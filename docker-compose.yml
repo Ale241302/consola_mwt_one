@@ -58,7 +58,7 @@ services:
     volumes:
       - consola-mwt-one-pgdata:/var/lib/postgresql/data
       # Se ejecutan automáticamente la primera vez (orden alfabético)
-      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./database/01_init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
       - ./database/02_auth_admin.sql:/docker-entrypoint-initdb.d/02-auth-admin.sql:ro
     ports:
       - "5434:5432"
