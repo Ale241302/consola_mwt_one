@@ -66,26 +66,14 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 12px;
   margin-bottom: 14px;
 }
 .login-logo {
-  width: 40px;
-  height: 40px;
+  height: 44px;
+  width: auto;
+  max-width: 240px;
   object-fit: contain;
-  filter: drop-shadow(0 0 10px rgba(0, 178, 134, 0.35));
-}
-.login-brand-text {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 28px;
-  color: #FFFFFF;
-  letter-spacing: 0.08em;
-  line-height: 1;
-}
-.login-brand-text small {
-  font-weight: 400;
-  color: rgba(255, 255, 255, 0.85);
+  filter: drop-shadow(0 0 14px rgba(0, 178, 134, 0.4));
 }
 
 .login-tagline {

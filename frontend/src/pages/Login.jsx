@@ -94,11 +94,14 @@ export default function Login() {
   return (
     <div className="login-page">
       <form className="login-card" onSubmit={onSubmit} autoComplete="on" noValidate>
-        {/* ---- Brand ---- */}
+        {/* ---- Brand (solo logo, sin texto — el logo ya dice MWT ONE) ---- */}
         <div className="login-brand">
-          <img src={LOGO_URL} alt="MWT" className="login-logo"
-               onError={(e) => { e.currentTarget.style.display = 'none'; }}/>
-          <span className="login-brand-text">MWT<small> ONE</small></span>
+          <img
+            src={LOGO_URL}
+            alt="MWT ONE"
+            className="login-logo"
+            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+          />
         </div>
         <div className="login-tagline">Ingresa tus credenciales para continuar</div>
 

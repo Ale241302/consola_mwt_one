@@ -74,6 +74,19 @@ a { color: inherit; text-decoration: none; }
   font: 800 13px/1 var(--font-display);
   letter-spacing: -0.02em;
 }
+.sidebar-logo-img {
+  height: 26px;
+  width: auto;
+  max-width: 150px;
+  object-fit: contain;
+  display: block;
+  transition: max-width 180ms ease;
+}
+[data-collapsed="true"] .sidebar-logo-img {
+  max-width: 32px;
+  /* Recorta la parte izquierda (icono) del logo y oculta el texto de MWT ONE */
+  object-position: left center;
+}
 .sidebar-collapse-btn {
   background: transparent; border: 0; cursor: pointer;
   color: var(--nav-text); padding: 6px; border-radius: 6px;
@@ -1493,3 +1506,4 @@ a { color: inherit; text-decoration: none; }
   background: var(--brand-primary); color: #fff; border-color: var(--brand-primary);
 }
 
+                

@@ -101,8 +101,22 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     <aside className="sidebar" aria-label="Main navigation">
       <div className="sidebar-head">
         <div className="sidebar-logo">
-          <div className="sidebar-logo-mark">M</div>
-          <span>MWT · <small style={{ opacity: 0.7, fontWeight: 600 }}>ONE</small></span>
+          <img
+            src="https://mwt.one/images/2024/12/04/recurso-1logo_foot.png"
+            alt="MWT ONE"
+            className="sidebar-logo-img"
+            onError={(e) => {
+              // Fallback a marca "M" si el CDN no responde
+              const parent = e.currentTarget.parentElement;
+              if (parent) {
+                e.currentTarget.remove();
+                const mark = document.createElement('div');
+                mark.className = 'sidebar-logo-mark';
+                mark.textContent = 'M';
+                parent.prepend(mark);
+              }
+            }}
+          />
         </div>
         <button className="sidebar-collapse-btn" onClick={onToggleCollapse} aria-label="Toggle sidebar">
           {collapsed ? <IconChevRight size={16}/> : <IconChevLeft size={16}/>}
