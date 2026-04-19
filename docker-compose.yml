@@ -1,0 +1,161 @@
+# =====================================================================
+# Consola MWT.ONE · docker-compose.yml
+# Agente responsable: [AG-BACKEND] + [AG-FRONTEND]
+#
+# Nombre del proyecto:  consola-mwt-one
+# Contenedores:
+#   · consola-mwt-one-postgres   (pgvector/pgvector:pg16)   5434:5432
+#   · consola-mwt-one-redis      (redis:7-alpine)           6380:6379
+#   · consola-mwt-one-django     (backend DRF + gunicorn)   8100:8000
+#   · consola-mwt-one-frontend   (Vite build + nginx)       3100:80
+#
+# Puertos elegidos para NO chocar con el proyecto `mwt` que ya corre:
+#   mwt usa 5433 (postgres), 6379 (redis), 8000 (django), 3000 (frontend).
+#
+# Uso:
+#     docker compose up -d --build
+#     docker compose logs -f consola-mwt-one-frontend
+#     docker compose down
+#
+# Acceso:
+#     Frontend (SPA):  http://localhost:3100
+#     API Django:      http://localhost:8100/api/auth/login/
+#     Postgres:        psql -h localhost -p 5434 -U mwt -d mwt_one
+# =====================================================================
+
+name: consola-mwt-one
+
+# ---------------------------------------------------------------------
+# Env compartido del backend (anchor YAML)
+# ---------------------------------------------------------------------
+x-backend-env: &backend-env
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-in-prod}
+  DJANGO_DEBUG:      ${DJANGO_DEBUG:-0}
+  DJANGO_ALLOWED_HOSTS: "django,backend,localhost,127.0.0.1,consola-mwt-one-django"
+  DB_NAME:     mwt_one
+  DB_USER:     mwt
+  DB_PASSWORD: ${DB_PASSWORD:-mwt}
+  DB_HOST:     postgres
+  DB_PORT:     "5432"
+  REDIS_URL:   redis://redis:6379/0
+  SQL_DIR:     /sql
+  TZ:          America/Mexico_City
+
+services:
+
+  # -----------------------------------------------------------------
+  # PostgreSQL + pgvector
+  # -----------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: consola-mwt-one-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       mwt_one
+      POSTGRES_USER:     mwt
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mwt}
+      TZ:                America/Mexico_City
+    volumes:
+      - consola-mwt-one-pgdata:/var/lib/postgresql/data
+      # Se ejecutan automáticamente la primera vez (orden alfabético)
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./database/02_auth_admin.sql:/docker-entrypoint-initdb.d/02-auth-admin.sql:ro
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mwt -d mwt_one"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - consola-net
+
+  # -----------------------------------------------------------------
+  # Redis (cache Django + broker futuro para Celery)
+  # -----------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: consola-mwt-one-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - consola-mwt-one-redis-data:/data
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks:
+      - consola-net
+
+  # -----------------------------------------------------------------
+  # Backend Django (API pura DRF + JWT)
+  # -----------------------------------------------------------------
+  django:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: consola-mwt-one/django:latest
+    container_name: consola-mwt-one-django
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    environment: *backend-env
+    volumes:
+      - ./backend:/app
+      - ./database:/sql:ro        # init.sql + 02_auth_admin.sql se aplican en arranque
+    ports:
+      - "8100:8000"
+    networks:
+      - consola-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/auth/login/", "-X", "OPTIONS"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # -----------------------------------------------------------------
+  # Frontend (Vite build + nginx)
+  # -----------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: /api
+    image: consola-mwt-one/frontend:latest
+    container_name: consola-mwt-one-frontend
+    restart: unless-stopped
+    depends_on:
+      - django
+    ports:
+      - "3100:80"
+    networks:
+      - consola-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/healthz"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+# ---------------------------------------------------------------------
+# Volúmenes nombrados (persistentes entre `docker compose down`)
+# ---------------------------------------------------------------------
+volumes:
+  consola-mwt-one-pgdata:
+    name: consola-mwt-one-pgdata
+  consola-mwt-one-redis-data:
+    name: consola-mwt-one-redis-data
+
+# ---------------------------------------------------------------------
+# Red interna (nombres DNS: postgres, redis, django, frontend)
+# ---------------------------------------------------------------------
+networks:
+  consola-net:
+    name: consola-mwt-one-net
+    driver: bridge

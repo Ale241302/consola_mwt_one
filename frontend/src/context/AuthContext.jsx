@@ -1,0 +1,161 @@
+// =====================================================================
+// MWT.ONE · AuthContext.jsx
+// Manejo de sesión (JWT access + refresh), perfil de usuario (rol,
+// permisos) y helpers de autorización.
+//
+// Modo de operación:
+//   · POST /api/auth/login  →  { access, refresh, user }
+//   · Token + user persistidos en localStorage (key: 'mwt-auth')
+//   · Fallback DEV: si el backend no está activo, se permite login
+//     directo validando el SHA-256 contra el hash del admin seed
+//     (alejandro@muitowork.com / MuitoWork2026?). Esto permite probar
+//     la UI antes de levantar Django.
+// =====================================================================
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { authApi, ApiError } from "../lib/api.js";
+
+const AUTH_KEY = "mwt-auth";
+
+// Hash SHA-256 del password admin (para fallback DEV). Generado con:
+//   printf '%s' 'MuitoWork2026?' | sha256sum
+const ADMIN_FALLBACK = {
+  email:     "alejandro@muitowork.com",
+  usernames: ["alejandro@muitowork.com", "admin", "alejandro"],
+  sha256:    "9fd0f3edaadea3046e561859e9f211878e8d124b1c196ddad82924ed570c05f9",
+  user: {
+    id:    "00000000-0000-0000-0000-000000000001",
+    email: "alejandro@muitowork.com",
+    full_name: "Alejandro Mendoza",
+    role: "admin",
+    role_name: "Admin",
+    permissions: {
+      modules: ["*"],
+      actions: ["view","create","edit","delete","export","admin"],
+    },
+  },
+};
+
+// SHA-256 en browser via WebCrypto
+async function sha256Hex(text) {
+  const enc = new TextEncoder().encode(text);
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+const AuthContext = createContext(null);
+
+export function AuthProvider({ children }) {
+  const [user,        setUser]        = useState(null);
+  const [accessToken, setAccessToken] = useState(null);
+  const [refresh,     setRefresh]     = useState(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError,   setAuthError]   = useState("");
+  const [bootstrapped, setBootstrapped] = useState(false);
+
+  // --- bootstrap desde localStorage ---
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(AUTH_KEY);
+      if (raw) {
+        const { user: u, access, refresh: r } = JSON.parse(raw);
+        if (u) setUser(u);
+        if (access) setAccessToken(access);
+        if (r) setRefresh(r);
+      }
+    } catch { /* noop */ }
+    setBootstrapped(true);
+  }, []);
+
+  const persist = (payload) => {
+    localStorage.setItem(AUTH_KEY, JSON.stringify(payload));
+  };
+  const clearPersist = () => localStorage.removeItem(AUTH_KEY);
+
+  // --- login ---
+  const login = useCallback(async (usuario, password) => {
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      // 1) Intento contra el backend real
+      let data;
+      try {
+        data = await authApi.login(usuario, password);
+      } catch (err) {
+        // Si el backend no responde (HTTP 0 / 404), caemos al fallback DEV.
+        const backendDown = err instanceof ApiError && (err.status === 0 || err.status === 404);
+        if (!backendDown) throw err;
+
+        // Fallback DEV: validamos contra el admin seed
+        const hash = await sha256Hex(password);
+        const userOk = ADMIN_FALLBACK.usernames.includes(usuario.toLowerCase());
+        if (!userOk || hash !== ADMIN_FALLBACK.sha256) {
+          throw new ApiError("Usuario o contraseña incorrectos", 401, null);
+        }
+        data = {
+          access:  "dev-local-" + Date.now(),
+          refresh: "dev-local-refresh-" + Date.now(),
+          user:    ADMIN_FALLBACK.user,
+        };
+      }
+
+      setUser(data.user);
+      setAccessToken(data.access);
+      setRefresh(data.refresh);
+      persist({ user: data.user, access: data.access, refresh: data.refresh });
+      return data.user;
+    } catch (err) {
+      const msg = err?.message || "Error al iniciar sesión";
+      setAuthError(msg);
+      throw err;
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  // --- logout ---
+  const logout = useCallback(async () => {
+    try { if (accessToken && refresh) await authApi.logout(accessToken, refresh); } catch { /* noop */ }
+    setUser(null);
+    setAccessToken(null);
+    setRefresh(null);
+    clearPersist();
+  }, [accessToken, refresh]);
+
+  // --- autorización ---
+  const has = useCallback((module, action = "view") => {
+    if (!user) return false;
+    const p = user.permissions || {};
+    const mods = p.modules || [];
+    const acts = p.actions || [];
+    if (mods.includes("*")) return true;
+    if (!mods.includes(module)) return false;
+    if (!acts.length) return true;
+    return acts.includes("*") || acts.includes(action);
+  }, [user]);
+
+  const value = {
+    user,
+    role:          user?.role || null,
+    roleName:      user?.role_name || null,
+    permissions:   user?.permissions || {},
+    accessToken,
+    refresh,
+    authLoading,
+    authError,
+    bootstrapped,
+    login,
+    logout,
+    has,
+    isAuthenticated: !!user,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth debe usarse dentro de <AuthProvider/>");
+  return ctx;
+}

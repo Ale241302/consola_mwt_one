@@ -1,0 +1,22 @@
+{
+  "name": "mwt-one-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MWT.ONE · Control Center — React + Vite (réplica modular del MWT ONE.html)",
+  "scripts": {
+    "dev": "vite --port 5173 --host",
+    "build": "vite build",
+    "preview": "vite preview --port 4173"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2",
+    "framer-motion": "^11.11.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.2",
+    "vite": "^5.4.8"
+  }
+}

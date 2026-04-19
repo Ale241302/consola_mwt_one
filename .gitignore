@@ -1,0 +1,65 @@
+# =====================================================================
+# Consola MWT.ONE · .gitignore (monorepo: frontend + backend + docker)
+# =====================================================================
+
+# --- Node / Vite ------------------------------------------------------
+node_modules/
+dist/
+.vite/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# --- Python / Django --------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+*.pyc
+*.pyo
+
+# --- Django local -----------------------------------------------------
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+media/
+local_settings.py
+
+# --- Secrets / env ----------------------------------------------------
+.env
+.env.local
+.env.*.local
+.env.production
+!.env.example
+
+# --- Editor / OS ------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- Build / IDE ------------------------------------------------------
+*.sublime-project
+*.sublime-workspace
+.history/
+
+# --- Docker volumes (si se bindearan localmente) ----------------------
+pgdata/
+redis-data/
+
+# --- Coverage / tests -------------------------------------------------
+coverage/
+.nyc_output/

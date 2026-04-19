@@ -1,0 +1,165 @@
+/* =====================================================================
+ * MWT ONE — Design tokens
+ * Sourced verbatim from MWT ONE.html :root block.
+ * =====================================================================*/
+:root {
+  /* Brand */
+  --brand-primary:      #013A57;
+  --brand-primary-light:#0A4F75;
+  --brand-primary-dark: #012840;
+  --brand-accent:       #75CBB3;
+  --brand-accent-light: #A0DACE;
+  --brand-accent-dark:  #5AB89E;
+  --brand-accent-soft:  #E8F5F0;
+  --brand-ice:          #A8D8EA;
+  --brand-ice-soft:     #EDF6FB;
+  --brand-sand:         #F5F0E8;
+  --brand-sand-dark:    #EAE3D2;
+
+  /* Typography */
+  --font-display: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-body:    'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, monospace;
+
+  /* Type scale */
+  --display-xl: 800 30px/1.1 var(--font-display);
+  --display-lg: 800 24px/1.2 var(--font-display);
+  --display-md: 700 20px/1.25 var(--font-display);
+  --heading-lg: 700 17px/1.3 var(--font-body);
+  --heading-md: 600 15px/1.4 var(--font-body);
+  --heading-sm: 600 13px/1.4 var(--font-body);
+  --body-lg:    400 15px/1.5 var(--font-body);
+  --body-md:    400 14px/1.5 var(--font-body);
+  --body-sm:    400 13px/1.5 var(--font-body);
+  --caption:    500 12px/1.4 var(--font-body);
+  --micro:      600 10.5px/1.3 var(--font-body);
+
+  /* Light theme */
+  --bg:             #F5F6F9;
+  --bg-alt:         #EEF0F4;
+  --surface:        #FFFFFF;
+  --surface-hover:  #F5F6F8;
+  --surface-active: #EEF0F4;
+  --surface-raised: #FFFFFF;
+  --border:         #E2E5EA;
+  --border-strong:  #C8CDD5;
+  --divider:        #ECEEF1;
+
+  --text-primary:   #013A57;
+  --text-secondary: #3D4F5C;
+  --text-tertiary:  #7A8A96;
+  --text-disabled:  #B0BAC4;
+  --text-inverse:   #FFFFFF;
+  --text-on-navy:   #FFFFFF;
+  --text-on-mint:   #013A57;
+
+  /* Semantic */
+  --success:        #0E8A6D;
+  --success-bg:     #F0FAF6;
+  --warning:        #B45309;
+  --warning-bg:     #FFF7ED;
+  --critical:       #DC2626;
+  --critical-bg:    #FEF2F2;
+  --info:           #0369A1;
+  --info-bg:        #F0F7FB;
+
+  /* Interactive */
+  --interactive:        #013A57;
+  --interactive-hover:  #014A73;
+  --interactive-active: #012B42;
+  --focus-ring:         #A8D8EA;
+  --selection:          rgba(168,216,234,0.2);
+
+  /* Nav */
+  --nav-bg:           #013A57;
+  --nav-text:         rgba(255,255,255,0.62);
+  --nav-text-active:  #FFFFFF;
+  --nav-item-hover:   rgba(255,255,255,0.06);
+  --nav-item-active:  rgba(117,203,179,0.12);
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(1,58,87,0.04);
+  --shadow-sm: 0 1px 2px rgba(1,58,87,0.04), 0 2px 8px -2px rgba(1,58,87,0.08);
+  --shadow-md: 0 2px 4px rgba(1,58,87,0.06), 0 4px 16px -4px rgba(1,58,87,0.12);
+  --shadow-lg: 0 4px 8px rgba(1,58,87,0.08), 0 8px 32px -8px rgba(1,58,87,0.16);
+
+  /* Spacing */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px; --s-12: 48px;
+
+  /* Layout */
+  --sidebar-w: 232px;
+  --sidebar-collapsed: 64px;
+  --header-h: 56px;
+}
+
+/* Accent variations */
+[data-accent="mint"]   { --brand-accent: #75CBB3; --brand-accent-soft: #E8F5F0; }
+[data-accent="ice"]    { --brand-accent: #A8D8EA; --brand-accent-soft: #EDF6FB; }
+[data-accent="coral"]  { --brand-accent: #F4A7A3; --brand-accent-soft: #FBECEA; }
+
+/* Dark theme */
+[data-theme="dark"] {
+  --bg:             #0B1929;
+  --bg-alt:         #0E1E30;
+  --surface:        #0F2337;
+  --surface-hover:  #132D47;
+  --surface-active: #173555;
+  --surface-raised: #142A40;
+  --border:         #1E3A54;
+  --border-strong:  #2A4D6B;
+  --divider:        #172E45;
+  --text-primary:   #F1F5F9;
+  --text-secondary: #94A3B8;
+  --text-tertiary:  #5A6E82;
+  --text-disabled:  #3A4F63;
+  --text-inverse:   #0B1929;
+  --brand-accent-soft: rgba(117,203,179,0.12);
+  --brand-ice-soft:    rgba(168,216,234,0.08);
+  --success-bg:     rgba(14,138,109,0.18);
+  --warning:        #FFB347;
+  --warning-bg:     rgba(180,83,9,0.18);
+  --critical:       #FF6B72;
+  --critical-bg:    rgba(220,38,38,0.18);
+  --info:           #A8D8EA;
+  --info-bg:        rgba(3,105,161,0.18);
+  --interactive:        #75CBB3;
+  --interactive-hover:  #8DD5C2;
+  --interactive-active: #5CB8A0;
+  --nav-bg:           #060F1A;
+  --nav-text:         rgba(255,255,255,0.5);
+  --nav-item-hover:   rgba(255,255,255,0.05);
+  --nav-item-active:  rgba(117,203,179,0.12);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.2);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.5), 0 4px 8px rgba(0,0,0,0.3);
+}
+
+/* Sidebar variants */
+[data-sidebar="light"] {
+  --nav-bg:           #FFFFFF;
+  --nav-text:         rgba(1,58,87,0.65);
+  --nav-text-active:  #013A57;
+  --nav-item-hover:   rgba(1,58,87,0.04);
+  --nav-item-active:  rgba(117,203,179,0.14);
+}
+[data-sidebar="sand"] {
+  --nav-bg:           #F5F0E8;
+  --nav-text:         rgba(1,58,87,0.58);
+  --nav-text-active:  #013A57;
+  --nav-item-hover:   rgba(1,58,87,0.05);
+  --nav-item-active:  rgba(1,58,87,0.08);
+}
+
+/* Density */
+[data-density="compact"]     { --row-h: 32px; --card-pad: 14px; }
+[data-density="comfortable"] { --row-h: 40px; --card-pad: 20px; }
+[data-density="cozy"]        { --row-h: 48px; --card-pad: 24px; }
