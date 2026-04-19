@@ -23,7 +23,7 @@ param(
     [string]$VpsHost = "187.77.218.102",
     [int]   $VpsPort = 2222,
     [string]$VpsUser = "root",
-    [string]$ContextName = "consola-mwt-one-vps",
+    [string]$ContextName = "mwt-vps",
     [string]$Branch = "main"
 )
 
@@ -67,7 +67,8 @@ $privKey = Join-Path $sshDir "consola_mwt_one_deploy"
 $pubKey  = "${privKey}.pub"
 
 if (-not (Test-Path $privKey)) {
-    ssh-keygen -t ed25519 -N "" -C "github-actions@consola-mwt-one" -f $privKey | Out-Null
+    $keygenArgs = @("-t", "ed25519", "-N", "", "-C", "github-actions@consola-mwt-one", "-f", $privKey)
+    & ssh-keygen @keygenArgs | Out-Null
     Write-OK "nueva key ed25519 generada en $privKey"
 } else {
     Write-OK "ya existe en $privKey"
