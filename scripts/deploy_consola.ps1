@@ -67,8 +67,7 @@ $privKey = Join-Path $sshDir "consola_mwt_one_deploy"
 $pubKey  = "${privKey}.pub"
 
 if (-not (Test-Path $privKey)) {
-    $keygenArgs = @("-t", "ed25519", "-N", "", "-C", "github-actions@consola-mwt-one", "-f", $privKey)
-    & ssh-keygen @keygenArgs | Out-Null
+    py -c "import subprocess; subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-C', 'github-actions@consola-mwt-one', '-f', '$($privKey.Replace('\','/'))'])" | Out-Null
     Write-OK "nueva key ed25519 generada en $privKey"
 } else {
     Write-OK "ya existe en $privKey"
