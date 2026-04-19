@@ -17,8 +17,17 @@
 set -euo pipefail
 
 APP_DIR="/opt/consola-mwt-one"
-REPO_URL="https://github.com/Ale241302/consola_mwt_one.git"
+REPO_PATH="Ale241302/consola_mwt_one"
 BRANCH="main"
+
+# Si tu repo es privado, exporta REPO_TOKEN antes de correr este script:
+#   REPO_TOKEN=ghp_xxx bash bootstrap_vps.sh
+# Si no, déjalo vacío y se usará clone público.
+if [ -n "${REPO_TOKEN:-}" ]; then
+    REPO_URL="https://x-access-token:${REPO_TOKEN}@github.com/${REPO_PATH}.git"
+else
+    REPO_URL="https://github.com/${REPO_PATH}.git"
+fi
 
 echo "======================================================================"
 echo " Consola MWT.ONE · bootstrap"
@@ -49,13 +58,19 @@ docker compose version >/dev/null
 # 3) Clonar o actualizar el repo
 # --------------------------------------------------------------------
 if [ ! -d "$APP_DIR/.git" ]; then
-    echo "==> Clonando $REPO_URL en $APP_DIR..."
+    echo "==> Clonando repo en $APP_DIR..."
     mkdir -p "$(dirname "$APP_DIR")"
     git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+    # Si usamos PAT para clonar, no lo dejamos persistido en .git/config
+    git -C "$APP_DIR" remote set-url origin "https://github.com/${REPO_PATH}.git"
 else
     echo "==> $APP_DIR ya existe, actualizando..."
     cd "$APP_DIR"
-    git fetch --all --prune
+    if [ -n "${REPO_TOKEN:-}" ]; then
+        git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer ${REPO_TOKEN}" fetch --all --prune
+    else
+        git fetch --all --prune
+    fi
     git reset --hard "origin/$BRANCH"
 fi
 

@@ -41,19 +41,63 @@ jobs:
         with:
           fetch-depth: 1
 
+      # ---------------------------------------------------------------
+      # Pre-flight: si alguno de los 4 secrets falta, aborta con
+      # un mensaje claro en vez de intentar SSH con host vacío.
+      # ---------------------------------------------------------------
+      - name: Validar secrets del VPS
+        env:
+          VPS_HOST:    ${{ secrets.VPS_HOST }}
+          VPS_PORT:    ${{ secrets.VPS_PORT }}
+          VPS_USER:    ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          miss=()
+          [ -z "$VPS_HOST" ]    && miss+=("VPS_HOST")
+          [ -z "$VPS_PORT" ]    && miss+=("VPS_PORT")
+          [ -z "$VPS_USER" ]    && miss+=("VPS_USER")
+          [ -z "$VPS_SSH_KEY" ] && miss+=("VPS_SSH_KEY")
+          if [ "${#miss[@]}" -gt 0 ]; then
+            echo "::error::Faltan secrets: ${miss[*]}"
+            echo "Configúralos en: Settings → Secrets and variables → Actions"
+            echo "  VPS_HOST    = 187.77.218.102"
+            echo "  VPS_PORT    = 2222"
+            echo "  VPS_USER    = root"
+            echo "  VPS_SSH_KEY = contenido de ~/.ssh/consola_mwt_one_deploy"
+            exit 1
+          fi
+          # Chequeo rápido de formato de la key
+          if ! printf '%s' "$VPS_SSH_KEY" | grep -q "BEGIN OPENSSH PRIVATE KEY\|BEGIN RSA PRIVATE KEY\|BEGIN EC PRIVATE KEY\|BEGIN PRIVATE KEY"; then
+            echo "::error::VPS_SSH_KEY no parece una private key válida (no encontré BEGIN ... PRIVATE KEY)."
+            echo "Pega la key completa incluyendo las líneas BEGIN/END."
+            exit 1
+          fi
+          echo "[OK] 4 secrets presentes, formato de key válido."
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          # REPO_TOKEN es opcional: sólo hace falta si el repo es privado.
+          # Se inyecta al entorno del script remoto a través de envs:
+          REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
         with:
           host:     ${{ secrets.VPS_HOST }}
           port:     ${{ secrets.VPS_PORT }}
           username: ${{ secrets.VPS_USER }}
           key:      ${{ secrets.VPS_SSH_KEY }}
+          envs: REPO_TOKEN
           script_stop: true
           script: |
             set -euo pipefail
 
             APP_DIR="/opt/consola-mwt-one"
-            REPO_URL="https://github.com/Ale241302/consola_mwt_one.git"
+            REPO_PATH="Ale241302/consola_mwt_one"
+            # Si hay PAT → clone autenticado; si no, clone público.
+            if [ -n "${REPO_TOKEN:-}" ]; then
+              REPO_URL="https://x-access-token:${REPO_TOKEN}@github.com/${REPO_PATH}.git"
+            else
+              REPO_URL="https://github.com/${REPO_PATH}.git"
+            fi
 
             echo "==> [1/6] Asegurando docker + compose"
             if ! command -v docker >/dev/null; then
@@ -66,12 +110,20 @@ jobs:
             if [ ! -d "$APP_DIR/.git" ]; then
               mkdir -p "$APP_DIR"
               git clone "$REPO_URL" "$APP_DIR"
+              # Después del clone, borra el token del remote.url para que
+              # no quede persistido en .git/config del VPS.
+              git -C "$APP_DIR" remote set-url origin "https://github.com/${REPO_PATH}.git"
             fi
 
             cd "$APP_DIR"
 
             echo "==> [3/6] git fetch + reset --hard origin/main"
-            git fetch --all --prune
+            if [ -n "${REPO_TOKEN:-}" ]; then
+              # Fetch con PAT efímero, sin persistirlo
+              git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer ${REPO_TOKEN}" fetch --all --prune
+            else
+              git fetch --all --prune
+            fi
             git reset --hard origin/main
 
             echo "==> [4/6] .env presente"
