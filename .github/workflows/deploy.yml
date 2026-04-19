@@ -1,0 +1,116 @@
+# =====================================================================
+# Consola MWT.ONE · GitHub Actions · Auto-deploy al VPS
+# Agente responsable: [AG-DEVOPS]
+#
+# Trigger:   push a `main`  (también ejecutable a mano: workflow_dispatch)
+# Estrategia: SSH al VPS → git fetch/reset → docker compose up -d --build
+# Idempotente: usa concurrency group para evitar deploys solapados.
+#
+# Secrets necesarios en el repo (Settings → Secrets and variables → Actions):
+#   VPS_HOST     → 187.77.218.102
+#   VPS_PORT     → 2222
+#   VPS_USER     → root
+#   VPS_SSH_KEY  → contenido completo de ~/.ssh/consola_mwt_one_deploy
+#                  (la PRIVADA, no la .pub)
+#
+# Acceso público del repo NO es necesario: clonamos por HTTPS desde el
+# VPS y como el repo es del mismo dueño del VPS, basta `git clone` simple.
+# Si el repo es privado, usa un Deploy Key adicional o un PAT en el VPS.
+# =====================================================================
+
+name: Deploy → VPS Hostinger
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: consola-mwt-one-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: SSH + docker compose up
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout (solo para tener el SHA en el log)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          port:     ${{ secrets.VPS_PORT }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            APP_DIR="/opt/consola-mwt-one"
+            REPO_URL="https://github.com/Ale241302/consola_mwt_one.git"
+
+            echo "==> [1/6] Asegurando docker + compose"
+            if ! command -v docker >/dev/null; then
+              curl -fsSL https://get.docker.com | sh
+              systemctl enable --now docker
+            fi
+            docker compose version >/dev/null
+
+            echo "==> [2/6] Asegurando $APP_DIR"
+            if [ ! -d "$APP_DIR/.git" ]; then
+              mkdir -p "$APP_DIR"
+              git clone "$REPO_URL" "$APP_DIR"
+            fi
+
+            cd "$APP_DIR"
+
+            echo "==> [3/6] git fetch + reset --hard origin/main"
+            git fetch --all --prune
+            git reset --hard origin/main
+
+            echo "==> [4/6] .env presente"
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              # Genera un SECRET_KEY decente la primera vez
+              SECRET=$(openssl rand -hex 48)
+              sed -i "s|^DJANGO_SECRET_KEY=.*|DJANGO_SECRET_KEY=${SECRET}|" .env
+              echo ">>> .env nuevo creado. Edita /opt/consola-mwt-one/.env si quieres cambiar password de DB."
+            fi
+
+            echo "==> [5/6] docker compose up -d --build"
+            docker compose pull --ignore-pull-failures || true
+            docker compose up -d --build --remove-orphans
+
+            echo "==> [6/6] Estado final"
+            docker compose ps
+            docker image prune -f >/dev/null
+
+      - name: Verificar healthchecks
+        if: success()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          port:     ${{ secrets.VPS_PORT }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/consola-mwt-one
+            # Espera hasta 90s a que postgres esté healthy
+            for i in $(seq 1 18); do
+              status=$(docker inspect --format='{{.State.Health.Status}}' consola-mwt-one-postgres 2>/dev/null || echo "missing")
+              if [ "$status" = "healthy" ]; then
+                echo "postgres healthy (intento $i)"
+                break
+              fi
+              echo "postgres: $status (intento $i/18)"
+              sleep 5
+            done
+            docker compose ps
+            curl -fsS http://127.0.0.1:3100/healthz || true
+            curl -fsS -X OPTIONS http://127.0.0.1:8100/api/auth/login/ || true
