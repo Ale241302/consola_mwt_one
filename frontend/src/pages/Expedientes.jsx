@@ -414,7 +414,14 @@ export default function ScreenExpedientes() {
                     <td>
                       <AlertStack e={e} lang={lang}/>
                     </td>
-                    <td onClick={(ev)=>{ev.stopPropagation(); onOpenExpediente(e.id);}}>
+                    <td onClick={(ev)=>{
+                         ev.stopPropagation();
+                         // Va a la vista intermedia de la OC (PO-xxxx-xxxxx)
+                         const oc = OCS.find(o => o.code === e.oc_client) || OCS.find(o => o.expedientes.includes(e.id));
+                         if (oc) navigate(`/expedientes/${oc.id}`);
+                         else onOpenExpediente(e.id);
+                       }}
+                       title={tr(lang,'oc_detail')}>
                       <IconChevRight size={14} style={{ color:'var(--text-tertiary)'}}/>
                     </td>
                   </tr>
