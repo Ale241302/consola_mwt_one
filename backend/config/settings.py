@@ -25,7 +25,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # --------------------------------------------------------------------
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-change-me")
 DEBUG      = os.environ.get("DJANGO_DEBUG", "1") == "1"
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+
+# ALLOWED_HOSTS: coma-separada. "*" significa aceptar todos los hosts.
+# ALLOWED_HOSTS: coma-separada. "*" significa aceptar todos los hosts.
+_DEFAULT_HOSTS = ["django", "backend", "localhost", "127.0.0.1", "consola-mwt-one-django"]
+_extra_hosts = [
+    h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",")
+    if h.strip()
+]
+ALLOWED_HOSTS = list(dict.fromkeys(_DEFAULT_HOSTS + _extra_hosts))
 
 # --------------------------------------------------------------------
 # Apps — un módulo del ERP = una app aislada
@@ -163,16 +171,36 @@ MWT_ROLES = (
 # CORS / CSRF
 #   - dev local:           Vite en :5173, opcional :3000
 #   - docker compose:      frontend (nginx) en :3100, backend en :8100
+#   - prod:                añade la IP/dominio del VPS vía env
+#
+# Env overrides (coma-separadas):
+#   DJANGO_CORS_ALLOWED_ORIGINS="http://mi-dominio.com,https://mi-dominio.com"
+#   DJANGO_CSRF_TRUSTED_ORIGINS="http://mi-dominio.com,https://mi-dominio.com"
 # --------------------------------------------------------------------
-CORS_ALLOWED_ORIGINS = [
+_DEFAULT_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:3100",
     "http://localhost:5173",
     "http://127.0.0.1:3100",
     "http://127.0.0.1:5173",
 ]
-CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
+
+_extra_cors = [
+    o.strip() for o in os.environ.get("DJANGO_CORS_ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+]
+_extra_csrf = [
+    o.strip() for o in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
+    if o.strip()
+]
+
+CORS_ALLOWED_ORIGINS  = list(dict.fromkeys(_DEFAULT_ORIGINS + _extra_cors))
+CSRF_TRUSTED_ORIGINS  = list(dict.fromkeys(_DEFAULT_ORIGINS + _extra_cors + _extra_csrf))
 CORS_ALLOW_CREDENTIALS = True
+
+# Si DEBUG está apagado, confía en el reverse proxy (nginx) para el esquema
+USE_X_FORWARDED_HOST   = True
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # --------------------------------------------------------------------
 # Redis  (broker + cache).  Local: redis-server.  Docker: service "redis".

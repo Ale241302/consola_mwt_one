@@ -85,8 +85,20 @@ if [ ! -f .env ]; then
     sed -i "s|^DJANGO_SECRET_KEY=.*|DJANGO_SECRET_KEY=${SECRET}|" .env
     echo "==> .env creado con SECRET_KEY aleatorio."
 else
-    echo "==> .env ya existe, lo respeto."
+    echo "==> .env ya existe, añadiendo llaves nuevas si faltan."
 fi
+
+# Asegura que llaves de producción nuevas existan aunque el .env sea viejo
+ensure_env() {
+    local key="$1"; local val="$2"
+    if ! grep -q "^${key}=" .env; then
+        echo "${key}=${val}" >> .env
+        echo ">>> añadida ${key}"
+    fi
+}
+ensure_env DJANGO_ALLOWED_HOSTS "localhost,127.0.0.1,187.77.218.102"
+ensure_env DJANGO_CORS_ALLOWED_ORIGINS "http://187.77.218.102:3100,http://187.77.218.102:8100"
+ensure_env DJANGO_CSRF_TRUSTED_ORIGINS "http://187.77.218.102:3100,http://187.77.218.102:8100"
 
 # --------------------------------------------------------------------
 # 5) Firewall básico (idempotente)
