@@ -228,7 +228,7 @@ export default function TemplateEditorDrawer({ lang='es', template, onClose, onS
             <label className="tpl-label">
               <span>{lang==='es'?'Cuerpo (texto plano + Jinja2)':'Body (plain text + Jinja2)'}</span>
               <span className="tpl-hint micro">
-                {lang==='es'?'sin HTML · usa { '{{ variable }}' } para renderizar':'no HTML · use double braces for variables'}
+                {lang==='es'?'sin HTML · usa {{ variable }} para renderizar':'no HTML · use double braces for variables'}
               </span>
             </label>
             <textarea
