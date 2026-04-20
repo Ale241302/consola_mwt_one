@@ -1,16 +1,78 @@
 // Pagos / Financial module
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
 import { Badge, StatusBadge, CreditDot, CreditBar, CountryFlag } from "../components/ui/primitives.jsx";
 import { IconDownload, IconPlus } from "../lib/icons.jsx";
-import { EXPEDIENTES, CLIENTS, OCS } from "../data/mockData.js";
+import {
+  EXPEDIENTES as MOCK_EXPEDIENTES,
+  CLIENTS,
+  OCS as MOCK_OCS,
+} from "../data/mockData.js";
+import { expedientesApi, ocsApi } from "../lib/api.js";
+
+// ── Mapeo backend → UI (campos financieros) ────────
+function mapExpedienteForPagos(r) {
+  return {
+    id: r.codigo || r.id,
+    ref: r.codigo || '',
+    oc_id: r.oc_id || null,
+    client: '', client_country: '',
+    brand: '', brand_id: r.brand_id || null,
+    status:       r.estado || 'REGISTRO',
+    op_mode:      r.modo_operacion === 'COMISION' ? 'B' : 'C',
+    commission_pct: r.commission_pct != null ? Number(r.commission_pct) : null,
+    total_invoiced: Number(r.total_invoiced) || 0,
+    total_paid:     Number(r.total_paid) || 0,
+    balance:        Number(r.balance) || 0,
+    credit_days:    Number(r.credit_days) || 0,
+    credit_band:    r.credit_band || 'GREEN',
+    projected_margin: Number(r.projected_margin) || 0,
+    real_margin:      Number(r.real_margin) || 0,
+    pg_verified: Number(r.pg_verified) || 0,
+    pg_released: Number(r.pg_released) || 0,
+    pg_pending:  Number(r.pg_pending)  || 0,
+    pg_rejected: Number(r.pg_rejected) || 0,
+    cost_corrections: !!r.cost_corrections,
+    _raw: r,
+  };
+}
 
 export default function ScreenPagos() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
+
+  // ── Data desde API (fallback a mocks) ────────
+  const [apiExpedientes, setApiExpedientes] = useState([]);
+  const [apiOcs,         setApiOcs]         = useState([]);
+  const [loading,        setLoading]        = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [expRaw, ocRaw] = await Promise.all([
+        expedientesApi.list().catch(() => []),
+        ocsApi.list().catch(() => []),
+      ]);
+      const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
+      const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
+      setApiExpedientes(expItems.map(mapExpedienteForPagos));
+      setApiOcs(ocItems);
+    } catch {
+      setApiExpedientes([]);
+      setApiOcs([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const EXPEDIENTES = !loading && apiExpedientes.length > 0 ? apiExpedientes : MOCK_EXPEDIENTES;
+  const OCS         = !loading && apiOcs.length > 0         ? apiOcs         : MOCK_OCS;
+
   const onOpenExpediente = (id) => {
-    const oc = OCS.find(o => o.expedientes.includes(id));
+    const oc = OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(id));
     if (oc) navigate(`/expedientes/${oc.id}/exp/${id}`);
     else navigate('/expedientes');
   };

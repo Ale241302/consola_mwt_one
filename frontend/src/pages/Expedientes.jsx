@@ -2,7 +2,7 @@
 // Global scope: all expedientes, all clients, all brands, all nodes.
 // Live profitability · cash flow & credit clock · operational times ·
 // process quality · alerts & blocks · payment breakdown · internal pricing.
-import React, { useState, useMemo, Fragment } from "react";
+import React, { useState, useMemo, useEffect, useCallback, Fragment } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney } from "../lib/i18n.js";
 import {
@@ -13,19 +13,117 @@ import {
   IconCreditCard, IconDollar, IconFolder, IconCheck,
 } from "../lib/icons.jsx";
 import {
-  EXPEDIENTES, BRANDS, CLIENTS, STATES, PHASE_BASELINE, OCS,
+  EXPEDIENTES as MOCK_EXPEDIENTES,
+  BRANDS, CLIENTS, STATES, PHASE_BASELINE,
+  OCS as MOCK_OCS,
 } from "../data/mockData.js";
+import { expedientesApi, ocsApi } from "../lib/api.js";
+
+// ── Mapeo backend → UI ────────
+function mapExpedienteFromApi(r) {
+  return {
+    id:  r.codigo || r.id,
+    ref: r.codigo || '',
+    oc_client: '',                     // se resuelve desde la OC cuando exista
+    oc_id: r.oc_id || null,
+    sap:  r.sap || null,
+    proforma: '',
+    client: '', client_country: '', client_id: r.client_id || null,
+    brand:  '', brand_id:  r.brand_id  || null,
+    status: r.estado || 'REGISTRO',
+    credit_days:  Number(r.credit_days) || 0,
+    credit_band:  r.credit_band || 'GREEN',
+    is_blocked:   !!r.is_blocked,
+    block_reason: r.block_reason || null,
+    block_cause:  r.block_cause || null,
+    factory_delay: !!r.factory_delay,
+    artifacts_done:  r.artifacts_done || 0,
+    artifacts_total: r.artifacts_total || 6,
+    op_mode: r.modo_operacion === 'COMISION' ? 'B' : 'C',
+    total_cost:      Number(r.total_cost) || 0,
+    total_invoiced:  Number(r.total_invoiced) || 0,
+    total_paid:      Number(r.total_paid) || 0,
+    balance:         Number(r.balance) || 0,
+    projected_margin: Number(r.projected_margin) || 0,
+    real_margin:      Number(r.real_margin) || 0,
+    margin_drift:     Number(r.margin_drift) || 0,
+    commission_pct:   r.commission_pct != null ? Number(r.commission_pct) : null,
+    dai_pct:   Number(r.dai_pct) || 0,
+    iva_pct:   Number(r.iva_pct) || 0,
+    dai_amount:    Number(r.dai_amount) || 0,
+    iva_amount:    Number(r.iva_amount) || 0,
+    logistic_cost: Number(r.logistic_cost) || 0,
+    base_price:    Number(r.base_price) || 0,
+    deferred_total_price:    Number(r.deferred_total_price) || 0,
+    show_deferred_to_client: !!r.show_deferred_to_client,
+    cost_corrections:        !!r.cost_corrections,
+    proforma_reviewed:       !!r.proforma_reviewed,
+    pg_verified: Number(r.pg_verified) || 0,
+    pg_released: Number(r.pg_released) || 0,
+    pg_pending:  Number(r.pg_pending)  || 0,
+    pg_rejected: Number(r.pg_rejected) || 0,
+    time_in_phase: r.time_in_phase || 0,
+    baseline_days: r.baseline_days || 10,
+    phase_ratio:   Number(r.phase_ratio) || 0,
+    phase_signal:  r.phase_signal || 'green',
+    currency:      r.moneda || 'USD',
+    mode:          r.incoterm || '—',
+    freight_mode:  r.freight_mode || 'SEA',
+    dispatch_mode: r.dispatch_mode || 'FCL',
+    origin:        r.origin || '',
+    destination:   r.destination || '',
+    shipment_date: r.shipment_date || null,
+    eta:           r.eta || null,
+    created_at:    r.created_at || null,
+    updated_at:    r.updated_at || null,
+    last_event_at: r.last_event_at || null,
+    product_count:   r.product_count   || 0,
+    container_count: r.container_count || 0,
+    notes: r.notas || '',
+    _raw:  r,
+  };
+}
 
 export default function ScreenExpedientes() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
+
+  // ── Data desde API (fallback a mocks) ────────
+  const [apiExpedientes, setApiExpedientes] = useState([]);
+  const [apiOcs,         setApiOcs]         = useState([]);
+  const [loading,        setLoading]        = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [expRaw, ocRaw] = await Promise.all([
+        expedientesApi.list().catch(() => []),
+        ocsApi.list().catch(() => []),
+      ]);
+      const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
+      const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
+      setApiExpedientes(expItems.map(mapExpedienteFromApi));
+      setApiOcs(ocItems);
+    } catch {
+      setApiExpedientes([]);
+      setApiOcs([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const EXPEDIENTES = !loading && apiExpedientes.length > 0 ? apiExpedientes : MOCK_EXPEDIENTES;
+  const OCS         = !loading && apiOcs.length > 0         ? apiOcs         : MOCK_OCS;
+
   const onNavigate = (key) => {
     const map = { wizard: '/wizard' };
     if (map[key]) navigate(map[key]);
   };
   const onOpenOC = (ocId) => navigate(`/expedientes/${ocId}`);
   const onOpenExpediente = (id) => {
-    const oc = OCS.find(o => o.expedientes.includes(id));
+    const oc = OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(id));
     if (oc) navigate(`/expedientes/${oc.id}/exp/${id}`);
     else navigate('/expedientes');
   };
@@ -59,7 +157,7 @@ export default function ScreenExpedientes() {
       }
       return true;
     });
-  }, [q, statusFilter, brandFilter, clientFilter, signalFilter, alertFilter]);
+  }, [q, statusFilter, brandFilter, clientFilter, signalFilter, alertFilter, EXPEDIENTES]);
 
   // ── CEO KPIs (live) ─────
   const kpi = useMemo(() => {
@@ -91,7 +189,7 @@ export default function ScreenExpedientes() {
       weighted_real_margin, weighted_proj_margin, drift,
       credit_60, credit_75, docs_missing, factory_delayed,
       corrected, corrected_pct, clean_pct, pf_reviewed, phase_stats };
-  }, []);
+  }, [EXPEDIENTES]);
 
   return (
     <div className="page" data-screen-label="Expedientes · CEO Dashboard">

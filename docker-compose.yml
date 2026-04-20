@@ -110,7 +110,8 @@ services:
     environment: *backend-env
     volumes:
       - ./backend:/app
-      - ./database:/sql:ro        # init.sql + 02_auth_admin.sql se aplican en arranque
+      - ./database:/sql:ro            # init.sql + 02_auth_admin.sql (bootstrap)
+      - ./backend/sql:/sql-modules:ro # 10_nodos.sql … 99_seed.sql (módulos + seed demo)
     ports:
       - "8100:8000"
     networks:

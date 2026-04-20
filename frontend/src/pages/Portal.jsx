@@ -17,7 +17,55 @@ import {
   IconCheck, IconFileText, IconShield, IconDownload, IconMapPin, IconShip, IconPlane,
   IconClock, IconArrow, IconChevRight,
 } from "../lib/icons.jsx";
-import { CLIENTS, OCS, EXPEDIENTES } from "../data/mockData.js";
+import {
+  CLIENTS    as MOCK_CLIENTS,
+  OCS        as MOCK_OCS,
+  EXPEDIENTES as MOCK_EXPEDIENTES,
+} from "../data/mockData.js";
+import { usePortalData } from "../hooks/usePortalData.js";
+
+// ── Adapters backend → shape UI ─────
+// El backend NO expone total_cost / margin / commission / supplier / modo_operacion;
+// el adapter mapea sólo los campos seguros del spec del Portal.
+function mapApiOcToPortalOc(r, allApiExpedientes) {
+  const expIds = (allApiExpedientes || [])
+    .filter(e => e.oc_id === r.id)
+    .map(e => e.id);
+  return {
+    id:          r.id,
+    po_code:     r.codigo || r.po_code || '',
+    client_id:   r.client_id || null,
+    brand:       r.brand_id || '—',            // UUID — ver TODO resolver nombre
+    total_value: Number(r.total_value) || 0,
+    total_paid:  Number(r.total_paid)  || 0,
+    balance:     Number(r.balance)     || 0,
+    coverage_pct: Number(r.coverage_pct) || 0,
+    lines_count: Number(r.lines_count) || 0,
+    lines: [],                                  // líneas no viajan por /mis_ocs/
+    expedientes: expIds,                        // ids de los expedientes asociados
+    _raw: r,
+  };
+}
+
+function mapApiExpedienteToPortalExp(r) {
+  return {
+    id:           r.id,
+    ref:          r.codigo || r.ref || '',
+    oc_id:        r.oc_id || null,
+    client_id:    r.client_id || null,
+    brand_id:     r.brand_id || null,
+    status:       r.estado || 'REGISTRO',
+    origin:       r.origin || '',
+    destination:  r.destination || '',
+    freight_mode: r.freight_mode || 'SEA',
+    eta:          r.eta || null,
+    total_invoiced: Number(r.total_invoiced) || 0,
+    total_paid:     Number(r.total_paid)     || 0,
+    balance:        Number(r.balance)        || 0,
+    coverage_pct:   Number(r.coverage_pct)   || 0,
+    _raw: r,
+  };
+}
 
 // ── Status mapping: technical → client natural ─────
 const CLIENT_STATUS_MAP = {
@@ -156,20 +204,47 @@ export default function ScreenPortal() {
   const onOpenOC = (ocId) => navigate(`/expedientes/${ocId}`);
 
   const [tab, setTab] = useState('orders');
+
+  // ── Backend real vía hook (fallback a mocks) ─────
+  const portalClientId = 'c1';  // dev: futuro claim del JWT (portal_client_id)
+  const {
+    me, kpis: apiKpis, ocs: apiOcsRaw, expedientes: apiExpedientesRaw,
+    loading: loadingPortal,
+  } = usePortalData(portalClientId);
+
+  const apiExpedientes = (apiExpedientesRaw || []).map(mapApiExpedienteToPortalExp);
+  const apiOcs         = (apiOcsRaw || []).map(r => mapApiOcToPortalOc(r, apiExpedientesRaw));
+
+  // Resolución CLIENTS / OCS / EXPEDIENTES — si el backend tiene data, úsala;
+  // si no, cae al mock para mantener viva la demo.
+  const CLIENTS = MOCK_CLIENTS;
+  const OCS         = (!loadingPortal && apiOcs.length > 0)         ? apiOcs         : MOCK_OCS;
+  const EXPEDIENTES = (!loadingPortal && apiExpedientes.length > 0) ? apiExpedientes : MOCK_EXPEDIENTES;
+
   // Client "c1" — scoped data
-  const client = CLIENTS.find(c => c.id === 'c1');
+  const client = (me && me.id) ? {
+    id: me.id, name: me.nombre || 'Cliente', contact: me.contacto || '',
+    email: me.email || '', phone: me.telefono || '',
+  } : CLIENTS.find(c => c.id === portalClientId);
+
   // Orders = OCs belonging to this client
-  const myOCs = OCS.filter(o => o.client_id === 'c1').slice(0, 10);
+  const myOCs = (!loadingPortal && apiOcs.length > 0)
+    ? apiOcs
+    : OCS.filter(o => o.client_id === portalClientId).slice(0, 10);
   // Featured (most recent / most active)
   const featured = myOCs[0];
 
-  // Simulated client-level KPIs (derived, no internals)
-  const totalInvoicedAll = myOCs.reduce((a,o) => a + (o.total_value || 0), 0);
-  const totalPaidAll     = myOCs.reduce((a,o) => a + (o.total_paid  || 0), 0);
-  const coveragePct      = totalInvoicedAll > 0 ? totalPaidAll / totalInvoicedAll : 0;
-  // Deterministic credit-days pick from client id
-  const creditLimit      = 90;
-  const creditUsed       = 45;
+  // KPIs: prioriza /api/portal/kpis/ si llegó; si no, calcula desde OCs
+  const totalInvoicedAll = apiKpis ? Number(apiKpis.total_invoiced) || 0
+                                   : myOCs.reduce((a,o) => a + (o.total_value || 0), 0);
+  const totalPaidAll     = apiKpis ? Number(apiKpis.total_paid) || 0
+                                   : myOCs.reduce((a,o) => a + (o.total_paid  || 0), 0);
+  const coveragePct      = apiKpis && apiKpis.coverage_pct != null
+                              ? Number(apiKpis.coverage_pct)
+                              : (totalInvoicedAll > 0 ? totalPaidAll / totalInvoicedAll : 0);
+  // Credit days
+  const creditLimit      = apiKpis?.credit_days_limit || 90;
+  const creditUsed       = apiKpis?.credit_days_used  || 45;
 
   return (
     <div style={{ background:'var(--bg)', minHeight:'100%' }} data-screen-label="Client Portal">
@@ -220,7 +295,10 @@ export default function ScreenPortal() {
             </div>
             <div className="portal-orders-breakdown">
               {['PRODUCCION','TRANSITO','EN_DESTINO','CERRADO'].map(s => {
-                const n = myOCs.filter(o => (EXPEDIENTES.find(e => o.expedientes.includes(e.id))?.status) === s).length;
+                const n = myOCs.filter(o => {
+                  const expIds = Array.isArray(o.expedientes) ? o.expedientes : [];
+                  return (EXPEDIENTES.find(e => expIds.includes(e.id))?.status) === s;
+                }).length;
                 if (n === 0) return null;
                 return (
                   <div key={s} className="caption">
@@ -235,7 +313,8 @@ export default function ScreenPortal() {
 
         {/* Featured OC — most recent order */}
         {featured && (() => {
-          const hero = EXPEDIENTES.find(e => featured.expedientes.includes(e.id));
+          const expIds = Array.isArray(featured.expedientes) ? featured.expedientes : [];
+          const hero = EXPEDIENTES.find(e => expIds.includes(e.id));
           if (!hero) return null;
           return (
             <div className="card mb-6" style={{overflow:'hidden', cursor:'pointer'}} onClick={() => onOpenOC && onOpenOC(featured.id)}>
@@ -248,7 +327,7 @@ export default function ScreenPortal() {
                     <div className="heading-lg" style={{marginTop:4}}>{featured.po_code}</div>
                     <div className="caption" style={{marginTop:2}}>
                       {featured.lines_total || featured.lines?.length || 0} {lang==='es' ? 'líneas · ' : 'lines · '}
-                      {featured.expedientes.length} {lang==='es' ? 'envíos' : 'shipments'}
+                      {expIds.length} {lang==='es' ? 'envíos' : 'shipments'}
                     </div>
                   </div>
                   <ClientStatusPill status={hero.status} lang={lang}/>
@@ -290,7 +369,7 @@ export default function ScreenPortal() {
           ))}
         </div>
 
-        {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} onOpenOC={onOpenOC}/>}
+        {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC}/>}
         {tab === 'payments' && <PortalPayments lang={lang} ocs={myOCs}/>}
         {tab === 'docs'     && <PortalDocs     lang={lang} ocs={myOCs}/>}
       </div>
@@ -299,7 +378,7 @@ export default function ScreenPortal() {
 }
 
 // ── Orders tab: table of OCs (not expedientes) ─────
-function PortalOrders({ lang, ocs, onOpenOC }) {
+function PortalOrders({ lang, ocs, expedientes = [], onOpenOC }) {
   return (
     <div className="card">
       <div className="card-head">
@@ -319,14 +398,15 @@ function PortalOrders({ lang, ocs, onOpenOC }) {
         <tbody>
           {ocs.map(o => {
             // Status = status of lead expediente
-            const leadExp = EXPEDIENTES.find(e => o.expedientes.includes(e.id));
+            const expIds = Array.isArray(o.expedientes) ? o.expedientes : [];
+            const leadExp = expedientes.find(e => expIds.includes(e.id));
             const lineCount = o.lines?.length || 0;
             const coverage = o.total_value > 0 ? (o.total_paid / o.total_value) : 0;
             return (
               <tr key={o.id} style={{cursor:'pointer'}} onClick={() => onOpenOC && onOpenOC(o.id)}>
                 <td>
                   <div style={{font:'700 12px/1.2 var(--font-mono)', color:'var(--brand-primary)'}}>{o.po_code}</div>
-                  <div className="caption" style={{marginTop:2}}>{o.expedientes.length} {lang==='es'?'envíos':'shipments'}</div>
+                  <div className="caption" style={{marginTop:2}}>{expIds.length} {lang==='es'?'envíos':'shipments'}</div>
                 </td>
                 <td>
                   <div style={{font:'500 13px/1.3 var(--font-body)'}}>{lineCount} {lang==='es' ? 'líneas' : 'lines'}</div>

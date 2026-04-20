@@ -28,7 +28,12 @@ DEBUG      = os.environ.get("DJANGO_DEBUG", "1") == "1"
 
 # ALLOWED_HOSTS: coma-separada. "*" significa aceptar todos los hosts.
 # ALLOWED_HOSTS: coma-separada. "*" significa aceptar todos los hosts.
-_DEFAULT_HOSTS = ["django", "backend", "localhost", "127.0.0.1", "consola-mwt-one-django"]
+_DEFAULT_HOSTS = [
+    "django", "backend", "localhost", "127.0.0.1",
+    "consola-mwt-one-django",
+    # Dominio público de producción (Consola MWT.ONE)
+    "consola.mwt.one",
+]
 _extra_hosts = [
     h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",")
     if h.strip()
@@ -56,25 +61,27 @@ THIRD_PARTY = [
 ]
 
 LOCAL_APPS = [
-    "apps.core",            # usuarios, roles, auth, audit  (ÚNICO IMPLEMENTADO)
+    "apps.core",            # usuarios, roles, auth, audit
+    "apps.nodos",           # red física (HQ · oficinas · almacenes · hubs)
+    "apps.brands",          # portafolio de marcas
+    "apps.clientes",        # cuentas B2B / retail / distribuidores
+    "apps.productos",       # catálogo SKU-level
+    "apps.proveedores",     # fabricantes / importadores / distribuidores
+    "apps.inventario",      # stock + ledger de movimientos
+    "apps.expedientes",     # OCs + expedientes + líneas + documentos
+    "apps.cobros",          # cobros + pagos (ingreso/egreso) + conciliación
+    "apps.analytics",       # KPIs consolidados cross-schema (dashboard · financiero)
+    "apps.portal",          # Portal B2B (read-only, scopeado al client_id)
+    "apps.transfers",       # transferencias inter-nodo + state machine
+    "apps.email_templates", # plantillas Jinja2 multi-idioma / multi-marca
+    "apps.notifications",   # historial de envíos (Celery / workflow / cron)
+    "apps.storage",         # MinIO/S3 signed URLs + Paperless ingest
     # Los siguientes módulos se irán activando cuando cada app tenga su
     # apps.py + views.py correspondiente. Dejarlos comentados evita que
     # Django falle al arrancar por ImportError durante INSTALLED_APPS.
     # "apps.dashboard",
-    # "apps.expedientes",
     # "apps.pipeline",
-    # "apps.portal",
     # "apps.financiero",
-    # "apps.transfers",
-    # "apps.nodos",
-    # "apps.clientes",
-    # "apps.brands",
-    # "apps.productos",
-    # "apps.proveedores",
-    # "apps.inventario",
-    # "apps.email_templates",
-    # "apps.notificaciones",
-    # "apps.cobros",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY + LOCAL_APPS
@@ -107,8 +114,8 @@ DATABASES = {
         "PORT":     os.environ.get("DB_PORT", "5432"),
         "OPTIONS":  {"options": "-c search_path=core,clientes,expedientes,pipeline,"
                                 "financiero,transfers,nodos,brands,productos,"
-                                "proveedores,inventario,portal,templates,"
-                                "notificaciones,cobros,public"},
+                                "proveedores,inventario,portal,email_templates,"
+                                "notifications,cobros,public"},
     }
 }
 
@@ -183,6 +190,9 @@ _DEFAULT_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:3100",
     "http://127.0.0.1:5173",
+    # Dominio público de producción (Consola MWT.ONE) — HTTP y HTTPS
+    "http://consola.mwt.one",
+    "https://consola.mwt.one",
 ]
 
 _extra_cors = [

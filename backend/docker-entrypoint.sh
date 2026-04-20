@@ -13,6 +13,7 @@ DB_NAME="${DB_NAME:-mwt_one}"
 DB_USER="${DB_USER:-mwt}"
 DB_PASSWORD="${DB_PASSWORD:-mwt}"
 SQL_DIR="${SQL_DIR:-/sql}"
+SQL_MODULES_DIR="${SQL_MODULES_DIR:-/sql-modules}"
 
 export PGPASSWORD="$DB_PASSWORD"
 
@@ -29,17 +30,22 @@ for i in $(seq 1 60); do
     fi
 done
 
-# Aplicar SQL crudos si están montados (init.sql + 02_auth_admin.sql).
-# Se marcan como aplicados creando una tabla _applied_sql para idempotencia.
-if [ -d "$SQL_DIR" ]; then
-    psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 <<'SQL'
+# Aplicar SQL crudos en dos fases:
+#   1) /sql            → bootstrap (init.sql + 02_auth_admin.sql)
+#   2) /sql-modules    → módulos por dominio (10_nodos..94_pipeline_…)
+#                         + 99_seed.sql (demo data full-stack).
+# Se marca cada archivo en public._applied_sql para idempotencia.
+psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 <<'SQL'
 CREATE TABLE IF NOT EXISTS public._applied_sql (
     filename  TEXT PRIMARY KEY,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 SQL
 
-    for f in $(ls "$SQL_DIR"/*.sql 2>/dev/null | sort); do
+apply_sql_dir() {
+    local dir="$1"
+    [ -d "$dir" ] || return 0
+    for f in $(ls "$dir"/*.sql 2>/dev/null | sort); do
         base="$(basename "$f")"
         already=$(psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc \
             "SELECT 1 FROM public._applied_sql WHERE filename='${base}'")
@@ -53,7 +59,10 @@ SQL
         psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
              -c "INSERT INTO public._applied_sql(filename) VALUES ('${base}') ON CONFLICT DO NOTHING;"
     done
-fi
+}
+
+apply_sql_dir "$SQL_DIR"
+apply_sql_dir "$SQL_MODULES_DIR"
 
 echo "[entrypoint] arrancando: $*"
 exec "$@"

@@ -165,3 +165,48 @@ docker compose down -v
 | `django` en loop de reinicio                          | `docker compose logs django`. Casi siempre falta Postgres listo (healthcheck corrige), o hay app importada en `settings.py LOCAL_APPS` sin existir. |
 | 404 al entrar a <http://ip:3100>                      | El build del frontend falló. Revisa `docker compose logs frontend`.                  |
 | Quiero cambiar password de DB                         | Edita `/opt/consola-mwt-one/.env` (`DB_PASSWORD=...`) y `docker compose up -d --build`. |
+
+---
+
+## 7. Routing público · `consola.mwt.one`
+
+El VPS ya tiene el contenedor `mwt-nginx` (del stack vecino `mwt_builder`)
+escuchando en los puertos 80/443 con cert self-signed. Consola MWT.ONE se
+expone a través de ese mismo nginx — no corremos otro nginx público aquí.
+
+Pasos (todos idempotentes — el script los puede correr varias veces):
+
+1. Asegúrate de que el stack de Consola está arriba:
+   ```bash
+   cd /opt/consola-mwt-one
+   docker compose up -d
+   ```
+
+2. Monta `consola.conf` en `mwt-nginx` y conéctalo a la red de Consola:
+   ```bash
+   bash /opt/consola-mwt-one/scripts/mount_consola_nginx.sh
+   ```
+
+   El script:
+   - ejecuta `docker network connect consola-mwt-one-net mwt-nginx`
+     (solo si no estaba conectado),
+   - `docker cp infra/nginx/consola.conf mwt-nginx:/etc/nginx/conf.d/consola.conf`
+     (solo si el md5 cambió),
+   - `docker exec mwt-nginx nginx -t` para validar,
+   - `docker exec mwt-nginx nginx -s reload` para aplicar sin downtime.
+
+3. Configura el DNS en Cloudflare: `consola.mwt.one` → A record al IP del VPS
+   (`187.77.218.102`) con modo SSL "Full (not strict)".
+
+`scripts/redeploy_vps.sh` llama a `mount_consola_nginx.sh` al final de
+cada rebuild, así que cada `git push origin main` también deja nginx
+actualizado (no hace falta reiniciarlo manualmente).
+
+Verificación rápida:
+
+| Qué                  | Curl                                                           |
+|----------------------|----------------------------------------------------------------|
+| Frontend público     | `curl -I https://consola.mwt.one/`                             |
+| API pública          | `curl -I https://consola.mwt.one/api/`                         |
+| Login endpoint       | `curl -X POST https://consola.mwt.one/api/auth/login/ -d '{}'` |
+

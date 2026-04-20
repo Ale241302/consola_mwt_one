@@ -6,7 +6,42 @@ import { Badge, Sparkline, BarChart, DualBar } from "../components/ui/primitives
 import {
   IconDownload, IconPlus, IconArrow, IconAlert, IconClock, IconChevRight,
 } from "../lib/icons.jsx";
-import { DASHBOARD, BRANDS, OCS } from "../data/mockData.js";
+import { DASHBOARD as MOCK_DASHBOARD, BRANDS, OCS } from "../data/mockData.js";
+import { useDashboardKpis } from "../hooks/useDashboardKpis.js";
+
+// ── Adapter backend → shape esperado por la UI ─────
+// Backend emite:
+//   { active, total_cost, total_invoiced, total_paid, receivables,
+//     margin_pct, by_status:[{status,count}], by_brand:[{brand_id,...}],
+//     urgent:[{id,ref,client_id,urgency,action}], cash_90:[{month,invoiced,paid}] }
+function mapDashboardFromApi(k) {
+  if (!k) return null;
+  return {
+    kpi: {
+      active:         Number(k.active) || 0,
+      total_cost:     Number(k.total_cost) || 0,
+      total_invoiced: Number(k.total_invoiced) || 0,
+      total_paid:     Number(k.total_paid) || 0,
+      receivables:    Number(k.receivables) || 0,
+      margin_pct:     Number(k.margin_pct) || 0,
+    },
+    by_status: Array.isArray(k.by_status) ? k.by_status : [],
+    by_brand:  (Array.isArray(k.by_brand) ? k.by_brand : []).map(b => ({
+      brand: BRANDS.find(x => x.id === b.brand_id)?.name || b.brand_id || '—',
+      count: Number(b.count) || 0,
+      total_cost:     Number(b.total_cost) || 0,
+      total_invoiced: Number(b.total_invoiced) || 0,
+    })),
+    urgent: (Array.isArray(k.urgent) ? k.urgent : []).map(u => ({
+      id:      u.id,
+      ref:     u.ref || '',
+      client:  u.client_id || '',
+      action:  u.action || '',
+      urgency: u.urgency || 'medium',
+    })),
+    cash_90: Array.isArray(k.cash_90) ? k.cash_90 : [],
+  };
+}
 
 export default function ScreenDashboard() {
   const navigate = useNavigate();
@@ -16,10 +51,17 @@ export default function ScreenDashboard() {
     if (map[key]) navigate(map[key]);
   };
   const onOpenExpediente = (id) => {
-    const oc = OCS.find(o => o.expedientes.includes(id));
+    const oc = OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(id));
     if (oc) navigate(`/expedientes/${oc.id}/exp/${id}`);
     else navigate('/expedientes');
   };
+
+  // ── Backend real (con fallback a MOCK_DASHBOARD) ─────
+  const { kpis: apiKpis, loading: loadingKpis } = useDashboardKpis();
+  const apiDash = mapDashboardFromApi(apiKpis);
+  const DASHBOARD = (!loadingKpis && apiDash && apiDash.kpi.active > 0)
+    ? apiDash
+    : MOCK_DASHBOARD;
 
   const k = DASHBOARD.kpi;
   const spark = [12,18,15,22,19,24,21,28,25,32,30,34];

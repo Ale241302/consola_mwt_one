@@ -6,24 +6,82 @@
 //  3. SLA traffic-light: days in phase vs baseline (green/amber/red dot)
 //  4. Alerts: blocked badge, credit clock (>60d amber, >75d red)
 // Cards are drag-droppable between columns to advance state.
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney } from "../lib/i18n.js";
 import { CountryFlag } from "../components/ui/primitives.jsx";
 import {
   IconRefresh, IconPlus, IconAlert, IconLock, IconClock, IconArrow, IconKanban,
 } from "../lib/icons.jsx";
-import { STATES, EXPEDIENTES, BRANDS, OCS } from "../data/mockData.js";
+import {
+  STATES,
+  EXPEDIENTES as MOCK_EXPEDIENTES,
+  BRANDS,
+  OCS as MOCK_OCS,
+} from "../data/mockData.js";
+import { expedientesApi, ocsApi } from "../lib/api.js";
+
+// ── Mapeo backend → UI (simplificado para Pipeline) ────────
+function mapExpedienteForPipeline(r) {
+  return {
+    id: r.codigo || r.id,
+    ref: r.codigo || '',
+    oc_id: r.oc_id || null,
+    client: '', brand: '', brand_id: r.brand_id || null,
+    status: r.estado || 'REGISTRO',
+    credit_days:  Number(r.credit_days) || 0,
+    is_blocked:   !!r.is_blocked,
+    block_reason: r.block_reason || null,
+    factory_delay: !!r.factory_delay,
+    op_mode: r.modo_operacion === 'COMISION' ? 'B' : 'C',
+    artifacts_done:  r.artifacts_done || 0,
+    artifacts_total: r.artifacts_total || 6,
+    phase_ratio:  Number(r.phase_ratio) || 0,
+    phase_signal: r.phase_signal || 'green',
+    total_invoiced: Number(r.total_invoiced) || 0,
+    _raw: r,
+  };
+}
 
 export default function ScreenPipeline() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
+
+  // ── Data desde API (fallback a mocks) ────────
+  const [apiExpedientes, setApiExpedientes] = useState([]);
+  const [apiOcs,         setApiOcs]         = useState([]);
+  const [loading,        setLoading]        = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [expRaw, ocRaw] = await Promise.all([
+        expedientesApi.list().catch(() => []),
+        ocsApi.list().catch(() => []),
+      ]);
+      const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
+      const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
+      setApiExpedientes(expItems.map(mapExpedienteForPipeline));
+      setApiOcs(ocItems);
+    } catch {
+      setApiExpedientes([]);
+      setApiOcs([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const EXPEDIENTES = !loading && apiExpedientes.length > 0 ? apiExpedientes : MOCK_EXPEDIENTES;
+  const OCS         = !loading && apiOcs.length > 0         ? apiOcs         : MOCK_OCS;
+
   const onNavigate = (key) => {
     const map = { wizard: '/wizard' };
     if (map[key]) navigate(map[key]);
   };
   const onOpenExpediente = (id) => {
-    const oc = OCS.find(o => o.expedientes.includes(id));
+    const oc = OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(id));
     if (oc) navigate(`/expedientes/${oc.id}/exp/${id}`);
     else navigate('/expedientes');
   };

@@ -14,11 +14,19 @@ import ScreenPagos from "./pages/Pagos.jsx";
 import ScreenInventario from "./pages/Inventario.jsx";
 import ScreenWizard from "./pages/Wizard.jsx";
 import ScreenTransfers from "./pages/Transfers.jsx";
+import ScreenTransferDetail from "./pages/TransferDetail.jsx";
 import ScreenNodos from "./pages/Nodos.jsx";
+import ScreenNodoDetail from "./pages/NodoDetail.jsx";
 import ScreenClientes from "./pages/Clientes.jsx";
+import ScreenClienteDetail from "./pages/ClienteDetail.jsx";
 import ScreenBrands from "./pages/Brands.jsx";
+import ScreenBrandDetail from "./pages/BrandDetail.jsx";
 import ScreenProductos from "./pages/Productos.jsx";
+import ScreenProductFormView from "./pages/ProductFormView.jsx";
+import ScreenSizingEngine from "./pages/SizingEngine.jsx";
 import ScreenProveedores from "./pages/Proveedores.jsx";
+import ScreenSupplierFormView from "./pages/SupplierFormView.jsx";
+import ScreenSupplierDetail from "./pages/SupplierDetail.jsx";
 import ScreenEmailTemplates from "./pages/EmailTemplates.jsx";
 import ScreenNotificaciones from "./pages/Notificaciones.jsx";
 import ScreenCobros from "./pages/Cobros.jsx";
@@ -42,11 +50,20 @@ export default function App() {
         <Route path="/inventario" element={<ScreenInventario />} />
         <Route path="/wizard" element={<ScreenWizard />} />
         <Route path="/transferencias" element={<ScreenTransfers />} />
+        <Route path="/transferencias/:transferId" element={<ScreenTransferDetail />} />
         <Route path="/nodos" element={<ScreenNodos />} />
+        <Route path="/nodos/:nodeId" element={<ScreenNodoDetail />} />
         <Route path="/clientes" element={<ScreenClientes />} />
+        <Route path="/clientes/:clienteId" element={<ScreenClienteDetail />} />
         <Route path="/marcas" element={<ScreenBrands />} />
+        <Route path="/marcas/:brandId" element={<ScreenBrandDetail />} />
         <Route path="/productos" element={<ScreenProductos />} />
+        <Route path="/productos/nuevo" element={<ScreenProductFormView />} />
+        <Route path="/productos/:productId" element={<ScreenProductFormView />} />
+        <Route path="/tallas" element={<ScreenSizingEngine />} />
         <Route path="/proveedores" element={<ScreenProveedores />} />
+        <Route path="/proveedores/nuevo" element={<ScreenSupplierFormView />} />
+        <Route path="/proveedores/:supplierId" element={<ScreenSupplierDetail />} />
         <Route path="/templates" element={<ScreenEmailTemplates />} />
         <Route path="/notificaciones" element={<ScreenNotificaciones />} />
         <Route path="/cobros" element={<ScreenCobros />} />
