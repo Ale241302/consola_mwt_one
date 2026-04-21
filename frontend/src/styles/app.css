@@ -226,6 +226,10 @@ a { color: inherit; text-decoration: none; }
 
 /* ── Main column ────────────────────────────────────────── */
 .main {
+  grid-column: 2;              /* forzado: el sidebar es position:fixed y sale
+                                  del flujo, entonces el .main tiene que ir
+                                  explícitamente a la columna 2 del grid para
+                                  no auto-placearse en la columna del sidebar */
   min-width: 0;
   display: flex; flex-direction: column;
 }
