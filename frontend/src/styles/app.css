@@ -93,24 +93,27 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* ── Sidebar ───────────────────────────────────────────── */
-/* height: 100dvh (con fallback 100vh) resuelve el hueco blanco que aparecía
-   al scrollear: `dvh` respeta la altura dinámica del viewport (sin contar
-   barras del browser que aparecen/desaparecen), mientras `vh` a veces se
-   quedaba corto en Chrome/Edge con la URL bar visible. La franja navy fixed
-   del .app-shell cubre cualquier edge case residual. */
+/* position: fixed garantiza que el sidebar NO scrollea junto al main, sin
+   depender de `sticky` (que requiere un scroll-container bien formado y se
+   rompe con ciertos ancestors de overflow). Ocupa el viewport completo,
+   y la grid del .app-shell sigue reservando la columna izquierda con el
+   mismo var(--sidebar-w), así que el .main no se corre. */
 .sidebar {
-  position: sticky; top: 0;
+  position: fixed;
+  top: 0; left: 0;
+  width: var(--sidebar-w);
   height: 100vh;
   height: 100dvh;
-  max-height: 100vh;
-  max-height: 100dvh;
-  align-self: start;           /* evita que el grid lo estire y rompa sticky */
   background: var(--nav-bg);
   color: var(--nav-text);
   display: flex; flex-direction: column;
   overflow: hidden;
   border-right: 1px solid color-mix(in oklab, var(--nav-bg), black 12%);
-  z-index: 10;                 /* por encima del contenido al scroll */
+  z-index: 10;                 /* por encima del contenido y del stripe fixed */
+  transition: width 200ms ease, background 200ms ease;
+}
+.app-shell[data-collapsed="true"] .sidebar {
+  width: var(--sidebar-collapsed);
 }
 .sidebar-head {
   height: var(--header-h);
