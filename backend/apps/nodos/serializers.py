@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Nodo
+from .models import Nodo, NodoJerarquia
 
 
 class NodoSerializer(serializers.ModelSerializer):
@@ -15,5 +15,15 @@ class NodoListSerializer(serializers.ModelSerializer):
         model = Nodo
         fields = (
             "id", "codigo", "nombre", "tipo", "pais_iso2", "ciudad",
-            "responsable_id", "capacidad_m2", "is_active", "updated_at",
+            "zona_horaria", "responsable_id", "capacidad_m2",
+            "legal_entity_owner_id", "operator_id",
+            "capabilities", "status",
+            "is_active", "updated_at",
         )
+
+
+class NodoJerarquiaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NodoJerarquia
+        fields = "__all__"
+        read_only_fields = ("id", "created_at", "updated_at")

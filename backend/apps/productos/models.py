@@ -26,6 +26,11 @@ class Producto(models.Model):
     costo_estandar         = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     precio_lista           = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     precio_distribuidor    = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    # Extensiones 93_schema_extensions.sql (JSON canónico #10):
+    #   precio_mwt       → precio interno MWT (distinto al distribuidor).
+    #   especificaciones → ficha técnica larga (tipo_puntera, normativa, …).
+    precio_mwt             = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    especificaciones       = models.JSONField(default=dict, blank=True)
 
     peso_kg                = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
     volumen_m3             = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)

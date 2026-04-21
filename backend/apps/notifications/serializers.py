@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import NotificationLog
+from .models import NotificationLog, GraceDaysCat, EmailQueueLog
 
 
 class NotificationLogListSerializer(serializers.ModelSerializer):
@@ -12,6 +12,8 @@ class NotificationLogListSerializer(serializers.ModelSerializer):
             "recipient_email", "subject",
             "trigger", "status", "retries", "attempt_count",
             "amount_overdue", "grace_days_used", "currency",
+            "idempotence_token", "retry_of", "queue_id", "celery_task_id",
+            "bounced_at", "bounce_reason",
             "is_active",
         )
 
@@ -19,4 +21,16 @@ class NotificationLogListSerializer(serializers.ModelSerializer):
 class NotificationLogSerializer(serializers.ModelSerializer):
     class Meta:
         model  = NotificationLog
+        fields = "__all__"
+
+
+class GraceDaysCatSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = GraceDaysCat
+        fields = "__all__"
+
+
+class EmailQueueLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = EmailQueueLog
         fields = "__all__"

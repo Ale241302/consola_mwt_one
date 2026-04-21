@@ -2,25 +2,31 @@
 // ProductMassiveUpload — Dropzone Excel para catálogo masivo
 // Agente responsable: [AG-FRONTEND]
 //
-// Flujo:
-//   1. Usuario arrastra .xlsx / .csv (animación de glow)
-//   2. Se parsea el header (primera fila) — acá lo simulamos
-//   3. Se muestra preview de MAPEO columnas Excel ↔ atributos canónicos
-//      de calzado de seguridad (BRAND_ATTRIBUTES)
-//   4. Cada fila puede: confirmar match, elegir target, ignorar
-//   5. Submit → onParsed({ rows, mapping })
+// Flujo real (2-step):
+//   1. Usuario suelta .xlsx/.csv → parsea con SheetJS en cliente
+//   2. Auto-mapping columnas Excel ↔ atributos canónicos
+//   3. Confirm import → POST /api/marcas/{marcaId}/upload_productos_preview/
+//   4. Si preview OK → POST /api/marcas/{marcaId}/upload_productos_commit/
+//      con idempotence_token para que reintentos sean seguros.
+//
+// Nota: `marcaId` es obligatorio para que el upload sea real; si no viene,
+// el componente sigue funcionando en modo "solo-cliente" y emite onParsed
+// con las filas parseadas (útil para testing del parser).
 // ─────────────────────────────────────────────────────────────
 import React, { useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import * as XLSX from "xlsx";
 import {
   IconUpload, IconFileText, IconX, IconCheck, IconAlert, IconRefresh, IconDownload,
 } from "../../lib/icons.jsx";
 import { BRAND_ATTRIBUTES } from "../../data/mockData.js";
+import { marcasApi } from "../../lib/api.js";
 
 /* Campos canónicos target (fila orden de detección) */
 const CANONICAL_FIELDS = [
   { k:'sku',                   l:'SKU',                   required:true  },
   { k:'nombre',                l:'Nombre del producto',   required:true  },
+  { k:'precio_usd',            l:'Precio USD',            required:true  },
   { k:'tipo_calzado',          l:'Tipo Calzado',          opts:'tipo_calzado' },
   { k:'cubrepuntera',          l:'Cubrepuntera',          opts:'cubrepuntera' },
   { k:'tipo_puntera',          l:'Tipo Puntera',          opts:'tipo_puntera' },
@@ -48,7 +54,6 @@ function normalize(s) {
 
 function autoMatch(header) {
   const n = normalize(header);
-  // match exacto primero, luego contains
   const direct = CANONICAL_FIELDS.find(f => normalize(f.k) === n);
   if (direct) return direct.k;
   const byLabel = CANONICAL_FIELDS.find(f => normalize(f.l) === n);
@@ -63,45 +68,68 @@ function autoMatch(header) {
   return partialL?.k || null;
 }
 
-/* Simulación: cuando el usuario suelta un archivo construimos un header + rows fake  */
-const MOCK_HEADER = [
-  'SKU', 'Nombre producto', 'tipo_calzado', 'Cubrepuntera', 'Tipo_puntera',
-  'Antiperforante', 'Protector metatarsal', 'Capellada', 'Disipativo de Energia',
-  'Suela', 'Normativa', 'Cierre', 'color', 'Segmento',
-  'Materiales circulares', 'Plantilla interna', 'NCM', 'riesgos',
-  'observaciones', // columna extra sin match → debe quedar "ignore"
-];
-const MOCK_ROWS = [
-  ['MLV-50S29-BLK-42','Bota 50S29 Plena Flor Negra','Bota al Tobillo','Sí','Composite 200J','Textil 1100 N','No','Cuero Plena Flor HIDRO','ABNT NBR 16603-2017 500V','Bidensidad PU','ABNT NBR 16.603:2017 500V - SECO','Con Cordones','Negro','Construcción','Suela','Etilvinilacetato ANT','6403.40.00','Caída Objetos','—'],
-  ['MLV-40S18-BRN-41','Bota Alta 40S18 Hidro Marrón','Bota Alta','Sí','Acero 200J','Acero 1100 N','Externo','Cuero Vaqueta HIDRO','ISO 20345 14.000V','Caucho','ISO 20345','Con Cordones','Marron','Petroquimicos','No','Poliuretano','6403.40.00','Químicos','Pedido Petro-01'],
-  ['MLV-EVA-AST-BLK-40','Zapato Antiestático Astillero','Zapato','Sí','Composite 200J','No','No','Microfibra','ISO 20345 14.000V ANT','Bidensidad PU','ISO 20345','Sin Cordones','Negro','Astillero','Sí','Etilvinilacetato','6402.99.00','Estática','—'],
-  ['MLV-FUEGO-BRN-43','Bota Anti-llamas Siderúrgica','Bota Alta','Sí','Acero 200J','Acero 1100 N','Externo','Anti-llamas','Conductivo','Caucho','ISO 20345','Con Cordones','Castor','Siderurgia','No','Etilvinilacetato ANT','6403.40.00','Alta Temperatura','—'],
-];
+/* Genera un token de idempotencia simple (no crypto-grade — suficiente para
+   prevenir dobles commits en esta sesión). */
+function makeIdempToken() {
+  return `imp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
-export default function ProductMassiveUpload({ lang='es', onParsed, onClose }) {
+export default function ProductMassiveUpload({ lang='es', marcaId, onParsed, onClose }) {
   const fileRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [stage, setStage] = useState('idle'); // idle | parsing | mapping | done
+  const [stage, setStage]   = useState('idle');
+                              // idle | parsing | mapping | uploading | done | error
   const [fileName, setFileName] = useState(null);
   const [header, setHeader] = useState([]);
   const [rows,   setRows]   = useState([]);
   const [mapping, setMapping] = useState({});  // { excelColIdx: canonicalKey | 'ignore' }
+  const [serverResult, setServerResult] = useState(null);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  /* Fake parse — en producción: SheetJS `XLSX.read(file)` */
+  /* Parse real con SheetJS */
   const parseFile = (file) => {
     setFileName(file?.name || 'catalogo.xlsx');
     setStage('parsing');
-    setTimeout(() => {
-      setHeader(MOCK_HEADER);
-      setRows(MOCK_ROWS);
-      // Auto-mapping
-      const m = {};
-      MOCK_HEADER.forEach((col, i) => {
-        m[i] = autoMatch(col) || 'ignore';
-      });
-      setMapping(m);
-      setStage('mapping');
-    }, 650);
+    setErrorMsg('');
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = new Uint8Array(evt.target.result);
+        const wb   = XLSX.read(data, { type: 'array' });
+        const firstSheet = wb.SheetNames[0];
+        const ws   = wb.Sheets[firstSheet];
+        // header:1 → devuelve array de arrays (primera fila = cabeceras)
+        const aoa  = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        if (!aoa.length) {
+          setErrorMsg(lang==='es' ? 'El archivo está vacío.' : 'File is empty.');
+          setStage('error');
+          return;
+        }
+        const rawHeader = aoa[0].map((h) => (h == null ? '' : String(h)));
+        const rawRows   = aoa.slice(1).filter(r => r.some(v => String(v ?? '').trim() !== ''));
+
+        setHeader(rawHeader);
+        setRows(rawRows);
+
+        const m = {};
+        rawHeader.forEach((col, i) => {
+          m[i] = autoMatch(col) || 'ignore';
+        });
+        setMapping(m);
+        setStage('mapping');
+      } catch (err) {
+        console.error('[ProductMassiveUpload] parse error', err);
+        setErrorMsg(lang==='es'
+          ? 'No se pudo leer el archivo. Verifica formato.'
+          : 'Could not read the file. Check the format.');
+        setStage('error');
+      }
+    };
+    reader.onerror = () => {
+      setErrorMsg(lang==='es' ? 'Error leyendo el archivo.' : 'File read error.');
+      setStage('error');
+    };
+    reader.readAsArrayBuffer(file);
   };
 
   const handleDrop = (e) => {
@@ -123,8 +151,9 @@ export default function ProductMassiveUpload({ lang='es', onParsed, onClose }) {
     return CANONICAL_FIELDS.filter(f => f.required).every(f => mapped.has(f.k));
   }, [mapping]);
 
-  const confirm = () => {
-    setStage('done');
+  /* Confirm → sube preview y luego commit contra el backend. */
+  const confirm = async () => {
+    // Estructuramos filas { sku, nombre, precio_usd, ... } usando el mapping.
     const structuredRows = rows.map(r => {
       const obj = {};
       header.forEach((col, i) => {
@@ -133,12 +162,66 @@ export default function ProductMassiveUpload({ lang='es', onParsed, onClose }) {
       });
       return obj;
     });
-    onParsed && onParsed({ rows: structuredRows, mapping, fileName });
+
+    // Mapping exportable para el backend: { "SKU": "sku", ... }.
+    const mappingExport = {};
+    header.forEach((col, i) => {
+      const target = mapping[i];
+      if (target && target !== 'ignore') mappingExport[col] = target;
+    });
+
+    // Si no tenemos marcaId, fallback a solo-cliente (testing/dry-run).
+    if (!marcaId) {
+      setStage('done');
+      onParsed && onParsed({ rows: structuredRows, mapping: mappingExport, fileName });
+      return;
+    }
+
+    setStage('uploading');
+    setErrorMsg('');
+    try {
+      const preview = await marcasApi.action('upload_productos_preview', marcaId, {
+        filename: fileName,
+        mapping:  mappingExport,
+        rows:     structuredRows,
+      });
+
+      if (preview.status === 'REJECTED') {
+        setErrorMsg(lang==='es'
+          ? `Todas las filas fueron rechazadas (${preview.invalid} inválidas).`
+          : `All rows rejected (${preview.invalid} invalid).`);
+        setServerResult(preview);
+        setStage('error');
+        return;
+      }
+
+      const idemToken = makeIdempToken();
+      const commit = await marcasApi.action('upload_productos_commit', marcaId, {
+        import_id:         preview.import_id,
+        idempotence_token: idemToken,
+      });
+
+      setServerResult({ ...preview, ...commit });
+      setStage('done');
+      onParsed && onParsed({
+        rows:      structuredRows,
+        mapping:   mappingExport,
+        fileName,
+        import_id: preview.import_id,
+        committed: commit.committed_rows,
+        status:    commit.status,
+      });
+    } catch (e) {
+      console.error('[ProductMassiveUpload] upload failed', e);
+      setErrorMsg((lang==='es' ? 'Error al subir: ' : 'Upload failed: ') + (e?.message || ''));
+      setStage('error');
+    }
   };
 
   const reset = () => {
     setStage('idle'); setFileName(null);
     setHeader([]); setRows([]); setMapping({});
+    setServerResult(null); setErrorMsg('');
     if (fileRef.current) fileRef.current.value = '';
   };
 
@@ -197,6 +280,53 @@ export default function ProductMassiveUpload({ lang='es', onParsed, onClose }) {
         </div>
       )}
 
+      {/* ─── Uploading (preview + commit) ─── */}
+      {stage === 'uploading' && (
+        <div className="dropzone dropzone-parsing">
+          <motion.div className="dropzone-icon"
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1.1, repeat: Infinity, ease: 'linear' }}>
+            <IconRefresh size={20}/>
+          </motion.div>
+          <div className="heading-md">
+            {lang==='es'?'Subiendo al servidor…':'Uploading to server…'}
+          </div>
+          <div className="caption" style={{color:'var(--text-tertiary)'}}>
+            {rows.length} {lang==='es'?'filas':'rows'} · {fileName}
+          </div>
+        </div>
+      )}
+
+      {/* ─── Error ─── */}
+      {stage === 'error' && (
+        <div className="dropzone dropzone-parsing" style={{borderColor:'var(--critical)'}}>
+          <div className="dropzone-icon" style={{background:'var(--critical-bg,#fee)', color:'var(--critical)'}}>
+            <IconAlert size={22}/>
+          </div>
+          <div className="heading-md">{lang==='es'?'Error en la carga':'Upload error'}</div>
+          <div className="caption" style={{color:'var(--text-tertiary)'}}>
+            {errorMsg || (lang==='es'?'Algo salió mal.':'Something went wrong.')}
+          </div>
+          {serverResult?.errors?.length > 0 && (
+            <ul className="caption" style={{color:'var(--text-tertiary)', marginTop:8, maxHeight:120, overflow:'auto'}}>
+              {serverResult.errors.slice(0, 10).map((e, i) => (
+                <li key={i}>
+                  {lang==='es'?'Fila':'Row'} {e.row}: {(e.missing || []).join(', ')}
+                </li>
+              ))}
+              {serverResult.errors.length > 10 && (
+                <li>+ {serverResult.errors.length - 10} {lang==='es'?'más':'more'}</li>
+              )}
+            </ul>
+          )}
+          <div className="mass-helpers">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={reset}>
+              <IconRefresh size={12}/> {lang==='es'?'Intentar de nuevo':'Try again'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ─── Mapping preview ─── */}
       {stage === 'mapping' && (
         <AnimatePresence>
@@ -231,8 +361,8 @@ export default function ProductMassiveUpload({ lang='es', onParsed, onClose }) {
                 <div className="alert-body">
                   <div className="alert-msg">
                     {lang==='es'
-                      ? 'Faltan mapear campos requeridos: SKU y Nombre.'
-                      : 'Required fields missing: SKU and Name.'}
+                      ? 'Faltan mapear campos requeridos: SKU, Nombre y Precio USD.'
+                      : 'Required fields missing: SKU, Name and USD Price.'}
                   </div>
                 </div>
               </div>
@@ -254,17 +384,17 @@ export default function ProductMassiveUpload({ lang='es', onParsed, onClose }) {
                     const target = mapping[i] || 'ignore';
                     const isIgnore = target === 'ignore';
                     const canonical = CANONICAL_FIELDS.find(f => f.k === target);
-                    const sampleRaw = rows[0]?.[i] || '—';
+                    const sampleRaw = rows[0]?.[i] ?? '—';
                     const optsList  = canonical?.opts ? BRAND_ATTRIBUTES[canonical.opts] : null;
                     const sampleValid = optsList ? optsList.includes(sampleRaw) : true;
 
                     return (
                       <tr key={i} data-ignored={isIgnore}>
                         <td className="mono-sm" style={{color:'var(--text-tertiary)'}}>{i+1}</td>
-                        <td className="mono-sm">{col}</td>
+                        <td className="mono-sm">{col || <em style={{color:'var(--text-tertiary)'}}>({lang==='es'?'sin título':'untitled'})</em>}</td>
                         <td>
                           <span className="mono-sm" style={{color: sampleValid ? 'var(--text-primary)' : 'var(--critical)'}}>
-                            {sampleRaw}
+                            {String(sampleRaw)}
                           </span>
                           {!sampleValid && (
                             <span className="caption" style={{color:'var(--critical)', marginLeft:6}}>
@@ -317,7 +447,11 @@ export default function ProductMassiveUpload({ lang='es', onParsed, onClose }) {
             {lang==='es'?'Import confirmado':'Import confirmed'}
           </div>
           <div className="caption" style={{color:'var(--text-tertiary)'}}>
-            {rows.length} {lang==='es'?'productos listos para crear':'products ready to create'}
+            {serverResult?.committed_rows ?? rows.length}{' '}
+            {lang==='es'?'productos creados':'products created'}
+            {serverResult?.invalid > 0 && (
+              <> · {serverResult.invalid} {lang==='es'?'rechazadas':'rejected'}</>
+            )}
           </div>
           <div className="mass-helpers">
             <button type="button" className="btn btn-ghost btn-sm" onClick={reset}>

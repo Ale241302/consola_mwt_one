@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import Oc, Expediente, Linea, Documento
+from .models import (
+    Oc, Expediente, Linea, Documento,
+    TransicionCat, EventLog, OcrParsingLog,
+)
 
 
 class OcListSerializer(serializers.ModelSerializer):
@@ -53,4 +56,22 @@ class LineaSerializer(serializers.ModelSerializer):
 class DocumentoSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Documento
+        fields = "__all__"
+
+
+class TransicionCatSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = TransicionCat
+        fields = "__all__"
+
+
+class EventLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = EventLog
+        fields = "__all__"
+
+
+class OcrParsingLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = OcrParsingLog
         fields = "__all__"

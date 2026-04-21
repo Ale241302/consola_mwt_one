@@ -31,11 +31,13 @@ from rest_framework.response import Response
 from .models import (
     Oc, Expediente, Linea, Documento,
     EstadoOcCat, EstadoExpedienteCat, ModoOperacionCat, IncotermCat,
+    TransicionCat, EventLog, OcrParsingLog,
 )
 from .serializers import (
     OcSerializer, OcListSerializer,
     ExpedienteSerializer, ExpedienteListSerializer,
     LineaSerializer, DocumentoSerializer,
+    TransicionCatSerializer, EventLogSerializer, OcrParsingLogSerializer,
 )
 
 log = logging.getLogger(__name__)
@@ -256,6 +258,195 @@ class ExpedienteViewSet(viewsets.ViewSet):
     def documentos(self, request, pk=None):
         qs = Documento.objects.filter(expediente_id=pk, is_active=True).order_by("-fecha", "-created_at")
         return Response(DocumentoSerializer(qs, many=True).data)
+
+    # ══════════════════════════════════════════════════════
+    # PIPELINE · Motor de fases (BLOQUE 4)
+    #   POST /api/expedientes/{id}/transition/
+    #     body: { fase_to, idempotence_token?, note?, documento_id? }
+    #   GET  /api/expedientes/{id}/events/
+    #   GET  /api/expedientes/kanban/
+    #   GET  /api/expedientes/select-transiciones/
+    # ══════════════════════════════════════════════════════
+    @action(detail=False, methods=["get"], url_path="select-transiciones")
+    def select_transiciones(self, request):
+        fase_from = request.query_params.get("fase_from")
+        qs = TransicionCat.objects.filter(is_active=True)
+        if fase_from:
+            qs = qs.filter(fase_from=fase_from)
+        return Response(TransicionCatSerializer(qs, many=True).data)
+
+    @action(detail=True, methods=["get"])
+    def events(self, request, pk=None):
+        """Event log de un expediente — trail append-only (C1..C11)."""
+        qs = EventLog.objects.filter(
+            aggregate_type="expediente",
+            aggregate_id=pk,
+            is_active=True,
+        ).order_by("-created_at")
+        limit = int(request.query_params.get("limit") or 200)
+        return Response(EventLogSerializer(qs[:limit], many=True).data)
+
+    @action(detail=False, methods=["get"])
+    def kanban(self, request):
+        """Vista kanban: expedientes agrupados por fase (estado).
+        Respeta filtros `client`, `brand`, `phase_signal` igual que list."""
+        qs = Expediente.objects.filter(is_active=True)
+        mapping = {
+            "client":       "client_id",
+            "brand":        "brand_id",
+            "phase_signal": "phase_signal",
+            "modo_operacion": "modo_operacion",
+        }
+        for p, f in mapping.items():
+            v = request.query_params.get(p)
+            if v:
+                qs = qs.filter(**{f: v})
+
+        fases_canonicas = [
+            "REGISTRO", "PRODUCCION", "PREPARACION",
+            "DESPACHO", "TRANSITO", "EN_DESTINO", "CERRADO",
+        ]
+        buckets = {f: [] for f in fases_canonicas}
+        other = []
+        for e in qs.order_by("-last_event_at", "-created_at"):
+            row = ExpedienteListSerializer(e).data
+            key = e.estado if e.estado in buckets else None
+            if key:
+                buckets[key].append(row)
+            else:
+                other.append(row)
+
+        columns = [
+            {
+                "codigo": f,
+                "label":  f.replace("_", " ").title(),
+                "count":  len(buckets[f]),
+                "items":  buckets[f],
+            }
+            for f in fases_canonicas
+        ]
+        if other:
+            columns.append({
+                "codigo": "OTROS",
+                "label":  "Otros",
+                "count":  len(other),
+                "items":  other,
+            })
+        return Response({"columns": columns, "total": qs.count()})
+
+    @action(detail=True, methods=["post"])
+    def transition(self, request, pk=None):
+        """Transiciona el expediente a una nueva fase.
+        Valida contra pipeline.transicion_cat y emite evento con
+        idempotence_token.
+        """
+        fase_to           = (request.data.get("fase_to") or "").strip()
+        idempotence_token = request.data.get("idempotence_token")
+        note              = request.data.get("note")
+        documento_id      = request.data.get("documento_id")
+
+        if not fase_to:
+            return Response({"detail": "fase_to requerido"}, status=400)
+
+        try:
+            exp = Expediente.objects.get(pk=pk, is_active=True)
+        except Expediente.DoesNotExist:
+            return Response({"detail": "Expediente no existe"}, status=404)
+
+        # Idempotencia: si token ya existe, early return.
+        if idempotence_token:
+            existing = EventLog.objects.filter(
+                idempotence_token=idempotence_token,
+                is_active=True,
+            ).first()
+            if existing:
+                return Response({
+                    "ok": True,
+                    "idempotent": True,
+                    "event_id": str(existing.id),
+                    "expediente": ExpedienteSerializer(exp).data,
+                }, status=200)
+
+        # Validación contra catálogo de transiciones
+        try:
+            t = TransicionCat.objects.get(
+                fase_from=exp.estado, fase_to=fase_to, is_active=True,
+            )
+        except TransicionCat.DoesNotExist:
+            return Response({
+                "detail": f"Transición inválida: {exp.estado} → {fase_to}",
+                "current_state": exp.estado,
+                "requested_state": fase_to,
+            }, status=409)
+
+        if t.requiere_documento and not documento_id:
+            return Response({
+                "detail": f"Transición requiere documento {t.requiere_documento}",
+                "required_doc": t.requiere_documento,
+            }, status=400)
+
+        previous_state  = exp.estado
+        correlation_id  = uuid.uuid4()
+        event_id        = uuid.uuid4()
+        emitter_id      = getattr(request.user, "id", None)
+        emitter_id      = str(emitter_id) if emitter_id else None
+        emitter_role    = ("admin" if t.is_rollback else
+                           (getattr(request.user, "role", None) or "system"))
+
+        payload = {
+            "from":         previous_state,
+            "to":           fase_to,
+            "label":        t.label,
+            "is_rollback":  t.is_rollback,
+            "note":         note,
+            "documento_id": documento_id,
+        }
+
+        try:
+            with transaction.atomic():
+                with connection.cursor() as c:
+                    c.execute("""
+                        UPDATE expedientes.expediente
+                           SET estado = %s,
+                               last_event_at = now(),
+                               phase_signal = CASE
+                                   WHEN %s = 'CERRADO' THEN 'ON_TRACK'
+                                   ELSE COALESCE(phase_signal, 'ON_TRACK')
+                               END
+                         WHERE id = %s::uuid
+                    """, [fase_to, fase_to, str(exp.id)])
+
+                    c.execute("""
+                        INSERT INTO pipeline.event_log (
+                            id, correlation_id, event_type, aggregate_type, aggregate_id,
+                            action_source, previous_status, new_status,
+                            phase_from, phase_to, payload,
+                            emitted_by_id, emitted_by_role, idempotence_token, is_active
+                        ) VALUES (
+                            %s, %s, 'expediente.phase_transition', 'expediente', %s,
+                            'C11', %s, %s,
+                            %s, %s, %s::jsonb,
+                            %s, %s, %s, TRUE
+                        )
+                    """, [
+                        str(event_id), str(correlation_id), str(exp.id),
+                        previous_state, fase_to,
+                        previous_state, fase_to, json.dumps(payload),
+                        emitter_id, emitter_role, idempotence_token,
+                    ])
+        except Exception as e:
+            log.exception("transition atomic tx falló: %s", e)
+            return Response({"detail": "transaction_failed", "error": str(e)}, status=500)
+
+        exp.refresh_from_db()
+        return Response({
+            "ok": True,
+            "idempotent": False,
+            "event_id":      str(event_id),
+            "correlation_id": str(correlation_id),
+            "transition":    {"from": previous_state, "to": fase_to},
+            "expediente":    ExpedienteSerializer(exp).data,
+        }, status=200)
 
     # ══════════════════════════════════════════════════════
     # COMANDO C5 · RegisterSAPConfirmation
@@ -660,3 +851,116 @@ class DocumentoViewSet(viewsets.ViewSet):
         data["documento_id"]  = str(d.id)
         data["expediente_id"] = str(d.expediente_id) if d.expediente_id else None
         return Response(data)
+
+
+# ════════════════════════════════════════════════════════════
+# PIPELINE ViewSets (schema "pipeline")
+# ════════════════════════════════════════════════════════════
+class TransicionCatViewSet(viewsets.ViewSet):
+    """Catálogo cerrado de transiciones válidas del motor de fases."""
+    def list(self, request):
+        qs = TransicionCat.objects.filter(is_active=True)
+        for p, f in (("fase_from", "fase_from"), ("fase_to", "fase_to")):
+            v = request.query_params.get(p)
+            if v:
+                qs = qs.filter(**{f: v})
+        is_rb = request.query_params.get("is_rollback")
+        if is_rb in ("true", "false"):
+            qs = qs.filter(is_rollback=(is_rb == "true"))
+        return Response(TransicionCatSerializer(qs, many=True).data)
+
+    def retrieve(self, request, pk=None):
+        try:
+            t = TransicionCat.objects.get(pk=pk, is_active=True)
+        except TransicionCat.DoesNotExist:
+            return Response({"detail": "Transición no existe"}, status=404)
+        return Response(TransicionCatSerializer(t).data)
+
+
+class EventLogViewSet(viewsets.ViewSet):
+    """Audit trail inmutable del pipeline (pipeline.event_log).
+    Solo GET — INSERTs se hacen desde las actions de negocio."""
+    def list(self, request):
+        qs = EventLog.objects.filter(is_active=True)
+        mapping = {
+            "aggregate_type": "aggregate_type",
+            "aggregate_id":   "aggregate_id",
+            "event_type":     "event_type",
+            "action_source":  "action_source",
+            "correlation_id": "correlation_id",
+            "emitted_by":     "emitted_by_id",
+            "phase_from":     "phase_from",
+            "phase_to":       "phase_to",
+        }
+        for p, f in mapping.items():
+            v = request.query_params.get(p)
+            if v:
+                qs = qs.filter(**{f: v})
+        limit = int(request.query_params.get("limit") or 200)
+        return Response(EventLogSerializer(qs.order_by("-created_at")[:limit], many=True).data)
+
+    def retrieve(self, request, pk=None):
+        try:
+            e = EventLog.objects.get(pk=pk, is_active=True)
+        except EventLog.DoesNotExist:
+            return Response({"detail": "Event no existe"}, status=404)
+        return Response(EventLogSerializer(e).data)
+
+    @action(detail=False, methods=["get"])
+    def kpis(self, request):
+        """KPIs de pipeline.event_log — útil para el Dashboard widget."""
+        out = {"total": 0, "last_24h": 0, "last_7d": 0, "by_aggregate": {}}
+        with connection.cursor() as c:
+            try:
+                c.execute("""
+                    SELECT
+                      COUNT(*),
+                      COUNT(*) FILTER (WHERE created_at > now() - interval '24 hours'),
+                      COUNT(*) FILTER (WHERE created_at > now() - interval '7 days')
+                    FROM pipeline.event_log
+                    WHERE is_active = TRUE
+                """)
+                r = c.fetchone()
+                out.update({
+                    "total":    r[0],
+                    "last_24h": r[1],
+                    "last_7d":  r[2],
+                })
+                c.execute("""
+                    SELECT aggregate_type, COUNT(*)
+                      FROM pipeline.event_log
+                     WHERE is_active = TRUE
+                       AND created_at > now() - interval '7 days'
+                     GROUP BY 1
+                     ORDER BY 2 DESC
+                """)
+                out["by_aggregate"] = {row[0]: row[1] for row in c.fetchall()}
+            except Exception:
+                pass
+        return Response(out)
+
+
+class OcrParsingLogViewSet(viewsets.ViewSet):
+    """Log de corridas de OCR (Paperless+Tika). GET-only desde la app.
+    Los INSERTs los hace el worker de OCR."""
+    def list(self, request):
+        qs = OcrParsingLog.objects.filter(is_active=True)
+        for p, f in (("expediente", "expediente_id"),
+                     ("artifact",   "artifact_id"),
+                     ("status",     "status"),
+                     ("tipo",       "artifact_tipo")):
+            v = request.query_params.get(p)
+            if v:
+                qs = qs.filter(**{f: v})
+        nhr = request.query_params.get("needs_human_review")
+        if nhr in ("true", "false"):
+            qs = qs.filter(needs_human_review=(nhr == "true"))
+        limit = int(request.query_params.get("limit") or 100)
+        return Response(OcrParsingLogSerializer(qs.order_by("-created_at")[:limit], many=True).data)
+
+    def retrieve(self, request, pk=None):
+        try:
+            r = OcrParsingLog.objects.get(pk=pk, is_active=True)
+        except OcrParsingLog.DoesNotExist:
+            return Response({"detail": "OCR log no existe"}, status=404)
+        return Response(OcrParsingLogSerializer(r).data)

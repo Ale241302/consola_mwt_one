@@ -217,3 +217,84 @@ class Documento(models.Model):
     class Meta:
         managed = False
         db_table = 'expedientes"."documento'
+
+
+# ══════════════════════════════════════════════════════════════
+# PIPELINE (BLOQUE 4) · schema "pipeline"
+#   Tablas creadas por 94_pipeline_financiero_portal.sql +
+#   96b_pipeline_audit.sql. Expuestas desde expedientes app
+#   porque el motor de fases vive del lado de expedientes.
+# ══════════════════════════════════════════════════════════════
+class TransicionCat(models.Model):
+    id                 = models.UUIDField(primary_key=True)
+    fase_from          = models.CharField(max_length=32)
+    fase_to            = models.CharField(max_length=32)
+    label              = models.CharField(max_length=128)
+    requiere_rol       = models.CharField(max_length=32, null=True, blank=True)
+    requiere_documento = models.CharField(max_length=32, null=True, blank=True)
+    is_rollback        = models.BooleanField(default=False)
+    orden              = models.IntegerField(default=100)
+    is_active          = models.BooleanField(default=True)
+
+    class Meta:
+        managed = False
+        db_table = 'pipeline"."transicion_cat'
+        ordering = ("orden", "fase_from", "fase_to")
+
+
+class EventLog(models.Model):
+    id                = models.UUIDField(primary_key=True)
+    correlation_id    = models.UUIDField(null=True, blank=True)
+    event_type        = models.CharField(max_length=64)
+    aggregate_type    = models.CharField(max_length=32)
+    aggregate_id      = models.UUIDField()
+    action_source     = models.CharField(max_length=16, null=True, blank=True)
+    previous_status   = models.CharField(max_length=32, null=True, blank=True)
+    new_status        = models.CharField(max_length=32, null=True, blank=True)
+    phase_from        = models.CharField(max_length=32, null=True, blank=True)
+    phase_to          = models.CharField(max_length=32, null=True, blank=True)
+    payload           = models.JSONField(default=dict)
+    emitted_by_id     = models.UUIDField(null=True, blank=True)
+    emitted_by_role   = models.CharField(max_length=32, null=True, blank=True)
+    ip_address        = models.GenericIPAddressField(null=True, blank=True)
+    user_agent        = models.TextField(null=True, blank=True)
+    idempotence_token = models.CharField(max_length=64, null=True, blank=True)
+    is_active         = models.BooleanField(default=True)
+    created_at        = models.DateTimeField(auto_now_add=True)
+    updated_at        = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'pipeline"."event_log'
+        ordering = ("-created_at",)
+
+
+class OcrParsingLog(models.Model):
+    id                  = models.UUIDField(primary_key=True)
+    expediente_id       = models.UUIDField()
+    artifact_id         = models.UUIDField()
+    artifact_tipo       = models.CharField(max_length=32)
+    engine              = models.CharField(max_length=32, default="PAPERLESS_TIKA")
+    engine_version      = models.CharField(max_length=32, null=True, blank=True)
+    source_url          = models.TextField(null=True, blank=True)
+    status              = models.CharField(max_length=16, default="QUEUED")
+    started_at          = models.DateTimeField(null=True, blank=True)
+    finished_at         = models.DateTimeField(null=True, blank=True)
+    duration_ms         = models.IntegerField(null=True, blank=True)
+    raw_text            = models.TextField(null=True, blank=True)
+    parsed_payload      = models.JSONField(default=dict)
+    confidence_score    = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    needs_human_review  = models.BooleanField(default=False)
+    error_code          = models.CharField(max_length=64, null=True, blank=True)
+    error_message       = models.TextField(null=True, blank=True)
+    triggered_by        = models.UUIDField(null=True, blank=True)
+    reviewed_by         = models.UUIDField(null=True, blank=True)
+    reviewed_at         = models.DateTimeField(null=True, blank=True)
+    is_active           = models.BooleanField(default=True)
+    created_at          = models.DateTimeField(auto_now_add=True)
+    updated_at          = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'expedientes"."ocr_parsing_log'
+        ordering = ("-created_at",)

@@ -317,8 +317,10 @@ export default function ScreenNodos() {
             lang={lang}
             onClose={()=>setShowCreate(false)}
             onCreated={async (payload) => {
-              // Map UI → backend: {node_id,name,type,country,status,capabilities}
-              //               →   {codigo,nombre,tipo,pais_iso2,is_active,...}
+              // Map UI → backend: {node_id,name,type,country,status,capabilities,
+              //                    zona_horaria,legal_entity_owner_id,operator_id}
+              //               →   {codigo,nombre,tipo,pais_iso2,status,is_active,
+              //                    capabilities,zona_horaria,legal_entity_owner_id,operator_id}
               const UI_TO_API_TIPO = {
                 factory:     "HQ",
                 fiscal:      "OFICINA",
@@ -326,12 +328,27 @@ export default function ScreenNodos() {
                 distributor: "HUB",
                 marketplace: "HUB",
               };
+              // Default TZ por país; el FE puede override si se cambia en el modal.
+              const TZ_POR_PAIS = {
+                PE: "America/Lima",
+                CO: "America/Bogota",
+                CL: "America/Santiago",
+                MX: "America/Mexico_City",
+                AR: "America/Argentina/Buenos_Aires",
+                US: "America/New_York",
+                ES: "Europe/Madrid",
+              };
               const body = {
-                codigo:    payload.node_id,
-                nombre:    payload.name,
-                tipo:      UI_TO_API_TIPO[payload.type] || "ALMACEN",
-                pais_iso2: payload.country,
-                is_active: payload.status !== "RETIRED",
+                codigo:                payload.node_id,
+                nombre:                payload.name,
+                tipo:                  UI_TO_API_TIPO[payload.type] || "ALMACEN",
+                pais_iso2:             payload.country,
+                zona_horaria:          payload.zona_horaria || TZ_POR_PAIS[payload.country] || "America/Lima",
+                status:                payload.status || "ACTIVE",
+                is_active:             payload.status !== "RETIRED",
+                capabilities:          Array.isArray(payload.capabilities) ? payload.capabilities : [],
+                legal_entity_owner_id: payload.legal_entity_owner_id || null,
+                operator_id:           payload.operator_id || null,
               };
               try {
                 await nodosApi.create(body);

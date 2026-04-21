@@ -21,10 +21,67 @@ Scope del cliente:
 Si no se resuelve client_id → 403.
 =====================================================================
 """
+import hashlib
+import logging
+import secrets
+import uuid
 from django.db import connection
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
+from .models import MwtUser, PortalSessionLog, PortalAuditLog
+from .serializers import (
+    MwtUserListSerializer, MwtUserSerializer,
+    PortalSessionLogSerializer, PortalAuditLogSerializer,
+)
+
+log = logging.getLogger(__name__)
+
+
+def _hash_password(raw: str) -> str:
+    """pbkdf2 simple — en prod reemplazar por argon2/bcrypt."""
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", raw.encode("utf-8"), salt.encode("utf-8"), 120_000)
+    return f"pbkdf2_sha256$120000${salt}${h.hex()}"
+
+
+def _verify_password(raw: str, stored: str) -> bool:
+    try:
+        scheme, iters, salt, expected = stored.split("$")
+        if scheme != "pbkdf2_sha256":
+            return False
+        h = hashlib.pbkdf2_hmac("sha256", raw.encode("utf-8"), salt.encode("utf-8"), int(iters))
+        return secrets.compare_digest(h.hex(), expected)
+    except Exception:
+        return False
+
+
+def _record_audit(user_id, email, action, resource_type, resource_id=None,
+                  resource_label=None, request=None, status_code=200, payload=None):
+    """Best-effort insert en portal_audit_log."""
+    try:
+        ip = None
+        ua = None
+        if request is not None:
+            ip = request.META.get("REMOTE_ADDR")
+            ua = request.META.get("HTTP_USER_AGENT")
+        PortalAuditLog.objects.create(
+            id             = uuid.uuid4(),
+            mwt_user_id    = user_id,
+            email          = email,
+            action         = action,
+            resource_type  = resource_type,
+            resource_id    = resource_id,
+            resource_label = resource_label,
+            ip_address     = ip,
+            user_agent     = ua,
+            status_code    = status_code,
+            payload        = payload or {},
+        )
+    except Exception as e:
+        log.warning("_record_audit falló: %s", e)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -242,6 +299,134 @@ class PortalViewSet(viewsets.ViewSet):
             r["signed_url_ttl_sec"] = 900
         return Response(rows)
 
+    # ── /api/portal/expediente_detail/?id=<uuid> ──────────────
+    @action(detail=False, methods=["get"], url_path="expediente_detail")
+    def expediente_detail(self, request):
+        """Detalle de un expediente del cliente (scope-checked por client_id).
+
+        Devuelve solo campos seguros (ver comentario en mis_expedientes).
+        Registra VIEW en portal_audit_log.
+        """
+        cid = _resolve_client_id(request)
+        if not cid:
+            return _forbidden()
+        exp_id = request.query_params.get("id")
+        if not exp_id:
+            return Response({"detail": "Falta query param 'id'"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        r = _fetchone("""
+            SELECT
+              id, codigo, oc_id, brand_id, client_id,
+              estado, origin, destination, freight_mode,
+              eta, last_event_at,
+              total_invoiced, total_paid, balance, coverage_pct,
+              credit_days, credit_days_limit,
+              created_at, updated_at
+            FROM expedientes.expediente
+            WHERE is_active = TRUE AND id = %s AND client_id = %s
+        """, [exp_id, cid])
+        if not r:
+            return Response({"detail": "Expediente no encontrado o fuera de scope."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        estado = r[5]
+        m = CLIENT_STATE_MAP.get(estado, {})
+        data = {
+            "id":                   r[0],
+            "codigo":               r[1],
+            "oc_id":                r[2],
+            "brand_id":             r[3],
+            "client_id":            r[4],
+            "estado":               estado,
+            "estado_cliente_es":    m.get("es", estado),
+            "estado_cliente_en":    m.get("en", estado),
+            "estado_cliente_step":  m.get("step", 0),
+            "origin":               r[6],
+            "destination":          r[7],
+            "freight_mode":         r[8],
+            "eta":                  r[9],
+            "last_event_at":        r[10],
+            "total_invoiced":       float(r[11] or 0),
+            "total_paid":           float(r[12] or 0),
+            "balance":              float(r[13] or 0),
+            "coverage_pct":         float(r[14] or 0),
+            "credit_days":          r[15],
+            "credit_days_limit":    r[16],
+            "created_at":           r[17],
+            "updated_at":           r[18],
+        }
+
+        # Eventos del expediente (pipeline.event_log) — solo campos visibles
+        events = _fetchall("""
+            SELECT id, phase_from, phase_to, note, created_at
+            FROM pipeline.event_log
+            WHERE expediente_id = %s AND is_active = TRUE
+            ORDER BY created_at ASC
+        """, [exp_id])
+        data["events"] = events
+
+        # Audit best-effort
+        user = getattr(request, "user", None)
+        user_id = getattr(user, "id", None)
+        user_email = getattr(user, "email", None)
+        if user_id:
+            _record_audit(
+                user_id=user_id, email=user_email,
+                action="VIEW", resource_type="expediente",
+                resource_id=exp_id, resource_label=data["codigo"],
+                request=request, status_code=200,
+                payload={"client_id": cid},
+            )
+
+        return Response(data)
+
+    # ── /api/portal/update_preferences/ ───────────────────────
+    @action(detail=False, methods=["patch", "post"], url_path="update_preferences")
+    def update_preferences(self, request):
+        """PATCH mwt_user.preferences (JSONB merge top-level).
+
+        Requiere request.user.id. Hace UPDATE preferences = preferences || %s.
+        """
+        user = getattr(request, "user", None)
+        user_id = getattr(user, "id", None)
+        if not user_id:
+            return Response({"detail": "Usuario no autenticado."},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        prefs = request.data.get("preferences") or {}
+        if not isinstance(prefs, dict):
+            return Response({"detail": "preferences debe ser dict."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            with connection.cursor() as c:
+                c.execute("""
+                    UPDATE portal.mwt_user
+                    SET preferences = COALESCE(preferences,'{}'::jsonb) || %s::jsonb,
+                        updated_at = NOW()
+                    WHERE id = %s AND is_active = TRUE
+                    RETURNING preferences
+                """, [
+                    __import__("json").dumps(prefs),
+                    str(user_id),
+                ])
+                row = c.fetchone()
+        except Exception as e:
+            log.warning("update_preferences falló: %s", e)
+            return Response({"detail": str(e)},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if not row:
+            return Response({"detail": "Usuario no encontrado."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        _record_audit(
+            user_id=user_id, email=getattr(user, "email", None),
+            action="UPDATE", resource_type="perfil",
+            resource_id=user_id, resource_label="preferences",
+            request=request, status_code=200,
+            payload={"keys": list(prefs.keys())},
+        )
+        return Response({"ok": True, "preferences": row[0]})
+
     # ── /api/portal/kpis/ ─────────────────────────────────────
     @action(detail=False, methods=["get"])
     def kpis(self, request):
@@ -295,3 +480,251 @@ class PortalViewSet(viewsets.ViewSet):
             out["credit_days_used"] = r[0] or 0
 
         return Response(out)
+
+
+# ══════════════════════════════════════════════════════════════
+# MwtUserViewSet — CRUD + acciones de portal (invitaciones, pwd)
+# ══════════════════════════════════════════════════════════════
+class MwtUserViewSet(viewsets.ModelViewSet):
+    """CRUD de usuarios del portal (portal.mwt_user).
+
+    · Idempotente por `idempotence_token` (early-return).
+    · Hash de password via pbkdf2_sha256 — prod reemplazar por argon2.
+    · Nunca expone `password_hash` ni `api_key_hash`.
+    """
+    queryset = MwtUser.objects.filter(is_active=True)
+    serializer_class = MwtUserSerializer
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return MwtUserListSerializer
+        return MwtUserSerializer
+
+    def get_queryset(self):
+        qs = MwtUser.objects.filter(is_active=True)
+        role = self.request.query_params.get("role")
+        legal_entity_id = self.request.query_params.get("legal_entity_id")
+        email = self.request.query_params.get("email")
+        search = self.request.query_params.get("search")
+        if role:
+            qs = qs.filter(role=role)
+        if legal_entity_id:
+            qs = qs.filter(legal_entity_id=legal_entity_id)
+        if email:
+            qs = qs.filter(email__iexact=email)
+        if search:
+            qs = qs.filter(email__icontains=search)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+        token = data.get("idempotence_token")
+
+        # Idempotence early-return
+        if token:
+            existing = MwtUser.objects.filter(
+                idempotence_token=token, is_active=True).first()
+            if existing:
+                return Response(
+                    MwtUserSerializer(existing).data,
+                    status=status.HTTP_200_OK,
+                    headers={"X-Idempotent-Replay": "true"},
+                )
+
+        # Auto-generate UUID si no viene
+        if not data.get("id"):
+            data["id"] = str(uuid.uuid4())
+
+        # Hash password si viene raw
+        raw_pwd = data.pop("password", None)
+        if raw_pwd:
+            data["password_hash"] = _hash_password(raw_pwd)
+            data["password_changed_at"] = timezone.now().isoformat()
+
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    # ── POST /api/mwt-users/<id>/accept_invitation/ ───────────
+    @action(detail=True, methods=["post"])
+    def accept_invitation(self, request, pk=None):
+        """Consume invite_token y activa la cuenta.
+        Body: {"invite_token": "...", "password": "..."}
+        """
+        token = (request.data.get("invite_token") or "").strip()
+        raw_pwd = request.data.get("password")
+        if not token or not raw_pwd:
+            return Response(
+                {"detail": "invite_token y password son obligatorios."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            u = MwtUser.objects.get(pk=pk, is_active=True)
+        except MwtUser.DoesNotExist:
+            return Response({"detail": "Usuario no encontrado."},
+                            status=status.HTTP_404_NOT_FOUND)
+        if u.invite_token != token:
+            return Response({"detail": "invite_token inválido."},
+                            status=status.HTTP_403_FORBIDDEN)
+        if u.invite_expires_at and u.invite_expires_at < timezone.now():
+            return Response({"detail": "invite_token expirado."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        u.password_hash = _hash_password(raw_pwd)
+        u.password_changed_at = timezone.now()
+        u.accepted_at = timezone.now()
+        u.invite_token = None
+        u.invite_expires_at = None
+        u.failed_login_count = 0
+        u.locked_until = None
+        u.save(update_fields=[
+            "password_hash", "password_changed_at", "accepted_at",
+            "invite_token", "invite_expires_at",
+            "failed_login_count", "locked_until", "updated_at",
+        ])
+
+        _record_audit(
+            user_id=u.id, email=u.email,
+            action="UPDATE", resource_type="perfil",
+            resource_id=u.id, resource_label="accept_invitation",
+            request=request, status_code=200,
+        )
+        return Response({"ok": True, "id": str(u.id), "accepted_at": u.accepted_at})
+
+    # ── POST /api/mwt-users/<id>/change_password/ ─────────────
+    @action(detail=True, methods=["post"])
+    def change_password(self, request, pk=None):
+        """Body: {"old_password": "...", "new_password": "..."}"""
+        old = request.data.get("old_password")
+        new = request.data.get("new_password")
+        if not new or len(new) < 8:
+            return Response(
+                {"detail": "new_password debe tener al menos 8 caracteres."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            u = MwtUser.objects.get(pk=pk, is_active=True)
+        except MwtUser.DoesNotExist:
+            return Response({"detail": "Usuario no encontrado."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        if u.password_hash:
+            if not old or not _verify_password(old, u.password_hash):
+                _record_audit(
+                    user_id=u.id, email=u.email,
+                    action="UPDATE", resource_type="perfil",
+                    resource_id=u.id, resource_label="change_password_failed",
+                    request=request, status_code=403,
+                )
+                return Response({"detail": "old_password inválido."},
+                                status=status.HTTP_403_FORBIDDEN)
+
+        u.password_hash = _hash_password(new)
+        u.password_changed_at = timezone.now()
+        u.failed_login_count = 0
+        u.locked_until = None
+        u.save(update_fields=[
+            "password_hash", "password_changed_at",
+            "failed_login_count", "locked_until", "updated_at",
+        ])
+        _record_audit(
+            user_id=u.id, email=u.email,
+            action="UPDATE", resource_type="perfil",
+            resource_id=u.id, resource_label="change_password",
+            request=request, status_code=200,
+        )
+        return Response({"ok": True, "password_changed_at": u.password_changed_at})
+
+    # ── GET /api/mwt-users/<id>/audit_log/ ────────────────────
+    @action(detail=True, methods=["get"])
+    def audit_log(self, request, pk=None):
+        """Audit log del usuario (filtro opcional por action/resource_type)."""
+        qs = PortalAuditLog.objects.filter(mwt_user_id=pk, is_active=True)
+        act = request.query_params.get("action")
+        rtype = request.query_params.get("resource_type")
+        if act:
+            qs = qs.filter(action=act)
+        if rtype:
+            qs = qs.filter(resource_type=rtype)
+        qs = qs.order_by("-created_at")[:500]
+        return Response(PortalAuditLogSerializer(qs, many=True).data)
+
+    # ── GET /api/mwt-users/<id>/session_log/ ──────────────────
+    @action(detail=True, methods=["get"])
+    def session_log(self, request, pk=None):
+        """Historial de sesiones del usuario."""
+        qs = PortalSessionLog.objects.filter(mwt_user_id=pk, is_active=True)
+        ev = request.query_params.get("event_type")
+        if ev:
+            qs = qs.filter(event_type=ev)
+        succ = request.query_params.get("success")
+        if succ is not None:
+            qs = qs.filter(success=(succ.lower() in ("1", "true", "yes")))
+        qs = qs.order_by("-created_at")[:500]
+        return Response(PortalSessionLogSerializer(qs, many=True).data)
+
+
+# ══════════════════════════════════════════════════════════════
+# PortalSessionLogViewSet — read-only
+# ══════════════════════════════════════════════════════════════
+class PortalSessionLogViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = PortalSessionLog.objects.filter(is_active=True)
+    serializer_class = PortalSessionLogSerializer
+
+    def get_queryset(self):
+        qs = PortalSessionLog.objects.filter(is_active=True)
+        user_id = self.request.query_params.get("mwt_user_id")
+        email = self.request.query_params.get("email")
+        ev = self.request.query_params.get("event_type")
+        succ = self.request.query_params.get("success")
+        if user_id:
+            qs = qs.filter(mwt_user_id=user_id)
+        if email:
+            qs = qs.filter(email__iexact=email)
+        if ev:
+            qs = qs.filter(event_type=ev)
+        if succ is not None:
+            qs = qs.filter(success=(succ.lower() in ("1", "true", "yes")))
+        return qs.order_by("-created_at")
+
+
+# ══════════════════════════════════════════════════════════════
+# PortalAuditLogViewSet — read-only
+# ══════════════════════════════════════════════════════════════
+class PortalAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = PortalAuditLog.objects.filter(is_active=True)
+    serializer_class = PortalAuditLogSerializer
+
+    def get_queryset(self):
+        qs = PortalAuditLog.objects.filter(is_active=True)
+        user_id = self.request.query_params.get("mwt_user_id")
+        act = self.request.query_params.get("action")
+        rtype = self.request.query_params.get("resource_type")
+        rid = self.request.query_params.get("resource_id")
+        if user_id:
+            qs = qs.filter(mwt_user_id=user_id)
+        if act:
+            qs = qs.filter(action=act)
+        if rtype:
+            qs = qs.filter(resource_type=rtype)
+        if rid:
+            qs = qs.filter(resource_id=rid)
+        return qs.order_by("-created_at")
+
+    # ── GET /api/portal-audit/kpis/ ───────────────────────────
+    @action(detail=False, methods=["get"])
+    def kpis(self, request):
+        """Stats agregados del audit log (últimos 30 días)."""
+        from django.utils import timezone as tz
+        from datetime import timedelta
+        since = tz.now() - timedelta(days=30)
+        qs = PortalAuditLog.objects.filter(is_active=True, created_at__gte=since)
+        total = qs.count()
+        by_action = {}
+        for row in qs.values_list("action", flat=True):
+            by_action[row] = by_action.get(row, 0) + 1
+        return Response({
+            "total_30d": total,
+            "by_action": by_action,
+        })

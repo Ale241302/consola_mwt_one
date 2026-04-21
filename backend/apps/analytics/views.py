@@ -17,10 +17,32 @@ Endpoints:
   GET /api/analytics/urgent/
 =====================================================================
 """
+import hashlib
+import json
+import logging
+import uuid
 from django.db import connection
-from rest_framework import viewsets
+from django.utils import timezone
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
+from .models import DashboardSnapshot, WidgetCat
+from .serializers import (
+    DashboardSnapshotSerializer, DashboardSnapshotListSerializer,
+    WidgetCatSerializer,
+)
+
+log = logging.getLogger(__name__)
+
+
+def _scope_hash(payload) -> str:
+    """SHA-256 corto de un dict para scope_hash (64 hex chars)."""
+    try:
+        s = json.dumps(payload, sort_keys=True, default=str)
+    except Exception:
+        s = str(payload)
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
 def _fetchone(sql, params=None):
@@ -296,3 +318,167 @@ class AnalyticsViewSet(viewsets.ViewSet):
             LIMIT 20
         """)
         return Response(rows)
+
+
+# ══════════════════════════════════════════════════════════════
+# DashboardSnapshotViewSet — CRUD con idempotencia
+# ══════════════════════════════════════════════════════════════
+class DashboardSnapshotViewSet(viewsets.ModelViewSet):
+    """CRUD sobre `dashboard.snapshot`.
+
+    · Idempotente por `idempotence_token` (early-return).
+    · `scope_hash` se deriva automáticamente del payload (filters/user_id)
+      si no se provee explícitamente.
+    · Filtros de listado: user_id, snapshot_type, is_pinned, generated_by,
+      period_start/end.
+    """
+    queryset = DashboardSnapshot.objects.filter(is_active=True)
+    serializer_class = DashboardSnapshotSerializer
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return DashboardSnapshotListSerializer
+        return DashboardSnapshotSerializer
+
+    def get_queryset(self):
+        qs = DashboardSnapshot.objects.filter(is_active=True)
+        user_id = self.request.query_params.get("user_id")
+        stype = self.request.query_params.get("snapshot_type")
+        pinned = self.request.query_params.get("is_pinned")
+        gen_by = self.request.query_params.get("generated_by")
+        p_start = self.request.query_params.get("period_start")
+        p_end = self.request.query_params.get("period_end")
+        scope_hash = self.request.query_params.get("scope_hash")
+        if user_id:
+            qs = qs.filter(user_id=user_id)
+        if stype:
+            qs = qs.filter(snapshot_type=stype)
+        if pinned is not None:
+            qs = qs.filter(is_pinned=(pinned.lower() in ("1", "true", "yes")))
+        if gen_by:
+            qs = qs.filter(generated_by=gen_by)
+        if p_start:
+            qs = qs.filter(period_start__gte=p_start)
+        if p_end:
+            qs = qs.filter(period_end__lte=p_end)
+        if scope_hash:
+            qs = qs.filter(scope_hash=scope_hash)
+        return qs.order_by("-is_pinned", "-created_at")
+
+    def create(self, request, *args, **kwargs):
+        data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+        token = data.get("idempotence_token")
+        if token:
+            existing = DashboardSnapshot.objects.filter(
+                idempotence_token=token, is_active=True).first()
+            if existing:
+                return Response(
+                    DashboardSnapshotSerializer(existing).data,
+                    status=status.HTTP_200_OK,
+                    headers={"X-Idempotent-Replay": "true"},
+                )
+        if not data.get("id"):
+            data["id"] = str(uuid.uuid4())
+        # scope_hash auto-derivación
+        if not data.get("scope_hash"):
+            scope_payload = {
+                "user_id":       data.get("user_id"),
+                "snapshot_type": data.get("snapshot_type"),
+                "period_start":  data.get("period_start"),
+                "period_end":    data.get("period_end"),
+                "filters":       (data.get("snapshot_data") or {}).get("filters"),
+            }
+            data["scope_hash"] = _scope_hash(scope_payload)
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    # ── POST /api/dashboard-snapshots/<id>/pin/ ───────────────
+    @action(detail=True, methods=["post"])
+    def pin(self, request, pk=None):
+        try:
+            snap = DashboardSnapshot.objects.get(pk=pk, is_active=True)
+        except DashboardSnapshot.DoesNotExist:
+            return Response({"detail": "Snapshot no encontrado."},
+                            status=status.HTTP_404_NOT_FOUND)
+        snap.is_pinned = True
+        snap.save(update_fields=["is_pinned", "updated_at"])
+        return Response({"ok": True, "id": str(snap.id), "is_pinned": True})
+
+    # ── POST /api/dashboard-snapshots/<id>/unpin/ ─────────────
+    @action(detail=True, methods=["post"])
+    def unpin(self, request, pk=None):
+        try:
+            snap = DashboardSnapshot.objects.get(pk=pk, is_active=True)
+        except DashboardSnapshot.DoesNotExist:
+            return Response({"detail": "Snapshot no encontrado."},
+                            status=status.HTTP_404_NOT_FOUND)
+        snap.is_pinned = False
+        snap.save(update_fields=["is_pinned", "updated_at"])
+        return Response({"ok": True, "id": str(snap.id), "is_pinned": False})
+
+    # ── GET /api/dashboard-snapshots/latest/?user_id=... ──────
+    @action(detail=False, methods=["get"])
+    def latest(self, request):
+        """Último snapshot no-expirado para un (user_id, snapshot_type)."""
+        user_id = request.query_params.get("user_id")
+        stype = request.query_params.get("snapshot_type", "preferences")
+        qs = DashboardSnapshot.objects.filter(is_active=True, snapshot_type=stype)
+        if user_id:
+            qs = qs.filter(user_id=user_id)
+        # filtrar expirados
+        now = timezone.now()
+        qs = qs.filter(models_Q_or_null(now))
+        snap = qs.order_by("-created_at").first()
+        if not snap:
+            return Response({"detail": "No hay snapshots."},
+                            status=status.HTTP_404_NOT_FOUND)
+        return Response(DashboardSnapshotSerializer(snap).data)
+
+    # ── POST /api/dashboard-snapshots/purge_expired/ ──────────
+    @action(detail=False, methods=["post"], url_path="purge_expired")
+    def purge_expired(self, request):
+        """Soft-delete de snapshots con expires_at < NOW()."""
+        now = timezone.now()
+        updated = 0
+        try:
+            with connection.cursor() as c:
+                c.execute("""
+                    UPDATE dashboard.snapshot
+                    SET is_active = FALSE, updated_at = NOW()
+                    WHERE is_active = TRUE
+                      AND expires_at IS NOT NULL
+                      AND expires_at < %s
+                """, [now])
+                updated = c.rowcount or 0
+        except Exception as e:
+            log.warning("purge_expired falló: %s", e)
+            return Response({"detail": str(e)},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"ok": True, "purged": updated})
+
+
+def models_Q_or_null(now):
+    """Helper: expires_at IS NULL OR expires_at > now."""
+    from django.db.models import Q
+    return Q(expires_at__isnull=True) | Q(expires_at__gt=now)
+
+
+# ══════════════════════════════════════════════════════════════
+# WidgetCatViewSet — catálogo cerrado, read-only
+# ══════════════════════════════════════════════════════════════
+class WidgetCatViewSet(viewsets.ReadOnlyModelViewSet):
+    """Catálogo de widgets del dashboard (read-only, seed en 94b SQL)."""
+    queryset = WidgetCat.objects.filter(is_active=True)
+    serializer_class = WidgetCatSerializer
+
+    def get_queryset(self):
+        qs = WidgetCat.objects.filter(is_active=True)
+        category = self.request.query_params.get("category")
+        min_role = self.request.query_params.get("min_role")
+        if category:
+            qs = qs.filter(category=category)
+        if min_role:
+            qs = qs.filter(min_role=min_role)
+        return qs.order_by("orden", "codigo")

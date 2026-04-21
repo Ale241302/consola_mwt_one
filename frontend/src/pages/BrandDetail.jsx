@@ -388,8 +388,9 @@ export default function ScreenBrandDetail() {
               <div className="modal-body">
                 <ProductMassiveUpload
                   lang={lang}
+                  marcaId={brandId}
                   onParsed={(r)=>{
-                    console.log('[mock] products parsed:', r);
+                    console.log('[brands] products parsed:', r);
                   }}
                   onClose={()=>setMassUp(false)}
                 />
