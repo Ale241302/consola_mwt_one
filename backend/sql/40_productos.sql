@@ -134,21 +134,16 @@ CREATE INDEX IF NOT EXISTS ix_producto_proveedor  ON productos.producto(proveedo
 CREATE INDEX IF NOT EXISTS ix_producto_nombre_trgm
     ON productos.producto USING gin (nombre gin_trgm_ops);
 
--- Trigger updated_at
-DO $$
+-- Trigger updated_at — función global en schema public, idempotente.
+-- CREATE OR REPLACE es suficiente (sin guard buggy por nombre),
+-- porque reemplaza la definición si ya existe sin romper nada.
+CREATE OR REPLACE FUNCTION public.tg_set_updated_at()
+RETURNS TRIGGER AS $f$
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_proc WHERE proname = 'tg_set_updated_at'
-    ) THEN
-        CREATE OR REPLACE FUNCTION public.tg_set_updated_at()
-        RETURNS TRIGGER AS $f$
-        BEGIN
-            NEW.updated_at = NOW();
-            RETURN NEW;
-        END;
-        $f$ LANGUAGE plpgsql;
-    END IF;
-END $$;
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$f$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS tg_producto_updated ON productos.producto;
 CREATE TRIGGER tg_producto_updated
