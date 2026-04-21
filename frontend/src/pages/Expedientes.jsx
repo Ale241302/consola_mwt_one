@@ -1,7 +1,26 @@
-// Expedientes — ADMIN / CEO Dashboard
-// Global scope: all expedientes, all clients, all brands, all nodes.
-// Live profitability · cash flow & credit clock · operational times ·
-// process quality · alerts & blocks · payment breakdown · internal pricing.
+// =====================================================================
+// MWT.ONE · Expedientes.jsx
+//
+// Dos experiencias en un solo archivo, gobernadas por RoleContext:
+//
+//   ADMIN (staff MWT)  → Dashboard CEO global:
+//       · KPIs en vivo (rentabilidad, cuentas por cobrar/pagar, crédito)
+//       · Tiempos operativos vs baseline + calidad del proceso
+//       · Tabla completa con vistas Financial / Ops / Fleet
+//       · Fila expandida con costos internos + deferred pricing
+//       · Botón "+ Crear Expediente"
+//
+//   CLIENT (Portal B2B) → Vista "Mis Pedidos":
+//       · Título cambia a "Mis Pedidos"
+//       · Sin KPIs CEO, sin columnas de margen, sin costos internos
+//       · Sin botón "+ Crear" (ART-01 es CEO-ONLY)
+//       · Solo columnas útiles para el cliente: ref, estado, destino, ETA
+//       · Si show_deferred_to_client=true → muestra "Precio acordado: $X"
+//         como lectura, NUNCA como "deferred" ni editable
+//
+// La seguridad real vive en el backend (apps.portal + ClientScopedManager).
+// Este componente solo oculta UI para dar la experiencia correcta.
+// =====================================================================
 import React, { useState, useMemo, useEffect, useCallback, Fragment } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney } from "../lib/i18n.js";
@@ -18,6 +37,7 @@ import {
   OCS as MOCK_OCS,
 } from "../data/mockData.js";
 import { expedientesApi, ocsApi } from "../lib/api.js";
+import { useRole } from "../context/RoleContext.jsx";
 
 // ── Mapeo backend → UI ────────
 function mapExpedienteFromApi(r) {
@@ -87,6 +107,9 @@ function mapExpedienteFromApi(r) {
 export default function ScreenExpedientes() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
+  // Viewport efectivo (ADMIN | CLIENT). Re-renderiza cuando el CEO usa
+  // el toggle "Tweaks → Viewport" para simular al cliente.
+  const { isAdmin, isClient, can } = useRole();
 
   // ── Data desde API (fallback a mocks) ────────
   const [apiExpedientes, setApiExpedientes] = useState([]);
@@ -134,8 +157,12 @@ export default function ScreenExpedientes() {
   const [clientFilter, setClientFilter] = useState('ALL');
   const [signalFilter, setSignalFilter] = useState('ALL'); // ALL | green | amber | red
   const [alertFilter, setAlertFilter] = useState('ALL');   // ALL | blocked | alerts
-  const [view, setView] = useState('financial');           // financial | ops | fleet
+  const [view, setView] = useState('financial');           // financial | ops | fleet (solo ADMIN)
   const [expandedId, setExpandedId] = useState(null);
+  // En CLIENT forzamos la vista "fleet" (origen→destino, modo, ETA, total
+  // facturado como "precio") y escondemos el selector. Esa vista es la más
+  // limpia y útil para el cliente, sin columnas internas de margen.
+  const effectiveView = isClient ? 'fleet' : view;
   // In-memory edits of deferred price / visibility toggle
   const [deferredEdits, setDeferredEdits] = useState({});
 
@@ -191,22 +218,50 @@ export default function ScreenExpedientes() {
       corrected, corrected_pct, clean_pct, pf_reviewed, phase_stats };
   }, [EXPEDIENTES]);
 
+  // ── Títulos/subtítulos dependientes del viewport ──
+  const pageTitle = isClient
+    ? (tr(lang, 'my_orders') || 'Mis Pedidos')
+    : tr(lang, 'expedientes');
+  const pageSubtitle = isClient
+    ? (lang === 'es'
+        ? `${EXPEDIENTES.length} pedidos activos`
+        : `${EXPEDIENTES.length} active orders`)
+    : `${tr(lang,'ceo_overview')} · ${EXPEDIENTES.length} ${lang==='es'?'expedientes globales':'global files'}`;
+
   return (
-    <div className="page" data-screen-label="Expedientes · CEO Dashboard">
+    <div
+      className="page"
+      data-viewport={isClient ? 'CLIENT' : 'ADMIN'}
+      data-screen-label={isClient ? 'Mis Pedidos' : 'Expedientes · CEO Dashboard'}
+    >
       <div className="page-header">
         <div>
-          <div className="micro" style={{marginBottom:6, color:'var(--brand-accent-dark, #0E8A6D)'}}>
-            {tr(lang,'ceo_scope')}
-          </div>
-          <h1 className="page-title">{tr(lang,'expedientes')}</h1>
-          <div className="page-subtitle">{tr(lang,'ceo_overview')} · {EXPEDIENTES.length} {lang==='es'?'expedientes globales':'global files'}</div>
+          {/* Micro-header "CEO Scope" SOLO para ADMIN. CLIENT no ve etiqueta interna. */}
+          {isAdmin && (
+            <div className="micro" style={{marginBottom:6, color:'var(--brand-accent-dark, #0E8A6D)'}}>
+              {tr(lang,'ceo_scope')}
+            </div>
+          )}
+          <h1 className="page-title">{pageTitle}</h1>
+          <div className="page-subtitle">{pageSubtitle}</div>
         </div>
         <div className="flex gap-2">
           <button className="btn btn-secondary"><IconDownload size={14}/>{tr(lang,'export')}</button>
-          <button className="btn btn-primary" onClick={() => onNavigate('wizard')}><IconPlus size={14}/>{tr(lang,'new_expediente')}</button>
+          {/* "+ Crear Expediente" → capability create_expediente (CEO-ONLY).
+              ART-01 se origina siempre desde MWT-Factory, nunca desde Portal B2B. */}
+          {can('create_expediente') && (
+            <button className="btn btn-primary" onClick={() => onNavigate('wizard')}>
+              <IconPlus size={14}/>{tr(lang,'new_expediente')}
+            </button>
+          )}
         </div>
       </div>
 
+      {/* ══════════════════════════════════════════════════════════════════
+          CEO-ONLY: KPIs de rentabilidad, tiempos operativos y calidad.
+          Ocultos cuando el viewport efectivo es CLIENT.
+          ══════════════════════════════════════════════════════════════════ */}
+      {isAdmin && <>
       {/* ── Row 1: Rentabilidad en vivo ───── */}
       <div className="grid col-4 gap-3 mb-4">
         <div className="kpi-tile accent">
@@ -324,6 +379,8 @@ export default function ScreenExpedientes() {
           </div>
         </div>
       </div>
+      </>}
+      {/* ── Fin bloque CEO-ONLY ══════════════════════════════════════════ */}
 
       {/* ── Toolbar ───── */}
       <div className="toolbar">
@@ -339,40 +396,50 @@ export default function ScreenExpedientes() {
           {STATES.slice(0,6).map(s => <option key={s} value={s}>{tr(lang,s)}</option>)}
         </select>
 
-        <select className="select" style={{ width: 140 }} value={brandFilter} onChange={e=>setBrandFilter(e.target.value)}>
-          <option value="ALL">{tr(lang,'all_brands')}</option>
-          {BRANDS.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
+        {/* Filtros cross-client / brand / señales de fase / bloqueos: CEO-ONLY.
+            Un cliente B2B solo ve sus propios pedidos (backend lo fuerza vía
+            ClientScopedManager) — no tiene sentido mostrarle el dropdown de
+            "Todos los clientes" o los semáforos de fase internos. */}
+        {isAdmin && <>
+          <select className="select" style={{ width: 140 }} value={brandFilter} onChange={e=>setBrandFilter(e.target.value)}>
+            <option value="ALL">{tr(lang,'all_brands')}</option>
+            {BRANDS.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
 
-        <select className="select" style={{ width: 170 }} value={clientFilter} onChange={e=>setClientFilter(e.target.value)}>
-          <option value="ALL">{tr(lang,'all_clients')}</option>
-          {CLIENTS.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+          <select className="select" style={{ width: 170 }} value={clientFilter} onChange={e=>setClientFilter(e.target.value)}>
+            <option value="ALL">{tr(lang,'all_clients')}</option>
+            {CLIENTS.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
 
-        <div className="ceo-chip-group">
-          <button data-active={signalFilter==='ALL'}   onClick={()=>setSignalFilter('ALL')}>{lang==='es'?'Todos':'All'}</button>
-          <button data-active={signalFilter==='green'} onClick={()=>setSignalFilter('green')}
-                  style={{color: signalFilter==='green' ? 'var(--success)':undefined}}>● {tr(lang,'signal_green')}</button>
-          <button data-active={signalFilter==='amber'} onClick={()=>setSignalFilter('amber')}
-                  style={{color: signalFilter==='amber' ? 'var(--warning)':undefined}}>● {tr(lang,'signal_amber')}</button>
-          <button data-active={signalFilter==='red'}   onClick={()=>setSignalFilter('red')}
-                  style={{color: signalFilter==='red' ? 'var(--critical)':undefined}}>● {tr(lang,'signal_red')}</button>
-        </div>
+          <div className="ceo-chip-group">
+            <button data-active={signalFilter==='ALL'}   onClick={()=>setSignalFilter('ALL')}>{lang==='es'?'Todos':'All'}</button>
+            <button data-active={signalFilter==='green'} onClick={()=>setSignalFilter('green')}
+                    style={{color: signalFilter==='green' ? 'var(--success)':undefined}}>● {tr(lang,'signal_green')}</button>
+            <button data-active={signalFilter==='amber'} onClick={()=>setSignalFilter('amber')}
+                    style={{color: signalFilter==='amber' ? 'var(--warning)':undefined}}>● {tr(lang,'signal_amber')}</button>
+            <button data-active={signalFilter==='red'}   onClick={()=>setSignalFilter('red')}
+                    style={{color: signalFilter==='red' ? 'var(--critical)':undefined}}>● {tr(lang,'signal_red')}</button>
+          </div>
 
-        <button className="filter-chip" data-active={alertFilter==='blocked'} onClick={() => setAlertFilter(alertFilter==='blocked'?'ALL':'blocked')}>
-          <IconLock size={12}/> {tr(lang,'show_blocked')}
-        </button>
-        <button className="filter-chip" data-active={alertFilter==='alerts'} onClick={() => setAlertFilter(alertFilter==='alerts'?'ALL':'alerts')}>
-          <IconAlert size={12}/> {tr(lang,'show_alerts')}
-        </button>
+          <button className="filter-chip" data-active={alertFilter==='blocked'} onClick={() => setAlertFilter(alertFilter==='blocked'?'ALL':'blocked')}>
+            <IconLock size={12}/> {tr(lang,'show_blocked')}
+          </button>
+          <button className="filter-chip" data-active={alertFilter==='alerts'} onClick={() => setAlertFilter(alertFilter==='alerts'?'ALL':'alerts')}>
+            <IconAlert size={12}/> {tr(lang,'show_alerts')}
+          </button>
+        </>}
 
         <div style={{ marginLeft:'auto' }}/>
 
-        <div className="ceo-chip-group">
-          <button data-active={view==='financial'} onClick={()=>setView('financial')}>{tr(lang,'financial_view')}</button>
-          <button data-active={view==='ops'}       onClick={()=>setView('ops')}>{tr(lang,'ops_view')}</button>
-          <button data-active={view==='fleet'}     onClick={()=>setView('fleet')}>{tr(lang,'fleet_view')}</button>
-        </div>
+        {/* Selector de vista (Financial / Ops / Fleet) es CEO-ONLY. En CLIENT
+            forzamos "fleet" para mostrar origen→destino + ETA, sin márgenes. */}
+        {isAdmin && (
+          <div className="ceo-chip-group">
+            <button data-active={view==='financial'} onClick={()=>setView('financial')}>{tr(lang,'financial_view')}</button>
+            <button data-active={view==='ops'}       onClick={()=>setView('ops')}>{tr(lang,'ops_view')}</button>
+            <button data-active={view==='fleet'}     onClick={()=>setView('fleet')}>{tr(lang,'fleet_view')}</button>
+          </div>
+        )}
       </div>
 
       {/* ── Master table ───── */}
@@ -385,23 +452,31 @@ export default function ScreenExpedientes() {
               <th>{tr(lang,'client')}</th>
               <th>{tr(lang,'brand')}</th>
               <th>{tr(lang,'status')}</th>
-              {view === 'ops' && <>
+              {effectiveView === 'ops' && <>
                 <th style={{width:210}}>{lang==='es'?'Timeline · Semáforo':'Timeline · Signal'}</th>
                 <th style={{width:90, textAlign:'right'}}>{tr(lang,'time_signal')}</th>
               </>}
-              {view === 'financial' && <>
+              {effectiveView === 'financial' && <>
                 <th style={{textAlign:'right'}}>{tr(lang,'invoiced')}</th>
                 <th style={{textAlign:'right'}}>{tr(lang,'real_margin')}</th>
                 <th style={{textAlign:'right'}}>{tr(lang,'credit_days')}</th>
                 <th style={{width: 140}}>{tr(lang,'payments_breakdown')}</th>
               </>}
-              {view === 'fleet' && <>
+              {effectiveView === 'fleet' && <>
                 <th>{tr(lang,'origin')} → {tr(lang,'destination')}</th>
                 <th style={{textAlign:'right'}}>{tr(lang,'mode')}</th>
-                <th style={{width:90, textAlign:'right'}}>{tr(lang,'credit_days')}</th>
-                <th style={{textAlign:'right'}}>{tr(lang,'invoiced')}</th>
+                {/* "Días de crédito" es una señal interna (cuántos días lleva
+                    la factura sin pagar). No mostramos esto al cliente. */}
+                {isAdmin && <th style={{width:90, textAlign:'right'}}>{tr(lang,'credit_days')}</th>}
+                <th style={{textAlign:'right'}}>
+                  {isClient
+                    ? (tr(lang, 'agreed_price') || (lang==='es' ? 'Precio acordado' : 'Agreed price'))
+                    : tr(lang,'invoiced')}
+                </th>
               </>}
-              <th style={{width:110}}>{tr(lang,'alerts_blocks')}</th>
+              {/* Columna de alertas internas (bloqueos, docs faltantes,
+                  retrasos de fábrica, señales de crédito): CEO-ONLY. */}
+              {isAdmin && <th style={{width:110}}>{tr(lang,'alerts_blocks')}</th>}
               <th style={{width:36}}></th>
             </tr>
           </thead>
@@ -416,8 +491,26 @@ export default function ScreenExpedientes() {
               return (
                 <Fragment key={e.id}>
                   <tr data-selected={isOpen} style={{ cursor:'pointer' }}
-                      onClick={() => setExpandedId(isOpen ? null : e.id)}>
-                    <td onClick={(ev)=>{ev.stopPropagation(); setExpandedId(isOpen?null:e.id);}}>
+                      onClick={() => {
+                        // Para CLIENT, el click directo en la fila abre el
+                        // detalle de la OC (no hay expandible con data interna).
+                        if (isClient) {
+                          const oc = OCS.find(o => o.code === e.oc_client) || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));
+                          if (oc) navigate(`/expedientes/${oc.id}`);
+                          return;
+                        }
+                        setExpandedId(isOpen ? null : e.id);
+                      }}>
+                    <td onClick={(ev)=>{
+                          ev.stopPropagation();
+                          // El chevron tampoco expande en CLIENT; navega al detalle.
+                          if (isClient) {
+                            const oc = OCS.find(o => o.code === e.oc_client) || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));
+                            if (oc) navigate(`/expedientes/${oc.id}`);
+                            return;
+                          }
+                          setExpandedId(isOpen?null:e.id);
+                        }}>
                       <IconChevDown size={14} style={{ color:'var(--text-tertiary)', transform: isOpen?'rotate(180deg)':'none', transition:'transform 160ms' }}/>
                     </td>
                     <td>
@@ -450,7 +543,7 @@ export default function ScreenExpedientes() {
                     </td>
                     <td><StatusBadge status={e.status} lang={lang}/></td>
 
-                    {view === 'ops' && <>
+                    {effectiveView === 'ops' && <>
                       <td>
                         <div className="mini-timeline">
                           {STATES.slice(0,6).map((s, i) => {
@@ -471,7 +564,7 @@ export default function ScreenExpedientes() {
                       </td>
                     </>}
 
-                    {view === 'financial' && <>
+                    {effectiveView === 'financial' && <>
                       <td className="td-money">{fmtMoney(e.total_invoiced)}</td>
                       <td style={{textAlign:'right'}}>
                         <span className={`margin-pill ${driftE > 0.005 ? 'up' : driftE < -0.005 ? 'down' : 'flat'}`}>
@@ -492,7 +585,7 @@ export default function ScreenExpedientes() {
                       </td>
                     </>}
 
-                    {view === 'fleet' && <>
+                    {effectiveView === 'fleet' && <>
                       <td>
                         <div className="caption">{e.origin}</div>
                         <div className="body-sm" style={{fontWeight:500}}>→ {e.destination}</div>
@@ -500,18 +593,32 @@ export default function ScreenExpedientes() {
                       <td style={{textAlign:'right'}}>
                         <span className="caption">{e.mode} · {e.freight_mode}</span>
                       </td>
-                      <td className="td-num">
-                        <div className="flex ai-center gap-2" style={{justifyContent:'flex-end'}}>
-                          <CreditDot band={e.credit_days>75?'RED':e.credit_days>60?'AMBER':'GREEN'}/>
-                          <span className="tabular">{e.credit_days}d</span>
-                        </div>
+                      {/* "credit_days" es una señal interna (edad de la cuenta por cobrar).
+                          CLIENT no ve esto. */}
+                      {isAdmin && (
+                        <td className="td-num">
+                          <div className="flex ai-center gap-2" style={{justifyContent:'flex-end'}}>
+                            <CreditDot band={e.credit_days>75?'RED':e.credit_days>60?'AMBER':'GREEN'}/>
+                            <span className="tabular">{e.credit_days}d</span>
+                          </div>
+                        </td>
+                      )}
+                      <td className="td-money">
+                        {/* Para CLIENT, esta columna es "Precio acordado" y solo se
+                            muestra si el CEO habilitó show_deferred_to_client.
+                            Si no, cae al total facturado (es el precio que el cliente
+                            ve en su factura — no expone márgenes). */}
+                        {isClient && e.show_deferred_to_client && e.deferred_total_price > 0
+                          ? fmtMoney(e.deferred_total_price)
+                          : fmtMoney(e.total_invoiced)}
                       </td>
-                      <td className="td-money">{fmtMoney(e.total_invoiced)}</td>
                     </>}
 
-                    <td>
-                      <AlertStack e={e} lang={lang}/>
-                    </td>
+                    {isAdmin && (
+                      <td>
+                        <AlertStack e={e} lang={lang}/>
+                      </td>
+                    )}
                     <td onClick={(ev)=>{
                          ev.stopPropagation();
                          // Va a la vista intermedia de la OC (PO-xxxx-xxxxx)
@@ -524,9 +631,11 @@ export default function ScreenExpedientes() {
                     </td>
                   </tr>
 
-                  {isOpen && (
+                  {/* Fila expandida con costos internos + deferred pricing: CEO-ONLY.
+                      CLIENT nunca puede expandir (el click ya lo redirigió al detalle). */}
+                  {isAdmin && isOpen && (
                     <tr className="expand-row">
-                      <td colSpan={view === 'financial' ? 11 : 11}>
+                      <td colSpan={11}>
                         <CeoDetailRow e={e} lang={lang}
                           deferredVal={deferredVal}
                           showDeferred={showDeferred}

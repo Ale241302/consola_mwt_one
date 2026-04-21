@@ -6455,3 +6455,137 @@ a { color: inherit; text-decoration: none; }
   .sap-lines-head,
   .sap-line-row{ grid-template-columns: 1fr 80px 110px 60px; padding:10px; }
 }
+
+/* =====================================================================
+   RBAC — Tweaks Viewport · RoleBadge · secciones del panel
+   Sistema de Visibilidad por Roles (ADMIN ↔ CLIENT). Ver POL_VISIBILIDAD
+   y RoleContext.jsx para la fuente de verdad de las reglas.
+   ===================================================================== */
+
+/* ── Secciones del Tweaks panel ─────────────────────────── */
+.tweak-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed var(--divider);
+}
+.tweak-section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.tweak-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tweak-section-title {
+  font: 700 11px/1 var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+}
+
+/* ── Role badge (chip que muestra el viewport efectivo) ──
+   data-role=ADMIN  → menta  (staff)
+   data-role=CLIENT → azul   (previewing cliente B2B) */
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 999px;
+  font: 700 10.5px/1 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  transition: background 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+.role-badge[data-role="ADMIN"] {
+  background: color-mix(in oklab, #00B286 14%, transparent);
+  color: #0E8A6D;
+  border-color: color-mix(in oklab, #00B286 40%, transparent);
+}
+.role-badge[data-role="CLIENT"] {
+  background: color-mix(in oklab, #3083FE 14%, transparent);
+  color: #1E5FC7;
+  border-color: color-mix(in oklab, #3083FE 40%, transparent);
+}
+.role-badge .role-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px color-mix(in oklab, currentColor 22%, transparent);
+}
+
+/* ── Nota amarilla "Previsualizando como Cliente B2B" ────── */
+.tweak-role-note {
+  overflow: hidden;
+  background: color-mix(in oklab, #3083FE 8%, transparent);
+  border: 1px solid color-mix(in oklab, #3083FE 30%, transparent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: 500 12px/1.45 var(--font-body);
+  color: var(--text-secondary);
+}
+.tweak-role-note strong {
+  color: #1E5FC7;
+  font-weight: 700;
+}
+
+/* ── Botón "Volver a mi rol real" ───────────────────────── */
+.tweak-role-reset {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font: 600 11.5px/1 var(--font-body);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+  align-self: flex-start;
+}
+.tweak-role-reset:hover {
+  background: var(--bg);
+  color: var(--text-primary);
+  border-color: var(--text-tertiary);
+}
+
+/* ── Avatar teñido por viewport en el sidebar ─────────────
+   Cuando el CEO simula cliente, el avatar cambia a azul para
+   recordarle visualmente que no está viendo su propio rol. */
+.avatar[data-viewport="CLIENT"] {
+  background: linear-gradient(135deg, #3083FE, #1E5FC7);
+  color: #fff;
+}
+
+/* ── Sidebar: indicador sutil de viewport ─────────────────
+   Una línea de color en el borde izquierdo del aside cuando
+   estás en modo CLIENT preview. No aparece para CLIENT reales
+   porque eso ya es la experiencia normal para ellos. */
+.sidebar .sidebar-group + .sidebar-group {
+  margin-top: 10px;
+}
+
+/* ── Ajustes específicos para tablas OC en viewport CLIENT ─
+   La tabla "oc-products-table" queda más compacta y read-only.
+   Quitamos el hover agresivo sobre celdas de edición porque ya
+   no hay inputs editables. */
+.oc-products-table[data-viewport="CLIENT"] td.td-num {
+  color: var(--text-primary);
+  padding: 10px 12px;
+}
+.oc-products-table[data-viewport="CLIENT"] tbody tr:hover {
+  background: var(--bg-alt);
+}
+
+/* ── Expedientes page: tweak sutil para CLIENT ────────────
+   Ocultar el scope "CEO" y estilizar el encabezado como
+   "mis pedidos" con más aire, menos densidad de dato. */
+.page[data-viewport="CLIENT"] .page-title {
+  letter-spacing: -0.015em;
+}
+.page[data-viewport="CLIENT"] .page-subtitle {
+  color: var(--text-secondary);
+}
+

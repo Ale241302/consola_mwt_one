@@ -55,6 +55,10 @@ export const STRINGS = {
     // Inventario
     stock: 'Stock', reserved: 'Reservado', lot: 'Lote', received: 'Recibido', node: 'Nodo',
     available: 'Disponible',
+    // RBAC viewport (Tweaks / Portal B2B)
+    my_orders: 'Mis Pedidos',
+    agreed_price: 'Precio acordado',
+    role_client_b2b: 'Cliente B2B',
     // CEO Admin Dashboard
     ceo_scope: 'ADMIN · CEO',
     ceo_overview: 'Rentabilidad, cash flow y logística en vivo',
@@ -126,6 +130,10 @@ export const STRINGS = {
     oc_state_closed: 'Cerrada', oc_state_active: 'En ejecución', oc_state_partial: 'Asignación parcial',
   },
   en: {
+    // RBAC viewport (Tweaks / Portal B2B)
+    my_orders: 'My Orders',
+    agreed_price: 'Agreed price',
+    role_client_b2b: 'B2B Client',
     dashboard: 'Dashboard', expedientes: 'Files', pipeline: 'Pipeline', portal: 'Portal',
     financiero: 'Financial', transfers: 'Transfers', nodos: 'Nodes', clientes: 'Clients',
     brands: 'Brands', productos: 'Products', suppliers: 'Suppliers', inventario: 'Inventory',

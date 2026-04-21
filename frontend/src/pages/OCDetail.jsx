@@ -1,7 +1,29 @@
-// OC Detail screen
-// Purchase-order pivot: lines × SAP · transport · deferred pricing · documents
-// Entry: clicking an OC code from Expedientes CEO dashboard
-// Navigates deeper into: Expediente Detail (clicking a SAP number)
+// =====================================================================
+// MWT.ONE · OCDetail.jsx
+//
+// Vista de detalle de una Orden de Compra, con dos experiencias:
+//
+//   ADMIN (staff MWT)  → CRUD completo:
+//       · Editar cantidades y precios de línea
+//       · Agregar / eliminar productos
+//       · "+ Agregar SAP" (ART-04 RegisterSAPConfirmation, C5)
+//       · "+ Agregar Documento"
+//       · Inputs deferred_qty + deferred_unit_price + toggle visibility
+//       · Totales con "diferido" visible
+//
+//   CLIENT (Portal B2B) → Lectura + descarga:
+//       · qty/precio visibles pero NO editables
+//       · Sin "+ Agregar SAP" (ART-04 es estrictamente MWT-Factory)
+//       · Sin "+ Agregar Documento" (cliente solo descarga via signed URL)
+//       · Sin "+ Agregar producto", sin eliminar líneas
+//       · Columnas deferred_qty/deferred_unit_price OCULTAS — nunca editar
+//       · Si show_deferred_to_client=true en una línea → mostrar
+//         "Precio acordado: $X" como lectura, NUNCA llamarlo "deferred"
+//       · Credit clock KPI oculto (es interno)
+//
+// Fuente de autoridad: RoleContext (can, isAdmin, isClient). La protección
+// real vive en el backend (apps.portal.ClientScopedManager + POL_VISIBILIDAD).
+// =====================================================================
 import React, { useState, useMemo } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney } from "../lib/i18n.js";
@@ -14,11 +36,14 @@ import {
   OCS, CLIENTS, BRANDS, EXPEDIENTES, PRODUCTS, HERO_OC_ID,
 } from "../data/mockData.js";
 import AddSAPConfirmationDrawer from "../components/expedientes/AddSAPConfirmationDrawer.jsx";
+import { useRole } from "../context/RoleContext.jsx";
 
 export default function ScreenOCDetail() {
   const navigate = useNavigate();
   const { ocId: paramOcId } = useParams();
   const { lang } = useOutletContext();
+  // Viewport efectivo + capability gates (ver POL_VISIBILIDAD).
+  const { isAdmin, isClient, can } = useRole();
   const ocId = paramOcId || HERO_OC_ID;
   const onBack = () => navigate('/expedientes');
   const onOpenExpediente = (id) => {
@@ -201,43 +226,57 @@ export default function ScreenOCDetail() {
 
         <div className="flex gap-2">
           <button className="btn btn-secondary"><IconDownload size={14}/>{tr(lang,'export')}</button>
-          <button
-            className="btn btn-primary"
-            onClick={openSapDrawer}
-            disabled={!sapEligibleExp}
-            title={!sapEligibleExp
-              ? (lang === 'es' ? 'No hay expediente en REGISTRO para confirmar' : 'No expediente in REGISTRO to confirm')
-              : ''}
-            style={{ background: '#0B1E3A' }}
-          >
-            <IconPlus size={14}/>{lang === 'es' ? 'Agregar SAP' : 'Add SAP'}
-          </button>
-          <button className="btn btn-ghost"><IconPlus size={14}/>{tr(lang,'add_document')}</button>
+          {/* "+ Agregar SAP" → register_sap (CEO-ONLY).
+              ART-04 SAPConfirmation se registra SIEMPRE desde MWT-Factory. */}
+          {can('register_sap') && (
+            <button
+              className="btn btn-primary"
+              onClick={openSapDrawer}
+              disabled={!sapEligibleExp}
+              title={!sapEligibleExp
+                ? (lang === 'es' ? 'No hay expediente en REGISTRO para confirmar' : 'No expediente in REGISTRO to confirm')
+                : ''}
+              style={{ background: '#0B1E3A' }}
+            >
+              <IconPlus size={14}/>{lang === 'es' ? 'Agregar SAP' : 'Add SAP'}
+            </button>
+          )}
+          {/* "+ Agregar Documento" → upload_document (CEO-ONLY).
+              El cliente solo descarga documentos publicados via signed URL. */}
+          {can('upload_document') && (
+            <button className="btn btn-ghost"><IconPlus size={14}/>{tr(lang,'add_document')}</button>
+          )}
         </div>
       </div>
 
-      {/* Drawer · Comando C5 RegisterSAPConfirmation */}
-      <AddSAPConfirmationDrawer
-        open={sapDrawerOpen}
-        onClose={() => setSapDrawerOpen(false)}
-        lang={lang}
-        oc={{ id: oc.id, codigo: oc.code || oc.codigo }}
-        expediente={sapDrawerExp && {
-          id:     sapDrawerExp.id,
-          codigo: sapDrawerExp.codigo || sapDrawerExp.code || sapDrawerExp.id,
-          estado: (sapDrawerExp.estado || sapDrawerExp.status || 'REGISTRO').toUpperCase(),
-        }}
-        lines={sapDrawerLines}
-        onSuccess={() => {
-          // Optimistic refresh: el backend devolvió el expediente con
-          // estado=PRODUCCION. En la versión con backend real, acá
-          // invalidamos el fetch del OC. Para mock, solo cerramos.
-          setSapDrawerOpen(false);
-        }}
-      />
+      {/* Drawer · Comando C5 RegisterSAPConfirmation — SOLO si el usuario
+          puede registrar SAP (CEO-ONLY). Para CLIENT ni se monta. */}
+      {can('register_sap') && (
+        <AddSAPConfirmationDrawer
+          open={sapDrawerOpen}
+          onClose={() => setSapDrawerOpen(false)}
+          lang={lang}
+          oc={{ id: oc.id, codigo: oc.code || oc.codigo }}
+          expediente={sapDrawerExp && {
+            id:     sapDrawerExp.id,
+            codigo: sapDrawerExp.codigo || sapDrawerExp.code || sapDrawerExp.id,
+            estado: (sapDrawerExp.estado || sapDrawerExp.status || 'REGISTRO').toUpperCase(),
+          }}
+          lines={sapDrawerLines}
+          onSuccess={() => {
+            // Optimistic refresh: el backend devolvió el expediente con
+            // estado=PRODUCCION. En la versión con backend real, acá
+            // invalidamos el fetch del OC. Para mock, solo cerramos.
+            setSapDrawerOpen(false);
+          }}
+        />
+      )}
 
-      {/* ── KPI row ───── */}
-      <div className="grid col-4 gap-3 mb-4">
+      {/* ── KPI row ─────
+          Para CLIENT ocultamos el "Credit clock" (días de crédito gastados)
+          porque es métrica interna de cobranza. Dejamos coverage, logistics
+          split y financial status — el cliente sí ve su propia factura. */}
+      <div className={`grid gap-3 mb-4 ${isClient ? 'col-3' : 'col-4'}`}>
         {/* Coverage */}
         <div className="kpi-tile">
           <div className="k-label">{tr(lang,'oc_coverage')}</div>
@@ -285,21 +324,23 @@ export default function ScreenOCDetail() {
           </div>
         </div>
 
-        {/* Credit clock */}
-        <div className="kpi-tile">
-          <div className="k-label">{tr(lang,'credit_clock')}</div>
-          <div className="k-value" style={{display:'flex', alignItems:'baseline', gap:6}}>
-            <CreditDot band={oc.credit_band}/>
-            <span style={{
-              color: oc.credit_band === 'RED' ? 'var(--critical)' : oc.credit_band === 'AMBER' ? 'var(--warning)' : 'var(--success)'
-            }}>{oc.max_credit_days}d</span>
+        {/* Credit clock — métrica interna de cobranza: CEO-ONLY. */}
+        {isAdmin && (
+          <div className="kpi-tile">
+            <div className="k-label">{tr(lang,'credit_clock')}</div>
+            <div className="k-value" style={{display:'flex', alignItems:'baseline', gap:6}}>
+              <CreditDot band={oc.credit_band}/>
+              <span style={{
+                color: oc.credit_band === 'RED' ? 'var(--critical)' : oc.credit_band === 'AMBER' ? 'var(--warning)' : 'var(--success)'
+              }}>{oc.max_credit_days}d</span>
+            </div>
+            <div className="k-sub">
+              {oc.max_credit_days > 0
+                ? <span>{tr(lang,'credit_triggered')} · {tr(lang,'vs_historical')} 45d</span>
+                : <span>{tr(lang,'credit_idle')}</span>}
+            </div>
           </div>
-          <div className="k-sub">
-            {oc.max_credit_days > 0
-              ? <span>{tr(lang,'credit_triggered')} · {tr(lang,'vs_historical')} 45d</span>
-              : <span>{tr(lang,'credit_idle')}</span>}
-          </div>
-        </div>
+        )}
       </div>
 
       {/* ── Main content: Lines table + Docs sidebar ───── */}
@@ -384,10 +425,24 @@ export default function ScreenOCDetail() {
                         <div style={{width: 80, textAlign:'right'}}>{lang==='es'?'Cant.':'Qty'}</div>
                         <div style={{width: 100, textAlign:'right'}}>{tr(lang,'unit_price_lbl')}</div>
                         <div style={{width: 110, textAlign:'right'}}>{tr(lang,'total_price_lbl')}</div>
-                        <div style={{width: 190, textAlign:'center', borderLeft:'1px dashed var(--divider)', paddingLeft: 12, color:'var(--brand-accent-dark,#0E8A6D)'}}>
-                          🔒 {tr(lang,'deferred_price_col')}
-                        </div>
-                        <div style={{width: 90, textAlign:'center'}}>{tr(lang,'visible_to_client_short')}</div>
+                        {/* Columnas "diferido" (qty + precio) + toggle de visibilidad:
+                            CEO-ONLY. CLIENT nunca las ve — nunca debe enterarse que
+                            existe un concepto "deferred" interno. */}
+                        {isAdmin && (
+                          <div style={{width: 190, textAlign:'center', borderLeft:'1px dashed var(--divider)', paddingLeft: 12, color:'var(--brand-accent-dark,#0E8A6D)'}}>
+                            🔒 {tr(lang,'deferred_price_col')}
+                          </div>
+                        )}
+                        {isAdmin && (
+                          <div style={{width: 90, textAlign:'center'}}>{tr(lang,'visible_to_client_short')}</div>
+                        )}
+                        {/* Para CLIENT, si el CEO publicó un "precio acordado" en alguna
+                            línea del grupo, lo mostramos agregado al final (read-only). */}
+                        {isClient && g.lines.some(l => l.show_deferred_to_client) && (
+                          <div style={{width: 170, textAlign:'right', borderLeft:'1px dashed var(--divider)', paddingLeft: 12}}>
+                            {tr(lang, 'agreed_price') || (lang==='es' ? 'Precio acordado' : 'Agreed price')}
+                          </div>
+                        )}
                       </div>
                       {g.lines.map(l => (
                         <div key={l.id} className="sap-line">
@@ -405,22 +460,36 @@ export default function ScreenOCDetail() {
                           <div style={{width: 110, textAlign:'right', fontVariantNumeric:'tabular-nums', fontWeight: 600}}>
                             {fmtMoney(l.total_price)}
                           </div>
-                          <div style={{width: 190, borderLeft:'1px dashed var(--divider)', paddingLeft: 12, display:'flex', gap: 6, alignItems:'center', justifyContent:'center'}}>
-                            <div className="deferred-input">
-                              <span>qty</span>
-                              <input type="number" value={l.deferred_qty || 0} min={0} max={l.qty}
-                                onChange={(e)=>updateLine(l.id, { deferred_qty: +e.target.value })}/>
+                          {/* ADMIN: inputs editables de deferred_qty / deferred_unit_price. */}
+                          {isAdmin && (
+                            <div style={{width: 190, borderLeft:'1px dashed var(--divider)', paddingLeft: 12, display:'flex', gap: 6, alignItems:'center', justifyContent:'center'}}>
+                              <div className="deferred-input">
+                                <span>qty</span>
+                                <input type="number" value={l.deferred_qty || 0} min={0} max={l.qty}
+                                  onChange={(e)=>updateLine(l.id, { deferred_qty: +e.target.value })}/>
+                              </div>
+                              <div className="deferred-input">
+                                <span>$</span>
+                                <input type="number" value={l.deferred_unit_price || 0} min={0} step="0.01"
+                                  onChange={(e)=>updateLine(l.id, { deferred_unit_price: +e.target.value })}/>
+                              </div>
                             </div>
-                            <div className="deferred-input">
-                              <span>$</span>
-                              <input type="number" value={l.deferred_unit_price || 0} min={0} step="0.01"
-                                onChange={(e)=>updateLine(l.id, { deferred_unit_price: +e.target.value })}/>
+                          )}
+                          {/* ADMIN: switch de visibilidad para publicar el precio al cliente. */}
+                          {isAdmin && (
+                            <div style={{width: 90, textAlign:'center'}}>
+                              <div className="switch sm" data-on={l.show_deferred_to_client}
+                                   onClick={()=>updateLine(l.id, { show_deferred_to_client: !l.show_deferred_to_client })}/>
                             </div>
-                          </div>
-                          <div style={{width: 90, textAlign:'center'}}>
-                            <div className="switch sm" data-on={l.show_deferred_to_client}
-                                 onClick={()=>updateLine(l.id, { show_deferred_to_client: !l.show_deferred_to_client })}/>
-                          </div>
+                          )}
+                          {/* CLIENT: "Precio acordado" como lectura. Nunca "deferred". */}
+                          {isClient && g.lines.some(ll => ll.show_deferred_to_client) && (
+                            <div style={{width: 170, textAlign:'right', borderLeft:'1px dashed var(--divider)', paddingLeft: 12, fontVariantNumeric:'tabular-nums', fontWeight: 600}}>
+                              {l.show_deferred_to_client && l.deferred_qty > 0 && l.deferred_unit_price > 0
+                                ? fmtMoney(l.deferred_qty * l.deferred_unit_price)
+                                : <span className="caption" style={{color:'var(--text-tertiary)'}}>—</span>}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -496,22 +565,32 @@ export default function ScreenOCDetail() {
         </div>
       </div>
 
-      {/* ── Flat Products OC table (editable) ───── */}
+      {/* ══════════════════════════════════════════════════════════════════
+          Tabla plana "Productos OC":
+            · ADMIN → tabla completa editable con columnas diferido + eliminar
+            · CLIENT → tabla de solo-lectura, sin diferido, sin eliminar
+          ══════════════════════════════════════════════════════════════════ */}
       <div className="card" style={{marginTop: 14}}>
         <div className="card-head" style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
           <div>
             <div className="card-title">{lang==='es'?'Productos OC':'PO Products'}</div>
             <div className="card-subtitle">
-              {allLines.length} {lang==='es'?'líneas':'lines'} · {lang==='es'?'editable':'editable'} · {fmtMoney(computedTotal)} {lang==='es'?'total':'total'}
-              {computedDeferred > 0 && <> · <span style={{color:'var(--brand-accent-dark,#0E8A6D)'}}>🔒 {fmtMoney(computedDeferred)} {lang==='es'?'diferido':'deferred'}</span></>}
+              {allLines.length} {lang==='es'?'líneas':'lines'}
+              {isAdmin && <> · {lang==='es'?'editable':'editable'}</>}
+              {' '}· {fmtMoney(computedTotal)} {lang==='es'?'total':'total'}
+              {/* El "diferido" es concepto interno — nunca se muestra a CLIENT. */}
+              {isAdmin && computedDeferred > 0 && <> · <span style={{color:'var(--brand-accent-dark,#0E8A6D)'}}>🔒 {fmtMoney(computedDeferred)} {lang==='es'?'diferido':'deferred'}</span></>}
             </div>
           </div>
-          <button className="btn btn-primary" onClick={()=>setShowAddProduct(true)}>
-            <IconPlus size={14}/> {lang==='es'?'Agregar producto':'Add product'}
-          </button>
+          {/* "+ Agregar producto" → add_oc_line (CEO-ONLY). */}
+          {can('add_oc_line') && (
+            <button className="btn btn-primary" onClick={()=>setShowAddProduct(true)}>
+              <IconPlus size={14}/> {lang==='es'?'Agregar producto':'Add product'}
+            </button>
+          )}
         </div>
         <div style={{overflowX:'auto'}}>
-          <table className="oc-products-table">
+          <table className="oc-products-table" data-viewport={isClient ? 'CLIENT' : 'ADMIN'}>
             <thead>
               <tr>
                 <th style={{width:140}}>SKU</th>
@@ -521,13 +600,19 @@ export default function ScreenOCDetail() {
                 <th style={{width:100, textAlign:'right'}}>{lang==='es'?'Precio':'Price'}</th>
                 <th style={{width:110, textAlign:'right'}}>{lang==='es'?'Total':'Total'}</th>
                 <th style={{width:130}}>SAP</th>
-                <th style={{width:100, textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
-                  🔒 {lang==='es'?'Cant. dif.':'Def. qty'}
-                </th>
-                <th style={{width:110, textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
-                  🔒 {lang==='es'?'Precio dif.':'Def. price'}
-                </th>
-                <th style={{width:44}}></th>
+                {/* Columnas deferred qty/price: CEO-ONLY. */}
+                {isAdmin && (
+                  <th style={{width:100, textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
+                    🔒 {lang==='es'?'Cant. dif.':'Def. qty'}
+                  </th>
+                )}
+                {isAdmin && (
+                  <th style={{width:110, textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
+                    🔒 {lang==='es'?'Precio dif.':'Def. price'}
+                  </th>
+                )}
+                {/* Columna acciones (botón eliminar): requiere delete_oc_line. */}
+                {can('delete_oc_line') && <th style={{width:44}}></th>}
               </tr>
             </thead>
             <tbody>
@@ -538,19 +623,33 @@ export default function ScreenOCDetail() {
                   <td style={{textAlign:'center'}}>
                     <span className="size-chip">{l.size}</span>
                   </td>
-                  <td className="td-edit" style={{textAlign:'right'}}>
-                    <input className="edit-input tabular" type="number" min={0}
-                      value={l.qty}
-                      onChange={e=>updateLine(l.id, { qty: +e.target.value })}/>
-                  </td>
-                  <td className="td-edit" style={{textAlign:'right'}}>
-                    <div className="edit-input-money">
-                      <span>$</span>
-                      <input className="edit-input tabular" type="number" min={0} step="0.01"
-                        value={l.unit_price}
-                        onChange={e=>updateLine(l.id, { unit_price: +e.target.value })}/>
-                    </div>
-                  </td>
+                  {/* Qty editable → capability edit_oc_line_qty. */}
+                  {can('edit_oc_line_qty') ? (
+                    <td className="td-edit" style={{textAlign:'right'}}>
+                      <input className="edit-input tabular" type="number" min={0}
+                        value={l.qty}
+                        onChange={e=>updateLine(l.id, { qty: +e.target.value })}/>
+                    </td>
+                  ) : (
+                    <td className="td-num" style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>
+                      {l.qty.toLocaleString()}
+                    </td>
+                  )}
+                  {/* Precio unitario editable → capability edit_oc_line_unit_price. */}
+                  {can('edit_oc_line_unit_price') ? (
+                    <td className="td-edit" style={{textAlign:'right'}}>
+                      <div className="edit-input-money">
+                        <span>$</span>
+                        <input className="edit-input tabular" type="number" min={0} step="0.01"
+                          value={l.unit_price}
+                          onChange={e=>updateLine(l.id, { unit_price: +e.target.value })}/>
+                      </div>
+                    </td>
+                  ) : (
+                    <td className="td-num" style={{textAlign:'right', fontVariantNumeric:'tabular-nums', color:'var(--text-secondary)'}}>
+                      ${l.unit_price.toFixed(2)}
+                    </td>
+                  )}
                   <td className="td-money">{fmtMoney(l.qty * l.unit_price)}</td>
                   <td>
                     {l.sap ? (
@@ -563,31 +662,41 @@ export default function ScreenOCDetail() {
                       </span>
                     )}
                   </td>
-                  <td className="td-edit" style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 4%, transparent)'}}>
-                    <input className="edit-input tabular" type="number" min={0} max={l.qty}
-                      value={l.deferred_qty || 0}
-                      onChange={e=>updateLine(l.id, { deferred_qty: +e.target.value })}/>
-                  </td>
-                  <td className="td-edit" style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 4%, transparent)'}}>
-                    <div className="edit-input-money">
-                      <span>$</span>
-                      <input className="edit-input tabular" type="number" min={0} step="0.01"
-                        value={l.deferred_unit_price || 0}
-                        onChange={e=>updateLine(l.id, { deferred_unit_price: +e.target.value })}/>
-                    </div>
-                  </td>
-                  <td style={{textAlign:'center'}}>
-                    <button className="icon-btn" title={lang==='es'?'Eliminar':'Remove'}
-                      onClick={()=>removeLine(l.id)}
-                      style={{width:26, height:26, color:'var(--text-tertiary)'}}>
-                      <IconX size={12}/>
-                    </button>
-                  </td>
+                  {/* Inputs deferred qty / deferred price: CEO-ONLY. */}
+                  {isAdmin && (
+                    <td className="td-edit" style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 4%, transparent)'}}>
+                      <input className="edit-input tabular" type="number" min={0} max={l.qty}
+                        value={l.deferred_qty || 0}
+                        onChange={e=>updateLine(l.id, { deferred_qty: +e.target.value })}/>
+                    </td>
+                  )}
+                  {isAdmin && (
+                    <td className="td-edit" style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 4%, transparent)'}}>
+                      <div className="edit-input-money">
+                        <span>$</span>
+                        <input className="edit-input tabular" type="number" min={0} step="0.01"
+                          value={l.deferred_unit_price || 0}
+                          onChange={e=>updateLine(l.id, { deferred_unit_price: +e.target.value })}/>
+                      </div>
+                    </td>
+                  )}
+                  {/* Botón eliminar → delete_oc_line (CEO-ONLY). */}
+                  {can('delete_oc_line') && (
+                    <td style={{textAlign:'center'}}>
+                      <button className="icon-btn" title={lang==='es'?'Eliminar':'Remove'}
+                        onClick={()=>removeLine(l.id)}
+                        style={{width:26, height:26, color:'var(--text-tertiary)'}}>
+                        <IconX size={12}/>
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
               {allLines.length === 0 && (
-                <tr><td colSpan={10} style={{textAlign:'center', padding:'32px', color:'var(--text-tertiary)'}}>
-                  {lang==='es'?'Sin productos. Agrega el primero.':'No products yet. Add your first.'}
+                <tr><td colSpan={isAdmin ? 10 : 7} style={{textAlign:'center', padding:'32px', color:'var(--text-tertiary)'}}>
+                  {lang==='es'
+                    ? (isClient ? 'Sin productos en esta orden.' : 'Sin productos. Agrega el primero.')
+                    : (isClient ? 'No products in this order.' : 'No products yet. Add your first.')}
                 </td></tr>
               )}
             </tbody>
@@ -597,20 +706,31 @@ export default function ScreenOCDetail() {
                   {lang==='es'?'Total orden':'Order total'}
                 </td>
                 <td className="td-money" style={{fontSize:15, fontWeight:700}}>{fmtMoney(computedTotal)}</td>
-                <td colSpan={2} style={{textAlign:'right', fontWeight:600, color:'var(--brand-accent-dark,#0E8A6D)', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
-                  🔒 {lang==='es'?'Total diferido':'Deferred total'}
-                </td>
-                <td className="td-money" style={{fontWeight:700, color:'var(--brand-accent-dark,#0E8A6D)', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
-                  {fmtMoney(computedDeferred)}
-                </td>
-                <td style={{background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}/>
+                {/* Totales de "diferido" en el tfoot: CEO-ONLY. */}
+                {isAdmin && (
+                  <td colSpan={2} style={{textAlign:'right', fontWeight:600, color:'var(--brand-accent-dark,#0E8A6D)', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
+                    🔒 {lang==='es'?'Total diferido':'Deferred total'}
+                  </td>
+                )}
+                {isAdmin && (
+                  <td className="td-money" style={{fontWeight:700, color:'var(--brand-accent-dark,#0E8A6D)', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
+                    {fmtMoney(computedDeferred)}
+                  </td>
+                )}
+                {/* Celda vacía para alinear con la columna de acciones (solo ADMIN). */}
+                {can('delete_oc_line') && (
+                  <td style={{background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}/>
+                )}
+                {/* CLIENT: no tiene columnas deferred ni acciones → el colspan ya cuadra. */}
+                {isClient && <td/>}
               </tr>
             </tfoot>
           </table>
         </div>
       </div>
 
-      {showAddProduct && (
+      {/* Modal "Agregar producto" solo se monta si ADMIN puede agregar línea. */}
+      {can('add_oc_line') && showAddProduct && (
         <AddProductModal lang={lang} onPick={addProduct} onClose={()=>setShowAddProduct(false)}/>
       )}
     </div>
