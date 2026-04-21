@@ -76,6 +76,7 @@ LOCAL_APPS = [
     "apps.email_templates", # plantillas Jinja2 multi-idioma / multi-marca
     "apps.notifications",   # historial de envíos (Celery / workflow / cron)
     "apps.storage",         # MinIO/S3 signed URLs + Paperless ingest
+    "apps.ocr",             # Wizard OCR (parse-oc / resolve-line)
     # Los siguientes módulos se irán activando cuando cada app tenga su
     # apps.py + views.py correspondiente. Dejarlos comentados evita que
     # Django falle al arrancar por ImportError durante INSTALLED_APPS.

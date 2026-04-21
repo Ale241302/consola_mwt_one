@@ -573,10 +573,11 @@ function ProductosTab({ lang, products, onAddManual, onMassUpload }) {
 }
 
 function SpecRow({ l, v }) {
+  const val = v || '—';
   return (
     <div className="spec-row">
       <span className="spec-l">{l}</span>
-      <span className="spec-v">{v || '—'}</span>
+      <span className="spec-v" title={val}>{val}</span>
     </div>
   );
 }

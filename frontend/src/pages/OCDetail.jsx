@@ -13,6 +13,7 @@ import {
 import {
   OCS, CLIENTS, BRANDS, EXPEDIENTES, PRODUCTS, HERO_OC_ID,
 } from "../data/mockData.js";
+import AddSAPConfirmationDrawer from "../components/expedientes/AddSAPConfirmationDrawer.jsx";
 
 export default function ScreenOCDetail() {
   const navigate = useNavigate();
@@ -38,6 +39,45 @@ export default function ScreenOCDetail() {
   const [showOrphansOnly, setShowOrphansOnly] = useState(false);
   const [openSap, setOpenSap] = useState(null); // expand/collapse SAP group
   const [showAddProduct, setShowAddProduct] = useState(false);
+
+  // ── Drawer "+ Agregar SAP" (Comando C5 RegisterSAPConfirmation) ──
+  const [sapDrawerOpen, setSapDrawerOpen] = useState(false);
+  const [sapDrawerExp, setSapDrawerExp]   = useState(null);
+
+  // Detecta el primer expediente en estado REGISTRO ligado a esta OC.
+  // Si no encontramos uno con estado explícito, fallback al primer
+  // expediente listado (mock data no siempre trae estado).
+  const sapEligibleExp = useMemo(() => {
+    const expIds = oc.expedientes || [];
+    const expObjs = expIds
+      .map(eid => EXPEDIENTES.find(e => e.id === eid))
+      .filter(Boolean);
+    const inRegistro = expObjs.find(e =>
+      (e.estado || e.status || "REGISTRO").toUpperCase() === "REGISTRO"
+    );
+    return inRegistro || expObjs[0] || null;
+  }, [oc]);
+
+  const openSapDrawer = () => {
+    setSapDrawerExp(sapEligibleExp);
+    setSapDrawerOpen(true);
+  };
+
+  // Líneas que pertenecen al expediente del drawer (para conciliación)
+  const sapDrawerLines = useMemo(() => {
+    if (!sapDrawerExp) return [];
+    const expId = sapDrawerExp.id;
+    return (oc.lines || [])
+      .filter(l => l.exp_id === expId || l.expediente_id === expId || !l.exp_id)
+      .map(l => ({
+        id:           l.id,
+        sku:          l.sku,
+        size:         l.size,
+        qty:          Number(l.qty || 0),
+        unit_price:   Number(l.unit_price || 0),
+        descripcion:  l.product || l.descripcion || "",
+      }));
+  }, [oc, sapDrawerExp]);
 
   const updateLine = (lineId, patch) => {
     setLineEdits(prev => ({ ...prev, [lineId]: { ...(prev[lineId]||{}), ...patch } }));
@@ -161,9 +201,40 @@ export default function ScreenOCDetail() {
 
         <div className="flex gap-2">
           <button className="btn btn-secondary"><IconDownload size={14}/>{tr(lang,'export')}</button>
-          <button className="btn btn-primary"><IconPlus size={14}/>{tr(lang,'add_document')}</button>
+          <button
+            className="btn btn-primary"
+            onClick={openSapDrawer}
+            disabled={!sapEligibleExp}
+            title={!sapEligibleExp
+              ? (lang === 'es' ? 'No hay expediente en REGISTRO para confirmar' : 'No expediente in REGISTRO to confirm')
+              : ''}
+            style={{ background: '#0B1E3A' }}
+          >
+            <IconPlus size={14}/>{lang === 'es' ? 'Agregar SAP' : 'Add SAP'}
+          </button>
+          <button className="btn btn-ghost"><IconPlus size={14}/>{tr(lang,'add_document')}</button>
         </div>
       </div>
+
+      {/* Drawer · Comando C5 RegisterSAPConfirmation */}
+      <AddSAPConfirmationDrawer
+        open={sapDrawerOpen}
+        onClose={() => setSapDrawerOpen(false)}
+        lang={lang}
+        oc={{ id: oc.id, codigo: oc.code || oc.codigo }}
+        expediente={sapDrawerExp && {
+          id:     sapDrawerExp.id,
+          codigo: sapDrawerExp.codigo || sapDrawerExp.code || sapDrawerExp.id,
+          estado: (sapDrawerExp.estado || sapDrawerExp.status || 'REGISTRO').toUpperCase(),
+        }}
+        lines={sapDrawerLines}
+        onSuccess={() => {
+          // Optimistic refresh: el backend devolvió el expediente con
+          // estado=PRODUCCION. En la versión con backend real, acá
+          // invalidamos el fetch del OC. Para mock, solo cerramos.
+          setSapDrawerOpen(false);
+        }}
+      />
 
       {/* ── KPI row ───── */}
       <div className="grid col-4 gap-3 mb-4">

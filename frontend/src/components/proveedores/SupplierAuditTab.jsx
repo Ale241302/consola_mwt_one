@@ -44,10 +44,12 @@ function scoreTier(s) {
 }
 
 // Radar SVG — 5 ejes
-function Radar({ values, size = 240 }) {
+// size 280 + radius 90 deja margen suficiente para que labels largos
+// como "COMUNICACIÓN" o "ENTREGAS" no se salgan del viewport.
+function Radar({ values, size = 280 }) {
   const cx = size / 2;
   const cy = size / 2;
-  const radius = size / 2 - 24;
+  const radius = size / 2 - 50;   // más aire para los labels exteriores
   const n = values.length;
 
   // Cada dimensión a ángulo (empieza arriba y gira clockwise)

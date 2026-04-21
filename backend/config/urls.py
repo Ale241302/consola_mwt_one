@@ -18,4 +18,5 @@ urlpatterns = [
     path("api/",           include("apps.email_templates.urls")),  # /api/email-templates/ + /api/email-template-versions/
     path("api/",           include("apps.notifications.urls")),    # /api/notification-logs/ + /api/collection-logs/
     path("api/",           include("apps.storage.urls")),          # /api/storage/signed_url/ + /api/storage/paperless_ingest/
+    path("api/",           include("apps.ocr.urls")),              # /api/ocr/parse-oc/ + /api/ocr/resolve-line/
 ]
