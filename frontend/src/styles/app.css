@@ -30,14 +30,18 @@ a { color: inherit; text-decoration: none; }
 .tabular    { font-variant-numeric: tabular-nums; font-weight: 600; }
 
 /* ── App shell ─────────────────────────────────────────── */
-/* Pintamos la columna izquierda con --nav-bg vía gradient, así que aunque
-   la sidebar (height: 100vh + sticky) no estire para ocupar la fila completa
-   cuando el contenido del módulo es más alto que el viewport, NUNCA se
-   alcanza a ver el --bg blanco debajo del footer del sidebar al scrollear. */
+/* Pintamos la columna izquierda con --nav-bg vía gradient ANCLADO AL VIEWPORT
+   (background-attachment: fixed). De esta forma, aunque:
+     - la sidebar (sticky, height: 100dvh) no estire 100% del shell,
+     - el contenido del main exceda el viewport y haya scroll vertical,
+     - el sidebar en CLIENT tenga pocos items,
+   la franja navy SIEMPRE cubre exactamente la columna izquierda del viewport
+   completo y nunca se ve el --bg beige debajo del footer del sidebar. */
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
   min-height: 100vh;
+  min-height: 100dvh;
   background:
     linear-gradient(
       to right,
@@ -46,6 +50,7 @@ a { color: inherit; text-decoration: none; }
       var(--bg)     var(--sidebar-w),
       var(--bg)     100%
     );
+  background-attachment: fixed;
   transition: grid-template-columns 200ms ease, background 200ms ease;
 }
 .app-shell[data-collapsed="true"] {
@@ -58,13 +63,21 @@ a { color: inherit; text-decoration: none; }
       var(--bg)     var(--sidebar-collapsed),
       var(--bg)     100%
     );
+  background-attachment: fixed;
 }
 
 /* ── Sidebar ───────────────────────────────────────────── */
+/* height: 100dvh (con fallback 100vh) resuelve el hueco blanco que aparecía
+   al scrollear: `dvh` respeta la altura dinámica del viewport (sin contar
+   barras del browser que aparecen/desaparecen), mientras `vh` a veces se
+   quedaba corto en Chrome/Edge con la URL bar visible. La franja navy fixed
+   del .app-shell cubre cualquier edge case residual. */
 .sidebar {
   position: sticky; top: 0;
   height: 100vh;
+  height: 100dvh;
   max-height: 100vh;
+  max-height: 100dvh;
   align-self: start;           /* evita que el grid lo estire y rompa sticky */
   background: var(--nav-bg);
   color: var(--nav-text);
