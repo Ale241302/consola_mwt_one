@@ -154,9 +154,10 @@ CREATE TRIGGER tr_transfer_doc_updated_at
 ALTER TABLE transfers.evento
     ADD COLUMN IF NOT EXISTS idempotence_token VARCHAR(64);
 
+-- transfers.evento es append-only — sin columna is_active.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_transfer_evento_idemp
     ON transfers.evento (idempotence_token)
-    WHERE idempotence_token IS NOT NULL AND is_active = TRUE;
+    WHERE idempotence_token IS NOT NULL;
 
 -- =====================================================================
 -- Fin 91_transfers_audit.sql
