@@ -9,6 +9,32 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* ── Franja navy del sidebar (safety-net bulletproof) ─────────
+   Pinta una banda de var(--nav-bg) pegada a la izquierda del viewport,
+   de alto 100% del viewport, como pseudo-elemento fijo en el body.
+   Esto garantiza que NUNCA haya hueco blanco debajo del sidebar,
+   aunque:
+     - la sidebar sticky quede corta en 100vh (bug Chrome/Edge),
+     - framer-motion cree stacking contexts que rompan background-attachment: fixed,
+     - el contenido del .main sea más alto que el viewport y haya scroll,
+     - el viewport tenga barra del browser dinámica.
+   z-index: 0 mantiene esta banda detrás de todo (sidebar y main renderizan
+   por encima). pointer-events: none evita bloquear clicks.
+──────────────────────────────────────────────────────────────── */
+body:has(.app-shell)::before {
+  content: "";
+  position: fixed;
+  top: 0; bottom: 0; left: 0;
+  width: var(--sidebar-w);
+  background: var(--nav-bg);
+  z-index: 0;
+  pointer-events: none;
+  transition: width 200ms ease, background 200ms ease;
+}
+body:has(.app-shell[data-collapsed="true"])::before {
+  width: var(--sidebar-collapsed);
+}
 button { font-family: inherit; }
 input, select, textarea { font-family: inherit; color: inherit; }
 a { color: inherit; text-decoration: none; }
