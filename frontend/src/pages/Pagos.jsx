@@ -1,15 +1,28 @@
 // Pagos / Financial module
+//
+// ── Variante CLIENT (RBAC, 2026-04-21) ────────────────────────────
+// Cuando isClient=true, el componente raíz delega en <ClientFinanciero/>,
+// que muestra una vista compacta: header de saldo actual + uso de crédito
+// + lista de los próximos 5 vencimientos. Oculto para CLIENT:
+//   - Máquina de estados de pagos (detalle operativo interno)
+//   - Aging de cuentas por cobrar (dashboard de cobranza)
+//   - Rentabilidad y márgenes [CEO-ONLY]
+//   - Tabs "Por cobrar / Por cliente / Historial" (vistas cross-cliente)
+//   - Botón "+ Registrar pago" (solo staff registra transferencias)
+// La autoridad real de filtrado por cliente vive en apps.portal +
+// ClientScopedManager; esta capa solo adapta la UI.
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
 import { Badge, StatusBadge, CreditDot, CreditBar, CountryFlag } from "../components/ui/primitives.jsx";
-import { IconDownload, IconPlus } from "../lib/icons.jsx";
+import { IconDownload, IconPlus, IconClock, IconShield } from "../lib/icons.jsx";
 import {
   EXPEDIENTES as MOCK_EXPEDIENTES,
   CLIENTS,
   OCS as MOCK_OCS,
 } from "../data/mockData.js";
 import { expedientesApi, ocsApi } from "../lib/api.js";
+import { useRole } from "../context/RoleContext.jsx";
 
 // ── Mapeo backend → UI (campos financieros) ────────
 function mapExpedienteForPagos(r) {
@@ -41,6 +54,7 @@ function mapExpedienteForPagos(r) {
 export default function ScreenPagos() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
+  const { isClient, can } = useRole();
 
   // ── Data desde API (fallback a mocks) ────────
   const [apiExpedientes, setApiExpedientes] = useState([]);
@@ -130,6 +144,21 @@ export default function ScreenPagos() {
   const avgMarginB = expsB.length ? expsB.reduce((a,e)=>a + e.real_margin,0) / expsB.length : 0;
   const avgMarginC = expsC.length ? expsC.reduce((a,e)=>a + e.real_margin,0) / expsC.length : 0;
 
+  // ── Variante CLIENT: vista compacta "Saldo + Próximos vencimientos" ──
+  // Delegamos en un componente aparte que consume los agregados ya calculados.
+  if (isClient) {
+    return (
+      <ClientFinanciero
+        lang={lang}
+        expedientes={EXPEDIENTES}
+        ocs={OCS}
+        totalInvoiced={totalInvoiced}
+        totalReceivable={totalReceivable}
+        onOpenExpediente={onOpenExpediente}
+      />
+    );
+  }
+
   return (
     <div className="page" data-screen-label="Financiero · Pagos">
       <div className="page-header">
@@ -140,7 +169,9 @@ export default function ScreenPagos() {
         </div>
         <div className="flex gap-2">
           <button className="btn btn-secondary"><IconDownload size={14}/>{tr(lang,'export')}</button>
-          <button className="btn btn-primary"><IconPlus size={14}/>{tr(lang,'register_payment')}</button>
+          {can('register_payment') && (
+            <button className="btn btn-primary"><IconPlus size={14}/>{tr(lang,'register_payment')}</button>
+          )}
         </div>
       </div>
 
@@ -678,4 +709,167 @@ function PaymentStateBadge({ state, lang }) {
     REJECTED: { kind:'critical', label: lang==='es' ? 'Rechazado'         : 'Rejected' },
   }[state] || { kind:'neutral', label: state };
   return <Badge kind={map.kind} dot>{map.label}</Badge>;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * ClientFinanciero — vista CLIENT de /financiero
+ *
+ * Muestra SOLO:
+ *   - Hero de saldo actual (balance total pendiente).
+ *   - Chip de uso de límite de crédito.
+ *   - Lista de los próximos 5 vencimientos (OC, monto, fecha, días restantes).
+ *
+ * Oculto respecto a la vista staff:
+ *   - Máquina de estados (pending/verified/released/rejected).
+ *   - Aging buckets.
+ *   - Sección [CEO-ONLY] Rentabilidad y márgenes.
+ *   - Tabs Por cobrar / Por cliente / Historial.
+ *   - Botón "+ Registrar pago" (solo staff registra; el cliente reporta
+ *     su pago desde /portal → tab "Pagos" con botón "Reportar pago",
+ *     fuera del scope de este sprint).
+ * ────────────────────────────────────────────────────────────────── */
+function ClientFinanciero({ lang, expedientes, ocs, totalInvoiced, totalReceivable, onOpenExpediente }) {
+  // Saldo actual = receivable (lo que aún no se liberó a crédito).
+  // Heurística: el cliente ve sus expedientes con balance > 0 ordenados
+  // por ETA ascendente (o last_event_at descendente si no hay ETA).
+  const openExps = (expedientes || []).filter(e => Number(e.balance) > 0);
+  const upcoming = [...openExps]
+    .sort((a, b) => {
+      const ea = a.eta || a.due_date || a.last_event_at || '';
+      const eb = b.eta || b.due_date || b.last_event_at || '';
+      return String(ea).localeCompare(String(eb));
+    })
+    .slice(0, 5);
+
+  const balance = totalReceivable ?? openExps.reduce((acc, e) => acc + Number(e.balance || 0), 0);
+
+  // Uso de crédito: para la demo usamos % de receivable sobre invoiced.
+  // En el backend real esto vendrá de portal.kpis.credit_days_used / limit.
+  const creditUsagePct = totalInvoiced > 0
+    ? Math.min(100, Math.round((balance / totalInvoiced) * 100))
+    : 0;
+  const creditTone = creditUsagePct >= 85 ? 'critical' : creditUsagePct >= 65 ? 'warning' : 'success';
+
+  const today = new Date();
+  const daysUntil = (dateStr) => {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    return Math.round((d - today) / (1000 * 60 * 60 * 24));
+  };
+
+  return (
+    <div className="page" data-screen-label="Mis Pagos" data-viewport="CLIENT">
+      <div className="page-header">
+        <div>
+          <div className="micro" style={{marginBottom:6, color:'var(--brand-primary)'}}>
+            {lang==='es' ? 'MIS PAGOS' : 'MY PAYMENTS'}
+          </div>
+          <h1 className="page-title">
+            {lang==='es' ? 'Tu estado de cuenta' : 'Your account statement'}
+          </h1>
+          <div className="page-subtitle">
+            {lang==='es'
+              ? 'Saldo actual y próximos vencimientos. Para reportar un pago, usa el portal.'
+              : 'Current balance and upcoming payments. To report a payment, use the portal.'}
+          </div>
+        </div>
+      </div>
+
+      {/* Hero: saldo actual + uso de crédito */}
+      <div className="client-balance-card mb-4">
+        <div className="client-balance-main">
+          <div className="micro" style={{color:'var(--text-tertiary)', marginBottom:6}}>
+            {lang==='es' ? 'SALDO ACTUAL' : 'CURRENT BALANCE'}
+          </div>
+          <div style={{font:'800 36px/1 var(--font-display)', color:'var(--text-primary)', letterSpacing:'-0.02em'}}>
+            {fmtMoney(balance)}
+          </div>
+          <div className="caption" style={{marginTop:6}}>
+            {openExps.length} {lang==='es' ? 'pedidos con saldo abierto' : 'orders with open balance'}
+          </div>
+        </div>
+        <div className="client-balance-credit">
+          <div className="micro" style={{color:'var(--text-tertiary)', marginBottom:6}}>
+            {lang==='es' ? 'USO DE LÍMITE DE CRÉDITO' : 'CREDIT LIMIT USAGE'}
+          </div>
+          <div style={{display:'flex', alignItems:'baseline', gap:6, marginBottom:8}}>
+            <span style={{font:'700 28px/1 var(--font-display)', color:`var(--${creditTone})`, fontVariantNumeric:'tabular-nums'}}>{creditUsagePct}</span>
+            <span style={{font:'500 14px/1 var(--font-body)', color:'var(--text-tertiary)'}}>%</span>
+          </div>
+          <div style={{height:6, background:'var(--bg-alt)', borderRadius:3, overflow:'hidden'}}>
+            <div style={{height:'100%', width:`${creditUsagePct}%`, background:`var(--${creditTone})`, transition:'width 300ms'}}/>
+          </div>
+          <div className="caption" style={{marginTop:8, display:'flex', alignItems:'center', gap:5}}>
+            <IconShield size={11}/>
+            {creditTone === 'critical'
+              ? (lang==='es' ? 'Cerca del límite — contactá a tu ejecutivo' : 'Near limit — contact your account manager')
+              : creditTone === 'warning'
+              ? (lang==='es' ? 'Uso moderado de tu línea' : 'Moderate use of your line')
+              : (lang==='es' ? 'Dentro del rango saludable' : 'Within healthy range')}
+          </div>
+        </div>
+      </div>
+
+      {/* Próximos vencimientos */}
+      <div className="card">
+        <div className="card-head">
+          <div>
+            <div className="card-title">
+              {lang==='es' ? 'Próximos vencimientos' : 'Upcoming payments'}
+            </div>
+            <div className="card-subtitle">
+              {lang==='es'
+                ? 'Los próximos 5 pedidos con saldo pendiente, ordenados por fecha.'
+                : 'The next 5 orders with outstanding balance, sorted by date.'}
+            </div>
+          </div>
+          <Badge kind="outline">{upcoming.length}</Badge>
+        </div>
+        {upcoming.length === 0 ? (
+          <div className="card-pad-lg" style={{textAlign:'center', color:'var(--text-tertiary)'}}>
+            <IconClock size={22} style={{opacity:0.4, marginBottom:8}}/>
+            <div>{lang==='es' ? 'No tenés vencimientos próximos.' : 'No upcoming payments.'}</div>
+          </div>
+        ) : (
+          <table className="table">
+            <thead><tr>
+              <th>{lang==='es'?'Pedido':'Order'}</th>
+              <th>{lang==='es'?'Estado':'Status'}</th>
+              <th style={{textAlign:'right'}}>{lang==='es'?'Saldo':'Balance'}</th>
+              <th>{lang==='es'?'Vencimiento':'Due date'}</th>
+              <th>{lang==='es'?'Días restantes':'Days left'}</th>
+            </tr></thead>
+            <tbody>
+              {upcoming.map(e => {
+                const due = e.eta || e.due_date || e.last_event_at;
+                const days = daysUntil(due);
+                const tone = days == null ? 'var(--text-tertiary)'
+                           : days < 0 ? 'var(--critical)'
+                           : days <= 7 ? 'var(--warning)'
+                           : 'var(--text-secondary)';
+                return (
+                  <tr key={e.id} onClick={() => onOpenExpediente && onOpenExpediente(e.id)} style={{cursor:'pointer'}}>
+                    <td><span className="td-ref">{e.ref}</span></td>
+                    <td><StatusBadge status={e.status} lang={lang}/></td>
+                    <td className="td-money">{fmtMoney(e.balance)}</td>
+                    <td className="text-sec">{fmtDate(due, lang) || '—'}</td>
+                    <td className="td-num" style={{color:tone, fontVariantNumeric:'tabular-nums', fontWeight:600}}>
+                      {days == null ? '—' : days < 0 ? `${Math.abs(days)}d ${lang==='es'?'vencido':'overdue'}` : `${days}d`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <div style={{padding:'10px 16px', borderTop:'1px solid var(--divider)', background:'var(--bg-alt)', font:'500 11px/1.4 var(--font-body)', color:'var(--text-tertiary)', display:'flex', gap:6, alignItems:'center'}}>
+          <IconShield size={11}/>
+          {lang==='es'
+            ? 'Para reportar un pago usa el Portal → pestaña Pagos. Para cualquier consulta, contactá a tu ejecutivo de cuenta.'
+            : 'To report a payment, use the Portal → Payments tab. For any questions, contact your account manager.'}
+        </div>
+      </div>
+    </div>
+  );
 }

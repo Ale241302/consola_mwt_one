@@ -6589,3 +6589,80 @@ a { color: inherit; text-decoration: none; }
   color: var(--text-secondary);
 }
 
+/* =====================================================================
+   RBAC CLIENT · Pipeline / Portal / Financiero
+   (sprint 2026-04-21 · AG-FRONTEND #109-#113)
+   ===================================================================== */
+
+/* ── Pipeline: kanban read-only para CLIENT ─────────────
+   Sin dragbar, más aire, cursor pointer. */
+.kanban[data-readonly="true"] .k-card-pro {
+  cursor: pointer;
+}
+.kanban[data-readonly="true"] .k-card-pro[data-readonly="true"] {
+  padding-left: 12px;
+}
+.kanban[data-readonly="true"] .k-col {
+  background: var(--bg-alt);
+}
+.k-card-pro[data-readonly="true"]:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+  border-color: var(--brand-primary);
+}
+
+/* ── Portal: Mi Empresa card ────────────────────────────
+   Layout de ficha read-only con 3 columnas por defecto. */
+.my-company-card {
+  border-left: 3px solid var(--brand-primary);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--brand-primary) 3%, var(--surface)) 0%,
+    var(--surface) 60%
+  );
+}
+.my-company-card .grid.col-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+@media (max-width: 800px) {
+  .my-company-card .grid.col-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  .my-company-card .grid.col-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Financiero CLIENT: hero de saldo + crédito ─────────
+   Card amplio con dos columnas: saldo USD grande + uso de límite. */
+.client-balance-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 28px;
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  gap: 32px;
+  align-items: center;
+  box-shadow: var(--shadow-sm);
+}
+.client-balance-card .client-balance-main {
+  padding-right: 24px;
+  border-right: 1px solid var(--divider);
+}
+@media (max-width: 720px) {
+  .client-balance-card {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .client-balance-card .client-balance-main {
+    padding-right: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--divider);
+    padding-bottom: 18px;
+  }
+}
+

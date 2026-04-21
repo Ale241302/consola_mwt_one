@@ -40,9 +40,20 @@ function deriveBaseViewport(backendRole) {
 
 // Whitelist de módulos visibles en CLIENT.
 // El Sidebar y otros filtros consumen esta lista.
+//
+// Ampliación 2026-04-21 (AG-FRONTEND):
+//   - pipeline → kanban READ-ONLY de los propios expedientes (sin drag-drop,
+//               sin montos USD, sin márgenes, sin filtros internos).
+//   - portal   → ficha "Mi Empresa" read-only (razón social, RUC/CUIT, AM,
+//               límite de crédito) + tabs Orders/Payments/Docs existentes.
+//   - pagos    → vista compacta "Saldo + próximos vencimientos" (sin
+//               máquina de estados, sin aging, sin Rentabilidad CEO).
 export const CLIENT_ALLOWED_MODULES = new Set([
   "dashboard",
   "expedientes",
+  "pipeline",
+  "portal",
+  "pagos",
 ]);
 
 // Capacidades CEO-ONLY — si isClient, estas acciones se ocultan/deshabilitan.
@@ -63,6 +74,16 @@ export const CEO_ONLY_CAPABILITIES = new Set([
   "view_internal_proforma",     // tab proforma interna
   "view_payables",              // KPI por pagar (Dashboard)
   "view_weighted_margin",       // KPI rentabilidad en vivo
+  // ─── Pipeline ────────────────────────────────────
+  "pipeline_drag",              // drag-and-drop para avanzar estado
+  "view_pipeline_money",        // montos USD en cards + column totals
+  "view_pipeline_internal_filters", // chips "Bloqueados" + leyenda con "Blocked"
+  // ─── Financiero / Pagos ──────────────────────────
+  "register_payment",           // "+ Registrar pago"
+  "view_financiero_full_dashboard", // Máquina de estados + Aging + Rentabilidad CEO + tabs
+  // ─── Portal ──────────────────────────────────────
+  "portal_edit_company",        // editar ficha de compañía (staff)
+  "view_portal_preview_badge",  // "VISTA CLIENTE" badge (solo staff previsualizando)
 ]);
 
 const RoleContext = createContext(null);

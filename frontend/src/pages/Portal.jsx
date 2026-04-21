@@ -15,7 +15,7 @@ import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
 import { Badge } from "../components/ui/primitives.jsx";
 import {
   IconCheck, IconFileText, IconShield, IconDownload, IconMapPin, IconShip, IconPlane,
-  IconClock, IconArrow, IconChevRight,
+  IconClock, IconArrow, IconChevRight, IconBuilding, IconUsers,
 } from "../lib/icons.jsx";
 import {
   CLIENTS    as MOCK_CLIENTS,
@@ -23,6 +23,7 @@ import {
   EXPEDIENTES as MOCK_EXPEDIENTES,
 } from "../data/mockData.js";
 import { usePortalData } from "../hooks/usePortalData.js";
+import { useRole } from "../context/RoleContext.jsx";
 
 // ── Adapters backend → shape UI ─────
 // El backend NO expone total_cost / margin / commission / supplier / modo_operacion;
@@ -201,6 +202,7 @@ function SignedDownload({ label, lang, kind }) {
 export default function ScreenPortal() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
+  const { isClient, can } = useRole();
   const onOpenOC = (ocId) => navigate(`/expedientes/${ocId}`);
 
   const [tab, setTab] = useState('orders');
@@ -254,7 +256,9 @@ export default function ScreenPortal() {
           <div className="portal-chrome-logo">M</div>
           <span className="portal-chrome-brand">MWT · <small>PORTAL</small></span>
         </div>
-        <Badge kind="mint" style={{ marginLeft: 8 }}>{lang==='es'?'VISTA CLIENTE':'CLIENT VIEW'}</Badge>
+        {can('view_portal_preview_badge') && (
+          <Badge kind="mint" style={{ marginLeft: 8 }}>{lang==='es'?'VISTA CLIENTE':'CLIENT VIEW'}</Badge>
+        )}
         <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:10, fontSize:13 }}>
           <span style={{ opacity:0.7 }}>{client?.name}</span>
           <div className="avatar" style={{ width:28, height:28, fontSize:11 }}>{client?.contact.split(' ').map(s=>s[0]).join('')}</div>
@@ -276,6 +280,11 @@ export default function ScreenPortal() {
               : 'Review your orders, payments, and shipping documents.'}
           </div>
         </div>
+
+        {/* Mi Empresa — solo CLIENT (read-only). Staff ya ve la ficha real en /clientes. */}
+        {isClient && client && (
+          <MyCompanyCard lang={lang} client={client} creditLimit={creditLimit} creditUsed={creditUsed} />
+        )}
 
         {/* Client KPIs (safe, no $ exposure) */}
         <div className="portal-kpi-grid mb-6">
@@ -509,6 +518,100 @@ function PortalPayments({ lang, ocs }) {
         {lang==='es'
           ? 'Los pagos rechazados requieren contacto directo con tu ejecutivo MWT para más detalles.'
           : 'Rejected payments require direct contact with your MWT rep for details.'}
+      </div>
+    </div>
+  );
+}
+
+// ── Mi Empresa card (CLIENT only) ─────
+// Ficha read-only con los datos fiscales y comerciales de la compañía.
+// Los campos vienen del serializer del Portal (me.*); si falta alguno,
+// cae al mock (--) como placeholder visual.
+function MyCompanyCard({ lang, client, creditLimit, creditUsed }) {
+  const _raw = client?._raw || {};
+  const fiscalId       = _raw.fiscal_id || _raw.ruc || _raw.cuit || client.fiscal_id || '—';
+  const fiscalName     = _raw.fiscal_name || _raw.razon_social || client.name || '—';
+  const fiscalAddress  = _raw.fiscal_address || _raw.address || client.address || '—';
+  const accountManager = _raw.account_manager_name || _raw.am_name || client.account_manager || '—';
+  const paymentTerms   = _raw.payment_terms || client.payment_terms || '—';
+  const country        = _raw.country || client.country || '—';
+
+  return (
+    <div className="card card-pad-lg mb-6 my-company-card">
+      <div className="flex ai-center gap-3 mb-4" style={{borderBottom:'1px solid var(--divider)', paddingBottom:14}}>
+        <div style={{
+          width:48, height:48, borderRadius:12,
+          background: 'linear-gradient(135deg, var(--brand-primary), var(--brand-ice, #3083FE))',
+          color:'#fff', display:'grid', placeItems:'center',
+        }}>
+          <IconBuilding size={22}/>
+        </div>
+        <div style={{flex:1, minWidth:0}}>
+          <div className="micro" style={{color:'var(--text-tertiary)', marginBottom:4}}>
+            {lang==='es' ? 'MI EMPRESA' : 'MY COMPANY'}
+          </div>
+          <div className="heading-lg truncate">{fiscalName}</div>
+          <div className="caption" style={{marginTop:2}}>
+            {country} · {lang==='es' ? 'Ficha read-only' : 'Read-only profile'}
+          </div>
+        </div>
+        <span
+          className="caption"
+          title={lang==='es' ? 'Para cambios contactá a tu ejecutivo de cuenta' : 'Contact your account manager for changes'}
+          style={{
+            display:'inline-flex', alignItems:'center', gap:5,
+            padding:'4px 9px', borderRadius:999,
+            background:'var(--bg-alt)', color:'var(--text-tertiary)',
+            border:'1px solid var(--divider)', font:'600 10px/1 var(--font-mono)', letterSpacing:'0.08em',
+          }}
+        >
+          <IconShield size={10}/>{lang==='es' ? 'SOLO LECTURA' : 'READ ONLY'}
+        </span>
+      </div>
+
+      <div className="grid col-3 gap-4">
+        <CompanyField label={lang==='es'?'RUC / CUIT':'Tax ID'} value={fiscalId} mono/>
+        <CompanyField label={lang==='es'?'Razón social':'Legal name'} value={fiscalName}/>
+        <CompanyField label={lang==='es'?'País':'Country'} value={country}/>
+        <CompanyField label={lang==='es'?'Dirección fiscal':'Fiscal address'} value={fiscalAddress} wide/>
+        <CompanyField label={lang==='es'?'Ejecutivo de cuenta':'Account manager'} value={accountManager} icon={<IconUsers size={12}/>}/>
+        <CompanyField label={lang==='es'?'Condiciones de pago':'Payment terms'} value={paymentTerms}/>
+      </div>
+
+      <div className="flex ai-center gap-4 mt-4" style={{paddingTop:14, borderTop:'1px solid var(--divider)'}}>
+        <div style={{flex:1}}>
+          <div className="micro" style={{marginBottom:4}}>
+            {lang==='es'?'LÍMITE DE CRÉDITO':'CREDIT LIMIT'}
+          </div>
+          <div style={{font:'700 15px/1.2 var(--font-mono)', color:'var(--text-primary)'}}>
+            {fmtMoney(_raw.credit_limit || client.credit_limit || 0)}
+          </div>
+        </div>
+        <div style={{flex:1}}>
+          <div className="micro" style={{marginBottom:4}}>
+            {lang==='es'?'DÍAS DE CRÉDITO USADOS':'CREDIT DAYS USED'}
+          </div>
+          <div style={{font:'700 15px/1.2 var(--font-mono)', color:'var(--text-primary)'}}>
+            {creditUsed} / {creditLimit} {lang==='es'?'días':'days'}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Small labeled field for Mi Empresa.
+function CompanyField({ label, value, mono, icon, wide }) {
+  return (
+    <div style={wide ? {gridColumn:'1 / -1'} : undefined}>
+      <div className="micro" style={{color:'var(--text-tertiary)', marginBottom:4, display:'flex', alignItems:'center', gap:4}}>
+        {icon}{label}
+      </div>
+      <div style={{
+        font: mono ? '600 13px/1.3 var(--font-mono)' : '500 13px/1.3 var(--font-body)',
+        color:'var(--text-primary)',
+      }}>
+        {value}
       </div>
     </div>
   );
