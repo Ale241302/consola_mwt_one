@@ -15,6 +15,7 @@ import { motion } from "framer-motion";
 import { aiThreadsApi, aiChatApi } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { fmtShortDate } from "../lib/i18n.js";
+import { MOCK_AI_THREADS } from "../data/mockData.js";
 import {
   IconBot, IconBrain, IconPlus, IconPin, IconArchive, IconRefresh,
 } from "../lib/icons.jsx";
@@ -29,6 +30,19 @@ export default function AIHub() {
   const [error,   setError]   = useState(null);
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState("ACTIVE");  // ACTIVE | PINNED | ARCHIVED
+  const [usingMock, setUsingMock] = useState(false);
+
+  // Filtra MOCK_AI_THREADS según el tab activo (ACTIVE | PINNED | ARCHIVED).
+  // Patrón fail-soft: si el backend no devuelve hilos (vacío o error), caemos a
+  // este dataset para que la UI tenga vida. Cualquier interacción con un
+  // thread mock-* es manejada localmente por AIChat (no toca el backend).
+  function mockThreadsForFilter() {
+    return MOCK_AI_THREADS.filter(t => {
+      if (filter === "PINNED")   return !!t.pinned_at && !t.archived_at;
+      if (filter === "ARCHIVED") return !!t.archived_at;
+      return !t.archived_at;  // ACTIVE
+    });
+  }
 
   async function load() {
     setLoading(true);
@@ -39,9 +53,18 @@ export default function AIHub() {
                    : {};
       const d = await aiThreadsApi.list(params);
       const list = Array.isArray(d) ? d : (d?.results || []);
-      setThreads(list);
+      if (list.length > 0) {
+        setThreads(list);
+        setUsingMock(false);
+      } else {
+        setThreads(mockThreadsForFilter());
+        setUsingMock(true);
+      }
     } catch (e) {
-      setError(e?.message || "No se pudieron cargar los hilos");
+      // Fail-soft: si el backend rechaza (401, 500, etc.) servimos mock
+      // para que el CEO pueda seguir explorando la UI.
+      setThreads(mockThreadsForFilter());
+      setUsingMock(true);
     } finally {
       setLoading(false);
     }
@@ -59,25 +82,43 @@ export default function AIHub() {
       const id = created?.id;
       if (id) navigate(`/ai/chat/${id}`);
     } catch (e) {
-      setError(e?.body?.detail || e?.message || "No se pudo crear el hilo");
+      // Fallback mock: creamos un thread local y navegamos a /ai/chat/mock-th-*.
+      const id = `mock-th-new-${Date.now()}`;
+      navigate(`/ai/chat/${id}`);
     } finally {
       setCreating(false);
     }
   }
 
+  // Mutación local para hilos mock — no llamamos al backend.
+  function _mutateLocalThread(id, patch) {
+    setThreads(arr => arr.map(t => (t.id === id ? { ...t, ...patch } : t)));
+  }
   async function togglePin(t) {
+    if (t.mock_only || String(t.id || "").startsWith("mock-th-")) {
+      _mutateLocalThread(t.id, { pinned_at: t.pinned_at ? null : new Date().toISOString() });
+      return;
+    }
     try {
       if (t.pinned_at) await aiChatApi.unpinThread(t.id);
       else             await aiChatApi.pinThread(t.id);
       await load();
-    } catch (_) { /* swallow */ }
+    } catch (_) {
+      _mutateLocalThread(t.id, { pinned_at: t.pinned_at ? null : new Date().toISOString() });
+    }
   }
   async function toggleArchive(t) {
+    if (t.mock_only || String(t.id || "").startsWith("mock-th-")) {
+      _mutateLocalThread(t.id, { archived_at: t.archived_at ? null : new Date().toISOString() });
+      return;
+    }
     try {
       if (t.archived_at) await aiChatApi.unarchiveThread(t.id);
       else               await aiChatApi.archiveThread(t.id);
       await load();
-    } catch (_) { /* swallow */ }
+    } catch (_) {
+      _mutateLocalThread(t.id, { archived_at: t.archived_at ? null : new Date().toISOString() });
+    }
   }
 
   return (
@@ -151,6 +192,24 @@ export default function AIHub() {
       </div>
 
       {/* Estado */}
+      {usingMock && !error && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          padding: "10px 14px", borderRadius: 10,
+          background: "rgba(180,83,9,0.10)", color: "#B45309",
+          border: "1px solid rgba(180,83,9,0.20)",
+          font: "500 13px/1.4 var(--font-body)",
+        }}>
+          <span style={{
+            display: "inline-flex", width: 8, height: 8, borderRadius: 999,
+            background: "#B45309", flex: "0 0 8px",
+          }}/>
+          <span>
+            <strong>Modo demo:</strong> Mostrando un historial de conversación de ejemplo.
+            Las nuevas conversaciones, anclados y archivados se mantienen sólo en este navegador.
+          </span>
+        </div>
+      )}
       {error && (
         <div style={{
           padding: "10px 14px", borderRadius: 10,

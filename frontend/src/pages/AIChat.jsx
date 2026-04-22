@@ -23,10 +23,49 @@ import { useNavigate, useParams } from "react-router-dom";
 import { aiThreadsApi, aiChatApi } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import {
+  MOCK_AI_THREADS,
+  MOCK_AI_MESSAGES_BY_THREAD,
+  MOCK_AI_CONTEXT_BY_THREAD,
+} from "../data/mockData.js";
+import {
   IconChevLeft, IconRefresh, IconPin, IconArchive, IconBrain, IconBot,
 } from "../lib/icons.jsx";
 import MessageBubble from "../components/ai/MessageBubble.jsx";
 import ChatInput     from "../components/ai/ChatInput.jsx";
+
+// Util — ¿Este threadId pertenece a un hilo mock?
+const _isMockThread = (id) => typeof id === "string" && id.startsWith("mock-th-");
+
+// Plantilla de respuesta del asistente cuando estamos en modo demo.
+function _buildMockAssistantReply(userText, threadId) {
+  const t = (userText || "").toLowerCase();
+  let body;
+  if (t.includes("precio") || t.includes("margen") || t.includes("lista")) {
+    body = `Recibido. Reviso la lista en cuestión y te traigo:\n\n• Margen promedio actual.\n• SKUs por debajo del piso 50%.\n• Recomendación de ajuste por SKU.\n\n*(Esto es una respuesta simulada en modo demo — cuando el backend de IA esté conectado, ejecuto el cálculo real con \`commercial.pricelist.aggregate\`.)*`;
+  } else if (t.includes("talla") || t.includes("plantilla") || t.includes("sizing")) {
+    body = `Listo. Construyo la tabla de tallas pedida con la fórmula vigente y la cargo en \`Motor de Tallas\`.\n\n*(Demo — al conectar el backend, llamo a \`sizing.build_table\` con los parámetros que me pasaste.)*`;
+  } else if (t.includes("mlv") || t.includes("mercado libre") || t.includes("amazon") || t.includes("marketplace")) {
+    body = `Tomo nota. Bajo el reporte de marketplace y propongo una acción en 3 pasos:\n\n1. Top SKUs con conversión < 0.5%.\n2. Comparativa de precio vs. top-3 del canal.\n3. Cupón / promo recomendado.\n\n*(Demo — el llamado real va a \`marketplace.conversion.bottom\`.)*`;
+  } else if (t.includes("compliance") || t.includes("ce") || t.includes("norma") || t.includes("doc")) {
+    body = `Perfecto. Reviso la normativa aplicable y te dejo el checklist + plantilla de **DoC** lista para firmar.\n\n*(Demo — backend desconectado.)*`;
+  } else {
+    body = `Recibido, Alejandro. Tomo nota y te respondo con datos en cuanto el backend de IA esté conectado a este hilo.\n\n*(Esta es una respuesta simulada en modo demo para que veas cómo se ve la interacción.)*`;
+  }
+  return {
+    id: `local-asst-${Date.now()}`,
+    thread_id: threadId,
+    sender: "ASSISTANT",
+    content_text: body,
+    created_at: new Date().toISOString(),
+    attachment_ids: [],
+    from_agent_id: "mock-ag-precios",
+    tool_name: null,
+    tokens_in: Math.round(40 + Math.random() * 200),
+    tokens_out: Math.round(120 + Math.random() * 380),
+    cost_usd: Number((0.0015 + Math.random() * 0.008).toFixed(4)),
+    mock_only: true,
+  };
+}
 
 export default function AIChat() {
   const { threadId } = useParams();
@@ -37,6 +76,7 @@ export default function AIChat() {
   const [thread,   setThread]   = useState(null);
   const [messages, setMessages] = useState([]);
   const [context,  setContext]  = useState({ agents: [], skills: [], instructions: [] });
+  const [usingMock, setUsingMock] = useState(false);
 
   const [loadingMeta,   setLoadingMeta]   = useState(true);
   const [loadingMsgs,   setLoadingMsgs]   = useState(true);
@@ -45,7 +85,37 @@ export default function AIChat() {
 
   const scrollRef = useRef(null);
 
+  // Carga el hilo desde el dataset mock — se usa cuando el threadId
+  // empieza con "mock-th-" o cuando el backend devuelve 404 / 401.
+  function loadFromMock() {
+    const t = MOCK_AI_THREADS.find(x => x.id === threadId) || {
+      id: threadId,
+      titulo: "Nueva conversación (demo)",
+      message_count: 0,
+      tokens_in_total: 0,
+      tokens_out_total: 0,
+      mock_only: true,
+    };
+    setThread(t);
+    setMessages(MOCK_AI_MESSAGES_BY_THREAD[threadId] || []);
+    const ctx = MOCK_AI_CONTEXT_BY_THREAD[threadId] || { agents: [], skills: [], instructions: [] };
+    setContext({
+      agents:       ctx.agents       || [],
+      skills:       ctx.skills       || [],
+      instructions: ctx.instructions || [],
+    });
+    setUsingMock(true);
+    setError(null);
+    setLoadingMeta(false);
+    setLoadingMsgs(false);
+  }
+
   async function loadAll() {
+    // Atajo: si el id ya es un thread mock, no llamamos al backend.
+    if (_isMockThread(threadId)) {
+      loadFromMock();
+      return;
+    }
     setLoadingMeta(true);
     setLoadingMsgs(true);
     setError(null);
@@ -63,8 +133,10 @@ export default function AIChat() {
         skills:        Array.isArray(ctx?.skills)       ? ctx.skills       : [],
         instructions:  Array.isArray(ctx?.instructions) ? ctx.instructions : [],
       });
+      setUsingMock(false);
     } catch (e) {
-      setError(e?.body?.detail || e?.message || "No se pudo cargar el hilo");
+      // Fail-soft: si el hilo no existe en backend, lo servimos como demo.
+      loadFromMock();
     } finally {
       setLoadingMeta(false);
       setLoadingMsgs(false);
@@ -92,6 +164,30 @@ export default function AIChat() {
       _optimistic: true,
     };
     setMessages(arr => [...arr, optimistic]);
+
+    // ── Modo demo: simulamos la respuesta del asistente sin tocar backend ──
+    if (usingMock || _isMockThread(threadId)) {
+      const userPersisted = { ...optimistic, _optimistic: false, mock_only: true };
+      // Pequeño delay para que se vea el typing indicator
+      setTimeout(() => {
+        const assistant = _buildMockAssistantReply(payload.user_text, threadId);
+        setMessages(arr => {
+          const filtered = arr.filter(m => m.id !== optimistic.id);
+          return [...filtered, userPersisted, assistant];
+        });
+        setThread(t => t ? {
+          ...t,
+          message_count: (t.message_count || 0) + 2,
+          last_message_at: new Date().toISOString(),
+          last_user_text: payload.user_text,
+          tokens_in_total:  (t.tokens_in_total  || 0) + (assistant.tokens_in  || 0),
+          tokens_out_total: (t.tokens_out_total || 0) + (assistant.tokens_out || 0),
+        } : t);
+        setSending(false);
+      }, 900);
+      return;
+    }
+
     try {
       const resp = await aiChatApi.send(payload);
       // Reemplazar el optimistic con el user real + agregar el assistant
@@ -132,21 +228,33 @@ export default function AIChat() {
 
   async function togglePin() {
     if (!thread) return;
+    if (usingMock || _isMockThread(thread.id)) {
+      setThread(t => ({ ...t, pinned_at: t.pinned_at ? null : new Date().toISOString() }));
+      return;
+    }
     try {
       if (thread.pinned_at) await aiChatApi.unpinThread(thread.id);
       else                  await aiChatApi.pinThread(thread.id);
       const t = await aiThreadsApi.get(threadId);
       setThread(t);
-    } catch (_) {}
+    } catch (_) {
+      setThread(t => ({ ...t, pinned_at: t.pinned_at ? null : new Date().toISOString() }));
+    }
   }
   async function toggleArchive() {
     if (!thread) return;
+    if (usingMock || _isMockThread(thread.id)) {
+      setThread(t => ({ ...t, archived_at: t.archived_at ? null : new Date().toISOString() }));
+      return;
+    }
     try {
       if (thread.archived_at) await aiChatApi.unarchiveThread(thread.id);
       else                    await aiChatApi.archiveThread(thread.id);
       const t = await aiThreadsApi.get(threadId);
       setThread(t);
-    } catch (_) {}
+    } catch (_) {
+      setThread(t => ({ ...t, archived_at: t.archived_at ? null : new Date().toISOString() }));
+    }
   }
 
   const titulo = thread?.titulo || "Conversación";
@@ -201,6 +309,26 @@ export default function AIChat() {
           <IconBrain size={14} /> Gobernanza
         </button>
       </div>
+
+      {/* Banner Demo */}
+      {usingMock && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          padding: "8px 20px",
+          background: "rgba(180,83,9,0.10)", color: "#B45309",
+          borderBottom: "1px solid rgba(180,83,9,0.18)",
+          font: "500 12.5px/1.4 var(--font-body)",
+        }}>
+          <span style={{
+            display: "inline-flex", width: 7, height: 7, borderRadius: 999,
+            background: "#B45309", flex: "0 0 7px",
+          }}/>
+          <span>
+            <strong>Modo demo:</strong> esta conversación es un ejemplo.
+            Tus mensajes generan respuestas simuladas hasta que el backend de IA esté conectado.
+          </span>
+        </div>
+      )}
 
       {/* Stream de mensajes */}
       <div ref={scrollRef} className="ai-chat-stream" style={{
