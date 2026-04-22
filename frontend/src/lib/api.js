@@ -6,6 +6,31 @@
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
+// =====================================================================
+// MOCK MODE — kill-switch para apagar el backend salvo /auth/*.
+// Activar con `VITE_USE_MOCKS=1` al buildear el frontend.
+// Comportamiento:
+//   · /auth/login/, /auth/refresh/, /auth/logout/, /auth/me/  → backend real.
+//   · cualquier otro path:
+//       - GET    → devuelve []  (las páginas detectan vacío y caen al
+//                                 fallback hardcoded de data/mockData.js).
+//       - POST/PUT/PATCH/DELETE → lanza ApiError con mensaje claro,
+//                                 para no simular escrituras fantasma.
+// Para reconectar el backend más tarde:  VITE_USE_MOCKS=0 + rebuild.
+// =====================================================================
+export const MOCKS_ENABLED = (
+  import.meta.env.VITE_USE_MOCKS === "1" ||
+  import.meta.env.VITE_USE_MOCKS === "true"
+);
+
+if (MOCKS_ENABLED && typeof window !== "undefined") {
+  // Marca visible en consola para que cualquiera entienda por qué la app
+  // no está pegándole al backend más allá del login.
+  // eslint-disable-next-line no-console
+  console.info("%c[api] MOCK MODE ON — solo /auth/* hace fetch real al backend.",
+               "color:#B45309;font-weight:600");
+}
+
 export class ApiError extends Error {
   constructor(message, status, body) {
     super(message);
@@ -16,6 +41,20 @@ export class ApiError extends Error {
 }
 
 export async function apiFetch(path, { method = "GET", body, token, headers = {} } = {}) {
+  // ── Kill-switch: mock mode ──────────────────────────────────────────
+  // /auth/* siempre pasa al backend real (login + refresh + me + logout).
+  // El resto: GET → []  ·  writes → ApiError honesta.
+  if (MOCKS_ENABLED && !path.startsWith("/auth/")) {
+    if (method === "GET") {
+      return [];
+    }
+    throw new ApiError(
+      "Backend deshabilitado (modo mock). Los cambios no se guardan.",
+      0,
+      { mock_mode: true, path, method },
+    );
+  }
+
   const opts = {
     method,
     headers: {

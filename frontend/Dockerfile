@@ -23,6 +23,10 @@ RUN npm ci || npm install
 COPY . .
 ARG VITE_API_BASE=/api
 ENV VITE_API_BASE=${VITE_API_BASE}
+# Mock mode kill-switch: 1 = apaga el backend (salvo /auth/*), 0 = backend real.
+# Default 0 (backend ON). Para activar: docker compose build --build-arg VITE_USE_MOCKS=1
+ARG VITE_USE_MOCKS=0
+ENV VITE_USE_MOCKS=${VITE_USE_MOCKS}
 RUN npm run build
 
 # ---------- 2) Runtime ------------------------------------------------

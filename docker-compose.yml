@@ -132,6 +132,9 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE: /api
+        # Mock mode: 1 = apaga el backend salvo /auth/*; 0 = backend real.
+        # Override desde env del host:  VITE_USE_MOCKS=1 docker compose up -d --build frontend
+        VITE_USE_MOCKS: ${VITE_USE_MOCKS:-0}
     image: consola-mwt-one/frontend:latest
     container_name: consola-mwt-one-frontend
     restart: unless-stopped
