@@ -189,3 +189,151 @@ export const portalApi = {
   misCobros:      (cid) => apiFetch(`${portalBase}/mis_cobros/`,     { token: getToken(), headers: portalHeaders(cid) }),
   misDocumentos:  (cid) => apiFetch(`${portalBase}/mis_documentos/`, { token: getToken(), headers: portalHeaders(cid) }),
 };
+
+// ---------------------------------------------------------------------
+// AI Hub (apps.ai_hub) — chat conversacional + catálogos de gobernanza.
+//
+//   /api/ai/agents/         · CRUD agentes
+//   /api/ai/skills/         · CRUD skills
+//   /api/ai/instructions/   · CRUD instrucciones
+//   /api/ai/threads/        · CRUD hilos + actions (pin/archive/anchor/...)
+//   /api/ai/messages/       · CRUD mensajes (read-mostly)
+//   /api/ai/attachments/    · CRUD adjuntos (read + soft delete)
+//   /api/ai/usage-logs/     · read-only telemetría
+//
+//   /api/ai/chat/send/      · POST → ChatService (LLM)
+//   /api/ai/chat/upload/    · POST multipart → AiAttachment
+//
+// MentionPopover (@/) consume:
+//   /api/ai/agents/select/?q=...
+//   /api/ai/skills/select/?q=...
+//   /api/ai/instructions/select/?q=...
+// ---------------------------------------------------------------------
+export const aiAgentsApi       = resource("ai/agents");
+export const aiSkillsApi       = resource("ai/skills");
+export const aiInstructionsApi = resource("ai/instructions");
+export const aiThreadsApi      = resource("ai/threads");
+export const aiThreadCtxApi    = resource("ai/thread-contexts");
+export const aiMessagesApi     = resource("ai/messages");
+export const aiAttachmentsApi  = resource("ai/attachments");
+export const aiUsageLogsApi    = resource("ai/usage-logs");
+
+const aiBase = "/ai";
+export const aiChatApi = {
+  // Mentions / Skills autocomplete
+  selectAgents:       (params)        => aiAgentsApi.action("select"),
+  selectSkills:       (params)        => aiSkillsApi.action("select"),
+  selectInstructions: (params)        => aiInstructionsApi.action("select"),
+
+  // Acciones de hilo (alias semánticos sobre el ViewSet)
+  threadMessages:     (threadId, qs)  => apiFetch(
+    `/ai/threads/${threadId}/messages/${qs ? `?${new URLSearchParams(qs).toString()}` : ""}`,
+    { token: getToken() },
+  ),
+  threadContext:      (threadId)      => apiFetch(
+    `/ai/threads/${threadId}/context/`, { token: getToken() },
+  ),
+  anchor:             (threadId, body) => apiFetch(
+    `/ai/threads/${threadId}/anchor/`,
+    { method: "POST", body, token: getToken() },
+  ),
+  unanchor:           (threadId, body) => apiFetch(
+    `/ai/threads/${threadId}/unanchor/`,
+    { method: "POST", body, token: getToken() },
+  ),
+  pinThread:          (threadId)      => apiFetch(
+    `/ai/threads/${threadId}/pin/`,   { method: "POST", token: getToken() },
+  ),
+  unpinThread:        (threadId)      => apiFetch(
+    `/ai/threads/${threadId}/unpin/`, { method: "POST", token: getToken() },
+  ),
+  archiveThread:      (threadId)      => apiFetch(
+    `/ai/threads/${threadId}/archive/`, { method: "POST", token: getToken() },
+  ),
+  unarchiveThread:    (threadId)      => apiFetch(
+    `/ai/threads/${threadId}/unarchive/`, { method: "POST", token: getToken() },
+  ),
+
+  // POST principal del chat
+  send: (payload) => apiFetch(`${aiBase}/chat/send/`, {
+    method: "POST", body: payload, token: getToken(),
+  }),
+
+  // Upload multipart (NO usa apiFetch porque éste fija Content-Type JSON).
+  upload: async ({ file, threadId, userId }) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (threadId) fd.append("thread_id", threadId);
+    if (userId)   fd.append("user_id",   userId);
+    const headers = {};
+    const tk = getToken();
+    if (tk) headers.Authorization = `Bearer ${tk}`;
+    const resp = await fetch(`${API_BASE}${aiBase}/chat/upload/`, {
+      method: "POST", body: fd, headers,
+    });
+    let data = null;
+    const text = await resp.text();
+    if (text) {
+      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    }
+    if (!resp.ok) {
+      const msg = data?.detail || data?.message || `HTTP ${resp.status}`;
+      throw new ApiError(msg, resp.status, data);
+    }
+    return data;
+  },
+};
+
+// ---------------------------------------------------------------------
+// Commercial Pricing API (Sprint 22-23)
+//   /api/commercial/pricelist-versions/          · CRUD + bulk-upsert-items + items
+//   /api/commercial/grade-items/                 · CRUD (cost_usd masked si ≠ CEO)
+//   /api/commercial/client-assignments/          · CPA
+//   /api/commercial/early-payment-policies/      · CRUD + replace-tiers
+//   /api/commercial/early-payment-tiers/         · CRUD bajo nivel
+//   /api/commercial/commission-rules/            · [CEO-ONLY]
+//   /api/commercial/catalogs/currencies/
+//   /api/commercial/catalogs/sources/
+//   /api/commercial/catalogs/commission-bases/
+//
+//   POST /api/commercial/resolve_client_price/   · waterfall endpoint
+// ---------------------------------------------------------------------
+export const priceListVersionsApi   = resource("commercial/pricelist-versions");
+export const gradeItemsApi          = resource("commercial/grade-items");
+export const clientAssignmentsApi   = resource("commercial/client-assignments");
+export const earlyPaymentPoliciesApi = resource("commercial/early-payment-policies");
+export const earlyPaymentTiersApi    = resource("commercial/early-payment-tiers");
+export const commissionRulesApi      = resource("commercial/commission-rules");
+export const currencyCatApi          = resource("commercial/catalogs/currencies");
+export const pricelistSourceCatApi   = resource("commercial/catalogs/sources");
+export const commissionBaseCatApi    = resource("commercial/catalogs/commission-bases");
+
+export const commercialApi = {
+  resolveClientPrice: (payload) =>
+    apiFetch(`/commercial/resolve_client_price/`, {
+      method: "POST", body: payload, token: getToken(),
+    }),
+  bulkUpsertItems: (pricelistId, items, replace_existing = false) =>
+    priceListVersionsApi.action("bulk-upsert-items", pricelistId, { items, replace_existing }),
+  listItemsOfPricelist: (pricelistId) =>
+    priceListVersionsApi.action("items", pricelistId),
+  replaceTiers: (policyId, tiers) =>
+    earlyPaymentPoliciesApi.action("replace-tiers", policyId, { tiers }),
+};
+
+// ---------------------------------------------------------------------
+// SIZING ENGINE — Sprint Sizing v1
+// ---------------------------------------------------------------------
+//   GET    /api/sizing/options/                catálogos para selects FE
+//   GET    /api/sizing/tipos-producto/         (read-only)
+//   GET    /api/sizing/sistemas-medida/        (read-only)
+//   CRUD   /api/sizing/tallas/                 (incluye action "clone")
+// ---------------------------------------------------------------------
+export const tallasApi               = resource("sizing/tallas");
+export const tiposProductoCatApi     = resource("sizing/tipos-producto");
+export const sistemasMedidaCatApi    = resource("sizing/sistemas-medida");
+
+export const sizingApi = {
+  options: () => apiFetch(`/sizing/options/`, { token: getToken() }),
+  clone:   (tallaId) => tallasApi.action("clone", tallaId, {}),
+};

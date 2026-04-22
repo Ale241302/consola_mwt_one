@@ -14,3 +14,7 @@ minio==7.2.8
 requests==2.32.3
 python-dotenv==1.0.1
 gunicorn==23.0.0
+# AI Hub (apps.ai_hub)
+anthropic==0.39.0
+pypdf==5.1.0
+pillow==10.4.0

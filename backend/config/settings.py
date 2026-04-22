@@ -77,6 +77,9 @@ LOCAL_APPS = [
     "apps.notifications",   # historial de envíos (Celery / workflow / cron)
     "apps.storage",         # MinIO/S3 signed URLs + Paperless ingest
     "apps.ocr",             # Wizard OCR (parse-oc / resolve-line)
+    "apps.ai_hub",          # AI Hub — chat conversacional + agentes + skills + telemetría
+    "apps.commercial",      # Capa comercial (pricing + early-payment + commissions) [Sprint 22-23]
+    "apps.sizing",          # Sizing Engine — catálogo de tallas calzado/plantilla [Sprint Sizing v1]
     # Los siguientes módulos se irán activando cuando cada app tenga su
     # apps.py + views.py correspondiente. Dejarlos comentados evita que
     # Django falle al arrancar por ImportError durante INSTALLED_APPS.
@@ -116,7 +119,7 @@ DATABASES = {
         "OPTIONS":  {"options": "-c search_path=core,clientes,expedientes,pipeline,"
                                 "financiero,transfers,nodos,brands,productos,"
                                 "proveedores,inventario,portal,email_templates,"
-                                "notifications,cobros,public"},
+                                "notifications,cobros,dashboard,ai,public"},
     }
 }
 
@@ -269,6 +272,28 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "ERP/Sistema Operativo B2B — API pura",
     "VERSION":     "0.1.0",
     "SERVE_INCLUDE_SCHEMA": False,
+}
+
+# --------------------------------------------------------------------
+# AI Hub — Anthropic / OpenAI / file upload
+# Consumido por apps.ai_hub.services (ChatService + FileProcessor).
+# --------------------------------------------------------------------
+AI_HUB = {
+    "ANTHROPIC_API_KEY":   os.environ.get("ANTHROPIC_API_KEY", ""),
+    "DEFAULT_MODEL":       os.environ.get("AI_HUB_DEFAULT_MODEL", "claude-sonnet-4-6"),
+    "FALLBACK_MODEL":      os.environ.get("AI_HUB_FALLBACK_MODEL", "claude-haiku-4-5-20251001"),
+    "MAX_TOKENS":          int(os.environ.get("AI_HUB_MAX_TOKENS", "4096")),
+    "TEMPERATURE":         float(os.environ.get("AI_HUB_TEMPERATURE", "0.30")),
+    # Retries con backoff exponencial (max 5 retries, base 1s, cap 60s, jitter).
+    "MAX_RETRIES":         int(os.environ.get("AI_HUB_MAX_RETRIES", "5")),
+    "RETRY_BASE_SECONDS":  float(os.environ.get("AI_HUB_RETRY_BASE", "1.0")),
+    "RETRY_CAP_SECONDS":   float(os.environ.get("AI_HUB_RETRY_CAP", "60.0")),
+    # Uploads (limit soft — nginx puede tener el suyo).
+    "MAX_UPLOAD_MB":       int(os.environ.get("AI_HUB_MAX_UPLOAD_MB", "25")),
+    "UPLOAD_BUCKET":       os.environ.get("AI_HUB_UPLOAD_BUCKET", MINIO_BUCKET),
+    # Si True, desactiva las llamadas reales al LLM y devuelve respuestas
+    # canned (útil para dev/tests sin API key).
+    "DRY_RUN":             os.environ.get("AI_HUB_DRY_RUN", "0") == "1",
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

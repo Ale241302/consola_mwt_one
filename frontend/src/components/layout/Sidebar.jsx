@@ -31,6 +31,7 @@ import {
   IconHome, IconFolder, IconKanban, IconBuilding, IconDollar, IconSwap,
   IconNetwork, IconUsers, IconTag, IconBoxes, IconTruck, IconWarehouse,
   IconMail, IconHistory, IconCreditCard, IconChevLeft, IconChevRight,
+  IconBot,
 } from "../../lib/icons.jsx";
 
 // key -> route path mapping. Keys mirror the original screen identifiers so that
@@ -52,6 +53,9 @@ const KEY_TO_PATH = {
   history:     '/notificaciones',
   collections: '/cobros',
   wizard:      '/wizard',
+  'ai-hub':    '/ai',
+  'ai-chat':   '/ai',
+  'ai-governance': '/ai/governance',
   'oc-detail': '/expedientes',
   'expediente-detail': '/expedientes',
 };
@@ -76,6 +80,8 @@ function screenFromPath(pathname) {
   if (pathname.startsWith('/notificaciones')) return 'history';
   if (pathname.startsWith('/cobros')) return 'collections';
   if (pathname.startsWith('/wizard')) return 'wizard';
+  if (pathname.startsWith('/ai/governance')) return 'ai-governance';
+  if (pathname.startsWith('/ai')) return 'ai-hub';
   return 'dashboard';
 }
 
@@ -128,6 +134,7 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'templates',      icon: <IconMail/>,       label: tr(lang,'templates'),     group: 'notifications' },
     { key: 'history',        icon: <IconHistory/>,    label: tr(lang,'history'),       group: 'notifications' },
     { key: 'collections',    icon: <IconCreditCard/>, label: tr(lang,'collections'),   group: 'notifications' },
+    { key: 'ai-hub',         icon: <IconBot/>,        label: tr(lang,'ai_hub') || 'AI Hub', group: 'ai' },
   ];
 
   // ───────────────────────────────── FILTRO POR ROL ────────────────────
@@ -140,6 +147,7 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'financiero',    label: tr(lang,'financiero') },
     { key: 'structure',     label: tr(lang,'structure') },
     { key: 'notifications', label: tr(lang,'notifications') },
+    { key: 'ai',            label: tr(lang,'ai_hub') || 'AI Hub' },
   ];
 
   return (

@@ -1,295 +1,587 @@
-// ─────────────────────────────────────────────────────────────
-// SizingEngine — Motor de Tallas
+// =====================================================================
+// MWT.ONE · pages/SizingEngine.jsx
 // Agente responsable: [AG-FRONTEND]
+// Sprint: SIZING ENGINE v1
 //
-// Tabla/grid de tallas agrupadas por sistema de medida, con:
-//   · Dimensional specs (Grosor antepié, Grosor talón, Drop, Peso)
-//   · Equivalencias cross-system (ej. EU 42 = BR 40 = US Men 9)
-//   · Productos que usan cada talla
+// Vista completa del Motor de Tallas:
+//   1. Dashboard / lista (badges Calzado/Plantilla, equivalencias rápidas).
+//   2. Drawer ancho de creación / edición con FORM DINÁMICO.
 //
-// Tokens visuales:
-//   Navy #0B1E3A · Mint #00B286 · LightGreen #1DE394
-//   Purple #481EE3 · Blue #3083FE · Cyan #1EE3D7
-// ─────────────────────────────────────────────────────────────
-import React, { useMemo, useState } from "react";
+// LÓGICA CONDICIONAL (Observer):
+//   · Si tipo_producto === 'plantilla' → aparece la sección
+//     "Especificaciones Dimensionales" (grosor antepié/talón, drop, peso).
+//   · Si tipo_producto === 'calzado' (o cualquier otro)  → la sección
+//     se oculta por completo y los valores físicos se mantienen
+//     como NULL al guardar.
+//
+// REGLAS MWT respetadas:
+//   · CERO datos hardcoded — todo el catálogo de tipos y sistemas
+//     se consume desde GET /api/sizing/options/.
+//   · NO hay validación `required` en el form — el botón "Guardar"
+//     puede enviarse con campos vacíos (se mandan como null).
+//   · Tokens: Navy #0B1E3A, Mint #00B286, Light #1DE394, tabular-nums.
+// =====================================================================
+import React, { useEffect, useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+
+import { tallasApi, sizingApi } from "../lib/api.js";
 import {
-  IconPlus, IconSearch, IconSliders, IconPackage,
-  IconSparkle, IconRefresh,
+  IconPlus, IconRefresh, IconSearch, IconX, IconCheck,
+  IconPackage, IconAlert, IconTag, IconLock,
 } from "../lib/icons.jsx";
-import {
-  SIZE_SYSTEMS, SIZES, PRODUCT_SIZES, BRAND_PRODUCTS,
-} from "../data/mockData.js";
-import SizeFormDrawer from "../components/productos/SizeFormDrawer.jsx";
 
+
+// ─── Helpers de presentación ──────────────────────────────────────
+const NAVY  = "#0B1E3A";
+const MINT  = "#00B286";
+
+function formatDecimal(v) {
+  if (v === null || v === undefined || v === "") return "—";
+  const n = Number(v);
+  if (Number.isNaN(n)) return String(v);
+  return n.toFixed(2);
+}
+
+function chipForTipo(tipo) {
+  if (tipo === "plantilla") return { bg: "rgba(72,30,227,0.10)",  fg: "#481EE3", border: "rgba(72,30,227,0.30)",  label: "Plantilla" };
+  if (tipo === "calzado")   return { bg: "rgba(0,178,134,0.12)",  fg: MINT,      border: "rgba(0,178,134,0.30)",  label: "Calzado"   };
+  return { bg: "rgba(100,116,139,0.12)", fg: "#475569", border: "rgba(100,116,139,0.25)", label: tipo || "Sin tipo" };
+}
+
+
+// =====================================================================
+// COMPONENTE PRINCIPAL
+// =====================================================================
 export default function ScreenSizingEngine() {
-  const { lang } = useOutletContext();
-  const [q, setQ] = useState('');
-  const [systemFilter, setSystemFilter] = useState('ALL');
-  const [selectedSize, setSelectedSize] = useState(null);
-  const [showNew, setShowNew] = useState(false);
+  // Algunos layouts pasan { lang } por context; soportamos ambos casos.
+  const ctx  = useOutletContext?.() || {};
+  const lang = ctx.lang || "es";
 
-  const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return SIZES.filter(s => {
-      if (systemFilter !== 'ALL' && s.system !== systemFilter) return false;
-      if (!needle) return true;
-      return (s.valor_talla + ' ' + s.system).toLowerCase().includes(needle);
-    });
-  }, [q, systemFilter]);
+  const [options,  setOptions]  = useState(null);    // /sizing/options/
+  const [tallas,   setTallas]   = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState(null);
+  const [filterTipo, setFilterTipo] = useState("");
+  const [q, setQ] = useState("");
+  const [editing, setEditing]   = useState(null);    // null | {} (nuevo) | obj (edita)
 
-  const systemMap = useMemo(() => {
-    const m = {};
-    SIZE_SYSTEMS.forEach(s => { m[s.id] = s; });
-    return m;
-  }, []);
-
-  const productsUsingSize = (sizeId) => {
-    const skus = PRODUCT_SIZES.filter(ps => ps.sizes.includes(sizeId)).map(ps => ps.sku);
-    return BRAND_PRODUCTS.filter(p => skus.includes(p.sku));
+  // ── Carga inicial: opciones + tallas ──────────────────────────
+  const loadAll = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [opt, list] = await Promise.all([
+        sizingApi.options(),
+        tallasApi.list(),
+      ]);
+      setOptions(opt);
+      setTallas(Array.isArray(list?.results) ? list.results
+                : Array.isArray(list)        ? list
+                : []);
+    } catch (e) {
+      setError(e?.message || "Error cargando tallas.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const kpis = useMemo(() => {
-    const totalSizes   = SIZES.length;
-    const totalSystems = SIZE_SYSTEMS.length;
-    const mapped       = new Set(PRODUCT_SIZES.flatMap(p => p.sizes)).size;
-    const unmapped     = totalSizes - mapped;
-    return { totalSizes, totalSystems, mapped, unmapped };
-  }, []);
+  useEffect(() => { loadAll(); }, []);
 
+  // ── Filtrado client-side ─────────────────────────────────────
+  const filtered = useMemo(() => {
+    let out = tallas;
+    if (filterTipo) out = out.filter(t => (t.tipo_producto || "") === filterTipo);
+    const ql = q.trim().toLowerCase();
+    if (ql) {
+      out = out.filter(t => (
+        (t.talla_base || "").toLowerCase().includes(ql) ||
+        (t.nombre || "").toLowerCase().includes(ql) ||
+        (t.eu || "").toLowerCase().includes(ql) ||
+        (t.us_men || "").toLowerCase().includes(ql) ||
+        (t.us_women || "").toLowerCase().includes(ql) ||
+        (t.uk_men || "").toLowerCase().includes(ql) ||
+        (t.br || "").toLowerCase().includes(ql) ||
+        (t.cm || "").toLowerCase().includes(ql)
+      ));
+    }
+    return out;
+  }, [tallas, filterTipo, q]);
+
+  // ── KPIs superiores ──────────────────────────────────────────
+  const kpis = useMemo(() => {
+    const total      = tallas.length;
+    const calzado    = tallas.filter(t => t.tipo_producto === "calzado").length;
+    const plantilla  = tallas.filter(t => t.tipo_producto === "plantilla").length;
+    const borradores = tallas.filter(t => !t.tipo_producto || !t.talla_base).length;
+    return { total, calzado, plantilla, borradores };
+  }, [tallas]);
+
+  // ── Persistencia: create / update ────────────────────────────
+  const handleSave = async (form) => {
+    // Limpia el payload — strings vacíos → null para no contaminar la DB.
+    const payload = {};
+    Object.entries(form).forEach(([k, v]) => {
+      if (typeof v === "string" && v.trim() === "") payload[k] = null;
+      else payload[k] = v;
+    });
+    if (form.id) {
+      await tallasApi.update(form.id, payload);
+    } else {
+      await tallasApi.create(payload);
+    }
+    setEditing(null);
+    await loadAll();
+  };
+
+  const handleSoftDelete = async (talla) => {
+    if (!talla?.id) return;
+    if (!window.confirm(lang === "es" ? "¿Desactivar esta talla?" : "Deactivate this size?")) return;
+    await tallasApi.remove(talla.id);
+    await loadAll();
+  };
+
+
+  // ─── RENDER ──────────────────────────────────────────────────
   return (
-    <div className="page">
-      <div className="page-header">
+    <div className="page siz-root" style={{ color: NAVY }}>
+      {/* Hero */}
+      <div className="siz-hero">
         <div>
-          <div className="micro" style={{marginBottom:6}}>
-            {lang==='es'?'MOTOR DE TALLAS':'SIZING ENGINE'}
-          </div>
-          <h1 className="page-title">{lang==='es'?'Motor de Tallas':'Sizing Engine'}</h1>
-          <div className="page-subtitle">
-            {lang==='es'
-              ? 'Sistemas de medida, especificaciones dimensionales y equivalencias cross-system.'
-              : 'Measurement systems, dimensional specs, and cross-system equivalences.'}
+          <div className="micro" style={{ color: MINT }}>SIZING ENGINE · v1</div>
+          <h1 className="page-title" style={{ margin: "2px 0" }}>
+            {lang === "es" ? "Motor de Tallas" : "Sizing Engine"}
+          </h1>
+          <div className="caption" style={{ color: "#64748B" }}>
+            {lang === "es"
+              ? "Catálogo maestro de tallas para calzado y plantillas. Cero campos obligatorios — guarda borradores cuando quieras."
+              : "Master catalog of sizes for footwear and insoles. No required fields — save drafts at any time."}
           </div>
         </div>
-        <div className="flex ai-center gap-2">
-          <button className="btn btn-accent" onClick={()=>setShowNew(true)}>
-            <IconPlus size={14}/> {lang==='es'?'Nueva talla':'New size'}
+        <div className="siz-hero-actions">
+          <button onClick={loadAll} className="siz-btn siz-btn-ghost" title="Recargar">
+            <IconRefresh size={14}/> {lang === "es" ? "Recargar" : "Refresh"}
+          </button>
+          <button onClick={() => setEditing({})} className="siz-btn siz-btn-primary">
+            <IconPlus size={14}/> {lang === "es" ? "Nueva talla" : "New size"}
           </button>
         </div>
       </div>
 
       {/* KPIs */}
-      <div className="nodes-kpis">
-        <div className="kpi-tile">
-          <div className="k-label">{lang==='es'?'Tallas registradas':'Registered sizes'}</div>
-          <div className="k-value tabular-nums">{kpis.totalSizes}</div>
-          <div className="k-sub">{lang==='es'?'Red completa':'Full network'}</div>
-        </div>
-        <div className="kpi-tile">
-          <div className="k-label">{lang==='es'?'Sistemas soportados':'Supported systems'}</div>
-          <div className="k-value tabular-nums">{kpis.totalSystems}</div>
-          <div className="k-sub">EU · US · BR · CM · UK</div>
-        </div>
-        <div className="kpi-tile">
-          <div className="k-label">{lang==='es'?'Con productos asociados':'With mapped products'}</div>
-          <div className="k-value tabular-nums">{kpis.mapped}</div>
-          <div className="k-sub">
-            <span className="dot-credit dot-green"/>
-            {kpis.unmapped} {lang==='es'?'huérfanas':'unmapped'}
-          </div>
-        </div>
-        <div className="kpi-tile accent">
-          <div className="k-label">{lang==='es'?'Productos cubiertos':'Products covered'}</div>
-          <div className="k-value tabular-nums">{PRODUCT_SIZES.length}</div>
-          <div className="k-sub">{lang==='es'?'SKUs con tallas definidas':'SKUs with sizes defined'}</div>
-        </div>
+      <div className="siz-kpis">
+        <KpiTile label={lang === "es" ? "Total tallas"  : "Total sizes"}  value={kpis.total}      hint={lang === "es" ? "registradas en el catálogo" : "in the catalog"}/>
+        <KpiTile label={lang === "es" ? "Calzado"       : "Footwear"}     value={kpis.calzado}    hint={lang === "es" ? "sin dimensiones físicas"     : "no physical dimensions"} accent={MINT}/>
+        <KpiTile label={lang === "es" ? "Plantillas"    : "Insoles"}      value={kpis.plantilla}  hint={lang === "es" ? "con grosor / drop / peso"    : "with thickness / drop / weight"} accent="#481EE3"/>
+        <KpiTile label={lang === "es" ? "Borradores"    : "Drafts"}       value={kpis.borradores} hint={lang === "es" ? "incompletas / sin tipo"      : "incomplete / typeless"} accent="#94A3B8"/>
       </div>
 
-      {/* Filtros */}
-      <div className="nodes-filters">
-        <div className="search-box" style={{flex:'1 1 260px', maxWidth: 360}}>
+      {/* Toolbar */}
+      <div className="siz-toolbar">
+        <div className="siz-search">
           <IconSearch size={14} className="search-icon"/>
-          <input className="input" value={q} onChange={e=>setQ(e.target.value)}
-                 placeholder={lang==='es'?'Buscar talla (ej. 42, 9.5)…':'Search size…'}/>
+          <input
+            className="siz-input"
+            placeholder={lang === "es" ? "Buscar por talla base, nombre o equivalencia (42, M, 9.5…)" : "Search by base size, name or equivalence"}
+            value={q}
+            onChange={e => setQ(e.target.value)}
+          />
         </div>
-        <div className="seg">
-          <button data-active={systemFilter==='ALL'} onClick={()=>setSystemFilter('ALL')}>
-            {lang==='es'?'Todos':'All'}
-          </button>
-          {SIZE_SYSTEMS.map(s => (
-            <button key={s.id} data-active={systemFilter===s.id} onClick={()=>setSystemFilter(s.id)}>
-              {s.label}
-            </button>
+        <select
+          className="siz-input siz-select"
+          value={filterTipo}
+          onChange={e => setFilterTipo(e.target.value)}
+          style={{ maxWidth: 220 }}
+        >
+          <option value="">{lang === "es" ? "Todos los tipos" : "All types"}</option>
+          {(options?.tipos_producto || []).map(t => (
+            <option key={t.codigo} value={t.codigo}>{t.label}</option>
           ))}
-        </div>
+        </select>
       </div>
 
-      {/* Grid principal · tallas + panel de detalle lateral */}
-      <div className="sizing-layout">
-        <div className="size-grid">
-          <AnimatePresence mode="popLayout">
-            {filtered.map((sz, idx) => {
-              const sys = systemMap[sz.system] || {};
-              const skuCount = PRODUCT_SIZES.filter(ps => ps.sizes.includes(sz.id)).length;
-              const isSel = selectedSize?.id === sz.id;
-              return (
-                <motion.div
-                  key={sz.id}
-                  layout
-                  initial={{ opacity:0, y:10 }}
-                  animate={{ opacity:1, y:0, transition:{ delay: idx*0.025, duration:0.25 } }}
-                  exit={{ opacity:0, y:-6, transition:{ duration:0.15 } }}
-                  whileHover={{ y:-2 }}
-                  className={`size-card ${isSel ? 'size-card-sel' : ''}`}
-                  style={{ '--sys-color': sys.color || '#00B286' }}
-                  onClick={()=>setSelectedSize(sz)}
-                >
-                  <div className="size-card-head">
-                    <span className="size-system-chip">
-                      <span className="size-dot" style={{background: sys.color}}/>
-                      {sys.label}
-                    </span>
-                    <span className="size-sku-count">
-                      <IconPackage size={10}/> {skuCount}
-                    </span>
-                  </div>
-                  <div className="size-valor tabular-nums">{sz.valor_talla}</div>
-                  <div className="size-specs">
-                    <div className="spec-pill"><span>Antepié</span><b className="tabular-nums">{sz.dimensional_specs.forefoot_mm}mm</b></div>
-                    <div className="spec-pill"><span>Talón</span><b className="tabular-nums">{sz.dimensional_specs.heel_mm}mm</b></div>
-                    <div className="spec-pill"><span>Drop</span><b className="tabular-nums">{sz.dimensional_specs.drop_mm}mm</b></div>
-                    <div className="spec-pill"><span>Peso</span><b className="tabular-nums">{sz.dimensional_specs.weight_g}g</b></div>
-                  </div>
-                  {sz.equivalences.length > 0 && (
-                    <div className="size-equivs">
-                      {sz.equivalences.slice(0, 4).map((eq, i) => (
-                        <span key={i} className="equiv-mini">
-                          {systemMap[eq.system]?.label || eq.system} {eq.value}
+      {/* Tabla */}
+      <div className="siz-card">
+        {loading ? (
+          <div className="siz-empty"><IconRefresh size={18}/> {lang === "es" ? "Cargando…" : "Loading…"}</div>
+        ) : error ? (
+          <div className="siz-empty siz-empty-error">
+            <IconAlert size={18}/> {error}
+            <button className="siz-btn siz-btn-ghost" onClick={loadAll}>{lang === "es" ? "Reintentar" : "Retry"}</button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="siz-empty">
+            <IconPackage size={20}/>
+            <div className="heading-md" style={{ color: NAVY }}>
+              {lang === "es" ? "Sin tallas que mostrar" : "No sizes to show"}
+            </div>
+            <div className="caption" style={{ color: "#64748B" }}>
+              {lang === "es" ? "Crea la primera con el botón “Nueva talla”." : "Create the first one with the “New size” button."}
+            </div>
+          </div>
+        ) : (
+          <div className="siz-table-wrap">
+            <table className="siz-table">
+              <thead>
+                <tr>
+                  <th>{lang === "es" ? "Tipo" : "Type"}</th>
+                  <th>{lang === "es" ? "Talla base" : "Base"}</th>
+                  <th>{lang === "es" ? "Nombre" : "Name"}</th>
+                  <th className="ar">EU</th>
+                  <th className="ar">US M</th>
+                  <th className="ar">US W</th>
+                  <th className="ar">UK M</th>
+                  <th className="ar">BR</th>
+                  <th className="ar">CM</th>
+                  <th className="ar">{lang === "es" ? "Drop" : "Drop"}</th>
+                  <th className="ar">{lang === "es" ? "Peso" : "Weight"}</th>
+                  <th>{lang === "es" ? "Estado" : "Status"}</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(t => {
+                  const chip = chipForTipo(t.tipo_producto);
+                  return (
+                    <tr key={t.id}
+                        className="siz-row"
+                        onClick={() => setEditing(t)}
+                        style={{ cursor: "pointer" }}>
+                      <td>
+                        <span className="siz-chip" style={{
+                          background: chip.bg, color: chip.fg, borderColor: chip.border,
+                        }}>
+                          {chip.label}
                         </span>
-                      ))}
-                      {sz.equivalences.length > 4 && (
-                        <span className="equiv-mini equiv-more">+{sz.equivalences.length - 4}</span>
-                      )}
-                    </div>
-                  )}
-                </motion.div>
-              );
-            })}
-          </AnimatePresence>
-        </div>
-
-        {/* Panel de detalle */}
-        <aside className="size-detail-panel">
-          <AnimatePresence mode="wait">
-            {selectedSize ? (
-              <motion.div
-                key={selectedSize.id}
-                initial={{ opacity:0, x:12 }}
-                animate={{ opacity:1, x:0 }}
-                exit={{ opacity:0, x:-12 }}
-                transition={{ type:'spring', stiffness:260, damping:30 }}
-              >
-                <div className="size-detail-head" style={{'--sys-color': systemMap[selectedSize.system]?.color}}>
-                  <div>
-                    <div className="caption" style={{color:'var(--text-tertiary)'}}>
-                      {lang==='es'?'TALLA':'SIZE'} · {systemMap[selectedSize.system]?.label}
-                    </div>
-                    <div className="size-detail-val tabular-nums">{selectedSize.valor_talla}</div>
-                  </div>
-                  <button className="btn btn-sm" onClick={()=>setSelectedSize(null)}>✕</button>
-                </div>
-
-                <div className="size-detail-section">
-                  <div className="size-detail-title">
-                    <IconSliders size={13}/> {lang==='es'?'Especificaciones dimensionales':'Dimensional specs'}
-                  </div>
-                  <div className="size-detail-specs">
-                    <div><span>Grosor antepié</span><b className="tabular-nums">{selectedSize.dimensional_specs.forefoot_mm} mm</b></div>
-                    <div><span>Grosor talón</span><b className="tabular-nums">{selectedSize.dimensional_specs.heel_mm} mm</b></div>
-                    <div><span>Drop</span><b className="tabular-nums">{selectedSize.dimensional_specs.drop_mm} mm</b></div>
-                    <div><span>Peso referencial</span><b className="tabular-nums">{selectedSize.dimensional_specs.weight_g} g</b></div>
-                  </div>
-                </div>
-
-                <div className="size-detail-section">
-                  <div className="size-detail-title">
-                    <IconRefresh size={13}/> {lang==='es'?'Equivalencias':'Equivalences'}
-                  </div>
-                  <div className="equiv-table">
-                    {selectedSize.equivalences.map((eq, i) => {
-                      const sys = systemMap[eq.system];
-                      return (
-                        <div key={i} className="equiv-row">
-                          <span className="equiv-sys" style={{'--sys-color': sys?.color}}>
-                            <span className="size-dot" style={{background: sys?.color}}/>
-                            {sys?.label || eq.system}
-                          </span>
-                          <span className="equiv-val tabular-nums">{eq.value}</span>
-                          <span className="equiv-desc caption">{sys?.desc || ''}</span>
-                        </div>
-                      );
-                    })}
-                    {selectedSize.equivalences.length === 0 && (
-                      <div className="caption" style={{color:'var(--text-tertiary)'}}>
-                        {lang==='es'?'Sin equivalencias registradas.':'No equivalences on file.'}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="size-detail-section">
-                  <div className="size-detail-title">
-                    <IconPackage size={13}/> {lang==='es'?'Productos que usan esta talla':'Products using this size'}
-                  </div>
-                  <div className="size-products">
-                    {productsUsingSize(selectedSize.id).map(p => (
-                      <div key={p.sku} className="size-product-row">
-                        <div className="size-product-sku mono-sm">{p.sku}</div>
-                        <div className="size-product-name">{p.nombre}</div>
-                      </div>
-                    ))}
-                    {productsUsingSize(selectedSize.id).length === 0 && (
-                      <div className="caption" style={{color:'var(--text-tertiary)'}}>
-                        {lang==='es'?'Ningún producto usa esta talla todavía.':'No product uses this size yet.'}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="empty"
-                initial={{ opacity:0 }}
-                animate={{ opacity:1 }}
-                exit={{ opacity:0 }}
-                className="size-detail-empty"
-              >
-                <IconSparkle size={22} style={{color:'var(--brand-accent)'}}/>
-                <div className="heading-md">{lang==='es'?'Selecciona una talla':'Select a size'}</div>
-                <div className="caption" style={{maxWidth:260, textAlign:'center'}}>
-                  {lang==='es'
-                    ? 'Verás especificaciones dimensionales, equivalencias cross-system y qué productos la usan.'
-                    : 'You\'ll see dimensional specs, cross-system equivalences and products that use it.'}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </aside>
+                      </td>
+                      <td className="mono"><strong>{t.talla_base || <span style={{ color:"#94A3B8" }}>—</span>}</strong></td>
+                      <td>{t.nombre || <span style={{ color:"#94A3B8" }}>—</span>}</td>
+                      <td className="ar tabular">{t.eu       || "—"}</td>
+                      <td className="ar tabular">{t.us_men   || "—"}</td>
+                      <td className="ar tabular">{t.us_women || "—"}</td>
+                      <td className="ar tabular">{t.uk_men   || "—"}</td>
+                      <td className="ar tabular">{t.br       || "—"}</td>
+                      <td className="ar tabular">{t.cm       || "—"}</td>
+                      <td className="ar tabular">{t.drop_mm  ? formatDecimal(t.drop_mm)  : "—"}</td>
+                      <td className="ar tabular">{t.peso_g   ? formatDecimal(t.peso_g)   : "—"}</td>
+                      <td>
+                        {t.is_active
+                          ? <span className="siz-badge siz-badge-ok">{lang === "es" ? "Activa" : "Active"}</span>
+                          : <span className="siz-badge siz-badge-off">{lang === "es" ? "Inactiva" : "Inactive"}</span>}
+                      </td>
+                      <td onClick={e => e.stopPropagation()}>
+                        <button
+                          className="siz-btn siz-btn-icon-ghost"
+                          title={lang === "es" ? "Desactivar" : "Deactivate"}
+                          onClick={() => handleSoftDelete(t)}
+                        >
+                          <IconX size={14}/>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
+      {/* Drawer de creación / edición */}
       <AnimatePresence>
-        {showNew && (
-          <SizeFormDrawer
+        {editing !== null && (
+          <TallaFormDrawer
             lang={lang}
-            onClose={()=>setShowNew(false)}
-            onCreated={(payload)=>{
-              console.log('[mock] create size:', payload);
-              setShowNew(false);
-            }}
+            options={options}
+            initial={editing}
+            onClose={() => setEditing(null)}
+            onSave={handleSave}
           />
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+
+// =====================================================================
+// KPI tile
+// =====================================================================
+function KpiTile({ label, value, hint, accent = MINT }) {
+  return (
+    <div className="siz-kpi">
+      <div className="siz-kpi-label">{label}</div>
+      <div className="siz-kpi-value tabular" style={{ color: NAVY }}>
+        {value}
+        <span style={{ display: "inline-block", marginLeft: 8, width: 6, height: 6, borderRadius: 999, background: accent }}/>
+      </div>
+      <div className="siz-kpi-hint">{hint}</div>
+    </div>
+  );
+}
+
+
+// =====================================================================
+// DRAWER · Form dinámico (creación / edición)
+//
+//   · LÓGICA CONDICIONAL OBSERVER:
+//       form.tipo_producto === 'plantilla'  → muestra "Especificaciones
+//       Dimensionales".  Cualquier otro valor (incluyendo null/empty
+//       o 'calzado') la oculta.
+//   · Cero validación required: el botón "Guardar" siempre está activo.
+// =====================================================================
+function TallaFormDrawer({ lang, options, initial, onClose, onSave }) {
+  const isEdit = !!initial?.id;
+
+  // Form state — arranca con un esquema vacío y rellena con `initial`.
+  const blank = useMemo(() => {
+    const eqFields  = (options?.equivalence_fields || []).reduce((acc, k) => ({ ...acc, [k]: "" }), {});
+    const dimFields = (options?.dimension_fields   || []).reduce((acc, d) => ({ ...acc, [d.key]: "" }), {});
+    return {
+      id: null,
+      is_active: true,
+      tipo_producto: "",
+      talla_base: "",
+      nombre: "",
+      descripcion: "",
+      ...eqFields,
+      ...dimFields,
+    };
+  }, [options]);
+
+  const [form, setForm] = useState({ ...blank, ...initial });
+  const [saving, setSaving] = useState(false);
+
+  // Cuando cambian las opciones (asíncrono) o el initial → re-merge.
+  useEffect(() => {
+    setForm({ ...blank, ...initial });
+  }, [blank, initial]);
+
+  const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  // ── Determinante de la lógica condicional ──────────────────
+  const tipoMeta = useMemo(() => {
+    return (options?.tipos_producto || []).find(
+      t => t.codigo === form.tipo_producto
+    ) || null;
+  }, [options, form.tipo_producto]);
+
+  const showDimensionales = tipoMeta?.requiere_dimensiones === true;
+
+  // ── Submit (sin bloqueos) ──────────────────────────────────
+  const submit = async () => {
+    setSaving(true);
+    try {
+      // Si el tipo no requiere dimensiones, los reseteamos a null.
+      const payload = { ...form };
+      if (!showDimensionales) {
+        (options?.dimension_fields || []).forEach(d => { payload[d.key] = null; });
+      }
+      await onSave(payload);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      alert((lang === "es" ? "Error guardando: " : "Save error: ") + (e?.message || e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <motion.div
+        className="siz-drawer-backdrop"
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        onClick={onClose}
+      />
+      <motion.aside
+        className="siz-drawer"
+        role="dialog" aria-modal="true"
+        initial={{ x: 640, opacity: 0.5 }}
+        animate={{ x: 0,   opacity: 1, transition: { type: "spring", stiffness: 240, damping: 28 } }}
+        exit={{    x: 640, opacity: 0, transition: { duration: 0.18 } }}
+      >
+        {/* Head */}
+        <div className="siz-drawer-head">
+          <div>
+            <div className="micro" style={{ color: MINT }}>
+              {isEdit ? (lang === "es" ? "EDITAR TALLA" : "EDIT SIZE")
+                      : (lang === "es" ? "NUEVA TALLA"  : "NEW SIZE")}
+            </div>
+            <div className="heading-md">
+              {form.nombre || form.talla_base || (lang === "es" ? "Borrador sin guardar" : "Unsaved draft")}
+            </div>
+            <div className="caption" style={{ color: "#64748B", marginTop: 2 }}>
+              {lang === "es"
+                ? "Ningún campo es obligatorio — puedes guardar este borrador con sólo abrirlo."
+                : "No fields are required — you can save this draft just by opening it."}
+            </div>
+          </div>
+          <button onClick={onClose} className="siz-btn siz-btn-icon-ghost" title="Cerrar">
+            <IconX size={16}/>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="siz-drawer-body">
+          {/* SECCIÓN 1 · Clasificación */}
+          <Section title={lang === "es" ? "Clasificación" : "Classification"}>
+            <div className="siz-grid-2">
+              <Field label={lang === "es" ? "Tipo de producto" : "Product type"}>
+                <select
+                  className="siz-input siz-select"
+                  value={form.tipo_producto || ""}
+                  onChange={e => set("tipo_producto", e.target.value)}
+                >
+                  <option value="">{lang === "es" ? "— Sin definir —" : "— Unset —"}</option>
+                  {(options?.tipos_producto || []).map(t => (
+                    <option key={t.codigo} value={t.codigo}>
+                      {t.label}{t.requiere_dimensiones ? "  (mide dimensiones)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label={lang === "es" ? "Talla base" : "Base size"}>
+                <input
+                  className="siz-input mono"
+                  placeholder={lang === "es" ? 'p.ej. "42", "S3", "M-WIDE"' : 'e.g. "42", "S3", "M-WIDE"'}
+                  value={form.talla_base || ""}
+                  onChange={e => set("talla_base", e.target.value)}
+                />
+              </Field>
+              <Field label={lang === "es" ? "Nombre comercial" : "Commercial name"}>
+                <input
+                  className="siz-input"
+                  placeholder={lang === "es" ? "Bota seguridad EU 42" : "Safety boot EU 42"}
+                  value={form.nombre || ""}
+                  onChange={e => set("nombre", e.target.value)}
+                />
+              </Field>
+              <Field label={lang === "es" ? "Activa" : "Active"}>
+                <label className="siz-toggle">
+                  <input
+                    type="checkbox"
+                    checked={!!form.is_active}
+                    onChange={e => set("is_active", e.target.checked)}
+                  />
+                  <span/>
+                </label>
+              </Field>
+              <Field label={lang === "es" ? "Descripción" : "Description"} span={2}>
+                <textarea
+                  rows={2}
+                  className="siz-input"
+                  placeholder={lang === "es" ? "Notas internas, contexto, fuente…" : "Internal notes, context, source…"}
+                  value={form.descripcion || ""}
+                  onChange={e => set("descripcion", e.target.value)}
+                />
+              </Field>
+            </div>
+          </Section>
+
+          {/* SECCIÓN 2 · Matriz de Equivalencias */}
+          <Section
+            title={lang === "es" ? "Matriz de Equivalencias" : "Equivalence Matrix"}
+            hint={lang === "es"
+              ? `Mapea esta talla a los ${(options?.sistemas_medida || []).length} sistemas internacionales soportados. Todos opcionales.`
+              : `Map this size to the ${(options?.sistemas_medida || []).length} supported international systems. All optional.`}
+          >
+            <div className="siz-grid-equiv">
+              {(options?.sistemas_medida || []).map(sis => (
+                <Field key={sis.codigo} label={sis.label} hint={sis.region}>
+                  <input
+                    className="siz-input tabular"
+                    placeholder={sis.grupo === "alfa" ? "S / M / L" : "—"}
+                    value={form[sis.codigo] || ""}
+                    onChange={e => set(sis.codigo, e.target.value)}
+                  />
+                </Field>
+              ))}
+            </div>
+          </Section>
+
+          {/* SECCIÓN 3 · DINÁMICA — sólo plantillas */}
+          <AnimatePresence initial={false}>
+            {showDimensionales && (
+              <motion.section
+                key="dim"
+                className="siz-section siz-section-dim"
+                initial={{ opacity: 0, height: 0, marginTop: 0 }}
+                animate={{ opacity: 1, height: "auto", marginTop: 16 }}
+                exit={{    opacity: 0, height: 0, marginTop: 0 }}
+                transition={{ duration: 0.22 }}
+              >
+                <div className="siz-section-head">
+                  <div className="siz-section-title">
+                    <IconLock size={12} style={{ marginRight: 6, color: "#481EE3" }}/>
+                    {lang === "es" ? "Especificaciones Dimensionales" : "Dimensional Specifications"}
+                  </div>
+                  <div className="caption" style={{ color: "#64748B" }}>
+                    {lang === "es"
+                      ? "Sólo aplica a plantillas. Todos los valores son opcionales."
+                      : "Applies to insoles only. All values optional."}
+                  </div>
+                </div>
+                <div className="siz-grid-dim">
+                  {(options?.dimension_fields || []).map(d => (
+                    <Field key={d.key} label={d.label} hint={d.unit}>
+                      <input
+                        type="number"
+                        step={d.step ?? 0.1}
+                        min={d.min ?? 0}
+                        max={d.max}
+                        className="siz-input tabular"
+                        placeholder={d.unit}
+                        value={form[d.key] ?? ""}
+                        onChange={e => set(d.key, e.target.value === "" ? null : e.target.value)}
+                      />
+                    </Field>
+                  ))}
+                </div>
+              </motion.section>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Foot */}
+        <div className="siz-drawer-foot">
+          <button onClick={onClose} className="siz-btn siz-btn-ghost" disabled={saving}>
+            {lang === "es" ? "Cancelar" : "Cancel"}
+          </button>
+          <button onClick={submit} className="siz-btn siz-btn-primary" disabled={saving}>
+            <IconCheck size={14}/> {saving
+              ? (lang === "es" ? "Guardando…" : "Saving…")
+              : (lang === "es" ? "Guardar borrador" : "Save draft")}
+          </button>
+        </div>
+      </motion.aside>
+    </>
+  );
+}
+
+
+// =====================================================================
+// Subcomponentes UI
+// =====================================================================
+function Section({ title, hint, children }) {
+  return (
+    <section className="siz-section">
+      <div className="siz-section-head">
+        <div className="siz-section-title"><IconTag size={12} style={{ marginRight: 6, color: MINT }}/> {title}</div>
+        {hint && <div className="caption" style={{ color: "#64748B" }}>{hint}</div>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Field({ label, hint, span = 1, children }) {
+  return (
+    <div className="siz-field" style={{ gridColumn: `span ${span}` }}>
+      <label className="siz-field-label">
+        {label}
+        {hint && <span className="siz-field-hint"> · {hint}</span>}
+      </label>
+      {children}
     </div>
   );
 }

@@ -28,7 +28,7 @@ import {
 } from "../data/mockData.js";
 import CreateBrandDrawer from "../components/brands/CreateBrandDrawer.jsx";
 import ProductMassiveUpload from "../components/brands/ProductMassiveUpload.jsx";
-import PricingManagerTable from "../components/brands/PricingManagerTable.jsx";
+import BrandPricingConsole from "../components/brands/BrandPricingConsole.jsx";
 
 /* ── Tipo → meta ────────────────────────── */
 const TIPO_META = {
@@ -318,11 +318,9 @@ export default function ScreenBrandDetail() {
             <motion.div key="precios"
               initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-              <PricingManagerTable
+              <BrandPricingConsole
                 lang={lang}
                 brandId={brand.id}
-                isCeo={true}
-                onMassUpload={()=>setMassUp(true)}
               />
             </motion.div>
           )}

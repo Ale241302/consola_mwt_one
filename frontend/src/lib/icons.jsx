@@ -68,3 +68,13 @@ export const IconTag          = mkIcon(<><path d="M20 12 12 20l-8-8 8-8h8z"/><ci
 export const IconBoxes        = mkIcon(<><path d="M3 8v12h18V8l-9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></>);
 export const IconGlobe        = mkIcon(<><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></>);
 export const IconCommand      = mkIcon(<path d="M6 6h3a3 3 0 1 0-3-3v3zM18 6h-3a3 3 0 1 1 3-3v3zM6 18h3a3 3 0 1 1-3 3v-3zM18 18h-3a3 3 0 1 0 3 3v-3zM6 6h12v12H6z"/>);
+// ─── AI Hub ────────────────────────────────────────────────────────────
+export const IconBot          = mkIcon(<><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4"/><circle cx="12" cy="3" r="1"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M9 17h6"/></>);
+export const IconBrain        = mkIcon(<><path d="M9 4a3 3 0 0 0-3 3v1a3 3 0 0 0-2 5 3 3 0 0 0 2 5v1a3 3 0 0 0 5 2"/><path d="M15 4a3 3 0 0 1 3 3v1a3 3 0 0 0 2 5 3 3 0 0 1-2 5v1a3 3 0 0 1-5 2"/><path d="M12 5v14"/></>);
+export const IconAt           = mkIcon(<><circle cx="12" cy="12" r="4"/><path d="M16 8v6a2 2 0 0 0 4 0v-2a8 8 0 1 0-3 6"/></>);
+export const IconHash         = mkIcon(<><path d="M5 9h14M5 15h14M10 3 8 21M16 3l-2 18"/></>);
+export const IconSend         = mkIcon(<><path d="M3 12 21 3l-7 18-3-9z"/><path d="m11 13 10-10"/></>);
+export const IconStop         = mkIcon(<rect x="6" y="6" width="12" height="12" rx="2"/>);
+export const IconPin          = mkIcon(<><path d="M12 2v6"/><path d="M9 8h6l1 6H8z"/><path d="M12 14v8"/></>);
+export const IconArchive      = mkIcon(<><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8"/><path d="M10 13h4"/></>);
+export const IconImage        = mkIcon(<><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 16-5-5-9 9"/></>);

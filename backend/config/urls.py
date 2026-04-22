@@ -19,4 +19,7 @@ urlpatterns = [
     path("api/",           include("apps.notifications.urls")),    # /api/notification-logs/ + /api/collection-logs/
     path("api/",           include("apps.storage.urls")),          # /api/storage/signed_url/ + /api/storage/paperless_ingest/
     path("api/",           include("apps.ocr.urls")),              # /api/ocr/parse-oc/ + /api/ocr/resolve-line/
+    path("api/",           include("apps.ai_hub.urls")),           # /api/ai/agents/ + /api/ai/skills/ + /api/ai/threads/ + /api/ai/chat/
+    path("api/",           include("apps.commercial.urls")),       # /api/commercial/* + /api/commercial/resolve_client_price/
+    path("api/",           include("apps.sizing.urls")),           # /api/sizing/tallas/ + /api/sizing/options/ + catálogos
 ]

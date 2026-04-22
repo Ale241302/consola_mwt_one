@@ -7,6 +7,7 @@ export const STRINGS = {
     brands: 'Marcas', productos: 'Productos', suppliers: 'Proveedores', inventario: 'Inventario',
     templates: 'Plantillas', history: 'Historial', collections: 'Cobros',
     core: 'Operación', structure: 'Estructura', notifications: 'Notificaciones',
+    ai_hub: 'AI Hub',
     // Common
     search: 'Buscar', search_ph: 'Buscar expediente, OC, SAP, cliente…', new: 'Nuevo', save: 'Guardar', cancel: 'Cancelar',
     filter: 'Filtrar', clear: 'Limpiar', edit: 'Editar', delete: 'Eliminar', view_all: 'Ver todos',
@@ -173,6 +174,7 @@ export const STRINGS = {
     brands: 'Brands', productos: 'Products', suppliers: 'Suppliers', inventario: 'Inventory',
     templates: 'Templates', history: 'History', collections: 'Collections',
     core: 'Operations', structure: 'Structure', notifications: 'Notifications',
+    ai_hub: 'AI Hub',
     search: 'Search', search_ph: 'Search file, PO, SAP, client…', new: 'New', save: 'Save', cancel: 'Cancel',
     filter: 'Filter', clear: 'Clear', edit: 'Edit', delete: 'Delete', view_all: 'View all',
     refresh: 'Refresh', export: 'Export', import: 'Import',

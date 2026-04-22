@@ -30,6 +30,9 @@ import ScreenSupplierDetail from "./pages/SupplierDetail.jsx";
 import ScreenEmailTemplates from "./pages/EmailTemplates.jsx";
 import ScreenNotificaciones from "./pages/Notificaciones.jsx";
 import ScreenCobros from "./pages/Cobros.jsx";
+import ScreenAIHub from "./pages/AIHub.jsx";
+import ScreenAIChat from "./pages/AIChat.jsx";
+import ScreenAIGovernance from "./pages/AIGovernance.jsx";
 
 export default function App() {
   return (
@@ -67,6 +70,9 @@ export default function App() {
         <Route path="/templates" element={<ScreenEmailTemplates />} />
         <Route path="/notificaciones" element={<ScreenNotificaciones />} />
         <Route path="/cobros" element={<ScreenCobros />} />
+        <Route path="/ai" element={<ScreenAIHub />} />
+        <Route path="/ai/governance" element={<ScreenAIGovernance />} />
+        <Route path="/ai/chat/:threadId" element={<ScreenAIChat />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
