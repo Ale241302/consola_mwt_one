@@ -56,10 +56,31 @@ export const authApi = {
 };
 
 // ---------------------------------------------------------------------
-// Token helper: lee el access token guardado por AuthContext
+// Token helper: lee el access token guardado por AuthContext.
+// AuthContext persiste el bundle completo como JSON bajo la key
+// "mwt-auth" con shape { user, access, refresh }. Se mantienen los
+// fallbacks históricos ("mwt_access", "token", "access") por si algún
+// build viejo dejó residuo en localStorage.
 // ---------------------------------------------------------------------
-export const getToken = () =>
-  (typeof localStorage !== "undefined" && localStorage.getItem("mwt_access")) || null;
+export const getToken = () => {
+  if (typeof localStorage === "undefined") return null;
+  // Camino canónico: bundle JSON serializado por AuthContext.
+  try {
+    const raw = localStorage.getItem("mwt-auth");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.access) return parsed.access;
+      if (parsed?.token)  return parsed.token;
+    }
+  } catch { /* mwt-auth corrupto → caemos al fallback */ }
+  // Fallbacks legacy.
+  return (
+    localStorage.getItem("mwt_access") ||
+    localStorage.getItem("access")     ||
+    localStorage.getItem("token")      ||
+    null
+  );
+};
 
 // ---------------------------------------------------------------------
 // CRUD genérico alineado al ViewSet de DRF.
