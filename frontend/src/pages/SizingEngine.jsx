@@ -277,69 +277,219 @@ export default function ScreenSizingEngine() {
             </div>
           </div>
         ) : (
-          <div className="siz-table-wrap">
-            <table className="siz-table">
-              <thead>
-                <tr>
-                  <th>{lang === "es" ? "Tipo" : "Type"}</th>
-                  <th>{lang === "es" ? "Talla base" : "Base"}</th>
-                  <th>{lang === "es" ? "Nombre" : "Name"}</th>
-                  <th className="ar">EU</th>
-                  <th className="ar">US M</th>
-                  <th className="ar">US W</th>
-                  <th className="ar">UK M</th>
-                  <th className="ar">BR</th>
-                  <th className="ar">CM</th>
-                  <th className="ar">{lang === "es" ? "Drop" : "Drop"}</th>
-                  <th className="ar">{lang === "es" ? "Peso" : "Weight"}</th>
-                  <th>{lang === "es" ? "Estado" : "Status"}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(t => {
-                  const chip = chipForTipo(t.tipo_producto);
-                  return (
-                    <tr key={t.id}
-                        className="siz-row"
-                        onClick={() => setEditing(t)}
-                        style={{ cursor: "pointer" }}>
-                      <td>
-                        <span className="siz-chip" style={{
-                          background: chip.bg, color: chip.fg, borderColor: chip.border,
-                        }}>
-                          {chip.label}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+              gap: 14,
+              padding: 4,
+            }}
+          >
+            {filtered.map(t => {
+              const chip = chipForTipo(t.tipo_producto);
+              const isPlantilla = t.tipo_producto === "plantilla";
+              return (
+                <div
+                  key={t.id}
+                  onClick={() => setEditing(t)}
+                  className="siz-talla-card"
+                  style={{
+                    position: "relative",
+                    background: "#FFFFFF",
+                    border: "1px solid #E5E7EB",
+                    borderRadius: 14,
+                    padding: 16,
+                    cursor: "pointer",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 12,
+                    boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+                    transition: "box-shadow 160ms ease, transform 160ms ease, border-color 160ms ease",
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.boxShadow = "0 8px 24px rgba(15,23,42,0.10)";
+                    e.currentTarget.style.borderColor = chip.border;
+                    e.currentTarget.style.transform = "translateY(-1px)";
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.boxShadow = "0 1px 2px rgba(15,23,42,0.04)";
+                    e.currentTarget.style.borderColor = "#E5E7EB";
+                    e.currentTarget.style.transform = "translateY(0)";
+                  }}
+                >
+                  {/* Header: chip + X */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span
+                      className="siz-chip"
+                      style={{
+                        background: chip.bg,
+                        color: chip.fg,
+                        borderColor: chip.border,
+                        border: "1px solid",
+                        borderRadius: 999,
+                        padding: "3px 10px",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        textTransform: "uppercase",
+                        letterSpacing: 0.4,
+                      }}
+                    >
+                      {chip.label}
+                    </span>
+                    <button
+                      className="siz-btn siz-btn-icon-ghost"
+                      title={lang === "es" ? "Desactivar" : "Deactivate"}
+                      onClick={e => { e.stopPropagation(); handleSoftDelete(t); }}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "#94A3B8",
+                        cursor: "pointer",
+                        padding: 4,
+                        borderRadius: 6,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <IconX size={14}/>
+                    </button>
+                  </div>
+
+                  {/* Talla base + nombre */}
+                  <div>
+                    <div
+                      className="mono tabular"
+                      style={{
+                        font: "700 28px/1.05 ui-monospace, SFMono-Regular, Menlo, monospace",
+                        color: NAVY,
+                        letterSpacing: -0.5,
+                      }}
+                    >
+                      {t.talla_base || <span style={{ color: "#CBD5E1" }}>—</span>}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: 13,
+                        color: "#475569",
+                        lineHeight: 1.3,
+                        minHeight: 17,
+                      }}
+                    >
+                      {t.nombre || <span style={{ color: "#CBD5E1" }}>—</span>}
+                    </div>
+                  </div>
+
+                  {/* Equivalencias */}
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(3, 1fr)",
+                      gap: "8px 10px",
+                      paddingTop: 10,
+                      borderTop: "1px dashed #E5E7EB",
+                    }}
+                  >
+                    {[
+                      { label: "EU",   value: t.eu },
+                      { label: "US M", value: t.us_men },
+                      { label: "US W", value: t.us_women },
+                      { label: "UK M", value: t.uk_men },
+                      { label: "BR",   value: t.br },
+                      { label: "CM",   value: t.cm },
+                    ].map(eq => (
+                      <div key={eq.label} style={{ display: "flex", flexDirection: "column" }}>
+                        <span style={{ fontSize: 10, color: "#94A3B8", fontWeight: 600, letterSpacing: 0.5 }}>
+                          {eq.label}
                         </span>
-                      </td>
-                      <td className="mono"><strong>{t.talla_base || <span style={{ color:"#94A3B8" }}>—</span>}</strong></td>
-                      <td>{t.nombre || <span style={{ color:"#94A3B8" }}>—</span>}</td>
-                      <td className="ar tabular">{t.eu       || "—"}</td>
-                      <td className="ar tabular">{t.us_men   || "—"}</td>
-                      <td className="ar tabular">{t.us_women || "—"}</td>
-                      <td className="ar tabular">{t.uk_men   || "—"}</td>
-                      <td className="ar tabular">{t.br       || "—"}</td>
-                      <td className="ar tabular">{t.cm       || "—"}</td>
-                      <td className="ar tabular">{t.drop_mm  ? formatDecimal(t.drop_mm)  : "—"}</td>
-                      <td className="ar tabular">{t.peso_g   ? formatDecimal(t.peso_g)   : "—"}</td>
-                      <td>
-                        {t.is_active
-                          ? <span className="siz-badge siz-badge-ok">{lang === "es" ? "Activa" : "Active"}</span>
-                          : <span className="siz-badge siz-badge-off">{lang === "es" ? "Inactiva" : "Inactive"}</span>}
-                      </td>
-                      <td onClick={e => e.stopPropagation()}>
-                        <button
-                          className="siz-btn siz-btn-icon-ghost"
-                          title={lang === "es" ? "Desactivar" : "Deactivate"}
-                          onClick={() => handleSoftDelete(t)}
+                        <span
+                          className="tabular"
+                          style={{
+                            fontSize: 13,
+                            color: eq.value ? NAVY : "#CBD5E1",
+                            fontWeight: eq.value ? 600 : 400,
+                            fontVariantNumeric: "tabular-nums",
+                          }}
                         >
-                          <IconX size={14}/>
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                          {eq.value || "—"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Dimensiones (sólo plantillas) */}
+                  {isPlantilla && (t.drop_mm || t.peso_g) && (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(2, 1fr)",
+                        gap: "6px 10px",
+                        padding: "8px 10px",
+                        background: "rgba(72,30,227,0.05)",
+                        borderRadius: 8,
+                      }}
+                    >
+                      <div style={{ display: "flex", flexDirection: "column" }}>
+                        <span style={{ fontSize: 10, color: "#481EE3", fontWeight: 600, letterSpacing: 0.5 }}>
+                          {lang === "es" ? "DROP (mm)" : "DROP (mm)"}
+                        </span>
+                        <span className="tabular" style={{ fontSize: 13, color: NAVY, fontWeight: 600 }}>
+                          {t.drop_mm ? formatDecimal(t.drop_mm) : "—"}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column" }}>
+                        <span style={{ fontSize: 10, color: "#481EE3", fontWeight: 600, letterSpacing: 0.5 }}>
+                          {lang === "es" ? "PESO (g)" : "WEIGHT (g)"}
+                        </span>
+                        <span className="tabular" style={{ fontSize: 13, color: NAVY, fontWeight: 600 }}>
+                          {t.peso_g ? formatDecimal(t.peso_g) : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Estado */}
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "auto" }}>
+                    {t.is_active ? (
+                      <span
+                        className="siz-badge siz-badge-ok"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                          background: "rgba(0,178,134,0.10)",
+                          color: MINT,
+                          border: "1px solid rgba(0,178,134,0.25)",
+                          borderRadius: 999,
+                          padding: "2px 8px",
+                          fontSize: 11,
+                          fontWeight: 600,
+                        }}
+                      >
+                        <IconCheck size={11}/>
+                        {lang === "es" ? "Activa" : "Active"}
+                      </span>
+                    ) : (
+                      <span
+                        className="siz-badge siz-badge-off"
+                        style={{
+                          background: "rgba(100,116,139,0.10)",
+                          color: "#64748B",
+                          border: "1px solid rgba(100,116,139,0.25)",
+                          borderRadius: 999,
+                          padding: "2px 8px",
+                          fontSize: 11,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {lang === "es" ? "Inactiva" : "Inactive"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
