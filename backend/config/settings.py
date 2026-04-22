@@ -137,8 +137,12 @@ MIGRATION_MODULES = _DisableMigrations()
 # Django REST Framework — API pura
 # --------------------------------------------------------------------
 REST_FRAMEWORK = {
+    # JWT custom: NO usamos simplejwt.JWTAuthentication directo porque
+    # internamente hace get_user_model() → auth.User → SELECT auth_user
+    # (tabla que no existe; MWT vive en core.users via SQL raw).
+    # Ver apps/core/jwt_auth.py para el detalle del lookup.
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "apps.core.jwt_auth.MwtJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
