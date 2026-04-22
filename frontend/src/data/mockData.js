@@ -2442,3 +2442,213 @@ export function findTemplate(key, language='ES', brand='GLOBAL') {
     t => t.template_key === key && t.language === language && t.is_active
   ) || null;
 }
+
+
+// ═══════════════════════════════════════════════════════════
+// MOCK SIZING ENGINE — alimenta /tallas cuando el backend está
+// vacío o en modo MOCK. Shape idéntico a /api/sizing/tallas/.
+// ═══════════════════════════════════════════════════════════
+export const MOCK_SIZING_OPTIONS = {
+  tipos_producto: [
+    { codigo: 'calzado',   label: 'Calzado',   requiere_dimensiones: false, orden: 1 },
+    { codigo: 'plantilla', label: 'Plantilla', requiere_dimensiones: true,  orden: 2 },
+  ],
+  sistemas_medida: [
+    { codigo: 'eu',       label: 'EU',       region: 'Europa',          grupo: 'numerica', orden: 1 },
+    { codigo: 'us_men',   label: 'US Men',   region: 'Estados Unidos',  grupo: 'numerica', orden: 2 },
+    { codigo: 'us_women', label: 'US Women', region: 'Estados Unidos',  grupo: 'numerica', orden: 3 },
+    { codigo: 'uk_men',   label: 'UK',       region: 'Reino Unido',     grupo: 'numerica', orden: 4 },
+    { codigo: 'br',       label: 'BR',       region: 'Brasil',          grupo: 'numerica', orden: 5 },
+    { codigo: 'cm',       label: 'CM',       region: 'Mondopoint',      grupo: 'numerica', orden: 6 },
+  ],
+  equivalence_fields: ['eu','us_men','us_women','uk_men','br','cm'],
+  dimension_fields: [
+    { key: 'grosor_antepie_mm', label: 'Grosor antepié (mm)', unit: 'mm', step: 0.1, min: 0, max: 99.99 },
+    { key: 'grosor_talon_mm',   label: 'Grosor talón (mm)',   unit: 'mm', step: 0.1, min: 0, max: 99.99 },
+    { key: 'drop_mm',           label: 'Drop (mm)',           unit: 'mm', step: 0.1, min: 0, max: 99.99 },
+    { key: 'peso_g',            label: 'Peso referencial (g)',unit: 'g',  step: 0.5, min: 0, max: 9999.99 },
+  ],
+  draft_allowed: true,
+  version: 'mock-sizing-engine-v1',
+};
+
+export const MOCK_TALLAS = [
+  // ── Calzado · línea EU 38–46 ────────────────────────────
+  { id: 'mt-calz-38', tipo_producto: 'calzado', talla_base: '38', nombre: 'Calzado EU 38',
+    eu: '38', us_men: '6',    us_women: '7.5',  uk_men: '5',   br: '36', cm: '24.0',
+    drop_mm: null, peso_g: null, descripcion: 'Línea calzado base · talla 38', is_active: true },
+  { id: 'mt-calz-39', tipo_producto: 'calzado', talla_base: '39', nombre: 'Calzado EU 39',
+    eu: '39', us_men: '6.5',  us_women: '8',    uk_men: '6',   br: '37', cm: '24.5',
+    drop_mm: null, peso_g: null, descripcion: 'Línea calzado base · talla 39', is_active: true },
+  { id: 'mt-calz-40', tipo_producto: 'calzado', talla_base: '40', nombre: 'Calzado EU 40',
+    eu: '40', us_men: '7',    us_women: '8.5',  uk_men: '6.5', br: '38', cm: '25.0',
+    drop_mm: null, peso_g: null, descripcion: 'Línea calzado base · talla 40', is_active: true },
+  { id: 'mt-calz-41', tipo_producto: 'calzado', talla_base: '41', nombre: 'Calzado EU 41',
+    eu: '41', us_men: '8',    us_women: '9.5',  uk_men: '7',   br: '39', cm: '25.5',
+    drop_mm: null, peso_g: null, descripcion: 'Línea calzado base · talla 41', is_active: true },
+  { id: 'mt-calz-42', tipo_producto: 'calzado', talla_base: '42', nombre: 'Calzado EU 42',
+    eu: '42', us_men: '9',    us_women: '10.5', uk_men: '8',   br: '40', cm: '26.0',
+    drop_mm: null, peso_g: null, descripcion: 'Línea calzado base · talla 42 (hero)', is_active: true },
+  { id: 'mt-calz-43', tipo_producto: 'calzado', talla_base: '43', nombre: 'Calzado EU 43',
+    eu: '43', us_men: '9.5',  us_women: '11',   uk_men: '8.5', br: '41', cm: '26.5',
+    drop_mm: null, peso_g: null, descripcion: 'Línea calzado base · talla 43', is_active: true },
+  { id: 'mt-calz-44', tipo_producto: 'calzado', talla_base: '44', nombre: 'Calzado EU 44',
+    eu: '44', us_men: '10.5', us_women: '12',   uk_men: '9.5', br: '42', cm: '27.0',
+    drop_mm: null, peso_g: null, descripcion: 'Línea calzado base · talla 44', is_active: true },
+  { id: 'mt-calz-45', tipo_producto: 'calzado', talla_base: '45', nombre: 'Calzado EU 45',
+    eu: '45', us_men: '11',   us_women: '12.5', uk_men: '10',  br: '43', cm: '27.5',
+    drop_mm: null, peso_g: null, descripcion: 'Línea calzado base · talla 45', is_active: true },
+  { id: 'mt-calz-46', tipo_producto: 'calzado', talla_base: '46', nombre: 'Calzado EU 46',
+    eu: '46', us_men: '12',   us_women: '13',   uk_men: '11',  br: '44', cm: '28.0',
+    drop_mm: null, peso_g: null, descripcion: 'Línea calzado base · talla 46', is_active: true },
+
+  // ── Plantillas (con dimensiones físicas) ────────────────
+  { id: 'mt-plan-40', tipo_producto: 'plantilla', talla_base: '40', nombre: 'Plantilla biomecánica EVA · 40',
+    eu: '40', us_men: '7',    us_women: '8.5',  uk_men: '6.5', br: '38', cm: '25.0',
+    grosor_antepie_mm: 6.0,  grosor_talon_mm: 12.0, drop_mm: 6.0, peso_g: 38.0,
+    descripcion: 'Plantilla EVA termoformada · arco medio', is_active: true },
+  { id: 'mt-plan-41', tipo_producto: 'plantilla', talla_base: '41', nombre: 'Plantilla biomecánica EVA · 41',
+    eu: '41', us_men: '8',    us_women: '9.5',  uk_men: '7',   br: '39', cm: '25.5',
+    grosor_antepie_mm: 6.0,  grosor_talon_mm: 12.0, drop_mm: 6.0, peso_g: 42.0,
+    descripcion: 'Plantilla EVA termoformada · arco medio', is_active: true },
+  { id: 'mt-plan-42', tipo_producto: 'plantilla', talla_base: '42', nombre: 'Plantilla PU memory · 42',
+    eu: '42', us_men: '9',    us_women: '10.5', uk_men: '8',   br: '40', cm: '26.0',
+    grosor_antepie_mm: 7.0,  grosor_talon_mm: 14.0, drop_mm: 7.0, peso_g: 58.0,
+    descripcion: 'Plantilla poliuretano memory-foam · soporte alto', is_active: true },
+  { id: 'mt-plan-43', tipo_producto: 'plantilla', talla_base: '43', nombre: 'Plantilla PU memory · 43',
+    eu: '43', us_men: '9.5',  us_women: '11',   uk_men: '8.5', br: '41', cm: '26.5',
+    grosor_antepie_mm: 7.0,  grosor_talon_mm: 14.0, drop_mm: 7.0, peso_g: 62.0,
+    descripcion: 'Plantilla poliuretano memory-foam · soporte alto', is_active: true },
+  { id: 'mt-plan-44', tipo_producto: 'plantilla', talla_base: '44', nombre: 'Plantilla PU memory · 44',
+    eu: '44', us_men: '10.5', us_women: '12',   uk_men: '9.5', br: '42', cm: '27.0',
+    grosor_antepie_mm: 7.5,  grosor_talon_mm: 15.0, drop_mm: 7.5, peso_g: 68.0,
+    descripcion: 'Plantilla poliuretano memory-foam · soporte alto', is_active: true },
+
+  // ── Borrador (para que el KPI "Borradores" no quede en 0) ──
+  { id: 'mt-draft-1', tipo_producto: '', talla_base: '', nombre: '',
+    eu: '', us_men: '', us_women: '', uk_men: '', br: '', cm: '',
+    drop_mm: null, peso_g: null, descripcion: 'Borrador sin tipo asignado', is_active: false },
+];
+
+
+// ═══════════════════════════════════════════════════════════
+// MOCK COMMERCIAL PRICING — alimenta el Motor de Precios
+// (BrandPricingConsole > sub-tab Listas de Precios) cuando el
+// backend está vacío o en modo MOCK.
+// Las pricelists están agrupadas por brand_id (mismo id que en
+// mockData.BRANDS) y los items están agrupados por pricelist.id.
+// ═══════════════════════════════════════════════════════════
+export const MOCK_PRICELISTS = [
+  // ── Bison ──
+  { id: 'pl-bis-2026', brand_id: 'bis', codigo: 'BIS-MAYORISTA-2026', nombre: 'Bison Mayorista 2026',
+    descripcion: 'Lista mayorista LATAM Bison · Q1–Q2 2026',
+    currency: 'USD', valid_from: '2026-01-01', valid_to: '2026-06-30',
+    source: 'MANUAL', is_active: true, items_count: 4, mock_only: true },
+  { id: 'pl-bis-eu',   brand_id: 'bis', codigo: 'BIS-EU-LIST-Q2',   nombre: 'Bison EU Q2',
+    descripcion: 'Distribución Europa · Q2 2026 · base EUR',
+    currency: 'EUR', valid_from: '2026-04-01', valid_to: '2026-06-30',
+    source: 'UPLOAD', is_active: true, items_count: 2, mock_only: true },
+  // ── Marluvas ──
+  { id: 'pl-mlv-2026', brand_id: 'mlv', codigo: 'MLV-CORE-2026',     nombre: 'Marluvas Core 2026',
+    descripcion: 'Lista núcleo Marluvas · LATAM',
+    currency: 'USD', valid_from: '2026-01-01', valid_to: null,
+    source: 'MANUAL', is_active: true, items_count: 4, mock_only: true },
+  // ── Goliath ──
+  { id: 'pl-gol-2026', brand_id: 'gol', codigo: 'GOL-INDUSTRIAL-26', nombre: 'Goliath Industrial 2026',
+    descripcion: 'Línea industrial premium Goliath',
+    currency: 'USD', valid_from: '2026-01-01', valid_to: '2026-12-31',
+    source: 'MANUAL', is_active: true, items_count: 1, mock_only: true },
+  // ── Leopard ──
+  { id: 'pl-leo-2026', brand_id: 'leo', codigo: 'LEO-RETAIL-2026',   nombre: 'Leopard Retail 2026',
+    descripcion: 'Línea sneaker retail Leopard',
+    currency: 'USD', valid_from: '2026-02-01', valid_to: null,
+    source: 'UPLOAD', is_active: true, items_count: 1, mock_only: true },
+  // ── Velox ──
+  { id: 'pl-vel-2026', brand_id: 'vel', codigo: 'VEL-RUNNING-2026',  nombre: 'Velox Running 2026',
+    descripcion: 'Línea running Velox · LATAM',
+    currency: 'USD', valid_from: '2026-03-01', valid_to: null,
+    source: 'MANUAL', is_active: true, items_count: 1, mock_only: true },
+];
+
+// Items por pricelist.id  →  shape /api/commercial/pricelist-versions/{id}/items/
+//   product_sku, product_name, unit_price_usd, cost_usd, margen_pct,
+//   grade_moq_total, size_multipliers { '40': 50, '41': 80, ... }
+export const MOCK_PRICELIST_ITEMS = {
+  'pl-bis-2026': [
+    { id: 'gi-bis-1', pricelist_id: 'pl-bis-2026',
+      product_sku: 'BIS-OXF-BLK-42', product_name: 'Oxford Bison cuero negro',
+      unit_price_usd: 89.00, cost_usd: 48.50, margen_pct: 45.5,
+      grade_moq_total: 360,
+      size_multipliers: { '39': 30, '40': 50, '41': 70, '42': 90, '43': 60, '44': 40, '45': 20 } },
+    { id: 'gi-bis-2', pricelist_id: 'pl-bis-2026',
+      product_sku: 'BIS-OXF-TAN-42', product_name: 'Oxford Bison cuero tan',
+      unit_price_usd: 89.00, cost_usd: 48.50, margen_pct: 45.5,
+      grade_moq_total: 280,
+      size_multipliers: { '39': 20, '40': 40, '41': 60, '42': 80, '43': 50, '44': 30 } },
+    { id: 'gi-bis-3', pricelist_id: 'pl-bis-2026',
+      product_sku: 'BIS-BLT-BRN-L',  product_name: 'Cinturón cuero marrón L',
+      unit_price_usd: 24.90, cost_usd: 11.20, margen_pct: 55.0,
+      grade_moq_total: 200,
+      size_multipliers: { 'M': 60, 'L': 90, 'XL': 50 } },
+    { id: 'gi-bis-4', pricelist_id: 'pl-bis-2026',
+      product_sku: 'BIS-DERBY-BLK-43', product_name: 'Derby cuero negro pulido',
+      unit_price_usd: 96.00, cost_usd: 52.30, margen_pct: 45.5,
+      grade_moq_total: 240,
+      size_multipliers: { '40': 30, '41': 50, '42': 70, '43': 50, '44': 30, '45': 10 } },
+  ],
+  'pl-bis-eu': [
+    { id: 'gi-bis-eu-1', pricelist_id: 'pl-bis-eu',
+      product_sku: 'BIS-OXF-BLK-42', product_name: 'Oxford Bison cuero negro (EU)',
+      unit_price_usd: 79.00, cost_usd: 48.50, margen_pct: 38.6,
+      grade_moq_total: 480,
+      size_multipliers: { '40': 70, '41': 90, '42': 130, '43': 100, '44': 60, '45': 30 } },
+    { id: 'gi-bis-eu-2', pricelist_id: 'pl-bis-eu',
+      product_sku: 'BIS-DERBY-BLK-43', product_name: 'Derby cuero negro pulido (EU)',
+      unit_price_usd: 86.00, cost_usd: 52.30, margen_pct: 39.2,
+      grade_moq_total: 200,
+      size_multipliers: { '41': 40, '42': 60, '43': 50, '44': 30, '45': 20 } },
+  ],
+  'pl-mlv-2026': [
+    { id: 'gi-mlv-1', pricelist_id: 'pl-mlv-2026',
+      product_sku: 'MLV-50S29-BLK-42', product_name: 'Bota seguridad 50S29 negra',
+      unit_price_usd: 52.00, cost_usd: 18.50, margen_pct: 64.4,
+      grade_moq_total: 420,
+      size_multipliers: { '39': 40, '40': 60, '41': 90, '42': 110, '43': 70, '44': 40, '45': 10 } },
+    { id: 'gi-mlv-2', pricelist_id: 'pl-mlv-2026',
+      product_sku: 'MLV-40S18-BRN-41', product_name: 'Bota industrial 40S18 marrón',
+      unit_price_usd: 68.00, cost_usd: 24.80, margen_pct: 63.5,
+      grade_moq_total: 360,
+      size_multipliers: { '40': 50, '41': 80, '42': 100, '43': 70, '44': 50, '45': 10 } },
+    { id: 'gi-mlv-3', pricelist_id: 'pl-mlv-2026',
+      product_sku: 'MLV-EVA-AST-BLK-40', product_name: 'Tenis EVA antiestático',
+      unit_price_usd: 44.00, cost_usd: 15.20, margen_pct: 65.5,
+      grade_moq_total: 280,
+      size_multipliers: { '38': 30, '39': 50, '40': 70, '41': 60, '42': 50, '43': 20 } },
+    { id: 'gi-mlv-4', pricelist_id: 'pl-mlv-2026',
+      product_sku: 'MLV-FUEGO-BRN-43', product_name: 'Bota Fuego cuero marrón',
+      unit_price_usd: 89.00, cost_usd: 32.00, margen_pct: 64.0,
+      grade_moq_total: 180,
+      size_multipliers: { '41': 20, '42': 40, '43': 50, '44': 40, '45': 20, '46': 10 } },
+  ],
+  'pl-gol-2026': [
+    { id: 'gi-gol-1', pricelist_id: 'pl-gol-2026',
+      product_sku: 'GOL-BT-BLK-44', product_name: 'Bota industrial Goliath 44',
+      unit_price_usd: 128.00, cost_usd: 55.80, margen_pct: 56.4,
+      grade_moq_total: 240,
+      size_multipliers: { '40': 20, '41': 30, '42': 50, '43': 60, '44': 50, '45': 20, '46': 10 } },
+  ],
+  'pl-leo-2026': [
+    { id: 'gi-leo-1', pricelist_id: 'pl-leo-2026',
+      product_sku: 'LEO-SN-WH-38', product_name: 'Sneaker blanco talla 38',
+      unit_price_usd: 48.00, cost_usd: 22.40, margen_pct: 53.3,
+      grade_moq_total: 320,
+      size_multipliers: { '37': 30, '38': 60, '39': 80, '40': 80, '41': 50, '42': 20 } },
+  ],
+  'pl-vel-2026': [
+    { id: 'gi-vel-1', pricelist_id: 'pl-vel-2026',
+      product_sku: 'VEL-RN-BLU-40', product_name: 'Running Velox azul 40',
+      unit_price_usd: 42.00, cost_usd: 18.80, margen_pct: 55.2,
+      grade_moq_total: 280,
+      size_multipliers: { '39': 50, '40': 70, '41': 60, '42': 50, '43': 30, '44': 20 } },
+  ],
+};

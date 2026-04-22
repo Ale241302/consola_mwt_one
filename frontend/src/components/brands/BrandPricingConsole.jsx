@@ -23,6 +23,9 @@ import {
   currencyCatApi, commissionBaseCatApi,
   clientesApi, commercialApi,
 } from "../../lib/api.js";
+import {
+  MOCK_PRICELISTS, MOCK_PRICELIST_ITEMS,
+} from "../../data/mockData.js";
 import { useRole } from "../../context/RoleContext.jsx";
 import {
   IconDollar, IconPlus, IconUpload, IconSearch, IconLock,
@@ -135,8 +138,16 @@ function PriceListsSubTab({ brandId, lang, canSeeMargins }) {
   const [versions, setVersions] = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
+  const [usingMock, setUsingMock] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [showNew,  setShowNew]  = useState(false);
+
+  // Fallback fail-soft: si el backend está vacío o cae, usamos
+  // MOCK_PRICELISTS filtrado por brand_id para que el módulo
+  // siga viviendo. Las pricelists mock llevan `mock_only: true`.
+  function mockForBrand() {
+    return MOCK_PRICELISTS.filter(p => p.brand_id === brandId);
+  }
 
   async function load() {
     setLoading(true);
@@ -144,14 +155,45 @@ function PriceListsSubTab({ brandId, lang, canSeeMargins }) {
     try {
       const d = await priceListVersionsApi.list({ brand_id: brandId });
       const list = Array.isArray(d) ? d : (d?.results || []);
-      setVersions(list);
+      if (list.length === 0) {
+        setVersions(mockForBrand());
+        setUsingMock(true);
+      } else {
+        setVersions(list);
+        setUsingMock(false);
+      }
     } catch (e) {
-      setError(e?.body?.detail || e?.message || "Error cargando listas de precios");
+      // Backend no disponible / mock-mode: caemos a MOCK directamente
+      setVersions(mockForBrand());
+      setUsingMock(true);
     } finally {
       setLoading(false);
     }
   }
   useEffect(() => { if (brandId) load(); /* eslint-disable-next-line */ }, [brandId]);
+
+  // Handler de creación local (cuando el backend rechaza POST porque
+  // está en mock-mode o porque la lista que creamos vive sólo en FE).
+  function handleLocalCreate(payload) {
+    const fakeId = `pl-local-${Date.now()}`;
+    const newPL = {
+      id: fakeId,
+      brand_id: brandId,
+      codigo: payload.codigo,
+      nombre: payload.nombre,
+      descripcion: payload.descripcion,
+      currency: payload.currency,
+      valid_from: payload.valid_from,
+      valid_to: payload.valid_to,
+      source: payload.source,
+      is_active: true,
+      items_count: 0,
+      mock_only: true,
+    };
+    setVersions(prev => [newPL, ...prev]);
+    setUsingMock(true);
+    setShowNew(false);
+  }
 
   return (
     <div className="bpc-section">
@@ -179,6 +221,19 @@ function PriceListsSubTab({ brandId, lang, canSeeMargins }) {
 
       {error && (
         <div style={errorBannerStyle}>⚠ {error}</div>
+      )}
+
+      {usingMock && !loading && versions.length > 0 && (
+        <div style={{
+          padding: "8px 12px", borderRadius: 8,
+          background: "rgba(180,83,9,0.10)", color: "#B45309",
+          font: "500 12.5px/1.4 var(--font-body)", marginBottom: 10,
+          border: "1px solid rgba(180,83,9,0.20)",
+        }}>
+          ⚠ {lang === "es"
+              ? "Modo demo · listas de ejemplo (la DB de pricelists está vacía o el backend no responde). Las creaciones / Excel no se persisten."
+              : "Demo mode · sample lists (pricelists DB is empty or backend not responding). Creations / Excel won't persist."}
+        </div>
       )}
 
       {loading ? (
@@ -261,6 +316,7 @@ function PriceListsSubTab({ brandId, lang, canSeeMargins }) {
             lang={lang}
             onClose={() => setShowNew(false)}
             onCreated={() => { setShowNew(false); load(); }}
+            onLocalFallback={handleLocalCreate}
           />
         )}
       </AnimatePresence>
@@ -274,16 +330,46 @@ function PricelistItemsPanel({ pricelist, lang, canSeeMargins, onChanged }) {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState(null);
+  // Una pricelist es mock cuando lo declara explícitamente (mock_only)
+  // o cuando su id sigue el patrón de id local (`pl-` + slug, en vez de UUID).
+  const isMockPricelist = !!pricelist.mock_only || /^pl-/.test(String(pricelist.id || ""));
+  const [usingMockItems, setUsingMockItems] = useState(false);
   const fileRef = useRef(null);
+
+  function mockItemsForList() {
+    return MOCK_PRICELIST_ITEMS[pricelist.id] || [];
+  }
 
   async function load() {
     setLoading(true);
+    // Si la pricelist nació en MOCK, no llamamos al backend (devolvería 404
+    // por id desconocido). Servimos directo desde MOCK_PRICELIST_ITEMS.
+    if (isMockPricelist) {
+      const mockList = mockItemsForList();
+      setItems(mockList);
+      setUsingMockItems(true);
+      setLoading(false);
+      return;
+    }
     try {
       const d = await commercialApi.listItemsOfPricelist(pricelist.id);
       const list = Array.isArray(d) ? d : (d?.results || []);
-      setItems(list);
+      if (list.length === 0) {
+        const mockList = mockItemsForList();
+        setItems(mockList);
+        setUsingMockItems(mockList.length > 0);
+      } else {
+        setItems(list);
+        setUsingMockItems(false);
+      }
     } catch (e) {
-      setToast({ kind: "error", text: e?.message || "Error cargando items" });
+      const mockList = mockItemsForList();
+      if (mockList.length > 0) {
+        setItems(mockList);
+        setUsingMockItems(true);
+      } else {
+        setToast({ kind: "error", text: e?.message || "Error cargando items" });
+      }
     } finally {
       setLoading(false);
     }
@@ -340,13 +426,76 @@ function PricelistItemsPanel({ pricelist, lang, canSeeMargins, onChanged }) {
         return;
       }
 
-      const resp = await commercialApi.bulkUpsertItems(pricelist.id, parsed, false);
-      setToast({
-        kind: "success",
-        text: `${resp?.created ?? 0} creados · ${resp?.updated ?? 0} actualizados`,
-      });
-      await load();
-      onChanged && onChanged();
+      // Si la pricelist es mock (UUID inválido para el backend), no llamamos
+      // bulkUpsert. Inyectamos los items parseados directamente en el state
+      // local y avisamos al usuario que NO se persiste.
+      if (isMockPricelist) {
+        const localItems = parsed.map((p, idx) => ({
+          id: `gi-local-${Date.now()}-${idx}`,
+          pricelist_id: pricelist.id,
+          product_sku:    p.product_sku,
+          product_name:   p.product_name,
+          unit_price_usd: p.unit_price_usd,
+          cost_usd:       p.cost_usd,
+          margen_pct:     (canSeeMargins && p.cost_usd && p.unit_price_usd)
+                            ? Number((((p.unit_price_usd - p.cost_usd) / p.unit_price_usd) * 100).toFixed(1))
+                            : null,
+          grade_moq_total: Object.values(p.size_multipliers || {}).reduce((a, b) => a + Number(b || 0), 0),
+          size_multipliers: p.size_multipliers,
+          mock_only: true,
+        }));
+        setItems(prev => {
+          const bySku = new Map(prev.map(it => [it.product_sku, it]));
+          for (const li of localItems) bySku.set(li.product_sku, li);
+          return Array.from(bySku.values());
+        });
+        setUsingMockItems(true);
+        setToast({
+          kind: "success",
+          text: lang === "es"
+            ? `${localItems.length} ítems añadidos en memoria · modo demo (no se guardan en la DB)`
+            : `${localItems.length} items added in memory · demo mode (not persisted to DB)`,
+        });
+        return;
+      }
+
+      try {
+        const resp = await commercialApi.bulkUpsertItems(pricelist.id, parsed, false);
+        setToast({
+          kind: "success",
+          text: `${resp?.created ?? 0} creados · ${resp?.updated ?? 0} actualizados`,
+        });
+        await load();
+        onChanged && onChanged();
+      } catch (apiErr) {
+        // Backend rechazó (mock-mode global o error): caemos a inyección local
+        const localItems = parsed.map((p, idx) => ({
+          id: `gi-local-${Date.now()}-${idx}`,
+          pricelist_id: pricelist.id,
+          product_sku:    p.product_sku,
+          product_name:   p.product_name,
+          unit_price_usd: p.unit_price_usd,
+          cost_usd:       p.cost_usd,
+          margen_pct:     (canSeeMargins && p.cost_usd && p.unit_price_usd)
+                            ? Number((((p.unit_price_usd - p.cost_usd) / p.unit_price_usd) * 100).toFixed(1))
+                            : null,
+          grade_moq_total: Object.values(p.size_multipliers || {}).reduce((a, b) => a + Number(b || 0), 0),
+          size_multipliers: p.size_multipliers,
+          mock_only: true,
+        }));
+        setItems(prev => {
+          const bySku = new Map(prev.map(it => [it.product_sku, it]));
+          for (const li of localItems) bySku.set(li.product_sku, li);
+          return Array.from(bySku.values());
+        });
+        setUsingMockItems(true);
+        setToast({
+          kind: "success",
+          text: lang === "es"
+            ? `${localItems.length} ítems añadidos en memoria · modo demo (backend no disponible)`
+            : `${localItems.length} items added in memory · demo mode (backend unavailable)`,
+        });
+      }
     } catch (err) {
       setToast({ kind: "error", text: err?.body?.detail || err?.message || "Error parseando Excel" });
     } finally {
@@ -383,6 +532,19 @@ function PricelistItemsPanel({ pricelist, lang, canSeeMargins, onChanged }) {
       {toast && (
         <div style={toast.kind === "error" ? errorBannerStyle : successBannerStyle}>
           {toast.kind === "error" ? "⚠" : "✓"} {toast.text}
+        </div>
+      )}
+
+      {usingMockItems && items.length > 0 && (
+        <div style={{
+          padding: "8px 12px", borderRadius: 8,
+          background: "rgba(180,83,9,0.10)", color: "#B45309",
+          font: "500 12.5px/1.4 var(--font-body)", marginBottom: 10,
+          border: "1px solid rgba(180,83,9,0.20)",
+        }}>
+          ⚠ {lang === "es"
+              ? "Modo demo · ítems de ejemplo (la lista no existe en la DB o el backend no responde). El Excel se carga en memoria, no se persiste."
+              : "Demo mode · sample items (list is not in DB or backend not responding). Excel uploads stay in memory, not persisted."}
         </div>
       )}
 
@@ -1155,7 +1317,7 @@ function SimulatorSubTab({ brandId, lang, canSeeMargins }) {
 // =====================================================================
 // Drawer · Nueva lista de precios
 // =====================================================================
-function NewPriceListDrawer({ brandId, lang, onClose, onCreated }) {
+function NewPriceListDrawer({ brandId, lang, onClose, onCreated, onLocalFallback }) {
   const [form, setForm] = useState({
     codigo: "",
     nombre: "",
@@ -1197,8 +1359,17 @@ function NewPriceListDrawer({ brandId, lang, onClose, onCreated }) {
         setSaving(false);
         return;
       }
-      await priceListVersionsApi.create(payload);
-      onCreated && onCreated();
+      try {
+        await priceListVersionsApi.create(payload);
+        onCreated && onCreated();
+      } catch (apiErr) {
+        // Backend rechazó (mock-mode o fallo): caemos a creación local
+        if (typeof onLocalFallback === "function") {
+          onLocalFallback(payload);
+        } else {
+          throw apiErr;
+        }
+      }
     } catch (e) {
       setError(e?.body?.detail || e?.message || "Error");
     } finally {

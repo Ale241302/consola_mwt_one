@@ -26,6 +26,7 @@ import { useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 
 import { tallasApi, sizingApi } from "../lib/api.js";
+import { MOCK_TALLAS, MOCK_SIZING_OPTIONS } from "../data/mockData.js";
 import {
   IconPlus, IconRefresh, IconSearch, IconX, IconCheck,
   IconPackage, IconAlert, IconTag, IconLock,
@@ -62,28 +63,41 @@ export default function ScreenSizingEngine() {
   const [tallas,   setTallas]   = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
+  const [usingMock, setUsingMock] = useState(false);  // banner informativo
   const [filterTipo, setFilterTipo] = useState("");
   const [q, setQ] = useState("");
   const [editing, setEditing]   = useState(null);    // null | {} (nuevo) | obj (edita)
 
   // ── Carga inicial: opciones + tallas ──────────────────────────
+  // Patrón fail-soft: si el backend no responde, está vacío o
+  // está en modo MOCK (devuelve []), caemos a MOCK_TALLAS para
+  // que la UI siga viviendo. Cualquier creación/edición que
+  // falle simplemente actualiza el state local sobre los MOCK.
   const loadAll = async () => {
     setLoading(true);
     setError(null);
+    let opt = null;
+    let list = [];
+    let optErr = null;
     try {
-      const [opt, list] = await Promise.all([
-        sizingApi.options(),
-        tallasApi.list(),
-      ]);
-      setOptions(opt);
-      setTallas(Array.isArray(list?.results) ? list.results
-                : Array.isArray(list)        ? list
-                : []);
-    } catch (e) {
-      setError(e?.message || "Error cargando tallas.");
-    } finally {
-      setLoading(false);
-    }
+      opt = await sizingApi.options();
+    } catch (e) { optErr = e; }
+    try {
+      const r = await tallasApi.list();
+      list = Array.isArray(r?.results) ? r.results
+           : Array.isArray(r)          ? r
+           : [];
+    } catch (e) { /* tragado — caemos a MOCK abajo */ }
+
+    const finalOptions = (opt && Object.keys(opt).length > 0) ? opt : MOCK_SIZING_OPTIONS;
+    const finalTallas  = list.length > 0 ? list : MOCK_TALLAS;
+
+    setOptions(finalOptions);
+    setTallas(finalTallas);
+    setUsingMock(list.length === 0);
+    // Sólo mostramos error duro si TAMPOCO había MOCK que servir.
+    if (optErr && finalTallas.length === 0) setError(optErr?.message || "Error cargando tallas.");
+    setLoading(false);
   };
 
   useEffect(() => { loadAll(); }, []);
@@ -118,6 +132,9 @@ export default function ScreenSizingEngine() {
   }, [tallas]);
 
   // ── Persistencia: create / update ────────────────────────────
+  // Si el backend está en MOCK / falla, se aplica el cambio sólo
+  // al state local (no se persiste). El banner "Modo demo" lo
+  // hace visible para que nadie crea que se guardó.
   const handleSave = async (form) => {
     // Limpia el payload — strings vacíos → null para no contaminar la DB.
     const payload = {};
@@ -125,20 +142,45 @@ export default function ScreenSizingEngine() {
       if (typeof v === "string" && v.trim() === "") payload[k] = null;
       else payload[k] = v;
     });
-    if (form.id) {
-      await tallasApi.update(form.id, payload);
-    } else {
-      await tallasApi.create(payload);
+    try {
+      if (form.id && !String(form.id).startsWith("mt-")) {
+        await tallasApi.update(form.id, payload);
+      } else if (!form.id) {
+        await tallasApi.create(payload);
+      } else {
+        throw new Error("mock-only id"); // forzar fallback local
+      }
+      setEditing(null);
+      await loadAll();
+    } catch (e) {
+      // Mock-mode local: actualiza in-memory.
+      setTallas(prev => {
+        if (form.id) {
+          return prev.map(t => t.id === form.id ? { ...t, ...payload } : t);
+        }
+        const newId = `mt-local-${Date.now()}`;
+        return [{ id: newId, ...payload, is_active: payload.is_active ?? true }, ...prev];
+      });
+      setUsingMock(true);
+      setEditing(null);
     }
-    setEditing(null);
-    await loadAll();
   };
 
   const handleSoftDelete = async (talla) => {
     if (!talla?.id) return;
     if (!window.confirm(lang === "es" ? "¿Desactivar esta talla?" : "Deactivate this size?")) return;
-    await tallasApi.remove(talla.id);
-    await loadAll();
+    try {
+      if (!String(talla.id).startsWith("mt-")) {
+        await tallasApi.remove(talla.id);
+      } else {
+        throw new Error("mock-only id");
+      }
+      await loadAll();
+    } catch (e) {
+      // Mock-mode: lo desactivamos en memoria.
+      setTallas(prev => prev.map(t => t.id === talla.id ? { ...t, is_active: false } : t));
+      setUsingMock(true);
+    }
   };
 
 
@@ -167,6 +209,21 @@ export default function ScreenSizingEngine() {
           </button>
         </div>
       </div>
+
+      {/* Banner modo demo (mock fallback) */}
+      {usingMock && (
+        <div style={{
+          marginTop: 12, padding: "8px 12px", borderRadius: 8,
+          background: "rgba(180,83,9,0.10)", color: "#B45309",
+          font: "600 12.5px/1.4 var(--font-body)",
+          border: "1px solid rgba(180,83,9,0.20)",
+          display: "inline-flex", alignItems: "center", gap: 6,
+        }}>
+          ⚠ {lang === "es"
+              ? "Modo demo · mostrando datos de ejemplo (la DB de tallas está vacía o el backend no responde). Las creaciones/ediciones no se persisten."
+              : "Demo mode · showing mock data (sizing DB empty or backend down). Creates/edits won't persist."}
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="siz-kpis">
