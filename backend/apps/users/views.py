@@ -53,17 +53,20 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import (
-    MwtUser, RoleCat, ModuleCat, RolePermission, UserRoleBridge,
-    PasswordResetToken, ActivityFeed, UserAddress,
+    MwtUser, PasswordResetToken, ActivityFeed, UserAddress,
 )
 from .serializers import (
     MwtUserSerializer, MwtUserListSerializer,
     ProfileMeSerializer,
-    RoleCatSerializer, ModuleCatSerializer, RolePermissionSerializer,
     ActivityFeedSerializer,
-    RoleMatrixInputSerializer, PasswordResetResponseSerializer,
+    PasswordResetResponseSerializer,
     UserAddressSerializer, UserAddressAdminSerializer,
 )
+# Los ViewSets de roles/RBAC ahora viven en apps.roles.views. El guard
+# `_deny_non_admin` se mantiene local aquí para los endpoints de identidad
+# (users + addresses). apps.roles tiene su propia copia en
+# apps/roles/permissions.py — las dos políticas son idénticas y no se
+# acoplan entre apps.
 
 log = logging.getLogger(__name__)
 
@@ -454,203 +457,10 @@ class ProfileMeView(APIView):
         return Response(ProfileMeSerializer(u).data)
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Roles · catálogos + matriz CRUD
-# ══════════════════════════════════════════════════════════════════════
-class RoleCatViewSet(viewsets.ModelViewSet):
-    """CRUD del catálogo de roles.
 
-    Sólo accesible para superadmin / admin. DELETE fuerza soft-delete
-    (`is_active=False`), y mutaciones sobre roles `is_system=True`
-    (superadmin, admin, client_b2b) están BLOQUEADAS — son roles
-    canónicos del sistema y borrarlos rompe el RBAC.
-    """
-    queryset = RoleCat.objects.all()
-    serializer_class = RoleCatSerializer
-    lookup_field = "slug"
-
-    def initial(self, request, *args, **kwargs):
-        super().initial(request, *args, **kwargs)
-        denied = _deny_non_admin(request, resource_label="roles.crud")
-        if denied is not None:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(denied.data)
-
-    def get_queryset(self):
-        qs = RoleCat.objects.all()
-        include_inactive = self.request.query_params.get("include_inactive")
-        if not (include_inactive and include_inactive.lower() in ("1", "true", "yes")):
-            qs = qs.filter(is_active=True)
-        return qs.order_by("orden", "slug")
-
-    def _reject_if_system(self, instance, action_label: str):
-        if getattr(instance, "is_system", False):
-            return Response(
-                {"detail": f"Rol de sistema (is_system=True). No se permite {action_label}.",
-                 "slug":   instance.slug},
-                status=status.HTTP_409_CONFLICT,
-            )
-        return None
-
-    def update(self, request, *args, **kwargs):
-        instance = self.get_object()
-        # Bloqueo: no dejamos que is_system se flipee via PATCH.
-        if "is_system" in request.data and instance.is_system:
-            return Response(
-                {"detail": "No se puede modificar el flag is_system de un rol canónico."},
-                status=status.HTTP_409_CONFLICT,
-            )
-        # Bloqueo: no se puede cambiar el slug de un rol de sistema.
-        if instance.is_system and request.data.get("slug") and request.data["slug"] != instance.slug:
-            return Response(
-                {"detail": "No se puede cambiar el slug de un rol de sistema."},
-                status=status.HTTP_409_CONFLICT,
-            )
-        return super().update(request, *args, **kwargs)
-
-    def perform_destroy(self, instance):
-        """Soft-delete + bloqueo sobre is_system."""
-        if instance.is_system:
-            # La excepción se traduce a 409 en la vista de destroy.
-            from rest_framework.exceptions import ValidationError
-            raise ValidationError(
-                {"detail": f"No se puede inactivar el rol de sistema '{instance.slug}'."}
-            )
-        instance.is_active = False
-        instance.save(update_fields=["is_active", "updated_at"])
-
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        if instance.is_system:
-            return Response(
-                {"detail": f"No se puede inactivar el rol de sistema '{instance.slug}'.",
-                 "slug":   instance.slug},
-                status=status.HTTP_409_CONFLICT,
-            )
-        return super().destroy(request, *args, **kwargs)
-
-    @action(detail=True, methods=["post"], url_path="toggle-active")
-    def toggle_active(self, request, slug=None):
-        role = self.get_object()
-        if role.is_system and role.is_active:
-            return Response(
-                {"detail": f"No se puede inactivar el rol de sistema '{role.slug}'."},
-                status=status.HTTP_409_CONFLICT,
-            )
-        role.is_active = not role.is_active
-        role.save(update_fields=["is_active", "updated_at"])
-        return Response({"ok": True, "slug": role.slug, "is_active": role.is_active})
-
-
-class ModuleCatViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = ModuleCat.objects.filter(is_active=True)
-    serializer_class = ModuleCatSerializer
-
-    def initial(self, request, *args, **kwargs):
-        super().initial(request, *args, **kwargs)
-        denied = _deny_non_admin(request, resource_label="modules.read")
-        if denied is not None:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(denied.data)
-
-
-class RolePermissionViewSet(viewsets.ModelViewSet):
-    """Lectura + update de la matriz CRUD por (role, module)."""
-    queryset = RolePermission.objects.all()
-    serializer_class = RolePermissionSerializer
-
-    def initial(self, request, *args, **kwargs):
-        super().initial(request, *args, **kwargs)
-        denied = _deny_non_admin(request, resource_label="permissions.crud")
-        if denied is not None:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(denied.data)
-
-
-class RoleGroupMatrixView(APIView):
-    """GET y PATCH de la matriz completa de un rol.
-
-      GET   /api/permissions/groups/<slug>/ →
-            { role: {...}, matrix: [{module, can_create, can_read, ...}] }
-
-      PATCH /api/permissions/groups/<slug>/ con body:
-            { matrix: [{module, can_create, can_read, can_update, can_delete}] }
-
-      Hace upsert (UNIQUE(role_slug, module_slug)) — las celdas ausentes
-      se mantienen sin cambios.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def initial(self, request, *args, **kwargs):
-        super().initial(request, *args, **kwargs)
-        denied = _deny_non_admin(request, resource_label="permissions.matrix")
-        if denied is not None:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(denied.data)
-
-    def get(self, request, slug):
-        try:
-            role = RoleCat.objects.get(slug=slug)
-        except RoleCat.DoesNotExist:
-            return Response({"detail": "Role no existe."}, status=404)
-        cells = RolePermission.objects.filter(role_slug=slug).order_by("module_slug")
-        modules = ModuleCat.objects.filter(is_active=True).order_by("orden", "slug")
-        # Indexamos celdas por module_slug
-        by_mod = {c.module_slug: c for c in cells}
-        matrix = []
-        for m in modules:
-            c = by_mod.get(m.slug)
-            matrix.append({
-                "module":       m.slug,
-                "module_label": m.nombre,
-                "categoria":    m.categoria,
-                "can_create":   bool(c and c.can_create),
-                "can_read":     bool(c and c.can_read),
-                "can_update":   bool(c and c.can_update),
-                "can_delete":   bool(c and c.can_delete),
-            })
-        return Response({
-            "role":   RoleCatSerializer(role).data,
-            "matrix": matrix,
-        })
-
-    def patch(self, request, slug):
-        try:
-            role = RoleCat.objects.get(slug=slug)
-        except RoleCat.DoesNotExist:
-            return Response({"detail": "Role no existe."}, status=404)
-        ser = RoleMatrixInputSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        updated_by = getattr(request.user, "id", None)
-        n_updated = 0
-        n_created = 0
-        valid_modules = set(ModuleCat.objects.filter(is_active=True).values_list("slug", flat=True))
-        for cell in ser.validated_data["matrix"]:
-            if cell["module"] not in valid_modules:
-                continue
-            obj, created = RolePermission.objects.update_or_create(
-                role_slug=slug, module_slug=cell["module"],
-                defaults={
-                    "can_create":    cell["can_create"],
-                    "can_read":      cell["can_read"],
-                    "can_update":    cell["can_update"],
-                    "can_delete":    cell["can_delete"],
-                    "updated_by_id": updated_by,
-                },
-            )
-            if created:
-                obj.id = uuid.uuid4()
-                obj.save()
-                n_created += 1
-            else:
-                n_updated += 1
-        return Response({
-            "ok":        True,
-            "role":      slug,
-            "updated":   n_updated,
-            "created":   n_created,
-        })
-
+# Los ViewSets de roles/RBAC viven en apps.roles.views (CRUD de RoleCat,
+# ModuleCat, RolePermission + matriz RoleGroupMatrixView). El frontend los
+# sigue consumiendo en /api/roles/, /api/permissions/* — sin cambios.
 
 # ══════════════════════════════════════════════════════════════════════
 # Activity feed · /api/activity-feed/

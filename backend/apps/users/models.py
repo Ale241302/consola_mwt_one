@@ -4,7 +4,18 @@ MWT.ONE · apps.users.models
 Agente responsable: [AG-BACKEND]
 
 Modelos Django (managed=False) sobre el schema `users` creado por
-[AG-DATABASE] en backend/sql/A4_users_roles.sql.
+[AG-DATABASE] en backend/sql/A4_users_roles.sql + A4b_users_addresses.sql.
+
+Tablas cubiertas aquí:
+  · users.mwtuser              → MwtUser
+  · users.password_reset_token → PasswordResetToken
+  · users.activity_feed        → ActivityFeed
+  · users.addresses            → UserAddress
+
+Los modelos de roles/permisos (RoleCat, ModuleCat, RolePermission,
+UserRoleBridge) se movieron a `apps.roles.models` para separar la
+app de identidad (users) de la app de RBAC (roles). El schema SQL
+sigue siendo `users.*` porque la migración es única.
 
 Regla de oro MWT: cero FK físicas → todos los vínculos (user_id,
 role_slug, legal_entity_id) son UUID/string planos con índices.
@@ -50,71 +61,6 @@ class MwtUser(models.Model):
     class Meta:
         managed  = False
         db_table = 'users"."mwtuser'
-
-
-class RoleCat(models.Model):
-    slug         = models.CharField(max_length=32, primary_key=True)
-    nombre       = models.CharField(max_length=96)
-    descripcion  = models.TextField(null=True, blank=True)
-    color        = models.CharField(max_length=16, default="#64748B")
-    orden        = models.IntegerField(default=100)
-    is_system    = models.BooleanField(default=False)
-    is_active    = models.BooleanField(default=True)
-    created_at   = models.DateTimeField(auto_now_add=True)
-    updated_at   = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        managed  = False
-        db_table = 'users"."role_cat'
-        ordering = ("orden", "slug")
-
-
-class ModuleCat(models.Model):
-    slug         = models.CharField(max_length=32, primary_key=True)
-    nombre       = models.CharField(max_length=96)
-    descripcion  = models.TextField(null=True, blank=True)
-    icon         = models.CharField(max_length=32, null=True, blank=True)
-    categoria    = models.CharField(max_length=32, default="OPERACIONAL")
-    orden        = models.IntegerField(default=100)
-    is_active    = models.BooleanField(default=True)
-
-    class Meta:
-        managed  = False
-        db_table = 'users"."module_cat'
-        ordering = ("orden", "slug")
-
-
-class RolePermission(models.Model):
-    """Matriz CRUD por (role_slug, module_slug). Un row por celda."""
-    id            = models.UUIDField(primary_key=True)
-    role_slug     = models.CharField(max_length=32)
-    module_slug   = models.CharField(max_length=32)
-    can_create    = models.BooleanField(default=False)
-    can_read      = models.BooleanField(default=False)
-    can_update    = models.BooleanField(default=False)
-    can_delete    = models.BooleanField(default=False)
-    updated_by_id = models.UUIDField(null=True, blank=True)
-    updated_at    = models.DateTimeField(auto_now=True)
-    created_at    = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        managed  = False
-        db_table = 'users"."role_permission'
-        unique_together = (("role_slug", "module_slug"),)
-
-
-class UserRoleBridge(models.Model):
-    id         = models.UUIDField(primary_key=True)
-    user_id    = models.UUIDField()
-    role_slug  = models.CharField(max_length=32)
-    granted_by = models.UUIDField(null=True, blank=True)
-    granted_at = models.DateTimeField(auto_now_add=True)
-    is_active  = models.BooleanField(default=True)
-
-    class Meta:
-        managed  = False
-        db_table = 'users"."user_role_bridge'
-        unique_together = (("user_id", "role_slug"),)
 
 
 class PasswordResetToken(models.Model):

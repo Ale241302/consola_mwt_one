@@ -12,9 +12,10 @@ Reglas:
 """
 from rest_framework import serializers
 from .models import (
-    MwtUser, RoleCat, ModuleCat, RolePermission, UserRoleBridge,
-    PasswordResetToken, ActivityFeed, UserAddress,
+    MwtUser, PasswordResetToken, ActivityFeed, UserAddress,
 )
+# Los serializers de RoleCat/ModuleCat/RolePermission/matriz RBAC se
+# movieron a apps.roles.serializers. Aquí solo quedan los de identidad.
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -143,33 +144,6 @@ class ProfileMeSerializer(serializers.ModelSerializer):
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Roles / Permisos
-# ─────────────────────────────────────────────────────────────────────
-class RoleCatSerializer(serializers.ModelSerializer):
-    class Meta:
-        model  = RoleCat
-        fields = "__all__"
-
-
-class ModuleCatSerializer(serializers.ModelSerializer):
-    class Meta:
-        model  = ModuleCat
-        fields = "__all__"
-
-
-class RolePermissionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model  = RolePermission
-        fields = "__all__"
-
-
-class UserRoleBridgeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model  = UserRoleBridge
-        fields = "__all__"
-
-
-# ─────────────────────────────────────────────────────────────────────
 # Activity feed (campana)
 # ─────────────────────────────────────────────────────────────────────
 class ActivityFeedSerializer(serializers.ModelSerializer):
@@ -181,30 +155,6 @@ class ActivityFeedSerializer(serializers.ModelSerializer):
             "read_at", "is_active", "created_at",
         )
         read_only_fields = fields
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Matriz RBAC · payload del endpoint /api/permissions/groups/<role_slug>/
-#
-# Shape del PATCH:
-#   {
-#     "matrix": [
-#       { "module": "expedientes", "can_create": true, "can_read": true,
-#         "can_update": true, "can_delete": false },
-#       ...
-#     ]
-#   }
-# ─────────────────────────────────────────────────────────────────────
-class RoleMatrixCellSerializer(serializers.Serializer):
-    module     = serializers.CharField(max_length=32)
-    can_create = serializers.BooleanField(default=False)
-    can_read   = serializers.BooleanField(default=False)
-    can_update = serializers.BooleanField(default=False)
-    can_delete = serializers.BooleanField(default=False)
-
-
-class RoleMatrixInputSerializer(serializers.Serializer):
-    matrix = RoleMatrixCellSerializer(many=True)
 
 
 # ─────────────────────────────────────────────────────────────────────
