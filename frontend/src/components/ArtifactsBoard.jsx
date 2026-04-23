@@ -13,7 +13,7 @@ import {
   STATES, HERO_ID, ARTIFACT_CATALOG, HERO_ARTIFACT_RECORDS,
 } from "../data/mockData.js";
 
-export function ArtifactsBoard({ expedienteId, lang }) {
+export function ArtifactsBoard({ expedienteId, lang, readOnly = false }) {
   // Initialize from HERO_ARTIFACT_RECORDS if hero, else empty
   const isHero = expedienteId === HERO_ID;
   const [records, setRecords] = useState(() => isHero ? JSON.parse(JSON.stringify(HERO_ARTIFACT_RECORDS)) : {});
@@ -60,9 +60,14 @@ export function ArtifactsBoard({ expedienteId, lang }) {
                   <span>{tr(lang, state)}</span>
                   <span className="ab-col-count">{items.length}</span>
                 </div>
-                <button className="ab-add-artifact" onClick={()=>setPickState(state)}>
-                  <IconPlus size={12}/> {lang==='es'?'Artefacto':'Artifact'}
-                </button>
+                {/* "+ Artefacto" es acción de gestión interna (el CEO sube
+                    BL, factura, certificados, etc.). CLIENT B2B sólo
+                    visualiza los artefactos ya publicados — nunca crea. */}
+                {!readOnly && (
+                  <button className="ab-add-artifact" onClick={()=>setPickState(state)}>
+                    <IconPlus size={12}/> {lang==='es'?'Artefacto':'Artifact'}
+                  </button>
+                )}
               </div>
               <div className="ab-col-body">
                 {items.length === 0 && (
@@ -96,9 +101,14 @@ export function ArtifactsBoard({ expedienteId, lang }) {
                           </div>
                         )}
                       </div>
-                      <button className="ab-add-record" onClick={()=>setRecordModal({ artifact: art })}>
-                        <IconPlus size={11}/> {lang==='es'?'Agregar registro':'Add record'}
-                      </button>
+                      {/* "Agregar registro" también es mutación (sube un
+                          BL, factura, certificado, foto de empaque, etc.).
+                          CLIENT sólo lee los registros publicados. */}
+                      {!readOnly && (
+                        <button className="ab-add-record" onClick={()=>setRecordModal({ artifact: art })}>
+                          <IconPlus size={11}/> {lang==='es'?'Agregar registro':'Add record'}
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -132,7 +142,9 @@ export function ArtifactsBoard({ expedienteId, lang }) {
           artifact={viewArtifact}
           records={records[viewArtifact.id] || []}
           lang={lang}
-          onAddRecord={()=>{ setRecordModal({ artifact: viewArtifact }); setViewArtifact(null); }}
+          onAddRecord={readOnly
+            ? null
+            : (()=>{ setRecordModal({ artifact: viewArtifact }); setViewArtifact(null); })}
           onClose={()=>setViewArtifact(null)}
         />
       )}
@@ -287,9 +299,11 @@ function ModalViewRecords({ artifact, records, lang, onAddRecord, onClose }) {
       </div>
       <div className="mdl-footer">
         <button className="btn btn-ghost" onClick={onClose}>{lang==='es'?'Cerrar':'Close'}</button>
-        <button className="btn btn-primary" onClick={onAddRecord}>
-          <IconPlus size={13}/> {lang==='es'?'Agregar registro':'Add record'}
-        </button>
+        {onAddRecord && (
+          <button className="btn btn-primary" onClick={onAddRecord}>
+            <IconPlus size={13}/> {lang==='es'?'Agregar registro':'Add record'}
+          </button>
+        )}
       </div>
     </ModalShell>
   );
