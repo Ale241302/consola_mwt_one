@@ -48,12 +48,20 @@ function deriveBaseViewport(backendRole) {
 //               límite de crédito) + tabs Orders/Payments/Docs existentes.
 //   - pagos    → vista compacta "Saldo + próximos vencimientos" (sin
 //               máquina de estados, sin aging, sin Rentabilidad CEO).
+//   - ai       → Asistente MWT (SVC-01). El cliente entra al mismo módulo
+//               /ai que el admin, pero con strip-down aplicado en
+//               AIHub.jsx + AIChat.jsx (sin Gobernanza, sin @ / /, pill
+//               fija SVC-01). Backend: guards en apps/ai_hub bloquean
+//               /api/ai/agents|skills|instructions con 403 y fuerzan
+//               user_id=request.user.id en threads.
 export const CLIENT_ALLOWED_MODULES = new Set([
   "dashboard",
   "expedientes",
   "pipeline",
   "portal",
   "pagos",
+  "ai",       // legacy alias
+  "ai-hub",   // clave real usada por Sidebar.jsx (key='ai-hub')
 ]);
 
 // Capacidades CEO-ONLY — si isClient, estas acciones se ocultan/deshabilitan.
