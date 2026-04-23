@@ -12,6 +12,7 @@
 //                futuras)
 // =====================================================================
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiFetch, getToken, ApiError } from "../../lib/api.js";
 import { useRole } from "../../context/RoleContext.jsx";
@@ -19,6 +20,9 @@ import { useRole } from "../../context/RoleContext.jsx";
 
 export default function SettingsMenu({ open, onClose, lang = "es" }) {
   const { isClient, isAdmin } = useRole();
+  const navigate = useNavigate();
+
+  const go = (path) => { onClose?.(); navigate(path); };
 
   return (
     <AnimatePresence>
@@ -38,23 +42,77 @@ export default function SettingsMenu({ open, onClose, lang = "es" }) {
             style={{
               position: "absolute",
               top: 52, right: 60,
-              width: 380,
+              width: 280,
               zIndex: 120,
               background: "#FFFFFF",
               border: "1px solid var(--border, #E1E6ED)",
               borderRadius: 12,
               boxShadow: "0 12px 40px rgba(11,30,58,0.18)",
               overflow: "hidden",
+              padding: "8px 0",
             }}
           >
-            {isClient
-              ? <ClientProfileForm onClose={onClose} lang={lang} />
-              : <AdminSystemTabs onClose={onClose} lang={lang} />}
+            {/* Quick menu — navega a la vista completa */}
+            <MenuItem icon="👤" label={lang === "es" ? "Mi perfil" : "My profile"}
+                      hint={lang === "es" ? "Datos personales, direcciones, empresa" : "Personal, addresses, company"}
+                      onClick={() => go("/perfil")}/>
+            {!isClient && (
+              <>
+                <Divider/>
+                <MenuItem icon="👥" label={lang === "es" ? "Usuarios" : "Users"}
+                          hint={lang === "es" ? "Gestionar usuarios del ERP" : "Manage ERP users"}
+                          onClick={() => go("/usuarios")}/>
+                <MenuItem icon="🛡️" label={lang === "es" ? "Roles y permisos" : "Roles & permissions"}
+                          hint={lang === "es" ? "Matriz RBAC CRUD" : "RBAC CRUD matrix"}
+                          onClick={() => go("/roles")}/>
+                <Divider/>
+                <MenuItem icon="🧠" label="LLMs · Routing" hint="Modelos por tipo de agente"
+                          onClick={() => go("/perfil?tab=system")}/>
+                <MenuItem icon="🔑" label="API Keys" hint="Claves activas · rotación"
+                          onClick={() => go("/perfil?tab=system")}/>
+                <MenuItem icon="🛡️" label="Políticas" hint="POL_VISIBILIDAD · POL_DETERMINISMO · …"
+                          onClick={() => go("/perfil?tab=system")}/>
+              </>
+            )}
           </motion.div>
         </>
       )}
     </AnimatePresence>
   );
+}
+
+
+function MenuItem({ icon, label, hint, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        width: "100%", textAlign: "left", border: "none", background: "transparent",
+        padding: "10px 16px", cursor: "pointer",
+        display: "flex", alignItems: "center", gap: 12,
+        transition: "background 0.1s ease",
+      }}
+      onMouseEnter={(e) => e.currentTarget.style.background = "#F7F9FC"}
+      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+    >
+      <span style={{ fontSize: 18, flex: "0 0 24px" }}>{icon}</span>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--navy, #0B1E3A)" }}>
+          {label}
+        </div>
+        {hint && (
+          <div style={{ fontSize: 11, color: "var(--text-tertiary, #64748B)", marginTop: 1 }}>
+            {hint}
+          </div>
+        )}
+      </div>
+    </button>
+  );
+}
+
+function Divider() {
+  return <div style={{ height: 1, background: "var(--border, #E1E6ED)", margin: "6px 12px" }}/>;
 }
 
 

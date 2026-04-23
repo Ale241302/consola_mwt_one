@@ -22,6 +22,7 @@ import { IconPlus, IconRefresh, IconLock, IconX, IconCheck } from "../lib/icons.
 
 export default function Users() {
   const { lang } = useOutletContext() || { lang: "es" };
+  const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
@@ -57,8 +58,10 @@ export default function Users() {
   };
 
   // ── Acciones ─────────────────────────────────────────────
-  const openCreate = () => setDrawer({ open: true, user: null });
-  const openEdit   = (u) => setDrawer({ open: true, user: u });
+  // Navegan a /usuarios/nuevo o /usuarios/:id — la vista completa vive
+  // en UserFormView.jsx.
+  const openCreate = () => navigate("/usuarios/nuevo");
+  const openEdit   = (u) => navigate(`/usuarios/${u.id}`);
   const closeDrawer = () => setDrawer({ open: false, user: null });
 
   const toggleActive = async (u) => {

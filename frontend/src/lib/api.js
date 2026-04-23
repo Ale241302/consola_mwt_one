@@ -17,6 +17,7 @@ import {
   ROLES_DEMO, MODULES_DEMO, USERS_DEMO, ME_PROFILE_MOCK,
   roleMatrixMock, usersListMock, userDetailMock,
   activityFeedListMock, activityFeedUnreadCountMock,
+  legalEntityMock, legalEntitiesListMock,
 } from "./usersRolesMock.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
@@ -109,6 +110,17 @@ function resolveMockFixture(path) {
   if (mGroup) {
     const result = roleMatrixMock(mGroup[1]);
     return result || { detail: "Role no existe" };
+  }
+
+  // /api/legal-entities/<id>/ — empresa individual (ficha completa)
+  const mLEDetail = path.match(/^\/legal-entities\/([^/?]+)\/?(?:\?.*)?$/);
+  if (mLEDetail) {
+    const le = legalEntityMock(mLEDetail[1]);
+    return le || { detail: "Empresa no encontrada" };
+  }
+  // /api/legal-entities/ — listado (para selector de UserFormView)
+  if (path.startsWith("/legal-entities/") || path.startsWith("/legal-entities?")) {
+    return legalEntitiesListMock();
   }
 
   // /api/activity-feed/unread-count/

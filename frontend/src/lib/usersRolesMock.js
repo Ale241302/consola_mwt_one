@@ -50,17 +50,149 @@ export const MODULES_DEMO = [
   { slug: "roles",          nombre: "Roles y Permisos",   categoria: "CORE",         orden: 210 },
 ];
 
+// Direcciones demo (un user puede tener varias; una es `is_default`).
+// Shape coherente con lo que espera ProfilePage + UserFormView.
+const ADDR = (label, street, city, country_iso2, is_default = false) => ({
+  id:          `addr-${Math.random().toString(36).slice(2, 10)}`,
+  label,                  // "Casa", "Oficina", "Almacén", "Fiscal"
+  street,
+  city,
+  country_iso2,
+  zip:         null,
+  is_default,
+  is_active:   true,
+});
+
 export const USERS_DEMO = [
-  { id: "u-001", email_plain: "alejandro@muitowork.com", full_name: "Alejandro Mendoza",   contact_email: "alejandro@muitowork.com", phone: "+51 999 111 111", preferred_language: "es", timezone: "America/Lima",     role_default: "superadmin", is_superuser: true,  legal_entity_id: null, last_login_at: "2026-04-23T14:22:00Z", is_active: true,  created_at: "2024-01-10T09:00:00Z" },
-  { id: "u-002", email_plain: "manager@mwt.one",         full_name: "Carolina Ortiz",      contact_email: "co@mwt.one",              phone: "+51 999 222 222", preferred_language: "es", timezone: "America/Lima",     role_default: "manager",    is_superuser: false, legal_entity_id: null, last_login_at: "2026-04-22T16:45:00Z", is_active: true,  created_at: "2024-03-05T10:30:00Z" },
-  { id: "u-003", email_plain: "ops@mwt.one",             full_name: "Diego Salazar",       contact_email: "ds@mwt.one",              phone: "+51 999 333 333", preferred_language: "es", timezone: "America/Lima",     role_default: "operator",   is_superuser: false, legal_entity_id: null, last_login_at: "2026-04-23T08:12:00Z", is_active: true,  created_at: "2024-06-11T14:20:00Z" },
-  { id: "u-004", email_plain: "finance@mwt.one",         full_name: "Lucía Vargas",        contact_email: "lv@mwt.one",              phone: "+51 999 444 444", preferred_language: "es", timezone: "America/Lima",     role_default: "finance",    is_superuser: false, legal_entity_id: null, last_login_at: "2026-04-23T11:05:00Z", is_active: true,  created_at: "2024-09-01T12:00:00Z" },
-  { id: "u-005", email_plain: "compras@mwt.one",         full_name: "Rodrigo Fernández",   contact_email: "rf@mwt.one",              phone: "+51 999 555 555", preferred_language: "es", timezone: "America/Lima",     role_default: "compras",    is_superuser: false, legal_entity_id: null, last_login_at: "2026-04-21T09:40:00Z", is_active: true,  created_at: "2025-01-20T08:00:00Z" },
-  { id: "u-006", email_plain: "viewer@mwt.one",          full_name: "Pablo Guzmán",        contact_email: "pg@mwt.one",              phone: null,              preferred_language: "es", timezone: "America/Lima",     role_default: "viewer",     is_superuser: false, legal_entity_id: null, last_login_at: "2026-04-18T15:30:00Z", is_active: true,  created_at: "2025-03-12T14:00:00Z" },
-  { id: "u-007", email_plain: "lpa@andesretail.pe",      full_name: "Luz Paredes",         contact_email: "lpa@andesretail.pe",      phone: "+51 1 234 5678",  preferred_language: "es", timezone: "America/Lima",     role_default: "client_b2b", is_superuser: false, legal_entity_id: "c1", last_login_at: "2026-04-23T13:10:00Z", is_active: true,  created_at: "2024-11-08T10:00:00Z" },
-  { id: "u-008", email_plain: "rojas@atacama.cl",        full_name: "Carolina Rojas",      contact_email: "rojas@atacama.cl",        phone: "+56 2 987 6543",  preferred_language: "es", timezone: "America/Santiago", role_default: "client_b2b", is_superuser: false, legal_entity_id: "c2", last_login_at: "2026-04-22T10:50:00Z", is_active: true,  created_at: "2024-08-15T11:30:00Z" },
-  { id: "u-009", email_plain: "consultor.externo@mwt.one", full_name: "Valeria Ibáñez",    contact_email: "vi.consultant@mwt.one",   phone: null,              preferred_language: "en", timezone: "America/Lima",     role_default: "viewer",     is_superuser: false, legal_entity_id: null, last_login_at: null,                    is_active: false, created_at: "2025-06-10T09:00:00Z" },
+  {
+    id: "u-001", email_plain: "alejandro@muitowork.com", full_name: "Alejandro Mendoza",
+    contact_email: "alejandro@muitowork.com", phone: "+51 999 111 111",
+    preferred_language: "es", timezone: "America/Lima",
+    role_default: "superadmin", is_superuser: true,
+    legal_entity_id: null,  // staff interno — no asignado a empresa cliente
+    last_login_at: "2026-04-23T14:22:00Z", is_active: true, created_at: "2024-01-10T09:00:00Z",
+    addresses: [
+      ADDR("Oficina HQ", "Av. República de Colombia 791, piso 14, San Isidro", "Lima", "PE", true),
+    ],
+  },
+  {
+    id: "u-002", email_plain: "manager@mwt.one", full_name: "Carolina Ortiz",
+    contact_email: "co@mwt.one", phone: "+51 999 222 222",
+    preferred_language: "es", timezone: "America/Lima",
+    role_default: "manager", is_superuser: false, legal_entity_id: null,
+    last_login_at: "2026-04-22T16:45:00Z", is_active: true, created_at: "2024-03-05T10:30:00Z",
+    addresses: [ADDR("Oficina HQ", "Av. República de Colombia 791, piso 14, San Isidro", "Lima", "PE", true)],
+  },
+  {
+    id: "u-003", email_plain: "ops@mwt.one", full_name: "Diego Salazar",
+    contact_email: "ds@mwt.one", phone: "+51 999 333 333",
+    preferred_language: "es", timezone: "America/Lima",
+    role_default: "operator", is_superuser: false, legal_entity_id: null,
+    last_login_at: "2026-04-23T08:12:00Z", is_active: true, created_at: "2024-06-11T14:20:00Z",
+    addresses: [ADDR("Oficina HQ", "Av. República de Colombia 791, piso 14, San Isidro", "Lima", "PE", true)],
+  },
+  {
+    id: "u-004", email_plain: "finance@mwt.one", full_name: "Lucía Vargas",
+    contact_email: "lv@mwt.one", phone: "+51 999 444 444",
+    preferred_language: "es", timezone: "America/Lima",
+    role_default: "finance", is_superuser: false, legal_entity_id: null,
+    last_login_at: "2026-04-23T11:05:00Z", is_active: true, created_at: "2024-09-01T12:00:00Z",
+    addresses: [ADDR("Oficina HQ", "Av. República de Colombia 791, piso 14, San Isidro", "Lima", "PE", true)],
+  },
+  {
+    id: "u-005", email_plain: "compras@mwt.one", full_name: "Rodrigo Fernández",
+    contact_email: "rf@mwt.one", phone: "+51 999 555 555",
+    preferred_language: "es", timezone: "America/Lima",
+    role_default: "compras", is_superuser: false, legal_entity_id: null,
+    last_login_at: "2026-04-21T09:40:00Z", is_active: true, created_at: "2025-01-20T08:00:00Z",
+    addresses: [ADDR("Oficina HQ", "Av. República de Colombia 791, piso 14, San Isidro", "Lima", "PE", true)],
+  },
+  {
+    id: "u-006", email_plain: "viewer@mwt.one", full_name: "Pablo Guzmán",
+    contact_email: "pg@mwt.one", phone: null,
+    preferred_language: "es", timezone: "America/Lima",
+    role_default: "viewer", is_superuser: false, legal_entity_id: null,
+    last_login_at: "2026-04-18T15:30:00Z", is_active: true, created_at: "2025-03-12T14:00:00Z",
+    addresses: [],
+  },
+  {
+    id: "u-007", email_plain: "lpa@andesretail.pe", full_name: "Luz Paredes",
+    contact_email: "lpa@andesretail.pe", phone: "+51 1 234 5678",
+    preferred_language: "es", timezone: "America/Lima",
+    role_default: "client_b2b", is_superuser: false,
+    legal_entity_id: "c1",  // Andes Retail Co.
+    last_login_at: "2026-04-23T13:10:00Z", is_active: true, created_at: "2024-11-08T10:00:00Z",
+    addresses: [
+      ADDR("Oficina principal", "Av. Javier Prado Este 2450, San Isidro", "Lima",     "PE", true),
+      ADDR("Almacén Callao",     "Av. Néstor Gambetta km 14.5, Callao",     "Callao",   "PE"),
+    ],
+  },
+  {
+    id: "u-008", email_plain: "rojas@atacama.cl", full_name: "Carolina Rojas",
+    contact_email: "rojas@atacama.cl", phone: "+56 2 987 6543",
+    preferred_language: "es", timezone: "America/Santiago",
+    role_default: "client_b2b", is_superuser: false,
+    legal_entity_id: "c2",  // Atacama Distribuidora
+    last_login_at: "2026-04-22T10:50:00Z", is_active: true, created_at: "2024-08-15T11:30:00Z",
+    addresses: [
+      ADDR("Oficina central",  "Av. Apoquindo 4800, piso 8, Las Condes", "Santiago", "CL", true),
+      ADDR("CD Valparaíso",    "Av. Altamirano 1480",                    "Valparaíso","CL"),
+    ],
+  },
+  {
+    id: "u-009", email_plain: "consultor.externo@mwt.one", full_name: "Valeria Ibáñez",
+    contact_email: "vi.consultant@mwt.one", phone: null,
+    preferred_language: "en", timezone: "America/Lima",
+    role_default: "viewer", is_superuser: false, legal_entity_id: null,
+    last_login_at: null, is_active: false, created_at: "2025-06-10T09:00:00Z",
+    addresses: [],
+  },
 ];
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Empresas (legal entities) — lookup helper. En real importamos de
+// /api/clientes/. Acá re-exportamos un subset de mockData.CLIENTS para
+// no duplicar verdad: el UserFormView y ProfilePage los resuelven por
+// legal_entity_id → {id, razon_social, tax_id, country, direccion,
+// contacto, email, phone, credit_days, credit_limit}.
+// ─────────────────────────────────────────────────────────────────────
+import { CLIENTS as MOCK_CLIENTS } from "../data/mockData.js";
+
+/** Devuelve los datos corporativos completos de una empresa. */
+export function legalEntityMock(id) {
+  if (!id) return null;
+  const c = (MOCK_CLIENTS || []).find((x) => x.id === id);
+  if (!c) return null;
+  return {
+    id:             c.id,
+    razon_social:   c.cliente || c.name,
+    nombre_comercial: c.name,
+    tax_id:         c.cedula_juridica || c.rut || "",
+    country:        c.country || null,
+    country_iso2:   c.country_code || null,
+    flag:           c.flag || null,
+    direccion_fiscal: c.direccion_entrega || "",
+    contacto_nombre: c.contacto_nombre || c.contact || "",
+    email:          c.email || "",
+    phone:          c.phone || "",
+    credito_dias:   c.credito_dias ?? null,
+    credito_limit:  c.credit_limit ?? c.credito_limit ?? null,
+    band:           c.band || null,
+  };
+}
+
+/** Lista completa de empresas para el selector del UserFormView. */
+export function legalEntitiesListMock() {
+  return (MOCK_CLIENTS || []).map((c) => ({
+    id:              c.id,
+    razon_social:    c.cliente || c.name,
+    nombre_comercial: c.name,
+    country:         c.country,
+    flag:            c.flag,
+    tax_id:          c.cedula_juridica || "",
+  }));
+}
 
 
 // Activity feed: mezcla de notificaciones realistas
