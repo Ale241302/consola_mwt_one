@@ -4,6 +4,7 @@ from .models import MwtUser, PortalSessionLog, PortalAuditLog
 # Importación tardía en los serializers del catálogo — evitamos acoplamiento
 # fuerte entre apps.portal y apps.productos a nivel de módulo.
 from apps.productos.models import Producto
+from apps.expedientes.models import Expediente, Linea, Documento
 
 
 class MwtUserListSerializer(serializers.ModelSerializer):
@@ -137,3 +138,175 @@ class ProductPortalDetailSerializer(ProductPortalListSerializer):
             "updated_at",
         )
         read_only_fields = fields
+
+
+# ════════════════════════════════════════════════════════════════════
+# EXPEDIENTE B2B · Strip-Down Serializers (Defensa en Profundidad)
+#
+# Regla de oro (POL_VISIBILIDAD):
+#   Campos PROHIBIDOS en el payload del portal cliente:
+#     · total_cost              (costo operativo interno — CEO-ONLY)
+#     · commission_pct          (comisión MWT — CEO-ONLY)
+#     · projected_margin        (margen proyectado — CEO-ONLY)
+#     · real_margin             (margen realizado — CEO-ONLY)
+#     · modo_operacion          (COMISION/FULL — decisión interna)
+#     · freight_mode            (ruteo logístico — INTERNAL)
+#     · transport_mode          (ruteo logístico — INTERNAL)
+#     · dispatch_mode           (FCL/LCL — INTERNAL)
+#     · price_basis             (incoterm interno — INTERNAL)
+#     · credit_band             (band de riesgo — INTERNAL)
+#     · credit_days             (política interna — INTERNAL)
+#     · credit_clock_start_rule (gobernanza financiera — INTERNAL)
+#     · factory_delay           (flag ops — INTERNAL)
+#     · is_blocked              (flag ops — INTERNAL)
+#     · phase_signal            (semáforo CEO — INTERNAL)
+#     · cost_lines (relación)   (composición de costos — CEO-ONLY)
+#     · margins (relación)      (cálculo de rentabilidad — CEO-ONLY)
+#     · available_transitions   (próximas acciones del pipeline — INTERNAL)
+#     · submitted_by_*          (auditoría interna — INTERNAL)
+#     · supplier_id             (fábrica — INTERNAL)
+#
+# Campos EXPUESTOS (whitelist):
+#   id, codigo, oc_id, brand_id, client_id, estado (traducido),
+#   origin, destination, freight público simplificado,
+#   eta, last_event_at, total_invoiced, total_paid, balance,
+#   coverage_pct, currency, created_at, updated_at.
+# ════════════════════════════════════════════════════════════════════
+
+# Mapa de estado técnico → etiqueta pública (estado_cliente)
+# (replicado de apps.portal.views.CLIENT_STATE_MAP para que el serializer
+#  no dependa del módulo views)
+_CLIENT_STATE_LABELS = {
+    "REGISTRO":    {"es": "Confirmado",     "en": "Confirmed",     "step": 0},
+    "PRODUCCION":  {"es": "En fabricación", "en": "Manufacturing", "step": 1},
+    "PREPARACION": {"es": "Preparación",    "en": "Preparing",     "step": 2},
+    "DESPACHO":    {"es": "Despachado",     "en": "Dispatched",    "step": 3},
+    "TRANSITO":    {"es": "En tránsito",    "en": "In transit",    "step": 3},
+    "EN_DESTINO":  {"es": "En aduana",      "en": "In customs",    "step": 4},
+    "CERRADO":     {"es": "Listo",          "en": "Ready",         "step": 5},
+}
+
+
+class ExpedientePortalListSerializer(serializers.ModelSerializer):
+    """Shape mínimo para listados — un expediente por fila.
+
+    Excluye TODO lo sensible por diseño (fields= es whitelist explícita).
+    """
+    estado_cliente_es   = serializers.SerializerMethodField()
+    estado_cliente_en   = serializers.SerializerMethodField()
+    estado_cliente_step = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = Expediente
+        fields = (
+            "id",
+            "codigo",
+            "oc_id",
+            "brand_id",
+            "client_id",
+            "estado",              # técnico — la UI puede ocultarlo si quiere
+            "estado_cliente_es",
+            "estado_cliente_en",
+            "estado_cliente_step",
+            "origin",
+            "destination",
+            "eta",
+            "last_event_at",
+            "total_invoiced",
+            "total_paid",
+            "balance",
+            "coverage_pct",
+            "moneda",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+    def _map(self, obj):
+        return _CLIENT_STATE_LABELS.get(obj.estado or "", {})
+
+    def get_estado_cliente_es(self, obj):   return self._map(obj).get("es", obj.estado or "—")
+    def get_estado_cliente_en(self, obj):   return self._map(obj).get("en", obj.estado or "—")
+    def get_estado_cliente_step(self, obj): return self._map(obj).get("step", 0)
+
+
+class ExpedientePortalLineaSerializer(serializers.ModelSerializer):
+    """Líneas del expediente visibles al cliente: SKU, qty, precio final.
+
+    NUNCA incluye `cost_usd`, `margen_*`, `sap`, `supplier_id`.
+    """
+    class Meta:
+        model  = Linea
+        fields = (
+            "id",
+            "oc_id",
+            "expediente_id",
+            "producto_id",
+            "sku",
+            "size",
+            "qty",
+            "unit_price",
+            "total_price",
+            "estado",
+        )
+        read_only_fields = fields
+
+
+class ExpedientePortalDocumentoSerializer(serializers.ModelSerializer):
+    """Documentos expuestos al cliente (solo artefactos públicos:
+    proforma, BL/AWB, factura, packing list).
+
+    NUNCA incluye documentos INTERNAL/CEO-ONLY (ART-03 Decisión de Modo,
+    ART-08 Pricing interno, ART-11 Costos operativos, etc.) — el
+    filtrado por whitelist de `kind` lo hace el ViewSet, no el serializer.
+    """
+    class Meta:
+        model  = Documento
+        fields = (
+            "id",
+            "oc_id",
+            "expediente_id",
+            "kind",
+            "codigo",
+            "fecha",
+            "storage_url",     # el ViewSet la reemplaza por signed URL
+            "created_at",
+        )
+        read_only_fields = fields
+
+
+class ExpedientePortalDetailSerializer(ExpedientePortalListSerializer):
+    """Detalle completo para /api/portal/expedientes/{id}/.
+
+    Incluye `lineas` y `documentos` (whitelisted). Sigue EXCLUYENDO
+    cost_lines, margins, supplier, modo_operacion, freight/transport/
+    dispatch, credit_*, phase_signal, available_transitions.
+    """
+    lineas     = serializers.SerializerMethodField()
+    documentos = serializers.SerializerMethodField()
+
+    class Meta(ExpedientePortalListSerializer.Meta):
+        fields = ExpedientePortalListSerializer.Meta.fields + (
+            "lineas",
+            "documentos",
+        )
+        read_only_fields = fields
+
+    def get_lineas(self, obj):
+        qs = Linea.objects.filter(expediente_id=obj.id, is_active=True).order_by("sku", "size")
+        return ExpedientePortalLineaSerializer(qs, many=True).data
+
+    def get_documentos(self, obj):
+        # Whitelist de kinds públicos para el cliente
+        PUBLIC_KINDS = [
+            "Proforma", "Proforma MWT",
+            "BL", "AWB", "Bill of Lading", "Airway Bill",
+            "Factura", "Invoice", "Packing List", "Certificado",
+            "Confirmación SAP",   # visible como comprobante de fabricación
+        ]
+        qs = Documento.objects.filter(
+            expediente_id=obj.id,
+            is_active=True,
+            kind__in=PUBLIC_KINDS,
+        ).order_by("-fecha", "-created_at")
+        return ExpedientePortalDocumentoSerializer(qs, many=True).data

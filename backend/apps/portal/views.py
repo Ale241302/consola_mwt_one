@@ -36,8 +36,10 @@ from .serializers import (
     MwtUserListSerializer, MwtUserSerializer,
     PortalSessionLogSerializer, PortalAuditLogSerializer,
     ProductPortalListSerializer, ProductPortalDetailSerializer,
+    ExpedientePortalListSerializer, ExpedientePortalDetailSerializer,
 )
 from apps.productos.models import Producto
+from apps.expedientes.models import Expediente
 
 log = logging.getLogger(__name__)
 
@@ -973,3 +975,124 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
     update          = _forbidden_write
     partial_update  = _forbidden_write
     destroy         = _forbidden_write
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PortalExpedienteViewSet — Detalle de expediente del cliente B2B
+#
+# GET  /api/portal/expedientes/        → list (expedientes del cliente)
+# GET  /api/portal/expedientes/{id}/   → detalle strip-down
+# POST / PUT / PATCH / DELETE          → 403 Forbidden (read-only)
+#
+# Reglas (DEFENSA EN PROFUNDIDAD):
+#   1. Scope obligatorio por `_resolve_client_id`.
+#      · Staff (admin/manager/…) puede impersonar vía X-Portal-Client.
+#      · CLIENT B2B debe aportar scope del JWT/header/query.
+#   2. Filtrado por client_id — un cliente sólo ve SUS expedientes.
+#   3. Serializer strip-down: NUNCA expone total_cost, projected_margin,
+#      real_margin, modo_operacion, freight_mode, transport_mode,
+#      dispatch_mode, price_basis, credit_band, credit_days, phase_signal,
+#      cost_lines, margins, available_transitions, supplier_id.
+#   4. PATCH/PUT/POST/DELETE → 403 explícito + audit log.
+# ══════════════════════════════════════════════════════════════════════
+class PortalExpedienteViewSet(viewsets.ReadOnlyModelViewSet):
+    """Detalle de expediente del portal B2B. 100% read-only, strip-down."""
+
+    serializer_class = ExpedientePortalListSerializer
+    http_method_names = ["get", "head", "options"]
+
+    _STAFF_ROLES = {
+        "superadmin", "admin", "manager", "operator",
+        "finance", "viewer", "compras",
+    }
+
+    def get_serializer_class(self):
+        if self.action == "retrieve":
+            return ExpedientePortalDetailSerializer
+        return ExpedientePortalListSerializer
+
+    # ── SECURITY GATE ─────────────────────────────────────────────
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        role = (getattr(request.user, "role", "") or "").lower()
+        cid  = _resolve_client_id(request)
+
+        if role in self._STAFF_ROLES:
+            # Staff: scope opcional (para impersonar en dev vía Tweaks).
+            # Sin scope, ven TODOS los expedientes activos — eso se mitiga
+            # con el filtro por client_id cuando se pasa el header.
+            request._portal_client_id = cid
+            return
+
+        # Cliente B2B: scope obligatorio
+        if not cid:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("No se pudo resolver el cliente del portal.")
+        request._portal_client_id = cid
+
+    def get_queryset(self):
+        qs = Expediente.objects.filter(is_active=True)
+        cid = getattr(self.request, "_portal_client_id", None)
+        if cid:
+            qs = qs.filter(client_id=cid)
+        # Filtros opcionales útiles en el front (por OC, brand, estado)
+        oc_id    = self.request.query_params.get("oc_id")
+        brand_id = self.request.query_params.get("brand_id")
+        estado   = self.request.query_params.get("estado")
+        if oc_id:    qs = qs.filter(oc_id=oc_id)
+        if brand_id: qs = qs.filter(brand_id=brand_id)
+        if estado:   qs = qs.filter(estado=estado)
+        return qs.order_by("-last_event_at", "-created_at")
+
+    def retrieve(self, request, *args, **kwargs):
+        try:
+            exp = self.get_queryset().get(pk=kwargs.get("pk"))
+        except Expediente.DoesNotExist:
+            return Response(
+                {"detail": "Expediente no encontrado o fuera de scope."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        data = self.get_serializer(exp).data
+
+        # Firmar URLs de documentos (best-effort)
+        for d in (data.get("documentos") or []):
+            raw_key = d.get("storage_url")
+            if not raw_key:
+                continue
+            try:
+                from apps.storage.services import generate_signed_url  # noqa: PLC0415
+                signed = generate_signed_url(key=raw_key, kind="get", ttl=900)
+                d["storage_url"]         = signed.get("url") or raw_key
+                d["signed_url_ttl_sec"]  = 900
+            except Exception:
+                d["signed_url_ttl_sec"] = 0
+
+        _record_audit(
+            user_id=getattr(request.user, "id", None),
+            email=getattr(request.user, "email", None),
+            action="VIEW", resource_type="portal_expediente",
+            resource_id=str(exp.id), resource_label=exp.codigo,
+            request=request, status_code=200,
+        )
+        return Response(data)
+
+    # ── Bloqueo explícito de writes (403 > 405) ──────────────────
+    def _forbidden_write(self, request, *args, **kwargs):
+        _record_audit(
+            user_id=getattr(request.user, "id", None),
+            email=getattr(request.user, "email", None),
+            action="UPDATE", resource_type="portal_expediente",
+            resource_id=kwargs.get("pk"),
+            resource_label="blocked_write_attempt",
+            request=request, status_code=403,
+            payload={"method": request.method},
+        )
+        return Response(
+            {"detail": "El portal B2B es read-only para expedientes."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    create         = _forbidden_write
+    update         = _forbidden_write
+    partial_update = _forbidden_write
+    destroy        = _forbidden_write

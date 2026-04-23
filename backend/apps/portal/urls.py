@@ -19,6 +19,7 @@ from .views import (
     PortalSessionLogViewSet,
     PortalAuditLogViewSet,
     PortalProductViewSet,
+    PortalExpedienteViewSet,
 )
 
 router = DefaultRouter()
@@ -34,8 +35,13 @@ router.register(r"portal-audit",    PortalAuditLogViewSet,   basename="portal-au
 portal_product_list = PortalProductViewSet.as_view({"get": "list"})
 portal_product_detail = PortalProductViewSet.as_view({"get": "retrieve"})
 
+portal_expediente_list   = PortalExpedienteViewSet.as_view({"get": "list"})
+portal_expediente_detail = PortalExpedienteViewSet.as_view({"get": "retrieve"})
+
 urlpatterns = [
     path("", include(router.urls)),
-    path("portal/products/",              portal_product_list,   name="portal-products-list"),
-    path("portal/products/<uuid:pk>/",    portal_product_detail, name="portal-products-detail"),
+    path("portal/products/",              portal_product_list,      name="portal-products-list"),
+    path("portal/products/<uuid:pk>/",    portal_product_detail,    name="portal-products-detail"),
+    path("portal/expedientes/",           portal_expediente_list,   name="portal-expedientes-list"),
+    path("portal/expedientes/<uuid:pk>/", portal_expediente_detail, name="portal-expedientes-detail"),
 ]

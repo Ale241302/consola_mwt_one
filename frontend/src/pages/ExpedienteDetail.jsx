@@ -16,6 +16,7 @@ import {
   EXPEDIENTES, CLIENTS, BRANDS, OCS, HERO_ID, HERO_LINES, HERO_COSTS,
   HERO_PAGOS, HERO_ARTIFACTS, HERO_ACTIVITY,
 } from "../data/mockData.js";
+import { useRole } from "../context/RoleContext.jsx";
 
 export default function ScreenExpedienteDetail() {
   const navigate = useNavigate();
@@ -34,7 +35,19 @@ export default function ScreenExpedienteDetail() {
   const exp = EXPEDIENTES.find(e => e.id === expedienteId) || EXPEDIENTES[2];
   const client = CLIENTS.find(c => c.id === exp.client_id) || CLIENTS[0];
   const brand = BRANDS.find(b => b.id === exp.brand_id) || BRANDS[0];
+
+  // ── Role-aware strip-down ─────────────────────────────────────
+  // Si isClient → ocultamos tabs "Costos" y "Actividad" (esta última
+  // expone logs internos de state machine), el action bar completo
+  // (Avanzar estado, Registrar pago, Registrar costo, Agregar docu,
+  // Enviar portal) y el NextActionCard del rail derecho.
+  const { isClient } = useRole();
   const [tab, setTab] = useState('overview');
+  // Si el rol cambia en caliente y el tab activo ya no es visible al
+  // cliente, lo re-anclamos a 'overview' en el próximo render.
+  if (isClient && (tab === 'costs' || tab === 'activity')) {
+    Promise.resolve().then(() => setTab('overview'));
+  }
   const [showAdvance, setShowAdvance] = useState(false);
   const [showCostDrawer, setShowCostDrawer] = useState(false);
   const [showPaymentDrawer, setShowPaymentDrawer] = useState(false);
@@ -107,59 +120,95 @@ export default function ScreenExpedienteDetail() {
           <StateTimeline currentStatus={exp.status} lang={lang} dates={dates}/>
         </div>
 
-        {/* Action bar */}
-        <div className="flex ai-center jc-between" style={{ padding: '12px 24px', background: 'var(--bg-alt)' }}>
-          <div className="flex gap-2">
-            <button className="btn btn-accent" onClick={() => setShowAdvance(true)}>
-              <IconArrow size={14}/> {tr(lang,'advance_state')}
-            </button>
-            <button className="btn btn-secondary" onClick={() => setShowPaymentDrawer(true)}>
-              <IconDollar size={14}/> {tr(lang,'register_payment')}
-            </button>
-            <button className="btn btn-secondary" onClick={() => setShowCostDrawer(true)}>
-              <IconPlus size={14}/> {tr(lang,'add_cost')}
-            </button>
-            <button className="btn btn-ghost"><IconPaperclip size={14}/>{tr(lang,'add_document')}</button>
+        {/* Action bar — SOLO ADMIN. CLIENT B2B es read-only:
+            sin Avanzar estado, sin Registrar pago/costo, sin Agregar
+            documento ni Enviar al portal. En su lugar mostramos una
+            píldora "Vista de solo lectura" para que el cliente entienda
+            que está viendo un tracking public de su orden. */}
+        {!isClient && (
+          <div className="flex ai-center jc-between" style={{ padding: '12px 24px', background: 'var(--bg-alt)' }}>
+            <div className="flex gap-2">
+              <button className="btn btn-accent" onClick={() => setShowAdvance(true)}>
+                <IconArrow size={14}/> {tr(lang,'advance_state')}
+              </button>
+              <button className="btn btn-secondary" onClick={() => setShowPaymentDrawer(true)}>
+                <IconDollar size={14}/> {tr(lang,'register_payment')}
+              </button>
+              <button className="btn btn-secondary" onClick={() => setShowCostDrawer(true)}>
+                <IconPlus size={14}/> {tr(lang,'add_cost')}
+              </button>
+              <button className="btn btn-ghost"><IconPaperclip size={14}/>{tr(lang,'add_document')}</button>
+            </div>
+            <div className="flex gap-2">
+              <button className="btn btn-ghost btn-sm"><IconMail size={13}/>{lang==='es' ? 'Enviar portal' : 'Send portal'}</button>
+              <button className="icon-btn" style={{ width: 32, height: 32 }}><IconMore size={15}/></button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <button className="btn btn-ghost btn-sm"><IconMail size={13}/>{lang==='es' ? 'Enviar portal' : 'Send portal'}</button>
-            <button className="icon-btn" style={{ width: 32, height: 32 }}><IconMore size={15}/></button>
+        )}
+        {isClient && (
+          <div
+            className="flex ai-center"
+            style={{ padding: '10px 24px', background: 'var(--bg-alt)', gap: 10 }}
+          >
+            <span
+              style={{
+                display:'inline-flex', alignItems:'center', gap:6,
+                fontSize:12, fontWeight:500,
+                color:'var(--text-tertiary, #64748B)',
+                padding:'5px 12px', borderRadius:6,
+                background:'rgba(0,0,0,0.04)',
+              }}
+            >
+              <IconLock size={12}/>
+              {lang==='es'
+                ? 'Seguimiento de orden — vista de solo lectura'
+                : 'Order tracking — read-only view'}
+            </span>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Body: main col + right rail */}
       <div className="grid gap-4" style={{ gridTemplateColumns: '2fr 1fr' }}>
         <div>
-          {/* Tabs */}
+          {/* Tabs. Para CLIENT B2B escondemos:
+                · 'costs'     → composición interna de costos (CEO-ONLY)
+                · 'activity'  → logs de state machine (INTERNAL)
+              El cliente sólo ve: resumen, productos, documentos, pagos. */}
           <div className="tabs" style={{ marginBottom: 16 }}>
             {[
-              ['overview', tr(lang,'tab_overview'), null],
-              ['lines',    tr(lang,'tab_lines'), lines.length],
-              ['artifacts',tr(lang,'tab_artifacts'), artifacts.length],
-              ['costs',    tr(lang,'tab_costs'), costs.length],
-              ['payments', tr(lang,'tab_payments'), pagos.length],
-              ['activity', tr(lang,'tab_activity'), activity.length],
-            ].map(([k,l,c]) => (
+              ['overview', tr(lang,'tab_overview'), null,                true],
+              ['lines',    tr(lang,'tab_lines'),    lines.length,        true],
+              ['artifacts',tr(lang,'tab_artifacts'),artifacts.length,    true],
+              ['costs',    tr(lang,'tab_costs'),    costs.length,        !isClient],
+              ['payments', tr(lang,'tab_payments'), pagos.length,        true],
+              ['activity', tr(lang,'tab_activity'), activity.length,     !isClient],
+            ].filter(([,,,visible]) => visible).map(([k,l,c]) => (
               <button key={k} className="tab" data-active={tab===k} onClick={() => setTab(k)}>
                 {l}{c != null && <span className="count">{c}</span>}
               </button>
             ))}
           </div>
 
-          {tab === 'overview'  && <OverviewTab exp={exp} lang={lang} lines={lines} activity={activity}/>}
+          {tab === 'overview'  && <OverviewTab exp={exp} lang={lang} lines={lines} activity={activity} isClient={isClient}/>}
           {tab === 'lines'     && <LinesTab lines={lines} lang={lang}/>}
-          {tab === 'artifacts' && <ArtifactsBoard expedienteId={exp.id} lang={lang}/>}
-          {tab === 'costs'     && <CostsTab costs={costs} lang={lang} onAdd={() => setShowCostDrawer(true)}/>}
-          {tab === 'payments'  && <PaymentsTab pagos={pagos} lang={lang} exp={exp} onAdd={() => setShowPaymentDrawer(true)}/>}
-          {tab === 'activity'  && <ActivityTab activity={activity} lang={lang}/>}
+          {tab === 'artifacts' && <ArtifactsBoard expedienteId={exp.id} lang={lang} readOnly={isClient}/>}
+          {tab === 'costs'     && !isClient && <CostsTab costs={costs} lang={lang} onAdd={() => setShowCostDrawer(true)}/>}
+          {tab === 'payments'  && <PaymentsTab pagos={pagos} lang={lang} exp={exp}
+                                               onAdd={isClient ? null : () => setShowPaymentDrawer(true)}
+                                               readOnly={isClient}/>}
+          {tab === 'activity'  && !isClient && <ActivityTab activity={activity} lang={lang}/>}
         </div>
 
-        {/* Right rail */}
+        {/* Right rail.
+            NextActionCard es CEO-ONLY — expone "próximas acciones del
+            pipeline" (available_transitions) que es info operativa interna.
+            Para CLIENT lo reemplazamos por un tracking summary público. */}
         <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
           <ClientCard client={client} exp={exp} lang={lang}/>
-          <FinancialCard exp={exp} lang={lang}/>
-          <NextActionCard exp={exp} lang={lang} onAdvance={() => setShowAdvance(true)}/>
+          {!isClient && <FinancialCard exp={exp} lang={lang}/>}
+          {!isClient && <NextActionCard exp={exp} lang={lang} onAdvance={() => setShowAdvance(true)}/>}
+          {isClient && <TrackingSummaryCard exp={exp} lang={lang}/>}
         </div>
       </div>
 
@@ -385,7 +434,7 @@ function CostsTab({ costs, lang, onAdd }) {
   );
 }
 
-function PaymentsTab({ pagos, lang, exp, onAdd }) {
+function PaymentsTab({ pagos, lang, exp, onAdd, readOnly = false }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
       <div className="card card-pad-lg">
@@ -403,7 +452,9 @@ function PaymentsTab({ pagos, lang, exp, onAdd }) {
       <div className="card">
         <div className="card-head">
           <div className="card-title">{lang==='es' ? 'Pagos registrados' : 'Registered payments'}</div>
-          <button className="btn btn-primary btn-sm" onClick={onAdd}><IconPlus size={13}/>{tr(lang,'register_payment')}</button>
+          {!readOnly && onAdd && (
+            <button className="btn btn-primary btn-sm" onClick={onAdd}><IconPlus size={13}/>{tr(lang,'register_payment')}</button>
+          )}
         </div>
         <table className="table">
           <thead><tr>
@@ -776,5 +827,92 @@ function PaymentDrawer({ lang, exp, onClose }) {
         </div>
       </div>
     </>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════════════
+// TrackingSummaryCard · CLIENT-ONLY (reemplaza NextActionCard)
+//
+// Muestra al cliente un resumen limpio de tracking: estado público,
+// ETA, cobertura de pagos. SIN available_transitions, SIN próximas
+// acciones internas, SIN botón "Avanzar".
+// ════════════════════════════════════════════════════════════════════
+function TrackingSummaryCard({ exp, lang }) {
+  // Mapa técnico → público (duplicado mínimo, coherente con backend)
+  const STATE_PUBLIC = {
+    REGISTRO:    { es: 'Confirmado',     en: 'Confirmed',      step: 0 },
+    PRODUCCION:  { es: 'En fabricación', en: 'Manufacturing',  step: 1 },
+    PREPARACION: { es: 'Preparación',    en: 'Preparing',      step: 2 },
+    DESPACHO:    { es: 'Despachado',     en: 'Dispatched',     step: 3 },
+    TRANSITO:    { es: 'En tránsito',    en: 'In transit',     step: 3 },
+    EN_DESTINO:  { es: 'En aduana',      en: 'In customs',     step: 4 },
+    CERRADO:     { es: 'Listo',          en: 'Ready',          step: 5 },
+  };
+  const tech = (exp?.status || exp?.estado || '').toUpperCase();
+  const map  = STATE_PUBLIC[tech] || { es: tech || '—', en: tech || '—', step: 0 };
+  const coverage = (exp?.total_invoiced && exp.total_invoiced > 0)
+    ? Math.round((exp.total_paid / exp.total_invoiced) * 100)
+    : 0;
+
+  return (
+    <div className="card card-pad">
+      <div className="heading-md" style={{ marginBottom: 10 }}>
+        {lang === 'es' ? 'Seguimiento de orden' : 'Order tracking'}
+      </div>
+      <div style={{
+        fontSize: 11, color: 'var(--text-tertiary, #64748B)',
+        textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4,
+      }}>
+        {lang === 'es' ? 'Estado actual' : 'Current status'}
+      </div>
+      <div style={{
+        fontSize: 16, fontWeight: 600,
+        color: 'var(--brand-primary, #0B1E3A)',
+        marginBottom: 14,
+      }}>
+        {lang === 'es' ? map.es : map.en}
+      </div>
+
+      {/* Paso del pipeline (0..5) como progress bar simple */}
+      <div style={{
+        height: 8, background: 'var(--surface-soft, #F3F5F8)',
+        borderRadius: 999, overflow: 'hidden', marginBottom: 14,
+      }}>
+        <div style={{
+          height: '100%',
+          width: `${(map.step / 5) * 100}%`,
+          background: 'var(--brand-accent, #00B286)',
+          transition: 'width 400ms ease',
+        }}/>
+      </div>
+
+      {/* ETA + cobertura */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 13 }}>
+        <div>
+          <div className="micro">ETA</div>
+          <div style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+            {exp?.eta ? fmtDate(exp.eta, lang) : '—'}
+          </div>
+        </div>
+        <div>
+          <div className="micro">{lang === 'es' ? 'Cobertura' : 'Coverage'}</div>
+          <div style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+            {coverage}%
+          </div>
+        </div>
+      </div>
+
+      <p style={{
+        marginTop: 14, fontSize: 11,
+        color: 'var(--text-tertiary, #64748B)',
+        lineHeight: 1.5,
+      }}>
+        <IconLock size={11} style={{ verticalAlign: '-2px', marginRight: 4 }}/>
+        {lang === 'es'
+          ? 'Los documentos oficiales de tu orden aparecen en la pestaña "Documentos". Las cuentas financieras internas y el detalle operativo de costos son confidenciales.'
+          : 'Official documents appear in the "Documents" tab. Internal financial accounts and cost details are confidential.'}
+      </p>
+    </div>
   );
 }

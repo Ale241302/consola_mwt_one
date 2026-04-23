@@ -43,6 +43,41 @@ from .serializers import (
 log = logging.getLogger(__name__)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Guard anti-mutación para roles CLIENT_*
+#
+# Los endpoints de /api/expedientes/, /api/ocs/, /api/lineas/,
+# /api/documentos/ SON admin-facing. El cliente B2B NUNCA debe poder
+# hacer POST/PATCH/PUT/DELETE acá — sus flujos de creación van por
+# /api/expedientes/create-from-oc/ (wizard, con HARD SHIELD dentro).
+#
+# Esta guard devuelve una Response 403 si el caller es CLIENT, o None
+# (pasa a la acción original) si es staff interno.
+# ══════════════════════════════════════════════════════════════════════
+_CLIENT_ROLES = {"client_b2b", "cliente", "client"}
+
+def _deny_client_mutation(request, action_label: str = ""):
+    """Si el usuario es CLIENT B2B, devuelve Response 403. Si no, None."""
+    role = (getattr(request.user, "role", "") or "").lower()
+    if role in _CLIENT_ROLES:
+        log.warning(
+            "Mutation denied: role=%s user=%s action=%s path=%s",
+            role, getattr(request.user, "email", "?"),
+            action_label, getattr(request, "path", "?"),
+        )
+        from rest_framework.response import Response as _Resp  # noqa: PLC0415
+        return _Resp(
+            {
+                "detail": "El portal B2B no permite mutaciones en expedientes desde el rol CLIENT.",
+                "hint":   "Usa POST /api/expedientes/create-from-oc/ desde tu portal.",
+                "role":   role,
+                "action": action_label,
+            },
+            status=403,
+        )
+    return None
+
+
 # ════════════════════════════════════════════════════════════
 # OC
 # ════════════════════════════════════════════════════════════
@@ -73,6 +108,8 @@ class OcViewSet(viewsets.ViewSet):
         return Response(OcSerializer(o).data)
 
     def create(self, request):
+        denied = _deny_client_mutation(request, action_label="oc.create")
+        if denied is not None: return denied
         data = {**request.data, "id": str(uuid.uuid4())}
         s = OcSerializer(data=data)
         s.is_valid(raise_exception=True)
@@ -80,6 +117,8 @@ class OcViewSet(viewsets.ViewSet):
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
+        denied = _deny_client_mutation(request, action_label="oc.update")
+        if denied is not None: return denied
         try:
             o = Oc.objects.get(pk=pk)
         except Oc.DoesNotExist:
@@ -91,6 +130,8 @@ class OcViewSet(viewsets.ViewSet):
     partial_update = update
 
     def destroy(self, request, pk=None):
+        denied = _deny_client_mutation(request, action_label="oc.destroy")
+        if denied is not None: return denied
         Oc.objects.filter(pk=pk).update(is_active=False)
         return Response(status=204)
 
@@ -166,6 +207,10 @@ class ExpedienteViewSet(viewsets.ViewSet):
         return Response(ExpedienteSerializer(e).data)
 
     def create(self, request):
+        # HARD SHIELD: CLIENT B2B NUNCA crea expedientes por este endpoint
+        # admin. Deben usar /api/expedientes/create-from-oc/.
+        denied = _deny_client_mutation(request, action_label="expediente.create")
+        if denied is not None: return denied
         data = {**request.data, "id": str(uuid.uuid4())}
         s = ExpedienteSerializer(data=data)
         s.is_valid(raise_exception=True)
@@ -173,6 +218,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
+        denied = _deny_client_mutation(request, action_label="expediente.update")
+        if denied is not None: return denied
         try:
             e = Expediente.objects.get(pk=pk)
         except Expediente.DoesNotExist:
@@ -184,6 +231,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
     partial_update = update
 
     def destroy(self, request, pk=None):
+        denied = _deny_client_mutation(request, action_label="expediente.destroy")
+        if denied is not None: return denied
         Expediente.objects.filter(pk=pk).update(is_active=False)
         return Response(status=204)
 
@@ -340,6 +389,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
         Valida contra pipeline.transicion_cat y emite evento con
         idempotence_token.
         """
+        # HARD SHIELD: CLIENT B2B NUNCA mueve la state machine.
+        denied = _deny_client_mutation(request, action_label="expediente.transition")
+        if denied is not None: return denied
         fase_to           = (request.data.get("fase_to") or "").strip()
         idempotence_token = request.data.get("idempotence_token")
         note              = request.data.get("note")
@@ -474,6 +526,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
         parser_classes=[MultiPartParser, FormParser, JSONParser],
     )
     def confirm_sap(self, request, pk=None):
+        # HARD SHIELD: confirmación SAP (C5) es CEO-ONLY.
+        denied = _deny_client_mutation(request, action_label="expediente.confirm_sap")
+        if denied is not None: return denied
         sap_id             = (request.data.get("sap_id") or "").strip()
         fecha_fabricacion  = (request.data.get("fecha_fabricacion") or "").strip()
         lineas_confirmadas = request.data.get("lineas_confirmadas") or "[]"
@@ -765,6 +820,8 @@ class LineaViewSet(viewsets.ViewSet):
         return Response(LineaSerializer(l).data)
 
     def create(self, request):
+        denied = _deny_client_mutation(request, action_label="linea.create")
+        if denied is not None: return denied
         data = {**request.data, "id": str(uuid.uuid4())}
         s = LineaSerializer(data=data)
         s.is_valid(raise_exception=True)
@@ -772,6 +829,8 @@ class LineaViewSet(viewsets.ViewSet):
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
+        denied = _deny_client_mutation(request, action_label="linea.update")
+        if denied is not None: return denied
         try:
             l = Linea.objects.get(pk=pk)
         except Linea.DoesNotExist:
@@ -783,6 +842,8 @@ class LineaViewSet(viewsets.ViewSet):
     partial_update = update
 
     def destroy(self, request, pk=None):
+        denied = _deny_client_mutation(request, action_label="linea.destroy")
+        if denied is not None: return denied
         Linea.objects.filter(pk=pk).update(is_active=False)
         return Response(status=204)
 
@@ -807,6 +868,8 @@ class DocumentoViewSet(viewsets.ViewSet):
         return Response(DocumentoSerializer(d).data)
 
     def create(self, request):
+        denied = _deny_client_mutation(request, action_label="documento.create")
+        if denied is not None: return denied
         data = {**request.data, "id": str(uuid.uuid4())}
         s = DocumentoSerializer(data=data)
         s.is_valid(raise_exception=True)
@@ -814,6 +877,8 @@ class DocumentoViewSet(viewsets.ViewSet):
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
+        denied = _deny_client_mutation(request, action_label="documento.update")
+        if denied is not None: return denied
         try:
             d = Documento.objects.get(pk=pk)
         except Documento.DoesNotExist:
@@ -825,6 +890,8 @@ class DocumentoViewSet(viewsets.ViewSet):
     partial_update = update
 
     def destroy(self, request, pk=None):
+        denied = _deny_client_mutation(request, action_label="documento.destroy")
+        if denied is not None: return denied
         Documento.objects.filter(pk=pk).update(is_active=False)
         return Response(status=204)
 
