@@ -4,7 +4,47 @@
 // normaliza el manejo de errores (401 → trigger logout desde AuthContext).
 // =====================================================================
 
+import {
+  portalProductsListMock,
+  portalProductsDetailMock,
+} from "./portalProductsMock.js";
+
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
+
+// =====================================================================
+// Mock fixtures — paths cuya respuesta queremos quemar en modo demo.
+// Si el path matchea, resolveMockFixture() devuelve el payload con el
+// MISMO shape que el backend real (para que los componentes de vista
+// no tengan que hacer branch-and-render).
+//
+// Paths cubiertos:
+//   · GET /portal/products/                  → {count, limit, offset, results}
+//   · GET /portal/products/<uuid>/           → detalle full
+//
+// Para agregar más fixtures, empujá más casos en resolveMockFixture.
+// =====================================================================
+function resolveMockFixture(path) {
+  // /portal/products/<id>/   (detalle — match por regex para capturar UUID o string)
+  const mDetail = path.match(/^\/portal\/products\/([^/?]+)\/?(?:\?.*)?$/);
+  if (mDetail) {
+    const productId = mDetail[1];
+    const p = portalProductsDetailMock(productId);
+    return p || { detail: "Producto no encontrado" };
+  }
+
+  // /portal/products/?limit=…&offset=…&q=…
+  if (path.startsWith("/portal/products/") || path.startsWith("/portal/products?")) {
+    const qs = path.split("?")[1] || "";
+    const sp = new URLSearchParams(qs);
+    return portalProductsListMock({
+      limit:  Number(sp.get("limit"))  || 60,
+      offset: Number(sp.get("offset")) || 0,
+      q:      sp.get("q") || "",
+    });
+  }
+
+  return undefined;
+}
 
 // =====================================================================
 // MOCK MODE — kill-switch para apagar el backend salvo /auth/*.
@@ -43,9 +83,13 @@ export class ApiError extends Error {
 export async function apiFetch(path, { method = "GET", body, token, headers = {} } = {}) {
   // ── Kill-switch: mock mode ──────────────────────────────────────────
   // /auth/* siempre pasa al backend real (login + refresh + me + logout).
-  // El resto: GET → []  ·  writes → ApiError honesta.
+  // El resto: GET → [] (o fixtures específicos si hay mock registrado)
+  //           writes → ApiError honesta.
   if (MOCKS_ENABLED && !path.startsWith("/auth/")) {
     if (method === "GET") {
+      // Antes de devolver [] probamos con fixtures específicos.
+      const fixture = resolveMockFixture(path);
+      if (fixture !== undefined) return fixture;
       return [];
     }
     throw new ApiError(
