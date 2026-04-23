@@ -363,8 +363,8 @@ export default function ScreenWizard() {
                 </div>
               </div>
             </div>
-            </div>{/* cierra grid 2-col (cliente / marca) */}
-          </div>{/* cierra wrapper step===0 (dropzone + grid) */}
+            </div>
+          </div>
         )}
         {step===1 && (
           <div style={{display:'grid',gap:24,maxWidth:700}}>
