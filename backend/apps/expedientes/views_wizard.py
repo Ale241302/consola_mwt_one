@@ -257,7 +257,20 @@ def _idempotence_replay(token: str) -> Optional[dict]:
 @parser_classes([MultiPartParser, FormParser, JSONParser])
 @permission_classes([IsAuthenticated])
 def create_from_oc(request):
-    """Orchestrator atómico del Wizard de Creación. Ver docstring del módulo."""
+    """Orchestrator atómico del Wizard de Creación. Ver docstring del módulo.
+
+    AUTORIZACIÓN:
+      · Abierto a CUALQUIER usuario autenticado (IsAuthenticated). Eso incluye
+        roles CLIENT_* del Portal B2B — ES INTENCIONAL: el cliente debe poder
+        subir su OC desde el portal.
+      · El HARD SHIELD de seguridad se hace DENTRO de la función, no a nivel
+        de permission_class, porque la misma ruta sirve a ADMIN y CLIENT con
+        reglas distintas (lo discrimina `_is_client_role(user.role)`).
+      · Para CLIENT: client_id del JWT (no del payload), mode/freight/transport/
+        dispatch/price_basis/deferred_total_price nulificados, estado='REGISTRO',
+        phase_signal='PENDING_CEO_REVIEW'.
+      · Para ADMIN: payload respetado.
+    """
     user = request.user
     role = getattr(user, "role", None)
     is_client = _is_client_role(role)
@@ -329,26 +342,41 @@ def create_from_oc(request):
     # ── 5. Campos comerciales/logísticos: NULL forzado para CLIENT ─
     client_defaults = _resolve_client_defaults(client_id) if is_client else {}
 
+    # HARD SHIELD: si el caller es CLIENT, los campos comerciales y
+    # logísticos se NULIFICAN SIEMPRE — aunque el payload intente colarlos.
+    # El cliente NO tiene autoridad sobre:
+    #    · mode                  (COMISION vs FULL — decisión CEO)
+    #    · freight_mode          (SEA/AIR — logística MWT)
+    #    · transport_mode        (MARITIMO/AEREO/TERRESTRE — logística MWT)
+    #    · dispatch_mode         (FCL/LCL/CONSOLIDADO — logística MWT)
+    #    · price_basis           (FOB/CIF/EXW/DDP — lo define el contrato)
+    #    · deferred_total_price  (split de cobro diferido — gobernanza CEO)
+    #    · credit_days           (lo hereda del contrato del cliente, no lo
+    #                             "pide" por OC; usamos clientes.cliente)
     if is_client:
-        mode            = None
-        freight_mode    = None
-        transport_mode  = None
-        price_basis     = None
-        credit_days     = client_defaults.get("credit_days")
-        moneda          = client_defaults.get("moneda") or (
+        mode                  = None
+        freight_mode          = None
+        transport_mode        = None
+        dispatch_mode         = None
+        price_basis           = None
+        deferred_total_price  = None
+        credit_days           = client_defaults.get("credit_days")
+        moneda                = client_defaults.get("moneda") or (
             (ocr_payload.get("po") or {}).get("currency") or "USD"
         )
-        phase_signal    = "PENDING_CEO_REVIEW"
+        phase_signal          = "PENDING_CEO_REVIEW"
     else:
-        mode            = request.data.get("mode")              # 'COMISION' | 'FULL' | None
-        freight_mode    = request.data.get("freight_mode")      # 'SEA' | 'AIR'
-        transport_mode  = request.data.get("transport_mode")    # 'MARITIMO' | 'AEREO'
-        price_basis     = request.data.get("price_basis")       # 'FOB' | 'CIF' | ...
-        credit_days     = request.data.get("credit_days")
-        moneda          = request.data.get("moneda") or (
+        mode                  = request.data.get("mode")              # 'COMISION' | 'FULL' | None
+        freight_mode          = request.data.get("freight_mode")      # 'SEA' | 'AIR'
+        transport_mode        = request.data.get("transport_mode")    # 'MARITIMO' | 'AEREO'
+        dispatch_mode         = request.data.get("dispatch_mode")     # 'FCL' | 'LCL' | 'CONSOLIDADO'
+        price_basis           = request.data.get("price_basis")       # 'FOB' | 'CIF' | ...
+        deferred_total_price  = request.data.get("deferred_total_price")
+        credit_days           = request.data.get("credit_days")
+        moneda                = request.data.get("moneda") or (
             (ocr_payload.get("po") or {}).get("currency") or "USD"
         )
-        phase_signal    = "ON_TRACK"
+        phase_signal          = "ON_TRACK"
 
     credit_clock_start_rule = request.data.get("credit_clock_start_rule")
 
@@ -414,12 +442,23 @@ def create_from_oc(request):
                 ])
 
                 # 7.2 — Insertar Expediente
+                # ─────────────────────────────────────────────────────
+                # HARD SHIELD EN EL INSERT:
+                #   · estado = 'REGISTRO' SIEMPRE (hardcoded, no viene del payload)
+                #   · dispatch_mode + deferred_total_price explícitos en el
+                #     INSERT (para CLIENT quedan NULL con certeza, para ADMIN
+                #     respetan el payload).
+                # Nota: si el cliente intenta inyectar un `mode` o un
+                # `freight_mode` en el payload, el bloque `if is_client` de
+                # arriba ya los sobreescribió a None — acá solo los usamos.
+                # ─────────────────────────────────────────────────────
                 c.execute("""
                     INSERT INTO expedientes.expediente (
                         id, codigo, oc_id, client_id, brand_id,
                         estado, modo_operacion, freight_mode, transport_mode,
-                        price_basis, credit_clock_start_rule,
+                        dispatch_mode, price_basis, credit_clock_start_rule,
                         moneda, total_cost, total_invoiced, total_paid, balance,
+                        deferred_total_price,
                         credit_days, phase_signal,
                         submitted_by_role, submitted_by_user_id,
                         submitted_via_portal, submitted_at,
@@ -428,8 +467,9 @@ def create_from_oc(request):
                     ) VALUES (
                         %s, %s, %s, %s, %s,
                         'REGISTRO', %s, %s, %s,
-                        %s, %s,
+                        %s, %s, %s,
                         %s, %s, 0, 0, %s,
+                        %s,
                         %s, %s,
                         %s, %s,
                         %s, now(),
@@ -441,8 +481,9 @@ def create_from_oc(request):
                     str(oc_id), str(client_id),
                     str(brand_id) if brand_id else None,
                     mode, freight_mode, transport_mode,
-                    price_basis, credit_clock_start_rule,
+                    dispatch_mode, price_basis, credit_clock_start_rule,
                     str(moneda), str(total_value), str(total_value),
+                    str(deferred_total_price) if deferred_total_price is not None else None,
                     credit_days, phase_signal,
                     submitted_role_val,
                     str(submitted_by_id) if submitted_by_id else None,
@@ -628,10 +669,12 @@ def create_from_oc(request):
             "modo_operacion":      mode,
             "freight_mode":        freight_mode,
             "transport_mode":      transport_mode,
+            "dispatch_mode":       dispatch_mode,
             "price_basis":         price_basis,
             "credit_clock_start_rule": credit_clock_start_rule,
             "moneda":              moneda,
             "total_cost":          float(total_value),
+            "deferred_total_price": float(deferred_total_price) if deferred_total_price is not None else None,
             "phase_signal":        phase_signal,
             "submitted_via_portal": is_client,
             "submitted_by_role":   submitted_role_val,

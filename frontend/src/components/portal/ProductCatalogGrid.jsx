@@ -18,7 +18,7 @@
 //   no lo renderizaríamos porque los selectores están hard-coded a los
 //   nombres seguros — pero igualmente el backend es la autoridad.
 // =====================================================================
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 
@@ -34,6 +34,45 @@ export default function ProductCatalogGrid({ lang = "es", onBuy, clientId }) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
   const [q,       setQ]       = useState("");
+
+  // ── Carrito (en memoria) ─────────────────────────────────────
+  // Map<productId, {product, qty}>. Se persiste únicamente en el runtime
+  // del portal — cuando el cliente pulsa "Procesar Pedido" lo mandamos
+  // al CreateExpedienteWizard vía location.state (no localStorage para
+  // no mezclar estado comercial entre sesiones).
+  const [cart, setCart] = useState({});   // { [productId]: { product, qty } }
+
+  const cartSummary = useMemo(() => {
+    const entries = Object.values(cart);
+    const units   = entries.reduce((a, it) => a + (Number(it.qty) || 0), 0);
+    const subtotal = entries.reduce(
+      (a, it) => a + (Number(it.qty) || 0) * (Number(it.product?.precio_venta) || 0),
+      0,
+    );
+    const currency = entries[0]?.product?.moneda || "USD";
+    return {
+      count:    entries.length,
+      units,
+      subtotal,
+      currency,
+      isEmpty:  entries.length === 0,
+    };
+  }, [cart]);
+
+  const setQty = useCallback((product, nextQty) => {
+    const q = Math.max(0, Math.floor(Number(nextQty) || 0));
+    setCart((prev) => {
+      const next = { ...prev };
+      if (q <= 0) {
+        delete next[product.id];
+      } else {
+        next[product.id] = { product, qty: q };
+      }
+      return next;
+    });
+  }, []);
+
+  const clearCart = useCallback(() => setCart({}), []);
 
   // Fetch paginado. El backend resuelve el scope del cliente en este orden:
   //   1. JWT claim portal_client_id  (cuando el claim esté en producción)
@@ -78,11 +117,41 @@ export default function ProductCatalogGrid({ lang = "es", onBuy, clientId }) {
     navigate(`/portal/productos/${productId}`);
   }, [navigate]);
 
+  // Click en "Comprar" desde una card: agrega 1 unidad al carrito.
+  // La navegación al wizard ocurre desde la barra flotante ("Procesar Pedido").
   const handleBuy = useCallback((p) => {
     if (onBuy) { onBuy(p); return; }
-    // Fallback: redirige al wizard de nueva OC con el SKU pre-seleccionado
-    navigate(`/portal/nueva-oc?sku=${encodeURIComponent(p.sku)}`);
-  }, [onBuy, navigate]);
+    setCart((prev) => {
+      const existing = prev[p.id];
+      const qty = (existing?.qty || 0) + 1;
+      return { ...prev, [p.id]: { product: p, qty } };
+    });
+  }, [onBuy]);
+
+  // "Procesar Pedido": salta al wizard (Paso 2 — Confirmar Productos)
+  // con el carrito serializado en location.state.cartItems. Al reconstruir
+  // el wizard, pre-siembra `state.lines` con estos items y setea idx=1
+  // (Paso 2 en el flujo CLIENT de 3 pasos).
+  const handleProcessOrder = useCallback(() => {
+    const cartItems = Object.values(cart).map(({ product, qty }) => ({
+      sku:          product.sku,
+      descripcion:  product.nombre || product.descripcion || null,
+      size:         null,
+      qty:          Number(qty) || 1,
+      unit_price:   Number(product.precio_venta) || 0,
+      producto_id:  product.id,
+      currency:     product.moneda || "USD",
+    }));
+    if (cartItems.length === 0) return;
+    navigate("/portal/nueva-oc", {
+      state: {
+        cartItems,
+        // Metadatos para que el wizard entre en modo "cart seed"
+        entrySource: "portal_catalog_cart",
+        jumpToStep:  "products",    // el wizard salta al Paso 2 si ve este flag
+      },
+    });
+  }, [cart, navigate]);
 
   return (
     <div className="portal-catalog">
@@ -136,9 +205,61 @@ export default function ProductCatalogGrid({ lang = "es", onBuy, clientId }) {
               lang={lang}
               onOpenDetail={() => handleOpenDetail(p.id)}
               onBuy={() => handleBuy(p)}
+              cartQty={cart[p.id]?.qty || 0}
+              onChangeQty={(nq) => setQty(p, nq)}
             />
           ))}
         </motion.div>
+      </AnimatePresence>
+
+      {/* ── Barra flotante de carrito ── */}
+      <AnimatePresence>
+        {!cartSummary.isEmpty && (
+          <motion.div
+            key="cart-bar"
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0,  opacity: 1 }}
+            exit={{    y: 80, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 320, damping: 28 }}
+            className="catalog-cart-bar"
+            role="region"
+            aria-label={lang === "es" ? "Carrito de pedido" : "Order cart"}
+          >
+            <div className="catalog-cart-summary">
+              <div className="catalog-cart-summary-main">
+                <span className="catalog-cart-badge">{cartSummary.count}</span>
+                <div>
+                  <div className="catalog-cart-summary-label">
+                    {lang === "es" ? "Productos en pedido" : "Items in order"}
+                  </div>
+                  <div className="catalog-cart-summary-value tabular-nums">
+                    {cartSummary.units} {lang === "es" ? "unidades" : "units"}
+                    {" · "}
+                    {fmtMoney(cartSummary.subtotal, cartSummary.currency)}
+                  </div>
+                </div>
+              </div>
+              <div className="catalog-cart-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost catalog-cart-clear"
+                  onClick={clearCart}
+                >
+                  {lang === "es" ? "Vaciar" : "Clear"}
+                </button>
+                <motion.button
+                  type="button"
+                  className="btn btn-primary catalog-cart-cta"
+                  onClick={handleProcessOrder}
+                  whileHover={{ y: -1 }}
+                  whileTap={{ scale: 0.97 }}
+                >
+                  {lang === "es" ? "Procesar Pedido" : "Process Order"} →
+                </motion.button>
+              </div>
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* ── Paginación ── */}
@@ -172,14 +293,19 @@ export default function ProductCatalogGrid({ lang = "es", onBuy, clientId }) {
 
 // ---------------------------------------------------------------------
 // ProductCard · una tarjeta del grid
+//
+// Props de carrito:
+//   cartQty      → cantidad actual de este SKU en el carrito (0 = no agregado)
+//   onChangeQty  → (nextQty) => void · callback para actualizar la cantidad
 // ---------------------------------------------------------------------
-function ProductCard({ product, lang, onOpenDetail, onBuy }) {
+function ProductCard({ product, lang, onOpenDetail, onBuy, cartQty = 0, onChangeQty }) {
   const {
     sku, nombre, descripcion,
     marca_label, imagen_url,
     moneda = "USD",
     precio_venta, categoria, estado,
   } = product || {};
+  const inCart = cartQty > 0;
 
   return (
     <motion.article
@@ -224,20 +350,53 @@ function ProductCard({ product, lang, onOpenDetail, onBuy }) {
         )}
       </div>
 
-      {/* Footer con precio + CTA */}
+      {/* Footer con precio + CTA (o stepper si está en carrito) */}
       <footer className="catalog-card-foot">
         <div className="catalog-card-price tabular-nums">
           {precio_venta != null && precio_venta > 0
             ? fmtMoney(precio_venta, moneda)
             : (lang === "es" ? "Consultar precio" : "Quote on request")}
         </div>
-        <button
-          type="button"
-          className="btn btn-primary catalog-card-cta"
-          onClick={(e) => { e.stopPropagation(); onBuy(); }}
-        >
-          {lang === "es" ? "Comprar" : "Buy"}
-        </button>
+        {!inCart ? (
+          <button
+            type="button"
+            className="btn btn-primary catalog-card-cta"
+            onClick={(e) => { e.stopPropagation(); onBuy(); }}
+          >
+            {lang === "es" ? "Comprar" : "Buy"}
+          </button>
+        ) : (
+          <div
+            className="catalog-card-stepper"
+            onClick={(e) => e.stopPropagation()}
+            role="group"
+            aria-label={lang === "es" ? "Cantidad" : "Quantity"}
+          >
+            <button
+              type="button"
+              className="catalog-stepper-btn"
+              onClick={() => onChangeQty && onChangeQty(cartQty - 1)}
+              aria-label={lang === "es" ? "Quitar uno" : "Remove one"}
+            >
+              −
+            </button>
+            <input
+              type="number"
+              min={0}
+              className="catalog-stepper-input tabular-nums"
+              value={cartQty}
+              onChange={(e) => onChangeQty && onChangeQty(Number(e.target.value))}
+            />
+            <button
+              type="button"
+              className="catalog-stepper-btn"
+              onClick={() => onChangeQty && onChangeQty(cartQty + 1)}
+              aria-label={lang === "es" ? "Agregar uno" : "Add one"}
+            >
+              +
+            </button>
+          </div>
+        )}
       </footer>
     </motion.article>
   );

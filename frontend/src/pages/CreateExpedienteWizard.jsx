@@ -23,7 +23,7 @@
 // /nuevo ya debería apuntar acá (revisar App.jsx).
 // =====================================================================
 import React, { useState, useMemo, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { useRole } from "../context/RoleContext.jsx";
@@ -109,15 +109,61 @@ export default function CreateExpedienteWizard() {
   const { isClient, isAdmin, user: roleUser } = useRole();
   const auth   = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const steps   = isClient ? STEPS_CLIENT : STEPS_ADMIN;
-  const [idx, setIdx] = useState(0);
+
+  // ── Pre-seed desde el carrito del catálogo ────────────────────
+  // Si el cliente llegó acá con location.state.cartItems (desde
+  // ProductCatalogGrid · "Procesar Pedido"), armamos un ocrPayload
+  // sintético con esas líneas para saltar al Paso "products" sin
+  // necesidad de subir un PDF/XLSX.
+  //
+  // Shape de cada cartItem (set por ProductCatalogGrid.handleProcessOrder):
+  //   { sku, descripcion, size, qty, unit_price, producto_id, currency }
+  const cartSeed = useMemo(() => {
+    const cart = location.state?.cartItems;
+    if (!Array.isArray(cart) || cart.length === 0) return null;
+    const lines = cart.map((it) => ({
+      sku:          it.sku,
+      descripcion:  it.descripcion || null,
+      size:         it.size || null,
+      qty:          Number(it.qty) || 1,
+      unit_price:   Number(it.unit_price) || 0,
+      producto_id:  it.producto_id || null,
+      confidence:   0.99,     // datos seleccionados por el cliente, no OCR
+      price_verdict: "OK",
+    }));
+    const currency = cart[0]?.currency || "USD";
+    return {
+      lines,
+      ocr_engine:  "portal-cart",
+      confidence:  0.99,
+      po: { number: null, date: null, currency, total: null },
+      client: { name: null, tax_id: null, _candidates: [] },
+      brand:  { name: null, brand_code: null, _candidates: [] },
+      raw_text_preview: null,
+    };
+  }, [location.state]);
+
+  // Índice inicial: si hay carrito pre-seed y el wizard pidió saltar
+  // (location.state.jumpToStep === 'products'), entramos directo al
+  // Paso 2 (índice del step key='products' en el array de pasos).
+  const initialIdx = useMemo(() => {
+    if (!cartSeed) return 0;
+    const jumpTo = location.state?.jumpToStep;
+    if (!jumpTo) return 0;
+    const i = steps.findIndex((s) => s.key === jumpTo);
+    return i >= 0 ? i : 0;
+  }, [cartSeed, location.state, steps]);
+
+  const [idx, setIdx] = useState(initialIdx);
 
   // Estado del wizard — vive acá arriba y los sub-componentes leen/escriben.
   const [state, setState] = useState(() => ({
     file:              null,            // File browser object
     fileMeta:          null,            // { name, ext, size }
-    ocrPayload:        null,            // respuesta de /api/ocr/parse-oc/
+    ocrPayload:        cartSeed || null, // si hay carrito, ya viene con lines
     loadingOcr:        false,
     ocrError:          null,
 
@@ -128,7 +174,7 @@ export default function CreateExpedienteWizard() {
     brandName:         "",
 
     // Líneas (productos). CLIENT solo puede editar qty.
-    lines:             [],
+    lines:             cartSeed ? cartSeed.lines.map((l) => ({ ...l })) : [],
 
     // Logística (ADMIN only)
     mode:              null,            // COMISION | FULL
@@ -142,6 +188,9 @@ export default function CreateExpedienteWizard() {
     submitting:        false,
     submitError:       null,
     createdExpediente: null,
+
+    // Metadatos de origen (audit)
+    entrySource:       location.state?.entrySource || "wizard_upload",
   }));
 
   // Patch state helper

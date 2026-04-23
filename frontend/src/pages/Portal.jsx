@@ -15,8 +15,9 @@ import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
 import { Badge } from "../components/ui/primitives.jsx";
 import {
   IconCheck, IconFileText, IconShield, IconDownload, IconMapPin, IconShip, IconPlane,
-  IconClock, IconArrow, IconChevRight, IconBuilding, IconUsers,
+  IconClock, IconArrow, IconChevRight, IconBuilding, IconUsers, IconPlus,
 } from "../lib/icons.jsx";
+import { motion } from "framer-motion";
 import {
   CLIENTS    as MOCK_CLIENTS,
   OCS        as MOCK_OCS,
@@ -380,7 +381,7 @@ export default function ScreenPortal() {
           ))}
         </div>
 
-        {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC}/>}
+        {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC} isClient={isClient}/>}
         {tab === 'payments' && <PortalPayments lang={lang} ocs={myOCs}/>}
         {tab === 'docs'     && <PortalDocs     lang={lang} ocs={myOCs}/>}
         {tab === 'products' && <ProductCatalogGrid lang={lang} clientId={portalClientId} />}
@@ -390,12 +391,44 @@ export default function ScreenPortal() {
 }
 
 // ── Orders tab: table of OCs (not expedientes) ─────
-function PortalOrders({ lang, ocs, expedientes = [], onOpenOC }) {
+function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false }) {
+  const navigate = useNavigate();
   return (
     <div className="card">
       <div className="card-head">
         <div className="card-title">{lang==='es' ? 'Mis Órdenes' : 'My Orders'}</div>
-        <span className="caption">{ocs.length} {lang==='es'?'órdenes':'orders'}</span>
+        <div style={{display:'flex', alignItems:'center', gap:12}}>
+          <span className="caption">{ocs.length} {lang==='es'?'órdenes':'orders'}</span>
+          {/* CTA primaria para el cliente: subir una nueva OC.
+              · Nunca decimos "Crear expediente" — eso es jerga interna MWT.
+              · Lleva al CreateExpedienteWizard en modo CLIENT (3 pasos). */}
+          {isClient && (
+            <motion.button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => navigate('/portal/nueva-oc')}
+              whileHover={{ y: -1 }}
+              whileTap={{ scale: 0.97 }}
+              style={{
+                background: '#00B286',          // Mint MWT
+                color: '#fff',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: 8,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                boxShadow: '0 1px 2px rgba(11, 30, 58, 0.10)',
+              }}
+            >
+              <IconPlus size={13}/>
+              {lang==='es' ? 'Subir Orden de Compra' : 'Upload Purchase Order'}
+            </motion.button>
+          )}
+        </div>
       </div>
       <table className="table">
         <thead><tr>
