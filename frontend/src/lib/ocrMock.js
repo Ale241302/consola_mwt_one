@@ -24,18 +24,20 @@
 // cerrando el loop UX.
 // =====================================================================
 
-// IDs demo coherentes con el resto de mocks (Rana Walk + Rana Pro)
-const CLIENT_ACME_ID    = "client-acme-demo";
-const CLIENT_DELTA_ID   = "client-delta-demo";
-const BRAND_RANA_WALK_ID = "brand-ranawalk-demo";
-const BRAND_RANA_PRO_ID  = "brand-ranapro-demo";
+// Importamos las fixtures del mockData para que el "OCR" devuelva IDs
+// que SÍ existen en el pool de clientes/marcas que renderiza la UI —
+// así el setClientId/setBrandId del Wizard matchea inmediatamente.
+import { CLIENTS as MOCK_CLIENTS, BRANDS as MOCK_BRANDS, BRAND_PRODUCTS as MOCK_BRAND_PRODUCTS } from "../data/mockData.js";
 
 // Pequeño pool de clientes ficticios para rotar según el nombre del archivo
 // (heurística barata para que distintos uploads muestren distintos clientes
 //  y se sienta "inteligente").
+// Pool de clientes de respaldo — sólo se usa si MOCK_CLIENTS de mockData
+// no pudo cargarse (SSR safety). En runtime real el seed siempre cae en
+// MOCK_CLIENTS y estos dos registros quedan inertes.
 const CLIENT_POOL = [
   {
-    id:                CLIENT_ACME_ID,
+    id:                "client-acme-fallback",
     razon_social:      "ACME Industrial S.R.L.",
     nombre_comercial:  "ACME Industrial",
     tax_id:            "30-12345678-9",
@@ -46,7 +48,7 @@ const CLIENT_POOL = [
     email:             "compras@acme-industrial.com.ar",
   },
   {
-    id:                CLIENT_DELTA_ID,
+    id:                "client-delta-fallback",
     razon_social:      "Constructora Delta S.A.",
     nombre_comercial:  "Delta Construcciones",
     tax_id:            "20-08765432-1",
@@ -131,76 +133,116 @@ function hashString(s) {
  * @param {File|null} file   archivo subido (se usa su nombre para seeding)
  * @param {object}    [opts]
  * @returns {object} payload con shape backend-compatible
+ *
+ * Los IDs devueltos (`client._candidates[0].id`, `brand._candidates[0].id`)
+ * son IDs que EXISTEN en mockData.CLIENTS / mockData.BRANDS — así el Wizard
+ * puede hacer `setClientId(resp.client._candidates[0].id)` y la UI lo
+ * resuelve a una fila real del pool demo.
  */
 export function portalOcrParseMock(file, opts = {}) {
   const filename = (file && file.name) || opts.filename || "oc_demo.pdf";
   const seed     = hashString(filename);
 
-  // Cliente asignado por hash → deterministic
-  const client = CLIENT_POOL[seed % CLIENT_POOL.length];
+  // ── Cliente real del pool mockData ────────────────────────────
+  // Tomamos el cliente por seed → siempre determinístico.
+  const pool = (Array.isArray(MOCK_CLIENTS) && MOCK_CLIENTS.length)
+    ? MOCK_CLIENTS
+    : CLIENT_POOL;
+  const client = pool[seed % pool.length];
+  const clientId     = client.id || client.uuid;
+  const clientName   = client.cliente || client.name || client.razon_social || "Cliente demo";
+  const taxId        = client.cedula_juridica || client.tax_id || "";
+  const creditDays   = client.credito_dias   ?? client.credit_days  ?? null;
+  const creditLimit  = client.credit_limit   ?? client.credito_limit ?? client.credit_limit_usd ?? null;
+  const countryIso   = client.country_code   || client.pais_iso2 || null;
+  const contactName  = client.contact        || client.contacto || null;
+  const contactEmail = client.email          || null;
 
-  // Número de OC generado a partir del nombre del archivo (parece real)
-  const poNumber = `OC-${client.nombre_comercial.split(" ")[0].toUpperCase()}-${String(seed).slice(-4).padStart(4,"0")}`;
-  const poDate   = new Date(Date.now() - (seed % 30) * 86400000).toISOString().slice(0, 10);
+  // 2do candidato (score más bajo) para simular el fuzzy-matching
+  const clientAlt = pool[(seed + 1) % pool.length];
 
-  // Líneas: 3 o 4 según seed
-  const nLines = 3 + (seed % 2);
+  // ── Marca real del pool mockData ──────────────────────────────
+  const brandPool = (Array.isArray(MOCK_BRANDS) && MOCK_BRANDS.length)
+    ? MOCK_BRANDS
+    : [{ id: "bis", name: "Bison", code: "BIS" }];
+  const brand = brandPool[seed % brandPool.length];
+
+  // ── Líneas ─────────────────────────────────────────────────────
+  // Si BRAND_PRODUCTS del mockData tiene items para esta marca, los usamos;
+  // si no, caemos al LINE_POOL.
+  const brandProducts = (Array.isArray(MOCK_BRAND_PRODUCTS) ? MOCK_BRAND_PRODUCTS : [])
+    .filter((p) => p.brand_id === brand.id);
+  const nLines = 3 + (seed % 2);    // 3 o 4 líneas
   const lines  = [];
   for (let i = 0; i < nLines; i++) {
-    const src = LINE_POOL[(seed + i) % LINE_POOL.length];
-    // pequeño jitter en qty para que no sean siempre iguales
-    const qtyJitter = ((seed >> (i+1)) % 5) * 12;
-    lines.push({
-      ...src,
-      qty: src.qty + qtyJitter,
-      ocr_raw_line: `${src.sku} · ${src.descripcion} · ${src.qty + qtyJitter} pares · $${src.unit_price.toFixed(2)}`,
-    });
+    const qtyJitter = 60 + ((seed >> (i + 1)) % 6) * 24;
+    if (brandProducts.length > 0) {
+      const src = brandProducts[(seed + i) % brandProducts.length];
+      const unitPrice = Number(src.base_price || src.price || 70).toFixed(2);
+      lines.push({
+        sku:          src.sku,
+        descripcion:  src.nombre || src.name || src.sku,
+        size:         src.size || null,
+        qty:          qtyJitter,
+        unit_price:   Number(unitPrice),
+        confidence:   0.93,
+        producto_id:  src.id,
+        price_verdict: "OK",
+        moq_client:    null,
+        moq_violated:  false,
+        notes:         null,
+        ocr_raw_line: `${src.sku} · ${qtyJitter} pares · $${unitPrice}`,
+      });
+    } else {
+      const src = LINE_POOL[(seed + i) % LINE_POOL.length];
+      lines.push({
+        ...src,
+        qty: qtyJitter,
+        ocr_raw_line: `${src.sku} · ${qtyJitter} pares · $${src.unit_price.toFixed(2)}`,
+      });
+    }
   }
   const total = lines.reduce((a, l) => a + l.qty * l.unit_price, 0);
 
-  // Brand = siempre Rana Walk para el demo (mayoría del catálogo)
-  const brandIsPro = lines.some((l) => l.sku.startsWith("RP-"));
-  const brandId    = brandIsPro ? BRAND_RANA_PRO_ID : BRAND_RANA_WALK_ID;
-  const brandName  = brandIsPro ? "Rana Pro" : "Rana Walk";
+  // ── PO number derivado del cliente + archivo ──────────────────
+  const shortName = (clientName.split(" ")[0] || "OC").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const poNumber = `PO-${shortName}-${String(seed).slice(-4).padStart(4, "0")}`;
+  const poDate   = new Date(Date.now() - (seed % 30) * 86400000).toISOString().slice(0, 10);
 
   return {
     ok:     true,
     error:  null,
     payload: {
       client: {
-        name:          client.razon_social,
-        tax_id:        client.tax_id,
+        name:   clientName,
+        tax_id: taxId,
         _candidates: [
           {
-            id:                client.id,
-            razon_social:      client.razon_social,
+            id:                clientId,
+            razon_social:      clientName,
             score:             0.97,
-            credit_days:       client.credit_days,
-            credit_limit_usd:  client.credit_limit_usd,
+            credit_days:       creditDays,
+            credit_limit_usd:  creditLimit,
           },
-          // 2do candidato con score más bajo (para mostrar que el algoritmo
-          // sabe desambiguar)
           {
-            id:                CLIENT_POOL[(seed + 1) % CLIENT_POOL.length].id,
-            razon_social:      CLIENT_POOL[(seed + 1) % CLIENT_POOL.length].razon_social,
+            id:                clientAlt.id,
+            razon_social:      clientAlt.cliente || clientAlt.name,
             score:             0.62,
-            credit_days:       CLIENT_POOL[(seed + 1) % CLIENT_POOL.length].credit_days,
-            credit_limit_usd:  CLIENT_POOL[(seed + 1) % CLIENT_POOL.length].credit_limit_usd,
+            credit_days:       clientAlt.credito_dias ?? clientAlt.credit_days ?? null,
+            credit_limit_usd:  clientAlt.credit_limit  ?? clientAlt.credito_limit ?? null,
           },
         ],
-        // Metadata extra útil en la UI (no lo usa el backend real
-        // todavía, pero lo dejamos por si luego lo agregamos al payload).
-        credit_days:      client.credit_days,
-        credit_limit_usd: client.credit_limit_usd,
-        contacto:         client.contacto,
-        email:            client.email,
-        pais_iso2:        client.pais_iso2,
+        credit_days:      creditDays,
+        credit_limit_usd: creditLimit,
+        contacto:         contactName,
+        email:            contactEmail,
+        pais_iso2:        countryIso,
       },
       brand: {
-        name:       brandName,
-        brand_code: brandIsPro ? "RP" : "RW",
+        name:       brand.name,
+        brand_code: brand.code || brand.brand_id || null,
         _candidates: [
-          { id: brandId, nombre: brandName, score: 0.99 },
+          { id: brand.id, nombre: brand.name, score: 0.99 },
         ],
       },
       po: {
@@ -216,10 +258,10 @@ export function portalOcrParseMock(file, opts = {}) {
       paperless_task_id: `mock-task-${seed.toString(16).slice(-8)}`,
       raw_text_preview:
         `ORDEN DE COMPRA ${poNumber}\n` +
-        `Cliente: ${client.razon_social}\n` +
-        `RUC/CUIT: ${client.tax_id}\n` +
+        `Cliente: ${clientName}\n` +
+        `RUC/CUIT: ${taxId}\n` +
         `Fecha: ${poDate}\n` +
-        `Marca: ${brandName}\n\n` +
+        `Marca: ${brand.name}\n\n` +
         lines.map((l) => `${l.sku}  ${l.qty} pares  $${l.unit_price.toFixed(2)}  ${l.descripcion}`).join("\n"),
     },
   };

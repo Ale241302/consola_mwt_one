@@ -1,12 +1,15 @@
 // New Expediente wizard
-import React, { useState } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import { tr, fmtMoney, fmtMoneyDetail } from "../lib/i18n.js";
 import { Badge, CreditBar } from "../components/ui/primitives.jsx";
 import {
   IconChevLeft, IconChevRight, IconCheck, IconPlus, IconX, IconAlert,
+  IconUpload,
 } from "../lib/icons.jsx";
 import { CLIENTS, BRANDS } from "../data/mockData.js";
+import { postMultipart, getToken } from "../lib/api.js";
 
 export default function ScreenWizard() {
   const navigate = useNavigate();
@@ -24,6 +27,87 @@ export default function ScreenWizard() {
   const [lines, setLines] = useState([
     { id:'nl1', sku:'BIS-OXF-BLK-42', name:'Oxford cuero negro T.42', qty: 300, price: 69.90 },
   ]);
+  // ── OCR upload (opcional) para Paso 1 ─────────────────────────
+  // Si el admin arrastra un archivo, llamamos /api/ocr/parse-oc/ y
+  // pre-seleccionamos cliente + marca + OC + líneas. Si lo deja vacío,
+  // el flujo manual sigue intacto.
+  const [poNumber, setPoNumber] = useState('PO-2026-04156');
+  const [ocrFile, setOcrFile] = useState(null);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrError, setOcrError] = useState(null);
+  const [ocrSummary, setOcrSummary] = useState(null); // { clientName, brandName, linesCount, confidence, poNumber }
+  const fileInputRef = useRef(null);
+
+  const handleOcrFile = useCallback(async (file) => {
+    if (!file) return;
+    const name = (file.name || "").toLowerCase();
+    const ok = name.endsWith(".pdf") || name.endsWith(".xlsx") || name.endsWith(".xlsm");
+    if (!ok) {
+      setOcrError(lang === "es"
+        ? "Formato no soportado. Solo .pdf o .xlsx"
+        : "Unsupported format. Only .pdf or .xlsx");
+      return;
+    }
+    setOcrFile(file);
+    setOcrLoading(true);
+    setOcrError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const resp = await postMultipart("/ocr/parse-oc/", fd, { token: getToken() });
+      if (!resp?.ok) {
+        setOcrError(resp?.hint || resp?.error || (lang === "es"
+          ? "El OCR no pudo leer el archivo. Completa los campos manualmente."
+          : "OCR failed. Fill fields manually."));
+        setOcrLoading(false);
+        return;
+      }
+      const pl = resp.payload || {};
+      const clientCand = (pl.client?._candidates || [])[0];
+      const brandCand  = (pl.brand?._candidates  || [])[0];
+
+      // Aplicar al estado del wizard (pre-selección)
+      if (clientCand?.id && CLIENTS.some(c => c.id === clientCand.id)) {
+        setClientId(clientCand.id);
+      }
+      if (brandCand?.id && BRANDS.some(b => b.id === brandCand.id)) {
+        setBrandId(brandCand.id);
+      }
+      if (pl.po?.number) {
+        setPoNumber(pl.po.number);
+      }
+      if (Array.isArray(pl.lines) && pl.lines.length > 0) {
+        setLines(pl.lines.map((l, i) => ({
+          id:    `nl-ocr-${i}`,
+          sku:   l.sku,
+          name:  l.descripcion || l.name || l.sku,
+          qty:   Number(l.qty) || 0,
+          price: Number(l.unit_price) || 0,
+        })));
+      }
+      setOcrSummary({
+        clientName:  clientCand?.razon_social || clientCand?.name || pl.client?.name || "—",
+        brandName:   brandCand?.nombre || brandCand?.name || pl.brand?.name || "—",
+        poNumber:    pl.po?.number || null,
+        linesCount:  (pl.lines || []).length,
+        confidence:  Math.round((pl.confidence || 0) * 100),
+        creditDays:  clientCand?.credit_days,
+        creditLimit: clientCand?.credit_limit_usd,
+      });
+    } catch (e) {
+      setOcrError(e?.message || (lang === "es"
+        ? "Error al procesar el archivo"
+        : "Error processing file"));
+    } finally {
+      setOcrLoading(false);
+    }
+  }, [lang]);
+
+  const clearOcr = useCallback(() => {
+    setOcrFile(null);
+    setOcrError(null);
+    setOcrSummary(null);
+  }, []);
 
   const steps = [
     tr(lang,'step_client'),
@@ -78,7 +162,147 @@ export default function ScreenWizard() {
 
       <div className="card card-pad-lg mb-4" style={{minHeight:380}}>
         {step===0 && (
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
+          <div>
+            {/* ── OCR · upload opcional ──────────────────────────────
+                Pegamos encima de las 2 columnas Cliente/Marca un bloque
+                "Subir OC (opcional)". Si el admin suelta un archivo,
+                llamamos /api/ocr/parse-oc/ y pre-seleccionamos cliente,
+                marca, PO y líneas. Si no lo usa, el flujo manual sigue
+                funcionando exactamente igual. ────────────────────── */}
+            <div
+              onDragOver={(e) => { e.preventDefault(); }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const f = e.dataTransfer.files?.[0];
+                if (f) handleOcrFile(f);
+              }}
+              onClick={() => !ocrLoading && fileInputRef.current?.click()}
+              style={{
+                position:     'relative',
+                overflow:     'hidden',
+                border:       `1.5px dashed ${ocrSummary ? 'var(--brand-accent, #00B286)' : 'var(--border, #E1E6ED)'}`,
+                background:   ocrSummary ? 'rgba(0,178,134,0.06)' : 'var(--surface-soft, #FAFBFD)',
+                borderRadius: 10,
+                padding:      '14px 18px',
+                marginBottom: 20,
+                cursor:       ocrLoading ? 'wait' : 'pointer',
+                transition:   'all 0.2s ease',
+              }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.xlsx,.xlsm"
+                style={{ display: 'none' }}
+                onChange={(e) => handleOcrFile(e.target.files?.[0])}
+              />
+
+              {/* Scan line animation durante loading */}
+              {ocrLoading && (
+                <motion.div
+                  aria-hidden="true"
+                  initial={{ y: '-100%', opacity: 0.9 }}
+                  animate={{ y: '100%',  opacity: 0.9 }}
+                  transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+                  style={{
+                    position: 'absolute', left: 0, right: 0,
+                    height: 3,
+                    background: 'linear-gradient(90deg, transparent 0%, #00B286 20%, #00B286 80%, transparent 100%)',
+                    boxShadow: '0 0 8px #00B286',
+                    zIndex: 2,
+                  }}
+                />
+              )}
+
+              {/* Estado 1: sin archivo → prompt */}
+              {!ocrFile && !ocrLoading && !ocrSummary && (
+                <div style={{display:'flex', alignItems:'center', gap:14}}>
+                  <div style={{
+                    width:42, height:42, borderRadius:8,
+                    background:'rgba(0,178,134,0.10)',
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    fontSize:20, flexShrink:0,
+                  }}>📄</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600, color:'var(--text, #1B2A45)', fontSize:14}}>
+                      {lang==='es' ? 'Subir OC del cliente (opcional)' : 'Upload client PO (optional)'}
+                    </div>
+                    <div style={{fontSize:12, color:'var(--text-tertiary, #64748B)', marginTop:2}}>
+                      {lang==='es'
+                        ? 'Arrastra o haz clic para subir un .pdf o .xlsx — el sistema llenará cliente, marca, OC y productos automáticamente.'
+                        : 'Drag or click to upload a .pdf or .xlsx — the system will auto-fill client, brand, PO and products.'}
+                    </div>
+                  </div>
+                  <Badge kind="neutral">OCR</Badge>
+                </div>
+              )}
+
+              {/* Estado 2: loading */}
+              {ocrLoading && (
+                <div style={{display:'flex', alignItems:'center', gap:14, position:'relative', zIndex:1}}>
+                  <div style={{fontSize:22}}>🔎</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600, fontSize:14, color:'var(--text, #1B2A45)'}}>
+                      {lang==='es' ? 'Leyendo documento…' : 'Reading document…'}
+                    </div>
+                    <div style={{fontSize:12, color:'var(--text-tertiary, #64748B)', marginTop:2}}>
+                      {ocrFile?.name} · {lang==='es' ? 'detectando cliente, marca y productos' : 'detecting client, brand, products'}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Estado 3: summary */}
+              {ocrSummary && !ocrLoading && (
+                <motion.div
+                  initial={{opacity:0, y:6}} animate={{opacity:1, y:0}}
+                  style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}
+                >
+                  <div style={{fontSize:22}}>✅</div>
+                  <div style={{flex:1, minWidth:200}}>
+                    <div style={{fontWeight:600, fontSize:13, color:'var(--text, #1B2A45)'}}>
+                      {lang==='es' ? 'OC leída y pre-rellenada' : 'PO parsed & pre-filled'}
+                      <span style={{
+                        marginLeft:8, fontSize:10, fontWeight:700,
+                        color:'#fff', background:'#00B286',
+                        padding:'2px 8px', borderRadius:999, letterSpacing:0.4,
+                      }}>
+                        {ocrSummary.confidence}% OCR
+                      </span>
+                    </div>
+                    <div style={{fontSize:12, color:'var(--text-tertiary, #64748B)', marginTop:4, display:'flex', gap:10, flexWrap:'wrap'}}>
+                      <span><strong style={{color:'var(--text, #1B2A45)'}}>{ocrSummary.clientName}</strong>
+                        {ocrSummary.creditDays != null && <> · {ocrSummary.creditDays} {lang==='es'?'días':'days'}</>}
+                      </span>
+                      <span>· {lang==='es'?'Marca':'Brand'}: <strong style={{color:'var(--text, #1B2A45)'}}>{ocrSummary.brandName}</strong></span>
+                      {ocrSummary.poNumber && <span>· OC <code style={{fontFamily:'monospace', fontWeight:600}}>{ocrSummary.poNumber}</code></span>}
+                      <span>· {ocrSummary.linesCount} {lang==='es'?'productos':'items'}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); clearOcr(); }}
+                    className="btn btn-ghost btn-sm"
+                    title={lang==='es'?'Quitar archivo':'Remove file'}
+                    style={{padding:'4px 10px'}}
+                  >
+                    <IconX size={12}/> {lang==='es'?'Quitar':'Remove'}
+                  </button>
+                </motion.div>
+              )}
+
+              {/* Error */}
+              {ocrError && !ocrLoading && (
+                <div style={{
+                  marginTop: ocrFile ? 8 : 0,
+                  color:'#B83227', fontSize:12,
+                }}>
+                  ⚠️ {ocrError}
+                </div>
+              )}
+            </div>
+
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
             <div>
               <label className="field-label">{tr(lang,'client')}</label>
               <select className="select" value={clientId} onChange={e=>setClientId(e.target.value)}>
@@ -122,7 +346,11 @@ export default function ScreenWizard() {
               </div>
               <div className="mt-6">
                 <label className="field-label">{lang==='es'?'OC del cliente':'Client PO'}</label>
-                <input className="input" defaultValue="PO-2026-04156"/>
+                <input
+                  className="input"
+                  value={poNumber}
+                  onChange={(e) => setPoNumber(e.target.value)}
+                />
               </div>
               <div className="grid col-2 gap-3 mt-4">
                 <div>
@@ -135,7 +363,8 @@ export default function ScreenWizard() {
                 </div>
               </div>
             </div>
-          </div>
+            </div>{/* cierra grid 2-col (cliente / marca) */}
+          </div>{/* cierra wrapper step===0 (dropzone + grid) */}
         )}
         {step===1 && (
           <div style={{display:'grid',gap:24,maxWidth:700}}>
