@@ -22,6 +22,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { aiThreadsApi, aiChatApi } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
+import { useRole } from "../context/RoleContext.jsx";
 import {
   MOCK_AI_THREADS,
   MOCK_AI_MESSAGES_BY_THREAD,
@@ -71,6 +72,7 @@ export default function AIChat() {
   const { threadId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { isClient } = useRole();
   const userId = user?.user_uuid || user?.id || user?.uuid || null;
 
   const [thread,   setThread]   = useState(null);
@@ -305,9 +307,37 @@ export default function AIChat() {
         <button onClick={loadAll} className="ai-btn ai-btn-icon-ghost" title="Recargar">
           <IconRefresh size={16} />
         </button>
-        <button onClick={() => navigate("/ai/governance")} className="ai-btn ai-btn-ghost">
-          <IconBrain size={14} /> Gobernanza
-        </button>
+        {/* "Gobernanza" es CEO-ONLY — estrictamente oculto para CLIENT.
+            El cliente sólo ve el chat con el Asistente MWT. */}
+        {!isClient && (
+          <button onClick={() => navigate("/ai/governance")} className="ai-btn ai-btn-ghost">
+            <IconBrain size={14} /> Gobernanza
+          </button>
+        )}
+        {/* En modo CLIENT mostramos una píldora fija "Asistente MWT · SVC-01"
+            que comunica visualmente con quién está hablando el cliente. */}
+        {isClient && (
+          <span
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              padding: "6px 12px",
+              background: "rgba(0,178,134,0.10)",
+              color: "#008B69",
+              borderRadius: 999,
+              font: "600 12px/1 var(--font-body)",
+              border: "1px solid rgba(0,178,134,0.22)",
+            }}
+            title="Estás chateando con el Asistente MWT (SVC-01)"
+          >
+            <IconBot size={14}/>
+            Asistente MWT
+            <code style={{
+              font: "700 10px/1 var(--font-mono)",
+              padding: "1px 6px", background: "#00B286",
+              color: "#fff", borderRadius: 4, letterSpacing: 0.4,
+            }}>SVC-01</code>
+          </span>
+        )}
       </div>
 
       {/* Banner Demo */}
@@ -394,6 +424,18 @@ export default function AIChat() {
           defaultInstructions={context.instructions}
           onSend={handleSend}
           sending={sending}
+          // Strip-down CLIENT B2B:
+          //   · Deshabilita menciones @ (agentes) y / (skills).
+          //     El cliente no orquesta; habla SOLO con SVC-01 (asegurado
+          //     por backend en chat_views.py ChatSendView).
+          //   · Restringe attachments a formatos seguros de negocio:
+          //     PDF (contratos, OC), XLSX (listas), JPG/JPEG/PNG (fotos
+          //     de referencia, packing list escaneada).
+          restrictMentions={isClient}
+          allowedFileTypes={isClient ? ".pdf,.xlsx,.xls,.jpg,.jpeg,.png" : undefined}
+          placeholder={isClient
+            ? "Escribe tu consulta para el Asistente MWT…"
+            : undefined}
         />
       </div>
     </div>

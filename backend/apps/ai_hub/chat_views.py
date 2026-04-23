@@ -122,18 +122,47 @@ class ChatSendView(APIView):
             return Response({"detail": "user_text o attachment_ids requerido."},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        # ── HARD SHIELD CLIENT B2B ───────────────────────────────
+        # Si el caller es CLIENT, ignoramos cualquier intento de orquestar
+        # agentes/skills ad-hoc (menciones @ o /). El cliente sólo habla
+        # con el Asistente MWT (SVC-01). Además, bloqueamos overrides de
+        # modelo/temperatura — el cliente no puede forzar un modelo caro
+        # (opus) ni subir la temperatura.
+        role = (getattr(request.user, "role", "") or "").lower()
+        _is_client = role in {"client_b2b", "cliente", "client"}
+
+        if _is_client:
+            extra_agent_ids = []     # ignorado (no orquesta)
+            extra_skill_ids = []     # ignorado (no orquesta)
+            model_override       = None
+            max_tokens_override  = None
+            temperature_override = None
+            # Log silencioso si hubo intento de inyectar agents/skills.
+            if data.get("agent_ids") or data.get("skill_ids"):
+                log.warning(
+                    "B2B orchestration spoof attempt: user=%s agent_ids=%s skill_ids=%s thread=%s",
+                    getattr(request.user, "email", "?"),
+                    data.get("agent_ids"), data.get("skill_ids"), thread_id,
+                )
+        else:
+            extra_agent_ids = data.get("agent_ids") or []
+            extra_skill_ids = data.get("skill_ids") or []
+            model_override       = data.get("model")
+            max_tokens_override  = data.get("max_tokens")
+            temperature_override = data.get("temperature")
+
         try:
             result = ChatService.send(
                 thread               = thread,
                 user_id              = user_id,
                 user_text            = user_text,
-                extra_agent_ids      = data.get("agent_ids") or [],
-                extra_skill_ids      = data.get("skill_ids") or [],
+                extra_agent_ids      = extra_agent_ids,
+                extra_skill_ids      = extra_skill_ids,
                 attachment_ids       = data.get("attachment_ids") or [],
                 idempotence_token    = data.get("idempotence_token"),
-                model_override       = data.get("model"),
-                max_tokens_override  = data.get("max_tokens"),
-                temperature_override = data.get("temperature"),
+                model_override       = model_override,
+                max_tokens_override  = max_tokens_override,
+                temperature_override = temperature_override,
             )
         except Exception as e:
             log.exception("ChatService.send falló")

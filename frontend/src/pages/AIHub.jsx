@@ -14,6 +14,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { aiThreadsApi, aiChatApi } from "../lib/api.js";
 import { useAuth } from "../context/AuthContext.jsx";
+import { useRole } from "../context/RoleContext.jsx";
 import { fmtShortDate } from "../lib/i18n.js";
 import { MOCK_AI_THREADS } from "../data/mockData.js";
 import {
@@ -23,6 +24,7 @@ import {
 export default function AIHub() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { isClient } = useRole();
   const userId = user?.user_uuid || user?.id || user?.uuid || null;
 
   const [threads, setThreads] = useState([]);
@@ -144,17 +146,31 @@ export default function AIHub() {
           </div>
           <div style={{ flex: 1 }}>
             <h1 style={{ margin: 0, font: "700 22px/1.1 var(--font-display)" }}>
-              AI Hub
+              {isClient ? "Asistente MWT" : "AI Hub"}
             </h1>
-            <p style={{ margin: "6px 0 0", font: "500 13px/1.45 var(--font-body)", opacity: 0.92 }}>
-              Conversa con agentes y skills de MWT.ONE. Usa <kbd style={kbdStyle}>@</kbd> para mencionar agentes,&nbsp;
-              <kbd style={kbdStyle}>/</kbd> para invocar skills, y <kbd style={kbdStyle}>📎</kbd> para adjuntar PDF, imágenes o texto.
-            </p>
+            {/* El cliente B2B no orquesta agentes/skills. Su copy habla
+                de "Asistente MWT" (SVC-01) como un soporte único. El
+                admin sí ve las pistas de @ / / */}
+            {isClient ? (
+              <p style={{ margin: "6px 0 0", font: "500 13px/1.45 var(--font-body)", opacity: 0.92 }}>
+                Consulta el estado de tus órdenes, factura, documentos y pagos con el
+                Asistente MWT. Adjunta <kbd style={kbdStyle}>📎</kbd> PDF, Excel o una imagen si necesitas referenciar algo.
+              </p>
+            ) : (
+              <p style={{ margin: "6px 0 0", font: "500 13px/1.45 var(--font-body)", opacity: 0.92 }}>
+                Conversa con agentes y skills de MWT.ONE. Usa <kbd style={kbdStyle}>@</kbd> para mencionar agentes,&nbsp;
+                <kbd style={kbdStyle}>/</kbd> para invocar skills, y <kbd style={kbdStyle}>📎</kbd> para adjuntar PDF, imágenes o texto.
+              </p>
+            )}
           </div>
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => navigate("/ai/governance")} className="ai-btn ai-btn-ghost-on-hero">
-              <IconBrain size={16} /> Gobernanza
-            </button>
+            {/* "Gobernanza" es CEO-ONLY — el cliente no debería siquiera
+                saber que existe. ESTRICTAMENTE OCULTO para isClient. */}
+            {!isClient && (
+              <button onClick={() => navigate("/ai/governance")} className="ai-btn ai-btn-ghost-on-hero">
+                <IconBrain size={16} /> Gobernanza
+              </button>
+            )}
             <button onClick={newChat} disabled={creating} className="ai-btn ai-btn-mass-primary">
               {creating ? <IconRefresh size={16} /> : <IconPlus size={16} />}
               <span>{creating ? "Creando…" : "Nuevo Chat"}</span>

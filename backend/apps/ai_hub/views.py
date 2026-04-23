@@ -68,6 +68,54 @@ from .serializers import (
 log = logging.getLogger(__name__)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Guards anti-CLIENT · Defensa en profundidad del AI Hub
+#
+# El AI Hub expone 3 superficies:
+#   1. Gobernanza (AiAgent / AiSkill / AiInstruction) — CEO-ONLY
+#   2. Hilos (AiThread) — scoped: el CLIENT sólo ve sus propios hilos
+#   3. Chat (ChatSendView) — CLIENT no puede mencionar agentes/skills
+#                             → el backend fuerza el asistente SVC-01
+# ══════════════════════════════════════════════════════════════════════
+_CLIENT_ROLES = {"client_b2b", "cliente", "client"}
+
+
+def _is_client_role(role) -> bool:
+    return (role or "").lower() in _CLIENT_ROLES
+
+
+def _deny_ai_governance_for_client(request, resource_label: str = ""):
+    """Si el caller es CLIENT B2B → Response 403. En caso contrario → None.
+
+    Usado en AiAgentViewSet / AiSkillViewSet / AiInstructionViewSet para
+    bloquear CUALQUIER método (GET, POST, PUT, PATCH, DELETE) — el
+    cliente B2B no debe ni siquiera leer el catálogo de agentes/skills/
+    instrucciones, porque esa info es gobernanza interna MWT.
+    """
+    role = (getattr(request.user, "role", "") or "").lower()
+    if role in _CLIENT_ROLES:
+        log.warning(
+            "AI Hub governance access denied: role=%s user=%s resource=%s path=%s",
+            role, getattr(request.user, "email", "?"),
+            resource_label, getattr(request, "path", "?"),
+        )
+        return Response(
+            {
+                "detail":   "La gobernanza del AI Hub es CEO-ONLY. El rol CLIENT no tiene acceso.",
+                "resource": resource_label,
+                "role":     role,
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
+
+# UUID canónico del Asistente MWT (SVC-01). Si no existe en la DB, el
+# ChatService resuelve al agente default del schema — no rompe.
+SVC_01_SLUG = "asistente-mwt"
+SVC_01_CODIGO = "SVC-01"
+
+
 # =====================================================================
 # Helpers
 # =====================================================================
@@ -100,9 +148,22 @@ def _label_for(ref_type: str, ref) -> str:
 # Catálogos: Agent / Skill / Instruction
 # =====================================================================
 class AiAgentViewSet(viewsets.ModelViewSet):
-    """CRUD sobre `ai.agent`. Soft-delete vía is_active=False."""
+    """CRUD sobre `ai.agent`. Soft-delete vía is_active=False.
+
+    SEGURIDAD: todo método (incluso GET list/retrieve) está bloqueado
+    para CLIENT B2B — la gobernanza del AI Hub es CEO-ONLY.
+    """
     queryset = AiAgent.objects.filter(is_active=True)
     serializer_class = AiAgentSerializer
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        denied = _deny_ai_governance_for_client(request, resource_label="ai.agent")
+        if denied is not None:
+            # DRF `initial` no soporta returnar Response directo — usamos
+            # una excepción PermissionDenied para que se serialize correcto.
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(denied.data)
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -149,8 +210,16 @@ class AiAgentViewSet(viewsets.ModelViewSet):
 
 
 class AiSkillViewSet(viewsets.ModelViewSet):
+    """CRUD sobre `ai.skill`. SEGURIDAD: CEO-ONLY. CLIENT B2B → 403."""
     queryset = AiSkill.objects.filter(is_active=True)
     serializer_class = AiSkillSerializer
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        denied = _deny_ai_governance_for_client(request, resource_label="ai.skill")
+        if denied is not None:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(denied.data)
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -193,6 +262,15 @@ class AiSkillViewSet(viewsets.ModelViewSet):
 
 
 class AiInstructionViewSet(viewsets.ModelViewSet):
+    """CRUD sobre `ai.instruction`. SEGURIDAD: CEO-ONLY. CLIENT B2B → 403."""
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        denied = _deny_ai_governance_for_client(request, resource_label="ai.instruction")
+        if denied is not None:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(denied.data)
+
     queryset = AiInstruction.objects.filter(is_active=True)
     serializer_class = AiInstructionSerializer
 
@@ -260,8 +338,24 @@ class AiThreadViewSet(viewsets.ModelViewSet):
         archived = self.request.query_params.get("archived")
         pinned = self.request.query_params.get("pinned")
         q = self.request.query_params.get("q")
-        if user_id:
+
+        # ── SECURITY ClientScopedManager · CLIENT B2B ────────────
+        # Un cliente B2B SOLO puede ver los hilos donde él es el creador.
+        # Esto ignora cualquier `user_id` que venga como query param
+        # (anti-spoofing) y fuerza request.user.id. Para staff interno,
+        # respetamos el filtro opcional del query param (útil para
+        # impersonation desde el Tweaks panel en dev).
+        if _is_client_role(getattr(self.request.user, "role", None)):
+            forced_uid = (getattr(self.request.user, "id", None)
+                          or getattr(self.request.user, "pk", None))
+            if forced_uid:
+                qs = qs.filter(user_id=str(forced_uid))
+            else:
+                # Sin uid del JWT → no hay scope → sin resultados.
+                qs = qs.none()
+        elif user_id:
             qs = qs.filter(user_id=user_id)
+
         if archived is not None:
             qs = qs.filter(archived=(archived.lower() in ("1", "true", "yes")))
         else:

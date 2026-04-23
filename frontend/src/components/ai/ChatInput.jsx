@@ -45,6 +45,13 @@ export default function ChatInput({
   onSend,
   sending = false,
   lang = "es",
+  // Strip-down para CLIENT B2B:
+  //   restrictMentions → deshabilita el popover de @ (agentes) y / (skills)
+  //   allowedFileTypes → string para `accept=` del <input type="file"/>
+  //   placeholder      → texto visible del textarea (reemplaza el genérico)
+  restrictMentions = false,
+  allowedFileTypes,
+  placeholder,
 }) {
   const [text, setText] = useState("");
   const [pendingAgents, setPendingAgents] = useState(defaultAgents);
@@ -86,6 +93,14 @@ export default function ChatInput({
   function handleChange(e) {
     const newText = e.target.value;
     setText(newText);
+
+    // STRIP-DOWN CLIENT: si el caller restringió menciones, ignoramos
+    // cualquier '@' o '/' — nunca abrimos el popover. El cliente no
+    // orquesta agentes/skills; habla solo con SVC-01.
+    if (restrictMentions) {
+      setPopover(p => ({ ...p, open: false }));
+      return;
+    }
 
     const caret = e.target.selectionStart || newText.length;
     const before = newText.slice(0, caret);
@@ -274,6 +289,7 @@ export default function ChatInput({
           ref={fileRef}
           type="file"
           multiple
+          accept={allowedFileTypes || undefined}
           style={{ display: "none" }}
           onChange={(e) => handleFiles(e.target.files)}
         />
@@ -284,7 +300,9 @@ export default function ChatInput({
           value={text}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder="Escribe un mensaje. Usa @ para agentes, / para skills…"
+          placeholder={placeholder || (restrictMentions
+            ? "Escribe tu consulta para el Asistente MWT…"
+            : "Escribe un mensaje. Usa @ para agentes, / para skills…")}
           rows={1}
           disabled={sending}
           style={{

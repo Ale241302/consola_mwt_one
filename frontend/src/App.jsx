@@ -34,6 +34,18 @@ import ScreenCobros from "./pages/Cobros.jsx";
 import ScreenAIHub from "./pages/AIHub.jsx";
 import ScreenAIChat from "./pages/AIChat.jsx";
 import ScreenAIGovernance from "./pages/AIGovernance.jsx";
+import { useRole } from "./context/RoleContext.jsx";
+
+// ── Route guard: CEO-ONLY páginas bloqueadas para CLIENT B2B.
+// AI Hub Governance expone catálogos (agentes, skills, instrucciones)
+// que son gobernanza interna MWT. El cliente no debe poder navegar ahí
+// aunque conozca la URL — se redirige a /ai (su chat). El backend
+// también devuelve 403 como defensa de segunda línea.
+function AdminOnlyRoute({ children }) {
+  const { isClient } = useRole();
+  if (isClient) return <Navigate to="/ai" replace />;
+  return children;
+}
 
 export default function App() {
   return (
@@ -78,7 +90,7 @@ export default function App() {
         <Route path="/notificaciones" element={<ScreenNotificaciones />} />
         <Route path="/cobros" element={<ScreenCobros />} />
         <Route path="/ai" element={<ScreenAIHub />} />
-        <Route path="/ai/governance" element={<ScreenAIGovernance />} />
+        <Route path="/ai/governance" element={<AdminOnlyRoute><ScreenAIGovernance /></AdminOnlyRoute>} />
         <Route path="/ai/chat/:threadId" element={<ScreenAIChat />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
