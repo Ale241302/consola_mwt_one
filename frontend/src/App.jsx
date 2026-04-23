@@ -34,6 +34,8 @@ import ScreenCobros from "./pages/Cobros.jsx";
 import ScreenAIHub from "./pages/AIHub.jsx";
 import ScreenAIChat from "./pages/AIChat.jsx";
 import ScreenAIGovernance from "./pages/AIGovernance.jsx";
+import ScreenUsers from "./pages/Users.jsx";
+import ScreenRolesPermissions from "./pages/RolesPermissions.jsx";
 import { useRole } from "./context/RoleContext.jsx";
 
 // ── Route guard: CEO-ONLY páginas bloqueadas para CLIENT B2B.
@@ -91,6 +93,9 @@ export default function App() {
         <Route path="/cobros" element={<ScreenCobros />} />
         <Route path="/ai" element={<ScreenAIHub />} />
         <Route path="/ai/governance" element={<AdminOnlyRoute><ScreenAIGovernance /></AdminOnlyRoute>} />
+        {/* M3 CORE — Usuarios y Roles (ADMIN-only, guard vía AdminOnlyRoute) */}
+        <Route path="/usuarios" element={<AdminOnlyRoute><ScreenUsers /></AdminOnlyRoute>} />
+        <Route path="/roles"    element={<AdminOnlyRoute><ScreenRolesPermissions /></AdminOnlyRoute>} />
         <Route path="/ai/chat/:threadId" element={<ScreenAIChat />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>

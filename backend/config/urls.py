@@ -22,4 +22,5 @@ urlpatterns = [
     path("api/",           include("apps.ai_hub.urls")),           # /api/ai/agents/ + /api/ai/skills/ + /api/ai/threads/ + /api/ai/chat/
     path("api/",           include("apps.commercial.urls")),       # /api/commercial/* + /api/commercial/resolve_client_price/
     path("api/",           include("apps.sizing.urls")),           # /api/sizing/tallas/ + /api/sizing/options/ + catálogos
+    path("api/",           include("apps.users.urls")),            # /api/users/ + /api/permissions/* + /api/activity-feed/ [M3 CORE]
 ]

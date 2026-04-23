@@ -31,7 +31,7 @@ import {
   IconHome, IconFolder, IconKanban, IconBuilding, IconDollar, IconSwap,
   IconNetwork, IconUsers, IconTag, IconBoxes, IconTruck, IconWarehouse,
   IconMail, IconHistory, IconCreditCard, IconChevLeft, IconChevRight,
-  IconBot,
+  IconBot, IconLock,
 } from "../../lib/icons.jsx";
 
 // key -> route path mapping. Keys mirror the original screen identifiers so that
@@ -58,6 +58,9 @@ const KEY_TO_PATH = {
   'ai-governance': '/ai/governance',
   'oc-detail': '/expedientes',
   'expediente-detail': '/expedientes',
+  // M3 CORE — usuarios y permisos (admin-only)
+  usuarios:    '/usuarios',
+  roles:       '/roles',
 };
 
 // derive currentScreen key from the URL pathname
@@ -135,6 +138,10 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'history',        icon: <IconHistory/>,    label: tr(lang,'history'),       group: 'notifications' },
     { key: 'collections',    icon: <IconCreditCard/>, label: tr(lang,'collections'),   group: 'notifications' },
     { key: 'ai-hub',         icon: <IconBot/>,        label: tr(lang,'ai_hub') || 'AI Hub', group: 'ai' },
+    // M3 CORE — gestión de acceso del ERP. Sólo visibles para admin
+    // (el whitelist de CLIENT_ALLOWED_MODULES NO los incluye).
+    { key: 'usuarios',       icon: <IconUsers/>,      label: tr(lang,'users')    || 'Usuarios',         group: 'core_admin' },
+    { key: 'roles',          icon: <IconLock/>,       label: tr(lang,'roles')    || 'Roles y Permisos', group: 'core_admin' },
   ];
 
   // ───────────────────────────────── FILTRO POR ROL ────────────────────
@@ -148,6 +155,7 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'structure',     label: tr(lang,'structure') },
     { key: 'notifications', label: tr(lang,'notifications') },
     { key: 'ai',            label: tr(lang,'ai_hub') || 'AI Hub' },
+    { key: 'core_admin',    label: tr(lang,'admin_section') || (lang === 'en' ? 'Admin' : 'Administración') },
   ];
 
   return (

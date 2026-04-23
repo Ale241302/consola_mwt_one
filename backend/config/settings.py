@@ -80,6 +80,7 @@ LOCAL_APPS = [
     "apps.ai_hub",          # AI Hub — chat conversacional + agentes + skills + telemetría
     "apps.commercial",      # Capa comercial (pricing + early-payment + commissions) [Sprint 22-23]
     "apps.sizing",          # Sizing Engine — catálogo de tallas calzado/plantilla [Sprint Sizing v1]
+    "apps.users",           # M3 CORE — usuarios + RBAC + activity feed + password reset tokens
     # Los siguientes módulos se irán activando cuando cada app tenga su
     # apps.py + views.py correspondiente. Dejarlos comentados evita que
     # Django falle al arrancar por ImportError durante INSTALLED_APPS.

@@ -13,6 +13,11 @@ import {
   aiAgentsListMock, aiSkillsListMock, aiInstructionsListMock,
   aiAgentDetailMock, aiSkillDetailMock, aiInstructionDetailMock,
 } from "./aiGovernanceMock.js";
+import {
+  ROLES_DEMO, MODULES_DEMO, USERS_DEMO, ME_PROFILE_MOCK,
+  roleMatrixMock, usersListMock, userDetailMock,
+  activityFeedListMock, activityFeedUnreadCountMock,
+} from "./usersRolesMock.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
@@ -71,6 +76,53 @@ function resolveMockFixture(path) {
     if (kind === "agents")       return aiAgentsListMock(params);
     if (kind === "skills")       return aiSkillsListMock(params);
     if (kind === "instructions") return aiInstructionsListMock(params);
+  }
+
+  // ── Users · Roles · Activity feed (M3 CORE) ─────────────────────
+  // /api/users/me/profile/
+  if (path.startsWith("/users/me/profile")) {
+    return ME_PROFILE_MOCK;
+  }
+  // /api/users/<id>/
+  const mUserDetail = path.match(/^\/users\/([^/?]+)\/?(?:\?.*)?$/);
+  if (mUserDetail && mUserDetail[1] !== "me") {
+    const u = userDetailMock(mUserDetail[1]);
+    return u || { detail: "Usuario no encontrado" };
+  }
+  // /api/users/?q=…
+  if (path.startsWith("/users/") || path.startsWith("/users?")) {
+    const qs = path.split("?")[1] || "";
+    const sp = new URLSearchParams(qs);
+    return usersListMock({
+      q:                 sp.get("q") || "",
+      role:              sp.get("role") || undefined,
+      include_inactive:  sp.get("include_inactive") === "true",
+    });
+  }
+
+  // /api/permissions/roles/
+  if (path.startsWith("/permissions/roles")) return ROLES_DEMO;
+  // /api/permissions/modules/
+  if (path.startsWith("/permissions/modules")) return MODULES_DEMO;
+  // /api/permissions/groups/<slug>/
+  const mGroup = path.match(/^\/permissions\/groups\/([^/?]+)\/?(?:\?.*)?$/);
+  if (mGroup) {
+    const result = roleMatrixMock(mGroup[1]);
+    return result || { detail: "Role no existe" };
+  }
+
+  // /api/activity-feed/unread-count/
+  if (path.startsWith("/activity-feed/unread-count")) {
+    return activityFeedUnreadCountMock();
+  }
+  // /api/activity-feed/
+  if (path.startsWith("/activity-feed/") || path.startsWith("/activity-feed?")) {
+    const qs = path.split("?")[1] || "";
+    const sp = new URLSearchParams(qs);
+    return activityFeedListMock({
+      unread_only: sp.get("unread_only") || false,
+      limit:       Number(sp.get("limit")) || 50,
+    });
   }
 
   return undefined;
