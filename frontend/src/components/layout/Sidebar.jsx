@@ -149,14 +149,43 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
   // ADMIN → todo; CLIENT → solo los keys whitelisteados.
   const items = allItems.filter(it => canSeeModule(it.key));
 
+  // Helper de etiqueta: tr() devuelve la clave literal si no existe traducción,
+  // lo que hace inútil el `|| fallback`. Usamos un fallback explícito.
+  const labelOr = (key, fallback) => {
+    const v = tr(lang, key);
+    return (!v || v === key) ? fallback : v;
+  };
   const groups = [
-    { key: 'core',          label: '' },
-    { key: 'financiero',    label: tr(lang,'financiero') },
-    { key: 'structure',     label: tr(lang,'structure') },
-    { key: 'notifications', label: tr(lang,'notifications') },
-    { key: 'ai',            label: tr(lang,'ai_hub') || 'AI Hub' },
-    { key: 'core_admin',    label: tr(lang,'admin_section') || (lang === 'en' ? 'Admin' : 'Administración') },
+    { key: 'core',          label: '',                                                                   defaultOpen: true  },
+    { key: 'financiero',    label: labelOr('financiero',    lang === 'en' ? 'Financials'     : 'Financiero'),     defaultOpen: false },
+    { key: 'structure',     label: labelOr('structure',     lang === 'en' ? 'Structure'      : 'Estructura'),     defaultOpen: false },
+    { key: 'notifications', label: labelOr('notifications', lang === 'en' ? 'Notifications'  : 'Notificaciones'), defaultOpen: false },
+    { key: 'ai',            label: labelOr('ai_hub',        'AI Hub'),                                              defaultOpen: false },
+    { key: 'core_admin',    label: lang === 'en' ? 'Administration' : 'Administración',                             defaultOpen: false },
   ];
+
+  // ── Secciones colapsables · persistencia en localStorage ────────
+  // Cada grupo con label es un toggle. "core" (sin label) siempre visible.
+  // Default: todos colapsados excepto core → evita scroll interno en
+  // sidebars con muchos items (especialmente en laptops 13").
+  const GROUP_STATE_KEY = 'mwt-sidebar-groups-expanded';
+  const [expandedGroups, setExpandedGroups] = React.useState(() => {
+    try {
+      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(GROUP_STATE_KEY) : null;
+      if (raw) return new Set(JSON.parse(raw));
+    } catch {}
+    // Default: abrimos solo los que tengan `defaultOpen=true`.
+    return new Set(groups.filter(g => g.defaultOpen).map(g => g.key));
+  });
+
+  const toggleGroup = React.useCallback((key) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      try { localStorage.setItem(GROUP_STATE_KEY, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }, []);
 
   return (
     <aside className="sidebar" data-viewport={viewportRole} aria-label="Main navigation">
@@ -188,35 +217,91 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
         {groups.map(g => {
           // Items de este grupo que pasaron el filtro de rol.
           const gItems = items.filter(i => i.group === g.key);
-          // Si el grupo queda vacío (p.ej. CLIENT oculta todo "financiero"),
-          // no renderizamos ni el label del grupo ni un div fantasma.
           if (gItems.length === 0) return null;
+
+          const hasLabel   = Boolean(g.label);
+          const isExpanded = !hasLabel || expandedGroups.has(g.key);
+          // Si hay un item activo dentro de un grupo colapsado, lo abrimos
+          // automáticamente para que el usuario vea dónde está.
+          const hasActiveChild = gItems.some(it =>
+            currentScreen === it.key
+            || (it.key === 'expedientes' && (currentScreen === 'expediente-detail' || currentScreen === 'oc-detail')));
+          const effectivelyOpen = isExpanded || hasActiveChild;
+
           return (
-            <div key={g.key} className="sidebar-group">
-              {g.label && <div className="sidebar-group-label">{g.label}</div>}
-              <AnimatePresence initial={false} mode="popLayout">
-                {gItems.map(it => (
-                  <motion.button
-                    key={it.key}
-                    layout
-                    initial={{ opacity: 0, x: -6 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -6 }}
-                    transition={{ duration: 0.18, ease: [0.32, 0.72, 0, 1] }}
-                    className="sidebar-item"
-                    data-active={
-                      currentScreen === it.key
-                      || (it.key === 'expedientes' && (currentScreen === 'expediente-detail' || currentScreen === 'oc-detail'))
-                      || (it.key === 'pagos' && currentScreen === 'pagos')
-                    }
-                    onClick={() => onNavigate(it.key)}
-                    title={collapsed ? it.label : undefined}
+            <div key={g.key} className="sidebar-group" data-collapsible={hasLabel ? 'true' : 'false'}>
+              {hasLabel && (
+                <button
+                  type="button"
+                  className="sidebar-group-label sidebar-group-toggle"
+                  onClick={() => toggleGroup(g.key)}
+                  aria-expanded={effectivelyOpen}
+                  title={effectivelyOpen ? `Colapsar ${g.label}` : `Expandir ${g.label}`}
+                  style={{
+                    display:        "flex",
+                    alignItems:     "center",
+                    justifyContent: "space-between",
+                    width:          "100%",
+                    padding:        collapsed ? 0 : "8px 14px 4px",
+                    margin:         0,
+                    border:         "none",
+                    background:     "transparent",
+                    color:          "inherit",
+                    cursor:         "pointer",
+                    textAlign:      "left",
+                    font:           "inherit",
+                    textTransform:  "uppercase",
+                    letterSpacing:  "0.08em",
+                    fontSize:       10,
+                    fontWeight:     700,
+                    opacity:        collapsed ? 0 : 0.55,
+                    pointerEvents:  collapsed ? "none" : "auto",
+                    userSelect:     "none",
+                  }}
+                >
+                  <span>{g.label}</span>
+                  <motion.span
+                    animate={{ rotate: effectivelyOpen ? 90 : 0 }}
+                    transition={{ duration: 0.18, ease: "easeOut" }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center", justifyContent: "center",
+                      width: 14, height: 14,
+                    }}
                   >
-                    <span className="sidebar-item-icon">{React.cloneElement(it.icon,{size:18})}</span>
-                    <span className="sidebar-item-label">{it.label}</span>
-                    {it.counter != null && <span className="sidebar-counter">{it.counter}</span>}
-                  </motion.button>
-                ))}
+                    <IconChevRight size={12}/>
+                  </motion.span>
+                </button>
+              )}
+              <AnimatePresence initial={false}>
+                {effectivelyOpen && (
+                  <motion.div
+                    key="group-body"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{    height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
+                    style={{ overflow: "hidden" }}
+                  >
+                    {gItems.map(it => (
+                      <button
+                        key={it.key}
+                        className="sidebar-item"
+                        data-active={
+                          currentScreen === it.key
+                          || (it.key === 'expedientes' && (currentScreen === 'expediente-detail' || currentScreen === 'oc-detail'))
+                          || (it.key === 'pagos' && currentScreen === 'pagos')
+                        }
+                        onClick={() => onNavigate(it.key)}
+                        title={collapsed ? it.label : undefined}
+                      >
+                        <span className="sidebar-item-icon">{React.cloneElement(it.icon,{size:18})}</span>
+                        <span className="sidebar-item-label">{it.label}</span>
+                        {it.counter != null && <span className="sidebar-counter">{it.counter}</span>}
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
               </AnimatePresence>
             </div>
           );

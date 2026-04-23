@@ -7742,3 +7742,21 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   transition: background 0.15s ease;
 }
 .catalog-cart-cta:hover { background: var(--mint-dark, #008B69); }
+
+/* =====================================================================
+   Sidebar · secciones colapsables (Financiero, Estructura, etc.)
+   ===================================================================== */
+.sidebar-group-toggle:hover {
+  opacity: 0.85 !important;
+  background: rgba(255,255,255,0.04);
+}
+.sidebar-group-toggle:focus-visible {
+  outline: 2px solid var(--brand-accent, #00B286);
+  outline-offset: -2px;
+  opacity: 0.85 !important;
+}
+/* En sidebar colapsada (iconos) ocultamos completamente los labels
+   de grupo porque ocupan espacio sin valor informativo. */
+.sidebar[data-collapsed="true"] .sidebar-group-toggle {
+  display: none;
+}
