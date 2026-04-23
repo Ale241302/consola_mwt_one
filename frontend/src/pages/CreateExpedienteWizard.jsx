@@ -28,7 +28,7 @@ import { AnimatePresence, motion } from "framer-motion";
 
 import { useRole } from "../context/RoleContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
-import { getToken, ApiError } from "../lib/api.js";
+import { getToken, ApiError, postMultipart } from "../lib/api.js";
 
 // ---------------------------------------------------------------------
 // Paleta MWT (hardcoded en constantes, no en clases — permite que el
@@ -64,24 +64,9 @@ const STEPS_CLIENT = [
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 
 // ---------------------------------------------------------------------
-// Helper: POST multipart (apiFetch no soporta FormData por default).
+// Helper: POST JSON (apiFetch.lib/api.js ya cubre uploads multipart vía
+// postMultipart importado arriba; acá sólo definimos el variant JSON).
 // ---------------------------------------------------------------------
-async function postMultipart(path, formData, { token } = {}) {
-  const resp = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body:    formData,
-  });
-  const text = await resp.text();
-  let data = null;
-  if (text) { try { data = JSON.parse(text); } catch { data = { raw: text }; } }
-  if (!resp.ok) {
-    const msg = data?.detail || data?.error || `HTTP ${resp.status}`;
-    throw new ApiError(msg, resp.status, data);
-  }
-  return data;
-}
-
 async function postJSON(path, body, { token } = {}) {
   const resp = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -464,11 +449,27 @@ function Stepper({ steps, current }) {
 
 
 // =====================================================================
-// PASO 1 · Upload (PDF / XLSX)
+// PASO 1 · Upload (PDF / XLSX) — OCR-FIRST
+//
+// Flujo (ADMIN):
+//   1. Dropzone masivo, ocupa todo el ancho del card.
+//   2. Usuario suelta archivo → animación de escaneo (barra horizontal
+//      que recorre el área del archivo).
+//   3. Cuando OCR responde → muestra "Contexto detectado" con chips
+//      auto-rellenados (Cliente + credit_days + credit_limit, Marca, PO
+//      Number). Todo READ-ONLY por default.
+//   4. Botón discreto "Llenar manualmente (Fallback)" revela editores
+//      de UUID si el OCR falló en identificar cliente/marca.
+//
+// Flujo (CLIENT): idéntico pero sin la sección de "Contexto detectado"
+// — el cliente no ve quién es su propio ID (ya lo sabe el sistema).
 // =====================================================================
 function StepUpload({ state, patch, isClient }) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
+  // Fallback manual oculto por default — POL_UX: no mostramos inputs
+  // de edición a menos que el OCR falle o el usuario los pida.
+  const [fallbackOpen, setFallbackOpen] = useState(false);
 
   const onDrop = useCallback(async (file) => {
     if (!file) return;
@@ -485,7 +486,8 @@ function StepUpload({ state, patch, isClient }) {
       ocrError:   null,
     });
 
-    // Enviar al endpoint de parseo
+    // Enviar al endpoint de parseo (en mock mode queda interceptado por
+    // lib/api.js → ocrMock.js y devuelve un fixture demo).
     try {
       const token = getToken();
       const fd = new FormData();
@@ -496,6 +498,9 @@ function StepUpload({ state, patch, isClient }) {
           loadingOcr: false,
           ocrError:   resp?.hint || resp?.error || "OCR no pudo extraer datos del archivo.",
         });
+        // Si el OCR falló, abrimos el fallback manual automáticamente
+        // para que el CEO no quede bloqueado.
+        setFallbackOpen(true);
         return;
       }
       const pl = resp.payload || {};
@@ -506,9 +511,9 @@ function StepUpload({ state, patch, isClient }) {
         ocrPayload: pl,
         ocrError:   null,
         clientId:   clientCand?.id   || null,
-        clientName: clientCand?.name || pl.client?.name || "",
+        clientName: clientCand?.razon_social || clientCand?.name || pl.client?.name || "",
         brandId:    brandCand?.id    || null,
-        brandName:  brandCand?.name  || pl.brand?.name  || "",
+        brandName:  brandCand?.nombre || brandCand?.name || pl.brand?.name || "",
         lines:      (pl.lines || []).map((l) => ({ ...l })),
       });
     } catch (e) {
@@ -516,21 +521,32 @@ function StepUpload({ state, patch, isClient }) {
         loadingOcr: false,
         ocrError:   e?.message || "Error procesando el archivo.",
       });
+      setFallbackOpen(true);
     }
   }, [patch]);
 
   const uploadLabel = isClient
-    ? "Sube tu Orden de Compra (PDF o Excel)"
-    : "Subir OC del cliente (.pdf o .xlsx)";
+    ? "Sube tu Orden de Compra"
+    : "Subir Orden de Compra del cliente";
 
   const uploadHint  = isClient
-    ? "Arrastra aquí el archivo, o haz clic para seleccionarlo desde tu computadora."
-    : "Arrastra el archivo o selecciónalo. El sistema extraerá SKUs, cantidades y PO Number automáticamente.";
+    ? "Arrastra aquí tu PDF o Excel, o haz clic para seleccionarlo."
+    : "Arrastra el archivo o selecciónalo. El sistema lee automáticamente cliente, marca, número de OC y productos.";
+
+  // Candidato principal de cliente (si el OCR lo resolvió)
+  const clientCand = state.ocrPayload?.client?._candidates?.[0] || null;
+  const brandCand  = state.ocrPayload?.brand?._candidates?.[0]  || null;
+  const po         = state.ocrPayload?.po || {};
+  const confidence = state.ocrPayload?.confidence;
 
   return (
     <section style={styles.card}>
       <h2 style={styles.h2}>{uploadLabel}</h2>
+      <p style={{ ...styles.lede, marginBottom: 12 }}>
+        {uploadHint}
+      </p>
 
+      {/* ── Dropzone ── */}
       <div
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
@@ -539,11 +555,14 @@ function StepUpload({ state, patch, isClient }) {
           const f = e.dataTransfer.files?.[0];
           if (f) onDrop(f);
         }}
-        onClick={() => inputRef.current?.click()}
+        onClick={() => !state.loadingOcr && inputRef.current?.click()}
         style={{
           ...styles.dropzone,
-          borderColor: dragOver ? COLORS.mint : COLORS.border,
-          background:  dragOver ? "#E6F7F1" : "#FAFBFD",
+          borderColor: dragOver ? COLORS.mint : (state.ocrPayload ? COLORS.mint : COLORS.border),
+          background:  dragOver ? "#E6F7F1" : (state.ocrPayload ? "#F4FBF8" : "#FAFBFD"),
+          position:    "relative",
+          overflow:    "hidden",
+          cursor:      state.loadingOcr ? "wait" : "pointer",
         }}
       >
         <input
@@ -553,61 +572,90 @@ function StepUpload({ state, patch, isClient }) {
           style={{ display: "none" }}
           onChange={(e) => onDrop(e.target.files?.[0])}
         />
+
+        {/* Animación de escaneo: línea horizontal que barre el dropzone */}
+        {state.loadingOcr && (
+          <motion.div
+            aria-hidden="true"
+            initial={{ y: "-100%", opacity: 0.9 }}
+            animate={{ y: "100%",  opacity: 0.9 }}
+            transition={{
+              duration: 1.6,
+              ease:     "easeInOut",
+              repeat:   Infinity,
+              repeatType: "loop",
+            }}
+            style={{
+              position: "absolute",
+              left: 0, right: 0,
+              height: 3,
+              background: `linear-gradient(90deg, transparent 0%, ${COLORS.mint} 20%, ${COLORS.mint} 80%, transparent 100%)`,
+              boxShadow: `0 0 8px ${COLORS.mint}`,
+              zIndex: 2,
+            }}
+          />
+        )}
+
         {!state.fileMeta && (
           <>
             <div style={{ fontSize: 40, marginBottom: 8 }}>📄</div>
-            <p style={{ margin: 0, fontSize: 15, color: COLORS.ink }}>
-              {uploadHint}
+            <p style={{ margin: 0, fontSize: 15, color: COLORS.ink, fontWeight: 500 }}>
+              Arrastra aquí tu archivo
             </p>
-            <p style={{ margin: "8px 0 0", fontSize: 12, color: COLORS.inkSoft }}>
-              Máximo 10 MB · Formatos: .pdf, .xlsx
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: COLORS.inkSoft }}>
+              Máximo 10 MB · Formatos aceptados: .pdf, .xlsx
             </p>
           </>
         )}
         {state.fileMeta && (
-          <div>
-            <div style={{ fontSize: 28 }}>✅</div>
+          <div style={{ position: "relative", zIndex: 1 }}>
+            <div style={{ fontSize: 28 }}>
+              {state.loadingOcr ? "🔎" : "✅"}
+            </div>
             <p style={{ margin: "8px 0 4px", fontWeight: 600, color: COLORS.ink }}>
               {state.fileMeta.name}
             </p>
             <p style={{ margin: 0, fontSize: 12, color: COLORS.inkSoft }}>
               {(state.fileMeta.size / 1024).toFixed(1)} KB
               · {state.fileMeta.ext.toUpperCase()}
+              {state.loadingOcr && " · Leyendo documento…"}
             </p>
           </div>
         )}
       </div>
 
+      {/* ── Loading caption (abajo del dropzone) ── */}
       {state.loadingOcr && (
-        <div style={styles.loadingBar}>
-          <motion.div
-            style={styles.loadingBarFill}
-            initial={{ width: "0%" }}
-            animate={{ width: ["0%", "80%", "95%"] }}
-            transition={{ duration: 4, times: [0, 0.5, 1], ease: "easeInOut" }}
-          />
-          <p style={{ margin: "8px 0 0", fontSize: 13, color: COLORS.inkSoft }}>
-            Procesando el archivo {state.fileMeta?.ext?.toUpperCase() === "PDF" ? "con OCR" : "con el parser Excel"}…
-          </p>
-        </div>
+        <motion.p
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+          style={{ margin: "12px 0 0", fontSize: 13, color: COLORS.inkSoft, textAlign: "center" }}
+        >
+          Reconociendo {state.fileMeta?.ext?.toUpperCase() === "PDF" ? "texto del PDF" : "celdas del Excel"}
+          {" · "}detectando cliente, marca y productos…
+        </motion.p>
       )}
 
       {state.ocrError && (
         <div style={styles.errorBox}>
           <strong>⚠️ {state.ocrError}</strong>
+          <div style={{ marginTop: 6, fontSize: 12 }}>
+            Puedes completar los datos manualmente más abajo.
+          </div>
         </div>
       )}
 
-      {/* Context summary — SOLO ADMIN */}
-      {!isClient && state.ocrPayload && (
-        <div style={styles.contextGrid}>
-          <AdminContextEditor state={state} patch={patch} />
-        </div>
+      {/* ── CONTEXTO DETECTADO (ADMIN) ── auto-fill card con chips ── */}
+      {!isClient && state.ocrPayload && !state.ocrError && (
+        <OcrDetectedPanel
+          clientCand={clientCand}
+          brandCand={brandCand}
+          po={po}
+          confidence={confidence}
+          linesCount={(state.lines || []).length}
+        />
       )}
 
-      {/* CLIENT: confirmación visual mínima — ni siquiera se muestra el
-          cliente, porque ya sabemos quién es y no queremos darle
-          opciones. */}
+      {/* ── CLIENT: confirmación mínima (sin cliente ni marca) ── */}
       {isClient && state.ocrPayload && (
         <div style={styles.clientConfirmBox}>
           <span style={{ fontSize: 22 }}>✅</span>
@@ -624,8 +672,177 @@ function StepUpload({ state, patch, isClient }) {
           </div>
         </div>
       )}
+
+      {/* ── Botón discreto "Llenar manualmente (Fallback)" — SOLO ADMIN.
+            · Si el OCR falló → abierto automáticamente (fallbackOpen=true).
+            · Si el OCR acertó → el admin puede abrirlo para corregir el UUID
+              del cliente o la marca (en caso raro de matcheo ambiguo).
+            · El CLIENT nunca ve esta sección — no tiene autoridad para
+              reasignar su propio client_id ni la marca. */}
+      {!isClient && (
+        <div style={{ marginTop: 18, borderTop: `1px solid ${COLORS.border}`, paddingTop: 16 }}>
+          <button
+            type="button"
+            onClick={() => setFallbackOpen((v) => !v)}
+            style={{
+              background:  "transparent",
+              border:      "none",
+              color:       COLORS.inkSoft,
+              fontSize:    12,
+              textDecoration: "underline dotted",
+              cursor:      "pointer",
+              padding:     "4px 0",
+            }}
+          >
+            {fallbackOpen
+              ? "Ocultar edición manual"
+              : "Llenar manualmente (Fallback)"}
+          </button>
+          <AnimatePresence initial={false}>
+            {fallbackOpen && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{    opacity: 0, height: 0 }}
+                transition={{ duration: 0.22 }}
+                style={{ overflow: "hidden" }}
+              >
+                <div style={{ ...styles.contextGrid, marginTop: 12 }}>
+                  <AdminContextEditor state={state} patch={patch} />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
     </section>
   );
+}
+
+
+// =====================================================================
+// OcrDetectedPanel · tarjeta "Contexto detectado" del Paso 1
+//
+// Muestra el resultado del OCR como chips read-only:
+//   [Cliente: ACME Industrial S.R.L. · 45 días · $150,000]
+//   [Marca: Rana Walk]
+//   [OC: OC-ACME-2026-001  ·  15 mar 2026]
+//   [4 productos detectados · Confianza OCR 94%]
+// =====================================================================
+function OcrDetectedPanel({ clientCand, brandCand, po, confidence, linesCount }) {
+  const clientName  = clientCand?.razon_social || clientCand?.name || "—";
+  const creditDays  = clientCand?.credit_days;
+  const creditLimit = clientCand?.credit_limit_usd;
+  const brandName   = brandCand?.nombre || brandCand?.name || "—";
+  const confPct     = Math.round((Number(confidence) || 0) * 100);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28 }}
+      style={{
+        marginTop: 18,
+        background: "#F4FBF8",
+        border: `1px solid ${COLORS.mint}`,
+        borderRadius: 10,
+        padding: "14px 18px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 18 }}>🎯</span>
+          <strong style={{ color: COLORS.navy, fontSize: 14 }}>
+            Contexto detectado automáticamente
+          </strong>
+        </div>
+        <span style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: "#fff",
+          background: confPct >= 80 ? COLORS.mintDark : COLORS.warning,
+          padding: "3px 10px",
+          borderRadius: 999,
+          letterSpacing: 0.4,
+        }}>
+          CONFIANZA OCR {confPct}%
+        </span>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+        {/* Cliente */}
+        <OcrChipField label="CLIENTE">
+          <div style={{ fontWeight: 600, fontSize: 14, color: COLORS.navy }}>{clientName}</div>
+          <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+            {creditDays != null && (
+              <span style={chipStyle()}>{creditDays} días crédito</span>
+            )}
+            {creditLimit != null && creditLimit > 0 && (
+              <span style={chipStyle(true)}>Límite {fmtMoneyCompact(creditLimit)}</span>
+            )}
+          </div>
+        </OcrChipField>
+
+        {/* Marca */}
+        <OcrChipField label="MARCA">
+          <div style={{ fontWeight: 600, fontSize: 14, color: COLORS.navy }}>{brandName}</div>
+          {brandCand?.brand_code && (
+            <div style={{ marginTop: 6 }}>
+              <span style={chipStyle()}>{brandCand.brand_code}</span>
+            </div>
+          )}
+        </OcrChipField>
+
+        {/* OC + líneas */}
+        <OcrChipField label="OC DEL CLIENTE">
+          <div style={{ fontFamily: "monospace", fontWeight: 600, fontSize: 13, color: COLORS.navy }}>
+            {po.number || "—"}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+            {po.date && <span style={chipStyle()}>{po.date}</span>}
+            <span style={chipStyle(true)}>{linesCount} productos</span>
+          </div>
+        </OcrChipField>
+      </div>
+    </motion.div>
+  );
+}
+
+function OcrChipField({ label, children }) {
+  return (
+    <div>
+      <div style={{
+        fontSize: 10,
+        fontWeight: 600,
+        color: COLORS.inkSoft,
+        letterSpacing: 0.5,
+        marginBottom: 4,
+      }}>
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function chipStyle(accent = false) {
+  return {
+    display: "inline-block",
+    fontSize: 11,
+    fontWeight: 500,
+    background: accent ? COLORS.mint : "#FFFFFF",
+    color:      accent ? "#fff"      : COLORS.ink,
+    border:     accent ? "none"      : `1px solid ${COLORS.border}`,
+    padding:    "3px 8px",
+    borderRadius: 999,
+  };
+}
+
+function fmtMoneyCompact(n) {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000)     return `$${(v / 1_000).toFixed(0)}K`;
+  return `$${v.toFixed(0)}`;
 }
 
 

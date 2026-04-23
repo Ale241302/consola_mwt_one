@@ -236,23 +236,45 @@ def parse_oc_pdf(file_bytes: bytes, filename: str) -> dict:
 # --------------------------------------------------------------------
 def resolve_entity_identity(ocr_name: str, entity: str = "cliente", top_k: int = 3) -> list:
     """Devuelve top-k candidatos del catálogo que más se parezcan al
-    nombre OCR, con ratio difflib ≥ 0.55."""
+    nombre OCR, con ratio difflib ≥ 0.55.
+
+    Para el caller `entity='cliente'`, cada candidato trae además
+    `credit_days` y `credit_limit_usd` — el Wizard los muestra como chips
+    en el Paso 1 ("cliente detectado con límite de $X"). Si la columna
+    no existe en el schema (setup antiguo), la query hace fallback a lo
+    mínimo y esos campos viajan como None.
+    """
     if not ocr_name:
         return []
 
     if entity == "cliente":
-        sql = "SELECT id::text, razon_social FROM clientes.cliente WHERE is_active = TRUE"
+        # Intentamos traer credit_days + credit_limit_usd. Si la columna
+        # no existe (DB antigua), hacemos fallback a la query mínima.
+        sql_full = """
+            SELECT id::text,
+                   razon_social,
+                   COALESCE(credit_days, 0)       AS credit_days,
+                   COALESCE(credit_limit_usd, 0)  AS credit_limit_usd
+              FROM clientes.cliente
+             WHERE is_active = TRUE
+        """
+        sql_min = "SELECT id::text, razon_social, NULL, NULL FROM clientes.cliente WHERE is_active = TRUE"
         namecol = "razon_social"
     elif entity == "marca":
-        sql = "SELECT id::text, nombre FROM brands.marca WHERE is_active = TRUE"
-        namecol = "nombre"
+        sql_full = "SELECT id::text, nombre, NULL, NULL FROM brands.marca WHERE is_active = TRUE"
+        sql_min  = sql_full
+        namecol  = "nombre"
     else:
         return []
 
     rows = []
     try:
         with connection.cursor() as c:
-            c.execute(sql)
+            try:
+                c.execute(sql_full)
+            except Exception:
+                # Fallback si la columna credit_* no existe
+                c.execute(sql_min)
             rows = c.fetchall()
     except Exception as e:
         log.warning("resolve_entity_identity (%s) falló: %s", entity, e)
@@ -260,12 +282,26 @@ def resolve_entity_identity(ocr_name: str, entity: str = "cliente", top_k: int =
 
     needle = ocr_name.lower().strip()
     scored = []
-    for rid, rname in rows:
+    for row in rows:
+        rid, rname = row[0], row[1]
         if not rname:
             continue
         ratio = difflib.SequenceMatcher(None, needle, rname.lower()).ratio()
-        if ratio >= 0.55:
-            scored.append({"id": rid, namecol: rname, "score": round(ratio, 4)})
+        if ratio < 0.55:
+            continue
+        item = {"id": rid, namecol: rname, "score": round(ratio, 4)}
+        # Clientes: agregamos credit_days + credit_limit_usd si la fila
+        # trae esas columnas.
+        if entity == "cliente" and len(row) >= 4:
+            try:
+                item["credit_days"]      = int(row[2]) if row[2] is not None else None
+            except (TypeError, ValueError):
+                item["credit_days"] = None
+            try:
+                item["credit_limit_usd"] = float(row[3]) if row[3] is not None else None
+            except (TypeError, ValueError):
+                item["credit_limit_usd"] = None
+        scored.append(item)
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored[:top_k]
 

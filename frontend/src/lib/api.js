@@ -8,6 +8,7 @@ import {
   portalProductsListMock,
   portalProductsDetailMock,
 } from "./portalProductsMock.js";
+import { portalOcrParseMock } from "./ocrMock.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
@@ -441,3 +442,86 @@ export const sizingApi = {
   options: () => apiFetch(`/sizing/options/`, { token: getToken() }),
   clone:   (tallaId) => tallasApi.action("clone", tallaId, {}),
 };
+
+
+// =====================================================================
+// postMultipart — wrapper para uploads de archivos con mock hook.
+//
+// El Wizard (CreateExpedienteWizard.jsx) y el grid del catálogo usaban
+// su propia función local para POST multipart, lo cual NO respetaba el
+// kill-switch MOCKS_ENABLED. Esta versión centralizada:
+//   · En modo mock, matchea `/ocr/parse-oc/` y devuelve el fixture demo
+//     (lib/ocrMock.js) con cliente/marca/PO/líneas pre-seleccionados.
+//   · Para cualquier otro upload en modo mock → lanza ApiError clara.
+//   · En modo real, hace fetch multipart normal.
+// =====================================================================
+export async function postMultipart(path, formData, { token } = {}) {
+  // ── Interceptor de mocks ──────────────────────────────────────────
+  if (MOCKS_ENABLED) {
+    // /ocr/parse-oc/ — devuelve payload estructurado con cliente/marca/PO
+    if (path.startsWith("/ocr/parse-oc")) {
+      const file = (formData && typeof formData.get === "function")
+        ? formData.get("file")
+        : null;
+      // Pequeño delay para que la animación de escaneo sea perceptible
+      // (el scan-line del StepUpload luce feo si el fetch resuelve en < 50ms).
+      await new Promise((r) => setTimeout(r, 1100));
+      return portalOcrParseMock(file);
+    }
+    // /expedientes/create-from-oc/ — en mock NO creamos nada real, pero
+    // devolvemos un shape "ok:true" para que el wizard muestre el estado
+    // de éxito. El archivo físico NO se persiste (estamos en demo).
+    if (path.startsWith("/expedientes/create-from-oc")) {
+      await new Promise((r) => setTimeout(r, 700));
+      const idem = (formData && typeof formData.get === "function")
+        ? (formData.get("idempotence_token") || "mock")
+        : "mock";
+      return {
+        ok: true,
+        command: "C1",
+        expediente: {
+          id:                    `demo-exp-${String(idem).slice(-8)}`,
+          codigo:                `EXP-DEMO-${String(idem).slice(-4).toUpperCase()}`,
+          estado:                "REGISTRO",
+          client_id:             "demo-client",
+          brand_id:              null,
+          modo_operacion:        null,
+          freight_mode:          null,
+          transport_mode:        null,
+          dispatch_mode:         null,
+          price_basis:           null,
+          moneda:                "USD",
+          total_cost:            0,
+          phase_signal:          "PENDING_CEO_REVIEW",
+          submitted_via_portal:  true,
+          submitted_by_role:     "CLIENT",
+        },
+        oc:              { id: "demo-oc", codigo: "OC-DEMO-0000", lines_count: 0 },
+        artifact_id:     `demo-art-${String(idem).slice(-6)}`,
+        correlation_id:  "demo-corr",
+        submission_id:   "demo-sub",
+        requires_ceo_review: true,
+      };
+    }
+    throw new ApiError(
+      "Backend deshabilitado (modo mock). Uploads no se persisten.",
+      0,
+      { mock_mode: true, path },
+    );
+  }
+
+  // ── Modo real: fetch multipart ────────────────────────────────────
+  const resp = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body:    formData,
+  });
+  const text = await resp.text();
+  let data = null;
+  if (text) { try { data = JSON.parse(text); } catch { data = { raw: text }; } }
+  if (!resp.ok) {
+    const msg = data?.detail || data?.error || `HTTP ${resp.status}`;
+    throw new ApiError(msg, resp.status, data);
+  }
+  return data;
+}
