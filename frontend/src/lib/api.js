@@ -9,6 +9,10 @@ import {
   portalProductsDetailMock,
 } from "./portalProductsMock.js";
 import { portalOcrParseMock } from "./ocrMock.js";
+import {
+  aiAgentsListMock, aiSkillsListMock, aiInstructionsListMock,
+  aiAgentDetailMock, aiSkillDetailMock, aiInstructionDetailMock,
+} from "./aiGovernanceMock.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
@@ -42,6 +46,31 @@ function resolveMockFixture(path) {
       offset: Number(sp.get("offset")) || 0,
       q:      sp.get("q") || "",
     });
+  }
+
+  // ── AI Hub · Gobernanza ─────────────────────────────────────────
+  // Detail endpoints (GET /api/ai/agents/<id>/, etc.)
+  const mAiDetail = path.match(/^\/ai\/(agents|skills|instructions)\/([^/?]+)\/?(?:\?.*)?$/);
+  if (mAiDetail) {
+    const [, kind, id] = mAiDetail;
+    const fn = (kind === "agents") ? aiAgentDetailMock
+            : (kind === "skills") ? aiSkillDetailMock
+            : aiInstructionDetailMock;
+    return fn(id) || { detail: "No encontrado" };
+  }
+
+  // List endpoints (GET /api/ai/agents/?ordering=nombre, etc.)
+  const mAiList = path.match(/^\/ai\/(agents|skills|instructions)\/?(?:\?(.*))?$/);
+  if (mAiList) {
+    const [, kind, qs] = mAiList;
+    const sp = new URLSearchParams(qs || "");
+    const params = {
+      ordering:  sp.get("ordering") || undefined,
+      is_active: sp.get("is_active") || undefined,
+    };
+    if (kind === "agents")       return aiAgentsListMock(params);
+    if (kind === "skills")       return aiSkillsListMock(params);
+    if (kind === "instructions") return aiInstructionsListMock(params);
   }
 
   return undefined;
