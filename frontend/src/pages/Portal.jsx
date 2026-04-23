@@ -383,7 +383,7 @@ export default function ScreenPortal() {
         {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC}/>}
         {tab === 'payments' && <PortalPayments lang={lang} ocs={myOCs}/>}
         {tab === 'docs'     && <PortalDocs     lang={lang} ocs={myOCs}/>}
-        {tab === 'products' && <ProductCatalogGrid lang={lang} />}
+        {tab === 'products' && <ProductCatalogGrid lang={lang} clientId={portalClientId} />}
       </div>
     </div>
   );

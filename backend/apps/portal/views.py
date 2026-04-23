@@ -773,18 +773,44 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
             return ProductPortalDetailSerializer
         return ProductPortalListSerializer
 
+    # Roles considerados "staff interno MWT" — pueden navegar el catálogo
+    # sin scope de cliente B2B. El filtro por visibility_tier sigue
+    # aplicando (staff NO accede a productos CEO-ONLY por esta ruta;
+    # para eso está /api/productos/ del backoffice).
+    _STAFF_ROLES = {
+        "superadmin", "admin", "manager", "operator",
+        "finance", "viewer", "compras",
+    }
+
     # ── SECURITY GATE ─────────────────────────────────────────────
     def initial(self, request, *args, **kwargs):
         """Enforce client scope ANTES de ejecutar la acción.
-        Si no podemos resolver el client_id → 403 directo (no 401/404),
-        para no filtrar la existencia del endpoint."""
+
+        Política:
+          · staff interno MWT  → scope opcional. Si no hay header/query,
+                                 ven el catálogo completo filtrado por
+                                 visibility_tier (sin personalización
+                                 de precio por cliente).
+          · cliente B2B        → scope obligatorio. Si no podemos
+                                 resolver el client_id → 403 explícito
+                                 (no 401/404) para no filtrar existencia.
+        """
         super().initial(request, *args, **kwargs)
+        role = (getattr(request.user, "role", "") or "").lower()
         cid = _resolve_client_id(request)
+
+        if role in self._STAFF_ROLES:
+            # Staff: scope opcional. Si pasaron un client_id (impersonation
+            # desde el Tweaks panel en dev), lo usamos para resolver precios;
+            # si no, request._portal_client_id queda None y el queryset
+            # devuelve el catálogo global filtrado por visibility_tier.
+            request._portal_client_id = cid  # puede ser None
+            return
+
+        # Cliente B2B: scope obligatorio
         if not cid:
-            # Usamos una excepción estándar para que DRF la serialice bien
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("No se pudo resolver el cliente del portal.")
-        # Dejamos el client_id resuelto accesible para list/retrieve
         request._portal_client_id = cid
 
     # ── QUERYSET — scope + whitelist de visibility_tier ───────────

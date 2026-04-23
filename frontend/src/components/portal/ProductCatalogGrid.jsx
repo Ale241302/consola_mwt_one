@@ -26,7 +26,7 @@ import { apiFetch, getToken } from "../../lib/api.js";
 import { fmtMoney } from "../../lib/i18n.js";
 
 
-export default function ProductCatalogGrid({ lang = "es", onBuy }) {
+export default function ProductCatalogGrid({ lang = "es", onBuy, clientId }) {
   const [items,   setItems]   = useState([]);
   const [count,   setCount]   = useState(0);
   const [offset,  setOffset]  = useState(0);
@@ -35,7 +35,12 @@ export default function ProductCatalogGrid({ lang = "es", onBuy }) {
   const [error,   setError]   = useState(null);
   const [q,       setQ]       = useState("");
 
-  // Fetch paginado
+  // Fetch paginado. El backend resuelve el scope del cliente en este orden:
+  //   1. JWT claim portal_client_id  (cuando el claim esté en producción)
+  //   2. Header X-Portal-Client       (dev / impersonation desde Tweaks panel)
+  //   3. Query ?client_id=            (último fallback)
+  // Siempre pasamos el header si el padre nos dio un clientId — esto es
+  // consistente con portalApi.* en lib/api.js.
   const fetchPage = useCallback(async (nextOffset, qOverride) => {
     setLoading(true);
     setError(null);
@@ -46,7 +51,11 @@ export default function ProductCatalogGrid({ lang = "es", onBuy }) {
       const qValue = qOverride !== undefined ? qOverride : q;
       if (qValue) params.set("q", qValue);
       const token = getToken();
-      const data = await apiFetch(`/portal/products/?${params.toString()}`, { token });
+      const headers = clientId ? { "X-Portal-Client": clientId } : {};
+      const data = await apiFetch(
+        `/portal/products/?${params.toString()}`,
+        { token, headers },
+      );
       setItems(data?.results || []);
       setCount(data?.count || 0);
       setOffset(nextOffset);
@@ -55,7 +64,7 @@ export default function ProductCatalogGrid({ lang = "es", onBuy }) {
     } finally {
       setLoading(false);
     }
-  }, [limit, q]);
+  }, [limit, q, clientId]);
 
   // Primer carga
   useEffect(() => { fetchPage(0, ""); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
