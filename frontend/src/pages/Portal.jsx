@@ -24,6 +24,7 @@ import {
 } from "../data/mockData.js";
 import { usePortalData } from "../hooks/usePortalData.js";
 import { useRole } from "../context/RoleContext.jsx";
+import ProductCatalogGrid from "../components/portal/ProductCatalogGrid.jsx";
 
 // ── Adapters backend → shape UI ─────
 // El backend NO expone total_cost / margin / commission / supplier / modo_operacion;
@@ -365,12 +366,13 @@ export default function ScreenPortal() {
           );
         })()}
 
-        {/* Tabs */}
+        {/* Tabs — Portal B2B tiene 4 pestañas canónicas */}
         <div className="tabs mb-4">
           {[
             { k:'orders',   es:'Mis Órdenes',        en:'My Orders' },
             { k:'payments', es:'Historial de Pagos', en:'Payment History' },
             { k:'docs',     es:'Documentos',         en:'Documents' },
+            { k:'products', es:'Productos',          en:'Products' },
           ].map(t => (
             <button key={t.k} className="tab" data-active={tab===t.k} onClick={()=>setTab(t.k)}>
               {lang==='es'?t.es:t.en}
@@ -381,6 +383,7 @@ export default function ScreenPortal() {
         {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC}/>}
         {tab === 'payments' && <PortalPayments lang={lang} ocs={myOCs}/>}
         {tab === 'docs'     && <PortalDocs     lang={lang} ocs={myOCs}/>}
+        {tab === 'products' && <ProductCatalogGrid lang={lang} />}
       </div>
     </div>
   );

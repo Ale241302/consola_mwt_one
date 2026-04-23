@@ -370,3 +370,289 @@ def resolve_client_price(client_id: Optional[str], sku: Optional[str],
     if producto_id:
         out["producto_id"] = producto_id
     return out
+
+
+# --------------------------------------------------------------------
+# 4. parse_oc_xlsx  — procesamiento nativo de OC en Excel
+# --------------------------------------------------------------------
+#
+# Cuando el cliente sube un .xlsx (caso típico B2B: clientes que ya
+# tienen su plantilla de compra en Excel), no tiene sentido pasar por
+# Paperless-ngx / OCR — leemos las celdas directamente con pandas.
+#
+# Heurística de mapeo de columnas:
+#   · Busca columnas case-insensitive que machéen alguno de estos alias:
+#       sku            → sku, código, codigo, ref, item, part_number
+#       descripcion    → descripción, descripcion, producto, name
+#       size           → talla, size, nro
+#       qty            → qty, cant, cantidad, quantity, units
+#       unit_price     → precio, precio_unit, unit_price, price, pu
+#   · El PO Number se busca en las primeras 10 filas (celda contiene
+#     'OC', 'PO', 'ORDEN', 'ORDER').
+#   · La moneda se detecta por símbolo en las celdas de precio ($ = USD).
+#
+# El payload devuelto tiene EXACTAMENTE el mismo shape que parse_oc_pdf:
+#   {ok, error, payload: {client, brand, po, lines, confidence, …}}
+# de modo que el orchestrator no necesita saber el origen.
+# --------------------------------------------------------------------
+_XLSX_COLUMN_ALIASES = {
+    "sku":         ["sku", "código", "codigo", "ref", "item", "part_number",
+                    "cod", "cód", "articulo", "artículo", "id_producto"],
+    "descripcion": ["descripción", "descripcion", "desc", "producto",
+                    "product", "name", "nombre", "detalle"],
+    "size":        ["talla", "size", "nro", "num", "número", "numero"],
+    "qty":         ["qty", "cant", "cantidad", "quantity", "units",
+                    "unidades", "pares"],
+    "unit_price":  ["precio", "precio_unit", "unit_price", "price",
+                    "pu", "precio_unitario", "costo", "cost"],
+}
+
+_XLSX_PO_KEYWORDS = ("OC", "PO", "ORDEN", "ORDER", "PEDIDO",
+                     "PURCHASE", "NRO. OC", "N° OC")
+
+
+def _normalize_col(col: str) -> str:
+    """lowercase + strip + saca acentos burdos para matching de columnas."""
+    if col is None:
+        return ""
+    s = str(col).strip().lower()
+    s = (s.replace("á", "a").replace("é", "e").replace("í", "i")
+           .replace("ó", "o").replace("ú", "u").replace("ñ", "n"))
+    return s
+
+
+def _match_column(df_cols, aliases: list[str]) -> Optional[str]:
+    """Devuelve el nombre original de la primera columna del DataFrame
+    que matchee algún alias (comparación normalizada)."""
+    norm_targets = {_normalize_col(a): a for a in aliases}
+    for c in df_cols:
+        nc = _normalize_col(c)
+        for key in norm_targets:
+            if key == nc or (len(key) >= 3 and key in nc):
+                return c
+    return None
+
+
+def _detect_po_number(df) -> Optional[str]:
+    """Busca el número de OC escaneando las primeras ~10 filas y celdas
+    que contengan keywords PO/ORDEN/OC. Captura el token alfanumérico
+    adyacente (o en la misma celda) con regex."""
+    po_re = re.compile(
+        r"(?:" + "|".join(_XLSX_PO_KEYWORDS) + r")"
+        r"[\s:#·\-]*([A-Z0-9][A-Z0-9\-_/]{2,})",
+        re.IGNORECASE,
+    )
+    try:
+        head = df.head(10).astype(str)
+        for _, row in head.iterrows():
+            joined = " | ".join(row.tolist())
+            m = po_re.search(joined)
+            if m:
+                return m.group(1).strip()
+    except Exception as e:
+        log.debug("_detect_po_number falló: %s", e)
+    return None
+
+
+def parse_oc_xlsx(file_bytes: bytes, filename: str) -> dict:
+    """Entrypoint público paralelo a parse_oc_pdf. Lee un .xlsx con
+    `pandas` y devuelve el mismo payload estructurado que el PDF.
+
+    No persiste nada — sólo devuelve datos para que el front los muestre.
+    """
+    if not file_bytes:
+        return {"ok": False, "error": "empty_file", "payload": None}
+
+    try:
+        import pandas as pd  # noqa: PLC0415
+    except ImportError:
+        return {
+            "ok": False,
+            "error": "pandas_missing",
+            "payload": None,
+            "hint": "pip install pandas openpyxl — requerido para procesar .xlsx",
+        }
+
+    # 1) Leer todas las hojas y elegir la que tenga más celdas con números
+    try:
+        sheets = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None, header=None)
+    except Exception as e:
+        log.exception("pandas.read_excel falló: %s", e)
+        return {"ok": False, "error": f"xlsx_read_failed: {e}", "payload": None}
+
+    if not sheets:
+        return {"ok": False, "error": "xlsx_empty", "payload": None}
+
+    # Elegimos la hoja más "densa" (más celdas numéricas no vacías)
+    best_name, best_df = None, None
+    best_score = -1
+    for name, df in sheets.items():
+        numeric_cells = df.applymap(lambda v: isinstance(v, (int, float))).sum().sum()
+        if numeric_cells > best_score:
+            best_score = numeric_cells
+            best_name, best_df = name, df
+
+    df = best_df
+
+    # 2) Detectar fila de headers: la primera fila que tenga >= 3 strings
+    #    no vacías consecutivas (heurística barata pero efectiva para
+    #    plantillas del cliente).
+    header_row_idx = None
+    for i in range(min(10, len(df))):
+        row = df.iloc[i]
+        non_null = sum(1 for v in row if isinstance(v, str) and v.strip())
+        if non_null >= 3:
+            header_row_idx = i
+            break
+
+    po_number = _detect_po_number(df)
+
+    if header_row_idx is None:
+        return {
+            "ok": False,
+            "error": "xlsx_no_header_detected",
+            "payload": {
+                "confidence": 0.0,
+                "po": {"number": po_number, "date": None,
+                       "currency": "USD", "total": None},
+                "client": {"name": None, "tax_id": None},
+                "brand":  {"name": None, "brand_code": None},
+                "lines":  [],
+                "raw_text_preview": None,
+                "sheet_name": best_name,
+            },
+        }
+
+    # 3) Re-parsear el DataFrame promoviendo esa fila a header
+    try:
+        df2 = df.iloc[header_row_idx + 1:].copy()
+        df2.columns = [str(c) for c in df.iloc[header_row_idx].tolist()]
+        df2 = df2.dropna(how="all")
+    except Exception as e:
+        log.exception("xlsx re-header falló: %s", e)
+        return {"ok": False, "error": "xlsx_reheader_failed", "payload": None}
+
+    cols = df2.columns.tolist()
+    mapped = {
+        "sku":         _match_column(cols, _XLSX_COLUMN_ALIASES["sku"]),
+        "descripcion": _match_column(cols, _XLSX_COLUMN_ALIASES["descripcion"]),
+        "size":        _match_column(cols, _XLSX_COLUMN_ALIASES["size"]),
+        "qty":         _match_column(cols, _XLSX_COLUMN_ALIASES["qty"]),
+        "unit_price":  _match_column(cols, _XLSX_COLUMN_ALIASES["unit_price"]),
+    }
+
+    # Si faltan las dos columnas críticas (sku + qty), damos por inválido
+    if not mapped["sku"] or not mapped["qty"]:
+        return {
+            "ok": False,
+            "error": "xlsx_missing_critical_columns",
+            "payload": {
+                "po":         {"number": po_number, "date": None,
+                               "currency": "USD", "total": None},
+                "client":     {"name": None, "tax_id": None},
+                "brand":      {"name": None, "brand_code": None},
+                "lines":      [],
+                "confidence": 0.1,
+                "mapped_columns": mapped,
+                "sheet_name": best_name,
+            },
+            "hint": "No se encontraron columnas SKU y/o cantidad. Encabezados detectados: "
+                    + ", ".join(str(c) for c in cols),
+        }
+
+    # 4) Extraer líneas
+    lines = []
+    total = Decimal("0")
+    currency = "USD"
+
+    for _, row in df2.iterrows():
+        sku_val = row.get(mapped["sku"])
+        qty_val = row.get(mapped["qty"])
+        if sku_val is None or str(sku_val).strip() == "" or str(sku_val).lower() == "nan":
+            continue
+
+        qty_dec = _safe_decimal(str(qty_val)) or Decimal("0")
+        if qty_dec <= 0:
+            continue
+
+        unit_price_dec = Decimal("0")
+        if mapped["unit_price"] is not None:
+            raw_price = row.get(mapped["unit_price"])
+            if raw_price is not None:
+                # Detectar símbolo de moneda en la misma celda
+                raw_s = str(raw_price)
+                if "$" in raw_s:
+                    currency = "USD"
+                elif "€" in raw_s:
+                    currency = "EUR"
+                elif "R$" in raw_s.upper():
+                    currency = "BRL"
+                unit_price_dec = _safe_decimal(raw_s) or Decimal("0")
+
+        size_val = None
+        if mapped["size"] is not None:
+            raw_size = row.get(mapped["size"])
+            if raw_size is not None and str(raw_size).strip() != "":
+                size_val = str(raw_size).strip()
+
+        desc_val = None
+        if mapped["descripcion"] is not None:
+            raw_desc = row.get(mapped["descripcion"])
+            if raw_desc is not None and str(raw_desc).strip() != "":
+                desc_val = str(raw_desc).strip()
+
+        line_total = qty_dec * unit_price_dec
+        total += line_total
+
+        lines.append({
+            "sku":           str(sku_val).strip(),
+            "descripcion":   desc_val,
+            "size":          size_val,
+            "qty":           float(qty_dec),
+            "unit_price":    float(unit_price_dec),
+            "ocr_raw_line":  None,   # no aplica en xlsx
+            "confidence":    0.98,    # datos estructurados → alta confianza
+        })
+
+    payload = {
+        "client":     {"name": None, "tax_id": None, "_candidates": []},
+        "brand":      {"name": None, "brand_code": None, "_candidates": []},
+        "po": {
+            "number":   po_number,
+            "date":     None,
+            "currency": currency,
+            "incoterm": None,
+            "total":    float(total) if total > 0 else None,
+        },
+        "lines":            lines,
+        "confidence":       0.98 if lines else 0.2,
+        "ocr_engine":       "pandas-xlsx",
+        "paperless_task_id": None,
+        "raw_text_preview": None,
+        "sheet_name":       best_name,
+        "mapped_columns":   mapped,
+    }
+
+    return {"ok": True, "error": None, "payload": payload}
+
+
+# --------------------------------------------------------------------
+# 5. parse_oc_auto — router por extensión (pdf / xlsx)
+# --------------------------------------------------------------------
+def parse_oc_auto(file_bytes: bytes, filename: str) -> dict:
+    """Entrypoint unificado. Rutea a parse_oc_pdf o parse_oc_xlsx según
+    la extensión del archivo (o su magic bytes en su defecto)."""
+    fn = (filename or "").lower()
+
+    if fn.endswith(".pdf") or file_bytes[:4] == b"%PDF":
+        return parse_oc_pdf(file_bytes, filename)
+
+    if fn.endswith(".xlsx") or fn.endswith(".xlsm") or file_bytes[:2] == b"PK":
+        return parse_oc_xlsx(file_bytes, filename)
+
+    return {
+        "ok":    False,
+        "error": "unsupported_format",
+        "hint":  "Solo .pdf y .xlsx son soportados por el wizard.",
+        "payload": None,
+    }

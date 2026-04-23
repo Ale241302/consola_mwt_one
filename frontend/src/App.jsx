@@ -13,6 +13,7 @@ import ScreenPortal from "./pages/Portal.jsx";
 import ScreenPagos from "./pages/Pagos.jsx";
 import ScreenInventario from "./pages/Inventario.jsx";
 import ScreenWizard from "./pages/Wizard.jsx";
+import CreateExpedienteWizard from "./pages/CreateExpedienteWizard.jsx";
 import ScreenTransfers from "./pages/Transfers.jsx";
 import ScreenTransferDetail from "./pages/TransferDetail.jsx";
 import ScreenNodos from "./pages/Nodos.jsx";
@@ -52,6 +53,9 @@ export default function App() {
         <Route path="/financiero" element={<ScreenPagos />} />
         <Route path="/inventario" element={<ScreenInventario />} />
         <Route path="/wizard" element={<ScreenWizard />} />
+        {/* Nuevo wizard multirol (ADMIN 4 pasos / CLIENT 3 pasos) — reemplazo de /wizard */}
+        <Route path="/expedientes/nuevo" element={<CreateExpedienteWizard />} />
+        <Route path="/portal/nueva-oc"  element={<CreateExpedienteWizard />} />
         <Route path="/transferencias" element={<ScreenTransfers />} />
         <Route path="/transferencias/:transferId" element={<ScreenTransferDetail />} />
         <Route path="/nodos" element={<ScreenNodos />} />
@@ -63,6 +67,9 @@ export default function App() {
         <Route path="/productos" element={<ScreenProductos />} />
         <Route path="/productos/nuevo" element={<ScreenProductFormView />} />
         <Route path="/productos/:productId" element={<ScreenProductFormView />} />
+        {/* Ruta del Portal B2B: mismo componente, pero useRole() detecta
+            CLIENT y aplica el strip-down (fieldset disabled + tabs filtradas). */}
+        <Route path="/portal/productos/:productId" element={<ScreenProductFormView />} />
         <Route path="/tallas" element={<ScreenSizingEngine />} />
         <Route path="/proveedores" element={<ScreenProveedores />} />
         <Route path="/proveedores/nuevo" element={<ScreenSupplierFormView />} />

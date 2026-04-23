@@ -7536,3 +7536,134 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
 }
 .siz-field-hint { font-weight: 500; text-transform: none; color: #94A3B8; }
 
+
+/* =====================================================================
+   Portal B2B · Catálogo de productos (ProductCatalogGrid)
+   Agente responsable: [AG-FRONTEND]
+   Tokens: var(--navy) · var(--mint) · var(--paper) · tabular-nums
+   ===================================================================== */
+.portal-catalog { display:flex; flex-direction:column; gap:20px; }
+.catalog-head   {
+  display:flex; justify-content:space-between; align-items:center;
+  gap:16px; flex-wrap:wrap;
+}
+.catalog-title  {
+  font: 600 18px/1.2 var(--font-display, Inter);
+  color: var(--navy, #0B1E3A);
+  display:flex; align-items:baseline; gap:10px;
+}
+.catalog-count  { font:500 12px/1 var(--font-body, Inter); color:#64748B; }
+.catalog-search {
+  min-width: 240px; max-width: 360px;
+  padding: 8px 12px; border:1px solid var(--border, #E1E6ED); border-radius:8px;
+  font-size:13px; color:#1B2A45;
+}
+.catalog-search:focus { outline:none; border-color: var(--mint, #00B286); box-shadow: 0 0 0 3px rgba(0,178,134,0.12); }
+
+.catalog-error  {
+  background:#FCE7E7; color:#B83227; border:1px solid #F0B0B0;
+  padding:10px 14px; border-radius:8px; font-size:13px;
+}
+
+.catalog-grid {
+  display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap:16px;
+}
+.catalog-empty {
+  grid-column: 1 / -1; text-align:center; padding:48px 16px;
+  color:#64748B; font-size:14px;
+  border:1px dashed var(--border, #E1E6ED); border-radius:10px;
+}
+
+.catalog-card {
+  display:flex; flex-direction:column; background:#fff;
+  border:1px solid var(--border, #E1E6ED); border-radius:12px;
+  overflow:hidden; cursor:pointer; transition: box-shadow 0.18s ease;
+}
+.catalog-card:focus-visible { outline:2px solid var(--mint, #00B286); outline-offset:2px; }
+
+.catalog-card-thumb {
+  position:relative; height:160px; background:#F3F5F8;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+.catalog-card-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.catalog-card-thumb-placeholder { width:100%; height:100%; background:#EEF2F7; }
+.catalog-card-badge-muted {
+  position:absolute; top:8px; right:8px;
+  background:rgba(27,42,69,0.85); color:#fff;
+  padding:2px 8px; font-size:10px; border-radius:999px;
+  letter-spacing:0.4px; text-transform:uppercase;
+}
+
+.catalog-card-body { padding:12px 14px 8px; display:flex; flex-direction:column; gap:6px; flex:1; }
+.catalog-card-brand-badge {
+  display:inline-block; align-self:flex-start;
+  background: var(--mint, #00B286); color:#fff;
+  padding: 2px 8px; border-radius: 6px;
+  font-size: 10px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase;
+}
+.catalog-card-name {
+  margin:2px 0 0; font: 600 14px/1.3 var(--font-body, Inter);
+  color: var(--navy, #0B1E3A);
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.catalog-card-sku {
+  font-size:11px; color:#64748B;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-variant-numeric: tabular-nums;
+}
+.catalog-card-sku code { font-family: inherit; color:#1B2A45; font-weight:500; }
+.catalog-card-desc {
+  margin:4px 0 0; font-size:12px; color:#4A5A75; line-height:1.4;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.catalog-card-cat {
+  align-self:flex-start;
+  padding: 2px 6px; border-radius:4px;
+  font-size: 10px; font-weight:500; text-transform:uppercase; letter-spacing:0.4px;
+  background:#F3F5F8; color:#64748B;
+  margin-top:4px;
+}
+
+.catalog-card-foot {
+  display:flex; justify-content:space-between; align-items:center;
+  padding: 10px 14px; border-top:1px solid var(--border, #E1E6ED);
+  background: #FAFBFD; gap:8px;
+}
+.catalog-card-price {
+  font: 700 15px/1 var(--font-display, Inter);
+  color: var(--navy, #0B1E3A);
+  font-variant-numeric: tabular-nums;
+}
+.catalog-card-cta {
+  --btn-primary-bg: var(--mint, #00B286);
+  padding: 7px 14px; font-size: 12px; font-weight:600;
+  background: var(--btn-primary, var(--mint, #00B286));
+  color:#fff; border:none; border-radius:6px; cursor:pointer;
+  transition: background 0.15s ease;
+}
+.catalog-card-cta:hover { background: var(--mint-dark, #008B69); }
+
+.catalog-pager {
+  display:flex; justify-content:center; align-items:center; gap:16px;
+  padding-top: 12px;
+}
+
+/* Skeleton loaders */
+.catalog-card-skeleton { pointer-events:none; opacity:0.7; }
+.catalog-card-skeleton .skel-line {
+  height:10px; background:#EEF2F7; border-radius:4px; margin:6px 0;
+  animation: skelShimmer 1.4s infinite linear;
+}
+.skel-line-40 { width:40%; }
+.skel-line-60 { width:60%; }
+.skel-line-90 { width:90%; }
+.catalog-card-skeleton .skel-pill {
+  width:60px; height:26px; background:#EEF2F7; border-radius:6px;
+  animation: skelShimmer 1.4s infinite linear;
+}
+@keyframes skelShimmer {
+  0%   { background-position: -200px 0; }
+  100% { background-position:  200px 0; }
+}

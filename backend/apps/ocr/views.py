@@ -34,11 +34,12 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .services import parse_oc_pdf, resolve_client_price
+from .services import parse_oc_auto, resolve_client_price
 
 log = logging.getLogger(__name__)
 
-MAX_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB — aplica tanto a PDF como a XLSX
+_SUPPORTED_EXTS = (".pdf", ".xlsx", ".xlsm")
 
 
 # --------------------------------------------------------------------
@@ -54,23 +55,30 @@ def parse_oc(request):
     if not f:
         return Response({"ok": False, "error": "file_missing"}, status=400)
 
-    # Validación tipo + tamaño
+    # Validación tipo + tamaño — soportamos .pdf y .xlsx
     name = (f.name or "").lower()
-    if not name.endswith(".pdf"):
-        return Response({"ok": False, "error": "only_pdf_supported"}, status=400)
-
-    if f.size > MAX_PDF_BYTES:
+    if not any(name.endswith(ext) for ext in _SUPPORTED_EXTS):
         return Response({
-            "ok": False, "error": "file_too_large",
-            "max_mb": MAX_PDF_BYTES / (1024 * 1024),
+            "ok":    False,
+            "error": "unsupported_format",
+            "hint":  "Formatos soportados: .pdf, .xlsx",
+        }, status=400)
+
+    if f.size > MAX_FILE_BYTES:
+        return Response({
+            "ok":    False,
+            "error": "file_too_large",
+            "max_mb": MAX_FILE_BYTES / (1024 * 1024),
         }, status=400)
 
     file_bytes = b"".join(chunk for chunk in f.chunks())
 
     try:
-        result = parse_oc_pdf(file_bytes, f.name)
+        # parse_oc_auto rutea internamente a parse_oc_pdf (Paperless+pdfminer)
+        # o parse_oc_xlsx (pandas) según la extensión/magic bytes del archivo.
+        result = parse_oc_auto(file_bytes, f.name)
     except Exception as e:
-        log.exception("parse_oc_pdf crashed: %s", e)
+        log.exception("parse_oc_auto crashed: %s", e)
         return Response({"ok": False, "error": f"ocr_crashed: {e}"}, status=500)
 
     if not result.get("ok"):

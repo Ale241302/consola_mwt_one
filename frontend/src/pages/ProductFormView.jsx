@@ -35,12 +35,20 @@ import {
   PRODUCT_CLIENT_VISIBILITY, NODES, CLIENTS,
 } from "../data/mockData.js";
 import ProductExpedientesTab from "../components/productos/ProductExpedientesTab.jsx";
+import { useRole } from "../context/RoleContext.jsx";
 
+// TABS canónicos del detalle de producto. La visibilidad se recorta
+// dinámicamente según el rol (POL_VISIBILIDAD):
+//   · 'detalles'    → PUBLIC / PARTNER_B2B / INTERNAL → todos la ven
+//   · 'gobernanza'  → INTERNAL / CEO-ONLY             → solo staff
+//   · 'expedientes' → INTERNAL                         → solo staff
+// La whitelist para CLIENT B2B es ['detalles'].
 const TABS = [
   { id:'detalles',   es:'Detalles y Especificaciones', en:'Details & Specs' },
   { id:'gobernanza', es:'Gobernanza y Precios',       en:'Governance & Pricing' },
   { id:'expedientes',es:'Expedientes',                 en:'Files' },
 ];
+const CLIENT_VISIBLE_TABS = new Set(['detalles']);
 
 export default function ScreenProductFormView() {
   const navigate = useNavigate();
@@ -111,8 +119,26 @@ export default function ScreenProductFormView() {
   );
   const [clientPrices, setClientPrices] = useState(existingPricing?.client_prices || {});
 
+  // ── Role-aware rendering ────────
+  // isClient → ProductFormView se vuelve read-only + solo pestaña "Detalles".
+  // isClient no puede editar, no puede ver gobernanza/pricing, no puede
+  // ver trazabilidad de expedientes. Doble defensa: el backend tampoco
+  // devuelve esos campos (ProductPortalSerializer strip-down).
+  const { isClient } = useRole();
+  const visibleTabs = useMemo(
+    () => isClient ? TABS.filter(t => CLIENT_VISIBLE_TABS.has(t.id)) : TABS,
+    [isClient],
+  );
+
   // ── Tabs (solo modo edit) ────────
   const [activeTab, setActiveTab] = useState('detalles');
+
+  // Si el rol cambia en caliente (tweaks panel) y el tab activo ya no es
+  // visible para CLIENT, lo re-anclamos al tab permitido.
+  if (isClient && !CLIENT_VISIBLE_TABS.has(activeTab)) {
+    // setState durante render no es ideal; usamos una microtask.
+    Promise.resolve().then(() => setActiveTab('detalles'));
+  }
 
   // Toggle helper
   const toggleRiesgo = (r) => {
@@ -494,18 +520,34 @@ export default function ScreenProductFormView() {
           </div>
         </div>
         <div className="flex ai-center gap-2">
-          <button className="btn" onClick={()=>navigate('/productos')}>
-            {lang==='es'?'Cancelar':'Cancel'}
+          <button className="btn" onClick={()=>navigate(isClient ? '/portal' : '/productos')}>
+            {lang==='es'?(isClient?'Volver':'Cancelar'):(isClient?'Back':'Cancel')}
           </button>
-          <button className="btn btn-accent" onClick={handleSave}>
-            <IconCheck size={13}/> {isEdit ? (lang==='es'?'Guardar cambios':'Save changes') : (lang==='es'?'Crear producto':'Create product')}
-          </button>
+          {/* CLIENT no puede editar → botón Save oculto. Doble defensa:
+              aunque el CSS lo mostrara, el fieldset disabled bloquearía
+              el onClick. Aun así — tercera defensa: el backend rechaza
+              PATCH/PUT con 403 (PortalProductViewSet._forbidden_write). */}
+          {!isClient && (
+            <button className="btn btn-accent" onClick={handleSave}>
+              <IconCheck size={13}/> {isEdit ? (lang==='es'?'Guardar cambios':'Save changes') : (lang==='es'?'Crear producto':'Create product')}
+            </button>
+          )}
+          {isClient && (
+            <span
+              className="caption"
+              style={{fontSize:12, color:'var(--text-tertiary, #64748B)',
+                      padding:'6px 10px', background:'#F3F5F8', borderRadius:6}}
+              title={lang==='es'?'Vista de solo lectura':'Read-only view'}
+            >
+              🔒 {lang==='es'?'Vista solo lectura':'Read-only'}
+            </span>
+          )}
         </div>
       </div>
 
       {isEdit && (
         <div className="tab-bar">
-          {TABS.map(t => (
+          {visibleTabs.map(t => (
             <button key={t.id}
                     className={`tab-btn ${activeTab===t.id ? 'tab-btn-on' : ''}`}
                     onClick={()=>setActiveTab(t.id)}>
@@ -520,7 +562,15 @@ export default function ScreenProductFormView() {
         </div>
       )}
 
-      {/* Create → single scroll · Edit → per-tab */}
+      {/* Create → single scroll · Edit → per-tab.
+          Si isClient → todos los inputs/selects/buttons del árbol bajo
+          el fieldset se desactivan nativamente (atributo HTML `disabled`
+          del fieldset propaga a sus descendientes). Esto es defensa
+          de UX — el verdadero bloqueo está en el backend. */}
+      <fieldset
+        disabled={isClient}
+        style={{border:'none', padding:0, margin:0, minInlineSize:'auto'}}
+      >
       {!isEdit ? (
         <div className="form-stack">
           <motion.div initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{duration:0.25}}>
@@ -532,9 +582,12 @@ export default function ScreenProductFormView() {
           <motion.div initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{duration:0.25, delay:0.1}}>
             {renderSectionC()}
           </motion.div>
-          <motion.div initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{duration:0.25, delay:0.15}}>
-            {renderSectionD()}
-          </motion.div>
+          {/* Gobernanza es CEO-ONLY → oculto para CLIENT incluso en modo create */}
+          {!isClient && (
+            <motion.div initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{duration:0.25, delay:0.15}}>
+              {renderSectionD()}
+            </motion.div>
+          )}
         </div>
       ) : (
         <div className="tab-panel">
@@ -549,7 +602,11 @@ export default function ScreenProductFormView() {
                 {renderSectionC()}
               </motion.div>
             )}
-            {activeTab === 'gobernanza' && (
+            {/* Gobernanza y Expedientes — ESTRICTAMENTE OCULTAS para CLIENT.
+                El guard `!isClient` es redundante con `visibleTabs` (el CLIENT
+                no puede llegar acá porque el tab-bar no renderiza esas opciones),
+                pero lo mantenemos como defensa en profundidad #2. */}
+            {!isClient && activeTab === 'gobernanza' && (
               <motion.div key="t2"
                 initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-6}}
                 transition={{duration:0.22}}
@@ -557,7 +614,7 @@ export default function ScreenProductFormView() {
                 {renderSectionD()}
               </motion.div>
             )}
-            {activeTab === 'expedientes' && existing && (
+            {!isClient && activeTab === 'expedientes' && existing && (
               <motion.div key="t3"
                 initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-6}}
                 transition={{duration:0.22}}>
@@ -567,6 +624,7 @@ export default function ScreenProductFormView() {
           </AnimatePresence>
         </div>
       )}
+      </fieldset>
     </div>
   );
 }

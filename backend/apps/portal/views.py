@@ -35,7 +35,9 @@ from .models import MwtUser, PortalSessionLog, PortalAuditLog
 from .serializers import (
     MwtUserListSerializer, MwtUserSerializer,
     PortalSessionLogSerializer, PortalAuditLogSerializer,
+    ProductPortalListSerializer, ProductPortalDetailSerializer,
 )
+from apps.productos.models import Producto
 
 log = logging.getLogger(__name__)
 
@@ -728,3 +730,220 @@ class PortalAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
             "total_30d": total,
             "by_action": by_action,
         })
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PortalProductViewSet — Catálogo B2B (strip-down)
+#
+# GET  /api/portal/products/        → list (cards del grid)
+# GET  /api/portal/products/{id}/   → retrieve (ficha técnica)
+# POST / PUT / PATCH / DELETE       → 403 Forbidden (read-only por spec)
+#
+# Reglas (DEFENSA EN PROFUNDIDAD):
+#   1. ClientScopedManager lógico: el scope se resuelve vía
+#      _resolve_client_id() (igual que el resto del portal). Si no hay
+#      scope → 403 (no se filtra data del CEO).
+#   2. Filtrado por visibility_tier ∈ {'PUBLIC', 'PARTNER_B2B'}. Los
+#      productos INTERNAL/CEO-ONLY se ocultan al cliente.
+#   3. `precio_venta` se resuelve por cliente llamando a
+#      apps.commercial.resolve_client_price (best-effort; si falla
+#      caemos a precio_distribuidor en el serializer).
+#   4. El serializer usa whitelist explícita (ProductPortalListSerializer/
+#      ProductPortalDetailSerializer) — los campos CEO-ONLY NO entran
+#      al payload bajo ninguna circunstancia, incluso si alguien hace
+#      patch directo del modelo en el futuro.
+#   5. PATCH/PUT/POST/DELETE → 403 explícito (no 405), porque queremos
+#      transmitir la intención "prohibido", no "método no configurado".
+# ══════════════════════════════════════════════════════════════════════
+class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
+    """Catálogo B2B del portal del cliente. 100% read-only, strip-down.
+
+    Tests cubren esto en tests/test_portal_products.py (BLOQUE 5).
+    """
+    serializer_class = ProductPortalListSerializer
+
+    # Solo aceptamos los métodos que queremos (DRF respeta esta lista);
+    # cualquier otro se bloquea en `dispatch` con 403 explícito.
+    http_method_names = ["get", "head", "options"]
+
+    def get_serializer_class(self):
+        # Detail devuelve MÁS campos (ficha técnica completa), list da
+        # el mínimo del grid para que el payload sea ligero.
+        if self.action == "retrieve":
+            return ProductPortalDetailSerializer
+        return ProductPortalListSerializer
+
+    # ── SECURITY GATE ─────────────────────────────────────────────
+    def initial(self, request, *args, **kwargs):
+        """Enforce client scope ANTES de ejecutar la acción.
+        Si no podemos resolver el client_id → 403 directo (no 401/404),
+        para no filtrar la existencia del endpoint."""
+        super().initial(request, *args, **kwargs)
+        cid = _resolve_client_id(request)
+        if not cid:
+            # Usamos una excepción estándar para que DRF la serialice bien
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("No se pudo resolver el cliente del portal.")
+        # Dejamos el client_id resuelto accesible para list/retrieve
+        request._portal_client_id = cid
+
+    # ── QUERYSET — scope + whitelist de visibility_tier ───────────
+    def get_queryset(self):
+        qs = Producto.objects.filter(
+            is_active=True,
+            visibility_tier__in=["PUBLIC", "PARTNER_B2B"],
+        )
+
+        # Filtros opcionales (útiles en el grid: q, marca, categoría)
+        q = self.request.query_params.get("q")
+        if q:
+            qs = qs.filter(nombre__icontains=q)
+        marca_id = self.request.query_params.get("marca_id")
+        if marca_id:
+            qs = qs.filter(marca_id=marca_id)
+        categoria = self.request.query_params.get("categoria")
+        if categoria:
+            qs = qs.filter(categoria=categoria)
+
+        # Scope adicional: brands asignados al cliente vía
+        # commercial.client_assignment (si existe). Best-effort.
+        cid = getattr(self.request, "_portal_client_id", None)
+        if cid:
+            try:
+                with connection.cursor() as c:
+                    c.execute("""
+                        SELECT brand_id FROM commercial.client_assignment
+                        WHERE client_id = %s AND is_active = TRUE
+                    """, [str(cid)])
+                    brand_ids = [r[0] for r in c.fetchall() if r[0]]
+                if brand_ids:
+                    qs = qs.filter(marca_id__in=brand_ids)
+            except Exception:
+                # Si la tabla no está montada → se deja el whitelist
+                # visibility_tier como único filtro (comportamiento OK
+                # en ambientes dev/sandbox).
+                pass
+
+        return qs.order_by("marca_id", "sku")
+
+    # ── Enriquecimiento: marca_label + precio resuelto ────────────
+    def _hydrate_batch(self, productos):
+        """Anexa `_marca_label` (del catálogo brands.marca) y
+        `precio_venta_resolved` (del resolver comercial) a cada objeto.
+        Best-effort: tolera ausencia de schemas."""
+        if not productos:
+            return
+
+        cid = getattr(self.request, "_portal_client_id", None)
+        brand_ids = list({str(p.marca_id) for p in productos if p.marca_id})
+        brand_map = {}
+        if brand_ids:
+            try:
+                with connection.cursor() as c:
+                    c.execute(
+                        "SELECT id, nombre FROM brands.marca "
+                        "WHERE id = ANY(%s::uuid[]) AND is_active = TRUE",
+                        [brand_ids],
+                    )
+                    brand_map = {str(r[0]): r[1] for r in c.fetchall()}
+            except Exception:
+                brand_map = {}
+
+        # Precios resueltos por cliente — una call por SKU (N+1
+        # aceptable porque el grid del portal muestra a lo sumo ~50
+        # productos y esto se puede cachear en Redis más adelante).
+        for p in productos:
+            p._marca_label = brand_map.get(str(p.marca_id)) if p.marca_id else None
+            if cid and p.sku and p.marca_id:
+                try:
+                    from apps.commercial.services import resolve_client_price  # noqa: PLC0415
+                    verdict = resolve_client_price(
+                        client_id=str(cid),
+                        brand_id=str(p.marca_id),
+                        product_sku=p.sku,
+                        quantity=1,
+                    )
+                    if verdict and verdict.get("ok"):
+                        p.precio_venta_resolved = verdict.get("final_price")
+                except Exception:
+                    # Silencio intencional — el fallback del serializer
+                    # (precio_distribuidor) maneja el caso.
+                    pass
+
+    # ── LIST ──────────────────────────────────────────────────────
+    def list(self, request, *args, **kwargs):
+        qs = self.filter_queryset(self.get_queryset())
+        # Paginación: limit/offset manual (no queremos acoplar al
+        # pagination_class global de DRF — el grid del front pagina
+        # infinito con `?limit=24&offset=0`).
+        try:
+            limit  = min(int(request.query_params.get("limit")  or 60), 200)
+            offset = max(int(request.query_params.get("offset") or 0), 0)
+        except (TypeError, ValueError):
+            limit, offset = 60, 0
+        total = qs.count()
+        page = list(qs[offset:offset + limit])
+        self._hydrate_batch(page)
+        ser = self.get_serializer(page, many=True)
+
+        _record_audit(
+            user_id=getattr(request.user, "id", None),
+            email=getattr(request.user, "email", None),
+            action="VIEW", resource_type="portal_catalogo",
+            resource_id=None, resource_label=f"catalog (n={len(page)})",
+            request=request, status_code=200,
+            payload={"limit": limit, "offset": offset, "total": total},
+        )
+        return Response({
+            "count":   total,
+            "limit":   limit,
+            "offset":  offset,
+            "results": ser.data,
+        })
+
+    # ── RETRIEVE ──────────────────────────────────────────────────
+    def retrieve(self, request, *args, **kwargs):
+        pk = kwargs.get("pk")
+        try:
+            p = self.get_queryset().get(pk=pk)
+        except Producto.DoesNotExist:
+            return Response(
+                {"detail": "Producto no encontrado o fuera de scope."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        self._hydrate_batch([p])
+        ser = self.get_serializer(p)
+
+        _record_audit(
+            user_id=getattr(request.user, "id", None),
+            email=getattr(request.user, "email", None),
+            action="VIEW", resource_type="portal_producto",
+            resource_id=str(p.id), resource_label=p.sku,
+            request=request, status_code=200,
+        )
+        return Response(ser.data)
+
+    # ── Bloqueo explícito de métodos no permitidos (403 > 405) ───
+    # Nota: `http_method_names` ya excluye POST/PUT/PATCH/DELETE, pero
+    # añadimos este override para que, si alguien en el futuro hace
+    # http_method_names += ["patch"] por error, el 403 siga aplicando
+    # y no haya fuga de superficie de ataque.
+    def _forbidden_write(self, request, *args, **kwargs):
+        _record_audit(
+            user_id=getattr(request.user, "id", None),
+            email=getattr(request.user, "email", None),
+            action="UPDATE", resource_type="portal_producto",
+            resource_id=kwargs.get("pk"),
+            resource_label="blocked_write_attempt",
+            request=request, status_code=403,
+            payload={"method": request.method},
+        )
+        return Response(
+            {"detail": "El catálogo B2B es read-only desde el portal."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    create          = _forbidden_write
+    update          = _forbidden_write
+    partial_update  = _forbidden_write
+    destroy         = _forbidden_write
