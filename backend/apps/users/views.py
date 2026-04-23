@@ -44,7 +44,7 @@ import secrets
 import uuid
 from datetime import timedelta
 
-from django.db import connection
+from django.db import connection, transaction
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
@@ -54,7 +54,7 @@ from rest_framework.views import APIView
 
 from .models import (
     MwtUser, RoleCat, ModuleCat, RolePermission, UserRoleBridge,
-    PasswordResetToken, ActivityFeed,
+    PasswordResetToken, ActivityFeed, UserAddress,
 )
 from .serializers import (
     MwtUserSerializer, MwtUserListSerializer,
@@ -62,6 +62,7 @@ from .serializers import (
     RoleCatSerializer, ModuleCatSerializer, RolePermissionSerializer,
     ActivityFeedSerializer,
     RoleMatrixInputSerializer, PasswordResetResponseSerializer,
+    UserAddressSerializer, UserAddressAdminSerializer,
 )
 
 log = logging.getLogger(__name__)
@@ -232,11 +233,162 @@ def _hash_password(raw: str) -> str:
 # ══════════════════════════════════════════════════════════════════════
 # Self-service · /api/users/me/profile/
 # ══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
+# Campos permitidos para el whitelist del self-service del perfil.
+#
+# Un CLIENT B2B SOLO puede modificar estos campos de su MwtUser.
+# Cualquier otro campo del payload se descarta silenciosamente.
+#
+# En particular, NUNCA se aceptan (ni siquiera si el payload los envía):
+#   · role_default, is_superuser, is_active, is_api_user
+#   · legal_entity_id   (scope del portal — cambiarlo rompería la
+#                        visibilidad B2B del ClientScopedManager)
+#   · email_plain       (identidad de login; el admin lo gestiona
+#                        vía /api/users/<id>/)
+#   · password_hash, api_key_hash
+# ══════════════════════════════════════════════════════════════════════
+_PROFILE_SELF_EDITABLE_FIELDS = {
+    "contact_email",
+    "phone",
+    "preferred_language",
+    "timezone",
+    "avatar_url",
+}
+
+
+def _process_addresses_atomic(user_id, payload_addresses):
+    """Procesa el array `addresses` del payload del PATCH perfil.
+
+    Reglas:
+      · Items SIN `id`             → CREATE (nuevo registro).
+      · Items CON `id` existente   → UPDATE (parcial).
+      · Items CON `id` marcado `_deleted=True` o ausentes en el payload
+                                   → SOFT DELETE (is_active=False).
+      · Si un item lleva `is_default=True`, primero desmarcamos cualquier
+        otra dirección default del mismo user para respetar el unique
+        index parcial de la BD.
+
+    Retorna: lista serializada de direcciones activas tras el proceso.
+
+    Nota: esta función DEBE ejecutarse dentro de `transaction.atomic()`
+    para evitar estados inconsistentes (ej. dos defaults simultáneos si
+    el unique index no existiera).
+    """
+    if payload_addresses is None:
+        # El caller no envió `addresses` → no tocar nada.
+        return None
+
+    if not isinstance(payload_addresses, list):
+        raise ValueError("addresses debe ser una lista.")
+
+    # Indexamos direcciones actuales por id para referencia rápida.
+    existing_qs = UserAddress.objects.filter(user_id=user_id, is_active=True)
+    existing_by_id = {str(a.id): a for a in existing_qs}
+
+    # IDs que el frontend mandó (los que no estén se soft-deletean).
+    ids_in_payload = set()
+
+    # Pre-pass: si alguno del payload marca is_default=True, desmarcamos
+    # los defaults existentes para no violar el unique index parcial.
+    any_default = any(bool(item.get("is_default")) for item in payload_addresses
+                      if not item.get("_deleted"))
+    if any_default:
+        existing_qs.filter(is_default=True).update(is_default=False)
+
+    results = []
+
+    for item in payload_addresses:
+        addr_id = item.get("id")
+
+        # ── 1. DELETE explícito (_deleted=True con id) ───────────
+        if item.get("_deleted") and addr_id:
+            addr = existing_by_id.get(str(addr_id))
+            if addr is not None:
+                addr.is_active = False
+                addr.is_default = False   # libera el unique index
+                addr.save(update_fields=["is_active", "is_default", "updated_at"])
+                ids_in_payload.add(str(addr_id))
+            continue
+
+        # ── 2. UPDATE (id ∈ existentes) ───────────────────────────
+        if addr_id and str(addr_id) in existing_by_id:
+            addr = existing_by_id[str(addr_id)]
+            ids_in_payload.add(str(addr_id))
+            updatable = (
+                "label", "kind",
+                "contact_name", "contact_phone",
+                "address_line_1", "address_line_2",
+                "city", "state", "country", "zip_code",
+                "latitude", "longitude",
+                "is_default", "notes",
+            )
+            for f in updatable:
+                if f in item:
+                    setattr(addr, f, item[f])
+            addr.save()
+            results.append(addr)
+            continue
+
+        # ── 3. CREATE (sin id o id inexistente para este user) ──
+        if not item.get("address_line_1"):
+            # requisito mínimo — line_1 obligatorio
+            continue
+        new_addr = UserAddress.objects.create(
+            id             = uuid.uuid4(),
+            user_id        = user_id,
+            label          = item.get("label") or None,
+            kind           = item.get("kind") or "SHIPPING",
+            contact_name   = item.get("contact_name") or None,
+            contact_phone  = item.get("contact_phone") or None,
+            address_line_1 = item["address_line_1"],
+            address_line_2 = item.get("address_line_2") or None,
+            city           = item.get("city") or None,
+            state          = item.get("state") or None,
+            country        = item.get("country") or None,
+            zip_code       = item.get("zip_code") or None,
+            latitude       = item.get("latitude"),
+            longitude      = item.get("longitude"),
+            is_default     = bool(item.get("is_default")),
+            notes          = item.get("notes") or None,
+        )
+        results.append(new_addr)
+
+    # ── 4. SOFT-DELETE de direcciones no presentes en el payload ──
+    #     Sólo aplicamos esta poda si el payload trajo AL MENOS una
+    #     dirección. Esto evita que un PATCH que no incluye `addresses`
+    #     intencionalmente (p. ej. el CLIENT sólo cambió preferred_language)
+    #     borre todo. → El caller de esta función ya se encarga de no
+    #     invocarla si addresses es None.
+    for addr_id_str, addr in existing_by_id.items():
+        if addr_id_str not in ids_in_payload:
+            addr.is_active  = False
+            addr.is_default = False
+            addr.save(update_fields=["is_active", "is_default", "updated_at"])
+
+    # Re-leemos las activas (pueden incluir las recién creadas).
+    final_qs = UserAddress.objects.filter(user_id=user_id, is_active=True).order_by(
+        "-is_default", "-created_at",
+    )
+    return UserAddressSerializer(final_qs, many=True).data
+
+
 class ProfileMeView(APIView):
     """GET y PATCH del perfil del usuario autenticado.
 
-    El CLIENT B2B solo puede modificar contact_email + preferred_language
-    + timezone + avatar_url (whitelist del ProfileMeSerializer).
+    Accesible para CUALQUIER usuario autenticado (staff + CLIENT B2B).
+
+    Whitelist de campos editables: ver `_PROFILE_SELF_EDITABLE_FIELDS`.
+
+    Addresses:
+      El payload puede incluir un array `addresses` con la lista COMPLETA
+      deseada. El procesamiento es atómico:
+        · sin id        → create
+        · con id        → update
+        · con _deleted  → soft delete (is_active=False)
+        · omitidos      → soft delete (no están en el nuevo estado deseado)
+
+    Todo el update (usuario + direcciones) corre dentro de
+    `transaction.atomic()` — si algo falla, el estado queda intacto.
     """
     permission_classes = [IsAuthenticated]
 
@@ -261,27 +413,133 @@ class ProfileMeView(APIView):
         if not u:
             return Response({"detail": "Usuario no resuelto."},
                             status=status.HTTP_401_UNAUTHORIZED)
-        ser = ProfileMeSerializer(u, data=request.data, partial=True)
-        ser.is_valid(raise_exception=True)
-        ser.save()
-        return Response(ser.data)
+
+        # Separamos addresses del resto — se procesa aparte.
+        payload = dict(request.data) if hasattr(request.data, "items") else {}
+        # DRF a veces devuelve valores como listas con QueryDict; normalizamos.
+        payload_addresses = request.data.get("addresses") if hasattr(request.data, "get") else None
+        if isinstance(payload_addresses, str):
+            # Caso raro (multipart) — ignoramos.
+            payload_addresses = None
+
+        # Filtro defensivo: sólo dejamos pasar campos del whitelist.
+        # Si el CLIENT manda role_default='superadmin', nunca llega al save().
+        safe_payload = {
+            k: v for k, v in payload.items()
+            if k in _PROFILE_SELF_EDITABLE_FIELDS
+        }
+
+        try:
+            with transaction.atomic():
+                if safe_payload:
+                    # Usamos partial=True y sólo los campos whitelisted.
+                    ser = ProfileMeSerializer(u, data=safe_payload, partial=True)
+                    ser.is_valid(raise_exception=True)
+                    ser.save()
+                    u.refresh_from_db()
+
+                if payload_addresses is not None:
+                    _process_addresses_atomic(u.id, payload_addresses)
+
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            log.exception("ProfileMeView.patch failed")
+            return Response(
+                {"detail": "Error actualizando perfil.", "error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # Respuesta final: perfil COMPLETO con direcciones actualizadas.
+        return Response(ProfileMeSerializer(u).data)
 
 
 # ══════════════════════════════════════════════════════════════════════
 # Roles · catálogos + matriz CRUD
 # ══════════════════════════════════════════════════════════════════════
-class RoleCatViewSet(viewsets.ReadOnlyModelViewSet):
-    """Catálogo de roles. Lectura abierta a staff; los CLIENT solo ven su
-    propio slug si acaso (aquí devolvemos 403 para CLIENT)."""
-    queryset = RoleCat.objects.filter(is_active=True)
+class RoleCatViewSet(viewsets.ModelViewSet):
+    """CRUD del catálogo de roles.
+
+    Sólo accesible para superadmin / admin. DELETE fuerza soft-delete
+    (`is_active=False`), y mutaciones sobre roles `is_system=True`
+    (superadmin, admin, client_b2b) están BLOQUEADAS — son roles
+    canónicos del sistema y borrarlos rompe el RBAC.
+    """
+    queryset = RoleCat.objects.all()
     serializer_class = RoleCatSerializer
+    lookup_field = "slug"
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        denied = _deny_non_admin(request, resource_label="roles.read")
+        denied = _deny_non_admin(request, resource_label="roles.crud")
         if denied is not None:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied(denied.data)
+
+    def get_queryset(self):
+        qs = RoleCat.objects.all()
+        include_inactive = self.request.query_params.get("include_inactive")
+        if not (include_inactive and include_inactive.lower() in ("1", "true", "yes")):
+            qs = qs.filter(is_active=True)
+        return qs.order_by("orden", "slug")
+
+    def _reject_if_system(self, instance, action_label: str):
+        if getattr(instance, "is_system", False):
+            return Response(
+                {"detail": f"Rol de sistema (is_system=True). No se permite {action_label}.",
+                 "slug":   instance.slug},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return None
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Bloqueo: no dejamos que is_system se flipee via PATCH.
+        if "is_system" in request.data and instance.is_system:
+            return Response(
+                {"detail": "No se puede modificar el flag is_system de un rol canónico."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        # Bloqueo: no se puede cambiar el slug de un rol de sistema.
+        if instance.is_system and request.data.get("slug") and request.data["slug"] != instance.slug:
+            return Response(
+                {"detail": "No se puede cambiar el slug de un rol de sistema."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().update(request, *args, **kwargs)
+
+    def perform_destroy(self, instance):
+        """Soft-delete + bloqueo sobre is_system."""
+        if instance.is_system:
+            # La excepción se traduce a 409 en la vista de destroy.
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                {"detail": f"No se puede inactivar el rol de sistema '{instance.slug}'."}
+            )
+        instance.is_active = False
+        instance.save(update_fields=["is_active", "updated_at"])
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_system:
+            return Response(
+                {"detail": f"No se puede inactivar el rol de sistema '{instance.slug}'.",
+                 "slug":   instance.slug},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"], url_path="toggle-active")
+    def toggle_active(self, request, slug=None):
+        role = self.get_object()
+        if role.is_system and role.is_active:
+            return Response(
+                {"detail": f"No se puede inactivar el rol de sistema '{role.slug}'."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        role.is_active = not role.is_active
+        role.save(update_fields=["is_active", "updated_at"])
+        return Response({"ok": True, "slug": role.slug, "is_active": role.is_active})
 
 
 class ModuleCatViewSet(viewsets.ReadOnlyModelViewSet):
@@ -445,3 +703,71 @@ class ActivityFeedViewSet(viewsets.ReadOnlyModelViewSet):
             user_id=uid, read_at__isnull=True, is_active=True,
         ).count()
         return Response({"count": n})
+
+
+# ══════════════════════════════════════════════════════════════════════
+# UserAddress · CRUD admin · /api/users/addresses/
+#
+# Este endpoint es para que el admin pueda gestionar direcciones de
+# cualquier usuario. El CLIENT usa /api/users/me/profile/ (payload
+# `addresses` procesado atómicamente), NO este endpoint.
+# ══════════════════════════════════════════════════════════════════════
+class UserAddressAdminViewSet(viewsets.ModelViewSet):
+    """CRUD admin de direcciones. Query filterable por ?user_id=<uuid>."""
+    queryset = UserAddress.objects.all()
+    serializer_class = UserAddressAdminSerializer
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        denied = _deny_non_admin(request, resource_label="users.addresses.crud")
+        if denied is not None:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(denied.data)
+
+    def get_queryset(self):
+        qs = UserAddress.objects.all()
+        uid = self.request.query_params.get("user_id")
+        if uid:
+            qs = qs.filter(user_id=uid)
+        include_inactive = self.request.query_params.get("include_inactive")
+        if not (include_inactive and include_inactive.lower() in ("1", "true", "yes")):
+            qs = qs.filter(is_active=True)
+        return qs.order_by("user_id", "-is_default", "-created_at")
+
+    def create(self, request, *args, **kwargs):
+        data = dict(request.data)
+        if not data.get("id"):
+            data["id"] = str(uuid.uuid4())
+        # Si es_default, respetar el unique index parcial:
+        # desactivar el default anterior del mismo user ANTES de insertar.
+        if data.get("is_default") and data.get("user_id"):
+            with transaction.atomic():
+                UserAddress.objects.filter(
+                    user_id=data["user_id"], is_default=True, is_active=True,
+                ).update(is_default=False)
+                ser = self.get_serializer(data=data)
+                ser.is_valid(raise_exception=True)
+                ser.save()
+                return Response(ser.data, status=status.HTTP_201_CREATED)
+        ser = self.get_serializer(data=data)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Respetar unique partial index: si marcamos is_default=True,
+        # desactivamos el anterior default en atomic.
+        if request.data.get("is_default") and not instance.is_default:
+            with transaction.atomic():
+                UserAddress.objects.filter(
+                    user_id=instance.user_id, is_default=True, is_active=True,
+                ).exclude(pk=instance.pk).update(is_default=False)
+                return super().update(request, *args, **kwargs)
+        return super().update(request, *args, **kwargs)
+
+    def perform_destroy(self, instance):
+        """Soft-delete. Si era default, también limpiamos la marca."""
+        instance.is_active  = False
+        instance.is_default = False
+        instance.save(update_fields=["is_active", "is_default", "updated_at"])

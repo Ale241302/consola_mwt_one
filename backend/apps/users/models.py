@@ -153,3 +153,41 @@ class ActivityFeed(models.Model):
         managed  = False
         db_table = 'users"."activity_feed'
         ordering = ("-created_at",)
+
+
+class UserAddress(models.Model):
+    """Direcciones múltiples por usuario (B2B). Sin FK física a mwtuser.
+
+    Un usuario puede tener 1..N direcciones; exactamente UNA está marcada
+    como `is_default=True` (unique index parcial en BD).
+    """
+    id             = models.UUIDField(primary_key=True)
+    user_id        = models.UUIDField()             # FK lógica a users.mwtuser.id
+
+    label          = models.CharField(max_length=96,  null=True, blank=True)
+    kind           = models.CharField(max_length=16,  default="SHIPPING")
+
+    contact_name   = models.CharField(max_length=160, null=True, blank=True)
+    contact_phone  = models.CharField(max_length=32,  null=True, blank=True)
+
+    address_line_1 = models.CharField(max_length=255)
+    address_line_2 = models.CharField(max_length=255, null=True, blank=True)
+    city           = models.CharField(max_length=96,  null=True, blank=True)
+    state          = models.CharField(max_length=96,  null=True, blank=True)
+    country        = models.CharField(max_length=64,  null=True, blank=True)
+    zip_code       = models.CharField(max_length=32,  null=True, blank=True)
+
+    latitude       = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    longitude      = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+
+    is_default     = models.BooleanField(default=False)
+    notes          = models.TextField(null=True, blank=True)
+
+    is_active      = models.BooleanField(default=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
+    updated_at     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'users"."addresses'
+        ordering = ("-is_default", "-created_at")

@@ -13,8 +13,42 @@ Reglas:
 from rest_framework import serializers
 from .models import (
     MwtUser, RoleCat, ModuleCat, RolePermission, UserRoleBridge,
-    PasswordResetToken, ActivityFeed,
+    PasswordResetToken, ActivityFeed, UserAddress,
 )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# UserAddress · direcciones múltiples del usuario
+#
+# Nota de seguridad:
+#   · `user_id` NO está en `fields` para el serializer público. Se setea
+#     siempre desde el backend (request.user.id o pk path), NUNCA desde
+#     el payload — esto impide que un cliente pueda sembrar direcciones
+#     bajo otro usuario cambiando el user_id del body.
+# ─────────────────────────────────────────────────────────────────────
+class UserAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = UserAddress
+        fields = (
+            "id",
+            "label", "kind",
+            "contact_name", "contact_phone",
+            "address_line_1", "address_line_2",
+            "city", "state", "country", "zip_code",
+            "latitude", "longitude",
+            "is_default", "notes",
+            "is_active",
+            "created_at", "updated_at",
+        )
+        read_only_fields = ("id", "is_active", "created_at", "updated_at")
+
+
+class UserAddressAdminSerializer(serializers.ModelSerializer):
+    """Variante ADMIN: incluye `user_id` para listar direcciones de cualquier usuario."""
+    class Meta:
+        model  = UserAddress
+        fields = "__all__"
+        read_only_fields = ("created_at", "updated_at")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -54,18 +88,58 @@ class MwtUserSerializer(serializers.ModelSerializer):
 # distinto, esos campos simplemente se ignoran (no están en `fields`).
 # ─────────────────────────────────────────────────────────────────────
 class ProfileMeSerializer(serializers.ModelSerializer):
+    """Whitelist del self-service.
+
+    Campos escribibles por un CLIENT B2B:
+      · contact_email
+      · phone
+      · preferred_language
+      · timezone
+      · avatar_url
+
+    Campos BLINDADOS (read_only_fields) — un CLIENT NUNCA puede cambiarlos:
+      · role_default        → permisos
+      · legal_entity_id     → scope del portal
+      · is_superuser, is_active, is_api_user
+      · email_plain         → login identity
+      · full_name           → lo cambia el admin (gobernanza de identidad)
+    """
+
+    # Las direcciones se exponen como nested read-only en GET.
+    # El PATCH procesa `addresses` como lista aparte en la vista
+    # (transaction.atomic), no por este campo.
+    addresses = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model  = MwtUser
         fields = (
-            "id", "email_plain", "full_name",
+            "id",
+            "email_plain", "full_name",
             "contact_email",
+            "phone",
             "preferred_language",
             "timezone",
             "avatar_url",
             "role_default",
+            "legal_entity_id",
             "is_active",
+            "addresses",
         )
-        read_only_fields = ("id", "email_plain", "full_name", "role_default", "is_active")
+        read_only_fields = (
+            "id",
+            "email_plain",
+            "full_name",
+            "role_default",
+            "legal_entity_id",
+            "is_active",
+            "addresses",
+        )
+
+    def get_addresses(self, obj):
+        qs = UserAddress.objects.filter(user_id=obj.id, is_active=True).order_by(
+            "-is_default", "-created_at",
+        )
+        return UserAddressSerializer(qs, many=True).data
 
 
 # ─────────────────────────────────────────────────────────────────────
