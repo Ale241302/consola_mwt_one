@@ -249,3 +249,55 @@ class CommissionBaseCat(models.Model):
         managed  = False
         db_table = 'commercial"."commission_base_cat'
         ordering = ("orden",)
+
+
+# =====================================================================
+# Pricing Waterfall COMEX · modelos de la calculadora Excel v6
+# =====================================================================
+class PricingConstant(models.Model):
+    """Constantes globales de la fórmula COMEX.
+
+    Seed canónico:
+      · base_commission_rate = 1.0183  (base del exponencial del Excel v6)
+      · default_markup_floor = 1.05
+      · fx_usd_pen           = 3.70
+    """
+    slug          = models.CharField(max_length=48, primary_key=True)
+    nombre        = models.CharField(max_length=128)
+    descripcion   = models.TextField(null=True, blank=True)
+    value         = models.DecimalField(max_digits=16, decimal_places=6)
+    unit          = models.CharField(max_length=16, null=True, blank=True)
+    is_active     = models.BooleanField(default=True)
+    updated_by_id = models.UUIDField(null=True, blank=True)
+    created_at    = models.DateTimeField(auto_now_add=True)
+    updated_at    = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'pricing"."pricing_constants'
+        ordering = ("slug",)
+
+
+class PaymentIndex(models.Model):
+    """Índice de pago por plazo en días.
+
+    Seed con los 34 valores del Excel 'Tabela de indices' (cols K-L-M).
+    Para COMEX (exportación) el factor que importa es `factor_me`.
+    """
+    id          = models.UUIDField(primary_key=True)
+    dias        = models.IntegerField(unique=True)
+    factor_mi   = models.DecimalField(max_digits=10, decimal_places=6, default=1.0)
+    factor_me   = models.DecimalField(max_digits=10, decimal_places=6, default=1.0)
+    descripcion = models.CharField(max_length=255, null=True, blank=True)
+    orden       = models.IntegerField(default=0)
+    is_active   = models.BooleanField(default=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'pricing"."payment_index'
+        ordering = ("dias",)
+
+    def __str__(self) -> str:
+        return f"PaymentIndex({self.dias}d → MI={self.factor_mi} · ME={self.factor_me})"

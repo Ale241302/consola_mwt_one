@@ -31,6 +31,8 @@ from .views import (
     EarlyPaymentPolicyViewSet, EarlyPaymentTierViewSet, CommissionRuleViewSet,
     CurrencyCatViewSet, PriceListSourceCatViewSet, CommissionBaseCatViewSet,
     ResolveClientPriceView,
+    # COMEX pricing waterfall (calculadora del Excel v6)
+    ResolveComexPriceView, PaymentIndexListView, PricingConstantListView,
 )
 
 
@@ -59,4 +61,14 @@ urlpatterns = [
     path("commercial/resolve_client_price/",
          ResolveClientPriceView.as_view(),
          name="commercial-resolve-client-price"),
+    # COMEX · calculadora del Excel v6 (J18)
+    path("commercial/resolve_price/",
+         ResolveComexPriceView.as_view(),
+         name="commercial-resolve-comex-price"),
+    path("commercial/payment_index/",
+         PaymentIndexListView.as_view(),
+         name="commercial-payment-index"),
+    path("commercial/pricing_constants/",
+         PricingConstantListView.as_view(),
+         name="commercial-pricing-constants"),
 ]

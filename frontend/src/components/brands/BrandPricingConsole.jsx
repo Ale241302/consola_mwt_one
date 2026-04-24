@@ -2,15 +2,25 @@
 // MWT.ONE · components/brands/BrandPricingConsole.jsx
 // Agente responsable: [AG-FRONTEND]
 //
-// Consola comercial del Módulo de Marcas — 4 sub-tabs:
-//   1. Listas de Precios Activas   (expandable · size_multipliers · Excel upload)
-//   2. Condiciones Comerciales      (EarlyPaymentPolicy + tiers)
-//   3. Reglas de Comisión [CEO]    (CommissionRule)
-//   4. Simulador / Catálogo Asignado (resolve_client_price en vivo)
+// Consola comercial del Módulo de Marcas.
+//
+// DESDE 2026-04 (sprint M3-CORE + Calculadora COMEX):
+//   Se simplifica a UN SOLO sub-tab "Listas de Precios" que combina:
+//     · Tabla de pricelists activas (Excel upload · expand por SKU)
+//     · Calculadora inline del Excel "Tabela de preços COMEX 2026":
+//         precio_final = precio_base_USD
+//                      × (1.0183 ^ (100 × comisión_pct))
+//                      × índice_ME(días_pago)
+//
+// Tabs eliminadas (dead code — se removió 2026-04):
+//   · Condiciones & Pronto Pago      (no la usaba el comprador, lógica
+//                                     migró al payment_index)
+//   · Reglas de Comisión [CEO]        (la comisión es ahora input libre
+//                                     del usuario en la calculadora)
+//   · Simulador / CPA                 (integrado dentro de "Listas de
+//                                     Precios" como fila expandible)
 //
 // Reglas MWT respetadas:
-//   · CERO datos hardcodeados (todo sale del backend /api/commercial/*).
-//   · CEO-ONLY: costos y márgenes se ocultan si !can('view_margin').
 //   · Tokens: Navy #0B1E3A · Mint #00B286 · LightGreen #1DE394.
 //   · Números con tabular-nums para alineación.
 // =====================================================================
@@ -18,14 +28,14 @@ import React, { useEffect, useMemo, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import * as XLSX from "xlsx";
 import {
-  priceListVersionsApi, gradeItemsApi, clientAssignmentsApi,
-  earlyPaymentPoliciesApi, commissionRulesApi,
-  currencyCatApi, commissionBaseCatApi,
-  clientesApi, commercialApi,
+  priceListVersionsApi,
+  currencyCatApi,
+  commercialApi,
 } from "../../lib/api.js";
 import {
   MOCK_PRICELISTS, MOCK_PRICELIST_ITEMS,
 } from "../../data/mockData.js";
+import ComexCalculator from "./ComexCalculator.jsx";
 import { useRole } from "../../context/RoleContext.jsx";
 import {
   IconDollar, IconPlus, IconUpload, IconSearch, IconLock,
@@ -41,92 +51,39 @@ const MUTED = "#64748B";
 
 export default function BrandPricingConsole({ brandId, lang = "es" }) {
   const { can } = useRole();
-  const canSeeMargins = can("view_margin");  // ← CEO-ONLY gate
+  const canSeeMargins = can("view_margin");  // ← CEO-ONLY gate (afecta columnas margen)
 
-  const [tab, setTab] = useState("pricelists");
-
-  const tabs = [
-    { key: "pricelists",  label: lang === "es" ? "Listas de Precios" : "Price Lists",
-      icon: IconDollar },
-    { key: "commercial",  label: lang === "es" ? "Condiciones & Pronto Pago" : "Conditions & Early Payment",
-      icon: IconPercent },
-    { key: "commissions", label: lang === "es" ? "Reglas de Comisión" : "Commission Rules",
-      icon: IconLock, ceoOnly: true },
-    { key: "simulator",   label: lang === "es" ? "Simulador / CPA" : "Simulator / CPA",
-      icon: IconSearch },
-  ].filter(t => !t.ceoOnly || canSeeMargins);
-
+  // Sólo queda un sub-tab — preservamos la barra para no romper el visual,
+  // pero ahora el componente es básicamente la tabla de pricelists con
+  // calculadora inline.
   return (
     <div className="bpc-root" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* Sub-tab bar */}
       <div className="bpc-subtabs" role="tablist" style={{
         display: "flex", gap: 4, padding: 4,
         background: "#F8FAFC", borderRadius: 10,
         border: "1px solid #E5E7EB",
       }}>
-        {tabs.map(t => {
-          const Ico = t.icon;
-          const active = tab === t.key;
-          return (
-            <button key={t.key} role="tab" aria-selected={active}
-              onClick={() => setTab(t.key)}
-              className="bpc-subtab"
-              data-active={active}
-              style={{
-                flex: 1, display: "inline-flex", alignItems: "center",
-                justifyContent: "center", gap: 6,
-                padding: "8px 10px", border: "none",
-                background: active ? "#FFFFFF" : "transparent",
-                color: active ? NAVY : MUTED,
-                font: `${active ? 700 : 600} 12.5px/1 var(--font-body)`,
-                borderRadius: 8, cursor: "pointer",
-                boxShadow: active ? "0 1px 2px rgba(11,30,58,0.08)" : "none",
-                transition: "all 120ms ease",
-              }}
-            >
-              <Ico size={13} />
-              <span>{t.label}</span>
-              {t.ceoOnly && <IconLock size={11} style={{ opacity: 0.7 }} />}
-            </button>
-          );
-        })}
+        <div role="tab" aria-selected="true"
+          className="bpc-subtab" data-active="true"
+          style={{
+            flex: 1, display: "inline-flex", alignItems: "center",
+            justifyContent: "center", gap: 6,
+            padding: "8px 10px", border: "none",
+            background: "#FFFFFF", color: NAVY,
+            font: "700 12.5px/1 var(--font-body)",
+            borderRadius: 8, boxShadow: "0 1px 2px rgba(11,30,58,0.08)",
+          }}
+        >
+          <IconDollar size={13} />
+          <span>{lang === "es" ? "Listas de Precios" : "Price Lists"}</span>
+        </div>
       </div>
 
-      {/* Panel */}
-      <AnimatePresence mode="wait">
-        {tab === "pricelists" && (
-          <motion.div key="pricelists"
-            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }} transition={{ duration: 0.16 }}
-          >
-            <PriceListsSubTab brandId={brandId} lang={lang} canSeeMargins={canSeeMargins} />
-          </motion.div>
-        )}
-        {tab === "commercial" && (
-          <motion.div key="commercial"
-            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }} transition={{ duration: 0.16 }}
-          >
-            <CommercialConditionsSubTab brandId={brandId} lang={lang} />
-          </motion.div>
-        )}
-        {tab === "commissions" && canSeeMargins && (
-          <motion.div key="commissions"
-            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }} transition={{ duration: 0.16 }}
-          >
-            <CommissionRulesSubTab brandId={brandId} lang={lang} />
-          </motion.div>
-        )}
-        {tab === "simulator" && (
-          <motion.div key="simulator"
-            initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }} transition={{ duration: 0.16 }}
-          >
-            <SimulatorSubTab brandId={brandId} lang={lang} canSeeMargins={canSeeMargins} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <PriceListsSubTab brandId={brandId} lang={lang} canSeeMargins={canSeeMargins} />
+
+      {/* Calculadora COMEX · reproduce J18 del Excel v6 con los 20
+          productos demo + 34 índices de pago sembrados en mockData.js */}
+      <ComexCalculator lang={lang} />
     </div>
   );
 }
@@ -542,704 +499,10 @@ function PricelistItemsPanel({ pricelist, lang, canSeeMargins, mockOverride, onC
   );
 }
 
-// =====================================================================
-// SUB-TAB 2 · Commercial Conditions & Early Payment
-// =====================================================================
-function CommercialConditionsSubTab({ brandId, lang }) {
-  const [clients, setClients] = useState([]);
-  const [selectedClient, setSelectedClient] = useState(null);
-  const [policies, setPolicies] = useState([]);
-  const [loading,  setLoading] = useState(false);
-  const [error,    setError]   = useState(null);
+// (Sub-tabs eliminadas en 2026-04: CommercialConditionsSubTab,
+//  CommissionRulesSubTab, SimulatorSubTab. La calculadora COMEX
+//  vive ahora dentro de PriceListsSubTab — fila expandible.)
 
-  useEffect(() => {
-    clientesApi.list({ is_active: true })
-      .then(d => setClients(Array.isArray(d) ? d : (d?.results || [])))
-      .catch(e => setError(e?.message || "Error cargando clientes"));
-  }, []);
-
-  useEffect(() => {
-    if (!selectedClient || !brandId) { setPolicies([]); return; }
-    setLoading(true);
-    earlyPaymentPoliciesApi.list({ client_id: selectedClient.id, brand_id: brandId })
-      .then(d => setPolicies(Array.isArray(d) ? d : (d?.results || [])))
-      .catch(e => setError(e?.message || "Error cargando policies"))
-      .finally(() => setLoading(false));
-  }, [selectedClient, brandId]);
-
-  return (
-    <div className="bpc-section">
-      <div className="bpc-section-header" style={sectionHeaderStyle}>
-        <div>
-          <div style={sectionTitleStyle}>
-            {lang === "es" ? "Condiciones comerciales por cliente" : "Commercial conditions per client"}
-          </div>
-          <div style={sectionHintStyle}>
-            {lang === "es"
-              ? "Configura los tiers de pronto pago (contado, 30, 60, 90 días)."
-              : "Configure early-payment tiers (cash, 30, 60, 90 days)."}
-          </div>
-        </div>
-      </div>
-
-      {error && <div style={errorBannerStyle}>⚠ {error}</div>}
-
-      <div style={{
-        display: "grid", gridTemplateColumns: "280px 1fr", gap: 16,
-      }}>
-        {/* Client picker */}
-        <div className="bpc-client-picker" style={{
-          background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 10,
-          padding: 12, maxHeight: 420, overflowY: "auto",
-        }}>
-          <div style={{ font: "600 11px/1 var(--font-body)", color: MUTED, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
-            {lang === "es" ? "Clientes" : "Clients"}
-          </div>
-          {clients.length === 0 ? (
-            <div style={{ color: MUTED, fontSize: 12.5 }}>
-              {lang === "es" ? "Sin clientes" : "No clients"}
-            </div>
-          ) : clients.map(c => (
-            <button key={c.id}
-              onClick={() => setSelectedClient(c)}
-              data-active={selectedClient?.id === c.id}
-              style={{
-                display: "block", width: "100%", textAlign: "left",
-                padding: "8px 10px", border: "none", borderRadius: 6,
-                background: selectedClient?.id === c.id ? "rgba(0,178,134,0.10)" : "transparent",
-                color: selectedClient?.id === c.id ? MINT : INK,
-                font: `${selectedClient?.id === c.id ? 700 : 500} 12.5px/1.2 var(--font-body)`,
-                cursor: "pointer", marginBottom: 2,
-              }}
-            >
-              {c.razon_social || c.nombre || c.codigo || c.id}
-            </button>
-          ))}
-        </div>
-
-        {/* Policy editor */}
-        <div>
-          {!selectedClient ? (
-            <div style={emptyStyle}>
-              <IconPercent size={26} />
-              <div style={{ marginTop: 6, fontWeight: 600, color: NAVY }}>
-                {lang === "es" ? "Selecciona un cliente" : "Select a client"}
-              </div>
-              <div style={{ color: MUTED, marginTop: 2, fontSize: 12 }}>
-                {lang === "es"
-                  ? "Las políticas de pronto pago son por (cliente × marca)."
-                  : "Early-payment policies are per (client × brand)."}
-              </div>
-            </div>
-          ) : loading ? (
-            <div style={loadingStyle}>Cargando policies…</div>
-          ) : (
-            <PolicyEditor
-              brandId={brandId}
-              client={selectedClient}
-              policies={policies}
-              lang={lang}
-              onChanged={() => {
-                earlyPaymentPoliciesApi.list({
-                  client_id: selectedClient.id, brand_id: brandId,
-                }).then(d => setPolicies(Array.isArray(d) ? d : (d?.results || [])));
-              }}
-            />
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PolicyEditor({ brandId, client, policies, lang, onChanged }) {
-  const current = policies[0] || null;
-  const [tiers, setTiers] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState(null);
-
-  useEffect(() => {
-    setTiers(current?.tiers?.length ? current.tiers.map(t => ({
-      payment_days: t.payment_days,
-      discount_pct: Number(t.discount_pct),
-      tier_label:   t.tier_label || "",
-    })) : [
-      { payment_days: 0,  discount_pct: 0, tier_label: lang === "es" ? "Contado" : "Cash" },
-      { payment_days: 30, discount_pct: 0, tier_label: "30 días" },
-      { payment_days: 60, discount_pct: 0, tier_label: "60 días" },
-    ]);
-  }, [current?.id, lang]);
-
-  function updateTier(idx, key, value) {
-    setTiers(arr => arr.map((t, i) => i === idx ? { ...t, [key]: value } : t));
-  }
-  function addTier() {
-    setTiers(arr => [...arr, { payment_days: 0, discount_pct: 0, tier_label: "" }]);
-  }
-  function removeTier(idx) {
-    setTiers(arr => arr.filter((_, i) => i !== idx));
-  }
-
-  async function handleSave() {
-    setSaving(true);
-    setMsg(null);
-    try {
-      let policyId = current?.id;
-      if (!policyId) {
-        const created = await earlyPaymentPoliciesApi.create({
-          client_id:  client.id,
-          brand_id:   brandId,
-          codigo:     `EPP-${(client.codigo || client.id).slice(0,8)}-${String(brandId).slice(0,6)}`,
-          nombre:     `EPP ${client.razon_social || client.nombre || client.id} × brand`,
-          valid_from: new Date().toISOString().slice(0,10),
-          is_active:  true,
-        });
-        policyId = created?.id;
-      }
-      if (!policyId) throw new Error("No se pudo obtener policy_id");
-      const cleanTiers = tiers
-        .filter(t => Number.isFinite(Number(t.payment_days)))
-        .map(t => ({
-          payment_days: Number(t.payment_days),
-          discount_pct: Number(t.discount_pct) || 0,
-          tier_label:   t.tier_label || `${t.payment_days} días`,
-        }));
-      await commercialApi.replaceTiers(policyId, cleanTiers);
-      setMsg({ kind: "success", text: lang === "es" ? "Tiers guardados" : "Tiers saved" });
-      onChanged && onChanged();
-    } catch (e) {
-      setMsg({ kind: "error", text: e?.body?.detail || e?.message || "Error guardando" });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div style={{
-      background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 10, padding: 16,
-    }}>
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #E5E7EB",
-      }}>
-        <div>
-          <div style={{ font: "700 14px/1.2 var(--font-body)", color: NAVY }}>
-            {client.razon_social || client.nombre || client.codigo}
-          </div>
-          <div style={{ font: "500 11px/1 var(--font-body)", color: MUTED, marginTop: 3 }}>
-            {current ? `Policy: ${current.codigo}` : (lang === "es" ? "Nueva policy al guardar" : "New policy on save")}
-          </div>
-        </div>
-        <button onClick={handleSave} disabled={saving} className="bpc-btn bpc-btn-primary">
-          {saving ? "Guardando…" : (lang === "es" ? "Guardar tiers" : "Save tiers")}
-        </button>
-      </div>
-
-      {msg && (
-        <div style={msg.kind === "error" ? errorBannerStyle : successBannerStyle}>
-          {msg.kind === "error" ? "⚠" : "✓"} {msg.text}
-        </div>
-      )}
-
-      <table className="bpc-table" style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
-        <thead>
-          <tr>
-            <Th>{lang === "es" ? "Etiqueta" : "Label"}</Th>
-            <Th align="right">{lang === "es" ? "Días pago" : "Payment days"}</Th>
-            <Th align="right">{lang === "es" ? "% Descuento" : "Discount %"}</Th>
-            <Th align="right"></Th>
-          </tr>
-        </thead>
-        <tbody>
-          {tiers.map((t, i) => (
-            <tr key={i}>
-              <Td>
-                <input value={t.tier_label} onChange={e => updateTier(i, "tier_label", e.target.value)}
-                       className="bpc-input" placeholder={lang === "es" ? "Contado / 30 días" : "Cash / 30 days"} />
-              </Td>
-              <Td align="right">
-                <input type="number" min={0}
-                       value={t.payment_days}
-                       onChange={e => updateTier(i, "payment_days", e.target.value)}
-                       className="bpc-input tabular" style={{ textAlign: "right", width: 90 }} />
-              </Td>
-              <Td align="right">
-                <input type="number" step="0.01" min={0} max={100}
-                       value={t.discount_pct}
-                       onChange={e => updateTier(i, "discount_pct", e.target.value)}
-                       className="bpc-input tabular" style={{ textAlign: "right", width: 90 }} />
-              </Td>
-              <Td align="right">
-                <button onClick={() => removeTier(i)}
-                        className="bpc-btn bpc-btn-icon-ghost" title="Eliminar">
-                  <IconX size={12} />
-                </button>
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <div style={{ marginTop: 10 }}>
-        <button onClick={addTier} className="bpc-btn bpc-btn-ghost">
-          <IconPlus size={12} /> {lang === "es" ? "Agregar tier" : "Add tier"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// =====================================================================
-// SUB-TAB 3 · Commission Rules       [CEO-ONLY]
-// =====================================================================
-function CommissionRulesSubTab({ brandId, lang }) {
-  const [rules, setRules] = useState([]);
-  const [bases, setBases] = useState([]);
-  const [clients, setClients] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState(null);
-  const [editing, setEditing] = useState(null);
-  const [saving,  setSaving]  = useState(false);
-
-  async function load() {
-    setLoading(true);
-    try {
-      const [r, b, c] = await Promise.all([
-        commissionRulesApi.list({ brand_id: brandId }),
-        commissionBaseCatApi.list(),
-        clientesApi.list({ is_active: true }),
-      ]);
-      setRules(Array.isArray(r) ? r : (r?.results || []));
-      setBases(Array.isArray(b) ? b : (b?.results || []));
-      setClients(Array.isArray(c) ? c : (c?.results || []));
-    } catch (e) {
-      setError(e?.body?.detail || e?.message || "Error cargando commission rules");
-    } finally {
-      setLoading(false);
-    }
-  }
-  useEffect(() => { if (brandId) load(); /* eslint-disable-next-line */ }, [brandId]);
-
-  async function handleSave(form) {
-    setSaving(true);
-    try {
-      const payload = {
-        brand_id:        brandId,
-        client_id:       form.client_id || null,
-        codigo:          form.codigo,
-        nombre:          form.nombre,
-        descripcion:     form.descripcion || "",
-        commission_pct:  Number(form.commission_pct),
-        commission_base: form.commission_base,
-        min_sale_amount: form.min_sale_amount ? Number(form.min_sale_amount) : null,
-        valid_from:      form.valid_from || new Date().toISOString().slice(0,10),
-        valid_to:        form.valid_to || null,
-        is_active:       true,
-      };
-      if (form.id) {
-        await commissionRulesApi.update(form.id, payload);
-      } else {
-        await commissionRulesApi.create(payload);
-      }
-      setEditing(null);
-      await load();
-    } catch (e) {
-      setError(e?.body?.detail || e?.message || "Error guardando regla");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleDelete(rule) {
-    if (!window.confirm(`${lang === "es" ? "Eliminar" : "Delete"} ${rule.codigo}?`)) return;
-    try {
-      await commissionRulesApi.remove(rule.id);
-      await load();
-    } catch (e) {
-      setError(e?.message || "Error eliminando");
-    }
-  }
-
-  return (
-    <div className="bpc-section">
-      <div className="bpc-section-header" style={sectionHeaderStyle}>
-        <div>
-          <div style={sectionTitleStyle}>
-            <IconLock size={14} /> {lang === "es" ? "Reglas de comisión" : "Commission rules"}
-            <span className="bpc-chip" data-kind="CEO" style={{ marginLeft: 8 }}>CEO-ONLY</span>
-          </div>
-          <div style={sectionHintStyle}>
-            {lang === "es"
-              ? "Comisiones aplicables sobre precio de venta o margen bruto."
-              : "Commission applied over sale price or gross margin."}
-          </div>
-        </div>
-        <button onClick={() => setEditing({})} className="bpc-btn bpc-btn-primary">
-          <IconPlus size={14} /> {lang === "es" ? "Nueva regla" : "New rule"}
-        </button>
-      </div>
-
-      {error && <div style={errorBannerStyle}>⚠ {error}</div>}
-
-      {loading ? (
-        <div style={loadingStyle}>Cargando…</div>
-      ) : rules.length === 0 ? (
-        <div style={emptyStyle}>
-          <IconLock size={22} />
-          <div style={{ marginTop: 6, fontWeight: 600, color: NAVY }}>
-            {lang === "es" ? "Sin reglas definidas" : "No rules defined"}
-          </div>
-        </div>
-      ) : (
-        <div className="bpc-table-wrap">
-          <table className="bpc-table" style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-            <thead>
-              <tr>
-                <Th>{lang === "es" ? "Código" : "Code"}</Th>
-                <Th>{lang === "es" ? "Nombre" : "Name"}</Th>
-                <Th>{lang === "es" ? "Cliente" : "Client"}</Th>
-                <Th>{lang === "es" ? "Base" : "Base"}</Th>
-                <Th align="right">%</Th>
-                <Th align="right">Min USD</Th>
-                <Th align="right"></Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rules.map(r => {
-                const client = clients.find(c => c.id === r.client_id);
-                return (
-                  <tr key={r.id}>
-                    <Td><strong>{r.codigo}</strong></Td>
-                    <Td>{r.nombre}</Td>
-                    <Td>{client ? (client.razon_social || client.nombre) : (lang === "es" ? "Todos" : "All")}</Td>
-                    <Td>
-                      <span className="bpc-chip" data-kind={r.commission_base}>
-                        {r.commission_base}
-                      </span>
-                    </Td>
-                    <Td align="right" className="tabular">{r.commission_pct}%</Td>
-                    <Td align="right" className="tabular">
-                      {r.min_sale_amount != null ? formatMoney(r.min_sale_amount, "USD") : "—"}
-                    </Td>
-                    <Td align="right">
-                      <button onClick={() => setEditing(r)} className="bpc-btn bpc-btn-icon-ghost" title="Editar">
-                        <IconEye size={12}/>
-                      </button>
-                      <button onClick={() => handleDelete(r)} className="bpc-btn bpc-btn-icon-ghost" title="Eliminar">
-                        <IconX size={12}/>
-                      </button>
-                    </Td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <AnimatePresence>
-        {editing !== null && (
-          <CommissionRuleDrawer
-            initial={editing}
-            brandId={brandId}
-            bases={bases}
-            clients={clients}
-            lang={lang}
-            saving={saving}
-            onClose={() => setEditing(null)}
-            onSave={handleSave}
-          />
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function CommissionRuleDrawer({ initial, brandId, bases, clients, lang, saving, onClose, onSave }) {
-  const [form, setForm] = useState({
-    id:              initial?.id || null,
-    codigo:          initial?.codigo || "",
-    nombre:          initial?.nombre || "",
-    descripcion:     initial?.descripcion || "",
-    commission_pct:  initial?.commission_pct != null ? String(initial.commission_pct) : "5.0",
-    commission_base: initial?.commission_base || "sale_price",
-    min_sale_amount: initial?.min_sale_amount != null ? String(initial.min_sale_amount) : "",
-    client_id:       initial?.client_id || "",
-    valid_from:      initial?.valid_from || new Date().toISOString().slice(0,10),
-    valid_to:        initial?.valid_to || "",
-  });
-
-  function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
-
-  return (
-    <>
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        onClick={onClose}
-        style={{ position: "fixed", inset: 0, background: "rgba(11,30,58,0.30)", zIndex: 100 }} />
-      <motion.aside initial={{ x: 480 }} animate={{ x: 0 }} exit={{ x: 480 }}
-        transition={{ duration: 0.22, ease: [0.32,0.72,0,1] }}
-        style={{
-          position: "fixed", top: 0, right: 0, bottom: 0, width: 480, maxWidth: "100vw",
-          background: "#FFFFFF", zIndex: 101, display: "flex", flexDirection: "column",
-          boxShadow: "-12px 0 32px rgba(11,30,58,0.18)",
-        }}
-      >
-        <div style={{
-          padding: "14px 18px", borderBottom: "1px solid #E5E7EB",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-        }}>
-          <div style={{ font: "700 15px/1.2 var(--font-body)", color: NAVY }}>
-            {initial?.id ? (lang === "es" ? "Editar regla" : "Edit rule")
-                         : (lang === "es" ? "Nueva regla" : "New rule")}
-          </div>
-          <button onClick={onClose} className="bpc-btn bpc-btn-icon-ghost">
-            <IconX size={14} />
-          </button>
-        </div>
-
-        <div style={{ flex: 1, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
-          <Field label="Código">
-            <input className="bpc-input" value={form.codigo} onChange={e => set("codigo", e.target.value)} />
-          </Field>
-          <Field label="Nombre">
-            <input className="bpc-input" value={form.nombre} onChange={e => set("nombre", e.target.value)} />
-          </Field>
-          <Field label={lang === "es" ? "Descripción" : "Description"}>
-            <textarea className="bpc-input" rows={2} value={form.descripcion} onChange={e => set("descripcion", e.target.value)} />
-          </Field>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Field label={lang === "es" ? "Cliente (opcional)" : "Client (optional)"}>
-              <select className="bpc-input" value={form.client_id} onChange={e => set("client_id", e.target.value)}>
-                <option value="">{lang === "es" ? "Todos" : "All clients"}</option>
-                {clients.map(c => (
-                  <option key={c.id} value={c.id}>{c.razon_social || c.nombre || c.codigo}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Base">
-              <select className="bpc-input" value={form.commission_base}
-                      onChange={e => set("commission_base", e.target.value)}>
-                {bases.length === 0
-                  ? <option value="sale_price">sale_price</option>
-                  : bases.map(b => <option key={b.codigo} value={b.codigo}>{b.nombre}</option>)}
-              </select>
-            </Field>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Field label="% Comisión">
-              <input className="bpc-input tabular" type="number" step="0.01" min={0} max={100}
-                     value={form.commission_pct} onChange={e => set("commission_pct", e.target.value)} />
-            </Field>
-            <Field label={lang === "es" ? "Min venta USD" : "Min sale USD"}>
-              <input className="bpc-input tabular" type="number" step="0.01"
-                     value={form.min_sale_amount} onChange={e => set("min_sale_amount", e.target.value)}
-                     placeholder="opcional" />
-            </Field>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Field label="Vigente desde">
-              <input className="bpc-input" type="date" value={form.valid_from} onChange={e => set("valid_from", e.target.value)} />
-            </Field>
-            <Field label="Vigente hasta">
-              <input className="bpc-input" type="date" value={form.valid_to} onChange={e => set("valid_to", e.target.value)} />
-            </Field>
-          </div>
-        </div>
-
-        <div style={{
-          padding: "12px 18px", borderTop: "1px solid #E5E7EB",
-          display: "flex", justifyContent: "flex-end", gap: 8,
-          background: "#F8FAFC",
-        }}>
-          <button onClick={onClose} className="bpc-btn bpc-btn-ghost" disabled={saving}>
-            {lang === "es" ? "Cancelar" : "Cancel"}
-          </button>
-          <button onClick={() => onSave(form)} className="bpc-btn bpc-btn-primary" disabled={saving}>
-            {saving ? "Guardando…" : (lang === "es" ? "Guardar" : "Save")}
-          </button>
-        </div>
-      </motion.aside>
-    </>
-  );
-}
-
-// =====================================================================
-// SUB-TAB 4 · Simulator / Assigned Catalog (uses resolve_client_price)
-// =====================================================================
-function SimulatorSubTab({ brandId, lang, canSeeMargins }) {
-  const [clients, setClients] = useState([]);
-  const [selectedClient, setSelectedClient] = useState(null);
-  const [paymentDays, setPaymentDays] = useState(30);
-  const [items, setItems] = useState([]);
-  const [loadingItems, setLoadingItems] = useState(false);
-  const [sims, setSims] = useState({}); // sku → resolve result
-  const [filter, setFilter] = useState("");
-
-  useEffect(() => {
-    clientesApi.list({ is_active: true })
-      .then(d => setClients(Array.isArray(d) ? d : (d?.results || [])));
-  }, []);
-
-  useEffect(() => {
-    if (!brandId) return;
-    setLoadingItems(true);
-    // Cargamos grade_items de la marca (los que están en pricelists activas)
-    gradeItemsApi.list({ brand_id: brandId })
-      .then(d => setItems(Array.isArray(d) ? d : (d?.results || [])))
-      .finally(() => setLoadingItems(false));
-  }, [brandId]);
-
-  async function runSimulation() {
-    if (!selectedClient) return;
-    setSims({});
-    // De-duplicate por sku (puede haber varios pricelists con el mismo sku)
-    const uniq = {};
-    for (const it of items) uniq[it.product_sku] = it;
-    const results = {};
-    await Promise.all(Object.keys(uniq).map(async sku => {
-      try {
-        const r = await commercialApi.resolveClientPrice({
-          client_id: selectedClient.id,
-          brand_id:  brandId,
-          product_sku: sku,
-          requested_payment_days: Number(paymentDays) || 0,
-        });
-        results[sku] = r;
-      } catch (_) { /* skip */ }
-    }));
-    setSims(results);
-  }
-
-  const displayedItems = useMemo(() => {
-    const uniq = {};
-    for (const it of items) {
-      if (!uniq[it.product_sku]
-          || Number(it.unit_price_usd) < Number(uniq[it.product_sku].unit_price_usd)) {
-        uniq[it.product_sku] = it;
-      }
-    }
-    let arr = Object.values(uniq);
-    if (filter.trim()) {
-      const f = filter.trim().toLowerCase();
-      arr = arr.filter(i =>
-        i.product_sku.toLowerCase().includes(f)
-        || (i.product_name || "").toLowerCase().includes(f));
-    }
-    return arr.sort((a, b) => a.product_sku.localeCompare(b.product_sku));
-  }, [items, filter]);
-
-  return (
-    <div className="bpc-section">
-      <div className="bpc-section-header" style={sectionHeaderStyle}>
-        <div>
-          <div style={sectionTitleStyle}>
-            {lang === "es" ? "Simulador de catálogo asignado" : "Assigned catalog simulator"}
-          </div>
-          <div style={sectionHintStyle}>
-            {lang === "es"
-              ? "Ejecuta el waterfall (CPA → MIN pricelist → EPP tier) para cada SKU del cliente."
-              : "Runs the waterfall (CPA → MIN pricelist → EPP tier) for each client SKU."}
-          </div>
-        </div>
-      </div>
-
-      {/* Controls */}
-      <div style={{
-        display: "flex", alignItems: "flex-end", gap: 10, marginBottom: 14,
-        padding: 12, background: "#F8FAFC", borderRadius: 10, border: "1px solid #E5E7EB",
-      }}>
-        <Field label={lang === "es" ? "Cliente" : "Client"} style={{ flex: 2 }}>
-          <select className="bpc-input" value={selectedClient?.id || ""}
-                  onChange={e => {
-                    const c = clients.find(x => x.id === e.target.value);
-                    setSelectedClient(c || null);
-                  }}>
-            <option value="">{lang === "es" ? "Selecciona…" : "Select…"}</option>
-            {clients.map(c => (
-              <option key={c.id} value={c.id}>{c.razon_social || c.nombre || c.codigo}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label={lang === "es" ? "Días de pago" : "Payment days"} style={{ flex: 1 }}>
-          <input type="number" min={0} className="bpc-input tabular"
-                 value={paymentDays} onChange={e => setPaymentDays(e.target.value)} />
-        </Field>
-        <Field label={lang === "es" ? "Filtrar SKU / nombre" : "Filter SKU / name"} style={{ flex: 2 }}>
-          <input className="bpc-input" value={filter} onChange={e => setFilter(e.target.value)}
-                 placeholder="…" />
-        </Field>
-        <button onClick={runSimulation} disabled={!selectedClient} className="bpc-btn bpc-btn-primary">
-          <IconRefresh size={13}/> {lang === "es" ? "Simular" : "Simulate"}
-        </button>
-      </div>
-
-      {loadingItems ? (
-        <div style={loadingStyle}>Cargando…</div>
-      ) : displayedItems.length === 0 ? (
-        <div style={emptyStyle}>
-          <IconSearch size={22}/>
-          <div style={{ marginTop: 6, fontWeight: 600, color: NAVY }}>
-            {lang === "es" ? "Sin ítems" : "No items"}
-          </div>
-        </div>
-      ) : (
-        <div className="bpc-table-wrap">
-          <table className="bpc-table" style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-            <thead>
-              <tr>
-                <Th>SKU</Th>
-                <Th>{lang === "es" ? "Nombre" : "Name"}</Th>
-                <Th align="right">{lang === "es" ? "Precio base" : "Base price"}</Th>
-                <Th align="right">Descuento</Th>
-                <Th align="right">{lang === "es" ? "Precio final" : "Final price"}</Th>
-                {canSeeMargins && <Th align="right"><IconLock size={10}/> Costo</Th>}
-                {canSeeMargins && <Th align="right"><IconLock size={10}/> Margen %</Th>}
-                <Th>{lang === "es" ? "Origen" : "Source"}</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayedItems.map(it => {
-                const r = sims[it.product_sku];
-                return (
-                  <tr key={it.id}>
-                    <Td><strong>{it.product_sku}</strong></Td>
-                    <Td>{it.product_name || "—"}</Td>
-                    <Td align="right" className="tabular">
-                      {r?.base_price != null
-                        ? formatMoney(r.base_price, r.currency)
-                        : formatMoney(it.unit_price_usd, "USD")}
-                    </Td>
-                    <Td align="right" className="tabular">
-                      {r?.discount_applied != null ? `${r.discount_applied}%` : "—"}
-                    </Td>
-                    <Td align="right" className="tabular" style={{ color: MINT, fontWeight: 700 }}>
-                      {r?.final_price != null ? formatMoney(r.final_price, r.currency) : "—"}
-                    </Td>
-                    {canSeeMargins && (
-                      <Td align="right" className="tabular" style={{ color: "#B91C1C" }}>
-                        {r?.cost_usd != null ? formatMoney(r.cost_usd, "USD") : "—"}
-                      </Td>
-                    )}
-                    {canSeeMargins && (
-                      <Td align="right" className="tabular" style={{ color: MINT, fontWeight: 600 }}>
-                        {r?.margen_pct != null ? `${r.margen_pct}%` : "—"}
-                      </Td>
-                    )}
-                    <Td>
-                      <span className="bpc-chip" data-kind={r?.source || "—"}>
-                        {r?.source || "—"}
-                      </span>
-                    </Td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // =====================================================================
 // Drawer · Nueva lista de precios

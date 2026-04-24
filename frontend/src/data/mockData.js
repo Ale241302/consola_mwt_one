@@ -2655,6 +2655,123 @@ export const MOCK_PRICELIST_ITEMS = {
 
 
 // =====================================================================
+// COMEX 2026 · productos demo extraídos del Excel v6
+//   Tabela de preços COMEX 2026 - v6 com reajuste.xlsx (primeras 20 filas).
+//   brand_id = 'mlv' (Marluvas) — son botas industriales PVC con NCM/CA.
+// =====================================================================
+export const MOCK_COMEX_PRODUCTS = [
+  { sku: '700377', name: '100AWORK-CA-BR',       material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '40754', centro: '1001- DORES DE CAMPOS', price_usd: 5.0013 },
+  { sku: '701402', name: '100AWORK-CA-PR',       material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '48254', centro: '1001- DORES DE CAMPOS', price_usd: 5.0013 },
+  { sku: '700381', name: '100AWORK-CA-PRA',      material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '40637', centro: '1001- DORES DE CAMPOS', price_usd: 5.0013 },
+  { sku: '701407', name: '100AWORK-CM-BR',       material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '48261', centro: '1001- DORES DE CAMPOS', price_usd: 4.7111 },
+  { sku: '701409', name: '100AWORK-CM-PR',       material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '48258', centro: '1001- DORES DE CAMPOS', price_usd: 4.7111 },
+  { sku: '701411', name: '100AWORK-CM-PRA',      material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '48259', centro: '1001- DORES DE CAMPOS', price_usd: 4.7111 },
+  { sku: '701412', name: '100AWORK-CM-PRA-A',    material: 'PVC', bico: 'BICO ACO', ncm: '6401.10.00', ca: '48270', centro: '1001- DORES DE CAMPOS', price_usd: 5.7556 },
+  { sku: '700385', name: '100AWORKF-CA-BR',      material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '40754', centro: '1001- DORES DE CAMPOS', price_usd: 5.1643 },
+  { sku: '701414', name: '100AWORKF-CA-BR-A',    material: 'PVC', bico: 'BICO ACO', ncm: '6401.10.00', ca: '48255', centro: '1001- DORES DE CAMPOS', price_usd: 5.6807 },
+  { sku: '700699', name: '100AWORKF-CA-BR-A-PA', material: 'PVC', bico: 'BICO ACO', ncm: '6401.10.00', ca: '40584', centro: '1001- DORES DE CAMPOS', price_usd: 7.0992 },
+  { sku: '701404', name: '100AWORKF-CA-PR',      material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '48254', centro: '1001- DORES DE CAMPOS', price_usd: 5.1643 },
+  { sku: '700383', name: '100AWORKF-CA-PRA',     material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '40637', centro: '1001- DORES DE CAMPOS', price_usd: 5.1643 },
+  { sku: '701405', name: '100AWORKF-CA-PR-A',    material: 'PVC', bico: 'BICO ACO', ncm: '6401.10.00', ca: '48262', centro: '1001- DORES DE CAMPOS', price_usd: 5.6807 },
+  { sku: '701413', name: '100AWORKF-CA-PRA-A',   material: 'PVC', bico: 'BICO ACO', ncm: '6401.10.00', ca: '48267', centro: '1001- DORES DE CAMPOS', price_usd: 5.6807 },
+  { sku: '700393', name: '100AWORKF-CA-PR-A-PA', material: 'PVC', bico: 'BICO ACO', ncm: '6401.10.00', ca: '40793', centro: '1001- DORES DE CAMPOS', price_usd: 7.0992 },
+  { sku: '700498', name: '100AWORKF-CA-PRA-PL',  material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '42673', centro: '1001- DORES DE CAMPOS', price_usd: 7.4011 },
+  { sku: '701406', name: '100AWORKF-CM-BR',      material: 'PVC', bico: 'SEM BICO', ncm: '6401.10.00', ca: '48261', centro: '1001- DORES DE CAMPOS', price_usd: 4.8185 },
+  { sku: '701403', name: '100AWORKF-CM-BR-A',    material: 'PVC', bico: 'BICO ACO', ncm: '6401.92.00', ca: '48257', centro: '1001- DORES DE CAMPOS', price_usd: 5.7556 },
+  { sku: '701410', name: '100AWORKF-CM-PR',      material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '48258', centro: '1001- DORES DE CAMPOS', price_usd: 4.8185 },
+  { sku: '701408', name: '100AWORKF-CM-PRA',     material: 'PVC', bico: 'SEM BICO', ncm: '6401.92.00', ca: '48259', centro: '1001- DORES DE CAMPOS', price_usd: 4.8185 },
+];
+
+// =====================================================================
+// COMEX 2026 · Tabela de indices (34 filas del Excel v6)
+//   · dias      = número de días de plazo de pago
+//   · factor_mi = Mercado Interno (Brasil)
+//   · factor_me = Mercado Externo (COMEX / export) ← default en la app
+// =====================================================================
+export const MOCK_PAYMENT_INDEX = [
+  { dias:   0, factor_mi: 1.000, factor_me: 1.000 },
+  { dias:  10, factor_mi: 1.010, factor_me: 1.003 },
+  { dias:  14, factor_mi: 1.014, factor_me: 1.005 },
+  { dias:  15, factor_mi: 1.015, factor_me: 1.005 },
+  { dias:  20, factor_mi: 1.020, factor_me: 1.007 },
+  { dias:  21, factor_mi: 1.021, factor_me: 1.007 },
+  { dias:  27, factor_mi: 1.027, factor_me: 1.009 },
+  { dias:  28, factor_mi: 1.028, factor_me: 1.009 },
+  { dias:  29, factor_mi: 1.029, factor_me: 1.010 },
+  { dias:  30, factor_mi: 1.030, factor_me: 1.010 },
+  { dias:  31, factor_mi: 1.031, factor_me: 1.013 },
+  { dias:  35, factor_mi: 1.035, factor_me: 1.012 },
+  { dias:  36, factor_mi: 1.036, factor_me: 1.012 },
+  { dias:  37, factor_mi: 1.037, factor_me: 1.013 },
+  { dias:  38, factor_mi: 1.038, factor_me: 1.013 },
+  { dias:  40, factor_mi: 1.040, factor_me: 1.013 },
+  { dias:  42, factor_mi: 1.042, factor_me: 1.014 },
+  { dias:  45, factor_mi: 1.045, factor_me: 1.015 },
+  { dias:  46, factor_mi: 1.046, factor_me: 1.015 },
+  { dias:  49, factor_mi: 1.050, factor_me: 1.017 },
+  { dias:  50, factor_mi: 1.051, factor_me: 1.017 },
+  { dias:  52, factor_mi: 1.053, factor_me: 1.018 },
+  { dias:  55, factor_mi: 1.056, factor_me: 1.018 },
+  { dias:  56, factor_mi: 1.057, factor_me: 1.019 },
+  { dias:  59, factor_mi: 1.060, factor_me: 1.020 },
+  { dias:  60, factor_mi: 1.061, factor_me: 1.020 },
+  { dias:  62, factor_mi: 1.063, factor_me: 1.021 },
+  { dias:  70, factor_mi: 1.071, factor_me: 1.023 },
+  { dias:  90, factor_mi: 1.093, factor_me: 1.030 },
+  { dias: 100, factor_mi: 1.104, factor_me: 1.033 },
+  { dias: 102, factor_mi: 1.106, factor_me: 1.034 },
+  { dias: 120, factor_mi: 1.126, factor_me: 1.040 },
+  { dias: 180, factor_mi: 1.194, factor_me: 1.060 },
+];
+
+// Constantes globales · base del exponencial de comisión (Excel v6 = 1.0183).
+export const MOCK_PRICING_CONSTANTS = {
+  base_commission_rate: 1.0183,
+};
+
+/**
+ * Reproduce la celda J18 del Excel COMEX v6:
+ *   precio_final = precio_base_USD
+ *                × (base ^ (100 × comision_pct))
+ *                × factor_indice_pago
+ *
+ * @param {object} args
+ * @param {string} args.sku           SKU del producto (MOCK_COMEX_PRODUCTS.sku)
+ * @param {number} args.comision_pct  Decimal, 0.08 = 8%
+ * @param {number} args.dias_pago     Nº de días del plazo (MOCK_PAYMENT_INDEX.dias)
+ * @param {'MI'|'ME'} [args.mercado]  Default 'ME'
+ * @returns {object|null} desglose + price_final_usd, o null si falta data
+ */
+export function comexResolvePriceMock({ sku, comision_pct = 0, dias_pago = 0, mercado = 'ME' }) {
+  const prod = MOCK_COMEX_PRODUCTS.find(p => p.sku === String(sku));
+  if (!prod) return null;
+  const idx = MOCK_PAYMENT_INDEX.find(r => r.dias === Number(dias_pago));
+  if (!idx) return null;
+  const base = MOCK_PRICING_CONSTANTS.base_commission_rate;
+  const commission_factor = Math.pow(base, 100 * Number(comision_pct));
+  const payment_factor    = mercado === 'MI' ? idx.factor_mi : idx.factor_me;
+  const price_final = prod.price_usd * commission_factor * payment_factor;
+  return {
+    sku,
+    price_base_usd:    prod.price_usd,
+    commission_pct,
+    commission_factor: Number(commission_factor.toFixed(6)),
+    payment_days:      Number(dias_pago),
+    payment_market:    mercado,
+    payment_factor,
+    price_final_usd:   Number(price_final.toFixed(4)),
+    currency:          'USD',
+    breakdown: [
+      `precio_base(${sku}) = ${prod.price_usd.toFixed(4)} USD`,
+      `commission_factor = ${base} ^ (100 × ${comision_pct}) = ${commission_factor.toFixed(6)}`,
+      `payment_factor(${dias_pago}d, ${mercado}) = ${payment_factor}`,
+      `final = ${prod.price_usd.toFixed(4)} × ${commission_factor.toFixed(6)} × ${payment_factor} = ${price_final.toFixed(4)} USD`,
+    ],
+  };
+}
+
+
+// =====================================================================
 // AI HUB · Hilos, mensajes y context anchors (fail-soft demo data)
 //   - Thread ids con prefijo "mock-th-" → al abrir uno, AIChat detecta
 //     el patrón y sirve mensajes locales (sin llamar al backend).

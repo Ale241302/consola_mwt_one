@@ -693,3 +693,180 @@ class ResolveClientPriceView(APIView):
 
         out_ser = ResolveClientPriceOutputSerializer(out)
         return Response(out_ser.data, status=status.HTTP_200_OK)
+
+
+# =====================================================================
+# COMEX pricing waterfall · endpoint de la calculadora del Excel v6
+# =====================================================================
+from .models import PricingConstant, PaymentIndex, GradeItem  # noqa: E402
+
+
+class ResolveComexPriceView(APIView):
+    """POST /api/commercial/resolve_price/
+
+    Implementa la fórmula EXACTA de la hoja 'Calculadora' del Excel
+    'Tabela de preços COMEX 2026 v6', celda J18:
+
+        precio_final = VLOOKUP(sku, 'Tabela de Preços', col_10)      ← precio_base
+                     × (1.0183 ^ (100 × comisión_pct))                ← factor_comisión
+                     × VLOOKUP(días, 'Tabela de indices', col_3, 0)   ← factor_índice_ME
+
+    Payload:
+        {
+          "sku":            "701407",            // obligatorio
+          "comision_pct":   0.08,                // opcional (default 0) — decimal, 0.08 = 8%
+          "dias_pago":      28,                  // opcional (default 0)
+          "mercado":        "ME"                 // "MI" | "ME" (default ME)
+        }
+
+    Respuesta:
+        {
+          "sku":           "701407",
+          "price_base_usd":  5.0013,
+          "commission_pct":  0.08,
+          "commission_factor": 1.15565,
+          "payment_days":    28,
+          "payment_market":  "ME",
+          "payment_factor":  1.009,
+          "price_final_usd": 5.8312,
+          "breakdown": [
+            "precio_base(701407) = 5.0013 USD",
+            "commission_factor = 1.0183 ^ (100 × 0.08) = 1.15565",
+            "payment_factor(28d, ME) = 1.009",
+            "final = 5.0013 × 1.15565 × 1.009 = 5.8312 USD"
+          ]
+        }
+
+    Errores:
+      · 404 · SKU no encontrado o sin pricelist activa.
+      · 404 · No existe índice para esos `dias_pago` (sugerir los cercanos).
+      · 400 · comision_pct fuera de [0, 1].
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        sku           = (request.data.get("sku") or "").strip()
+        comision_pct  = request.data.get("comision_pct")
+        dias_pago     = request.data.get("dias_pago")
+        mercado       = (request.data.get("mercado") or "ME").upper()
+
+        if not sku:
+            return Response({"detail": "sku es obligatorio."}, status=400)
+
+        try:
+            comision_pct = Decimal(str(comision_pct)) if comision_pct is not None else Decimal("0")
+        except Exception:
+            return Response({"detail": "comision_pct debe ser decimal."}, status=400)
+
+        if comision_pct < 0 or comision_pct > 1:
+            return Response(
+                {"detail": "comision_pct fuera de rango. Usar decimal entre 0 y 1 (ej. 0.08 = 8%)."},
+                status=400,
+            )
+
+        try:
+            dias_pago = int(dias_pago) if dias_pago is not None else 0
+        except Exception:
+            return Response({"detail": "dias_pago debe ser entero."}, status=400)
+
+        if mercado not in ("MI", "ME"):
+            return Response({"detail": "mercado debe ser 'MI' o 'ME'."}, status=400)
+
+        # ── 1. precio base del SKU (GradeItem activo + más reciente) ─────
+        gi = (
+            GradeItem.objects.filter(product_sku=sku, is_active=True)
+            .order_by("-updated_at")
+            .first()
+        )
+        if not gi:
+            return Response(
+                {"detail": f"SKU '{sku}' no encontrado en pricelists activas."},
+                status=404,
+            )
+        price_base_usd = Decimal(str(gi.unit_price_usd))
+
+        # ── 2. factor de comisión (base ^ (100 × pct)) ───────────────────
+        base_const = PricingConstant.objects.filter(
+            slug="base_commission_rate", is_active=True,
+        ).first()
+        base = Decimal(str(base_const.value)) if base_const else Decimal("1.0183")
+        # Decimal ^ Decimal no es natural — convertimos via float y
+        # volvemos a Decimal con 6 decimales para mantener determinismo.
+        import math
+        commission_factor = Decimal(
+            f"{math.pow(float(base), float(100 * comision_pct)):.6f}"
+        )
+
+        # ── 3. factor de plazo (índice MI/ME) ────────────────────────────
+        pi = PaymentIndex.objects.filter(dias=dias_pago, is_active=True).first()
+        if not pi:
+            # Sugerir los plazos cercanos disponibles.
+            near = list(
+                PaymentIndex.objects.filter(is_active=True)
+                .values_list("dias", flat=True)
+                .order_by("dias")
+            )
+            return Response(
+                {"detail": f"No existe índice para {dias_pago} días.",
+                 "dias_disponibles": near},
+                status=404,
+            )
+        payment_factor = Decimal(str(pi.factor_me if mercado == "ME" else pi.factor_mi))
+
+        # ── 4. precio final ──────────────────────────────────────────────
+        price_final = (price_base_usd * commission_factor * payment_factor).quantize(Decimal("0.0001"))
+
+        breakdown = [
+            f"precio_base({sku}) = {price_base_usd:.4f} USD",
+            f"commission_factor = {base} ^ (100 × {comision_pct}) = {commission_factor}",
+            f"payment_factor({dias_pago}d, {mercado}) = {payment_factor}",
+            f"final = {price_base_usd:.4f} × {commission_factor} × {payment_factor} = {price_final} USD",
+        ]
+
+        return Response({
+            "sku":               sku,
+            "price_base_usd":    str(price_base_usd),
+            "commission_pct":    str(comision_pct),
+            "commission_factor": str(commission_factor),
+            "payment_days":      dias_pago,
+            "payment_market":    mercado,
+            "payment_factor":    str(payment_factor),
+            "price_final_usd":   str(price_final),
+            "currency":          "USD",
+            "breakdown":         breakdown,
+        }, status=200)
+
+
+class PaymentIndexListView(APIView):
+    """GET /api/commercial/payment_index/ · lista los 34 índices del Excel."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = PaymentIndex.objects.filter(is_active=True).order_by("dias")
+        return Response([
+            {
+                "dias":       p.dias,
+                "factor_mi":  str(p.factor_mi),
+                "factor_me":  str(p.factor_me),
+                "descripcion": p.descripcion,
+            }
+            for p in qs
+        ], status=200)
+
+
+class PricingConstantListView(APIView):
+    """GET /api/commercial/pricing_constants/ · constantes editables."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = PricingConstant.objects.filter(is_active=True).order_by("slug")
+        return Response([
+            {
+                "slug":        c.slug,
+                "nombre":      c.nombre,
+                "descripcion": c.descripcion,
+                "value":       str(c.value),
+                "unit":        c.unit,
+            }
+            for c in qs
+        ], status=200)
