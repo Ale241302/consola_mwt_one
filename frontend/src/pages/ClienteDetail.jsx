@@ -21,7 +21,10 @@ import { fmtMoney, fmtShortDate } from "../lib/i18n.js";
 import {
   CLIENTS, EXPEDIENTES, CLIENT_PAYMENTS, CLIENT_PRODUCTS_BOUGHT, OCS,
 } from "../data/mockData.js";
-import ClientFormDrawer from "../components/clientes/ClientFormDrawer.jsx";
+// NOTA 2026-04 · ClientFormDrawer DEPRECATED — reemplazado por la página
+// full-page pages/ClienteFormView.jsx. El botón "Editar" de aquí navega
+// ahora a /clientes/:id/editar.
+// import ClientFormDrawer from "../components/clientes/ClientFormDrawer.jsx";
 
 /* ── Payment Status Machine ──────────────────────────── */
 const PAYMENT_STATUS = {
@@ -67,7 +70,9 @@ export default function ScreenClienteDetail() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
   const [tab, setTab] = useState('expedientes');
-  const [showEdit, setShowEdit] = useState(false);
+  // showEdit/setShowEdit ya no se usa — la edición es una página aparte.
+  // Lo mantengo declarado para no romper la función si algún effect lo refería.
+  const [showEdit, setShowEdit] = useState(false);   // eslint-disable-line no-unused-vars
 
   const client = useMemo(() => CLIENTS.find(c => c.id === clienteId), [clienteId]);
 
@@ -195,8 +200,9 @@ export default function ScreenClienteDetail() {
             </div>
           </div>
           <div style={{display:'flex', gap:8}}>
-            <button className="btn btn-ghost" onClick={()=>setShowEdit(true)}>
-              {lang==='es'?'Editar':'Edit'}
+            <button className="btn btn-ghost"
+                    onClick={() => navigate(`/clientes/${clienteId}/editar`)}>
+              {lang==='es' ? 'Editar' : 'Edit'}
             </button>
           </div>
         </div>
@@ -285,17 +291,15 @@ export default function ScreenClienteDetail() {
         </AnimatePresence>
       </div>
 
-      {/* ── Edit Drawer ─────────── */}
+      {/* Edit Drawer DEPRECATED — la edición es ahora la página
+          /clientes/:id/editar (ver ClienteFormView.jsx). El AnimatePresence
+          queda inactivo (showEdit siempre false). */}
       <AnimatePresence>
-        {showEdit && (
-          <ClientFormDrawer
-            lang={lang}
-            initial={client}
-            onClose={()=>setShowEdit(false)}
-            onCreated={(payload)=>{
-              console.log('[mock] update client:', payload);
-              setShowEdit(false);
-            }}
+        {false && showEdit && (
+          <div
+            /* keep-alive removed block */
+            onClick={()=>setShowEdit(false)}
+            data-deprecated="ClientFormDrawer"
           />
         )}
       </AnimatePresence>

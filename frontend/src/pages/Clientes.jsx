@@ -4,7 +4,7 @@
 //
 // Grid animado de tarjetas (framer-motion · staggered fade-in).
 // Click → /clientes/:clienteId (ClienteDetail · CEO-ONLY).
-// Botón "+ Nuevo cliente" → <ClientFormDrawer/> (drawer lateral).
+// Botón "+ Nuevo cliente" → navega a /clientes/nuevo (página full).
 //
 // Tokens visuales (paleta MWT extendida):
 //   Navy #0B1E3A · Mint #00B286 · LightGreen #1DE394
@@ -155,8 +155,9 @@ export default function ScreenClientes() {
           </div>
         </div>
         <div className="flex ai-center gap-2">
-          <button className="btn btn-accent" onClick={()=>setShowCreate(true)}>
-            <IconPlus size={14}/> {lang==='es'?'Nuevo cliente':'New client'}
+          <button className="btn btn-accent"
+                  onClick={() => navigate("/clientes/nuevo")}>
+            <IconPlus size={14}/> {lang==='es' ? 'Nuevo cliente' : 'New client'}
           </button>
         </div>
       </div>
@@ -331,9 +332,11 @@ export default function ScreenClientes() {
         )}
       </div>
 
-      {/* ── Drawer creación ────────────── */}
+      {/* Drawer creación DEPRECATED — "+ Nuevo cliente" ahora navega a
+          /clientes/nuevo (página full-page, ver ClienteFormView.jsx).
+          Este bloque queda inerte: setShowCreate nunca se dispara. */}
       <AnimatePresence>
-        {showCreate && (
+        {false && showCreate && (
           <ClientFormDrawer
             lang={lang}
             onClose={()=>setShowCreate(false)}

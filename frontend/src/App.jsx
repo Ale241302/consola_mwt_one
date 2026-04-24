@@ -20,6 +20,7 @@ import ScreenNodos from "./pages/Nodos.jsx";
 import ScreenNodoDetail from "./pages/NodoDetail.jsx";
 import ScreenClientes from "./pages/Clientes.jsx";
 import ScreenClienteDetail from "./pages/ClienteDetail.jsx";
+import ScreenClienteFormView from "./pages/ClienteFormView.jsx";
 import ScreenBrands from "./pages/Brands.jsx";
 import ScreenBrandDetail from "./pages/BrandDetail.jsx";
 import ScreenProductos from "./pages/Productos.jsx";
@@ -77,7 +78,10 @@ export default function App() {
         <Route path="/nodos" element={<ScreenNodos />} />
         <Route path="/nodos/:nodeId" element={<ScreenNodoDetail />} />
         <Route path="/clientes" element={<ScreenClientes />} />
-        <Route path="/clientes/:clienteId" element={<ScreenClienteDetail />} />
+        {/* Form full-page · debe ir ANTES del detail para no matchear /nuevo como :clienteId */}
+        <Route path="/clientes/nuevo"                element={<ScreenClienteFormView />} />
+        <Route path="/clientes/:clienteId/editar"    element={<ScreenClienteFormView />} />
+        <Route path="/clientes/:clienteId"           element={<ScreenClienteDetail />} />
         <Route path="/marcas" element={<ScreenBrands />} />
         <Route path="/marcas/:brandId" element={<ScreenBrandDetail />} />
         <Route path="/productos" element={<ScreenProductos />} />
