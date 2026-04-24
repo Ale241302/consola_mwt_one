@@ -870,3 +870,218 @@ class PricingConstantListView(APIView):
             }
             for c in qs
         ], status=200)
+
+
+# =====================================================================
+# Sprint M3c · BrandClientPricingAssignment
+# =====================================================================
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser  # noqa: E402
+from .models import BrandClientPricingAssignment  # noqa: E402
+from .serializers import (                         # noqa: E402
+    BrandClientPricingAssignmentSerializer,
+    BrandClientPricingAssignmentListSerializer,
+)
+
+
+_ADMIN_ROLES = {"superadmin", "admin"}
+
+
+def _is_admin(user) -> bool:
+    if getattr(user, "is_superuser", False):
+        return True
+    return (getattr(user, "role", "") or "").lower() in _ADMIN_ROLES
+
+
+class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
+    """CRUD de asignaciones cliente↔marca con archivo + modificadores.
+
+      GET  /api/commercial/brand-client-pricing/?brand_id=<uuid>
+      GET  /api/commercial/brand-client-pricing/?cliente_id=<uuid>
+      POST /api/commercial/brand-client-pricing/
+      POST /api/commercial/brand-client-pricing/<id>/upload-file/
+      DELETE /api/commercial/brand-client-pricing/<id>/  → soft delete
+    """
+    queryset = BrandClientPricingAssignment.objects.filter(is_active=True)
+    serializer_class = BrandClientPricingAssignmentSerializer
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return BrandClientPricingAssignmentListSerializer
+        return BrandClientPricingAssignmentSerializer
+
+    def get_queryset(self):
+        qs = BrandClientPricingAssignment.objects.filter(is_active=True)
+        brand_id   = self.request.query_params.get("brand_id")
+        cliente_id = self.request.query_params.get("cliente_id")
+        if brand_id:
+            qs = qs.filter(brand_id=brand_id)
+        if cliente_id:
+            qs = qs.filter(cliente_id=cliente_id)
+        return qs.order_by("-updated_at")
+
+    def create(self, request, *args, **kwargs):
+        data = dict(request.data)
+        if not data.get("id"):
+            data["id"] = str(uuid.uuid4())
+
+        # Snapshot inmutable · leemos los términos del cliente ahora mismo
+        # y los congelamos en la asignación (aunque luego el cliente cambie
+        # su comisión, esta asignación guarda los valores que pactamos hoy).
+        cliente_id = data.get("cliente_id")
+        if cliente_id:
+            with connection.cursor() as cur:
+                cur.execute("""
+                    SELECT comision_pct, dias_credito, credito_aprobado
+                      FROM clientes.cliente
+                     WHERE id = %s AND is_active = TRUE
+                     LIMIT 1
+                """, [cliente_id])
+                row = cur.fetchone()
+                if row:
+                    data.setdefault("comision_pct_snapshot",  row[0])
+                    data.setdefault("credito_dias_snapshot",  row[1])
+                    data.setdefault("credito_limit_snapshot", row[2])
+
+        # Defensa en profundidad: si hay ya una asignación activa para este
+        # (brand_id, cliente_id), la inactivamos en la misma transacción
+        # para respetar el unique index parcial.
+        brand_id = data.get("brand_id")
+        if brand_id and cliente_id:
+            BrandClientPricingAssignment.objects.filter(
+                brand_id=brand_id, cliente_id=cliente_id, is_active=True,
+            ).update(is_active=False)
+
+        data["created_by_id"] = str(getattr(request.user, "id", "")) or None
+        data["updated_by_id"] = data["created_by_id"]
+
+        ser = self.get_serializer(data=data)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        return Response(ser.data, status=201)
+
+    def perform_destroy(self, instance):
+        """Soft delete (los archivos permanecen en MinIO)."""
+        instance.is_active = False
+        instance.save(update_fields=["is_active", "updated_at"])
+
+    # ── POST /api/commercial/brand-client-pricing/<id>/upload-file/ ─────
+    @action(detail=True, methods=["post"], url_path="upload-file",
+            parser_classes=[MultiPartParser, FormParser])
+    def upload_file(self, request, pk=None):
+        """Sube un Excel/CSV y lo asocia a la asignación.
+
+        El archivo real debería ir a MinIO (apps.storage) — aquí sólo
+        guardamos metadata + un object_key determinista. En modo demo
+        se guarda un fake key.
+        """
+        try:
+            bcpa = BrandClientPricingAssignment.objects.get(pk=pk, is_active=True)
+        except BrandClientPricingAssignment.DoesNotExist:
+            return Response({"detail": "Asignación no encontrada."}, status=404)
+
+        f = request.FILES.get("file") or request.data.get("file")
+        if not f:
+            return Response({"detail": "file es obligatorio (multipart)."}, status=400)
+
+        # Fake object_key demo (prod: subir a MinIO/Paperless).
+        object_key = f"commercial/pricing/{bcpa.brand_id}/{bcpa.cliente_id}/{uuid.uuid4()}.xlsx"
+
+        bcpa.file_object_key  = object_key
+        bcpa.file_name        = getattr(f, "name", "price_list.xlsx")[:255]
+        bcpa.file_size_bytes  = getattr(f, "size", None)
+        bcpa.file_mime        = getattr(f, "content_type", None)
+        bcpa.file_uploaded_at = timezone.now()
+        bcpa.file_uploaded_by = getattr(request.user, "id", None)
+        bcpa.save()
+
+        return Response(self.get_serializer(bcpa).data, status=200)
+
+
+# =====================================================================
+# GET /api/commercial/brands/<uuid>/clients_summary/
+#   — Lista clientes con datos financieros (para el grid de cards del
+#     Motor de Precios por marca). POL_VISIBILIDAD aplicada.
+#
+# Shape:
+#   [{
+#     "cliente_id", "razon_social", "flag", "estado",
+#     "dias_credito", "credito_limit_usd", "comision_pct",
+#     "assignment": {
+#        "id","file_name","fecha_inicio","fecha_fin",
+#        "sobre_precio_pct","pronto_pago_dias","pronto_pago_pct",
+#        "volumen_pct", ...
+#     } | null    ← presente si ya hay asignación vigente
+#   }, ...]
+# =====================================================================
+class BrandClientsSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, brand_id):
+        is_admin = _is_admin(request.user)
+
+        # 1. Todos los clientes activos (ligero — no filtramos por ventas
+        #    por ahora; en fase 2 podemos enlazar con expedientes.expediente
+        #    WHERE brand_id = ...).
+        with connection.cursor() as cur:
+            cur.execute("""
+                SELECT id, razon_social, nombre_comercial, pais_iso2,
+                       estado, dias_credito,
+                       credito_aprobado, comision_pct
+                  FROM clientes.cliente
+                 WHERE is_active = TRUE
+                 ORDER BY razon_social
+                 LIMIT 500
+            """)
+            cols = [c[0] for c in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+        # 2. Asignaciones vigentes para esta marca.
+        bcpas = {
+            str(a.cliente_id): a
+            for a in BrandClientPricingAssignment.objects.filter(
+                brand_id=brand_id, is_active=True,
+            )
+        }
+
+        def _assignment_dict(a):
+            if not a:
+                return None
+            return {
+                "id":                str(a.id),
+                "file_name":         a.file_name,
+                "file_size_bytes":   a.file_size_bytes,
+                "file_uploaded_at":  a.file_uploaded_at.isoformat() if a.file_uploaded_at else None,
+                "fecha_inicio":      a.fecha_inicio.isoformat() if a.fecha_inicio else None,
+                "fecha_fin":         a.fecha_fin.isoformat() if a.fecha_fin else None,
+                "sobre_precio_pct":  str(a.sobre_precio_pct)   if a.sobre_precio_pct  is not None else None,
+                "pronto_pago_dias":  a.pronto_pago_dias,
+                "pronto_pago_pct":   str(a.pronto_pago_pct)    if a.pronto_pago_pct   is not None else None,
+                "volumen_pct":       str(a.volumen_pct)        if a.volumen_pct      is not None else None,
+                "volumen_min_units": a.volumen_min_units,
+                "updated_at":        a.updated_at.isoformat()  if a.updated_at else None,
+            }
+
+        out = []
+        for r in rows:
+            assignment = bcpas.get(str(r["id"]))
+            card = {
+                "cliente_id":       str(r["id"]),
+                "razon_social":     r["razon_social"],
+                "nombre_comercial": r["nombre_comercial"],
+                "pais_iso2":        r["pais_iso2"],
+                "estado":           r["estado"],
+                "dias_credito":     r["dias_credito"],
+                # CEO-ONLY — enmascarado para no-admin
+                "credito_limit_usd": str(r["credito_aprobado"]) if is_admin and r["credito_aprobado"] is not None else None,
+                "comision_pct":      str(r["comision_pct"])    if is_admin and r["comision_pct"]    is not None else None,
+                "assignment":        _assignment_dict(assignment),
+            }
+            out.append(card)
+
+        return Response({
+            "brand_id": str(brand_id),
+            "is_admin": is_admin,
+            "count":    len(out),
+            "clients":  out,
+        }, status=200)

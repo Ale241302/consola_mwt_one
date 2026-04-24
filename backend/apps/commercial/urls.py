@@ -33,6 +33,8 @@ from .views import (
     ResolveClientPriceView,
     # COMEX pricing waterfall (calculadora del Excel v6)
     ResolveComexPriceView, PaymentIndexListView, PricingConstantListView,
+    # Sprint M3c · brand↔client pricing assignment
+    BrandClientPricingAssignmentViewSet, BrandClientsSummaryView,
 )
 
 
@@ -55,6 +57,10 @@ router.register(r"commercial/catalogs/sources",
                 PriceListSourceCatViewSet, basename="commercial-sources")
 router.register(r"commercial/catalogs/commission-bases",
                 CommissionBaseCatViewSet, basename="commercial-commission-bases")
+# Sprint M3c · brand↔client pricing (una fila por cliente-marca vigente)
+router.register(r"commercial/brand-client-pricing",
+                BrandClientPricingAssignmentViewSet,
+                basename="commercial-brand-client-pricing")
 
 urlpatterns = [
     path("", include(router.urls)),
@@ -71,4 +77,8 @@ urlpatterns = [
     path("commercial/pricing_constants/",
          PricingConstantListView.as_view(),
          name="commercial-pricing-constants"),
+    # Sprint M3c · grid de cards del Motor de Precios por marca
+    path("commercial/brands/<uuid:brand_id>/clients_summary/",
+         BrandClientsSummaryView.as_view(),
+         name="commercial-brand-clients-summary"),
 ]

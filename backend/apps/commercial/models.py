@@ -278,6 +278,64 @@ class PricingConstant(models.Model):
         ordering = ("slug",)
 
 
+class BrandClientPricingAssignment(models.Model):
+    """Asignación cliente-marca de precios + modificadores + archivo.
+
+    Ver SQL A2c_brand_client_pricing.sql. Una fila por cada cliente
+    que tiene precios activos para una marca. La UNIQUE parcial sobre
+    (brand_id, cliente_id) WHERE is_active=TRUE garantiza que sólo
+    exista una asignación vigente por par.
+
+    El snapshot de términos financieros del cliente
+    (`comision_pct_snapshot`, `credito_dias_snapshot`,
+    `credito_limit_snapshot`) se copia en el momento de crear la
+    asignación y NO se recalcula después — auditoría histórica.
+    """
+    id               = models.UUIDField(primary_key=True)
+    brand_id         = models.UUIDField()         # ⛔ sin FK
+    cliente_id       = models.UUIDField()         # ⛔ sin FK
+
+    # Archivo
+    file_object_key  = models.TextField(null=True, blank=True)
+    file_name        = models.CharField(max_length=255, null=True, blank=True)
+    file_size_bytes  = models.IntegerField(null=True, blank=True)
+    file_mime        = models.CharField(max_length=64, null=True, blank=True)
+    file_uploaded_at = models.DateTimeField(null=True, blank=True)
+    file_uploaded_by = models.UUIDField(null=True, blank=True)
+
+    # Vigencia
+    fecha_inicio     = models.DateField()
+    fecha_fin        = models.DateField(null=True, blank=True)
+
+    # Modificadores (todos opcionales, decimal 0..1)
+    sobre_precio_pct  = models.DecimalField(max_digits=6, decimal_places=4, null=True, blank=True)
+    pronto_pago_dias  = models.IntegerField(null=True, blank=True)
+    pronto_pago_pct   = models.DecimalField(max_digits=6, decimal_places=4, null=True, blank=True)
+    volumen_pct       = models.DecimalField(max_digits=6, decimal_places=4, null=True, blank=True)
+    volumen_min_units = models.IntegerField(null=True, blank=True)
+
+    # Snapshot inmutable de términos financieros del cliente
+    comision_pct_snapshot  = models.DecimalField(max_digits=6, decimal_places=4, null=True, blank=True)
+    credito_dias_snapshot  = models.SmallIntegerField(null=True, blank=True)
+    credito_limit_snapshot = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+
+    # Meta
+    notas             = models.TextField(null=True, blank=True)
+    is_active         = models.BooleanField(default=True)
+    created_by_id     = models.UUIDField(null=True, blank=True)
+    updated_by_id     = models.UUIDField(null=True, blank=True)
+    created_at        = models.DateTimeField(auto_now_add=True)
+    updated_at        = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'commercial"."brand_client_pricing_assignment'
+        ordering = ("-updated_at",)
+
+    def __str__(self):
+        return f"BCPA(brand={self.brand_id} client={self.cliente_id} active={self.is_active})"
+
+
 class PaymentIndex(models.Model):
     """Índice de pago por plazo en días.
 

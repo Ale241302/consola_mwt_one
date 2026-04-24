@@ -23,6 +23,7 @@ import ScreenClienteDetail from "./pages/ClienteDetail.jsx";
 import ScreenClienteFormView from "./pages/ClienteFormView.jsx";
 import ScreenBrands from "./pages/Brands.jsx";
 import ScreenBrandDetail from "./pages/BrandDetail.jsx";
+import ScreenBrandClientPricingForm from "./pages/BrandClientPricingForm.jsx";
 import ScreenProductos from "./pages/Productos.jsx";
 import ScreenProductFormView from "./pages/ProductFormView.jsx";
 import ScreenSizingEngine from "./pages/SizingEngine.jsx";
@@ -83,6 +84,9 @@ export default function App() {
         <Route path="/clientes/:clienteId/editar"    element={<ScreenClienteFormView />} />
         <Route path="/clientes/:clienteId"           element={<ScreenClienteDetail />} />
         <Route path="/marcas" element={<ScreenBrands />} />
+        {/* Precios cliente-marca · vista full-page con drag&drop */}
+        <Route path="/marcas/:brandId/clientes/:clienteId/precios"
+               element={<ScreenBrandClientPricingForm />} />
         <Route path="/marcas/:brandId" element={<ScreenBrandDetail />} />
         <Route path="/productos" element={<ScreenProductos />} />
         <Route path="/productos/nuevo" element={<ScreenProductFormView />} />

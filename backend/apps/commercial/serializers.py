@@ -23,6 +23,8 @@ from .models import (
     # commercial
     EarlyPaymentPolicy, EarlyPaymentTier, CommissionRule,
     CommissionBaseCat,
+    # sprint M3c — asignación cliente↔marca
+    BrandClientPricingAssignment,
 )
 
 
@@ -212,3 +214,40 @@ class ResolveClientPriceOutputSerializer(serializers.Serializer):
     commission_base     = serializers.CharField(allow_null=True, required=False)
     notes               = serializers.ListField(
         child=serializers.CharField(), required=False)
+
+
+# =====================================================================
+# Sprint M3c · BrandClientPricingAssignment
+# =====================================================================
+class BrandClientPricingAssignmentSerializer(serializers.ModelSerializer):
+    """Asignación cliente↔marca con archivo + modificadores + snapshot.
+
+    POL_VISIBILIDAD: los campos `comision_pct_snapshot`,
+    `credito_limit_snapshot` son sensibles y el ViewSet los enmascara
+    si el caller no es admin/superadmin.
+    """
+    class Meta:
+        model  = BrandClientPricingAssignment
+        fields = "__all__"
+        read_only_fields = (
+            "id",
+            "file_uploaded_at", "file_uploaded_by",
+            "comision_pct_snapshot", "credito_dias_snapshot", "credito_limit_snapshot",
+            "created_by_id", "updated_by_id",
+            "created_at", "updated_at",
+        )
+
+
+class BrandClientPricingAssignmentListSerializer(serializers.ModelSerializer):
+    """Versión ligera para el grid — sin el file_object_key ni los snapshots sensibles."""
+    class Meta:
+        model  = BrandClientPricingAssignment
+        fields = (
+            "id", "brand_id", "cliente_id",
+            "file_name", "file_size_bytes", "file_uploaded_at",
+            "fecha_inicio", "fecha_fin",
+            "sobre_precio_pct",
+            "pronto_pago_dias", "pronto_pago_pct",
+            "volumen_pct", "volumen_min_units",
+            "is_active", "updated_at",
+        )
