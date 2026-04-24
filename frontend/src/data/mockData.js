@@ -2754,7 +2754,7 @@ export function comexResolvePriceMock({ sku, comision_pct = 0, dias_pago = 0, me
   return {
     sku,
     price_base_usd:    prod.price_usd,
-    commission_pct,
+    commission_pct:    Number(comision_pct),
     commission_factor: Number(commission_factor.toFixed(6)),
     payment_days:      Number(dias_pago),
     payment_market:    mercado,
