@@ -1,19 +1,225 @@
+"""
+=====================================================================
+MWT.ONE · apps.clientes.serializers
+Agente responsable: [AG-BACKEND]
+
+Sprint Cliente M3b — soporta la ficha B2B completa:
+  · Datos base + SAP (codigo_marluvas, cedula_juridica)
+  · Ubicación + entrega (pais_iso2, direccion_entrega)
+  · Contacto principal (contacto_nombre/email/tel)
+  · Condiciones comerciales (canal, incoterm, medio_pago, dias_credito)
+  · Gobernanza financiera CEO-ONLY (credito_limit_usd, comision_pct)
+  · Estado operativo (ACTIVO · PAUSADO · BLOQUEADO · INACTIVO)
+
+POL_VISIBILIDAD · política aplicada aquí:
+  - Los campos `credito_limit_usd` (alias de credito_aprobado) y
+    `comision_pct` SÓLO son mutables por caller con role superadmin/admin.
+  - Un CLIENT B2B o cualquier otro rol los verá como read_only en el GET
+    y serán descartados silenciosamente si aparecen en el PATCH/PUT.
+  - El dato se persiste igual en la BD (SQL no cambia); la restricción
+    es a nivel serializer porque el front puede mostrarlos en modo
+    lectura al CEO.
+
+Validaciones:
+  · codigo_marluvas: exactamente 10 dígitos numéricos si se envía.
+  · dias_credito:    rango 0..180.
+  · comision_pct:    rango 0..1 (0.085 = 8.5%).
+=====================================================================
+"""
+from __future__ import annotations
+
+import re
 from rest_framework import serializers
+
 from .models import Cliente, ClienteCreditSnapshot
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Roles que pueden mutar campos CEO-ONLY
+# ─────────────────────────────────────────────────────────────────────
+_ADMIN_ROLES = {"superadmin", "admin"}
+
+#: Campos CEO-ONLY — se silencian en payload y se marcan read_only para no-admin.
+CEO_ONLY_FIELDS = ("credito_limit_usd", "comision_pct", "credito_aprobado")
+
+
+def _is_admin_request(context) -> bool:
+    """True si el caller del serializer es superadmin/admin.
+
+    El ``context`` se inyecta desde el ViewSet:
+      self.get_serializer(context={'request': request, ...})
+    (DRF lo hace automáticamente en todos los ModelViewSet).
+    """
+    request = context.get("request") if context else None
+    if request is None:
+        return False
+    user = getattr(request, "user", None)
+    if not user:
+        return False
+    if getattr(user, "is_superuser", False):
+        return True
+    return (getattr(user, "role", "") or "").lower() in _ADMIN_ROLES
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Serializer principal · full CRUD (Admin) + strip-down (CLIENT)
+# ═════════════════════════════════════════════════════════════════════
 class ClienteSerializer(serializers.ModelSerializer):
+    """
+    Serializer con POL_VISIBILIDAD.
+
+    · Expone `credito_limit_usd` como alias de `credito_aprobado` (mapeo).
+    · Si el caller NO es admin: los CEO_ONLY_FIELDS se marcan read_only.
+    · Incluye `credito_disponible` y `tasa_utilizacion` derivados.
+    """
+
+    # Alias · el frontend usa credito_limit_usd (SAP naming),
+    # la BD lo guarda en credito_aprobado (legacy).
+    credito_limit_usd  = serializers.DecimalField(
+        source="credito_aprobado",
+        max_digits=14, decimal_places=2,
+        required=False, allow_null=True,
+    )
+
+    # El estado ACTIVO/PAUSADO/BLOQUEADO/INACTIVO.
+    # Alias semántico para que el frontend pueda usar `estado_operativo`.
+    estado_operativo   = serializers.CharField(source="estado", required=False)
+
+    # Campos derivados.
     credito_disponible = serializers.SerializerMethodField()
     tasa_utilizacion   = serializers.SerializerMethodField()
 
     class Meta:
         model  = Cliente
-        fields = "__all__"
+        fields = (
+            # Identidad
+            "id", "razon_social", "nombre_comercial", "tax_id",
+            "codigo_marluvas", "cedula_juridica",
+            # Clasificación
+            "tipo", "segmento",
+            # Ubicación
+            "pais_iso2", "ciudad", "direccion", "direccion_entrega",
+            # Contacto
+            "contacto_nombre", "contacto_email", "contacto_tel",
+            # Comercial
+            "canal", "incoterm", "medio_pago", "dias_credito",
+            "moneda",
+            # CEO-ONLY
+            "credito_limit_usd",         # ← alias credito_aprobado
+            "credito_aprobado",           # ← dejamos expuesto para compat legacy
+            "credito_usado",
+            "credito_disponible", "tasa_utilizacion",
+            "comision_pct",
+            # Estado
+            "estado", "estado_operativo",
+            # Asignación interna
+            "nodo_asignado_id", "responsable_id",
+            "visibility_tier",
+            # Auditoría
+            "is_active", "created_at", "updated_at",
+        )
         read_only_fields = (
             "id", "created_at", "updated_at",
             "credito_disponible", "tasa_utilizacion",
+            "credito_usado",
         )
 
+    # ── POL_VISIBILIDAD · gate CEO-ONLY ────────────────────────
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not _is_admin_request(self.context):
+            # Marcar CEO_ONLY_FIELDS como read_only para no-admin.
+            # Aún los ven en el GET (Frontend los mostrará si el role
+            # context también lo permite), pero no los pueden modificar.
+            for field_name in CEO_ONLY_FIELDS:
+                if field_name in self.fields:
+                    self.fields[field_name].read_only = True
+
+    # ── Validaciones de campos ─────────────────────────────────
+    def validate_codigo_marluvas(self, value):
+        """Exactamente 10 dígitos numéricos si se envía."""
+        if value in (None, "", 0):
+            return None
+        value = str(value).strip()
+        if not re.fullmatch(r"\d{10}", value):
+            raise serializers.ValidationError(
+                "codigo_marluvas debe tener exactamente 10 dígitos numéricos."
+            )
+        return value
+
+    def validate_dias_credito(self, value):
+        """Rango 0..180."""
+        if value is None:
+            return None
+        v = int(value)
+        if v < 0 or v > 180:
+            raise serializers.ValidationError(
+                "dias_credito debe estar entre 0 y 180."
+            )
+        return v
+
+    def validate_comision_pct(self, value):
+        """Rango 0..0.9999 (decimal, 0.085 = 8.5%)."""
+        if value is None:
+            return None
+        v = float(value)
+        if v < 0 or v > 0.9999:
+            raise serializers.ValidationError(
+                "comision_pct debe ser un decimal entre 0 y 0.9999 (0.085 = 8.5%)."
+            )
+        return value
+
+    def validate_estado(self, value):
+        """Enum canónico."""
+        if value is None:
+            return None
+        allowed = {"ACTIVO", "PAUSADO", "BLOQUEADO", "INACTIVO"}
+        v = str(value).upper()
+        if v not in allowed:
+            raise serializers.ValidationError(
+                f"estado inválido. Valores permitidos: {sorted(allowed)}."
+            )
+        return v
+
+    def validate_pais_iso2(self, value):
+        """ISO-3166 alpha-2 en mayúsculas (CR, BR, CL, PE, MX, etc.)."""
+        if value is None:
+            return None
+        v = str(value).strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", v):
+            raise serializers.ValidationError(
+                "pais_iso2 debe ser código ISO-3166 alpha-2 (2 letras mayúsculas)."
+            )
+        return v
+
+    def validate(self, attrs):
+        """POL_VISIBILIDAD · defensa en profundidad.
+
+        Aunque `__init__` ya marca los campos como read_only para
+        no-admin, DRF permite que campos read_only lleguen al payload
+        (solo los ignora en save). Aquí los eliminamos explícitamente
+        como defensa adicional y dejamos un log (WARNING) si un CLIENT
+        intentó modificarlos — señal de escalamiento malicioso.
+        """
+        if not _is_admin_request(self.context):
+            leaked = [f for f in CEO_ONLY_FIELDS if f in attrs]
+            if leaked:
+                import logging
+                log = logging.getLogger(__name__)
+                request = self.context.get("request")
+                log.warning(
+                    "POL_VISIBILIDAD: CLIENT intentó modificar campos CEO-ONLY: %s · "
+                    "email=%s role=%s path=%s",
+                    leaked,
+                    getattr(getattr(request, "user", None), "email", "?"),
+                    getattr(getattr(request, "user", None), "role", "?"),
+                    getattr(request, "path", "?"),
+                )
+                for f in leaked:
+                    attrs.pop(f, None)
+        return attrs
+
+    # ── Derivados ──────────────────────────────────────────────
     def get_credito_disponible(self, o):
         return float(o.credito_aprobado or 0) - float(o.credito_usado or 0)
 
@@ -23,20 +229,30 @@ class ClienteSerializer(serializers.ModelSerializer):
         return round((usado / aprobado) * 100, 2) if aprobado > 0 else 0.0
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Lista ligera para el grid (Clientes.jsx)
+# ═════════════════════════════════════════════════════════════════════
 class ClienteListSerializer(serializers.ModelSerializer):
-    """Versión ligera para el grid — incluye extensiones comerciales."""
+    """Versión ligera · no expone comision_pct en el listado."""
     credito_disponible = serializers.SerializerMethodField()
     tasa_utilizacion   = serializers.SerializerMethodField()
+    credito_limit_usd  = serializers.DecimalField(
+        source="credito_aprobado",
+        max_digits=14, decimal_places=2,
+        required=False, allow_null=True,
+    )
 
     class Meta:
         model  = Cliente
         fields = (
             "id", "razon_social", "nombre_comercial", "tax_id",
-            "tipo", "segmento", "pais_iso2", "ciudad", "estado",
-            "credito_aprobado", "credito_usado", "credito_disponible",
-            "tasa_utilizacion", "dias_credito",
+            "codigo_marluvas", "cedula_juridica",
+            "tipo", "segmento", "pais_iso2", "ciudad",
+            "estado",
+            "credito_aprobado", "credito_limit_usd", "credito_usado",
+            "credito_disponible", "tasa_utilizacion", "dias_credito",
             "nodo_asignado_id", "responsable_id",
-            "codigo_marluvas", "canal", "incoterm", "medio_pago",
+            "canal", "incoterm", "medio_pago",
             "is_active", "updated_at",
         )
 
@@ -49,6 +265,9 @@ class ClienteListSerializer(serializers.ModelSerializer):
         return round((usado / aprobado) * 100, 2) if aprobado > 0 else 0.0
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Snapshot semáforo de crédito
+# ═════════════════════════════════════════════════════════════════════
 class ClienteCreditSnapshotSerializer(serializers.ModelSerializer):
     class Meta:
         model  = ClienteCreditSnapshot

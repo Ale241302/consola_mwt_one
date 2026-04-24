@@ -30,6 +30,20 @@ def _calc_semaforo(tasa_util: float, dias_mora: int) -> str:
 
 
 class ClienteViewSet(viewsets.ViewSet):
+    """
+    CRUD de clientes B2B · sprint Cliente M3b.
+
+    IMPORTANTE — POL_VISIBILIDAD:
+      Los serializers aplican gate CEO-ONLY sobre los campos
+      credito_limit_usd / credito_aprobado / comision_pct. Para que la
+      política se active, el contexto debe incluir ``request`` (lo que
+      hacemos en `_ctx()` y pasamos a cada Serializer).
+    """
+
+    def _ctx(self, request):
+        """Context estándar DRF — requerido para POL_VISIBILIDAD."""
+        return {"request": request, "view": self}
+
     def list(self, request):
         qs = Cliente.objects.filter(is_active=True).order_by("razon_social")
         mapping = {
@@ -48,18 +62,18 @@ class ClienteViewSet(viewsets.ViewSet):
         q = request.query_params.get("q")
         if q:
             qs = qs.filter(razon_social__icontains=q)
-        return Response(ClienteListSerializer(qs, many=True).data)
+        return Response(ClienteListSerializer(qs, many=True, context=self._ctx(request)).data)
 
     def retrieve(self, request, pk=None):
         try:
             c = Cliente.objects.get(pk=pk, is_active=True)
         except Cliente.DoesNotExist:
             return Response({"detail": "Cliente no existe"}, status=404)
-        return Response(ClienteSerializer(c).data)
+        return Response(ClienteSerializer(c, context=self._ctx(request)).data)
 
     def create(self, request):
         data = {**request.data, "id": str(uuid.uuid4())}
-        s = ClienteSerializer(data=data)
+        s = ClienteSerializer(data=data, context=self._ctx(request))
         s.is_valid(raise_exception=True)
         s.save()
         return Response(s.data, status=201)
@@ -69,7 +83,8 @@ class ClienteViewSet(viewsets.ViewSet):
             c = Cliente.objects.get(pk=pk)
         except Cliente.DoesNotExist:
             return Response({"detail": "Cliente no existe"}, status=404)
-        s = ClienteSerializer(c, data=request.data, partial=True)
+        s = ClienteSerializer(c, data=request.data, partial=True,
+                              context=self._ctx(request))
         s.is_valid(raise_exception=True)
         s.save()
         return Response(s.data)

@@ -31,6 +31,12 @@ class Cliente(models.Model):
     medio_pago        = models.CharField(max_length=48, null=True, blank=True)
     direccion_entrega = models.TextField(null=True, blank=True)
 
+    # Extensiones 32_clientes_extensions.sql (sprint Cliente M3b):
+    cedula_juridica   = models.CharField(max_length=32, null=True, blank=True)
+    comision_pct      = models.DecimalField(
+        max_digits=6, decimal_places=4, null=True, blank=True,
+    )   # CEO-ONLY — ver POL_VISIBILIDAD en serializers.
+
     is_active        = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     updated_at       = models.DateTimeField(auto_now=True)

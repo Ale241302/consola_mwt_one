@@ -350,10 +350,12 @@ export const CLIENTS = [
     direccion_entrega: 'Av. Javier Prado 2450, San Isidro, Lima',
     contact: 'L. Paredes',  contacto_nombre: 'Luz Paredes',
     email: 'lpa@andesretail.pe',    phone: '+51 1 234 5678',
-    credito_dias: 60, credito_limit: 180000, credito_used: 142300,
+    credito_dias: 60, credito_limit: 180000, credito_limit_usd: 180000,
+    credito_used: 142300,
     credit_limit: 180000, credit_used: 142300, // alias legacy
-    medio_pago: 'transferencia', incoterm: 'CIF',
-    canal: 'distribuidor', estado: 'ACTIVO', band: 'AMBER',
+    comision_pct: 0.085, // 8.5% · CEO-ONLY
+    medio_pago: 'TRANSFER_BANCARIA', incoterm: 'CIF',
+    canal: 'DISTRIBUIDOR', estado: 'ACTIVO', estado_operativo: 'ACTIVO', band: 'AMBER',
     created_at: '2024-03-12',
   },
   {
@@ -364,10 +366,12 @@ export const CLIENTS = [
     direccion_entrega: 'Av. Apoquindo 4800, Las Condes, Santiago',
     contact: 'C. Rojas', contacto_nombre: 'Carolina Rojas',
     email: 'rojas@atacama.cl',      phone: '+56 2 987 6543',
-    credito_dias: 45, credito_limit: 240000, credito_used: 88500,
+    credito_dias: 45, credito_limit: 240000, credito_limit_usd: 240000,
+    credito_used: 88500,
     credit_limit: 240000, credit_used: 88500,
-    medio_pago: 'transferencia', incoterm: 'FOB',
-    canal: 'distribuidor', estado: 'ACTIVO', band: 'GREEN',
+    comision_pct: 0.065, // 6.5% · CEO-ONLY
+    medio_pago: 'TRANSFER_BANCARIA', incoterm: 'FOB',
+    canal: 'DISTRIBUIDOR', estado: 'ACTIVO', estado_operativo: 'ACTIVO', band: 'GREEN',
     created_at: '2023-11-04',
   },
   {
