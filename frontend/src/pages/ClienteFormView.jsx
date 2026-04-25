@@ -30,6 +30,7 @@ import {
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { CLIENTS } from "../data/mockData.js";
+import { clientesApi } from "../lib/api.js";
 
 // ─── Design tokens ───────────────────────────────────────────
 const NAVY  = "#0B1E3A";
@@ -195,18 +196,36 @@ export default function ScreenClienteFormView() {
     }
 
     try {
-      // TODO: wire to clientesApi.update/create — por ahora simula demo.
-      await new Promise(r => setTimeout(r, 420));
-      console.log("[mock] save client:", payload);
+      // POST/PATCH real al backend (antes era mock con setTimeout).
+      // Nota: comision_pct viene como decimal 0..1 desde el slider del FE
+      // (ej. 0.0975). El backend acepta así (NUMERIC(5,4) en clientes.cliente).
+      const saved = isEdit
+        ? await clientesApi.update(clienteId, payload)
+        : await clientesApi.create(payload);
       setBanner({
         type: "success",
         msg: isEdit
           ? (lang === "es" ? "Cambios guardados correctamente." : "Changes saved successfully.")
           : (lang === "es" ? "Cliente creado correctamente." : "Client created successfully."),
       });
-      setTimeout(() => navigate("/clientes", { replace: false }), 700);
+      // Si es nuevo y backend devolvió id, redirige al detalle del recién creado;
+      // si es edición, vuelve al detalle existente.
+      const targetId = isEdit ? clienteId : (saved?.id || saved?.uuid);
+      setTimeout(() => {
+        navigate(targetId ? `/clientes/${targetId}` : "/clientes", { replace: false });
+      }, 700);
     } catch (err) {
-      setBanner({ type: "error", msg: String(err?.message || err) });
+      // El error puede venir como objeto de DRF: {"campo": ["msg"]}
+      let msg = String(err?.message || err);
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed && typeof parsed === "object") {
+          msg = Object.entries(parsed)
+            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
+            .join("  ·  ");
+        }
+      } catch (_) { /* msg ya es string plano */ }
+      setBanner({ type: "error", msg });
     } finally {
       setSaving(false);
     }

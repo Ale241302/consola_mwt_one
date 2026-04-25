@@ -72,10 +72,15 @@ class ClienteViewSet(viewsets.ViewSet):
         return Response(ClienteSerializer(c, context=self._ctx(request)).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = ClienteSerializer(data=data, context=self._ctx(request))
+        s = ClienteSerializer(data=request.data, context=self._ctx(request))
         s.is_valid(raise_exception=True)
-        s.save()
+        # ── id explícito vía save(**kwargs) ──
+        # `id` está en read_only_fields del serializer → DRF lo descarta
+        # del validated_data. Si dejamos que `save()` siga sin él, Django
+        # manda INSERT id=NULL y revienta la PK NOT NULL. La forma canónica
+        # es inyectarlo como kwarg de save(): se mergea a validated_data
+        # antes de llamar a create(). Mismo patrón aplicado en nodos.
+        s.save(id=uuid.uuid4())
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
