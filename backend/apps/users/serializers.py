@@ -72,6 +72,14 @@ class MwtUserListSerializer(serializers.ModelSerializer):
 
 
 class MwtUserSerializer(serializers.ModelSerializer):
+    """Serializer admin · CRUD completo + addresses anidadas read-only.
+
+    El PATCH/POST puede recibir `addresses[]` en el payload, pero la
+    persistencia la hace `_process_addresses_atomic()` en el ViewSet
+    (transaction.atomic con create/update/soft-delete por id).
+    """
+    addresses = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model  = MwtUser
         fields = "__all__"
@@ -79,6 +87,13 @@ class MwtUserSerializer(serializers.ModelSerializer):
             "password_hash": {"write_only": True, "required": False},
             "api_key_hash":  {"write_only": True, "required": False},
         }
+
+    def get_addresses(self, obj):
+        from .models import UserAddress
+        qs = UserAddress.objects.filter(user_id=obj.id, is_active=True).order_by(
+            "-is_default", "-created_at",
+        )
+        return UserAddressSerializer(qs, many=True).data
 
 
 # ─────────────────────────────────────────────────────────────────────

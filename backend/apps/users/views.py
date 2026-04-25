@@ -145,6 +145,8 @@ class MwtUserViewSet(viewsets.ModelViewSet):
         data = dict(request.data)
         if not data.get("id"):
             data["id"] = str(uuid.uuid4())
+        # Extraer addresses para procesarlas aparte (transaction.atomic).
+        payload_addresses = data.pop("addresses", None)
         # Si viene password raw → hashearlo (SHA-256 salted simple — en
         # prod swap por Argon2).
         raw_pwd = data.pop("password", None)
@@ -152,9 +154,18 @@ class MwtUserViewSet(viewsets.ModelViewSet):
             raw_pwd = raw_pwd if isinstance(raw_pwd, str) else raw_pwd[0]
             data["password_hash"] = _hash_password(raw_pwd)
             data["password_changed_at"] = timezone.now().isoformat()
-        ser = self.get_serializer(data=data)
-        ser.is_valid(raise_exception=True)
-        ser.save()
+
+        try:
+            with transaction.atomic():
+                ser = self.get_serializer(data=data)
+                ser.is_valid(raise_exception=True)
+                ser.save()
+
+                # Procesar direcciones (si vinieron) en la misma TX.
+                if payload_addresses is not None:
+                    _process_addresses_atomic(data["id"], payload_addresses)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
 
         # AUTO-SYNC con core.users · sin esto el user no puede loguearse.
         # Toda persona creada via /api/users/ debe poder hacer login
@@ -168,20 +179,33 @@ class MwtUserViewSet(viewsets.ModelViewSet):
                 user_uuid  = data["id"],
             )
 
-        return Response(ser.data, status=status.HTTP_201_CREATED)
+        # Re-leer la instancia para que la respuesta incluya addresses.
+        instance = MwtUser.objects.get(pk=data["id"])
+        out = self.get_serializer(instance).data
+        return Response(out, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
-        """Misma sincronización si en un PATCH viene password nuevo."""
+        """Misma sincronización si en un PATCH viene password nuevo + addresses."""
         instance = self.get_object()
         data = dict(request.data)
+        # Extraer addresses para procesar aparte.
+        payload_addresses = data.pop("addresses", None)
         raw_pwd = data.pop("password", None)
         if raw_pwd:
             raw_pwd = raw_pwd if isinstance(raw_pwd, str) else raw_pwd[0]
             data["password_hash"] = _hash_password(raw_pwd)
             data["password_changed_at"] = timezone.now().isoformat()
-        ser = self.get_serializer(instance, data=data, partial=True)
-        ser.is_valid(raise_exception=True)
-        ser.save()
+
+        try:
+            with transaction.atomic():
+                ser = self.get_serializer(instance, data=data, partial=True)
+                ser.is_valid(raise_exception=True)
+                ser.save()
+
+                if payload_addresses is not None:
+                    _process_addresses_atomic(instance.id, payload_addresses)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
 
         if raw_pwd:
             _sync_to_core_users(
@@ -202,7 +226,9 @@ class MwtUserViewSet(viewsets.ModelViewSet):
                 user_uuid = str(instance.id),
             )
 
-        return Response(ser.data)
+        # Re-leer para devolver addresses actualizadas (las del SerializerMethodField).
+        instance.refresh_from_db()
+        return Response(self.get_serializer(instance).data)
     partial_update = update
 
     def perform_destroy(self, instance):
