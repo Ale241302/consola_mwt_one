@@ -59,10 +59,53 @@ export default function ScreenProductFormView() {
   const { productId } = useParams();
 
   const isEdit = Boolean(productId);
-  const existing = useMemo(
-    () => isEdit ? BRAND_PRODUCTS.find(p => p.id === productId) : null,
-    [isEdit, productId]
-  );
+
+  // ── Fetch real al backend en modo EDIT (antes leía BRAND_PRODUCTS mock,
+  //    por eso productos creados vía API mostraban form vacío) ──
+  const [existing, setExisting] = useState(null);
+  const [loadingExisting, setLoadingExisting] = useState(isEdit);
+
+  useEffect(() => {
+    if (!isEdit) { setExisting(null); return; }
+    let cancelled = false;
+    setLoadingExisting(true);
+    productosApi.get(productId)
+      .then(p => {
+        if (cancelled) return;
+        // Adapter: el backend guarda los 14 atributos técnicos dentro de
+        // `especificaciones` (JSON). Los promovemos al top-level del objeto
+        // `existing` para que el resto del form siga leyéndolos como antes.
+        const e = p.especificaciones || {};
+        setExisting({
+          ...p,
+          tipo_calzado:         e.tipo_calzado,
+          cubrepuntera:         e.cubrepuntera,
+          tipo_puntera:         e.tipo_puntera,
+          antiperforante:       e.antiperforante,
+          protector_metatarsal: e.protector_metatarsal,
+          capellada:            e.capellada,
+          disipativo_energia:   e.disipativo_energia,
+          suela:                e.suela,
+          normativa:            e.normativa,
+          cierre:               e.cierre,
+          color:                e.color,
+          segmento:             e.segmento,
+          materiales_circulares: e.materiales_circulares,
+          plantilla_interna:    e.plantilla_interna,
+          ncm:                  e.ncm,
+          riesgo:               e.riesgo || [],
+          // Sizes vienen en p.tallas (UUIDs) o en e.sizes (mock legacy)
+          // Nodes vienen en e.nodes (no hay columna dedicada)
+          // Visibility/pricing en e.visibility / e.client_prices
+        });
+        setLoadingExisting(false);
+      })
+      .catch(err => {
+        console.error('[productos] fetch failed:', err);
+        setLoadingExisting(false);
+      });
+    return () => { cancelled = true; };
+  }, [isEdit, productId]);
 
   // ── Estado del formulario ────────
   const [sku, setSku] = useState(existing?.sku || '');
@@ -111,8 +154,57 @@ export default function ScreenProductFormView() {
   });
   // Riesgo — MULTI-CHECKBOX (no single-select)
   const [riesgos, setRiesgos] = useState(
-    existing?.riesgo ? [existing.riesgo] : []
+    Array.isArray(existing?.riesgo) ? existing.riesgo
+      : (existing?.riesgo ? [existing.riesgo] : [])
   );
+
+  // ── Repuebla TODOS los campos cuando llega `existing` del fetch async ──
+  // Los useState() iniciales corrieron con existing=null; ahora que tenemos
+  // los datos reales del backend, sincronizamos cada campo. Sin esto, el
+  // form se quedaría vacío en modo edit hasta que el usuario tocara algo.
+  useEffect(() => {
+    if (!existing) return;
+    setSku(existing.sku || '');
+    setNombre(existing.nombre || '');
+    setBrandId(existing.marca_id || '');
+    const espGallery = existing.especificaciones?.gallery || [];
+    setGalleryKeys(espGallery.length ? espGallery
+      : (existing.imagen_url ? [existing.imagen_url] : []));
+    const espFichas = existing.especificaciones?.fichas || [];
+    setFichaKeys(espFichas.length ? espFichas
+      : (existing.ficha_url ? [existing.ficha_url] : []));
+    setAttrs({
+      tipo_calzado:         existing.tipo_calzado         || BRAND_ATTRIBUTES.tipo_calzado[0],
+      cubrepuntera:         existing.cubrepuntera         || 'No',
+      tipo_puntera:         existing.tipo_puntera         || 'No tiene',
+      antiperforante:       existing.antiperforante       || 'No',
+      protector_metatarsal: existing.protector_metatarsal || 'No',
+      capellada:            existing.capellada            || BRAND_ATTRIBUTES.capellada[0],
+      disipativo_energia:   existing.disipativo_energia   || 'No',
+      suela:                existing.suela                || BRAND_ATTRIBUTES.suela[0],
+      normativa:            existing.normativa            || 'No',
+      cierre:               existing.cierre               || BRAND_ATTRIBUTES.cierre[0],
+      color:                existing.color                || BRAND_ATTRIBUTES.color[0],
+      segmento:             existing.segmento             || BRAND_ATTRIBUTES.segmento[0],
+      materiales_circulares: existing.materiales_circulares|| 'No',
+      plantilla_interna:    existing.plantilla_interna    || 'No',
+      ncm:                  existing.ncm                  || '',
+    });
+    setRiesgos(Array.isArray(existing.riesgo) ? existing.riesgo : []);
+    // Tallas: el backend las guarda en p.tallas (array de UUIDs o codes).
+    setSelectedSizes(Array.isArray(existing.tallas)
+      ? existing.tallas
+      : (existing.especificaciones?.sizes || []));
+    // Nodes: solo en especificaciones.nodes (no hay columna dedicada)
+    setSelectedNodes(existing.especificaciones?.nodes || []);
+    // Visibility + pricing
+    const vis = existing.especificaciones?.visibility || {};
+    if (vis.visible_to_all !== undefined) setVisibleToAll(!!vis.visible_to_all);
+    setClientOverrides(vis.client_overrides || {});
+    setListPrice(Number(existing.precio_lista) || 0);
+    setMwtPrice(Number(existing.precio_mwt)   || 0);
+    setClientPrices(existing.especificaciones?.client_prices || {});
+  }, [existing]);
 
   // Sección C · relaciones
   const existingProductSizes = useMemo(
