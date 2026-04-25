@@ -143,6 +143,84 @@ export default function ScreenClienteDetail() {
     return adaptBackendClient(rawClient);
   }, [rawClient]);
 
+  // ─── TODOS los hooks DEBEN ejecutarse en cada render (regla de hooks
+  //     de React). Por eso los `useMemo` van ANTES de los returns
+  //     condicionales (loading / not-found), con null-safety en su body
+  //     para que no fallen cuando `client` aún no resolvió. ───
+  const cid = client?.id;
+
+  /* ── Data slices ────────────────── */
+  const expedientesCliente = useMemo(
+    () => cid ? EXPEDIENTES.filter(e => e.client_id === cid) : [],
+    [cid]
+  );
+  const expedientesActivos = useMemo(
+    () => expedientesCliente.filter(e => e.status !== 'CERRADO'),
+    [expedientesCliente]
+  );
+  const pagosCliente = useMemo(
+    () => cid
+      ? CLIENT_PAYMENTS.filter(p => p.client_id === cid)
+          .sort((a,b) => (a.date < b.date ? 1 : -1))
+      : [],
+    [cid]
+  );
+  const productosCliente = useMemo(
+    () => cid
+      ? CLIENT_PRODUCTS_BOUGHT.filter(p => p.client_id === cid)
+          .sort((a,b) => b.revenue_12m - a.revenue_12m)
+      : [],
+    [cid]
+  );
+
+  /* ── KPIs ───────────────────────── */
+  const kpis = useMemo(() => {
+    if (!client) return {
+      credito_limit:0, credito_used:0, credito_avail:0, credito_pct:0,
+      total_facturado:0, total_pagado:0, saldo:0,
+      dso:0, expedientes_activos:0,
+    };
+    const credito_limit = client.credito_limit || 0;
+    const credito_used  = client.credito_used  || 0;
+    const credito_avail = Math.max(0, credito_limit - credito_used);
+    const credito_pct   = credito_limit ? credito_used / credito_limit : 0;
+
+    const total_facturado = expedientesCliente.reduce((a,e) => a + (e.total_invoiced || 0), 0);
+    const total_pagado    = expedientesCliente.reduce((a,e) => a + (e.total_paid     || 0), 0);
+    const saldo           = total_facturado - total_pagado;
+
+    // DSO (Days Sales Outstanding) ~ weighted avg credit_days of active expedientes
+    const dsoNum = expedientesActivos.reduce((a,e) => a + (e.credit_days || 0) * (e.balance || 0), 0);
+    const dsoDen = expedientesActivos.reduce((a,e) => a + (e.balance || 0), 0);
+    const dso = dsoDen ? Math.round(dsoNum / dsoDen) : client.credito_dias;
+
+    return {
+      credito_limit, credito_used, credito_avail, credito_pct,
+      total_facturado, total_pagado, saldo,
+      dso, expedientes_activos: expedientesActivos.length,
+    };
+  }, [client, expedientesCliente, expedientesActivos]);
+
+  /* ── Alertas derivadas ────────── */
+  const alertas = useMemo(() => {
+    if (!client) return [];
+    const out = [];
+    if (kpis.credito_pct >= 1)   out.push({ severity:'critical', msg: `Crédito al ${(kpis.credito_pct*100).toFixed(0)}% — bloqueo automático.` });
+    else if (kpis.credito_pct >= 0.85) out.push({ severity:'warning', msg: `Crédito al ${(kpis.credito_pct*100).toFixed(0)}% — revisar antes de aprobar nueva OC.` });
+    expedientesActivos.forEach(e => {
+      if (e.credit_days >= 75) out.push({ severity:'critical', msg: `${e.ref} · reloj de crédito ${e.credit_days}d · cliente debería estar bloqueado.` });
+      else if (e.credit_days >= 60) out.push({ severity:'warning', msg: `${e.ref} · reloj ${e.credit_days}d · negociar cobro / garantía.` });
+    });
+    const rejected = pagosCliente.filter(p => p.status === 'rejected');
+    if (rejected.length) out.push({ severity:'warning', msg: `${rejected.length} pago(s) rechazado(s) históricamente · revisar origen de fondos.` });
+    const pending = pagosCliente.filter(p => p.status === 'pending');
+    if (pending.length >= 2) out.push({ severity:'info', msg: `${pending.length} pagos en status pending · acelerar conciliación bancaria.` });
+    if (client.estado === 'BLOQUEADO') out.push({ severity:'critical', msg: 'Cliente BLOQUEADO — no emitir nuevas proformas sin autorización CEO.' });
+    if (!out.length) out.push({ severity:'ok', msg: 'Sin señales activas. Cliente saludable.' });
+    return out;
+  }, [kpis, expedientesActivos, pagosCliente, client]);
+
+  // ── Returns condicionales DESPUÉS de todos los hooks ──
   if (loading) {
     return (
       <div className="page">
@@ -170,64 +248,6 @@ export default function ScreenClienteDetail() {
   }
 
   const channel = CHANNEL_META[client.canal] || CHANNEL_META.directo;
-
-  /* ── Data slices ────────────────── */
-  const expedientesCliente = useMemo(
-    () => EXPEDIENTES.filter(e => e.client_id === client.id),
-    [client.id]
-  );
-  const expedientesActivos = expedientesCliente.filter(e => e.status !== 'CERRADO');
-  const pagosCliente = useMemo(
-    () => CLIENT_PAYMENTS.filter(p => p.client_id === client.id)
-      .sort((a,b) => (a.date < b.date ? 1 : -1)),
-    [client.id]
-  );
-  const productosCliente = useMemo(
-    () => CLIENT_PRODUCTS_BOUGHT.filter(p => p.client_id === client.id)
-      .sort((a,b) => b.revenue_12m - a.revenue_12m),
-    [client.id]
-  );
-
-  /* ── KPIs ───────────────────────── */
-  const kpis = useMemo(() => {
-    const credito_limit = client.credito_limit || 0;
-    const credito_used  = client.credito_used  || 0;
-    const credito_avail = Math.max(0, credito_limit - credito_used);
-    const credito_pct   = credito_limit ? credito_used / credito_limit : 0;
-
-    const total_facturado = expedientesCliente.reduce((a,e) => a + (e.total_invoiced || 0), 0);
-    const total_pagado    = expedientesCliente.reduce((a,e) => a + (e.total_paid     || 0), 0);
-    const saldo           = total_facturado - total_pagado;
-
-    // DSO (Days Sales Outstanding) ~ weighted avg credit_days of active expedientes
-    const dsoNum = expedientesActivos.reduce((a,e) => a + (e.credit_days || 0) * (e.balance || 0), 0);
-    const dsoDen = expedientesActivos.reduce((a,e) => a + (e.balance || 0), 0);
-    const dso = dsoDen ? Math.round(dsoNum / dsoDen) : client.credito_dias;
-
-    return {
-      credito_limit, credito_used, credito_avail, credito_pct,
-      total_facturado, total_pagado, saldo,
-      dso, expedientes_activos: expedientesActivos.length,
-    };
-  }, [client, expedientesCliente, expedientesActivos]);
-
-  /* ── Alertas derivadas ────────── */
-  const alertas = useMemo(() => {
-    const out = [];
-    if (kpis.credito_pct >= 1)   out.push({ severity:'critical', msg: `Crédito al ${(kpis.credito_pct*100).toFixed(0)}% — bloqueo automático.` });
-    else if (kpis.credito_pct >= 0.85) out.push({ severity:'warning', msg: `Crédito al ${(kpis.credito_pct*100).toFixed(0)}% — revisar antes de aprobar nueva OC.` });
-    expedientesActivos.forEach(e => {
-      if (e.credit_days >= 75) out.push({ severity:'critical', msg: `${e.ref} · reloj de crédito ${e.credit_days}d · cliente debería estar bloqueado.` });
-      else if (e.credit_days >= 60) out.push({ severity:'warning', msg: `${e.ref} · reloj ${e.credit_days}d · negociar cobro / garantía.` });
-    });
-    const rejected = pagosCliente.filter(p => p.status === 'rejected');
-    if (rejected.length) out.push({ severity:'warning', msg: `${rejected.length} pago(s) rechazado(s) históricamente · revisar origen de fondos.` });
-    const pending = pagosCliente.filter(p => p.status === 'pending');
-    if (pending.length >= 2) out.push({ severity:'info', msg: `${pending.length} pagos en status pending · acelerar conciliación bancaria.` });
-    if (client.estado === 'BLOQUEADO') out.push({ severity:'critical', msg: 'Cliente BLOQUEADO — no emitir nuevas proformas sin autorización CEO.' });
-    if (!out.length) out.push({ severity:'ok', msg: 'Sin señales activas. Cliente saludable.' });
-    return out;
-  }, [kpis, expedientesActivos, pagosCliente, client]);
 
   return (
     <div className="page">
