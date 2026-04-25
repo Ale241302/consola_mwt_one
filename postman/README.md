@@ -24,10 +24,24 @@ postman/
    - El test script guarda `access_token`, `refresh_token`, `user_id`, `user_email`, `user_role` en el environment automáticamente.
    - Todos los demás requests heredan el `Bearer {{access_token}}` (auth definido a nivel de colección).
 
-3. **Setear UUIDs reales**
-   - El environment trae placeholders vacíos: `client_uuid`, `brand_uuid`, `product_uuid`, etc.
-   - Lánzate al primer `List` de cualquier módulo (`8 · Clientes ▸ List clientes`) → copia un `id` de la respuesta → pégalo en el environment como `client_uuid`.
-   - Repite para cada UUID que necesites.
+3. **Setear UUIDs reales** (automático ahora)
+   - **14 endpoints `List` rellenan UUIDs solos**. Sólo lanza estos y el environment se llena en cascada:
+     - `List clientes`     → `client_uuid`
+     - `List marcas`       → `brand_uuid`
+     - `List productos`    → `product_uuid`
+     - `List proveedores`  → `supplier_uuid`
+     - `List nodos`        → `node_uuid`
+     - `List OCs`          → `oc_uuid`
+     - `List expedientes`  → `expediente_uuid`
+     - `List transferencias` → `transfer_uuid`
+     - `List stock`        → `stock_uuid`
+     - `List pagos`        → `pago_uuid`
+     - `List cobros`       → `cobro_uuid`
+     - `List email templates` → `template_uuid`
+     - `List users`        → `user_uuid`
+     - `List threads`      → `thread_uuid`
+   - El test script toma `response[0].id` y lo guarda en el environment.
+   - Después puedes lanzar todos los `Retrieve / Update / Delete` que dependen de esos UUIDs sin tocar nada.
 
 4. **Run completo**
    - Click derecho en la colección → `Run collection` → marca todos los folders → `Run`.

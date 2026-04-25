@@ -1,4 +1,5 @@
 $kind: http-request
+name: Create user
 url: "{{base_url}}/api/users"
 method: POST
 headers:
@@ -7,11 +8,11 @@ body:
   type: json
   content: |-
     {
-      "email_plain": "demo@muitowork.com",
-      "full_name": "Demo User",
-      "role_default": "operator",
+      "email_plain": "alvaro@muitowork.com",
+      "full_name": "Alvaro",
+      "role_default": "superadmin",
       "preferred_language": "es",
       "timezone": "America/Lima",
-      "password": "DemoPass123!"
+      "password": "MuitoWork2026?"
     }
 order: 3000

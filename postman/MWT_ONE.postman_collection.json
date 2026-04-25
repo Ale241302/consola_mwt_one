@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "3bea6a77-08c4-4ce4-b6fc-c05e9aafad79",
+    "_postman_id": "6c1a5f62-e7e9-4778-bad7-71d5dbf5423c",
     "name": "MWT.ONE · API completa (15 módulos)",
     "description": "Colección de pruebas de la API REST del ERP MWT.ONE.\n\nCubre los 15 módulos:\n  1. Dashboard\n  2. Expedientes\n  3. Pipeline\n  4. Portal B2B\n  5. Financiero\n  6. Transferencias\n  7. Nodos\n  8. Clientes\n  9. Marcas\n  10. Productos\n  11. Proveedores\n  12. Inventario\n  13. Plantillas de Email\n  14. Historial de Notificaciones\n  15. Cobros\n\nPlus: Auth, Users + Roles, Storage, AI Hub.\n\nFlujo recomendado:\n  1. Importa también MWT_ONE.postman_environment.json y selecciónalo.\n  2. Edita la variable `base_url` si no es https://consola.mwt.one.\n  3. Ejecuta \"Auth ▸ Login\" — guarda automáticamente access_token y user_id.\n  4. Recorre los demás endpoints (la auth Bearer ya está aplicada a la colección).\n\nVariables clave (definidas en environment):\n  · base_url           = https://consola.mwt.one\n  · access_token       = (lo setea Login)\n  · refresh_token      = (lo setea Login)\n  · user_id            = (lo setea Login)\n  · admin_email        = alejandro@muitowork.com\n  · admin_password     = MuitoWork2026?\n  · client_uuid        = (cualquier cliente real — para probar /clientes/<id>/)\n  · brand_uuid         = (cualquier marca real)\n  · product_uuid       = (cualquier producto real)\n  · oc_uuid            = (cualquier OC real)\n\nConectado a GitHub: ver postman/README.md",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -363,7 +363,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('oc_uuid', item['id']);",
+                  "      console.log('[auto] oc_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Retrieve OC",
@@ -489,7 +512,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('expediente_uuid', item['id']);",
+                  "      console.log('[auto] expediente_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Retrieve expediente",
@@ -968,7 +1014,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('pago_uuid', item['id']);",
+                  "      console.log('[auto] pago_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Retrieve pago",
@@ -1136,7 +1205,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('transfer_uuid', item['id']);",
+                  "      console.log('[auto] transfer_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Retrieve transferencia",
@@ -1303,7 +1395,49 @@
       "description": "CRUD de nodos (warehouses, stores, hubs).",
       "item": [
         {
-          "name": "List nodo",
+          "name": "List nodos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/nodos/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "nodos"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('node_uuid', item['id']);",
+                  "      console.log('[auto] node_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List nodo (CRUD)",
           "request": {
             "method": "GET",
             "header": [],
@@ -1322,7 +1456,7 @@
           "response": []
         },
         {
-          "name": "Retrieve nodo",
+          "name": "Retrieve nodo (CRUD)",
           "request": {
             "method": "GET",
             "header": [],
@@ -1342,7 +1476,7 @@
           "response": []
         },
         {
-          "name": "Create nodo",
+          "name": "Create nodo (CRUD)",
           "request": {
             "method": "POST",
             "header": [
@@ -1375,7 +1509,7 @@
           "response": []
         },
         {
-          "name": "Update nodo",
+          "name": "Update nodo (CRUD)",
           "request": {
             "method": "PATCH",
             "header": [
@@ -1409,7 +1543,7 @@
           "response": []
         },
         {
-          "name": "Delete nodo",
+          "name": "Delete nodo (CRUD)",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1451,7 +1585,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('client_uuid', item['id']);",
+                  "      console.log('[auto] client_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "List clientes (filtros)",
@@ -1856,7 +2013,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('brand_uuid', item['id']);",
+                  "      console.log('[auto] brand_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Retrieve marca",
@@ -2398,7 +2578,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('product_uuid', item['id']);",
+                  "      console.log('[auto] product_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "List productos · filtros",
@@ -2561,7 +2764,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('supplier_uuid', item['id']);",
+                  "      console.log('[auto] supplier_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Retrieve proveedor",
@@ -2693,7 +2919,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('stock_uuid', item['id']);",
+                  "      console.log('[auto] stock_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "List stock · por nodo",
@@ -2816,7 +3065,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('template_uuid', item['id']);",
+                  "      console.log('[auto] template_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Retrieve template",
@@ -3055,7 +3327,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('cobro_uuid', item['id']);",
+                  "      console.log('[auto] cobro_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Retrieve cobro",
@@ -3171,7 +3466,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('user_uuid', item['id']);",
+                  "      console.log('[auto] user_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Retrieve user",
@@ -3804,7 +4122,30 @@
             },
             "description": ""
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  try {",
+                  "    const data = pm.response.json();",
+                  "    let item = null;",
+                  "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                  "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                  "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                  "    if (item && item['id']) {",
+                  "      pm.environment.set('thread_uuid', item['id']);",
+                  "      console.log('[auto] thread_uuid =', item['id']);",
+                  "    }",
+                  "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Send message",

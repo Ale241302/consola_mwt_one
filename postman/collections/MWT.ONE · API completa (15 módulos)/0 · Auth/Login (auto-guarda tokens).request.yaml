@@ -1,6 +1,7 @@
 $kind: http-request
+name: Login (auto-guarda tokens)
 description: Devuelve access + refresh JWT y los guarda en variables del environment.
-url: "{{base_url}}/api/auth/login"
+url: "{{base_url}}/api/auth/login/"
 method: POST
 headers:
   Content-Type: application/json

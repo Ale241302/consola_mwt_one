@@ -95,7 +95,20 @@ def url_obj(path, query=None):
     return out
 
 
-def req(name, method, path, body=None, query=None, description=""):
+def req(name, method, path, body=None, query=None, description="",
+        auto_extract_id_to=None, auto_extract_field="id"):
+    """
+    Construye un request Postman.
+
+    auto_extract_id_to: si se especifica, agrega un test script que
+        toma el primer item de la respuesta y guarda su `auto_extract_field`
+        en la variable de environment indicada. Ej:
+            auto_extract_id_to="client_uuid"
+        guarda response.json()[0].id en {{client_uuid}}.
+
+        Útil para los endpoints `List` — el primer Send rellena el UUID
+        para todos los demás endpoints que dependen de él.
+    """
     r = {
         "name": name,
         "request": {
@@ -114,6 +127,28 @@ def req(name, method, path, body=None, query=None, description=""):
             "raw": json.dumps(body, indent=2, ensure_ascii=False),
             "options": {"raw": {"language": "json"}},
         }
+    if auto_extract_id_to:
+        r["event"] = [{
+            "listen": "test",
+            "script": {
+                "type": "text/javascript",
+                "exec": [
+                    "if (pm.response.code === 200) {",
+                    "  try {",
+                    "    const data = pm.response.json();",
+                    "    let item = null;",
+                    "    if (Array.isArray(data) && data.length > 0) item = data[0];",
+                    "    else if (data && Array.isArray(data.results) && data.results.length > 0) item = data.results[0];",
+                    "    else if (data && Array.isArray(data.clients) && data.clients.length > 0) item = data.clients[0];",
+                    f"    if (item && item['{auto_extract_field}']) {{",
+                    f"      pm.environment.set('{auto_extract_id_to}', item['{auto_extract_field}']);",
+                    f"      console.log('[auto] {auto_extract_id_to} =', item['{auto_extract_field}']);",
+                    "    }",
+                    "  } catch (e) { console.warn('[auto-extract] parse failed:', e); }",
+                    "}",
+                ],
+            },
+        }]
     return r
 
 
@@ -209,7 +244,7 @@ dashboard_items = [
 # ═════════════════════════════════════════════════════════════════════
 expedientes_items = [
     # OCs
-    req("List OCs",     "GET",  "/api/ocs/"),
+    req("List OCs",     "GET",  "/api/ocs/", auto_extract_id_to="oc_uuid"),
     req("Retrieve OC",  "GET",  "/api/ocs/{{oc_uuid}}/"),
     req("Create OC",    "POST", "/api/ocs/", body={
         "codigo": "PO-DEMO-2026-0001",
@@ -224,7 +259,7 @@ expedientes_items = [
     req("Delete OC",    "DELETE", "/api/ocs/{{oc_uuid}}/"),
 
     # Expedientes
-    req("List expedientes",       "GET",  "/api/expedientes/"),
+    req("List expedientes",       "GET",  "/api/expedientes/", auto_extract_id_to="expediente_uuid"),
     req("Retrieve expediente",    "GET",  "/api/expedientes/{{expediente_uuid}}/"),
     req("Update expediente",      "PATCH","/api/expedientes/{{expediente_uuid}}/",
         body={"fase": "PRODUCCION"}),
@@ -276,7 +311,7 @@ portal_items = [
 # 5. Financiero (parte 1 — pagos + vencimientos + FX)
 # ═════════════════════════════════════════════════════════════════════
 financiero_items = [
-    req("List pagos",          "GET", "/api/pagos/"),
+    req("List pagos",          "GET", "/api/pagos/", auto_extract_id_to="pago_uuid"),
     req("Retrieve pago",       "GET", "/api/pagos/{{pago_uuid}}/"),
     req("Create pago",         "POST", "/api/pagos/", body={
         "cliente_id": "{{client_uuid}}", "monto_usd": 5000.0,
@@ -296,7 +331,7 @@ financiero_items = [
 # 6. Transferencias
 # ═════════════════════════════════════════════════════════════════════
 transfers_items = [
-    req("List transferencias",       "GET", "/api/transferencias/"),
+    req("List transferencias",       "GET", "/api/transferencias/", auto_extract_id_to="transfer_uuid"),
     req("Retrieve transferencia",    "GET", "/api/transferencias/{{transfer_uuid}}/"),
     req("Create transferencia",      "POST","/api/transferencias/", body={
         "codigo": "TRF-2026-DEMO",
@@ -317,8 +352,10 @@ transfers_items = [
 # ═════════════════════════════════════════════════════════════════════
 # 7. Nodos
 # ═════════════════════════════════════════════════════════════════════
-nodos_items = crud(
-    "nodo", "/api/nodos",
+nodos_items = [
+    req("List nodos", "GET", "/api/nodos/", auto_extract_id_to="node_uuid"),
+] + crud(
+    "nodo (CRUD)", "/api/nodos",
     sample_create={
         "codigo": "NODO-DEMO",
         "nombre": "Nodo demo Lima",
@@ -335,7 +372,7 @@ nodos_items = crud(
 # 8. Clientes
 # ═════════════════════════════════════════════════════════════════════
 clientes_items = [
-    req("List clientes",       "GET", "/api/clientes/"),
+    req("List clientes",       "GET", "/api/clientes/", auto_extract_id_to="client_uuid"),
     req("List clientes (filtros)", "GET", "/api/clientes/",
         query={"q": "Atacama", "tipo": "B2B", "estado": "ACTIVO"}),
     req("Retrieve cliente",    "GET", "/api/clientes/{{client_uuid}}/"),
@@ -376,7 +413,7 @@ clientes_items = [
 # 9. Marcas (incluye motor de precios brand-client)
 # ═════════════════════════════════════════════════════════════════════
 marcas_items = [
-    req("List marcas",       "GET", "/api/marcas/"),
+    req("List marcas",       "GET", "/api/marcas/", auto_extract_id_to="brand_uuid"),
     req("Retrieve marca",    "GET", "/api/marcas/{{brand_uuid}}/"),
     req("Create marca",      "POST","/api/marcas/", body={
         "nombre": "Marca Demo", "codigo": "MD",
@@ -435,7 +472,7 @@ marcas_items = [
 # 10. Productos
 # ═════════════════════════════════════════════════════════════════════
 productos_items = [
-    req("List productos",   "GET", "/api/productos/"),
+    req("List productos",   "GET", "/api/productos/", auto_extract_id_to="product_uuid"),
     req("List productos · filtros", "GET", "/api/productos/",
         query={"brand_id": "{{brand_uuid}}", "q": "Oxford"}),
     req("Retrieve producto","GET", "/api/productos/{{product_uuid}}/"),
@@ -455,7 +492,7 @@ productos_items = [
 # 11. Proveedores
 # ═════════════════════════════════════════════════════════════════════
 proveedores_items = [
-    req("List proveedores",    "GET", "/api/proveedores/"),
+    req("List proveedores",    "GET", "/api/proveedores/", auto_extract_id_to="supplier_uuid"),
     req("Retrieve proveedor",  "GET", "/api/proveedores/{{supplier_uuid}}/"),
     req("Create proveedor",    "POST","/api/proveedores/", body={
         "razon_social": "Fabrica Demo Ltda", "codigo": "PROV-DEMO",
@@ -474,7 +511,7 @@ proveedores_items = [
 # 12. Inventario
 # ═════════════════════════════════════════════════════════════════════
 inventario_items = [
-    req("List stock",          "GET", "/api/stock/"),
+    req("List stock",          "GET", "/api/stock/", auto_extract_id_to="stock_uuid"),
     req("List stock · por nodo","GET", "/api/stock/", query={"node_id": "{{node_uuid}}"}),
     req("Retrieve stock",      "GET", "/api/stock/{{stock_uuid}}/"),
     req("List movimientos",    "GET", "/api/movimientos/"),
@@ -491,7 +528,7 @@ inventario_items = [
 # 13. Plantillas Email
 # ═════════════════════════════════════════════════════════════════════
 templates_items = [
-    req("List email templates",    "GET", "/api/email-templates/"),
+    req("List email templates",    "GET", "/api/email-templates/", auto_extract_id_to="template_uuid"),
     req("Retrieve template",       "GET", "/api/email-templates/{{template_uuid}}/"),
     req("Create template",         "POST","/api/email-templates/", body={
         "key": "demo.welcome",
@@ -520,7 +557,7 @@ notif_items = [
 # 15. Cobros
 # ═════════════════════════════════════════════════════════════════════
 cobros_items = [
-    req("List cobros",              "GET", "/api/cobros/"),
+    req("List cobros",              "GET", "/api/cobros/", auto_extract_id_to="cobro_uuid"),
     req("Retrieve cobro",           "GET", "/api/cobros/{{cobro_uuid}}/"),
     req("Create cobro",             "POST","/api/cobros/", body={
         "cliente_id": "{{client_uuid}}",
@@ -538,7 +575,7 @@ cobros_items = [
 # Bonus · Auth (Users + Roles)
 # ═════════════════════════════════════════════════════════════════════
 users_items = [
-    req("List users",            "GET", "/api/users/"),
+    req("List users",            "GET", "/api/users/", auto_extract_id_to="user_uuid"),
     req("Retrieve user",         "GET", "/api/users/{{user_uuid}}/"),
     req("Create user",           "POST","/api/users/", body={
         "email_plain": "demo@muitowork.com",
@@ -596,7 +633,7 @@ ai_items = [
     req("List agents",        "GET", "/api/ai/agents/"),
     req("List skills",        "GET", "/api/ai/skills/"),
     req("List instructions",  "GET", "/api/ai/instructions/"),
-    req("List threads",       "GET", "/api/ai/threads/"),
+    req("List threads",       "GET", "/api/ai/threads/", auto_extract_id_to="thread_uuid"),
     req("Send message",       "POST","/api/ai/chat/send/", body={
         "thread_id": "{{thread_uuid}}",
         "message": "¿Cuál es el margen del Bisontes 2026?",

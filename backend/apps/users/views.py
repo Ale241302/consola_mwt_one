@@ -149,17 +149,78 @@ class MwtUserViewSet(viewsets.ModelViewSet):
         # prod swap por Argon2).
         raw_pwd = data.pop("password", None)
         if raw_pwd:
-            data["password_hash"] = _hash_password(raw_pwd if isinstance(raw_pwd, str) else raw_pwd[0])
+            raw_pwd = raw_pwd if isinstance(raw_pwd, str) else raw_pwd[0]
+            data["password_hash"] = _hash_password(raw_pwd)
             data["password_changed_at"] = timezone.now().isoformat()
         ser = self.get_serializer(data=data)
         ser.is_valid(raise_exception=True)
         ser.save()
+
+        # AUTO-SYNC con core.users · sin esto el user no puede loguearse.
+        # Toda persona creada via /api/users/ debe poder hacer login
+        # inmediatamente — esto upsertea en la tabla que valida el JWT.
+        if raw_pwd:
+            _sync_to_core_users(
+                email      = data.get("email_plain") or "",
+                full_name  = data.get("full_name") or "",
+                role       = data.get("role_default") or "viewer",
+                raw_pwd    = raw_pwd,
+                user_uuid  = data["id"],
+            )
+
         return Response(ser.data, status=status.HTTP_201_CREATED)
 
+    def update(self, request, *args, **kwargs):
+        """Misma sincronización si en un PATCH viene password nuevo."""
+        instance = self.get_object()
+        data = dict(request.data)
+        raw_pwd = data.pop("password", None)
+        if raw_pwd:
+            raw_pwd = raw_pwd if isinstance(raw_pwd, str) else raw_pwd[0]
+            data["password_hash"] = _hash_password(raw_pwd)
+            data["password_changed_at"] = timezone.now().isoformat()
+        ser = self.get_serializer(instance, data=data, partial=True)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+
+        if raw_pwd:
+            _sync_to_core_users(
+                email      = ser.data.get("email_plain") or instance.email_plain,
+                full_name  = ser.data.get("full_name") or instance.full_name or "",
+                role       = ser.data.get("role_default") or instance.role_default,
+                raw_pwd    = raw_pwd,
+                user_uuid  = str(instance.id),
+            )
+        # Si hubo cambio de email/nombre/role pero no de password, también
+        # actualizamos los campos no-sensibles en core.users (sin tocar el hash).
+        elif any(k in data for k in ("email_plain", "full_name", "role_default")):
+            _sync_to_core_users_meta(
+                old_email = instance.email_plain,
+                new_email = ser.data.get("email_plain") or instance.email_plain,
+                full_name = ser.data.get("full_name") or instance.full_name or "",
+                role      = ser.data.get("role_default") or instance.role_default,
+                user_uuid = str(instance.id),
+            )
+
+        return Response(ser.data)
+    partial_update = update
+
     def perform_destroy(self, instance):
-        """Soft delete: is_active=False."""
+        """Soft delete · sync con core.users.
+
+        Marca is_active=FALSE en mwtuser y replica el cambio a core.users
+        (set is_active=FALSE + deleted_at=NOW()). El siguiente request del
+        user con su JWT actual recibirá 401 (MwtJWTAuthentication chequea
+        deleted_at IS NULL + is_active en cada llamada).
+        """
         instance.is_active = False
         instance.save(update_fields=["is_active", "updated_at"])
+        _sync_active_to_core_users(
+            email     = instance.email_plain,
+            user_uuid = str(instance.id),
+            is_active = False,
+            soft_delete = True,
+        )
 
     # ── POST /api/users/<id>/reset-password/ ───────────────────
     @action(detail=True, methods=["post"], url_path="reset-password")
@@ -223,6 +284,17 @@ class MwtUserViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_404_NOT_FOUND)
         u.is_active = not u.is_active
         u.save(update_fields=["is_active", "updated_at"])
+
+        # Sync a core.users · si lo inactivamos, el JWT actual queda
+        # invalidado en el próximo request (auth chequea is_active).
+        # Si lo reactivamos, vuelve a poder loguearse.
+        _sync_active_to_core_users(
+            email       = u.email_plain,
+            user_uuid   = str(u.id),
+            is_active   = u.is_active,
+            soft_delete = not u.is_active,   # al desactivar, marcamos deleted_at
+        )
+
         return Response({"ok": True, "id": str(u.id), "is_active": u.is_active})
 
 
@@ -231,6 +303,167 @@ def _hash_password(raw: str) -> str:
     salt = secrets.token_hex(16)
     h = hashlib.pbkdf2_hmac("sha256", raw.encode("utf-8"), salt.encode("utf-8"), 120_000)
     return f"pbkdf2_sha256$120000${salt}${h.hex()}"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Sync con core.users
+#
+# El login (apps.core.auth_views.LoginView) valida contra `core.users`
+# con SHA-256 (hash_kind='sha256'). El módulo M3-CORE persiste usuarios
+# en `users.mwtuser` con un schema más rico (legal_entity_id, addresses,
+# etc.). Para que cualquier user creado vía /api/users/ pueda loguearse
+# inmediatamente, mantenemos AMBAS tablas sincronizadas:
+#
+#   · Mismo UUID en ambas (la id del mwtuser se usa también en core.users).
+#   · email_plain idéntico.
+#   · password_hash en core.users = SHA-256(raw_pwd) · hash_kind='sha256'.
+#   · role congruente (superadmin/admin/manager/operator/viewer/client_b2b).
+# ══════════════════════════════════════════════════════════════════════
+def _sha256(plain: str) -> str:
+    return hashlib.sha256(plain.encode("utf-8")).hexdigest()
+
+
+def _sync_to_core_users(*, email: str, full_name: str, role: str,
+                       raw_pwd: str, user_uuid: str) -> None:
+    """UPSERT en core.users con password SHA-256.
+
+    Usa el mismo UUID que `users.mwtuser` para que ambas tablas
+    referencien al mismo usuario. Si el email ya existe en core.users
+    con OTRO id, lo actualizamos (mismo email = misma persona).
+    """
+    if not email or not raw_pwd:
+        return
+    email_low = email.strip().lower()
+    pwd_hash  = _sha256(raw_pwd)
+
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM core.users WHERE lower(email_plain) = %s LIMIT 1",
+                [email_low],
+            )
+            row = cur.fetchone()
+
+            if row:
+                # Update — mismo email, sólo refrescamos password + role.
+                cur.execute("""
+                    UPDATE core.users
+                       SET password_hash = %s,
+                           hash_kind     = 'sha256',
+                           full_name     = %s,
+                           role          = %s,
+                           is_active     = TRUE,
+                           is_staff      = TRUE,
+                           deleted_at    = NULL,
+                           updated_at    = NOW()
+                     WHERE id = %s
+                """, [pwd_hash, full_name or "", role, row[0]])
+                log.info("core.users · ACTUALIZADO %s (id=%s)", email, row[0])
+            else:
+                # Insert — usamos el mismo UUID que mwtuser para que las dos
+                # tablas referencien al mismo usuario.
+                cur.execute("""
+                    INSERT INTO core.users
+                        (id, email_plain, password_hash, hash_kind, full_name,
+                         role, is_active, is_staff, created_at, updated_at)
+                    VALUES
+                        (%s, %s, %s, 'sha256', %s, %s, TRUE, TRUE, NOW(), NOW())
+                """, [user_uuid, email, pwd_hash, full_name or "", role])
+                log.info("core.users · CREADO %s (id=%s)", email, user_uuid)
+    except Exception as e:
+        # Crítico — si falla, el user de mwtuser quedará sin login.
+        # No abortamos el create del mwtuser (ya está commiteado), pero
+        # registramos error visible para que se pueda corregir manualmente.
+        log.exception("core.users sync FAILED for %s: %s", email, e)
+
+
+def _sync_to_core_users_meta(*, old_email: str, new_email: str,
+                              full_name: str, role: str, user_uuid: str) -> None:
+    """Actualiza datos no-sensibles en core.users (sin tocar password).
+
+    Útil cuando el admin edita un user para cambiar nombre/role pero
+    no cambia su contraseña.
+    """
+    if not new_email:
+        return
+    try:
+        with connection.cursor() as cur:
+            # Buscar por email viejo o por UUID — lo que coincida primero.
+            cur.execute("""
+                SELECT id FROM core.users
+                 WHERE lower(email_plain) = %s OR id = %s
+                 LIMIT 1
+            """, [(old_email or "").strip().lower(), user_uuid])
+            row = cur.fetchone()
+            if not row:
+                return
+            cur.execute("""
+                UPDATE core.users
+                   SET email_plain = %s,
+                       full_name   = %s,
+                       role        = %s,
+                       updated_at  = NOW()
+                 WHERE id = %s
+            """, [new_email, full_name or "", role, row[0]])
+    except Exception as e:
+        log.exception("core.users meta-sync FAILED for %s: %s", new_email, e)
+
+
+def _sync_active_to_core_users(*, email: str, user_uuid: str,
+                                is_active: bool, soft_delete: bool = False) -> None:
+    """Replica el estado is_active a core.users.
+
+    Cuando soft_delete=True, también setea deleted_at=NOW() — eso hace que
+    MwtJWTAuthentication.get_user() rechace el token con 401 inmediatamente
+    (la query incluye `WHERE deleted_at IS NULL`).
+
+    Cuando soft_delete=False y is_active=True (reactivación), limpia
+    deleted_at para que el user vuelva a poder loguearse.
+    """
+    if not (email or user_uuid):
+        return
+    try:
+        with connection.cursor() as cur:
+            # Buscar por UUID primero (ambas tablas comparten id), email como fallback.
+            cur.execute("""
+                SELECT id FROM core.users
+                 WHERE id = %s OR lower(email_plain) = %s
+                 LIMIT 1
+            """, [user_uuid, (email or "").strip().lower()])
+            row = cur.fetchone()
+            if not row:
+                log.info("core.users sync_active: no row found for %s/%s",
+                         email, user_uuid)
+                return
+
+            if soft_delete:
+                cur.execute("""
+                    UPDATE core.users
+                       SET is_active  = FALSE,
+                           deleted_at = NOW(),
+                           updated_at = NOW()
+                     WHERE id = %s
+                """, [row[0]])
+                log.info("core.users · DESACTIVADO + soft-delete %s (id=%s)", email, row[0])
+            elif is_active:
+                cur.execute("""
+                    UPDATE core.users
+                       SET is_active  = TRUE,
+                           deleted_at = NULL,
+                           updated_at = NOW()
+                     WHERE id = %s
+                """, [row[0]])
+                log.info("core.users · REACTIVADO %s (id=%s)", email, row[0])
+            else:
+                cur.execute("""
+                    UPDATE core.users
+                       SET is_active  = FALSE,
+                           updated_at = NOW()
+                     WHERE id = %s
+                """, [row[0]])
+                log.info("core.users · DESACTIVADO %s (id=%s)", email, row[0])
+    except Exception as e:
+        log.exception("core.users sync_active FAILED for %s: %s", email, e)
 
 
 # ══════════════════════════════════════════════════════════════════════
