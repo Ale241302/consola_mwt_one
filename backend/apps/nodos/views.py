@@ -62,13 +62,20 @@ class NodoViewSet(viewsets.ViewSet):
 
     # ── Create ────────────────────────────────────────
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
         # Defaults: status=ACTIVE si no viene; capabilities=[] si no viene.
+        data = {**request.data}
         data.setdefault("status", "ACTIVE")
         data.setdefault("capabilities", [])
         s = NodoSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        # ── id explícito vía save(**kwargs) ──
+        # El modelo `Nodo.id` es UUIDField sin default; el SQL tiene
+        # DEFAULT gen_random_uuid() pero Django manda el INSERT con la
+        # columna id presente (=NULL) y rompe el PK NOT NULL.
+        # Como `id` está en read_only_fields, no podemos pasarlo dentro
+        # de `data` — DRF lo descartaría. La forma canónica es inyectarlo
+        # como kwarg de save(): se mergea a validated_data antes de create().
+        s.save(id=uuid.uuid4())
         return Response(s.data, status=201)
 
     # ── Update (full + partial) ───────────────────────
