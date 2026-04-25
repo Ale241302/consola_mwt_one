@@ -119,19 +119,34 @@ export default function ScreenClienteFormView() {
 
   const isEdit  = !!clienteId && clienteId !== "nuevo";
 
-  // Initial — desde el mock local mientras el frontend esté en VITE_USE_MOCKS.
-  // En modo real: fetch /api/clientes/:clienteId/ y poblar `initial`.
-  const initial = useMemo(() => {
-    if (!isEdit) return null;
-    return CLIENTS.find(c => c.id === clienteId || c.uuid === clienteId) || null;
+  // Initial — fetch real al backend cuando es modo edit; cae a mock si el
+  // ID solo existe en mockData (compat con onboarding/screenshots viejos).
+  // En modo "nuevo" arranca con form vacío (defaults).
+  const [initial, setInitial] = useState(null);
+  const [loadingInitial, setLoadingInitial] = useState(false);
+
+  useEffect(() => {
+    if (!isEdit) { setInitial(null); return; }
+    let cancelled = false;
+    setLoadingInitial(true);
+    clientesApi.get(clienteId)
+      .then(data => { if (!cancelled) { setInitial(data); setLoadingInitial(false); } })
+      .catch(() => {
+        if (cancelled) return;
+        const mockMatch = CLIENTS.find(c => c.id === clienteId || c.uuid === clienteId) || null;
+        setInitial(mockMatch);
+        setLoadingInitial(false);
+      });
+    return () => { cancelled = true; };
   }, [clienteId, isEdit]);
 
-  const [form, setForm] = useState(() => defaultsFrom(initial));
+  const [form, setForm] = useState(() => defaultsFrom(null));
   const [touched, setTouched] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null);
 
+  // Repobla el form cada vez que cambia `initial` (después del fetch).
   useEffect(() => { setForm(defaultsFrom(initial)); }, [initial]);
 
   const update = (k, v) => setForm(p => ({ ...p, [k]: v }));
