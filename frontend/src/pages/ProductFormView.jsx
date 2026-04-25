@@ -36,7 +36,7 @@ import {
 } from "../data/mockData.js";
 import ProductExpedientesTab from "../components/productos/ProductExpedientesTab.jsx";
 import { useRole } from "../context/RoleContext.jsx";
-import { productosApi, marcasApi, apiFetch, getToken } from "../lib/api.js";
+import { productosApi, marcasApi, tallasApi, nodosApi, apiFetch, getToken } from "../lib/api.js";
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
 
@@ -67,7 +67,9 @@ export default function ScreenProductFormView() {
   // ── Estado del formulario ────────
   const [sku, setSku] = useState(existing?.sku || '');
   const [nombre, setNombre] = useState(existing?.nombre || '');
-  const [brandId, setBrandId] = useState(existing?.brand_id || BRANDS[0]?.id || '');
+  // Si es edit usamos `marca_id` del backend (UUID real). Si es create
+  // dejamos vacío y autoseleccionamos la primera marca real cuando carguen.
+  const [brandId, setBrandId] = useState(existing?.marca_id || existing?.brand_id || '');
   // Antes guardaba File objects locales (que solo viajaban como nombres
   // y nunca se subían). Ahora guardamos las KEYS reales de MinIO que
   // devuelve el backend después de un PUT firmado.
@@ -164,15 +166,39 @@ export default function ScreenProductFormView() {
     setSelectedNodes(prev => prev.includes(nid) ? prev.filter(x => x !== nid) : [...prev, nid]);
   };
 
-  // ── Marcas reales del backend (para resolver slug/code → UUID al guardar)
-  // El form sigue mostrando BRANDS mock para no romper el selector visual,
-  // pero al hacer POST necesitamos marca_id como UUID. Cargamos la lista
-  // del backend y matcheamos por slug/brand_code/nombre.
+  // ── Catálogos reales del backend ──
+  // Antes el form usaba BRANDS / SIZES / NODES de mockData.js (datos
+  // quemados que no reflejaban la BD real). Ahora cargamos los 3
+  // catálogos en paralelo. Si la BD está vacía → listas vacías
+  // (no fallback a mock para evitar inconsistencia FE↔BD).
   const [realBrands, setRealBrands] = useState([]);
+  const [realSizes,  setRealSizes]  = useState([]);
+  const [realNodes,  setRealNodes]  = useState([]);
   useEffect(() => {
-    marcasApi.list().then(r => setRealBrands(Array.isArray(r) ? r : (r?.results || [])))
-                   .catch(() => setRealBrands([]));
+    const norm = (r) => Array.isArray(r) ? r : (r?.results || []);
+    marcasApi.list().then(r => setRealBrands(norm(r))).catch(() => setRealBrands([]));
+    tallasApi.list().then(r => setRealSizes(norm(r))).catch(() => setRealSizes([]));
+    nodosApi.list().then(r => setRealNodes(norm(r))).catch(() => setRealNodes([]));
   }, []);
+
+  // En modo CREATE, si no hay brandId seleccionado y ya cargaron las
+  // marcas reales, autoselecciona la primera (mejor UX que dropdown vacío).
+  useEffect(() => {
+    if (!brandId && realBrands.length > 0 && !isEdit) {
+      setBrandId(realBrands[0].id);
+    }
+  }, [realBrands, brandId, isEdit]);
+
+  // Agrupa tallas por sistema (`tipo_producto` o `sistema_medida`) para
+  // el render. Si solo hay tallas "calzado", todas caen en un grupo.
+  const sizesGrouped = useMemo(() => {
+    const groups = {};
+    realSizes.forEach(t => {
+      const sys = (t.tipo_producto || 'otro').toLowerCase();
+      (groups[sys] ||= []).push(t);
+    });
+    return groups;   // {calzado: [...], plantilla: [...]}
+  }, [realSizes]);
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
@@ -280,7 +306,15 @@ export default function ScreenProductFormView() {
         <label className="form-field">
           <span>{lang==='es'?'Marca':'Brand'}</span>
           <select className="input" value={brandId} onChange={e=>setBrandId(e.target.value)}>
-            {BRANDS.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            <option value="">{lang==='es'?'— Sin marca —':'— No brand —'}</option>
+            {realBrands.map(b => (
+              <option key={b.id} value={b.id}>
+                {b.nombre || b.brand_code || b.slug || b.id}
+              </option>
+            ))}
+            {realBrands.length === 0 && (
+              <option disabled>{lang==='es'?'(sin marcas en BD)':'(no brands in DB)'}</option>
+            )}
           </select>
         </label>
       </div>
@@ -451,30 +485,33 @@ export default function ScreenProductFormView() {
             </span>
           </div>
           <div className="size-picker">
-            {SIZE_SYSTEMS.map(sys => {
-              const sysSizes = SIZES.filter(s => s.system === sys.id);
-              if (sysSizes.length === 0) return null;
-              return (
-                <div key={sys.id} className="size-picker-group">
-                  <div className="size-picker-head" style={{'--sys-color': sys.color}}>
-                    <span className="size-dot" style={{background: sys.color}}/>
-                    {sys.label}
-                  </div>
-                  <div className="size-picker-row">
-                    {sysSizes.map(sz => {
-                      const on = selectedSizes.includes(sz.id);
-                      return (
-                        <button type="button" key={sz.id}
-                                className={`size-chip ${on ? 'size-chip-on' : ''}`}
-                                onClick={()=>toggleSize(sz.id)}>
-                          {sz.valor_talla}
-                        </button>
-                      );
-                    })}
-                  </div>
+            {realSizes.length === 0 ? (
+              <div className="caption" style={{padding:'12px 0', color:'var(--text-tertiary)'}}>
+                {lang==='es'
+                  ? 'No hay tallas en BD. Crea las primeras en /tallas.'
+                  : 'No sizes in DB. Create the first ones in /tallas.'}
+              </div>
+            ) : Object.entries(sizesGrouped).map(([sys, sysSizes]) => (
+              <div key={sys} className="size-picker-group">
+                <div className="size-picker-head" style={{'--sys-color':'#481EE3'}}>
+                  <span className="size-dot" style={{background:'#481EE3'}}/>
+                  {sys.toUpperCase()}
                 </div>
-              );
-            })}
+                <div className="size-picker-row">
+                  {sysSizes.map(sz => {
+                    const on = selectedSizes.includes(sz.id);
+                    const label = sz.talla_base || sz.eu || sz.us_men || sz.nombre || '—';
+                    return (
+                      <button type="button" key={sz.id}
+                              className={`size-chip ${on ? 'size-chip-on' : ''}`}
+                              onClick={()=>toggleSize(sz.id)}>
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -486,16 +523,25 @@ export default function ScreenProductFormView() {
             </span>
           </div>
           <div className="node-picker">
-            {NODES.map(n => {
+            {realNodes.length === 0 ? (
+              <div className="caption" style={{padding:'12px 0', color:'var(--text-tertiary)'}}>
+                {lang==='es'
+                  ? 'No hay nodos logísticos en BD. Crea el primero en /nodos.'
+                  : 'No logistics nodes in DB. Create the first one in /nodos.'}
+              </div>
+            ) : realNodes.map(n => {
               const on = selectedNodes.includes(n.id);
+              const code  = n.codigo || n.node_id || n.id?.slice(0, 8) || '—';
+              const name  = n.nombre || n.name   || '—';
+              const flag  = n.flag   || (n.pais_iso2 ? `[${n.pais_iso2}]` : '🌐');
               return (
                 <button type="button" key={n.id}
                         className={`node-pick ${on ? 'node-pick-on' : ''}`}
                         onClick={()=>toggleNode(n.id)}>
-                  <span className="node-pick-flag">{n.flag}</span>
+                  <span className="node-pick-flag">{flag}</span>
                   <span className="node-pick-body">
-                    <span className="mono-sm">{n.node_id}</span>
-                    <span className="caption">{n.name}</span>
+                    <span className="mono-sm">{code}</span>
+                    <span className="caption">{name}</span>
                   </span>
                   <span className="node-pick-check">
                     {on ? <IconCheck size={12}/> : <IconPlus size={12} style={{opacity:0.4}}/>}
