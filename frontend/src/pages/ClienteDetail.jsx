@@ -821,12 +821,14 @@ function ConfirmDeleteModal({ clientName, busy, error, lang, onCancel, onConfirm
         }}
       />
       <motion.div
-        initial={{ opacity:0, scale:0.96 }}
-        animate={{ opacity:1, scale:1, transition:{ duration:0.18 }}}
-        exit   ={{ opacity:0, scale:0.96, transition:{ duration:0.12 }}}
+        initial={{ opacity:0, y:-12, x:'-50%' }}
+        animate={{ opacity:1, y:0,   x:'-50%', transition:{ duration:0.18 }}}
+        exit   ={{ opacity:0, y:-12, x:'-50%', transition:{ duration:0.12 }}}
         role="dialog" aria-modal="true"
         style={{
-          position:'fixed', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
+          // Centrado horizontal, anclado a 12vh desde la parte superior
+          // (el usuario lo prefiere alto, no en el centro vertical).
+          position:'fixed', top:'12vh', left:'50%',
           width:'min(420px, 92vw)', zIndex:91,
           background:'#FFFFFF', borderRadius:14,
           boxShadow:'0 30px 60px -20px rgba(15,27,61,0.45)',
