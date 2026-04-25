@@ -5,7 +5,7 @@
 // Tabs: Resumen (KPIs) · Inventario · Transferencias ·
 //       Automatizaciones · Expedientes vinculados
 // ─────────────────────────────────────────────────────────────
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -14,6 +14,7 @@ import {
   IconArrow, IconSparkle,
 } from "../lib/icons.jsx";
 import { tr, fmtMoney } from "../lib/i18n.js";
+import { nodosApi } from "../lib/api.js";
 import {
   NODES, NODE_INVENTORY, NODE_TRANSFERS, NODE_AUTOMATIONS,
   LEGAL_ENTITIES, OPERATORS, PRODUCTS, EXPEDIENTES, OCS,
@@ -26,6 +27,53 @@ const TYPE_META = {
   distributor: { label: 'Distributor', color: '#1EE3D7' },
   factory:     { label: 'Factory',     color: '#1DE394' },
 };
+
+// ── Mapeos backend → mock-shape ───────────────────────────────────
+// Backend retorna `tipo` en MAYÚSCULAS (HQ/OFICINA/ALMACEN/HUB),
+// el componente espera `type` en minúsculas (warehouse/factory/...).
+const TIPO_TO_TYPE = {
+  HQ:      'factory',
+  OFICINA: 'fiscal',
+  ALMACEN: 'warehouse',
+  HUB:     'distributor',
+};
+// Banderas por país (subset; el resto cae a 🌐).
+const FLAG_BY_ISO2 = {
+  PE: '🇵🇪', CO: '🇨🇴', US: '🇺🇸', CN: '🇨🇳',
+  MX: '🇲🇽', AR: '🇦🇷', CL: '🇨🇱', ES: '🇪🇸',
+  BR: '🇧🇷', UY: '🇺🇾', EC: '🇪🇨',
+};
+// Adapter: toma el JSON crudo del API y produce el shape que espera
+// el componente (heredado del mock). Capacidades llegan como array
+// (["receive","dispatch"]) y el componente las consume como objeto
+// ({receive: true, dispatch: true}).
+function adaptBackendNode(raw) {
+  if (!raw || !raw.id) return null;
+  const capsArray = Array.isArray(raw.capabilities) ? raw.capabilities : [];
+  // Normaliza a minúsculas porque algunos seeds antiguos guardan
+  // RECEIVE/DISPATCH y el frontend compara con keys en minúsculas.
+  const capsObj = {};
+  capsArray.forEach(c => { capsObj[String(c).toLowerCase()] = true; });
+
+  const cityCountry = [raw.ciudad, raw.pais_iso2].filter(Boolean).join(', ');
+  const capUnits    = Number(raw.capacidad_m2 || 0);
+  return {
+    id:                raw.id,
+    node_id:           raw.codigo,
+    name:              raw.nombre,
+    type:              TIPO_TO_TYPE[raw.tipo] || 'warehouse',
+    flag:              FLAG_BY_ISO2[raw.pais_iso2] || '🌐',
+    location:          cityCountry || raw.pais_iso2 || '—',
+    status:            raw.status || (raw.is_active ? 'ACTIVE' : 'INACTIVE'),
+    legal_entity_id:   raw.legal_entity_owner_id || null,
+    operator_id:       raw.operator_id || null,
+    capabilities:      capsObj,
+    capacity_units:    capUnits,
+    capacity_used:     0,   // TODO: cuando el endpoint de inventario consolide ocupación, sustituir.
+    // mantén crudo por si tabs futuros lo quieren leer
+    _raw: raw,
+  };
+}
 
 const TABS = [
   { k: 'overview',    l: 'Resumen' },
@@ -41,17 +89,61 @@ export default function ScreenNodoDetail() {
   const { lang } = useOutletContext();
   const [tab, setTab] = useState('overview');
 
-  const node = useMemo(() => NODES.find(n => n.id === nodeId), [nodeId]);
+  // ── Fetch real al backend (antes leía NODES de mockData.js,
+  //    por eso nodos creados vía API daban "Nodo no encontrado") ──
+  const [rawNode, setRawNode] = useState(null);
+  const [loadErr, setLoadErr] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // Derivados
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setLoadErr(null);
+    nodosApi.get(nodeId)
+      .then(data => { if (!cancelled) { setRawNode(data); setLoading(false); } })
+      .catch(err => {
+        if (cancelled) return;
+        // Fallback al mock para mantener compatibilidad con IDs demo
+        // que aún no están en BD (p.ej. screenshots/onboarding).
+        const mockMatch = NODES.find(n => n.id === nodeId);
+        if (mockMatch) {
+          setRawNode({ __isMockShape: true, ...mockMatch });
+        } else {
+          setLoadErr(err?.message || 'fetch_failed');
+        }
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [nodeId]);
+
+  // Adapta el shape backend → forma esperada por el resto del componente.
+  // Si el fallback devolvió shape mock crudo, úsalo directo.
+  const node = useMemo(() => {
+    if (!rawNode) return null;
+    if (rawNode.__isMockShape) return rawNode;
+    return adaptBackendNode(rawNode);
+  }, [rawNode]);
+
+  // Derivados — siguen leyendo mock (inventario/transfers/automations
+  // todavía no están migrados a backend; nodos nuevos los verán vacíos).
   const inventory = useMemo(() => NODE_INVENTORY.filter(r => r.node_id === nodeId), [nodeId]);
   const transfers = useMemo(() => NODE_TRANSFERS.filter(t => t.from === nodeId || t.to === nodeId), [nodeId]);
   const autos     = useMemo(() => NODE_AUTOMATIONS.filter(a => a.node_id === nodeId), [nodeId]);
   const files     = useMemo(() =>
-    // Expedientes cuyo destino coincide con la ubicación del nodo
     EXPEDIENTES.filter(e => node && (e.destination || '').includes((node.location || '').split(',')[0] || '__none__'))
                .slice(0, 8)
   , [node]);
+
+  if (loading) {
+    return (
+      <div className="page">
+        <div className="empty-state">
+          <IconRefresh size={20} style={{color:'var(--brand-accent)', animation:'spin 1.2s linear infinite'}}/>
+          <div className="caption">{lang==='es'?'Cargando nodo…':'Loading node…'}</div>
+        </div>
+      </div>
+    );
+  }
 
   if (!node) {
     return (
@@ -59,6 +151,7 @@ export default function ScreenNodoDetail() {
         <div className="empty-state">
           <IconSparkle size={22} style={{color:'var(--brand-accent)'}}/>
           <div className="heading-md">{lang==='es'?'Nodo no encontrado':'Node not found'}</div>
+          {loadErr && <div className="caption" style={{color:'var(--text-tertiary)'}}>{loadErr}</div>}
           <button className="btn btn-ghost" onClick={()=>navigate('/nodos')}>
             <IconChevLeft size={14}/> {lang==='es'?'Volver a nodos':'Back to nodes'}
           </button>
