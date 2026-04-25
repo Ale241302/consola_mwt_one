@@ -14,21 +14,47 @@
 //   Navy #0B1E3A · Mint #00B286 · LightGreen #1DE394
 //   Purple #481EE3 · Blue #3083FE · Cyan #1EE3D7
 // ─────────────────────────────────────────────────────────────
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IconChevLeft, IconGlobe, IconPackage, IconFolder, IconDollar,
-  IconShield, IconSparkle, IconLock, IconAlert, IconCheck,
+  IconShield, IconSparkle, IconLock, IconAlert, IconCheck, IconRefresh,
   IconPlus, IconUpload, IconTag, IconPercent, IconX, IconSearch,
 } from "../lib/icons.jsx";
 import { fmtMoney, fmtMoneyDetail, fmtShortDate } from "../lib/i18n.js";
+import { marcasApi } from "../lib/api.js";
 import {
   BRANDS, LEGAL_ENTITIES, EXPEDIENTES, BRAND_PRODUCTS, BRAND_ATTRIBUTES, OCS,
 } from "../data/mockData.js";
 import CreateBrandDrawer from "../components/brands/CreateBrandDrawer.jsx";
 import ProductMassiveUpload from "../components/brands/ProductMassiveUpload.jsx";
 import BrandPricingConsole from "../components/brands/BrandPricingConsole.jsx";
+
+// ── Adapter backend → forma esperada por el componente (heredada del mock).
+// Backend: nombre/slug/tipo/brand_code/pais_origen_iso2/categoria_principal/
+//          estado_comercial/markup_default/fecha_firma/mercados_activos/etc.
+// Mock:    name/brand_id/color/created_at/status/description/feature_flags/etc.
+const TIPO_COLOR = { PROPIA: '#00B286', DISTRIBUCION: '#481EE3', TERCEROS: '#481EE3' };
+function adaptBackendBrand(raw) {
+  if (!raw || !raw.id) return null;
+  return {
+    id:                raw.id,
+    name:              raw.nombre || raw.slug || '—',
+    brand_id:          raw.brand_code || raw.slug || '—',
+    color:             TIPO_COLOR[raw.tipo] || '#481EE3',
+    tipo:              raw.tipo || 'TERCEROS',
+    issuing_entity:    raw.issuing_entity_id || null,
+    created_at:        raw.fecha_firma || (raw.updated_at || '').slice(0,10) || '—',
+    status:            raw.estado_comercial || 'PROSPECTO',
+    description:       raw.categoria_principal ? `Categoría: ${raw.categoria_principal}` : '',
+    mercados_activos:  Array.isArray(raw.mercados_activos) ? raw.mercados_activos : [],
+    feature_flags:     raw.feature_flags || {},
+    active_skus:       Number(raw.active_skus || 0),
+    avg_margin:        Number(raw.markup_default || 0),
+    _raw: raw,
+  };
+}
 
 /* ── Tipo → meta ────────────────────────── */
 const TIPO_META = {
@@ -76,14 +102,77 @@ export default function ScreenBrandDetail() {
   const [showMassUp, setMassUp] = useState(false);
   const [showNewProd, setShowNewProd] = useState(false);
 
-  const brand = useMemo(
-    () => BRANDS.find(b => b.id === brandId),
-    [brandId]
-  );
+  // ── Fetch real al backend (antes leía BRANDS de mockData.js) ──
+  const [rawBrand, setRawBrand] = useState(null);
+  const [loading,  setLoading]  = useState(true);
+  const [loadErr,  setLoadErr]  = useState(null);
 
-  /* Feature flags en estado local (mock · en prod: PATCH ENT_PLAT_MARCAS) */
-  const [flags, setFlags] = useState(() => brand?.feature_flags || {});
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setLoadErr(null);
+    marcasApi.get(brandId)
+      .then(data => { if (!cancelled) { setRawBrand(data); setLoading(false); } })
+      .catch(err => {
+        if (cancelled) return;
+        const mockMatch = BRANDS.find(b => b.id === brandId);
+        if (mockMatch) {
+          setRawBrand({ __isMockShape: true, ...mockMatch });
+        } else {
+          setLoadErr(err?.message || 'fetch_failed');
+        }
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [brandId]);
+
+  const brand = useMemo(() => {
+    if (!rawBrand) return null;
+    if (rawBrand.__isMockShape) return rawBrand;
+    return adaptBackendBrand(rawBrand);
+  }, [rawBrand]);
+
+  /* Feature flags en estado local — se sincronizan cuando llega `brand`. */
+  const [flags, setFlags] = useState({});
+  useEffect(() => { if (brand?.feature_flags) setFlags(brand.feature_flags); }, [brand]);
   const toggleFlag = (k) => setFlags(prev => ({ ...prev, [k]: !prev[k] }));
+
+  // ── TODOS los hooks ANTES de los returns condicionales (regla React) ──
+  const bid = brand?.id;
+  const products = useMemo(
+    () => bid ? BRAND_PRODUCTS.filter(p => p.brand_id === bid) : [],
+    [bid]
+  );
+  const expedientes = useMemo(
+    () => bid ? EXPEDIENTES.filter(e => e.brand_id === bid) : [],
+    [bid]
+  );
+  const expedientesActivos = useMemo(
+    () => expedientes.filter(e => e.status !== 'CERRADO'),
+    [expedientes]
+  );
+  const kpis = useMemo(() => {
+    if (!brand) return { totalProds:0, activos:0, revenue:0, margin:0 };
+    const totalProds = products.length || brand.active_skus || 0;
+    const activos    = expedientesActivos.length;
+    const revenue    = expedientes.reduce((a, e) => a + (e.total_invoiced || 0), 0);
+    const marginNum  = expedientes.reduce((a, e) => a + ((e.real_margin || 0) * (e.total_invoiced || 0)), 0);
+    const marginDen  = expedientes.reduce((a, e) => a + (e.total_invoiced || 0), 0);
+    const margin     = marginDen ? marginNum / marginDen : brand.avg_margin || 0;
+    return { totalProds, activos, revenue, margin };
+  }, [products, expedientes, expedientesActivos, brand]);
+
+  // ── Returns condicionales DESPUÉS de los hooks ──
+  if (loading) {
+    return (
+      <div className="page">
+        <div className="card card-pad-lg empty">
+          <IconRefresh size={20} style={{color:'var(--brand-accent)', animation:'spin 1.2s linear infinite'}}/>
+          <div className="caption">{lang==='es'?'Cargando marca…':'Loading brand…'}</div>
+        </div>
+      </div>
+    );
+  }
 
   if (!brand) {
     return (
@@ -93,6 +182,7 @@ export default function ScreenBrandDetail() {
           <div className="heading-md">
             {lang === 'es' ? 'Marca no encontrada' : 'Brand not found'}
           </div>
+          {loadErr && <div className="caption" style={{color:'var(--text-tertiary)'}}>{loadErr}</div>}
           <button className="btn btn-ghost" onClick={()=>navigate('/marcas')}>
             <IconChevLeft size={14}/> {lang === 'es' ? 'Volver a Marcas' : 'Back to Brands'}
           </button>
@@ -103,29 +193,6 @@ export default function ScreenBrandDetail() {
 
   const tipo  = TIPO_META[brand.tipo] || TIPO_META.PROPIA;
   const owner = LEGAL_ENTITIES.find(e => e.id === brand.issuing_entity);
-
-  /* ── Data slices ────────────────── */
-  const products = useMemo(
-    () => BRAND_PRODUCTS.filter(p => p.brand_id === brand.id),
-    [brand.id]
-  );
-  const expedientes = useMemo(
-    () => EXPEDIENTES.filter(e => e.brand_id === brand.id),
-    [brand.id]
-  );
-  const expedientesActivos = expedientes.filter(e => e.status !== 'CERRADO');
-
-  /* ── KPIs superiores ──────────────── */
-  const kpis = useMemo(() => {
-    const totalProds = products.length || brand.active_skus || 0;
-    const activos    = expedientesActivos.length;
-    const revenue    = expedientes.reduce((a, e) => a + (e.total_invoiced || 0), 0);
-    // Margen global (promedio ponderado) — CEO-ONLY
-    const marginNum  = expedientes.reduce((a, e) => a + ((e.real_margin || 0) * (e.total_invoiced || 0)), 0);
-    const marginDen  = expedientes.reduce((a, e) => a + (e.total_invoiced || 0), 0);
-    const margin     = marginDen ? marginNum / marginDen : brand.avg_margin || 0;
-    return { totalProds, activos, revenue, margin };
-  }, [products, expedientes, expedientesActivos, brand]);
 
   return (
     <div className="page">
