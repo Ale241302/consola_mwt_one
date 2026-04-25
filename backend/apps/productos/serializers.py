@@ -13,6 +13,15 @@ class ProductoListSerializer(serializers.ModelSerializer):
 
 
 class ProductoSerializer(serializers.ModelSerializer):
+    # Por decisión de producto: NINGÚN campo es obligatorio al crear/editar.
+    # Esto permite guardar borradores con sólo el SKU o sólo el nombre.
+    sku    = serializers.CharField(max_length=64,  required=False, allow_blank=True, allow_null=True)
+    nombre = serializers.CharField(max_length=160, required=False, allow_blank=True, allow_null=True)
+
     class Meta:
         model  = Producto
         fields = "__all__"
+        # `id` debe ser read_only para que DRF no lo exija en el payload;
+        # el ViewSet lo inyecta vía s.save(id=uuid.uuid4()) (mismo patrón
+        # que nodos/clientes/marcas). created_at/updated_at son auto.
+        read_only_fields = ("id", "created_at", "updated_at")

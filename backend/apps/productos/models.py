@@ -13,8 +13,8 @@ from django.db import models
 
 class Producto(models.Model):
     id                     = models.UUIDField(primary_key=True)
-    sku                    = models.CharField(max_length=64, unique=True)
-    nombre                 = models.CharField(max_length=160)
+    sku                    = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    nombre                 = models.CharField(max_length=160, null=True, blank=True)
     descripcion            = models.TextField(null=True, blank=True)
 
     marca_id               = models.UUIDField(null=True, blank=True)   # ⛔ sin FK
