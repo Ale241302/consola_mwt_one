@@ -180,7 +180,8 @@ export default function ScreenSizingEngine() {
         // HARD delete: query param ?hard=1 (sin él, el backend hace soft
         // por compatibilidad histórica). tallasApi.remove() no soporta
         // query params, por eso usamos apiFetch directamente.
-        await apiFetch(`/tallas/${talla.id}/?hard=1`, {
+        // NOTA: la base real del endpoint es /sizing/tallas/ (no /tallas/).
+        await apiFetch(`/sizing/tallas/${talla.id}/?hard=1`, {
           method: "DELETE", token: getToken(),
         });
       }
