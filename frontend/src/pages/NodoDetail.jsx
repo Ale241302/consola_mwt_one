@@ -13,6 +13,39 @@ import {
   IconCheck, IconX, IconClock, IconDollar, IconBoxes, IconTrend,
   IconArrow, IconSparkle,
 } from "../lib/icons.jsx";
+
+// ── Definiciones compartidas con CreateNodeModal (mismas cards + iconos)
+//    para que la pantalla de Edición se vea idéntica a la de Creación. ──
+const TYPE_CARDS = [
+  { ui:'marketplace', api:'HUB',     l:'Marketplace', hint:'Inventario consignado en Amazon, Mercado Libre, etc.' },
+  { ui:'fiscal',      api:'OFICINA', l:'Fiscal',      hint:'Almacén fiscal o depósito aduanero' },
+  { ui:'warehouse',   api:'ALMACEN', l:'Warehouse',   hint:'Centro de distribución propio u operado' },
+  { ui:'distributor', api:'HUB',     l:'Distributor', hint:'Hub de un distribuidor regional' },
+  { ui:'factory',     api:'HQ',      l:'Factory',     hint:'Planta productiva / origen de mercancía' },
+];
+// Mapeo inverso: backend → UI (cuando varias UI mapean al mismo API,
+// preferimos la canónica: HUB → distributor, OFICINA → fiscal).
+const API_TO_UI_TYPE = { HQ:'factory', OFICINA:'fiscal', ALMACEN:'warehouse', HUB:'distributor' };
+
+const CAP_DEFS = [
+  { k:'receive',          l:'Recibir',    icon: IconPackage },
+  { k:'store',            l:'Almacenar',  icon: IconBoxes   },
+  { k:'prepare',          l:'Preparar',   icon: IconCheck   },
+  { k:'dispatch',         l:'Despachar',  icon: IconTruck   },
+  { k:'report_sales',     l:'Ventas',     icon: IconDollar  },
+  { k:'report_inventory', l:'Inventario', icon: IconTrend   },
+];
+
+// Estados de un nodo en el ciclo de vida (mismo orden que el catálogo
+// `nodos.status_cat`). El segmentado los muestra todos para que el
+// admin pueda pasar libremente entre ACTIVE ↔ INACTIVE etc.
+const STATUS_OPTIONS = [
+  { k:'PLANNED',  l:'Planeado'  },
+  { k:'SETUP',    l:'Setup'     },
+  { k:'ACTIVE',   l:'Activo'    },
+  { k:'INACTIVE', l:'Inactivo'  },
+  { k:'RETIRED',  l:'Retirado'  },
+];
 import { tr, fmtMoney } from "../lib/i18n.js";
 import { nodosApi } from "../lib/api.js";
 import {
@@ -546,10 +579,15 @@ function AutomationsTab({ autos, lang }) {
 // backend (select_tipos / select_status / select_paises / select_capabilities)
 // para que los <select> reflejen exactamente lo que el BE acepta.
 function EditNodeDrawer({ raw, lang, onClose, onSaved }) {
+  // Mantenemos `type_ui` (clave UI: warehouse/factory/...) en el form
+  // para alimentar el TYPE_CARDS picker. En submit lo mapeamos al
+  // canónico backend (HQ/OFICINA/ALMACEN/HUB).
+  const initUiType = API_TO_UI_TYPE[raw.tipo] || 'warehouse';
+
   const [form, setForm] = useState({
     codigo:         raw.codigo || '',
     nombre:         raw.nombre || '',
-    tipo:           raw.tipo || 'ALMACEN',
+    type_ui:        initUiType,
     pais_iso2:      raw.pais_iso2 || '',
     ciudad:         raw.ciudad || '',
     direccion:      raw.direccion || '',
@@ -566,24 +604,10 @@ function EditNodeDrawer({ raw, lang, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr]   = useState(null);
 
-  // Catálogos
-  const [tipos, setTipos]   = useState([]);
-  const [status, setStatus] = useState([]);
+  // Catálogo de países (los demás están hardcodeados arriba con su look).
   const [paises, setPaises] = useState([]);
-  const [caps, setCaps]     = useState([]);
-
   useEffect(() => {
-    Promise.allSettled([
-      nodosApi.select('tipos'),
-      nodosApi.select('status'),
-      nodosApi.select('paises'),
-      nodosApi.select('capabilities'),
-    ]).then(([t, s, p, c]) => {
-      if (t.status === 'fulfilled') setTipos(t.value || []);
-      if (s.status === 'fulfilled') setStatus(s.value || []);
-      if (p.status === 'fulfilled') setPaises(p.value || []);
-      if (c.status === 'fulfilled') setCaps(c.value || []);
-    });
+    nodosApi.select('paises').then(setPaises).catch(()=>{});
   }, []);
 
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -604,9 +628,23 @@ function EditNodeDrawer({ raw, lang, onClose, onSaved }) {
     setBusy(true);
     setErr(null);
     try {
+      // UI → API: mapeo del tipo y limpieza de campos derivados.
+      const apiTipo = (TYPE_CARDS.find(c => c.ui === form.type_ui) || {}).api || 'ALMACEN';
       const body = {
-        ...form,
-        capacidad_m2: form.capacidad_m2 === '' ? null : Number(form.capacidad_m2),
+        codigo:         form.codigo,
+        nombre:         form.nombre,
+        tipo:           apiTipo,
+        pais_iso2:      form.pais_iso2,
+        ciudad:         form.ciudad,
+        direccion:      form.direccion,
+        zona_horaria:   form.zona_horaria,
+        status:         form.status,
+        is_active:      form.status !== 'RETIRED' && form.status !== 'INACTIVE',
+        capabilities:   form.capabilities,
+        capacidad_m2:   form.capacidad_m2 === '' ? null : Number(form.capacidad_m2),
+        contacto_email: form.contacto_email,
+        contacto_tel:   form.contacto_tel,
+        observaciones:  form.observaciones,
       };
       await nodosApi.update(raw.id, body);
       await onSaved?.();
@@ -656,108 +694,149 @@ function EditNodeDrawer({ raw, lang, onClose, onSaved }) {
           <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Cerrar">✕</button>
         </div>
 
-        <form onSubmit={submit} style={{ padding: '18px 22px', overflowY:'auto', flex:1 }}>
-          <Field label={lang==='es'?'Código':'Code'}>
-            <input value={form.codigo} onChange={e=>setF('codigo', e.target.value)} style={inp}/>
-          </Field>
-          <Field label={lang==='es'?'Nombre':'Name'}>
-            <input value={form.nombre} onChange={e=>setF('nombre', e.target.value)} style={inp}/>
-          </Field>
+        <form onSubmit={submit} className="drawer-body" style={{ padding: '18px 22px', overflowY:'auto', flex:1 }}>
+          {/* ── Identificación ── */}
+          <section className="drawer-section">
+            <div className="drawer-section-title">{lang==='es'?'Identificación':'Identification'}</div>
+            <div className="grid col-2 gap-3">
+              <div>
+                <label className="field-label">{lang==='es'?'Código':'Code'}</label>
+                <input className="input mono-sm" value={form.codigo}
+                       onChange={e=>setF('codigo', e.target.value.toUpperCase().slice(0, 16))}/>
+              </div>
+              <div>
+                <label className="field-label">{lang==='es'?'Nombre':'Name'}</label>
+                <input className="input" value={form.nombre}
+                       onChange={e=>setF('nombre', e.target.value)}/>
+              </div>
+            </div>
+          </section>
 
-          <div style={row2}>
-            <Field label={lang==='es'?'Tipo':'Type'}>
-              <select value={form.tipo} onChange={e=>setF('tipo', e.target.value)} style={inp}>
-                {tipos.length === 0 && <option value={form.tipo}>{form.tipo}</option>}
-                {tipos.map(t => <option key={t.codigo} value={t.codigo}>{t.label}</option>)}
-              </select>
-            </Field>
-            <Field label={lang==='es'?'Estado':'Status'}>
-              <select value={form.status} onChange={e=>setF('status', e.target.value)} style={inp}>
-                {status.length === 0 && <option value={form.status}>{form.status}</option>}
-                {status.map(s => <option key={s.codigo} value={s.codigo}>{s.label}</option>)}
-              </select>
-            </Field>
-          </div>
+          {/* ── Tipo de nodo (cards) ── */}
+          <section className="drawer-section">
+            <div className="drawer-section-title">{lang==='es'?'Tipo':'Type'}</div>
+            <div className="type-picker">
+              {TYPE_CARDS.map(t => (
+                <button key={t.ui} type="button"
+                        className="type-chip"
+                        data-active={form.type_ui === t.ui}
+                        onClick={()=>setF('type_ui', t.ui)}>
+                  <span className="type-chip-l">{t.l}</span>
+                  <span className="type-chip-h">{t.hint}</span>
+                </button>
+              ))}
+            </div>
+          </section>
 
-          <div style={row2}>
-            <Field label={lang==='es'?'País':'Country'}>
-              <select value={form.pais_iso2} onChange={e=>setF('pais_iso2', e.target.value)} style={inp}>
-                <option value="">—</option>
-                {paises.map(p => <option key={p.codigo} value={p.codigo}>{p.label}</option>)}
-              </select>
-            </Field>
-            <Field label={lang==='es'?'Ciudad':'City'}>
-              <input value={form.ciudad} onChange={e=>setF('ciudad', e.target.value)} style={inp}/>
-            </Field>
-          </div>
+          {/* ── Localización + estado ── */}
+          <section className="drawer-section">
+            <div className="drawer-section-title">{lang==='es'?'Localización y estado':'Location & status'}</div>
+            <div className="grid col-2 gap-3">
+              <div>
+                <label className="field-label">{lang==='es'?'País':'Country'}</label>
+                <div className="input" style={{display:'flex', alignItems:'center', gap:8, padding:'0 12px'}}>
+                  <IconMapPin size={13} style={{color:'var(--text-tertiary)'}}/>
+                  <select value={form.pais_iso2} onChange={e=>setF('pais_iso2', e.target.value)}
+                          style={{flex:1, border:0, background:'transparent', outline:'none', font:'inherit'}}>
+                    <option value="">—</option>
+                    {paises.map(p => (
+                      <option key={p.codigo} value={p.codigo}>{p.label} ({p.codigo})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="field-label">{lang==='es'?'Ciudad':'City'}</label>
+                <input className="input" value={form.ciudad}
+                       onChange={e=>setF('ciudad', e.target.value)}/>
+              </div>
+            </div>
 
-          <Field label={lang==='es'?'Dirección':'Address'}>
-            <input value={form.direccion} onChange={e=>setF('direccion', e.target.value)} style={inp}/>
-          </Field>
+            {/* Status segmentado — incluye TODOS los estados del catálogo
+                para que el admin pueda activar/inactivar/retirar. */}
+            <div style={{ marginTop: 12 }}>
+              <label className="field-label">{lang==='es'?'Estado':'Status'}</label>
+              <div className="seg" style={{ width:'100%', display:'grid',
+                                            gridTemplateColumns:`repeat(${STATUS_OPTIONS.length}, 1fr)` }}>
+                {STATUS_OPTIONS.map(s => (
+                  <button key={s.k} type="button"
+                          data-active={form.status === s.k}
+                          onClick={()=>setF('status', s.k)}>
+                    {s.k}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
 
-          <Field label={lang==='es'?'Zona horaria':'Time zone'}>
-            <input value={form.zona_horaria} onChange={e=>setF('zona_horaria', e.target.value)} style={inp}/>
-          </Field>
+          {/* ── Dirección + zona horaria + capacidad ── */}
+          <section className="drawer-section">
+            <div className="drawer-section-title">{lang==='es'?'Detalle físico':'Physical detail'}</div>
+            <div>
+              <label className="field-label">{lang==='es'?'Dirección':'Address'}</label>
+              <input className="input" value={form.direccion}
+                     onChange={e=>setF('direccion', e.target.value)}/>
+            </div>
+            <div className="grid col-2 gap-3" style={{ marginTop: 10 }}>
+              <div>
+                <label className="field-label">{lang==='es'?'Zona horaria':'Time zone'}</label>
+                <input className="input mono-sm" value={form.zona_horaria}
+                       onChange={e=>setF('zona_horaria', e.target.value)}/>
+              </div>
+              <div>
+                <label className="field-label">{lang==='es'?'Capacidad (m²)':'Capacity (m²)'}</label>
+                <input className="input" type="number" min="0" step="0.01"
+                       value={form.capacidad_m2}
+                       onChange={e=>setF('capacidad_m2', e.target.value)}/>
+              </div>
+            </div>
+          </section>
 
-          <Field label={lang==='es'?'Capacidad (m²)':'Capacity (m²)'}>
-            <input
-              type="number"
-              value={form.capacidad_m2}
-              onChange={e=>setF('capacidad_m2', e.target.value)}
-              style={inp}
-              min="0" step="0.01"
-            />
-          </Field>
+          {/* ── Contacto ── */}
+          <section className="drawer-section">
+            <div className="drawer-section-title">{lang==='es'?'Contacto':'Contact'}</div>
+            <div className="grid col-2 gap-3">
+              <div>
+                <label className="field-label">{lang==='es'?'Email':'Email'}</label>
+                <input className="input" type="email" value={form.contacto_email}
+                       onChange={e=>setF('contacto_email', e.target.value)}/>
+              </div>
+              <div>
+                <label className="field-label">{lang==='es'?'Teléfono':'Phone'}</label>
+                <input className="input" value={form.contacto_tel}
+                       onChange={e=>setF('contacto_tel', e.target.value)}/>
+              </div>
+            </div>
+          </section>
 
-          <div style={row2}>
-            <Field label={lang==='es'?'Email contacto':'Contact email'}>
-              <input
-                type="email"
-                value={form.contacto_email}
-                onChange={e=>setF('contacto_email', e.target.value)}
-                style={inp}
-              />
-            </Field>
-            <Field label={lang==='es'?'Teléfono':'Phone'}>
-              <input value={form.contacto_tel} onChange={e=>setF('contacto_tel', e.target.value)} style={inp}/>
-            </Field>
-          </div>
-
-          <Field label={lang==='es'?'Capacidades':'Capabilities'}>
-            <div style={{
-              display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:4,
-            }}>
-              {(caps.length ? caps : DEFAULT_CAPS).map(c => {
-                const on = form.capabilities.includes(c.codigo);
+          {/* ── Capabilities (mismo cap-grid del Create) ── */}
+          <section className="drawer-section">
+            <div className="drawer-section-title">{lang==='es'?'Capacidades':'Capabilities'}</div>
+            <div className="cap-grid">
+              {CAP_DEFS.map(c => {
+                const on = form.capabilities.includes(c.k);
+                const Ico = c.icon;
                 return (
-                  <button
-                    type="button"
-                    key={c.codigo}
-                    onClick={()=>toggleCap(c.codigo)}
-                    style={{
-                      padding:'8px 10px', borderRadius:8, cursor:'pointer',
-                      border: on ? '1.5px solid #10B981' : '1.5px solid #E5EAF2',
-                      background: on ? '#10B98115' : '#FFFFFF',
-                      color: on ? '#065F46' : '#3D4A6B',
-                      font:'500 12.5px/1.2 inherit',
-                      display:'flex', alignItems:'center', gap:6,
-                    }}
-                  >
-                    {on ? '✓' : '○'} {c.label}
+                  <button key={c.k} type="button"
+                          className="cap-check" data-on={on}
+                          onClick={()=>toggleCap(c.k)}>
+                    <Ico size={14}/>
+                    <span>{c.l}</span>
+                    {on && <IconCheck size={12} className="cap-check-tick"/>}
                   </button>
                 );
               })}
             </div>
-          </Field>
+          </section>
 
-          <Field label={lang==='es'?'Observaciones':'Notes'}>
-            <textarea
-              rows={3}
-              value={form.observaciones}
-              onChange={e=>setF('observaciones', e.target.value)}
-              style={{ ...inp, resize:'vertical', minHeight:64 }}
-            />
-          </Field>
+          {/* ── Observaciones ── */}
+          <section className="drawer-section">
+            <div className="drawer-section-title">{lang==='es'?'Observaciones':'Notes'}</div>
+            <textarea className="input" rows={3}
+                      value={form.observaciones}
+                      onChange={e=>setF('observaciones', e.target.value)}
+                      style={{ resize:'vertical', minHeight:64 }}/>
+          </section>
 
           {err && (
             <div style={{
@@ -785,37 +864,6 @@ function EditNodeDrawer({ raw, lang, onClose, onSaved }) {
         </div>
       </motion.aside>
     </>
-  );
-}
-
-const DEFAULT_CAPS = [
-  { codigo:'receive',          label:'Recibir' },
-  { codigo:'store',            label:'Almacenar' },
-  { codigo:'prepare',          label:'Preparar' },
-  { codigo:'dispatch',         label:'Despachar' },
-  { codigo:'report_sales',     label:'Reportar ventas' },
-  { codigo:'report_inventory', label:'Reportar inventario' },
-];
-
-const inp = {
-  width:'100%', padding:'10px 12px',
-  border:'1.5px solid #E5EAF2', borderRadius:8,
-  font:'500 13.5px/1.2 inherit', color:'#0F1B3D',
-  background:'#FFFFFF', outline:'none', boxSizing:'border-box',
-};
-const row2 = { display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 };
-
-function Field({ label, children }) {
-  return (
-    <label style={{ display:'block', marginBottom:14 }}>
-      <div style={{
-        font:'600 11px/1 inherit', color:'#0F1B3D',
-        textTransform:'uppercase', letterSpacing:0.4, marginBottom:6,
-      }}>
-        {label}
-      </div>
-      {children}
-    </label>
   );
 }
 
