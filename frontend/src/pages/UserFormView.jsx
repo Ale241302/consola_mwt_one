@@ -104,20 +104,23 @@ export default function UserFormView() {
       const body = { ...user };
       if (isEdit && !body.password) delete body.password;
 
-      // Normalizar addresses al shape del backend:
+      // Normalizar addresses al shape del backend.
+      // Mapeo de keys del form → modelo Django:
       //   street → address_line_1
       //   country_iso2 → country
       //   zip → zip_code
-      // Y eliminar ids "locales" (addr-${ts}-...) para que el backend
-      // los trate como nuevas inserciones; los ids reales (UUID) sí se
-      // preservan para que el procesador atómico haga update.
+      // NINGÚN campo es obligatorio. Si quedan vacíos se mandan como null
+      // y el backend los acepta (la columna es nullable a partir de A4c).
+      // Los ids "locales" (addr-${ts}-...) se eliminan para que el
+      // backend los trate como nuevas inserciones; los UUIDs reales se
+      // preservan para que el procesador atómico haga UPDATE.
       if (Array.isArray(body.addresses)) {
         body.addresses = body.addresses.map((a) => {
           const isLocalId = typeof a.id === "string" && a.id.startsWith("addr-");
           const out = {
             label:          a.label || null,
             kind:           a.kind  || "SHIPPING",
-            address_line_1: a.address_line_1 ?? a.street ?? "",
+            address_line_1: a.address_line_1 ?? a.street ?? null,
             address_line_2: a.address_line_2 ?? null,
             city:           a.city  ?? null,
             state:          a.state ?? null,
@@ -129,10 +132,7 @@ export default function UserFormView() {
           if (a._deleted) out._deleted = true;
           return out;
         });
-        // Eliminar addresses sin address_line_1 — el backend las rechazaría.
-        body.addresses = body.addresses.filter(
-          (a) => a._deleted || (a.address_line_1 && a.address_line_1.trim()),
-        );
+        // No filtramos: TODAS las direcciones se mandan.
       }
       const resp = isEdit
         ? await apiFetch(`/users/${userId}/`, { method: "PATCH", body, token: getToken() })
@@ -517,31 +517,6 @@ export default function UserFormView() {
                    <IconPlus size={11}/> Agregar dirección
                  </button>
                }>
-        {/* Hint visible · explica que se persisten con el botón Guardar de abajo */}
-        {(user.addresses || []).length > 0 && (
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            padding: "8px 12px", marginBottom: 12,
-            background: "rgba(0,178,134,0.08)",
-            border: "1px solid rgba(0,178,134,0.25)",
-            borderRadius: 8,
-            font: "500 11.5px/1.4 var(--font-body)",
-            color: "#065F46",
-          }}>
-            <span style={{
-              width: 18, height: 18, borderRadius: "50%",
-              background: "var(--mint, #00B286)", color: "#fff",
-              display: "grid", placeItems: "center",
-              font: "700 11px/1 var(--font-body)", flexShrink: 0,
-            }}>i</span>
-            Las direcciones se guardan automáticamente al pulsar
-            <strong style={{ marginLeft: 4, color: "var(--mint, #00B286)" }}>
-              {isEdit ? "Guardar cambios" : "Crear usuario"}
-            </strong>
-            {" "}abajo. Crear/editar/eliminar acá <em>prepara</em> la lista; el envío real se hace en una sola transacción atómica.
-          </div>
-        )}
-
         {(user.addresses || []).length === 0 ? (
           <div style={{
             padding: 28, textAlign: "center", color: "var(--text-tertiary)",

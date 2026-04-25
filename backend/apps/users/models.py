@@ -116,7 +116,7 @@ class UserAddress(models.Model):
     contact_name   = models.CharField(max_length=160, null=True, blank=True)
     contact_phone  = models.CharField(max_length=32,  null=True, blank=True)
 
-    address_line_1 = models.CharField(max_length=255)
+    address_line_1 = models.CharField(max_length=255, null=True, blank=True)
     address_line_2 = models.CharField(max_length=255, null=True, blank=True)
     city           = models.CharField(max_length=96,  null=True, blank=True)
     state          = models.CharField(max_length=96,  null=True, blank=True)

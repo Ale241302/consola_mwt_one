@@ -592,9 +592,9 @@ def _process_addresses_atomic(user_id, payload_addresses):
             continue
 
         # ── 3. CREATE (sin id o id inexistente para este user) ──
-        if not item.get("address_line_1"):
-            # requisito mínimo — line_1 obligatorio
-            continue
+        # NINGÚN campo es obligatorio · permitimos crear direcciones
+        # con todos los campos vacíos (caso "guardo solo el label como
+        # placeholder mientras consigo el resto").
         new_addr = UserAddress.objects.create(
             id             = uuid.uuid4(),
             user_id        = user_id,
@@ -602,7 +602,7 @@ def _process_addresses_atomic(user_id, payload_addresses):
             kind           = item.get("kind") or "SHIPPING",
             contact_name   = item.get("contact_name") or None,
             contact_phone  = item.get("contact_phone") or None,
-            address_line_1 = item["address_line_1"],
+            address_line_1 = item.get("address_line_1") or None,
             address_line_2 = item.get("address_line_2") or None,
             city           = item.get("city") or None,
             state          = item.get("state") or None,
