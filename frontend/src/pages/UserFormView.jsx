@@ -206,14 +206,15 @@ export default function UserFormView() {
   }, [companies, companySearch]);
 
   // ── Direcciones helpers ─────────────────────────────────
+  // Usa nombres canónicos del backend (address_line_1, country, zip_code).
   const addAddress = () => {
     const a = {
       id: `addr-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
       label: "Nueva dirección",
-      street: "",
+      address_line_1: "",
       city: "",
-      country_iso2: "PE",
-      zip: "",
+      country: "PE",
+      zip_code: "",
       is_default: (user.addresses || []).length === 0,
       is_active: true,
     };
@@ -636,10 +637,14 @@ function AddressRow({ address, onUpdate, onSetDefault, onRemove }) {
           <IconX size={12}/>
         </button>
       </div>
+      {/* Usamos los mismos nombres de campo que el backend
+          (address_line_1 / country / zip_code) para que cargar y
+          guardar sean simétricos. Acepta `street/country_iso2/zip`
+          como fallback para compat con datos viejos en memoria. */}
       <div style={styles.grid2}>
         <Field label="Calle y número">
-          <input value={address.street}
-                 onChange={(e) => onUpdate({ street: e.target.value })}
+          <input value={address.address_line_1 ?? address.street ?? ""}
+                 onChange={(e) => onUpdate({ address_line_1: e.target.value })}
                  style={styles.input}/>
         </Field>
         <Field label="Ciudad">
@@ -648,8 +653,8 @@ function AddressRow({ address, onUpdate, onSetDefault, onRemove }) {
                  style={styles.input}/>
         </Field>
         <Field label="País">
-          <select value={address.country_iso2 || "PE"}
-                  onChange={(e) => onUpdate({ country_iso2: e.target.value })}
+          <select value={address.country ?? address.country_iso2 ?? "PE"}
+                  onChange={(e) => onUpdate({ country: e.target.value })}
                   style={styles.input}>
             <option value="PE">🇵🇪 Perú</option>
             <option value="CL">🇨🇱 Chile</option>
@@ -659,11 +664,15 @@ function AddressRow({ address, onUpdate, onSetDefault, onRemove }) {
             <option value="BR">🇧🇷 Brasil</option>
             <option value="EC">🇪🇨 Ecuador</option>
             <option value="UY">🇺🇾 Uruguay</option>
+            <option value="US">🇺🇸 USA</option>
+            <option value="DO">🇩🇴 R. Dominicana</option>
+            <option value="PA">🇵🇦 Panamá</option>
+            <option value="CR">🇨🇷 Costa Rica</option>
           </select>
         </Field>
         <Field label="Código postal">
-          <input value={address.zip || ""}
-                 onChange={(e) => onUpdate({ zip: e.target.value })}
+          <input value={address.zip_code ?? address.zip ?? ""}
+                 onChange={(e) => onUpdate({ zip_code: e.target.value })}
                  style={styles.input}/>
         </Field>
       </div>
