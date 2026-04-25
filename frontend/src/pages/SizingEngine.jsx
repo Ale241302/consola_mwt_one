@@ -30,7 +30,7 @@ import { tallasApi, sizingApi } from "../lib/api.js";
 import { MOCK_TALLAS, MOCK_SIZING_OPTIONS } from "../data/mockData.js";
 import ConfirmModal from "../components/common/ConfirmModal.jsx";
 import {
-  IconPlus, IconRefresh, IconSearch, IconX, IconCheck, IconAlert,
+  IconPlus, IconRefresh, IconSearch, IconX, IconCheck,
   IconPackage, IconAlert, IconTag, IconLock,
 } from "../lib/icons.jsx";
 
