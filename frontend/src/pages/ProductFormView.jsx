@@ -303,9 +303,14 @@ export default function ScreenProductFormView() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
 
-  const resolveMarcaId = (slugOrCode) => {
-    if (!slugOrCode || !realBrands.length) return null;
-    const needle = String(slugOrCode).toLowerCase();
+  const resolveMarcaId = (idOrSlug) => {
+    if (!idOrSlug) return null;
+    // Si ya es un UUID (lo que el dropdown actual mete como value), úsalo directo.
+    const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (UUID_RX.test(idOrSlug)) return idOrSlug;
+    // Fallback: matchea slug/code/nombre (compat con BRANDS mock legacy).
+    if (!realBrands.length) return null;
+    const needle = String(idOrSlug).toLowerCase();
     const hit = realBrands.find(b =>
       (b.slug || '').toLowerCase()      === needle ||
       (b.brand_code || '').toLowerCase() === needle ||

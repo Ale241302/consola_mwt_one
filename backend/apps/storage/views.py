@@ -21,6 +21,7 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
+from rest_framework.permissions import AllowAny
 
 from django.http import StreamingHttpResponse, Http404
 
@@ -127,7 +128,7 @@ class StorageViewSet(viewsets.ViewSet):
     #    la URL HTTP de MinIO. Permite que <img>/<iframe> en el FE
     #    pidan archivos sin mixed-content. Usa GET para que cacheen. ──
     @action(detail=False, methods=["get"], url_path="download",
-            permission_classes=[])    # AllowAny — la key UUID actúa como secret
+            permission_classes=[AllowAny])   # la key UUID actúa como secret
     def download(self, request):
         """
         GET /api/storage/download/?key=<key>
