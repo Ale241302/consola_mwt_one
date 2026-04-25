@@ -111,6 +111,11 @@ export default function ScreenClienteDetail() {
   // Lo mantengo declarado para no romper la función si algún effect lo refería.
   const [showEdit, setShowEdit] = useState(false);   // eslint-disable-line no-unused-vars
 
+  // Estado para el modal de confirmación de eliminación
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting,      setDeleting]      = useState(false);
+  const [deleteErr,     setDeleteErr]     = useState(null);
+
   // ── Fetch real al backend (antes leía CLIENTS de mockData.js, por eso
   //    clientes creados vía API mostraban "Cliente no encontrado") ──
   const [rawClient, setRawClient] = useState(null);
@@ -303,9 +308,43 @@ export default function ScreenClienteDetail() {
                     onClick={() => navigate(`/clientes/${clienteId}/editar`)}>
               {lang==='es' ? 'Editar' : 'Edit'}
             </button>
+            {/* Eliminar (soft-delete vía DELETE /api/clientes/{id}/) — solo
+                si el cliente vino del backend; los mock-only no se borran. */}
+            {client._raw && (
+              <button className="btn btn-ghost"
+                      style={{ color: '#DC2626' }}
+                      onClick={() => setConfirmDelete(true)}>
+                {lang==='es' ? 'Eliminar' : 'Delete'}
+              </button>
+            )}
           </div>
         </div>
       </motion.div>
+
+      {/* ── Modal confirmación de eliminación ───────── */}
+      <AnimatePresence>
+        {confirmDelete && (
+          <ConfirmDeleteModal
+            clientName={client.name}
+            busy={deleting}
+            error={deleteErr}
+            lang={lang}
+            onCancel={() => { setConfirmDelete(false); setDeleteErr(null); }}
+            onConfirm={async () => {
+              setDeleting(true);
+              setDeleteErr(null);
+              try {
+                await clientesApi.remove(clienteId);
+                navigate('/clientes', { replace: true });
+              } catch (e) {
+                setDeleteErr(e?.message || (lang==='es'?'No se pudo eliminar.':'Delete failed.'));
+              } finally {
+                setDeleting(false);
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* ── KPIs ──────────────────── */}
       <div className="nodes-kpis" style={{marginTop: 16}}>
@@ -600,5 +639,84 @@ function AlertasTab({ lang, alertas }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────
+   ConfirmDeleteModal — confirmación de soft-delete
+   ──────────────────────────────────────────────────── */
+function ConfirmDeleteModal({ clientName, busy, error, lang, onCancel, onConfirm }) {
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        onClick={busy ? undefined : onCancel}
+        style={{
+          position:'fixed', inset:0, zIndex:90,
+          background:'rgba(15,27,61,0.45)', backdropFilter:'blur(2px)',
+        }}
+      />
+      <motion.div
+        initial={{ opacity:0, scale:0.96 }}
+        animate={{ opacity:1, scale:1, transition:{ duration:0.18 }}}
+        exit   ={{ opacity:0, scale:0.96, transition:{ duration:0.12 }}}
+        role="dialog" aria-modal="true"
+        style={{
+          position:'fixed', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
+          width:'min(420px, 92vw)', zIndex:91,
+          background:'#FFFFFF', borderRadius:14,
+          boxShadow:'0 30px 60px -20px rgba(15,27,61,0.45)',
+          fontFamily:'inherit',
+        }}
+      >
+        <div style={{ padding:'22px 22px 12px' }}>
+          <div style={{
+            font:'600 11px/1 inherit', color:'#DC2626',
+            letterSpacing:'0.12em', textTransform:'uppercase', marginBottom:8,
+          }}>
+            {lang==='es' ? 'Acción destructiva' : 'Destructive action'}
+          </div>
+          <div style={{ font:'700 17px/1.3 inherit', color:'#0F1B3D', marginBottom:8 }}>
+            {lang==='es' ? '¿Eliminar este cliente?' : 'Delete this client?'}
+          </div>
+          <div style={{ font:'500 13.5px/1.5 inherit', color:'#3D4A6B' }}>
+            {lang==='es'
+              ? <>Vas a eliminar <strong>{clientName}</strong>. Es soft-delete: el cliente queda inactivo en BD pero se conserva el historial. Cualquier expediente o pago asociado no se borra.</>
+              : <>You're about to delete <strong>{clientName}</strong>. This is a soft-delete: the client becomes inactive in DB but history is preserved. Linked files/payments are not removed.</>
+            }
+          </div>
+          {error && (
+            <div style={{
+              marginTop:14, padding:'10px 12px', borderRadius:8,
+              background:'#FEE2E2', border:'1px solid #FCA5A5', color:'#991B1B',
+              font:'500 12.5px/1.4 inherit',
+            }}>
+              {error}
+            </div>
+          )}
+        </div>
+        <div style={{
+          padding:'14px 22px 18px',
+          display:'flex', gap:10, justifyContent:'flex-end',
+        }}>
+          <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={busy}>
+            {lang==='es' ? 'Cancelar' : 'Cancel'}
+          </button>
+          <button type="button" onClick={onConfirm} disabled={busy}
+                  style={{
+                    padding:'10px 16px', borderRadius:9,
+                    background: busy ? '#FCA5A5' : '#DC2626',
+                    color:'#FFFFFF', border:'none',
+                    cursor: busy ? 'not-allowed' : 'pointer',
+                    font:'700 13.5px/1 inherit',
+                    boxShadow: busy ? 'none' : '0 4px 10px rgba(220,38,38,0.25)',
+                  }}>
+            {busy
+              ? (lang==='es' ? 'Eliminando…' : 'Deleting…')
+              : (lang==='es' ? 'Sí, eliminar' : 'Yes, delete')}
+          </button>
+        </div>
+      </motion.div>
+    </>
   );
 }

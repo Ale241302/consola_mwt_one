@@ -90,6 +90,7 @@ const CANALES = [
 const ESTADOS = [
   { k: "ACTIVO",    l: "Activo",    color: MINT,  hint: "Operación normal." },
   { k: "PAUSADO",   l: "Pausado",   color: AMBER, hint: "Operación suspendida temporalmente (revisión comercial)." },
+  { k: "INACTIVO",  l: "Inactivo",  color: MUTED, hint: "Cliente fuera de operación — no aparece en buscadores." },
   { k: "BLOQUEADO", l: "Bloqueado", color: RED,   hint: "Cliente bloqueado — sin nuevas OCs." },
 ];
 
