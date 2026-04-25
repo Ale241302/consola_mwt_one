@@ -109,18 +109,19 @@ class TransferenciaViewSet(viewsets.ViewSet):
         return Response(data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
+        data = {**request.data}
+        new_id = uuid.uuid4()
         s = TransferenciaSerializer(data=data)
         s.is_valid(raise_exception=True)
         with transaction.atomic():
-            s.save()
+            s.save(id=new_id)   # bypass read_only_fields=("id",)
             # Snapshot timestamp y primer evento
-            Transferencia.objects.filter(pk=s.data["id"]).update(
+            Transferencia.objects.filter(pk=new_id).update(
                 snapshot_created_at=timezone.now(),
             )
             Evento.objects.create(
                 id               = uuid.uuid4(),
-                transferencia_id = s.data["id"],
+                transferencia_id = new_id,
                 estado_prev      = None,
                 estado_nuevo     = s.data.get("estado", "PLANNED"),
                 actor_id         = data.get("created_by_id"),
@@ -405,10 +406,10 @@ class TransferenciaViewSet(viewsets.ViewSet):
             ).order_by("-created_at")
             return Response(TransferenciaDocumentoSerializer(qs, many=True).data)
         # POST
-        data = {**request.data, "id": str(uuid.uuid4()), "transferencia_id": pk}
+        data = {**request.data, "transferencia_id": pk}
         s = TransferenciaDocumentoSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     @action(detail=True, methods=["delete"], url_path=r"documentos/(?P<doc_id>[^/.]+)")
@@ -444,14 +445,14 @@ class LineaViewSet(viewsets.ViewSet):
         return Response(LineaSerializer(l).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
+        data = {**request.data}
         # Snapshot de costo al crear
         if not data.get("snapshot_unit_cost") and data.get("unit_cost"):
             data["snapshot_unit_cost"]  = data["unit_cost"]
             data["snapshot_created_at"] = timezone.now().isoformat()
         s = LineaSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -487,7 +488,7 @@ class EventoViewSet(viewsets.ViewSet):
         return Response(EventoSerializer(qs, many=True).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
+        data = {**request.data}
         token = data.get("idempotence_token")
         if token:
             prev = Evento.objects.filter(idempotence_token=token, is_active=True).first()
@@ -495,7 +496,7 @@ class EventoViewSet(viewsets.ViewSet):
                 return Response(EventoSerializer(prev).data, status=200)
         s = EventoSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
 
@@ -521,10 +522,9 @@ class TransferenciaDocumentoViewSet(viewsets.ViewSet):
         return Response(TransferenciaDocumentoSerializer(d).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = TransferenciaDocumentoSerializer(data=data)
+        s = TransferenciaDocumentoSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):

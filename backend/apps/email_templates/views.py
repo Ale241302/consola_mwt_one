@@ -77,15 +77,16 @@ class TemplateViewSet(viewsets.ViewSet):
             if existing:
                 return Response({**TemplateSerializer(existing).data, "idempotent": True}, status=200)
 
-        data = {**request.data, "id": str(uuid.uuid4())}
+        data = {**request.data}
         data.setdefault("status", "DRAFT")
+        new_id = uuid.uuid4()
         s = TemplateSerializer(data=data)
         s.is_valid(raise_exception=True)
         with transaction.atomic():
-            s.save()
+            s.save(id=new_id)   # bypass read_only_fields=("id",)
             Version.objects.create(
                 id               = uuid.uuid4(),
-                template_id      = s.data["id"],
+                template_id      = new_id,
                 subject_template = s.data.get("subject_template"),
                 body_template    = s.data.get("body_template"),
                 changed_by_id    = data.get("changed_by_id"),
@@ -440,10 +441,9 @@ class VersionViewSet(viewsets.ViewSet):
         return Response(VersionSerializer(v).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = VersionSerializer(data=data)
+        s = VersionSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
 

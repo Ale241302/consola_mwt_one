@@ -105,10 +105,9 @@ class CobroViewSet(viewsets.ViewSet):
         return Response(data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = CobroSerializer(data=data)
+        s = CobroSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -162,10 +161,10 @@ class CobroViewSet(viewsets.ViewSet):
             Vencimiento.objects.filter(cobro_id=pk, is_active=True).update(is_active=False)
             out = []
             for v in plan:
-                payload = {**v, "id": str(uuid.uuid4()), "cobro_id": pk}
+                payload = {**v, "cobro_id": pk}
                 s = VencimientoSerializer(data=payload)
                 s.is_valid(raise_exception=True)
-                s.save()
+                s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
                 out.append(s.data)
         return Response({"count": len(out), "plan": out}, status=201)
 
@@ -286,7 +285,7 @@ class PagoViewSet(viewsets.ViewSet):
     def create(self, request):
         """Crea un pago; si está VERIFICADO actualiza cobro.monto_pagado.
         Idempotente por external_id (si viene)."""
-        data = {**request.data, "id": str(uuid.uuid4())}
+        data = {**request.data}
 
         # ── Idempotencia por external_id ───────────────
         external_id = data.get("external_id")
@@ -304,7 +303,7 @@ class PagoViewSet(viewsets.ViewSet):
         s = PagoSerializer(data=data)
         s.is_valid(raise_exception=True)
         with transaction.atomic():
-            s.save()
+            s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
             self._aplicar_delta_cobro(data.get("cobro_id"),
                                       Decimal(str(data.get("monto", 0))),
                                       data.get("estado", "PENDIENTE"))
@@ -350,10 +349,10 @@ class PagoViewSet(viewsets.ViewSet):
             qs = WithholdingLog.objects.filter(pago_id=pk, is_active=True)
             return Response(WithholdingLogSerializer(qs, many=True).data)
         # POST
-        data = {**request.data, "id": str(uuid.uuid4()), "pago_id": pk}
+        data = {**request.data, "pago_id": pk}
         s = WithholdingLogSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     # ── Selects ────────────────────────────────────────
@@ -418,7 +417,7 @@ class ConciliacionViewSet(viewsets.ViewSet):
         return Response(ConciliacionSerializer(c).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
+        data = {**request.data}
         # ── Idempotencia por idempotence_token ─────────
         token = data.get("idempotence_token")
         if token:
@@ -427,7 +426,7 @@ class ConciliacionViewSet(viewsets.ViewSet):
                 return Response(ConciliacionSerializer(prev).data, status=200)
         s = ConciliacionSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -466,10 +465,9 @@ class VencimientoViewSet(viewsets.ViewSet):
         return Response(VencimientoSerializer(v).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = VencimientoSerializer(data=data)
+        s = VencimientoSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -508,10 +506,9 @@ class WithholdingLogViewSet(viewsets.ViewSet):
         return Response(WithholdingLogSerializer(w).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = WithholdingLogSerializer(data=data)
+        s = WithholdingLogSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
 
@@ -531,7 +528,7 @@ class FxRateHistoryViewSet(viewsets.ViewSet):
 
     def create(self, request):
         """Idempotente por (fecha, moneda_from, moneda_to, source)."""
-        data = {**request.data, "id": str(uuid.uuid4())}
+        data = {**request.data}
         prev = FxRateHistory.objects.filter(
             fecha       = data.get("fecha"),
             moneda_from = data.get("moneda_from"),
@@ -543,7 +540,7 @@ class FxRateHistoryViewSet(viewsets.ViewSet):
             return Response(FxRateHistorySerializer(prev).data, status=200)
         s = FxRateHistorySerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     @action(detail=False, methods=["get"])
@@ -582,11 +579,11 @@ class CollectionEventViewSet(viewsets.ViewSet):
         return Response(CollectionEventSerializer(qs[:limit], many=True).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
+        data = {**request.data}
         s = CollectionEventSerializer(data=data)
         s.is_valid(raise_exception=True)
         with transaction.atomic():
-            s.save()
+            s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
             # bump last_reminder_at en el cobro
             if data.get("cobro_id"):
                 Cobro.objects.filter(pk=data["cobro_id"]).update(

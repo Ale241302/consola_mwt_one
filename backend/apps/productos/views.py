@@ -36,10 +36,9 @@ class ProductoViewSet(viewsets.ViewSet):
         return Response(ProductoSerializer(p).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = ProductoSerializer(data=data)
+        s = ProductoSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):

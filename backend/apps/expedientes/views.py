@@ -110,10 +110,9 @@ class OcViewSet(viewsets.ViewSet):
     def create(self, request):
         denied = _deny_client_mutation(request, action_label="oc.create")
         if denied is not None: return denied
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = OcSerializer(data=data)
+        s = OcSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -211,10 +210,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # admin. Deben usar /api/expedientes/create-from-oc/.
         denied = _deny_client_mutation(request, action_label="expediente.create")
         if denied is not None: return denied
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = ExpedienteSerializer(data=data)
+        s = ExpedienteSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -822,10 +820,9 @@ class LineaViewSet(viewsets.ViewSet):
     def create(self, request):
         denied = _deny_client_mutation(request, action_label="linea.create")
         if denied is not None: return denied
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = LineaSerializer(data=data)
+        s = LineaSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -870,10 +867,9 @@ class DocumentoViewSet(viewsets.ViewSet):
     def create(self, request):
         denied = _deny_client_mutation(request, action_label="documento.create")
         if denied is not None: return denied
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = DocumentoSerializer(data=data)
+        s = DocumentoSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):

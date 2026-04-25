@@ -40,10 +40,12 @@ class MarcaViewSet(viewsets.ViewSet):
         return Response(MarcaSerializer(m).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = MarcaSerializer(data=data)
+        s = MarcaSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        # `id` está en read_only_fields → DRF lo descarta del validated_data.
+        # Inyectarlo vía save(**kwargs) bypasea el read_only y evita el
+        # IntegrityError por PK NULL. (Mismo patrón aplicado en nodos/clientes.)
+        s.save(id=uuid.uuid4())
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -148,10 +150,10 @@ class MarcaViewSet(viewsets.ViewSet):
             return Response(BrandDiscountCodeSerializer(qs, many=True).data)
 
         # POST
-        data = {**request.data, "marca_id": pk, "id": str(uuid.uuid4())}
+        data = {**request.data, "marca_id": pk}
         s = BrandDiscountCodeSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     @action(detail=True, methods=["patch", "delete"],

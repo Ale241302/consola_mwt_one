@@ -43,10 +43,9 @@ class ProveedorViewSet(viewsets.ViewSet):
         return Response(ProveedorSerializer(p).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = ProveedorSerializer(data=data)
+        s = ProveedorSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -158,10 +157,10 @@ class ProveedorViewSet(viewsets.ViewSet):
                   .order_by("-created_at"))
             return Response(SupplierPromoCodeSerializer(qs, many=True).data)
 
-        data = {**request.data, "proveedor_id": pk, "id": str(uuid.uuid4())}
+        data = {**request.data, "proveedor_id": pk}
         s = SupplierPromoCodeSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     @action(detail=True, methods=["patch", "delete"],
@@ -190,12 +189,12 @@ class ProveedorViewSet(viewsets.ViewSet):
                   .order_by("-created_at")[:limit])
             return Response(SupplierAuditEventSerializer(qs, many=True).data)
 
-        data = {**request.data, "proveedor_id": pk, "id": str(uuid.uuid4())}
+        data = {**request.data, "proveedor_id": pk}
         data.setdefault("actor_id", str(getattr(request.user, "id", "")) or None)
         data.setdefault("actor_type", "USER")
         s = SupplierAuditEventSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     # ── Certificaciones ───────────────────────────────
@@ -207,10 +206,10 @@ class ProveedorViewSet(viewsets.ViewSet):
                   .order_by("-fecha_vencimiento"))
             return Response(SupplierCertificacionSerializer(qs, many=True).data)
 
-        data = {**request.data, "proveedor_id": pk, "id": str(uuid.uuid4())}
+        data = {**request.data, "proveedor_id": pk}
         s = SupplierCertificacionSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     # ── Mass upload catálogo (2-step preview + commit) ─

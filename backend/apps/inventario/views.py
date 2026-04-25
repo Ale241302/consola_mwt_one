@@ -51,10 +51,9 @@ class StockViewSet(viewsets.ViewSet):
         return Response(StockSerializer(s).data)
 
     def create(self, request):
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = StockSerializer(data=data)
+        s = StockSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -134,10 +133,10 @@ class StockViewSet(viewsets.ViewSet):
             qs = StockUbicacion.objects.filter(stock_id=pk, is_active=True)
             return Response(StockUbicacionSerializer(qs, many=True).data)
         # POST
-        data = {**request.data, "id": str(uuid.uuid4()), "stock_id": pk}
+        data = {**request.data, "stock_id": pk}
         s = StockUbicacionSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     # ── Snapshots históricos ─────────────────────────────
@@ -332,7 +331,7 @@ class MovimientoViewSet(viewsets.ViewSet):
             lote?, cantidad, costo_unitario_usd?, notas?,
             contexto_legal?, idempotence_token? }
         """
-        data = {**request.data, "id": str(uuid.uuid4())}
+        data = {**request.data}
 
         # ── Idempotencia: si ya existe el token, devolver el movimiento previo.
         token = data.get("idempotence_token")
@@ -355,7 +354,7 @@ class MovimientoViewSet(viewsets.ViewSet):
 
         try:
             with transaction.atomic():
-                m = s.save()
+                m = s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
                 # Aplicar delta al stock según tipo
                 if tipo == "ENTRADA" and nodo_destino_id:
                     self._aplicar_delta(nodo_destino_id, producto_id, lote, +cantidad)

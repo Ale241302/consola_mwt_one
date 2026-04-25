@@ -77,11 +77,11 @@ class NotificationLogViewSet(viewsets.ViewSet):
                     status=200,
                 )
 
-        data = {**request.data, "id": str(uuid.uuid4())}
+        data = {**request.data}
         data.setdefault("ts", timezone.now())
         s = NotificationLogSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -452,10 +452,9 @@ class EmailQueueLogViewSet(viewsets.ViewSet):
                     {**EmailQueueLogSerializer(existing).data, "idempotent": True},
                     status=200,
                 )
-        data = {**request.data, "id": str(uuid.uuid4())}
-        s = EmailQueueLogSerializer(data=data)
+        s = EmailQueueLogSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
