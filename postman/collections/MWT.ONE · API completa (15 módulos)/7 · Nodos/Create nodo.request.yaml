@@ -1,5 +1,6 @@
 $kind: http-request
-url: "{{base_url}}/api/nodos"
+name: Create nodo
+url: "{{base_url}}/api/nodos/"
 method: POST
 headers:
   Content-Type: application/json

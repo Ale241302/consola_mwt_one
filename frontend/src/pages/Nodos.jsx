@@ -338,6 +338,18 @@ export default function ScreenNodos() {
                 US: "America/New_York",
                 ES: "Europe/Madrid",
               };
+              // CreateNodeModal mantiene `capabilities` como objeto
+              // {receive:true, store:false, ...}; el backend espera un
+              // array de claves activas: ["receive","store",...].
+              const capsToArray = (caps) => {
+                if (Array.isArray(caps)) return caps;
+                if (caps && typeof caps === "object") {
+                  return Object.entries(caps)
+                    .filter(([, v]) => Boolean(v))
+                    .map(([k]) => k);
+                }
+                return [];
+              };
               const body = {
                 codigo:                payload.node_id,
                 nombre:                payload.name,
@@ -346,7 +358,7 @@ export default function ScreenNodos() {
                 zona_horaria:          payload.zona_horaria || TZ_POR_PAIS[payload.country] || "America/Lima",
                 status:                payload.status || "ACTIVE",
                 is_active:             payload.status !== "RETIRED",
-                capabilities:          Array.isArray(payload.capabilities) ? payload.capabilities : [],
+                capabilities:          capsToArray(payload.capabilities),
                 legal_entity_owner_id: payload.legal_entity_owner_id || null,
                 operator_id:           payload.operator_id || null,
               };
