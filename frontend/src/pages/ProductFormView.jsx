@@ -81,7 +81,15 @@ export default function ScreenProductFormView() {
     if (fromEspec.length) return fromEspec;
     return existing.imagen_url ? [existing.imagen_url] : [];
   });
-  const [fichaKey, setFichaKey] = useState(existing?.ficha_url || null);
+  // Soporta múltiples PDFs. Por compat legacy, si solo hay uno se persiste
+  // también en `ficha_url` (string). El array completo va en
+  // `especificaciones.fichas` para mantener galería de PDFs.
+  const [fichaKeys, setFichaKeys] = useState(() => {
+    if (!existing) return [];
+    const fromEspec = (existing.especificaciones?.fichas || []).filter(Boolean);
+    if (fromEspec.length) return fromEspec;
+    return existing.ficha_url ? [existing.ficha_url] : [];
+  });
 
   // Atributos (Sección B)
   const [attrs, setAttrs] = useState({
@@ -236,6 +244,8 @@ export default function ScreenProductFormView() {
       // Galería completa de keys MinIO (no nombres). Compat con preview
       // múltiple en futuro. El "imagen principal" es galleryKeys[0].
       gallery:          galleryKeys,
+      // Galería de fichas técnicas (PDFs). La "principal" es fichaKeys[0].
+      fichas:           fichaKeys,
     };
 
     const body = {
@@ -251,7 +261,7 @@ export default function ScreenProductFormView() {
       visibility_tier:   visibleToAll ? 'INTERNAL' : 'CEO-ONLY',
       // Archivos REALES subidos a MinIO (vía FileUploader → signed PUT).
       imagen_url:        galleryKeys[0] || null,
-      ficha_url:         fichaKey,
+      ficha_url:         fichaKeys[0] || null,
     };
 
     try {
@@ -356,35 +366,40 @@ export default function ScreenProductFormView() {
           )}
         </div>
 
-        {/* ── Ficha técnica (PDF único) ── */}
+        {/* ── Fichas técnicas (PDFs · múltiples) ── */}
         <div>
           <div style={{ font:'600 11px/1 inherit', color:'#0F1B3D',
                         textTransform:'uppercase', letterSpacing:0.4, marginBottom:6 }}>
-            {lang==='es'?'Ficha técnica (PDF)':'Tech data sheet (PDF)'}
+            {lang==='es'?'Fichas técnicas (PDFs)':'Tech data sheets (PDFs)'}
           </div>
-          {!fichaKey ? (
-            <FileUploader
-              scope={`producto/${productId || 'nuevo'}/ficha`}
-              accept="application/pdf"
-              maxSizeMb={20}
-              label={lang==='es'?'Arrastra un PDF con especificaciones':'Drop a PDF with specs'}
-              onUploaded={(key) => setFichaKey(key)}
-              onError={(msg) => console.warn('[upload ficha]', msg)}
-            />
-          ) : (
-            <FilePreview
-              keyOrUrl={fichaKey}
-              mime="application/pdf"
-              height={240}
-              onDelete={async () => {
-                try {
-                  await apiFetch(`/storage/delete/?key=${encodeURIComponent(fichaKey)}`, {
-                    method: "DELETE", token: getToken(),
-                  });
-                } catch (_) { /* idempotente */ }
-                setFichaKey(null);
-              }}
-            />
+          <FileUploader
+            scope={`producto/${productId || 'nuevo'}/fichas`}
+            accept="application/pdf"
+            maxSizeMb={20}
+            multiple
+            label={lang==='es'?'Arrastra uno o más PDFs · máx 20 MB c/u':'Drop one or more PDFs · max 20 MB each'}
+            onUploaded={(key) => setFichaKeys(prev => [...prev, key])}
+            onError={(msg) => console.warn('[upload ficha]', msg)}
+          />
+          {fichaKeys.length > 0 && (
+            <div style={{ marginTop:10, display:'grid', gap:10 }}>
+              {fichaKeys.map((k) => (
+                <FilePreview
+                  key={k}
+                  keyOrUrl={k}
+                  mime="application/pdf"
+                  height={240}
+                  onDelete={async () => {
+                    try {
+                      await apiFetch(`/storage/delete/?key=${encodeURIComponent(k)}`, {
+                        method: "DELETE", token: getToken(),
+                      });
+                    } catch (_) { /* idempotente */ }
+                    setFichaKeys(prev => prev.filter(x => x !== k));
+                  }}
+                />
+              ))}
+            </div>
           )}
         </div>
       </div>
