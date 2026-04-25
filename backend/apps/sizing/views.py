@@ -81,9 +81,17 @@ class TallaViewSet(viewsets.ModelViewSet):
             )
         return qs
 
-    # ── Soft delete: nunca borramos físicamente ────────────────
+    # ── Delete: por defecto SOFT (is_active=False).
+    #    Si el caller pasa ?hard=1 en query params, hacemos HARD delete
+    #    real (DELETE FROM ops.tallas WHERE id=...). Esto le permite al
+    #    FE distinguir "Desactivar" vs "Eliminar permanente". ──────────
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
+        hard = str(request.query_params.get("hard", "")).lower() in ("1", "true", "yes")
+        if hard:
+            instance.delete()  # HARD — fila eliminada de la tabla
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        # SOFT (default)
         instance.is_active = False
         instance.save(update_fields=["is_active", "updated_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)

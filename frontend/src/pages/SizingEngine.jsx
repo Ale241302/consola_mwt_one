@@ -26,7 +26,7 @@ import { createPortal } from "react-dom";
 import { useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { tallasApi, sizingApi } from "../lib/api.js";
+import { tallasApi, sizingApi, apiFetch, getToken } from "../lib/api.js";
 import { MOCK_TALLAS, MOCK_SIZING_OPTIONS } from "../data/mockData.js";
 import ConfirmModal from "../components/common/ConfirmModal.jsx";
 import {
@@ -177,9 +177,12 @@ export default function ScreenSizingEngine() {
         // PATCH suave — preserva el registro pero lo oculta de listas activas.
         await tallasApi.update(talla.id, { is_active: false });
       } else if (kind === 'delete') {
-        // DELETE en BD — el ViewSet decide si es hard o soft, pero
-        // semánticamente el usuario lo ve como permanente.
-        await tallasApi.remove(talla.id);
+        // HARD delete: query param ?hard=1 (sin él, el backend hace soft
+        // por compatibilidad histórica). tallasApi.remove() no soporta
+        // query params, por eso usamos apiFetch directamente.
+        await apiFetch(`/tallas/${talla.id}/?hard=1`, {
+          method: "DELETE", token: getToken(),
+        });
       }
       setPendingAction(null);
       await loadAll();
