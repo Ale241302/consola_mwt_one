@@ -1,5 +1,6 @@
 $kind: http-request
-url: "{{base_url}}/api/users/{{user_uuid}}/toggle-active"
+name: Toggle active
+url: "{{base_url}}/api/users/{{user_uuid}}/toggle-active/"
 method: POST
 headers:
   Content-Type: application/json

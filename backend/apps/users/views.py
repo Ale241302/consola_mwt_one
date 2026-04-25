@@ -629,12 +629,60 @@ class ProfileMeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def _get_user(self, request):
-        uid = getattr(request.user, "id", None) or getattr(request.user, "pk", None)
-        if not uid:
+        """Resuelve el perfil de mwtuser para el JWT del request.
+
+        Estrategia de búsqueda en cascada (autoprovisión lazy):
+          1) Por UUID exacto (caso normal — el JWT trae el id de mwtuser).
+          2) Por email_plain (caso histórico — usuario creado por
+             seed_admins en core.users sin fila correspondiente en mwtuser).
+          3) Auto-create — si tampoco está por email, crea la fila en
+             mwtuser con los datos del JWT + core.users. Así cualquier
+             usuario que pueda hacer login obtiene perfil al primer
+             acceso a /me/profile/, sin tener que correr comandos.
+        """
+        uid   = getattr(request.user, "id",    None) or getattr(request.user, "pk", None)
+        email = getattr(request.user, "email", None)
+        role  = getattr(request.user, "role",  None) or "viewer"
+        full  = getattr(request.user, "full_name", None) or ""
+
+        if not (uid or email):
             return None
+
+        # 1) Lookup por UUID
+        if uid:
+            try:
+                return MwtUser.objects.get(pk=uid)
+            except MwtUser.DoesNotExist:
+                pass
+
+        # 2) Lookup por email
+        if email:
+            existing = MwtUser.objects.filter(email_plain__iexact=email).first()
+            if existing:
+                return existing
+
+        # 3) Auto-provision · creamos la fila usando el id del JWT (mismo
+        #    UUID que core.users → ambas tablas referencian al mismo user).
+        if not (uid and email):
+            return None
+
         try:
-            return MwtUser.objects.get(pk=uid)
-        except MwtUser.DoesNotExist:
+            new_user = MwtUser.objects.create(
+                id                 = uid,
+                email_plain        = email,
+                full_name          = full,
+                role_default       = role,
+                preferred_language = "es",
+                timezone           = "America/Lima",
+                is_active          = True,
+                is_superuser       = role in ("superadmin", "admin"),
+            )
+            log.info("mwtuser autoprovision · creado %s (id=%s, role=%s)",
+                     email, uid, role)
+            return new_user
+        except Exception as e:
+            log.exception("mwtuser autoprovision FAILED for %s/%s: %s",
+                          email, uid, e)
             return None
 
     def get(self, request):
