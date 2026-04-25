@@ -248,11 +248,19 @@ CELERY_RESULT_SERIALIZER   = "json"
 CELERY_TIMEZONE            = "America/Mexico_City"
 
 # --------------------------------------------------------------------
-# MinIO (S3-compatible).  Local: docker compose up minio.
+# MinIO (S3-compatible) — endpoint del VPS compartido.
+#
+# IMPORTANTE: la lib Python usa la API S3 en el puerto 9000.
+# La consola web (UI de admin) corre en 9001 — esa NO va acá.
+#
+# Hardcodeado al servidor de producción para que no dependa de env vars
+# (las env vars suelen "perderse" entre restarts si docker-compose no
+# está bien configurado). Las env vars siguen funcionando como override
+# para dev local o staging — si las defines, ganan sobre el default.
 # --------------------------------------------------------------------
-MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT",   "http://127.0.0.1:9000")
-MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "mwt-access")
-MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "mwt-secret")
+MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT",   "http://187.77.218.102:9000")
+MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "admin")
+MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "MuitoWork2026?")
 MINIO_BUCKET     = os.environ.get("MINIO_BUCKET",     "mwt-one")
 MINIO_SECURE     = os.environ.get("MINIO_SECURE", "0") == "1"
 
