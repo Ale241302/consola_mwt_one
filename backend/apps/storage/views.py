@@ -158,20 +158,27 @@ class StorageViewSet(viewsets.ViewSet):
 
         # Adivina el content-type del header de MinIO o por extensión.
         ct = resp.headers.get("Content-Type") or "application/octet-stream"
-        # Cache 5 min en el browser para previews repetidos.
-        streamer = StreamingHttpResponse(
-            resp.stream(64 * 1024),   # chunks de 64KB
-            content_type=ct,
-        )
-        streamer["Cache-Control"] = "private, max-age=300"
-        # Sugerencia de filename (último segmento de la key)
-        fname = key.split("/")[-1]
-        streamer["Content-Disposition"] = f'inline; filename="{fname}"'
         cl = resp.headers.get("Content-Length")
+        fname = key.split("/")[-1]
+
+        # Generator que cierra el upstream automáticamente al terminar.
+        # (Antes usaba `_resource_closers` que es atributo privado y puede
+        # cambiar entre versiones de Django — este patrón es más estable.)
+        def _stream():
+            try:
+                for chunk in resp.stream(64 * 1024):
+                    yield chunk
+            finally:
+                try: resp.close()
+                except Exception: pass
+                try: resp.release_conn()
+                except Exception: pass
+
+        streamer = StreamingHttpResponse(_stream(), content_type=ct)
+        streamer["Cache-Control"]       = "private, max-age=300"
+        streamer["Content-Disposition"] = f'inline; filename="{fname}"'
         if cl:
             streamer["Content-Length"] = cl
-        # Cerramos el upstream cuando el response termine
-        streamer._resource_closers.append(lambda: (resp.close(), resp.release_conn()))
         return streamer
 
     # ── DELETE genérico: borra un objeto del bucket por su key.
