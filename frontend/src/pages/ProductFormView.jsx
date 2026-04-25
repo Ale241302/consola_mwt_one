@@ -20,7 +20,7 @@
 //   Purple #481EE3 · Blue #3083FE · Cyan #1EE3D7
 //   Critical #DC2626 (CEO-ONLY)
 // ─────────────────────────────────────────────────────────────
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -36,6 +36,7 @@ import {
 } from "../data/mockData.js";
 import ProductExpedientesTab from "../components/productos/ProductExpedientesTab.jsx";
 import { useRole } from "../context/RoleContext.jsx";
+import { productosApi, marcasApi } from "../lib/api.js";
 
 // TABS canónicos del detalle de producto. La visibilidad se recorta
 // dinámicamente según el rol (POL_VISIBILIDAD):
@@ -151,19 +152,89 @@ export default function ScreenProductFormView() {
     setSelectedNodes(prev => prev.includes(nid) ? prev.filter(x => x !== nid) : [...prev, nid]);
   };
 
-  const handleSave = () => {
-    const payload = {
-      ...(existing || {}),
-      sku, nombre, brand_id: brandId,
-      ...attrs, riesgo: riesgos,
-      sizes: selectedSizes, nodes: selectedNodes,
-      visibility: { visible_to_all: visibleToAll, client_overrides: clientOverrides },
-      pricing: { list_price: Number(listPrice)||0, mwt_price: Number(mwtPrice)||0, client_prices: clientPrices },
-      gallery: galleryFiles.map(f => f.name),
-      tech_file: techFile?.name || null,
+  // ── Marcas reales del backend (para resolver slug/code → UUID al guardar)
+  // El form sigue mostrando BRANDS mock para no romper el selector visual,
+  // pero al hacer POST necesitamos marca_id como UUID. Cargamos la lista
+  // del backend y matcheamos por slug/brand_code/nombre.
+  const [realBrands, setRealBrands] = useState([]);
+  useEffect(() => {
+    marcasApi.list().then(r => setRealBrands(Array.isArray(r) ? r : (r?.results || [])))
+                   .catch(() => setRealBrands([]));
+  }, []);
+
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+
+  const resolveMarcaId = (slugOrCode) => {
+    if (!slugOrCode || !realBrands.length) return null;
+    const needle = String(slugOrCode).toLowerCase();
+    const hit = realBrands.find(b =>
+      (b.slug || '').toLowerCase()      === needle ||
+      (b.brand_code || '').toLowerCase() === needle ||
+      (b.nombre || '').toLowerCase()    === needle
+    );
+    return hit?.id || null;
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError(null);
+
+    // ── UI shape → backend shape ──
+    // Los 14 atributos técnicos del calzado (tipo_calzado, capellada, suela…)
+    // no son columnas en `productos.producto`; los empaquetamos en
+    // `especificaciones` JSON. Pricing client_prices / gallery / nodes /
+    // visibility tampoco tienen columna dedicada → mismo destino JSON.
+    const especificaciones = {
+      ...attrs,
+      riesgo:           riesgos,
+      sizes:            selectedSizes,
+      nodes:            selectedNodes,
+      visibility: {
+        visible_to_all:    visibleToAll,
+        client_overrides:  clientOverrides,
+      },
+      client_prices:    clientPrices,
+      gallery:          galleryFiles.map(f => f.name),
+      tech_file:        techFile?.name || null,
     };
-    console.log('[mock] save product:', payload);
-    navigate('/productos');
+
+    const body = {
+      sku:               (sku || '').trim(),
+      nombre:            (nombre || '').trim() || sku || '(sin nombre)',
+      marca_id:          resolveMarcaId(brandId),
+      categoria:         attrs.tipo_calzado || 'CALZADO',
+      precio_lista:      Number(listPrice) || 0,
+      precio_mwt:        Number(mwtPrice)  || 0,
+      especificaciones,
+      tallas:            selectedSizes,
+      estado:            'ACTIVO',
+      visibility_tier:   visibleToAll ? 'INTERNAL' : 'CEO-ONLY',
+    };
+
+    try {
+      if (isEdit) {
+        await productosApi.update(productId, body);
+      } else {
+        await productosApi.create(body);
+      }
+      navigate('/productos');
+    } catch (e) {
+      // Renderiza mensaje del backend si es JSON DRF
+      let msg = String(e?.message || e);
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed && typeof parsed === 'object') {
+          msg = Object.entries(parsed)
+            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+            .join('  ·  ');
+        }
+      } catch (_) { /* msg ya es string */ }
+      setSaveError(msg);
+      alert((lang==='es'?'No se pudo guardar el producto: ':'Could not save product: ') + msg);
+    } finally {
+      setSaving(false);
+    }
   };
 
   // ── Renderers ────────
