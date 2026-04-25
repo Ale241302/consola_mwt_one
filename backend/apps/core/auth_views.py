@@ -231,6 +231,112 @@ class LogoutView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class PasswordResetConfirmView(APIView):
+    """POST /api/auth/password-reset-confirm/
+
+    Body: { "token": "<raw-token-del-link>", "new_password": "..." }
+
+    Flujo:
+      1. SHA-256(token) → busca en users.password_reset_token activo y no expirado.
+      2. Si válido: actualiza core.users.password_hash con SHA-256(new_password).
+      3. Marca el token como consumido (consumed_at = NOW).
+      4. Devuelve 200 con {ok: True, email: <email>}.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        import hashlib
+        from datetime import datetime, timezone as _tz
+        from django.utils import timezone as _dj_tz
+
+        raw_token    = (request.data.get("token") or "").strip()
+        new_password = request.data.get("new_password") or ""
+
+        if not raw_token:
+            return Response({"detail": "Falta el token."}, status=400)
+        if len(new_password) < 8:
+            return Response({"detail": "La nueva contraseña debe tener al menos 8 caracteres."},
+                            status=400)
+
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+        with connection.cursor() as cur:
+            # Buscar el token vigente
+            cur.execute("""
+                SELECT t.id, t.user_id, t.expires_at, t.consumed_at,
+                       u.id, u.email_plain
+                  FROM users.password_reset_token t
+                  LEFT JOIN core.users u ON u.id = t.user_id
+                 WHERE t.token_hash = %s
+                 LIMIT 1
+            """, [token_hash])
+            row = cur.fetchone()
+
+        if not row:
+            return Response({"detail": "Token inválido o ya consumido."}, status=400)
+
+        token_id, user_id, expires_at, consumed_at, core_uid, email = row
+
+        if consumed_at is not None:
+            return Response({"detail": "Este enlace ya fue utilizado."}, status=400)
+
+        # Comparar expires_at vs ahora · ambos deben ser tz-aware
+        now = _dj_tz.now()
+        if expires_at and expires_at < now:
+            return Response({"detail": "Este enlace ha expirado. Solicita uno nuevo."}, status=400)
+
+        # El user_id en password_reset_token apunta a users.mwtuser.id.
+        # core.users PUEDE tener el mismo UUID (si fue sembrado por seed_admins
+        # o auto-sincronizado) o uno distinto (caso legacy). Buscamos por email.
+        if not email:
+            # Lookup en mwtuser para obtener el email
+            with connection.cursor() as cur:
+                cur.execute("SELECT email_plain FROM users.mwtuser WHERE id = %s", [user_id])
+                r = cur.fetchone()
+                email = r[0] if r else None
+
+        if not email:
+            return Response({"detail": "Usuario asociado no encontrado."}, status=404)
+
+        new_hash = hashlib.sha256(new_password.encode("utf-8")).hexdigest()
+
+        # Update password en core.users (la tabla del login).
+        # Si por algún motivo no existe la fila, hacer UPSERT.
+        with connection.cursor() as cur:
+            cur.execute("""
+                UPDATE core.users
+                   SET password_hash = %s,
+                       hash_kind     = 'sha256',
+                       updated_at    = NOW()
+                 WHERE lower(email_plain) = lower(%s)
+            """, [new_hash, email])
+            updated = cur.rowcount
+            if updated == 0:
+                # Auto-create en core.users si no existe (caso edge).
+                import uuid as _uuid
+                cur.execute("""
+                    INSERT INTO core.users
+                        (id, email_plain, password_hash, hash_kind, full_name,
+                         role, is_active, is_staff, created_at, updated_at)
+                    VALUES
+                        (%s, %s, %s, 'sha256', '', 'viewer', TRUE, FALSE, NOW(), NOW())
+                """, [str(_uuid.uuid4()), email, new_hash])
+
+            # Marcar token consumido
+            cur.execute("""
+                UPDATE users.password_reset_token
+                   SET consumed_at = NOW()
+                 WHERE id = %s
+            """, [token_id])
+
+        return Response({
+            "ok":    True,
+            "email": email,
+            "message": "Contraseña actualizada correctamente. Ya puedes iniciar sesión.",
+        }, status=200)
+
+
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 

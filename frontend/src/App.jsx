@@ -4,6 +4,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import AppLayout from "./components/layout/AppLayout.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import Login from "./pages/Login.jsx";
+import ScreenPasswordReset from "./pages/PasswordReset.jsx";
 import ScreenDashboard from "./pages/Dashboard.jsx";
 import ScreenExpedientes from "./pages/Expedientes.jsx";
 import ScreenOCDetail from "./pages/OCDetail.jsx";
@@ -56,8 +57,9 @@ function AdminOnlyRoute({ children }) {
 export default function App() {
   return (
     <Routes>
-      {/* Pública */}
+      {/* Públicas */}
       <Route path="/login" element={<Login />} />
+      <Route path="/reset" element={<ScreenPasswordReset />} />
 
       {/* Protegidas — todas pasan por <ProtectedRoute/> y comparten AppLayout */}
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
