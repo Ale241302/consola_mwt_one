@@ -88,12 +88,29 @@ export default function ScreenNodoDetail() {
   const { nodeId } = useParams();
   const { lang } = useOutletContext();
   const [tab, setTab] = useState('overview');
+  const [showEdit, setShowEdit] = useState(false);
 
   // ── Fetch real al backend (antes leía NODES de mockData.js,
   //    por eso nodos creados vía API daban "Nodo no encontrado") ──
   const [rawNode, setRawNode] = useState(null);
   const [loadErr, setLoadErr] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const reload = () => {
+    setLoading(true);
+    setLoadErr(null);
+    return nodosApi.get(nodeId)
+      .then(data => { setRawNode(data); setLoading(false); })
+      .catch(err => {
+        const mockMatch = NODES.find(n => n.id === nodeId);
+        if (mockMatch) {
+          setRawNode({ __isMockShape: true, ...mockMatch });
+        } else {
+          setLoadErr(err?.message || 'fetch_failed');
+        }
+        setLoading(false);
+      });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -179,6 +196,14 @@ export default function ScreenNodoDetail() {
         </button>
         <span className="caption">/</span>
         <span className="caption">{node.node_id}</span>
+        <span style={{flex:1}}/>
+        {/* "Editar" sólo aparece para nodos reales (con _raw del backend);
+            los mock-only no se pueden persistir. */}
+        {node._raw && (
+          <button className="btn btn-secondary btn-sm" onClick={()=>setShowEdit(true)}>
+            {lang==='es'?'Editar':'Edit'}
+          </button>
+        )}
       </div>
 
       <div className="node-hero" style={{ '--type-color': meta.color }}>
@@ -257,6 +282,21 @@ export default function ScreenNodoDetail() {
           </motion.div>
         </AnimatePresence>
       </div>
+
+      {/* ── Drawer de edición ───────────── */}
+      <AnimatePresence>
+        {showEdit && node?._raw && (
+          <EditNodeDrawer
+            raw={node._raw}
+            lang={lang}
+            onClose={()=>setShowEdit(false)}
+            onSaved={async () => {
+              setShowEdit(false);
+              await reload();
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -498,6 +538,284 @@ function AutomationsTab({ autos, lang }) {
         )}
       </div>
     </div>
+  );
+}
+
+/* ─────────────── Drawer de edición ─────────────── */
+// Edita el nodo via PATCH /api/nodos/{id}/. Usa los catálogos del
+// backend (select_tipos / select_status / select_paises / select_capabilities)
+// para que los <select> reflejen exactamente lo que el BE acepta.
+function EditNodeDrawer({ raw, lang, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    codigo:         raw.codigo || '',
+    nombre:         raw.nombre || '',
+    tipo:           raw.tipo || 'ALMACEN',
+    pais_iso2:      raw.pais_iso2 || '',
+    ciudad:         raw.ciudad || '',
+    direccion:      raw.direccion || '',
+    zona_horaria:   raw.zona_horaria || 'America/Lima',
+    status:         raw.status || 'ACTIVE',
+    capabilities:   Array.isArray(raw.capabilities)
+                      ? raw.capabilities.map(c => String(c).toLowerCase())
+                      : [],
+    capacidad_m2:   raw.capacidad_m2 ?? '',
+    contacto_email: raw.contacto_email || '',
+    contacto_tel:   raw.contacto_tel || '',
+    observaciones:  raw.observaciones || '',
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr]   = useState(null);
+
+  // Catálogos
+  const [tipos, setTipos]   = useState([]);
+  const [status, setStatus] = useState([]);
+  const [paises, setPaises] = useState([]);
+  const [caps, setCaps]     = useState([]);
+
+  useEffect(() => {
+    Promise.allSettled([
+      nodosApi.select('tipos'),
+      nodosApi.select('status'),
+      nodosApi.select('paises'),
+      nodosApi.select('capabilities'),
+    ]).then(([t, s, p, c]) => {
+      if (t.status === 'fulfilled') setTipos(t.value || []);
+      if (s.status === 'fulfilled') setStatus(s.value || []);
+      if (p.status === 'fulfilled') setPaises(p.value || []);
+      if (c.status === 'fulfilled') setCaps(c.value || []);
+    });
+  }, []);
+
+  const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const toggleCap = (codigo) => {
+    setForm(f => {
+      const has = f.capabilities.includes(codigo);
+      return {
+        ...f,
+        capabilities: has
+          ? f.capabilities.filter(c => c !== codigo)
+          : [...f.capabilities, codigo],
+      };
+    });
+  };
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    setBusy(true);
+    setErr(null);
+    try {
+      const body = {
+        ...form,
+        capacidad_m2: form.capacidad_m2 === '' ? null : Number(form.capacidad_m2),
+      };
+      await nodosApi.update(raw.id, body);
+      await onSaved?.();
+    } catch (ex) {
+      setErr(ex?.message || (lang==='es'?'Error al guardar':'Save failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      {/* Backdrop */}
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        onClick={onClose}
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(15,27,61,0.45)',
+          zIndex: 90, backdropFilter: 'blur(2px)',
+        }}
+      />
+      {/* Drawer */}
+      <motion.aside
+        initial={{ x: 480, opacity: 0 }}
+        animate={{ x: 0, opacity: 1, transition: { duration: 0.25, ease: 'easeOut' }}}
+        exit={{ x: 480, opacity: 0, transition: { duration: 0.18 }}}
+        style={{
+          position: 'fixed', top: 0, right: 0, bottom: 0,
+          width: 'min(480px, 96vw)', background: '#FFFFFF',
+          boxShadow: '-12px 0 40px -10px rgba(15,27,61,0.25)',
+          zIndex: 91, display: 'flex', flexDirection: 'column',
+          fontFamily: 'inherit',
+        }}
+      >
+        <div style={{
+          padding: '18px 22px', borderBottom: '1px solid #EAEEF5',
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <div style={{flex:1}}>
+            <div className="micro" style={{ color: '#6B7894' }}>
+              {lang==='es'?'EDICIÓN DE NODO':'EDIT NODE'}
+            </div>
+            <div style={{ font:'700 16px/1.2 inherit', color:'#0F1B3D' }}>
+              {form.codigo || raw.codigo}
+            </div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Cerrar">✕</button>
+        </div>
+
+        <form onSubmit={submit} style={{ padding: '18px 22px', overflowY:'auto', flex:1 }}>
+          <Field label={lang==='es'?'Código':'Code'}>
+            <input value={form.codigo} onChange={e=>setF('codigo', e.target.value)} style={inp}/>
+          </Field>
+          <Field label={lang==='es'?'Nombre':'Name'}>
+            <input value={form.nombre} onChange={e=>setF('nombre', e.target.value)} style={inp}/>
+          </Field>
+
+          <div style={row2}>
+            <Field label={lang==='es'?'Tipo':'Type'}>
+              <select value={form.tipo} onChange={e=>setF('tipo', e.target.value)} style={inp}>
+                {tipos.length === 0 && <option value={form.tipo}>{form.tipo}</option>}
+                {tipos.map(t => <option key={t.codigo} value={t.codigo}>{t.label}</option>)}
+              </select>
+            </Field>
+            <Field label={lang==='es'?'Estado':'Status'}>
+              <select value={form.status} onChange={e=>setF('status', e.target.value)} style={inp}>
+                {status.length === 0 && <option value={form.status}>{form.status}</option>}
+                {status.map(s => <option key={s.codigo} value={s.codigo}>{s.label}</option>)}
+              </select>
+            </Field>
+          </div>
+
+          <div style={row2}>
+            <Field label={lang==='es'?'País':'Country'}>
+              <select value={form.pais_iso2} onChange={e=>setF('pais_iso2', e.target.value)} style={inp}>
+                <option value="">—</option>
+                {paises.map(p => <option key={p.codigo} value={p.codigo}>{p.label}</option>)}
+              </select>
+            </Field>
+            <Field label={lang==='es'?'Ciudad':'City'}>
+              <input value={form.ciudad} onChange={e=>setF('ciudad', e.target.value)} style={inp}/>
+            </Field>
+          </div>
+
+          <Field label={lang==='es'?'Dirección':'Address'}>
+            <input value={form.direccion} onChange={e=>setF('direccion', e.target.value)} style={inp}/>
+          </Field>
+
+          <Field label={lang==='es'?'Zona horaria':'Time zone'}>
+            <input value={form.zona_horaria} onChange={e=>setF('zona_horaria', e.target.value)} style={inp}/>
+          </Field>
+
+          <Field label={lang==='es'?'Capacidad (m²)':'Capacity (m²)'}>
+            <input
+              type="number"
+              value={form.capacidad_m2}
+              onChange={e=>setF('capacidad_m2', e.target.value)}
+              style={inp}
+              min="0" step="0.01"
+            />
+          </Field>
+
+          <div style={row2}>
+            <Field label={lang==='es'?'Email contacto':'Contact email'}>
+              <input
+                type="email"
+                value={form.contacto_email}
+                onChange={e=>setF('contacto_email', e.target.value)}
+                style={inp}
+              />
+            </Field>
+            <Field label={lang==='es'?'Teléfono':'Phone'}>
+              <input value={form.contacto_tel} onChange={e=>setF('contacto_tel', e.target.value)} style={inp}/>
+            </Field>
+          </div>
+
+          <Field label={lang==='es'?'Capacidades':'Capabilities'}>
+            <div style={{
+              display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:4,
+            }}>
+              {(caps.length ? caps : DEFAULT_CAPS).map(c => {
+                const on = form.capabilities.includes(c.codigo);
+                return (
+                  <button
+                    type="button"
+                    key={c.codigo}
+                    onClick={()=>toggleCap(c.codigo)}
+                    style={{
+                      padding:'8px 10px', borderRadius:8, cursor:'pointer',
+                      border: on ? '1.5px solid #10B981' : '1.5px solid #E5EAF2',
+                      background: on ? '#10B98115' : '#FFFFFF',
+                      color: on ? '#065F46' : '#3D4A6B',
+                      font:'500 12.5px/1.2 inherit',
+                      display:'flex', alignItems:'center', gap:6,
+                    }}
+                  >
+                    {on ? '✓' : '○'} {c.label}
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+
+          <Field label={lang==='es'?'Observaciones':'Notes'}>
+            <textarea
+              rows={3}
+              value={form.observaciones}
+              onChange={e=>setF('observaciones', e.target.value)}
+              style={{ ...inp, resize:'vertical', minHeight:64 }}
+            />
+          </Field>
+
+          {err && (
+            <div style={{
+              marginTop:12, padding:'10px 12px', borderRadius:8,
+              background:'#FEE2E2', border:'1px solid #FCA5A5', color:'#991B1B',
+              font:'500 12.5px/1.4 inherit',
+            }}>
+              {err}
+            </div>
+          )}
+        </form>
+
+        <div style={{
+          padding:'14px 22px', borderTop:'1px solid #EAEEF5',
+          display:'flex', gap:10, justifyContent:'flex-end',
+        }}>
+          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
+            {lang==='es'?'Cancelar':'Cancel'}
+          </button>
+          <button
+            type="button" className="btn btn-primary" onClick={submit} disabled={busy}
+          >
+            {busy ? (lang==='es'?'Guardando…':'Saving…') : (lang==='es'?'Guardar cambios':'Save changes')}
+          </button>
+        </div>
+      </motion.aside>
+    </>
+  );
+}
+
+const DEFAULT_CAPS = [
+  { codigo:'receive',          label:'Recibir' },
+  { codigo:'store',            label:'Almacenar' },
+  { codigo:'prepare',          label:'Preparar' },
+  { codigo:'dispatch',         label:'Despachar' },
+  { codigo:'report_sales',     label:'Reportar ventas' },
+  { codigo:'report_inventory', label:'Reportar inventario' },
+];
+
+const inp = {
+  width:'100%', padding:'10px 12px',
+  border:'1.5px solid #E5EAF2', borderRadius:8,
+  font:'500 13.5px/1.2 inherit', color:'#0F1B3D',
+  background:'#FFFFFF', outline:'none', boxSizing:'border-box',
+};
+const row2 = { display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 };
+
+function Field({ label, children }) {
+  return (
+    <label style={{ display:'block', marginBottom:14 }}>
+      <div style={{
+        font:'600 11px/1 inherit', color:'#0F1B3D',
+        textTransform:'uppercase', letterSpacing:0.4, marginBottom:6,
+      }}>
+        {label}
+      </div>
+      {children}
+    </label>
   );
 }
 
