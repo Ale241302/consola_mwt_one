@@ -69,34 +69,32 @@ export default function ScreenSizingEngine() {
   const [editing, setEditing]   = useState(null);    // null | {} (nuevo) | obj (edita)
 
   // ── Carga inicial: opciones + tallas ──────────────────────────
-  // Patrón fail-soft: si el backend no responde, está vacío o
-  // está en modo MOCK (devuelve []), caemos a MOCK_TALLAS para
-  // que la UI siga viviendo. Cualquier creación/edición que
-  // falle simplemente actualiza el state local sobre los MOCK.
+  // Las opciones (catálogos) sí caen a MOCK_SIZING_OPTIONS si el
+  // backend no las trae (sin ellas el form quedaría inutilizable).
+  // Las TALLAS, en cambio, ya NO caen al mock — si la BD está
+  // vacía mostramos empty-state real para que el usuario cree las
+  // suyas. (Antes se mostraba el banner "Modo demo" que confundía.)
   const loadAll = async () => {
     setLoading(true);
     setError(null);
     let opt = null;
     let list = [];
-    let optErr = null;
+    let listErr = null;
     try {
       opt = await sizingApi.options();
-    } catch (e) { optErr = e; }
+    } catch (e) { /* opciones vienen del catálogo de soporte; si fallan, usamos MOCK */ }
     try {
       const r = await tallasApi.list();
       list = Array.isArray(r?.results) ? r.results
            : Array.isArray(r)          ? r
            : [];
-    } catch (e) { /* tragado — caemos a MOCK abajo */ }
+    } catch (e) { listErr = e; }
 
     const finalOptions = (opt && Object.keys(opt).length > 0) ? opt : MOCK_SIZING_OPTIONS;
-    const finalTallas  = list.length > 0 ? list : MOCK_TALLAS;
-
     setOptions(finalOptions);
-    setTallas(finalTallas);
-    setUsingMock(list.length === 0);
-    // Sólo mostramos error duro si TAMPOCO había MOCK que servir.
-    if (optErr && finalTallas.length === 0) setError(optErr?.message || "Error cargando tallas.");
+    setTallas(list);          // si está vacío, vacío se queda
+    setUsingMock(false);      // banner demo desactivado por completo
+    if (listErr) setError(listErr?.message || "Error cargando tallas.");
     setLoading(false);
   };
 
@@ -143,26 +141,18 @@ export default function ScreenSizingEngine() {
       else payload[k] = v;
     });
     try {
-      if (form.id && !String(form.id).startsWith("mt-")) {
+      if (form.id) {
         await tallasApi.update(form.id, payload);
-      } else if (!form.id) {
-        await tallasApi.create(payload);
       } else {
-        throw new Error("mock-only id"); // forzar fallback local
+        await tallasApi.create(payload);
       }
       setEditing(null);
       await loadAll();
     } catch (e) {
-      // Mock-mode local: actualiza in-memory.
-      setTallas(prev => {
-        if (form.id) {
-          return prev.map(t => t.id === form.id ? { ...t, ...payload } : t);
-        }
-        const newId = `mt-local-${Date.now()}`;
-        return [{ id: newId, ...payload, is_active: payload.is_active ?? true }, ...prev];
-      });
-      setUsingMock(true);
-      setEditing(null);
+      // Antes había fallback a "mock-mode local" — quitado.
+      // Ahora el error se muestra honestamente para que el usuario sepa
+      // qué falló y reintente. Mantiene el form abierto para no perder edición.
+      alert((lang === "es" ? "No se pudo guardar: " : "Save failed: ") + (e?.message || ""));
     }
   };
 
@@ -170,16 +160,10 @@ export default function ScreenSizingEngine() {
     if (!talla?.id) return;
     if (!window.confirm(lang === "es" ? "¿Desactivar esta talla?" : "Deactivate this size?")) return;
     try {
-      if (!String(talla.id).startsWith("mt-")) {
-        await tallasApi.remove(talla.id);
-      } else {
-        throw new Error("mock-only id");
-      }
+      await tallasApi.remove(talla.id);
       await loadAll();
     } catch (e) {
-      // Mock-mode: lo desactivamos en memoria.
-      setTallas(prev => prev.map(t => t.id === talla.id ? { ...t, is_active: false } : t));
-      setUsingMock(true);
+      alert((lang === "es" ? "No se pudo desactivar: " : "Deactivate failed: ") + (e?.message || ""));
     }
   };
 
