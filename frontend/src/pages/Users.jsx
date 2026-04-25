@@ -14,11 +14,13 @@
 //   POST   /api/users/<uuid>/toggle-active/
 // =====================================================================
 import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiFetch, getToken, ApiError } from "../lib/api.js";
 import { ROLES_DEMO } from "../lib/usersRolesMock.js";
 import { IconPlus, IconRefresh, IconLock, IconX, IconCheck } from "../lib/icons.jsx";
+import ConfirmActionModal, { ACTION_META } from "../components/users/ConfirmActionModal.jsx";
 
 export default function Users() {
   const { lang } = useOutletContext() || { lang: "es" };
@@ -64,39 +66,49 @@ export default function Users() {
   const openEdit   = (u) => navigate(`/usuarios/${u.id}`);
   const closeDrawer = () => setDrawer({ open: false, user: null });
 
-  const toggleActive = async (u) => {
-    const verb = u.is_active
-      ? (lang === "es" ? "inactivar" : "deactivate")
-      : (lang === "es" ? "reactivar" : "reactivate");
-    if (!window.confirm(`¿${verb.charAt(0).toUpperCase() + verb.slice(1)} "${u.full_name || u.email_plain}"?`)) return;
-    try {
-      await apiFetch(`/users/${u.id}/toggle-active/`, {
-        method: "POST", token: getToken(),
-      });
-      showToast(`${u.full_name || u.email_plain} · ${verb} OK`);
-    } catch (e) {
-      if (!(e instanceof ApiError && e.status === 0)) {
-        showToast(`Error: ${e?.message}`, "err"); return;
-      }
-    }
-    // Optimista — actualizamos localmente
-    setUsers((prev) => prev.map((x) => x.id === u.id ? { ...x, is_active: !x.is_active } : x));
-  };
+  // ── Confirmación unificada vía modal (reemplaza window.confirm) ──
+  // pendingAction: { kind: 'reset'|'toggleOn'|'toggleOff'|'delete', user: {...} }
+  const [pendingAction, setPendingAction] = useState(null);
+  const [actionBusy,    setActionBusy]    = useState(false);
+  const [actionError,   setActionError]   = useState(null);
 
-  const resetPassword = async (u) => {
-    if (!window.confirm(`¿Enviar email de reseteo de contraseña a ${u.contact_email || u.email_plain}?`)) return;
+  const askResetPassword = (u) => { setActionError(null); setPendingAction({ kind: 'reset', user: u }); };
+  const askToggleActive  = (u) => { setActionError(null); setPendingAction({ kind: u.is_active ? 'toggleOff' : 'toggleOn', user: u }); };
+  const askDelete        = (u) => { setActionError(null); setPendingAction({ kind: 'delete', user: u }); };
+
+  const executeAction = async () => {
+    if (!pendingAction) return;
+    const { kind, user: u } = pendingAction;
+    setActionBusy(true);
+    setActionError(null);
     try {
-      const resp = await apiFetch(`/users/${u.id}/reset-password/`, {
-        method: "POST", body: { ttl_hours: 24 }, token: getToken(),
-      });
-      showToast(`Token generado · ····${resp?.token_preview || "????"} · email ${resp?.email_sent ? "enviado" : "pendiente"}`);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 0) {
-        // mock mode — no envía pero simulamos UX
-        showToast(`(demo) Email de reseteo encolado para ${u.contact_email || u.email_plain}`);
-      } else {
-        showToast(`Error: ${e?.message}`, "err");
+      if (kind === 'reset') {
+        const resp = await apiFetch(`/users/${u.id}/reset-password/`, {
+          method: "POST", body: { ttl_hours: 24 }, token: getToken(),
+        });
+        showToast(`Email enviado · ····${resp?.token_preview || "????"} · ${u.contact_email || u.email_plain}`);
+      } else if (kind === 'toggleOff' || kind === 'toggleOn') {
+        await apiFetch(`/users/${u.id}/toggle-active/`, { method: "POST", token: getToken() });
+        const verb = kind === 'toggleOff' ? 'inactivado' : 'reactivado';
+        showToast(`${u.full_name || u.email_plain} · ${verb}`);
+        setUsers((prev) => prev.map((x) => x.id === u.id ? { ...x, is_active: !x.is_active } : x));
+      } else if (kind === 'delete') {
+        await apiFetch(`/users/${u.id}/`, { method: "DELETE", token: getToken() });
+        showToast(`${u.full_name || u.email_plain} eliminado`);
+        // remueve de la lista (o marca inactivo según preferencia visual)
+        setUsers((prev) => prev.filter((x) => x.id !== u.id));
       }
+      setPendingAction(null);
+    } catch (e) {
+      // mock-mode (status=0) cuenta como "OK simulado" para reset
+      if (kind === 'reset' && e instanceof ApiError && e.status === 0) {
+        showToast(`(demo) Email de reseteo encolado para ${u.contact_email || u.email_plain}`);
+        setPendingAction(null);
+      } else {
+        setActionError(e?.message || 'Operación falló');
+      }
+    } finally {
+      setActionBusy(false);
     }
   };
 
@@ -169,11 +181,26 @@ export default function Users() {
         {users.map((u) => (
           <UserRow key={u.id} user={u}
                    onEdit={() => openEdit(u)}
-                   onToggleActive={() => toggleActive(u)}
-                   onResetPassword={() => resetPassword(u)}
+                   onToggleActive={() => askToggleActive(u)}
+                   onResetPassword={() => askResetPassword(u)}
+                   onDelete={() => askDelete(u)}
                    lang={lang}/>
         ))}
       </div>
+
+      {/* Modal de confirmación unificado — vía portal a body */}
+      {pendingAction && createPortal(
+        <ConfirmActionModal
+          meta={ACTION_META[pendingAction.kind]}
+          user={pendingAction.user}
+          busy={actionBusy}
+          error={actionError}
+          lang={lang}
+          onCancel={() => { if (!actionBusy) { setPendingAction(null); setActionError(null); } }}
+          onConfirm={executeAction}
+        />,
+        document.body
+      )}
 
       {/* Modal Create/Edit */}
       <UserDrawer
@@ -245,7 +272,7 @@ function TableHeader({ lang }) {
   );
 }
 
-function UserRow({ user, onEdit, onToggleActive, onResetPassword, lang }) {
+function UserRow({ user, onEdit, onToggleActive, onResetPassword, onDelete, lang }) {
   const role = ROLES_DEMO.find((r) => r.slug === user.role_default)
     || { nombre: user.role_default, color: "#64748B" };
   const fmtDate = (iso) => {
@@ -322,6 +349,18 @@ function UserRow({ user, onEdit, onToggleActive, onResetPassword, lang }) {
           {user.is_active
             ? (lang === "es" ? "Inactivar" : "Deactivate")
             : (lang === "es" ? "Activar"   : "Activate")}
+        </button>
+        <button onClick={onDelete}
+                className="ai-btn ai-btn-xs"
+                title={lang === "es" ? "Eliminar usuario (soft-delete)" : "Delete user (soft-delete)"}
+                style={{
+                  background: "transparent",
+                  color: "#DC2626",
+                  border: "1px solid rgba(220,38,38,0.25)",
+                  padding: "3px 8px", borderRadius: 4,
+                  fontSize: 11, fontWeight: 600, cursor: "pointer",
+                }}>
+          {lang === "es" ? "Eliminar" : "Delete"}
         </button>
       </span>
     </div>
@@ -525,3 +564,7 @@ function Field({ label, required, children }) {
     </label>
   );
 }
+
+
+// ConfirmActionModal vive en components/users/ConfirmActionModal.jsx
+// (compartido con UserFormView para mantener el copy + estilos en un solo lugar).

@@ -21,6 +21,7 @@
 // Acciones inline: Cancelar · Guardar · (edit) Reset password · Inactivar
 // =====================================================================
 import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiFetch, getToken, ApiError } from "../lib/api.js";
@@ -28,6 +29,7 @@ import { ROLES_DEMO } from "../lib/usersRolesMock.js";
 import {
   IconChevLeft, IconCheck, IconPlus, IconX, IconLock, IconRefresh,
 } from "../lib/icons.jsx";
+import ConfirmActionModal, { ACTION_META } from "../components/users/ConfirmActionModal.jsx";
 
 const EMPTY_USER = {
   email_plain: "",
@@ -159,36 +161,48 @@ export default function UserFormView() {
     }
   };
 
-  // ── Acciones inline (solo edit) ─────────────────────────
-  const resetPassword = async () => {
-    if (!window.confirm(`¿Enviar email de reseteo a ${user.contact_email || user.email_plain}?`)) return;
-    try {
-      const resp = await apiFetch(`/users/${userId}/reset-password/`, {
-        method: "POST", body: { ttl_hours: 24 }, token: getToken(),
-      });
-      showToast(`✓ Token ····${resp?.token_preview || "????"} · email ${resp?.email_sent ? "enviado" : "encolado"}`);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 0) {
-        showToast(`✓ (demo) Email de reseteo encolado`);
-      } else {
-        showToast(`⚠️ ${e?.message}`, "err");
-      }
-    }
-  };
+  // ── Acciones inline (solo edit) — vía ConfirmActionModal ─────────
+  // pendingAction: { kind: 'reset'|'toggleOn'|'toggleOff'|'delete' }
+  const [pendingAction, setPendingAction] = useState(null);
+  const [actionBusy,    setActionBusy]    = useState(false);
+  const [actionError,   setActionError]   = useState(null);
 
-  const toggleActive = async () => {
-    const verb = user.is_active ? "inactivar" : "reactivar";
-    if (!window.confirm(`¿${verb.charAt(0).toUpperCase() + verb.slice(1)} este usuario?`)) return;
+  const askResetPassword = () => { setActionError(null); setPendingAction({ kind: 'reset' }); };
+  const askToggleActive  = () => { setActionError(null); setPendingAction({ kind: user.is_active ? 'toggleOff' : 'toggleOn' }); };
+  const askDelete        = () => { setActionError(null); setPendingAction({ kind: 'delete' }); };
+
+  const executeAction = async () => {
+    if (!pendingAction) return;
+    const { kind } = pendingAction;
+    setActionBusy(true);
+    setActionError(null);
     try {
-      await apiFetch(`/users/${userId}/toggle-active/`,
-        { method: "POST", token: getToken() });
-    } catch (e) {
-      if (!(e instanceof ApiError && e.status === 0)) {
-        showToast(`⚠️ ${e?.message}`, "err"); return;
+      if (kind === 'reset') {
+        const resp = await apiFetch(`/users/${userId}/reset-password/`, {
+          method: "POST", body: { ttl_hours: 24 }, token: getToken(),
+        });
+        showToast(`✓ Email enviado · ····${resp?.token_preview || "????"}`);
+      } else if (kind === 'toggleOff' || kind === 'toggleOn') {
+        await apiFetch(`/users/${userId}/toggle-active/`, { method: "POST", token: getToken() });
+        patch({ is_active: !user.is_active });
+        showToast(`✓ ${kind === 'toggleOff' ? 'Inactivado' : 'Reactivado'} OK`);
+      } else if (kind === 'delete') {
+        await apiFetch(`/users/${userId}/`, { method: "DELETE", token: getToken() });
+        showToast('✓ Usuario eliminado');
+        // Salir del editor — el usuario ya no existe
+        setTimeout(() => navigate("/usuarios", { replace: true }), 600);
       }
+      setPendingAction(null);
+    } catch (e) {
+      if (kind === 'reset' && e instanceof ApiError && e.status === 0) {
+        showToast(`✓ (demo) Email de reseteo encolado`);
+        setPendingAction(null);
+      } else {
+        setActionError(e?.message || 'Operación falló');
+      }
+    } finally {
+      setActionBusy(false);
     }
-    patch({ is_active: !user.is_active });
-    showToast(`✓ ${verb.charAt(0).toUpperCase() + verb.slice(1)} OK`);
   };
 
   // ── Empresa seleccionada ────────────────────────────────
@@ -285,11 +299,11 @@ export default function UserFormView() {
         </div>
         {isEdit && (
           <>
-            <button onClick={resetPassword} className="btn btn-ghost">
+            <button onClick={askResetPassword} className="btn btn-ghost">
               <IconLock size={13}/> Reset password
             </button>
             <button
-              onClick={toggleActive}
+              onClick={askToggleActive}
               className="btn"
               style={{
                 background: user.is_active ? "rgba(214,69,69,0.10)" : "rgba(0,178,134,0.10)",
@@ -299,6 +313,19 @@ export default function UserFormView() {
               }}
             >
               {user.is_active ? "Inactivar" : "Activar"}
+            </button>
+            <button
+              onClick={askDelete}
+              className="btn"
+              style={{
+                background: "transparent",
+                color: "#DC2626",
+                border: "1px solid rgba(220,38,38,0.30)",
+                padding: "8px 14px", borderRadius: 6,
+                fontSize: 12, fontWeight: 600, cursor: "pointer",
+              }}
+            >
+              Eliminar
             </button>
           </>
         )}
@@ -557,6 +584,20 @@ export default function UserFormView() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Modal de confirmación unificado — vía portal a body */}
+      {pendingAction && createPortal(
+        <ConfirmActionModal
+          meta={ACTION_META[pendingAction.kind]}
+          user={user}
+          busy={actionBusy}
+          error={actionError}
+          lang={lang}
+          onCancel={() => { if (!actionBusy) { setPendingAction(null); setActionError(null); } }}
+          onConfirm={executeAction}
+        />,
+        document.body
+      )}
     </div>
   );
 }
