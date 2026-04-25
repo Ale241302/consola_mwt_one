@@ -16,6 +16,27 @@ import { motion, AnimatePresence } from "framer-motion";
 import { apiFetch, getToken, ApiError } from "../lib/api.js";
 import { IconCheck, IconRefresh, IconPlus, IconX, IconAlert, IconLock } from "../lib/icons.jsx";
 
+// Iconos no presentes en lib/icons — definidos inline.
+const IconTrash = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2"
+       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="3 6 5 6 21 6"/>
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+    <path d="M10 11v6M14 11v6"/>
+    <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
+  </svg>
+);
+const IconSave = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2"
+       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+    <polyline points="17 21 17 13 7 13 7 21"/>
+    <polyline points="7 3 7 8 15 8"/>
+  </svg>
+);
+
 export default function RolesPermissions() {
   const { lang } = useOutletContext() || { lang: "es" };
 
@@ -218,17 +239,35 @@ export default function RolesPermissions() {
             </option>
           ))}
         </select>
+        {/* Marcador de color del rol seleccionado · descripción en tooltip */}
         {roleMeta && (
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", flex: 1 }}>
+          <div
+            title={roleMeta.descripcion || ""}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "4px 10px",
+              background: `${roleMeta.color}1A`,
+              border: `1px solid ${roleMeta.color}55`,
+              borderRadius: 999,
+              fontSize: 11, fontWeight: 600,
+              color: roleMeta.color,
+              flexShrink: 0,
+            }}
+          >
             <span style={{
-              display: "inline-block", width: 10, height: 10, borderRadius: 5,
-              background: roleMeta.color, marginRight: 6, verticalAlign: "middle",
+              display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+              background: roleMeta.color,
             }}/>
-            {roleMeta.descripcion}
+            {roleMeta.is_system
+              ? (lang === "es" ? "SISTEMA" : "SYSTEM")
+              : (lang === "es" ? "PERSONALIZADO" : "CUSTOM")}
           </div>
         )}
 
-        {/* CRUD de roles · botones nuevo/eliminar */}
+        {/* spacer */}
+        <div style={{ flex: 1 }}/>
+
+        {/* CRUD de roles · iconos compactos */}
         <button
           type="button"
           onClick={() => setShowCreate(true)}
@@ -241,15 +280,18 @@ export default function RolesPermissions() {
             fontSize: 12.5, fontWeight: 600,
             cursor: "pointer",
             display: "inline-flex", alignItems: "center", gap: 5,
+            whiteSpace: "nowrap",
           }}
         >
           <IconPlus size={12}/> {lang === "es" ? "Nuevo rol" : "New role"}
         </button>
 
+        {/* Eliminar · solo icono trash */}
         <button
           type="button"
           onClick={() => roleMeta && setConfirmDel(roleMeta)}
           disabled={!roleMeta || roleMeta.is_system}
+          aria-label={lang === "es" ? "Eliminar rol" : "Delete role"}
           title={
             !roleMeta ? "" :
             roleMeta.is_system
@@ -259,32 +301,42 @@ export default function RolesPermissions() {
               : (lang === "es" ? "Eliminar este rol (soft delete)" : "Delete this role (soft delete)")
           }
           style={{
-            background: "transparent",
+            background: roleMeta?.is_system ? "#F8FAFC" : "transparent",
             color: roleMeta?.is_system ? "#CBD5E1" : "#DC2626",
             border: `1.5px solid ${roleMeta?.is_system ? "#E5E7EB" : "#DC262633"}`,
-            padding: "8px 14px", borderRadius: 8,
-            fontSize: 12.5, fontWeight: 600,
+            padding: 8, borderRadius: 8,
             cursor: roleMeta?.is_system ? "not-allowed" : "pointer",
-            display: "inline-flex", alignItems: "center", gap: 5,
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            width: 38, height: 38,
           }}
         >
-          {roleMeta?.is_system ? <IconLock size={11}/> : <IconX size={12}/>}
-          {lang === "es" ? "Eliminar" : "Delete"}
+          {roleMeta?.is_system ? <IconLock size={14}/> : <IconTrash size={14}/>}
         </button>
 
+        {/* Guardar matriz · solo icono save */}
         <button
           onClick={save}
           disabled={!dirty || saving}
+          aria-label={lang === "es" ? "Guardar matriz" : "Save matrix"}
+          title={
+            saving
+              ? (lang === "es" ? "Guardando…" : "Saving…")
+              : !dirty
+                ? (lang === "es" ? "No hay cambios sin guardar" : "No unsaved changes")
+                : (lang === "es" ? "Guardar matriz" : "Save matrix")
+          }
           style={{
             background: dirty ? "var(--mint, #00B286)" : "#E1E6ED",
             color: dirty ? "#fff" : "var(--text-tertiary)",
-            border: "none", padding: "9px 18px", borderRadius: 8,
-            fontSize: 13, fontWeight: 600,
+            border: "none",
+            padding: 8, borderRadius: 8,
             cursor: (dirty && !saving) ? "pointer" : "default",
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            width: 38, height: 38,
+            transition: "background 130ms ease",
           }}
         >
-          <IconCheck size={12}/> {saving ? (lang === "es" ? "Guardando…" : "Saving…")
-                                         : (lang === "es" ? "Guardar matriz" : "Save matrix")}
+          <IconSave size={14}/>
         </button>
       </div>
 
