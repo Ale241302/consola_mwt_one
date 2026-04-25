@@ -272,33 +272,59 @@ class MwtUserViewSet(viewsets.ModelViewSet):
             user_agent = (request.META.get("HTTP_USER_AGENT") or "")[:250],
         )
 
-        # Disparar email (best-effort). Usa la plantilla PUBLISHED del
-        # email_templates con key='auth.password_reset'.
-        email_sent = False
+        # Disparar email · usa templates Django (HTML + texto plano).
+        # Las plantillas viven en apps/users/templates/users/email/.
+        from django.template.loader import render_to_string  # noqa: PLC0415
+        from django.utils import timezone as _tz             # noqa: PLC0415
+        from apps.storage.services import send_test_email    # noqa: PLC0415
+
+        reset_url = f"https://consola.mwt.one/reset?token={raw_token}"
+        ctx = {
+            "full_name":     u.full_name or "",
+            "email":         u.email_plain,
+            "reset_url":     reset_url,
+            "ttl_hours":     ttl_hours,
+            "support_email": "info@mwt.one",
+            "header_title":  "Restablecimiento de contraseña",
+            "preheader":     f"Solicitud de restablecimiento de contraseña — válida por {ttl_hours} horas.",
+            "year":          _tz.now().year,
+        }
+        subject   = "[MWT·ONE] Restablece tu contraseña"
         try:
-            from apps.storage.services import send_test_email  # noqa: PLC0415
-            subject = "[MWT.ONE] Restablece tu contraseña"
-            body = (
-                f"Hola {u.full_name or u.email_plain},\n\n"
-                f"Se solicitó un restablecimiento de contraseña para tu cuenta.\n\n"
-                f"Enlace único (válido {ttl_hours}h):\n"
-                f"https://mwt.one/reset?token={raw_token}\n\n"
-                f"Si no fuiste tú, ignora este correo."
-            )
-            send_test_email(to=u.contact_email or u.email_plain,
-                            subject=subject, body=body)
-            email_sent = True
+            html_body = render_to_string("users/email/password_reset.html", ctx)
+            text_body = render_to_string("users/email/password_reset.txt",  ctx)
         except Exception as e:
-            log.warning("reset_password email failed: %s", e)
+            log.exception("render_to_string falló para password_reset: %s", e)
+            html_body = None
+            text_body = (
+                f"Hola {u.full_name or u.email_plain},\n\n"
+                f"Para restablecer tu contraseña entra a:\n{reset_url}\n\n"
+                f"Válido {ttl_hours} horas."
+            )
+
+        result = send_test_email(
+            to=u.contact_email or u.email_plain,
+            subject=subject,
+            body=text_body,
+            html_body=html_body,
+        )
 
         resp = {
             "ok":             True,
             "token_preview":  raw_token[-8:],
             "expires_at":     expires.isoformat(),
-            "email_sent":     email_sent,
+            "email_sent":     bool(result.get("ok")),
             "email_template": "auth.password_reset",
         }
-        return Response(PasswordResetResponseSerializer(resp).data, status=200)
+        # Para depurar desde el front, devolvemos el shape extendido directamente
+        # (el serializer es opcional y no falla si añadimos campos extra).
+        return Response({
+            **resp,
+            "email_to":      result.get("to"),
+            "email_from":    result.get("from"),
+            "email_backend": result.get("backend"),
+            "email_error":   result.get("error"),
+        }, status=200)
 
     # ── POST /api/users/<id>/toggle-active/ ────────────────────
     @action(detail=True, methods=["post"], url_path="toggle-active")

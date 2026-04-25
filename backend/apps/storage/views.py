@@ -101,15 +101,59 @@ class StorageViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def healthz(self, request):
-        """Diagnóstico rápido de los gateways de storage."""
+        """Diagnóstico rápido de los gateways de storage + SMTP."""
         from django.conf import settings
         minio_ok = ensure_bucket()
         paperless_configured = bool(
             getattr(settings, "PAPERLESS_URL", "") and
             getattr(settings, "PAPERLESS_TOKEN", "")
         )
+        # SMTP — sin enviar, solo verificamos config.
+        email_pwd_set = bool(getattr(settings, "EMAIL_HOST_PASSWORD", "") or "")
         return Response({
             "minio_available":        minio_ok,
             "minio_bucket":           getattr(settings, "MINIO_BUCKET", ""),
             "paperless_configured":   paperless_configured,
+            "smtp": {
+                "backend":            getattr(settings, "EMAIL_BACKEND", "?"),
+                "host":               getattr(settings, "EMAIL_HOST", ""),
+                "port":               getattr(settings, "EMAIL_PORT", 0),
+                "use_ssl":            getattr(settings, "EMAIL_USE_SSL", False),
+                "use_tls":            getattr(settings, "EMAIL_USE_TLS", False),
+                "user":               getattr(settings, "EMAIL_HOST_USER", ""),
+                "password_set":       email_pwd_set,
+                "from":               getattr(settings, "DEFAULT_FROM_EMAIL", ""),
+                "reply_to":           getattr(settings, "DEFAULT_REPLY_TO", ""),
+            },
         })
+
+    @action(detail=False, methods=["post"], url_path="test-smtp")
+    def test_smtp(self, request):
+        """Envía un email de prueba real al destinatario que se pase.
+
+        POST body:
+          { "to": "destinatario@ejemplo.com", "subject": "...", "body": "..." }
+
+        Útil para validar que las credenciales de mail.mwt.one están bien
+        configuradas en el .env del VPS sin pasar por el flujo de reset.
+        Sólo admin/superuser.
+        """
+        # Permission gate
+        user = request.user
+        is_admin = (
+            getattr(user, "is_superuser", False)
+            or (getattr(user, "role", "") or "").lower() in ("superadmin", "admin")
+        )
+        if not is_admin:
+            return Response({"detail": "Solo admin/superadmin."}, status=403)
+
+        from .services import send_test_email
+        to      = request.data.get("to")
+        subject = request.data.get("subject") or "[MWT.ONE] Test SMTP"
+        body    = request.data.get("body")    or "Este es un correo de prueba enviado desde /api/storage/test-smtp/."
+
+        if not to:
+            return Response({"detail": "Falta 'to' (destinatario)."}, status=400)
+
+        result = send_test_email(to=to, subject=subject, body=body)
+        return Response(result, status=200 if result.get("ok") else 502)

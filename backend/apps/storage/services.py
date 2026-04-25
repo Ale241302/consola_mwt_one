@@ -160,6 +160,72 @@ def generate_signed_url(
 
 
 # --------------------------------------------------------------------
+# Email · helper unificado para envío SMTP
+# --------------------------------------------------------------------
+def send_test_email(*, to: str, subject: str, body: str,
+                    html_body: str = None,
+                    reply_to: str = None,
+                    from_email: str = None) -> dict:
+    """
+    Envía un email vía el backend configurado en settings.EMAIL_BACKEND.
+
+    Lee credenciales de:
+      EMAIL_HOST · EMAIL_PORT · EMAIL_HOST_USER · EMAIL_HOST_PASSWORD
+      EMAIL_USE_SSL · EMAIL_USE_TLS · DEFAULT_FROM_EMAIL · DEFAULT_REPLY_TO
+
+    Si EMAIL_HOST_PASSWORD está vacío, settings cae al backend `console`
+    y el mensaje se imprime en stdout (no falla, útil para dev).
+
+    Devuelve dict:
+      { "ok": bool, "backend": str, "to": str, "subject": str,
+        "from": str, "error": str|None }
+
+    Nunca lanza excepción — atrapa todo internamente.
+    """
+    from django.conf import settings as _s
+    from django.core.mail import EmailMultiAlternatives
+
+    fmail   = from_email or getattr(_s, "DEFAULT_FROM_EMAIL", None)
+    rto     = reply_to   or getattr(_s, "DEFAULT_REPLY_TO",   None)
+    backend = getattr(_s, "EMAIL_BACKEND", "?")
+
+    if not to:
+        return {"ok": False, "backend": backend, "to": None,
+                "subject": subject, "from": fmail,
+                "error": "to_required"}
+
+    try:
+        msg = EmailMultiAlternatives(
+            subject  = subject or "(sin asunto)",
+            body     = body or "",
+            from_email = fmail,
+            to       = [to] if isinstance(to, str) else list(to),
+            reply_to = [rto] if rto else None,
+        )
+        if html_body:
+            msg.attach_alternative(html_body, "text/html")
+        n = msg.send(fail_silently=False)
+        return {
+            "ok":      bool(n),
+            "backend": backend,
+            "to":      to,
+            "subject": subject,
+            "from":    fmail,
+            "error":   None if n else "send_returned_zero",
+        }
+    except Exception as e:
+        log.exception("send_test_email failed: %s", e)
+        return {
+            "ok":      False,
+            "backend": backend,
+            "to":      to,
+            "subject": subject,
+            "from":    fmail,
+            "error":   f"{type(e).__name__}: {e}",
+        }
+
+
+# --------------------------------------------------------------------
 # Paperless-ngx ingest
 # --------------------------------------------------------------------
 def paperless_ingest(

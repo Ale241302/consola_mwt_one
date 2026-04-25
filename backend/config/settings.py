@@ -303,3 +303,46 @@ AI_HUB = {
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+# --------------------------------------------------------------------
+# Templates · necesario para render_to_string de plantillas de email
+# --------------------------------------------------------------------
+TEMPLATES = [
+    {
+        "BACKEND":  "django.template.backends.django.DjangoTemplates",
+        "DIRS":     [],
+        "APP_DIRS": True,           # carga templates desde apps/<app>/templates/
+        "OPTIONS":  {
+            "context_processors": [
+                "django.template.context_processors.request",
+            ],
+        },
+    },
+]
+
+
+# --------------------------------------------------------------------
+# Email / SMTP
+# --------------------------------------------------------------------
+# Backend canónico (usa SMTP real si EMAIL_HOST_PASSWORD está seteado;
+# si no, cae a console y los mensajes salen en stdout para debug).
+EMAIL_BACKEND      = os.environ.get(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.smtp.EmailBackend"
+    if os.environ.get("EMAIL_HOST_PASSWORD")
+    else "django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_HOST         = os.environ.get("EMAIL_HOST",         "mail.mwt.one")
+EMAIL_PORT         = int(os.environ.get("EMAIL_PORT",      "465"))
+EMAIL_USE_SSL      = os.environ.get("EMAIL_USE_SSL", "True").lower() in ("1", "true", "yes")
+EMAIL_USE_TLS      = os.environ.get("EMAIL_USE_TLS", "False").lower() in ("1", "true", "yes")
+EMAIL_HOST_USER    = os.environ.get("EMAIL_HOST_USER",    "info@mwt.one")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "info@mwt.one")
+EMAIL_TIMEOUT      = int(os.environ.get("EMAIL_TIMEOUT",   "20"))
+
+# Cuenta secundaria (envío de proformas / documentos comerciales)
+EMAIL_DOC_USER     = os.environ.get("EMAIL_DOC_USER",     "mw_doc@mwt.one")
+EMAIL_DOC_PASSWORD = os.environ.get("EMAIL_DOC_PASSWORD", "")
+DEFAULT_REPLY_TO   = os.environ.get("DEFAULT_REPLY_TO",   "trade@mwt.one")
