@@ -44,6 +44,7 @@ function mapProductoFromApi(r) {
     sku:           r.sku || "",
     nombre:        r.nombre || "",
     brand_id:      r.marca_id || null,
+    brand_nombre:  r.marca_nombre || null,   // ← viene del backend (lookup ya resuelto)
     tipo_calzado:  r.subcategoria || r.categoria || "",
     color:         colores[0] || "",
     ncm:           r.hs_code || "",
@@ -288,7 +289,9 @@ export default function ScreenProductos() {
                     <td>
                       <span className="brand-badge-row" style={{'--brand-color': brand?.color}}>
                         <span className="brand-badge-dot" style={{background: brand?.color}}/>
-                        {brand?.name || p.brand_id}
+                        {/* Prioridad: nombre real del backend (marca_nombre) →
+                            fallback al mock map → último recurso "—" si no hay marca */}
+                        {p.brand_nombre || brand?.name || (p.brand_id ? '—' : '—')}
                       </span>
                     </td>
                     <td className="ta-right tabular-nums" style={{fontWeight:600}}>
