@@ -36,7 +36,9 @@ import {
 } from "../data/mockData.js";
 import ProductExpedientesTab from "../components/productos/ProductExpedientesTab.jsx";
 import { useRole } from "../context/RoleContext.jsx";
-import { productosApi, marcasApi } from "../lib/api.js";
+import { productosApi, marcasApi, apiFetch, getToken } from "../lib/api.js";
+import FileUploader from "../components/common/FileUploader.jsx";
+import FilePreview  from "../components/common/FilePreview.jsx";
 
 // TABS canónicos del detalle de producto. La visibilidad se recorta
 // dinámicamente según el rol (POL_VISIBILIDAD):
@@ -66,8 +68,18 @@ export default function ScreenProductFormView() {
   const [sku, setSku] = useState(existing?.sku || '');
   const [nombre, setNombre] = useState(existing?.nombre || '');
   const [brandId, setBrandId] = useState(existing?.brand_id || BRANDS[0]?.id || '');
-  const [galleryFiles, setGalleryFiles] = useState([]);  // [{name}]
-  const [techFile, setTechFile] = useState(null);
+  // Antes guardaba File objects locales (que solo viajaban como nombres
+  // y nunca se subían). Ahora guardamos las KEYS reales de MinIO que
+  // devuelve el backend después de un PUT firmado.
+  // - galleryKeys[0] se persiste también en `imagen_url` (compat legacy).
+  // - fichaKey se persiste en `ficha_url`.
+  const [galleryKeys, setGalleryKeys] = useState(() => {
+    if (!existing) return [];
+    const fromEspec = (existing.especificaciones?.gallery || []).filter(Boolean);
+    if (fromEspec.length) return fromEspec;
+    return existing.imagen_url ? [existing.imagen_url] : [];
+  });
+  const [fichaKey, setFichaKey] = useState(existing?.ficha_url || null);
 
   // Atributos (Sección B)
   const [attrs, setAttrs] = useState({
@@ -195,8 +207,9 @@ export default function ScreenProductFormView() {
         client_overrides:  clientOverrides,
       },
       client_prices:    clientPrices,
-      gallery:          galleryFiles.map(f => f.name),
-      tech_file:        techFile?.name || null,
+      // Galería completa de keys MinIO (no nombres). Compat con preview
+      // múltiple en futuro. El "imagen principal" es galleryKeys[0].
+      gallery:          galleryKeys,
     };
 
     const body = {
@@ -210,6 +223,9 @@ export default function ScreenProductFormView() {
       tallas:            selectedSizes,
       estado:            'ACTIVO',
       visibility_tier:   visibleToAll ? 'INTERNAL' : 'CEO-ONLY',
+      // Archivos REALES subidos a MinIO (vía FileUploader → signed PUT).
+      imagen_url:        galleryKeys[0] || null,
+      ficha_url:         fichaKey,
     };
 
     try {
@@ -270,23 +286,73 @@ export default function ScreenProductFormView() {
       </div>
 
       <div className="form-grid-2" style={{marginTop:14}}>
-        <MediaDropzone
-          kind="gallery"
-          lang={lang}
-          files={galleryFiles}
-          onChange={setGalleryFiles}
-          label={lang==='es'?'Galería de imágenes':'Image gallery'}
-          hint={lang==='es'?'Arrastra múltiples .jpg, .png, .webp':'Drop multiple .jpg, .png, .webp'}
-          multiple
-        />
-        <MediaDropzone
-          kind="doc"
-          lang={lang}
-          files={techFile ? [techFile] : []}
-          onChange={(arr)=>setTechFile(arr[0] || null)}
-          label={lang==='es'?'Ficha técnica (PDF)':'Tech data sheet (PDF)'}
-          hint={lang==='es'?'Arrastra un PDF con especificaciones':'Drop a PDF with specs'}
-        />
+        {/* ── Galería de imágenes (sube a MinIO de verdad) ── */}
+        <div>
+          <div style={{ font:'600 11px/1 inherit', color:'#0F1B3D',
+                        textTransform:'uppercase', letterSpacing:0.4, marginBottom:6 }}>
+            {lang==='es'?'Galería de imágenes':'Image gallery'}
+          </div>
+          <FileUploader
+            scope={`producto/${productId || 'nuevo'}`}
+            accept="image/*"
+            maxSizeMb={10}
+            multiple
+            label={lang==='es'?'Arrastra .jpg, .png, .webp · máx 10 MB':'Drop .jpg, .png, .webp · max 10 MB'}
+            onUploaded={(key) => setGalleryKeys(prev => [...prev, key])}
+            onError={(msg) => console.warn('[upload imagen]', msg)}
+          />
+          {galleryKeys.length > 0 && (
+            <div style={{ marginTop:10, display:'grid', gap:10 }}>
+              {galleryKeys.map((k, i) => (
+                <FilePreview
+                  key={k}
+                  keyOrUrl={k}
+                  height={160}
+                  onDelete={async () => {
+                    try {
+                      await apiFetch(`/storage/delete/?key=${encodeURIComponent(k)}`, {
+                        method: "DELETE", token: getToken(),
+                      });
+                    } catch (_) { /* idempotente — seguimos */ }
+                    setGalleryKeys(prev => prev.filter(x => x !== k));
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Ficha técnica (PDF único) ── */}
+        <div>
+          <div style={{ font:'600 11px/1 inherit', color:'#0F1B3D',
+                        textTransform:'uppercase', letterSpacing:0.4, marginBottom:6 }}>
+            {lang==='es'?'Ficha técnica (PDF)':'Tech data sheet (PDF)'}
+          </div>
+          {!fichaKey ? (
+            <FileUploader
+              scope={`producto/${productId || 'nuevo'}/ficha`}
+              accept="application/pdf"
+              maxSizeMb={20}
+              label={lang==='es'?'Arrastra un PDF con especificaciones':'Drop a PDF with specs'}
+              onUploaded={(key) => setFichaKey(key)}
+              onError={(msg) => console.warn('[upload ficha]', msg)}
+            />
+          ) : (
+            <FilePreview
+              keyOrUrl={fichaKey}
+              mime="application/pdf"
+              height={240}
+              onDelete={async () => {
+                try {
+                  await apiFetch(`/storage/delete/?key=${encodeURIComponent(fichaKey)}`, {
+                    method: "DELETE", token: getToken(),
+                  });
+                } catch (_) { /* idempotente */ }
+                setFichaKey(null);
+              }}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
