@@ -20,6 +20,7 @@ class MarcaListSerializer(serializers.ModelSerializer):
             # extensiones
             "issuing_entity_id", "mercados_activos",
             "min_margin_alert_pct", "brand_code", "tipo",
+            "feature_flags",
         )
 
 

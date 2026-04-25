@@ -132,10 +132,32 @@ export default function ScreenBrandDetail() {
     return adaptBackendBrand(rawBrand);
   }, [rawBrand]);
 
-  /* Feature flags en estado local — se sincronizan cuando llega `brand`. */
+  /* Feature flags en estado local — se sincronizan cuando llega `brand`,
+     y cada toggle se persiste con PATCH /api/marcas/{id}/. */
   const [flags, setFlags] = useState({});
+  const [savingFlag, setSavingFlag] = useState(null);   // key del flag en vuelo
   useEffect(() => { if (brand?.feature_flags) setFlags(brand.feature_flags); }, [brand]);
-  const toggleFlag = (k) => setFlags(prev => ({ ...prev, [k]: !prev[k] }));
+  const toggleFlag = async (k) => {
+    if (!brand?._raw) {
+      // Mock-only — no persistimos, solo local UI
+      setFlags(prev => ({ ...prev, [k]: !prev[k] }));
+      return;
+    }
+    const next = { ...flags, [k]: !flags[k] };
+    // Optimista — actualizamos UI antes; revertimos si falla.
+    setFlags(next);
+    setSavingFlag(k);
+    try {
+      const updated = await marcasApi.update(brandId, { feature_flags: next });
+      setRawBrand(updated);   // sincroniza el resto de la vista
+    } catch (e) {
+      // Revertir
+      setFlags(flags);
+      alert((lang==='es'?'No se pudo guardar el flag: ':'Failed to save flag: ') + (e?.message || ''));
+    } finally {
+      setSavingFlag(null);
+    }
+  };
 
   // ── TODOS los hooks ANTES de los returns condicionales (regla React) ──
   const bid = brand?.id;
@@ -416,9 +438,29 @@ export default function ScreenBrandDetail() {
             lang={lang}
             initial={brand}
             onClose={()=>setShowEdit(false)}
-            onCreated={(payload)=>{
-              console.log('[mock] update brand:', payload);
-              setShowEdit(false);
+            onCreated={async (payload) => {
+              // Igual que en Brands.jsx: payload viene en shape UI, lo
+              // convertimos a lo que el backend espera y mandamos PATCH.
+              const slugify = (s) =>
+                (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                         .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+              const body = {
+                nombre:              payload.name || payload.nombre,
+                slug:                payload.slug || slugify(payload.name || payload.nombre),
+                pais_origen_iso2:    payload.pais_origen_iso2 || payload.country || brand._raw?.pais_origen_iso2 || 'MX',
+                categoria_principal: payload.categoria_principal || payload.categoria || brand._raw?.categoria_principal || 'GENERAL',
+                estado_comercial:    payload.estado_comercial || payload.status || brand._raw?.estado_comercial || 'PROSPECTO',
+                mercados_activos:    payload.mercados_activos || payload.territorios || [],
+                tipo:                payload.tipo || brand._raw?.tipo || 'TERCEROS',
+                brand_code:          payload.brand_id || payload.brand_code || brand._raw?.brand_code || null,
+              };
+              try {
+                const updated = await marcasApi.update(brandId, body);
+                setRawBrand(updated);
+                setShowEdit(false);
+              } catch (e) {
+                alert((lang==='es'?'Error al guardar: ':'Save failed: ') + (e?.message || ''));
+              }
             }}
           />
         )}

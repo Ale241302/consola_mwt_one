@@ -313,8 +313,13 @@ export default function ScreenBrands() {
                 slug:                payload.slug || slugify(payload.name || payload.nombre),
                 pais_origen_iso2:    payload.pais_origen_iso2 || payload.country || "MX",
                 categoria_principal: payload.categoria_principal || payload.categoria || "GENERAL",
-                estado_comercial:    payload.estado_comercial || "PROSPECTO",
-                territorios:         payload.territorios || payload.mercados_activos || [],
+                estado_comercial:    payload.estado_comercial || payload.status || "PROSPECTO",
+                // El serializer del backend expone `mercados_activos`, NO `territorios`
+                // (territorios existe en BD pero está oculto). Antes mandábamos el campo
+                // equivocado y los markets seleccionados se descartaban silenciosamente.
+                mercados_activos:    payload.mercados_activos || payload.territorios || [],
+                tipo:                payload.tipo || "TERCEROS",
+                brand_code:          payload.brand_id || payload.brand_code || null,
               };
               try {
                 await marcasApi.create(body);

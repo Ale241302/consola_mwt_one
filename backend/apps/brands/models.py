@@ -28,6 +28,10 @@ class Marca(models.Model):
     tipo                   = models.CharField(max_length=16, null=True, blank=True)
                               # PROPIA / EXCLUSIVA / TERCEROS
 
+    # Extensión 21b_brands_feature_flags.sql — toggles persistentes de
+    # capacidades por marca (storefront / B2B / expedientes / scanner).
+    feature_flags          = models.JSONField(default=dict, blank=True)
+
     is_active           = models.BooleanField(default=True)
     created_at          = models.DateTimeField(auto_now_add=True)
     updated_at          = models.DateTimeField(auto_now=True)
