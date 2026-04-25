@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/ai/usage-logs"
+method: GET
+order: 7000

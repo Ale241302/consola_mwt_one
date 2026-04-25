@@ -1,0 +1,20 @@
+$kind: http-request
+url: "{{base_url}}/api/permissions/groups/{{role_slug}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "matrix": [
+        {
+          "module": "expedientes",
+          "can_create": true,
+          "can_read": true,
+          "can_update": true,
+          "can_delete": false
+        }
+      ]
+    }
+order: 9000

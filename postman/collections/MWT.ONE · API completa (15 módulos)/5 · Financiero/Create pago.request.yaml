@@ -1,0 +1,16 @@
+$kind: http-request
+url: "{{base_url}}/api/pagos"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "cliente_id": "{{client_uuid}}",
+      "monto_usd": 5000.0,
+      "fecha_pago": "2026-04-25",
+      "metodo": "TRANSFER",
+      "referencia": "TRX-DEMO-001"
+    }
+order: 3000

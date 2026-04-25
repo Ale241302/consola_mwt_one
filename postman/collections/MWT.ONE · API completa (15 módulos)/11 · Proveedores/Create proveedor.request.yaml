@@ -1,0 +1,19 @@
+$kind: http-request
+url: "{{base_url}}/api/proveedores"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "razon_social": "Fabrica Demo Ltda",
+      "codigo": "PROV-DEMO",
+      "pais_iso2": "BR",
+      "ciudad": "Sao Paulo",
+      "tax_id": "12.345.678/0001-90",
+      "contacto_email": "demo@fabrica.br",
+      "contacto_tel": "+55 11 1234 5678",
+      "is_active": true
+    }
+order: 3000

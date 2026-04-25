@@ -1,0 +1,25 @@
+$kind: http-request
+url: "{{base_url}}/api/expedientes/create-from-oc"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "oc": {
+        "codigo": "PO-2026-0099",
+        "client_id": "{{client_uuid}}",
+        "brand_id": "{{brand_uuid}}",
+        "moneda": "USD"
+      },
+      "lineas": [
+        {
+          "sku": "BIS-OXF-BLK-42",
+          "qty": 60,
+          "unit_price": 95.0
+        }
+      ],
+      "modo_operacion": "FULL"
+    }
+order: 11000

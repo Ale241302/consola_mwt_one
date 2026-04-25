@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/proveedores/{{supplier_uuid}}"
+method: GET
+order: 2000

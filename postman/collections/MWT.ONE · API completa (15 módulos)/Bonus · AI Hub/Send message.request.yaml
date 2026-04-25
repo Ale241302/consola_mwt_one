@@ -1,0 +1,13 @@
+$kind: http-request
+url: "{{base_url}}/api/ai/chat/send"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "thread_id": "{{thread_uuid}}",
+      "message": "¿Cuál es el margen del Bisontes 2026?"
+    }
+order: 5000

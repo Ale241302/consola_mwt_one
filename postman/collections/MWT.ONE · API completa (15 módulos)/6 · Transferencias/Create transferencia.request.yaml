@@ -1,0 +1,16 @@
+$kind: http-request
+url: "{{base_url}}/api/transferencias"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "codigo": "TRF-2026-DEMO",
+      "nodo_origen_id": "{{node_origen_uuid}}",
+      "nodo_destino_id": "{{node_destino_uuid}}",
+      "fecha_envio": "2026-04-25",
+      "estado": "PREPARANDO"
+    }
+order: 3000

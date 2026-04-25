@@ -1,0 +1,12 @@
+$kind: http-request
+url: "{{base_url}}/api/ocr/parse-oc"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: >-
+    {
+      "_comment": "Multipart real: subir archivo .xlsx en file. Aquí solo skeleton JSON."
+    }
+order: 9000

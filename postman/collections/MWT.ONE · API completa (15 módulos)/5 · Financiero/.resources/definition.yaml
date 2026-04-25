@@ -1,0 +1,3 @@
+$kind: collection
+description: Pagos, conciliaciones, vencimientos, FX rate history.
+order: 6000

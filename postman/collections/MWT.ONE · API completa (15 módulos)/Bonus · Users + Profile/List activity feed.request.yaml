@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{base_url}}/api/activity-feed?limit=20"
+method: GET
+queryParams:
+  limit: "20"
+order: 10000

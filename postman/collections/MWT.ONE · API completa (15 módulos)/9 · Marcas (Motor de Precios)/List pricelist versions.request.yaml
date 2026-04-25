@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/commercial/pricelist-versions"
+method: GET
+order: 14000

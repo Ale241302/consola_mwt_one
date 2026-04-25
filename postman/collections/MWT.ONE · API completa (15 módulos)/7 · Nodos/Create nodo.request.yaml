@@ -1,0 +1,22 @@
+$kind: http-request
+url: "{{base_url}}/api/nodos"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "codigo": "NODO-DEMO",
+      "nombre": "Nodo demo Lima",
+      "tipo": "WAREHOUSE",
+      "pais_iso2": "PE",
+      "ciudad": "Lima",
+      "capabilities": [
+        "RECEIVE",
+        "DISPATCH"
+      ],
+      "zona_horaria": "America/Lima",
+      "is_active": true
+    }
+order: 3000

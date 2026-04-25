@@ -1,0 +1,14 @@
+$kind: http-request
+url: "{{base_url}}/api/conciliaciones"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "pago_id": "{{pago_uuid}}",
+      "expediente_id": "{{expediente_uuid}}",
+      "monto_aplicado_usd": 5000.0
+    }
+order: 5000

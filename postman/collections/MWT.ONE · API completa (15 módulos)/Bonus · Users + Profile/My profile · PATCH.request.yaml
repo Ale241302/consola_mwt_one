@@ -1,0 +1,23 @@
+$kind: http-request
+url: "{{base_url}}/api/users/me/profile"
+method: PATCH
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "phone": "+51 999 111 222",
+      "preferred_language": "es",
+      "addresses": [
+        {
+          "label": "Oficina",
+          "kind": "BOTH",
+          "address_line_1": "Av. Demo 123",
+          "city": "Lima",
+          "country": "PE",
+          "is_default": true
+        }
+      ]
+    }
+order: 8000

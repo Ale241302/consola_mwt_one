@@ -1,0 +1,7 @@
+$kind: http-request
+url: "{{base_url}}/api/productos?brand_id={{brand_uuid}}&q=Oxford"
+method: GET
+queryParams:
+  brand_id: "{{brand_uuid}}"
+  q: Oxford
+order: 2000

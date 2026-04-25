@@ -1,0 +1,52 @@
+$kind: collection
+description: >-
+  Colección de pruebas de la API REST del ERP MWT.ONE.
+
+
+  Cubre los 15 módulos:
+    1. Dashboard
+    2. Expedientes
+    3. Pipeline
+    4. Portal B2B
+    5. Financiero
+    6. Transferencias
+    7. Nodos
+    8. Clientes
+    9. Marcas
+    10. Productos
+    11. Proveedores
+    12. Inventario
+    13. Plantillas de Email
+    14. Historial de Notificaciones
+    15. Cobros
+
+  Plus: Auth, Users + Roles, Storage, AI Hub.
+
+
+  Flujo recomendado:
+    1. Importa también MWT_ONE.postman_environment.json y selecciónalo.
+    2. Edita la variable `base_url` si no es https://consola.mwt.one.
+    3. Ejecuta "Auth ▸ Login" — guarda automáticamente access_token y user_id.
+    4. Recorre los demás endpoints (la auth Bearer ya está aplicada a la colección).
+
+  Variables clave (definidas en environment):
+    · base_url           = https://consola.mwt.one
+    · access_token       = (lo setea Login)
+    · refresh_token      = (lo setea Login)
+    · user_id            = (lo setea Login)
+    · admin_email        = alejandro@muitowork.com
+    · admin_password     = MuitoWork2026?
+    · client_uuid        = (cualquier cliente real — para probar /clientes/<id>/)
+    · brand_uuid         = (cualquier marca real)
+    · product_uuid       = (cualquier producto real)
+    · oc_uuid            = (cualquier OC real)
+
+  Conectado a GitHub: ver postman/README.md
+variables:
+  base_url: https://consola.mwt.one
+auth:
+  - id: 4f20b15b-0586-4647-af37-10aaa89f9f5f
+    type: bearer
+    name: bearer auth
+    credentials:
+      token: "{{access_token}}"

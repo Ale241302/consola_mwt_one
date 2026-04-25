@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/commercial/pricing_constants"
+method: GET
+order: 13000

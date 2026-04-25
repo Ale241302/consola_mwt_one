@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{base_url}}/api/documentos?expediente_id={{expediente_uuid}}"
+method: GET
+queryParams:
+  expediente_id: "{{expediente_uuid}}"
+order: 13000

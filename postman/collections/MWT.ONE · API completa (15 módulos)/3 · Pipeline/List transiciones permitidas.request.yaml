@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/pipeline-transiciones"
+method: GET
+order: 1000

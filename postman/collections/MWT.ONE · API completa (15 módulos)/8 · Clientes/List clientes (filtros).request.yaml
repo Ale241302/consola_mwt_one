@@ -1,0 +1,8 @@
+$kind: http-request
+url: "{{base_url}}/api/clientes?q=Atacama&tipo=B2B&estado=ACTIVO"
+method: GET
+queryParams:
+  q: Atacama
+  tipo: B2B
+  estado: ACTIVO
+order: 2000

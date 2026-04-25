@@ -1,0 +1,16 @@
+$kind: http-request
+url: "{{base_url}}/api/roles"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "slug": "demo-role",
+      "nombre": "Rol demo",
+      "color": "#3083FE",
+      "orden": 50,
+      "is_active": true
+    }
+order: 3000

@@ -1,0 +1,12 @@
+$kind: http-request
+url: "{{base_url}}/api/productos/{{product_uuid}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "precio_mwt": 95.0
+    }
+order: 5000

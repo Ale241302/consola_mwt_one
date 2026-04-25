@@ -1,0 +1,12 @@
+$kind: http-request
+url: "{{base_url}}/api/auth/logout"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "refresh": "{{refresh_token}}"
+    }
+order: 4000

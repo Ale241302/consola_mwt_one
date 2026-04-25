@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{base_url}}/api/email-template-versions?template_id={{template_uuid}}"
+method: GET
+queryParams:
+  template_id: "{{template_uuid}}"
+order: 5000

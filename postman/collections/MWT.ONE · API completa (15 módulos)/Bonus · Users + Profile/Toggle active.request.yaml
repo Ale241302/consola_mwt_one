@@ -1,0 +1,9 @@
+$kind: http-request
+url: "{{base_url}}/api/users/{{user_uuid}}/toggle-active"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: "{}"
+order: 6000

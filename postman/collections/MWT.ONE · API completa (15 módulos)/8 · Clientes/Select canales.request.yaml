@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/clientes/select_canales"
+method: GET
+order: 9000

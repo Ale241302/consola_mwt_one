@@ -1,0 +1,9 @@
+$kind: http-request
+url: "{{base_url}}/api/clientes/{{client_uuid}}/refresh_credit"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: "{}"
+order: 17000

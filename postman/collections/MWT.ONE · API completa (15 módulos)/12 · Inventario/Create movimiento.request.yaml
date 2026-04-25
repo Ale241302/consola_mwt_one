@@ -1,0 +1,16 @@
+$kind: http-request
+url: "{{base_url}}/api/movimientos"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "tipo": "ENTRADA",
+      "node_id": "{{node_uuid}}",
+      "product_id": "{{product_uuid}}",
+      "qty": 100,
+      "ref_documento": "TRF-2026-DEMO"
+    }
+order: 5000

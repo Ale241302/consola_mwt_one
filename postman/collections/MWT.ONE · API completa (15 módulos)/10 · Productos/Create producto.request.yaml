@@ -1,0 +1,21 @@
+$kind: http-request
+url: "{{base_url}}/api/productos"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "sku": "DEMO-SKU-001",
+      "nombre": "Producto demo",
+      "brand_id": "{{brand_uuid}}",
+      "precio_mwt": 89.0,
+      "moneda": "USD",
+      "is_active": true,
+      "especificaciones": {
+        "material": "cuero",
+        "color": "negro"
+      }
+    }
+order: 4000

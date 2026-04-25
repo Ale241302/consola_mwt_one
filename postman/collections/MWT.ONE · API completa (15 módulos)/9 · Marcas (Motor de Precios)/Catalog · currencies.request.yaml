@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/commercial/catalogs/currencies"
+method: GET
+order: 20000

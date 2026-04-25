@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{base_url}}/api/analytics/timeseries?days=30"
+method: GET
+queryParams:
+  days: "30"
+order: 5000

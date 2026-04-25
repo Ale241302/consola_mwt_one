@@ -1,0 +1,3 @@
+$kind: collection
+description: Login (auto-guarda tokens), refresh, me, logout.
+order: 1000

@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{base_url}}/api/analytics/kpis_brand?brand_id={{brand_uuid}}"
+method: GET
+queryParams:
+  brand_id: "{{brand_uuid}}"
+order: 2000

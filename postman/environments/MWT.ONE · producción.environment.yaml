@@ -1,0 +1,83 @@
+name: MWT.ONE · producción
+values:
+  - key: base_url
+    value: 'https://consola.mwt.one'
+    enabled: true
+  - key: admin_email
+    value: alejandro@muitowork.com
+    enabled: true
+  - key: admin_password
+    value: MuitoWork2026?
+    enabled: true
+  - key: access_token
+    value: ''
+    enabled: true
+  - key: refresh_token
+    value: ''
+    enabled: true
+  - key: user_id
+    value: ''
+    enabled: true
+  - key: user_email
+    value: ''
+    enabled: true
+  - key: user_role
+    value: ''
+    enabled: true
+  - key: client_uuid
+    value: ''
+    enabled: true
+  - key: brand_uuid
+    value: ''
+    enabled: true
+  - key: product_uuid
+    value: ''
+    enabled: true
+  - key: supplier_uuid
+    value: ''
+    enabled: true
+  - key: node_uuid
+    value: ''
+    enabled: true
+  - key: node_origen_uuid
+    value: ''
+    enabled: true
+  - key: node_destino_uuid
+    value: ''
+    enabled: true
+  - key: oc_uuid
+    value: ''
+    enabled: true
+  - key: expediente_uuid
+    value: ''
+    enabled: true
+  - key: transfer_uuid
+    value: ''
+    enabled: true
+  - key: stock_uuid
+    value: ''
+    enabled: true
+  - key: pago_uuid
+    value: ''
+    enabled: true
+  - key: cobro_uuid
+    value: ''
+    enabled: true
+  - key: template_uuid
+    value: ''
+    enabled: true
+  - key: user_uuid
+    value: ''
+    enabled: true
+  - key: role_slug
+    value: operator
+    enabled: true
+  - key: thread_uuid
+    value: ''
+    enabled: true
+  - key: storage_uuid
+    value: ''
+    enabled: true
+  - key: bcpa_uuid
+    value: ''
+    enabled: true

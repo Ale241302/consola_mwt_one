@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/commercial/brands/{{brand_uuid}}/clients_summary"
+method: GET
+order: 6000

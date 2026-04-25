@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{base_url}}/api/stock?node_id={{node_uuid}}"
+method: GET
+queryParams:
+  node_id: "{{node_uuid}}"
+order: 2000

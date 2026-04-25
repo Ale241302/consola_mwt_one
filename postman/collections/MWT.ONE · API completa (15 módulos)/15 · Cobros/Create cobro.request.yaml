@@ -1,0 +1,17 @@
+$kind: http-request
+url: "{{base_url}}/api/cobros"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "cliente_id": "{{client_uuid}}",
+      "expediente_id": "{{expediente_uuid}}",
+      "monto_usd": 12000.0,
+      "fecha_emision": "2026-04-25",
+      "fecha_vencimiento": "2026-06-25",
+      "estado": "PENDIENTE"
+    }
+order: 3000

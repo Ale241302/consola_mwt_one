@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/expedientes"
+method: GET
+order: 6000

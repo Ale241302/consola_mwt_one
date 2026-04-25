@@ -1,0 +1,14 @@
+$kind: http-request
+url: "{{base_url}}/api/ocr/resolve-line"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "sku": "BIS-OXF-BLK-42",
+      "qty": 100,
+      "unit_price": 95.0
+    }
+order: 10000

@@ -1,0 +1,12 @@
+$kind: http-request
+url: "{{base_url}}/api/commercial/brand-client-pricing/{{bcpa_uuid}}/upload-file"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "_comment": "multipart: campo 'file' con .xlsx — aquí JSON skeleton"
+    }
+order: 9000

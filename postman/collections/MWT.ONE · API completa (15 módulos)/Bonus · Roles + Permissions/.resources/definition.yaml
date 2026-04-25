@@ -1,0 +1,3 @@
+$kind: collection
+description: "RBAC: roles + módulos + matriz de permisos."
+order: 18000

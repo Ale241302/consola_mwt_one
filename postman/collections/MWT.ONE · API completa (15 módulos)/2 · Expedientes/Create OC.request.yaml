@@ -1,0 +1,18 @@
+$kind: http-request
+url: "{{base_url}}/api/ocs"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "codigo": "PO-DEMO-2026-0001",
+      "client_id": "{{client_uuid}}",
+      "brand_id": "{{brand_uuid}}",
+      "fecha_emision": "2026-04-25",
+      "moneda": "USD",
+      "total_estimado": 12000,
+      "estado": "REGISTRO"
+    }
+order: 3000

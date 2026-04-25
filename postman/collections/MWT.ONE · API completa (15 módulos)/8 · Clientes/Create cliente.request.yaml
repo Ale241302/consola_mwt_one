@@ -1,0 +1,30 @@
+$kind: http-request
+url: "{{base_url}}/api/clientes"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "razon_social": "Demo Cliente SA",
+      "tax_id": "20999888777",
+      "tipo": "B2B",
+      "segmento": "B",
+      "pais_iso2": "PE",
+      "ciudad": "Lima",
+      "codigo_marluvas": "4000000999",
+      "cedula_juridica": "20999888777",
+      "direccion_entrega": "Av. Demo 123",
+      "contacto_nombre": "Juan Demo",
+      "contacto_email": "demo@example.com",
+      "contacto_tel": "+51 999 999 999",
+      "canal": "DISTRIBUIDOR",
+      "incoterm": "CIF",
+      "medio_pago": "TRANSFER_BANCARIA",
+      "dias_credito": 60,
+      "credito_limit_usd": 150000,
+      "comision_pct": 0.08,
+      "estado": "ACTIVO"
+    }
+order: 4000

@@ -1,0 +1,17 @@
+$kind: http-request
+url: "{{base_url}}/api/users"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "email_plain": "demo@muitowork.com",
+      "full_name": "Demo User",
+      "role_default": "operator",
+      "preferred_language": "es",
+      "timezone": "America/Lima",
+      "password": "DemoPass123!"
+    }
+order: 3000

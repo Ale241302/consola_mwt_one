@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/permissions/groups/{{role_slug}}"
+method: GET
+order: 8000

@@ -1,0 +1,15 @@
+$kind: http-request
+url: "{{base_url}}/api/marcas"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "nombre": "Marca Demo",
+      "codigo": "MD",
+      "tipo": "PROPIA",
+      "is_active": true
+    }
+order: 3000

@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/portal/products/{{product_uuid}}"
+method: GET
+order: 2000

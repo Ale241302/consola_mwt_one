@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/nodos/{{node_uuid}}"
+method: GET
+order: 2000

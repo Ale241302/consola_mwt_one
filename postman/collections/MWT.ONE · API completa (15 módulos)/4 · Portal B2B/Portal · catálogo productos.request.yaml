@@ -1,0 +1,7 @@
+$kind: http-request
+url: "{{base_url}}/api/portal/products?limit=24&offset=0"
+method: GET
+queryParams:
+  limit: "24"
+  offset: "0"
+order: 1000

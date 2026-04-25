@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/portal-sessions"
+method: GET
+order: 5000

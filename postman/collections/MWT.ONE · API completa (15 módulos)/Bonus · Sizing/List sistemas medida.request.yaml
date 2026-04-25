@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/sizing/sistemas-medida"
+method: GET
+order: 4000

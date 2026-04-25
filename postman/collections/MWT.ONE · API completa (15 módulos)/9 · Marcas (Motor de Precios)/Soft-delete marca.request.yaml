@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/marcas/{{brand_uuid}}"
+method: DELETE
+order: 5000

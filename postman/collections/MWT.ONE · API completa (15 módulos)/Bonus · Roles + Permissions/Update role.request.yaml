@@ -1,0 +1,12 @@
+$kind: http-request
+url: "{{base_url}}/api/roles/{{role_slug}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "color": "#00B286"
+    }
+order: 4000

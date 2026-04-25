@@ -1,0 +1,13 @@
+# Use this workspace to collaborate
+workspace:
+  id: 738db58f-bc48-4442-8645-9d584a05b5ae
+
+cloudResources:
+  collections:
+    ..\postman\collections\MWT.ONE · API completa (15 módulos): d4e4a28c-6c72-4b84-bb00-8af278577b4f
+
+# All resources in the `postman/` folder are automatically registered in Local View.
+# Point to additional files outside the `postman/` folder to register them individually. Example:
+#localResources:
+#  collections:
+#    - ../tests/E2E Test Collection/

@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{base_url}}/api/user-addresses?user_id={{user_uuid}}"
+method: GET
+queryParams:
+  user_id: "{{user_uuid}}"
+order: 9000

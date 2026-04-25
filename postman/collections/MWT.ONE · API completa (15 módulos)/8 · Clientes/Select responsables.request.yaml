@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/clientes/select_responsables"
+method: GET
+order: 14000

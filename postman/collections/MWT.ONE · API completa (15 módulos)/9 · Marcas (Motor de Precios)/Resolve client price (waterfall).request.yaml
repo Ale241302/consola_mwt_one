@@ -1,0 +1,14 @@
+$kind: http-request
+url: "{{base_url}}/api/commercial/resolve_client_price"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "client_id": "{{client_uuid}}",
+      "brand_id": "{{brand_uuid}}",
+      "sku": "BIS-OXF-BLK-42"
+    }
+order: 10000

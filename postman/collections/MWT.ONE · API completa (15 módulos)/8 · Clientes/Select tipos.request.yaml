@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/clientes/select_tipos"
+method: GET
+order: 7000

@@ -1,0 +1,12 @@
+$kind: http-request
+url: "{{base_url}}/api/ai/chat/upload"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "_comment": "multipart: file"
+    }
+order: 6000

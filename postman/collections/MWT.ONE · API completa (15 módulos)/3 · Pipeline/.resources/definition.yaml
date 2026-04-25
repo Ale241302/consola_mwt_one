@@ -1,0 +1,3 @@
+$kind: collection
+description: Transiciones permitidas + log de eventos.
+order: 4000

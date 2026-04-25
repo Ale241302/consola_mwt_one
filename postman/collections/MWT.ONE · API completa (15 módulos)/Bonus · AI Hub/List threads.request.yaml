@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/ai/threads"
+method: GET
+order: 4000

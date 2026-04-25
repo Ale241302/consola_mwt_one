@@ -1,0 +1,12 @@
+$kind: http-request
+url: "{{base_url}}/api/users/{{user_uuid}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "is_active": true
+    }
+order: 4000

@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/activity-feed/unread-count"
+method: GET
+order: 11000

@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{base_url}}/api/clientes/select_paises"
+method: GET
+order: 12000

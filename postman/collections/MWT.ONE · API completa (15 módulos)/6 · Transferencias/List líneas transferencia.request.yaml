@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{base_url}}/api/transfer-lineas?transferencia_id={{transfer_uuid}}"
+method: GET
+queryParams:
+  transferencia_id: "{{transfer_uuid}}"
+order: 5000

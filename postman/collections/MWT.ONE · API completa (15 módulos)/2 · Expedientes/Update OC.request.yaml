@@ -1,0 +1,12 @@
+$kind: http-request
+url: "{{base_url}}/api/ocs/{{oc_uuid}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "estado": "CONFIRMADA"
+    }
+order: 4000

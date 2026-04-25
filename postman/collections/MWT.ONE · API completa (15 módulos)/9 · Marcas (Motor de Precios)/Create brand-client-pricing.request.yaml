@@ -1,0 +1,21 @@
+$kind: http-request
+url: "{{base_url}}/api/commercial/brand-client-pricing"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "brand_id": "{{brand_uuid}}",
+      "cliente_id": "{{client_uuid}}",
+      "fecha_inicio": "2026-04-25",
+      "fecha_fin": null,
+      "sobre_precio_pct": "0.0500",
+      "pronto_pago_dias": 10,
+      "pronto_pago_pct": "0.0300",
+      "volumen_min_units": 500,
+      "volumen_pct": "0.0400",
+      "notas": "Demo asignación"
+    }
+order: 8000

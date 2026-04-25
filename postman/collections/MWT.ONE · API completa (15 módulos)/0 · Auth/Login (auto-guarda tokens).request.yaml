@@ -1,0 +1,33 @@
+$kind: http-request
+description: Devuelve access + refresh JWT y los guarda en variables del environment.
+url: "{{base_url}}/api/auth/login"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "usuario": "{{admin_email}}",
+      "password": "{{admin_password}}"
+    }
+auth:
+  type: noauth
+scripts:
+  - type: afterResponse
+    code: >-
+      if (pm.response.code === 200) {
+        const j = pm.response.json();
+        pm.environment.set('access_token',  j.access  || '');
+        pm.environment.set('refresh_token', j.refresh || '');
+        if (j.user) {
+          pm.environment.set('user_id',    j.user.id    || '');
+          pm.environment.set('user_email', j.user.email || '');
+          pm.environment.set('user_role',  j.user.role  || '');
+        }
+        console.log('[auth] tokens guardados ·', j.user && j.user.email);
+      } else {
+        console.warn('[auth] login fallido', pm.response.code, pm.response.text());
+      }
+    language: text/javascript
+order: 1000

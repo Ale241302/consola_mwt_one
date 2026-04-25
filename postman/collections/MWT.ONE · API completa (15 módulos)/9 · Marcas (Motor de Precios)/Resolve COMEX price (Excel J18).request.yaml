@@ -1,0 +1,15 @@
+$kind: http-request
+url: "{{base_url}}/api/commercial/resolve_price"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "sku": "701407",
+      "comision_pct": 0.08,
+      "dias_pago": 28,
+      "mercado": "ME"
+    }
+order: 11000

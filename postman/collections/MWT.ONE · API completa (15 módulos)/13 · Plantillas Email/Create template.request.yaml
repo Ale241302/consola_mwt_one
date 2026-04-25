@@ -1,0 +1,16 @@
+$kind: http-request
+url: "{{base_url}}/api/email-templates"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: json
+  content: |-
+    {
+      "key": "demo.welcome",
+      "asunto": "Bienvenido {{ '{{nombre}}' }}",
+      "cuerpo_html": "<h1>Hola {{ '{{nombre}}' }}</h1>",
+      "lang": "es",
+      "is_active": true
+    }
+order: 3000
