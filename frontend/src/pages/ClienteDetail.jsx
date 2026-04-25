@@ -9,18 +9,55 @@
 //   3. Productos comprados    — Inteligencia de surtido (12m)
 //   4. Alertas                — señales cruzadas de riesgo y oportunidad
 // ─────────────────────────────────────────────────────────────
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IconChevLeft, IconMapPin, IconUser, IconMail, IconCreditCard,
   IconClock, IconAlert, IconCheck, IconX, IconShield, IconDollar,
   IconTrend, IconBoxes, IconFolder, IconHistory, IconGlobe, IconLock,
+  IconRefresh,
 } from "../lib/icons.jsx";
 import { fmtMoney, fmtShortDate } from "../lib/i18n.js";
+import { clientesApi } from "../lib/api.js";
 import {
   CLIENTS, EXPEDIENTES, CLIENT_PAYMENTS, CLIENT_PRODUCTS_BOUGHT, OCS,
 } from "../data/mockData.js";
+
+// ── Banderitas por país (mismo subset que NodoDetail) ──
+const FLAG_BY_ISO2 = {
+  PE:'🇵🇪', CO:'🇨🇴', US:'🇺🇸', CN:'🇨🇳', MX:'🇲🇽',
+  AR:'🇦🇷', CL:'🇨🇱', ES:'🇪🇸', BR:'🇧🇷', UY:'🇺🇾',
+  EC:'🇪🇨', CR:'🇨🇷', PA:'🇵🇦',
+};
+
+// ── Adapter backend → forma esperada por la vista (heredada del mock).
+// El backend usa nombres canónicos (razon_social, credito_aprobado, dias_credito,
+// pais_iso2, contacto_email…); el render legado lee `name`, `credito_limit`,
+// `credito_dias`, `country`, `email`. Mapeamos en un solo lugar.
+function adaptBackendClient(raw) {
+  if (!raw || !raw.id) return null;
+  return {
+    id:                raw.id,
+    name:              raw.razon_social || raw.nombre_comercial || raw.tax_id || '—',
+    flag:              FLAG_BY_ISO2[raw.pais_iso2] || '🌐',
+    country:           raw.pais_iso2 || '—',
+    canal:             (raw.canal || 'directo').toLowerCase(),
+    estado:            raw.estado || 'ACTIVO',
+    codigo_marluvas:   raw.codigo_marluvas || '—',
+    cedula_juridica:   raw.cedula_juridica || '',
+    direccion_entrega: raw.direccion_entrega || raw.direccion || '',
+    contacto_nombre:   raw.contacto_nombre || '—',
+    email:             raw.contacto_email || '',
+    incoterm:          raw.incoterm || '—',
+    // Crédito · soporta ambos nombres (alias backend / canon Excel COMEX)
+    credito_limit:     Number(raw.credito_limit_usd ?? raw.credito_aprobado ?? 0),
+    credito_used:      Number(raw.credito_usado ?? 0),
+    credito_dias:      Number(raw.dias_credito ?? 0),
+    // crudo por si tabs futuros lo quieren
+    _raw: raw,
+  };
+}
 // NOTA 2026-04 · ClientFormDrawer DEPRECATED — reemplazado por la página
 // full-page pages/ClienteFormView.jsx. El botón "Editar" de aquí navega
 // ahora a /clientes/:id/editar.
@@ -74,7 +111,48 @@ export default function ScreenClienteDetail() {
   // Lo mantengo declarado para no romper la función si algún effect lo refería.
   const [showEdit, setShowEdit] = useState(false);   // eslint-disable-line no-unused-vars
 
-  const client = useMemo(() => CLIENTS.find(c => c.id === clienteId), [clienteId]);
+  // ── Fetch real al backend (antes leía CLIENTS de mockData.js, por eso
+  //    clientes creados vía API mostraban "Cliente no encontrado") ──
+  const [rawClient, setRawClient] = useState(null);
+  const [loading, setLoading]     = useState(true);
+  const [loadErr, setLoadErr]     = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setLoadErr(null);
+    clientesApi.get(clienteId)
+      .then(data => { if (!cancelled) { setRawClient(data); setLoading(false); } })
+      .catch(err => {
+        if (cancelled) return;
+        // Fallback a mock para IDs demo que solo existen en mockData.js.
+        const mockMatch = CLIENTS.find(c => c.id === clienteId);
+        if (mockMatch) {
+          setRawClient({ __isMockShape: true, ...mockMatch });
+        } else {
+          setLoadErr(err?.message || 'fetch_failed');
+        }
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [clienteId]);
+
+  const client = useMemo(() => {
+    if (!rawClient) return null;
+    if (rawClient.__isMockShape) return rawClient;
+    return adaptBackendClient(rawClient);
+  }, [rawClient]);
+
+  if (loading) {
+    return (
+      <div className="page">
+        <div className="card card-pad-lg empty">
+          <IconRefresh size={20} style={{color:'var(--brand-accent)', animation:'spin 1.2s linear infinite'}}/>
+          <div className="caption">{lang==='es'?'Cargando cliente…':'Loading client…'}</div>
+        </div>
+      </div>
+    );
+  }
 
   if (!client) {
     return (
@@ -82,6 +160,7 @@ export default function ScreenClienteDetail() {
         <div className="card card-pad-lg empty">
           <IconAlert size={22} style={{color:'var(--text-tertiary)'}}/>
           <div className="heading-md">{lang==='es'?'Cliente no encontrado':'Client not found'}</div>
+          {loadErr && <div className="caption" style={{color:'var(--text-tertiary)'}}>{loadErr}</div>}
           <button className="btn btn-ghost" onClick={()=>navigate('/clientes')}>
             <IconChevLeft size={14}/> {lang==='es'?'Volver a Clientes':'Back to Clients'}
           </button>
