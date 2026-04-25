@@ -9,7 +9,8 @@
 //   3. Productos comprados    — Inteligencia de surtido (12m)
 //   4. Alertas                — señales cruzadas de riesgo y oportunidad
 // ─────────────────────────────────────────────────────────────
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -115,6 +116,11 @@ export default function ScreenClienteDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting,      setDeleting]      = useState(false);
   const [deleteErr,     setDeleteErr]     = useState(null);
+
+  // Cambio de estado inline (popover desde el botón "Estado")
+  const [showStatusMenu, setShowStatusMenu] = useState(false);
+  const [savingStatus,   setSavingStatus]   = useState(false);
+  const statusBtnRef = useRef(null);
 
   // ── Fetch real al backend (antes leía CLIENTS de mockData.js, por eso
   //    clientes creados vía API mostraban "Cliente no encontrado") ──
@@ -303,7 +309,19 @@ export default function ScreenClienteDetail() {
               </span>
             </div>
           </div>
-          <div style={{display:'flex', gap:8}}>
+          <div style={{display:'flex', gap:8, position:'relative'}}>
+            {/* Cambiar estado inline — solo nodos del backend (los mock no
+                pueden persistir cambios). Abre un popover con las 4 opciones. */}
+            {client._raw && (
+              <button ref={statusBtnRef}
+                      className="btn btn-ghost"
+                      disabled={savingStatus}
+                      onClick={()=>setShowStatusMenu(s=>!s)}>
+                {savingStatus
+                  ? (lang==='es'?'Guardando…':'Saving…')
+                  : (lang==='es'?'Estado ▾':'Status ▾')}
+              </button>
+            )}
             <button className="btn btn-ghost"
                     onClick={() => navigate(`/clientes/${clienteId}/editar`)}>
               {lang==='es' ? 'Editar' : 'Edit'}
@@ -317,13 +335,43 @@ export default function ScreenClienteDetail() {
                 {lang==='es' ? 'Eliminar' : 'Delete'}
               </button>
             )}
+
+            {/* Popover de estados — anclado al botón "Estado" */}
+            <AnimatePresence>
+              {showStatusMenu && (
+                <StatusPopover
+                  current={client.estado}
+                  busy={savingStatus}
+                  lang={lang}
+                  onClose={()=>setShowStatusMenu(false)}
+                  onPick={async (newEstado) => {
+                    if (newEstado === client.estado) { setShowStatusMenu(false); return; }
+                    setSavingStatus(true);
+                    try {
+                      await clientesApi.update(clienteId, { estado: newEstado });
+                      // recargar el cliente desde backend
+                      const fresh = await clientesApi.get(clienteId);
+                      setRawClient(fresh);
+                      setShowStatusMenu(false);
+                    } catch (e) {
+                      alert((lang==='es'?'Error: ':'Error: ') + (e?.message || ''));
+                    } finally {
+                      setSavingStatus(false);
+                    }
+                  }}
+                />
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </motion.div>
 
-      {/* ── Modal confirmación de eliminación ───────── */}
-      <AnimatePresence>
-        {confirmDelete && (
+      {/* ── Modal confirmación de eliminación ─────────
+           Renderizado vía Portal a document.body para que `position:fixed`
+           sea relativo al viewport (algún ancestor con transform/perspective
+           rompía el centrado en pantalla). */}
+      {confirmDelete && createPortal(
+        <AnimatePresence>
           <ConfirmDeleteModal
             clientName={client.name}
             busy={deleting}
@@ -343,8 +391,9 @@ export default function ScreenClienteDetail() {
               }
             }}
           />
-        )}
-      </AnimatePresence>
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* ── KPIs ──────────────────── */}
       <div className="nodes-kpis" style={{marginTop: 16}}>
@@ -639,6 +688,93 @@ function AlertasTab({ lang, alertas }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────
+   StatusPopover — cambio rápido de estado (PATCH inline)
+   Estados: ACTIVO · PAUSADO · INACTIVO · BLOQUEADO
+   ──────────────────────────────────────────────────── */
+const STATUS_OPTIONS = [
+  { k:'ACTIVO',    l:'Activo',    color:'#10B981', hint:'Operación normal.' },
+  { k:'PAUSADO',   l:'Pausado',   color:'#F59E0B', hint:'Suspendido temporalmente.' },
+  { k:'INACTIVO',  l:'Inactivo',  color:'#64748B', hint:'Fuera de operación.' },
+  { k:'BLOQUEADO', l:'Bloqueado', color:'#DC2626', hint:'Sin nuevas OCs.' },
+];
+
+function StatusPopover({ current, busy, lang, onClose, onPick }) {
+  // Click fuera cierra
+  const ref = useRef(null);
+  useEffect(() => {
+    const onDoc = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) onClose?.();
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [onClose]);
+
+  return (
+    <motion.div
+      ref={ref}
+      initial={{ opacity:0, y:-4 }}
+      animate={{ opacity:1, y:0, transition:{ duration:0.14 }}}
+      exit   ={{ opacity:0, y:-4, transition:{ duration:0.10 }}}
+      style={{
+        position:'absolute', top:'calc(100% + 6px)', right:0,
+        zIndex:50, minWidth:240,
+        background:'#FFFFFF', borderRadius:12,
+        boxShadow:'0 18px 40px -12px rgba(15,27,61,0.28)',
+        border:'1px solid #EAEEF5', overflow:'hidden',
+        fontFamily:'inherit',
+      }}
+    >
+      <div style={{
+        padding:'10px 14px', borderBottom:'1px solid #F1F4F9',
+        font:'600 11px/1 inherit', color:'#6B7894',
+        textTransform:'uppercase', letterSpacing:'0.1em',
+      }}>
+        {lang==='es' ? 'Cambiar estado' : 'Change status'}
+      </div>
+      {STATUS_OPTIONS.map(s => {
+        const isCurrent = current === s.k;
+        return (
+          <button key={s.k} type="button"
+                  disabled={busy}
+                  onClick={()=>onPick?.(s.k)}
+                  style={{
+                    display:'flex', alignItems:'center', gap:10,
+                    width:'100%', padding:'10px 14px',
+                    background: isCurrent ? '#F7F9FC' : '#FFFFFF',
+                    border:'none', borderTop:'1px solid #F1F4F9',
+                    cursor: busy ? 'not-allowed' : 'pointer',
+                    textAlign:'left',
+                  }}
+                  onMouseOver={e => !busy && !isCurrent && (e.currentTarget.style.background='#F7F9FC')}
+                  onMouseOut ={e => !busy && !isCurrent && (e.currentTarget.style.background='#FFFFFF')}>
+            <span style={{
+              width:10, height:10, borderRadius:99, background:s.color, flexShrink:0,
+              boxShadow:`0 0 0 3px ${s.color}22`,
+            }}/>
+            <div style={{flex:1, minWidth:0}}>
+              <div style={{
+                font:'600 13px/1.2 inherit',
+                color: isCurrent ? '#0F1B3D' : '#3D4A6B',
+              }}>
+                {s.l}
+              </div>
+              <div style={{ font:'500 11.5px/1.3 inherit', color:'#8893AC' }}>
+                {s.hint}
+              </div>
+            </div>
+            {isCurrent && (
+              <span style={{ font:'600 10.5px/1 inherit', color:s.color }}>
+                {lang==='es'?'ACTUAL':'CURRENT'}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </motion.div>
   );
 }
 
