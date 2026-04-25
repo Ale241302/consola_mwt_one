@@ -22,13 +22,15 @@
 //   · Tokens: Navy #0B1E3A, Mint #00B286, Light #1DE394, tabular-nums.
 // =====================================================================
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 
 import { tallasApi, sizingApi } from "../lib/api.js";
 import { MOCK_TALLAS, MOCK_SIZING_OPTIONS } from "../data/mockData.js";
+import ConfirmModal from "../components/common/ConfirmModal.jsx";
 import {
-  IconPlus, IconRefresh, IconSearch, IconX, IconCheck,
+  IconPlus, IconRefresh, IconSearch, IconX, IconCheck, IconAlert,
   IconPackage, IconAlert, IconTag, IconLock,
 } from "../lib/icons.jsx";
 
@@ -156,15 +158,58 @@ export default function ScreenSizingEngine() {
     }
   };
 
-  const handleSoftDelete = async (talla) => {
-    if (!talla?.id) return;
-    if (!window.confirm(lang === "es" ? "¿Desactivar esta talla?" : "Deactivate this size?")) return;
+  // ── Confirmaciones unificadas vía modal MWT (no window.confirm). ──
+  // pendingAction: { kind: 'deactivate'|'delete', talla }
+  const [pendingAction, setPendingAction] = useState(null);
+  const [actionBusy,    setActionBusy]    = useState(false);
+  const [actionError,   setActionError]   = useState(null);
+
+  const askDeactivate = (talla) => { setActionError(null); setPendingAction({ kind: 'deactivate', talla }); };
+  const askDelete     = (talla) => { setActionError(null); setPendingAction({ kind: 'delete',     talla }); };
+
+  const executeAction = async () => {
+    if (!pendingAction?.talla?.id) return;
+    const { kind, talla } = pendingAction;
+    setActionBusy(true);
+    setActionError(null);
     try {
-      await tallasApi.remove(talla.id);
+      if (kind === 'deactivate') {
+        // PATCH suave — preserva el registro pero lo oculta de listas activas.
+        await tallasApi.update(talla.id, { is_active: false });
+      } else if (kind === 'delete') {
+        // DELETE en BD — el ViewSet decide si es hard o soft, pero
+        // semánticamente el usuario lo ve como permanente.
+        await tallasApi.remove(talla.id);
+      }
+      setPendingAction(null);
       await loadAll();
     } catch (e) {
-      alert((lang === "es" ? "No se pudo desactivar: " : "Deactivate failed: ") + (e?.message || ""));
+      setActionError(e?.message || (lang === "es" ? "Operación falló" : "Operation failed"));
+    } finally {
+      setActionBusy(false);
     }
+  };
+
+  // Copy del modal según la acción.
+  const ACTION_COPY = {
+    deactivate: {
+      eyebrow:  'CAMBIO DE ESTADO',
+      title:    lang === "es" ? '¿Desactivar esta talla?' : 'Deactivate this size?',
+      action:   lang === "es" ? 'Sí, desactivar'           : 'Yes, deactivate',
+      color:    '#F59E0B',
+      body:     (t) => lang === "es"
+        ? <>La talla <strong>{t.nombre || t.talla_base || '—'}</strong> se marcará como inactiva. Sigue en la BD pero deja de aparecer en listas y selectores. Reversible.</>
+        : <>Size <strong>{t.nombre || t.talla_base || '—'}</strong> will be marked inactive. Stays in DB but disappears from lists. Reversible.</>,
+    },
+    delete: {
+      eyebrow:  'ACCIÓN DESTRUCTIVA',
+      title:    lang === "es" ? '¿Eliminar esta talla?' : 'Delete this size?',
+      action:   lang === "es" ? 'Sí, eliminar'         : 'Yes, delete',
+      color:    '#DC2626',
+      body:     (t) => lang === "es"
+        ? <>Vas a eliminar <strong>{t.nombre || t.talla_base || '—'}</strong>. Esta acción NO es reversible desde la UI — necesitarás restaurar manualmente desde BD si te arrepientes.</>
+        : <>You're about to delete <strong>{t.nombre || t.talla_base || '—'}</strong>. This action is NOT reversible from the UI.</>,
+    },
   };
 
 
@@ -320,24 +365,46 @@ export default function ScreenSizingEngine() {
                     >
                       {chip.label}
                     </span>
-                    <button
-                      className="siz-btn siz-btn-icon-ghost"
-                      title={lang === "es" ? "Desactivar" : "Deactivate"}
-                      onClick={e => { e.stopPropagation(); handleSoftDelete(t); }}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        color: "#94A3B8",
-                        cursor: "pointer",
-                        padding: 4,
-                        borderRadius: 6,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <IconX size={14}/>
-                    </button>
+                    <div style={{ display: "inline-flex", gap: 2 }}>
+                      <button
+                        className="siz-btn siz-btn-icon-ghost"
+                        title={lang === "es" ? "Desactivar" : "Deactivate"}
+                        onClick={e => { e.stopPropagation(); askDeactivate(t); }}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#F59E0B",
+                          cursor: "pointer",
+                          padding: 4,
+                          borderRadius: 6,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <IconX size={14}/>
+                      </button>
+                      <button
+                        className="siz-btn siz-btn-icon-ghost"
+                        title={lang === "es" ? "Eliminar" : "Delete"}
+                        onClick={e => { e.stopPropagation(); askDelete(t); }}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#DC2626",
+                          cursor: "pointer",
+                          padding: 4,
+                          borderRadius: 6,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          font: "700 11px/1 inherit",
+                          letterSpacing: 0.5,
+                        }}
+                      >
+                        <IconAlert size={14}/>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Talla base + nombre */}
@@ -490,6 +557,23 @@ export default function ScreenSizingEngine() {
           />
         )}
       </AnimatePresence>
+
+      {/* Modal de confirmación (Desactivar / Eliminar) — vía portal */}
+      {pendingAction && createPortal(
+        <ConfirmModal
+          eyebrow={ACTION_COPY[pendingAction.kind].eyebrow}
+          title={ACTION_COPY[pendingAction.kind].title}
+          body={ACTION_COPY[pendingAction.kind].body(pendingAction.talla)}
+          actionLabel={ACTION_COPY[pendingAction.kind].action}
+          actionColor={ACTION_COPY[pendingAction.kind].color}
+          cancelLabel={lang === "es" ? "Cancelar" : "Cancel"}
+          busy={actionBusy}
+          error={actionError}
+          onCancel={() => { if (!actionBusy) { setPendingAction(null); setActionError(null); } }}
+          onConfirm={executeAction}
+        />,
+        document.body
+      )}
     </div>
   );
 }
