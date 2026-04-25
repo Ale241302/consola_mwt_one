@@ -1,8 +1,10 @@
 import uuid
-from django.db import connection
+from django.db import connection, transaction
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
+from apps.storage.services import delete_object as _storage_delete
 
 from .models import Producto, CategoriaCat, SubcategoriaCat, UnidadCat, EstadoCat
 from .serializers import ProductoSerializer, ProductoListSerializer
@@ -53,7 +55,24 @@ class ProductoViewSet(viewsets.ViewSet):
     partial_update = update
 
     def destroy(self, request, pk=None):
-        Producto.objects.filter(pk=pk).update(is_active=False)
+        try:
+            instance = Producto.objects.get(pk=pk)
+        except Producto.DoesNotExist:
+            return Response(status=204)
+        # Capturar TODAS las keys ANTES del save/delete
+        keys = [
+            instance.imagen_url,
+            instance.ficha_url,
+        ]
+        keys = [k for k in keys if k]
+
+        with transaction.atomic():
+            Producto.objects.filter(pk=pk).update(is_active=False)
+            # ON COMMIT: solo si la transacción de BD se confirma, borramos
+            # el objeto del bucket. Evita huérfanos en caso de rollback.
+            for k in keys:
+                transaction.on_commit(lambda key=k: _storage_delete(key))
+
         return Response(status=204)
 
     # ── Selects ────────────────────────────────────────

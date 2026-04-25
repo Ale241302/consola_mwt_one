@@ -30,6 +30,8 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.storage.services import delete_object as _storage_delete
+
 from .models import (
     Cobro, Pago, Conciliacion,
     Vencimiento, WithholdingLog, FxRateHistory, CollectionEvent,
@@ -336,10 +338,20 @@ class PagoViewSet(viewsets.ViewSet):
             p = Pago.objects.get(pk=pk)
         except Pago.DoesNotExist:
             return Response(status=204)
+        # Capturar TODAS las keys ANTES del save/delete
+        keys = [
+            p.comprobante_url,
+        ]
+        keys = [k for k in keys if k]
+
         with transaction.atomic():
             Pago.objects.filter(pk=pk).update(is_active=False)
             if p.estado == "VERIFICADO":
                 self._aplicar_delta_cobro(p.cobro_id, -p.monto, "REVERSO")
+            # ON COMMIT: solo si la transacción de BD se confirma, borramos
+            # el objeto del bucket. Evita huérfanos en caso de rollback.
+            for k in keys:
+                transaction.on_commit(lambda key=k: _storage_delete(key))
         return Response(status=204)
 
     # ── Retenciones (append-only log por pago) ────────

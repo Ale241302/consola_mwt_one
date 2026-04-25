@@ -28,6 +28,8 @@ from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 
+from apps.storage.services import delete_object as _storage_delete
+
 from .models import (
     Oc, Expediente, Linea, Documento,
     EstadoOcCat, EstadoExpedienteCat, ModoOperacionCat, IncotermCat,
@@ -888,7 +890,23 @@ class DocumentoViewSet(viewsets.ViewSet):
     def destroy(self, request, pk=None):
         denied = _deny_client_mutation(request, action_label="documento.destroy")
         if denied is not None: return denied
-        Documento.objects.filter(pk=pk).update(is_active=False)
+        try:
+            instance = Documento.objects.get(pk=pk)
+        except Documento.DoesNotExist:
+            return Response(status=204)
+        # Capturar TODAS las keys ANTES del save/delete
+        keys = [
+            instance.storage_url,
+        ]
+        keys = [k for k in keys if k]
+
+        with transaction.atomic():
+            Documento.objects.filter(pk=pk).update(is_active=False)
+            # ON COMMIT: solo si la transacción de BD se confirma, borramos
+            # el objeto del bucket. Evita huérfanos en caso de rollback.
+            for k in keys:
+                transaction.on_commit(lambda key=k: _storage_delete(key))
+
         return Response(status=204)
 
     # ── Presigned URL (GET) para ver/descargar el documento ──

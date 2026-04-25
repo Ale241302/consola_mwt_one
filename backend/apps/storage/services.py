@@ -160,6 +160,54 @@ def generate_signed_url(
 
 
 # --------------------------------------------------------------------
+# Object lifecycle: delete + key generation
+# --------------------------------------------------------------------
+def delete_object(key: str, *, bucket: Optional[str] = None) -> dict:
+    """
+    Elimina un objeto del bucket. Idempotente — si no existe devuelve
+    `available=True, deleted=False` sin error.
+
+    Devuelve:
+        { "ok": bool, "deleted": bool, "available": bool, "error": str|None }
+    """
+    bucket = bucket or getattr(settings, "MINIO_BUCKET", "mwt-one")
+    client = _get_minio_client()
+    if client is None:
+        return {"ok": False, "deleted": False, "available": False,
+                "error": "minio_unavailable"}
+    try:
+        client.remove_object(bucket, key)
+        return {"ok": True, "deleted": True, "available": True, "error": None}
+    except Exception as e:
+        # MinIO `NoSuchKey` se considera idempotente (no error real)
+        cls = type(e).__name__
+        if "NoSuchKey" in cls or "S3Error" in cls and "does not exist" in str(e).lower():
+            return {"ok": True, "deleted": False, "available": True, "error": None}
+        log.error("delete_object(%s/%s) falló: %s", bucket, key, e)
+        return {"ok": False, "deleted": False, "available": True,
+                "error": f"{cls}: {e}"}
+
+
+def make_object_key(scope: str, filename: str) -> str:
+    """
+    Genera una key única dentro del bucket: <scope>/<uuid>-<filename-saneado>.
+    Ej: make_object_key("producto/abc-123", "Ficha técnica.pdf")
+        → "producto/abc-123/9f2c1a-ficha-tecnica.pdf"
+
+    El scope sirve como "carpeta lógica" para agrupar/limpiar objetos
+    relacionados a un mismo registro. Saneamos filename para evitar
+    paths traversal y caracteres problemáticos.
+    """
+    import uuid as _uuid
+    import re
+    safe_scope = re.sub(r"[^a-zA-Z0-9/_-]+", "-", (scope or "misc")).strip("/-") or "misc"
+    safe_name  = re.sub(r"[^a-zA-Z0-9._-]+", "-",
+                        (filename or "archivo").lower()).strip("-") or "archivo"
+    short_uuid = _uuid.uuid4().hex[:8]
+    return f"{safe_scope}/{short_uuid}-{safe_name}"
+
+
+# --------------------------------------------------------------------
 # Email · helper unificado para envío SMTP
 # --------------------------------------------------------------------
 def send_test_email(*, to: str, subject: str, body: str,

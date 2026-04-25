@@ -25,6 +25,8 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.storage.services import delete_object as _storage_delete
+
 from .models import (
     Transferencia, Linea, Evento, TransferenciaDocumento,
     EstadoTransferCat, LegalContextCat, TransicionCat,
@@ -539,5 +541,24 @@ class TransferenciaDocumentoViewSet(viewsets.ViewSet):
     partial_update = update
 
     def destroy(self, request, pk=None):
-        TransferenciaDocumento.objects.filter(pk=pk).update(is_active=False)
+        try:
+            instance = TransferenciaDocumento.objects.get(pk=pk)
+        except TransferenciaDocumento.DoesNotExist:
+            return Response(status=204)
+        # Capturar TODAS las keys ANTES del save/delete
+        # object_key vive en el bucket explícito; url es legacy/derivado
+        bucket = instance.bucket
+        keys = [
+            instance.object_key,
+            instance.url,
+        ]
+        keys = [k for k in keys if k]
+
+        with transaction.atomic():
+            TransferenciaDocumento.objects.filter(pk=pk).update(is_active=False)
+            # ON COMMIT: solo si la transacción de BD se confirma, borramos
+            # el objeto del bucket. Evita huérfanos en caso de rollback.
+            for k in keys:
+                transaction.on_commit(lambda key=k, b=bucket: _storage_delete(key, bucket=b))
+
         return Response(status=204)

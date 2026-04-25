@@ -22,7 +22,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 
-from .services import generate_signed_url, paperless_ingest, ensure_bucket
+from .services import (
+    generate_signed_url, paperless_ingest, ensure_bucket,
+    delete_object, make_object_key,
+)
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +54,66 @@ class StorageViewSet(viewsets.ViewSet):
 
         data = generate_signed_url(key=key, kind=kind, ttl=ttl, bucket=bkt)
         return Response(data)
+
+    # ── Upload de 2 pasos: el FE pide PUT URL + key, sube directo a MinIO,
+    #    luego PATCHea su modelo con la key. ────────────────────────────
+    @action(detail=False, methods=["post"], url_path="upload-url")
+    def upload_url(self, request):
+        """
+        Body (JSON):
+            { filename: str, content_type?: str, scope?: str, ttl?: int }
+
+        Respuesta:
+            { upload_url, key, method:"PUT", expires_at, bucket, available,
+              content_type }
+
+        El FE debe luego hacer:
+            await fetch(upload_url, { method:"PUT", body: file,
+                                      headers:{"Content-Type": content_type } });
+            await api.patch(`/api/<modelo>/<id>/`, { ficha_url: key });
+        """
+        filename     = (request.data.get("filename") or "").strip()
+        content_type = (request.data.get("content_type") or "application/octet-stream").strip()
+        scope        = (request.data.get("scope") or "misc").strip()
+        ttl          = int(request.data.get("ttl") or 600)
+
+        if not filename:
+            return Response({"detail": "Falta 'filename'"}, status=400)
+
+        # Genera key única deterministicamente para evitar colisiones.
+        key  = make_object_key(scope, filename)
+        sign = generate_signed_url(key=key, kind="put", ttl=ttl)
+        return Response({
+            "upload_url":   sign["url"],
+            "key":          sign["key"],
+            "method":       "PUT",
+            "expires_at":   sign["expires_at"],
+            "bucket":       sign["bucket"],
+            "available":    sign["available"],
+            "content_type": content_type,
+        }, status=200 if sign["available"] else 503)
+
+    # ── DELETE genérico: borra un objeto del bucket por su key.
+    #    El llamador (Producto/Expediente/etc.) es responsable de
+    #    setear ficha_url=NULL en su columna en la misma transacción. ──
+    @action(detail=False, methods=["delete", "post"], url_path="delete")
+    def delete_obj(self, request):
+        """
+        DELETE /api/storage/delete/?key=<key>
+          o
+        POST   /api/storage/delete/  { key: <key> }
+
+        Respuesta:
+            { ok, deleted, available, error, key }
+        """
+        src = request.query_params if request.method == "DELETE" else request.data
+        key = src.get("key")
+        bkt = src.get("bucket") or None
+        if not key:
+            return Response({"detail": "Falta 'key'"}, status=400)
+        result = delete_object(key, bucket=bkt)
+        result["key"] = key
+        return Response(result, status=200 if result.get("ok") else 502)
 
     @action(detail=False, methods=["post"])
     def paperless_ingest(self, request):
