@@ -12,7 +12,7 @@ class Nodo(models.Model):
     nombre          = models.CharField(max_length=128)
     tipo            = models.CharField(max_length=16)
     pais_iso2       = models.CharField(max_length=2)
-    ciudad          = models.CharField(max_length=96)
+    ciudad          = models.CharField(max_length=96, null=True, blank=True)
     direccion       = models.TextField(null=True, blank=True)
     zona_horaria    = models.CharField(max_length=48, default="America/Lima")
     responsable_id  = models.UUIDField(null=True, blank=True)     # ⛔ sin FK

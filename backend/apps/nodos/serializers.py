@@ -3,6 +3,13 @@ from .models import Nodo, NodoJerarquia
 
 
 class NodoSerializer(serializers.ModelSerializer):
+    # ── Campos opcionales explícitos ────────────────────────────────
+    # El form "Nuevo nodo" del FE no pregunta por estos. La filosofía
+    # MWT es: si no se pide al humano, no puede ser requerido en BD/API.
+    # (Se completan luego en el detalle / edición si hace falta.)
+    ciudad    = serializers.CharField(max_length=96,  required=False, allow_blank=True, allow_null=True)
+    direccion = serializers.CharField(               required=False, allow_blank=True, allow_null=True)
+
     class Meta:
         model = Nodo
         fields = "__all__"
