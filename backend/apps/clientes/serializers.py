@@ -85,6 +85,17 @@ class ClienteSerializer(serializers.ModelSerializer):
     # Alias semántico para que el frontend pueda usar `estado_operativo`.
     estado_operativo   = serializers.CharField(source="estado", required=False)
 
+    # ── Campos opcionales explícitos ──
+    # Filosofía MWT: "si el form no se lo pide al humano, BD/API no lo exigen".
+    # El form `/clientes/nuevo` NO obliga a ningún campo de identidad/clasificación,
+    # por eso aquí los marcamos required=False / allow_blank=True / allow_null=True.
+    razon_social = serializers.CharField(max_length=200, required=False, allow_blank=True, allow_null=True)
+    tax_id       = serializers.CharField(max_length=32,  required=False, allow_blank=True, allow_null=True)
+    tipo         = serializers.CharField(max_length=16,  required=False, allow_blank=True, allow_null=True)
+    pais_iso2    = serializers.CharField(max_length=2,   required=False, allow_blank=True, allow_null=True)
+    ciudad       = serializers.CharField(max_length=96,  required=False, allow_blank=True, allow_null=True)
+    direccion    = serializers.CharField(                 required=False, allow_blank=True, allow_null=True)
+
     # Campos derivados.
     credito_disponible = serializers.SerializerMethodField()
     tasa_utilizacion   = serializers.SerializerMethodField()

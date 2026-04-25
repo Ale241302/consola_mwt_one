@@ -138,22 +138,25 @@ export default function ScreenClienteFormView() {
   const blur   = (k)    => setTouched(p => ({ ...p, [k]: true }));
 
   // ─── Validación en vivo ─────────────────
+  // Por decisión de producto: NINGÚN campo es requerido al crear cliente.
+  // Solo validamos *formato* cuando el usuario ya escribió algo — así
+  // evitamos bloquear el guardado por campos vacíos. Los faltantes se
+  // pueden completar desde el detalle (modo edición) más adelante.
   const liveErrors = useMemo(() => {
     const e = {};
-    if (!form.razon_social || form.razon_social.trim().length < 3) {
-      e.razon_social = lang === "es" ? "Mínimo 3 caracteres." : "Min 3 characters.";
-    }
     if (form.codigo_marluvas && !CODIGO_MARLUVAS_RX.test(String(form.codigo_marluvas).trim())) {
       e.codigo_marluvas = lang === "es"
         ? "Debe ser exactamente 10 dígitos numéricos."
         : "Must be exactly 10 numeric digits.";
     }
-    if (!form.contacto_email || !EMAIL_RX.test(form.contacto_email)) {
+    if (form.contacto_email && !EMAIL_RX.test(form.contacto_email)) {
       e.contacto_email = lang === "es" ? "Email no válido." : "Invalid email.";
     }
-    const d = Number(form.dias_credito);
-    if (Number.isNaN(d) || d < 0 || d > 180) {
-      e.dias_credito = lang === "es" ? "Entre 0 y 180." : "Between 0 and 180.";
+    if (form.dias_credito !== "" && form.dias_credito != null) {
+      const d = Number(form.dias_credito);
+      if (Number.isNaN(d) || d < 0 || d > 180) {
+        e.dias_credito = lang === "es" ? "Entre 0 y 180." : "Between 0 and 180.";
+      }
     }
     if (isAdmin && form.comision_pct != null && form.comision_pct !== "") {
       const c = Number(form.comision_pct);
