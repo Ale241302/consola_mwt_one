@@ -336,35 +336,38 @@ export default function ScreenClienteDetail() {
               </button>
             )}
 
-            {/* Popover de estados — anclado al botón "Estado" */}
-            <AnimatePresence>
-              {showStatusMenu && (
-                <StatusPopover
-                  current={client.estado}
-                  busy={savingStatus}
-                  lang={lang}
-                  onClose={()=>setShowStatusMenu(false)}
-                  onPick={async (newEstado) => {
-                    if (newEstado === client.estado) { setShowStatusMenu(false); return; }
-                    setSavingStatus(true);
-                    try {
-                      await clientesApi.update(clienteId, { estado: newEstado });
-                      // recargar el cliente desde backend
-                      const fresh = await clientesApi.get(clienteId);
-                      setRawClient(fresh);
-                      setShowStatusMenu(false);
-                    } catch (e) {
-                      alert((lang==='es'?'Error: ':'Error: ') + (e?.message || ''));
-                    } finally {
-                      setSavingStatus(false);
-                    }
-                  }}
-                />
-              )}
-            </AnimatePresence>
           </div>
         </div>
       </motion.div>
+
+      {/* Popover de estados — vía Portal, ancla al botón "Estado".
+          Se monta fuera del hero (overflow:hidden lo cortaba). */}
+      {showStatusMenu && createPortal(
+        <AnimatePresence>
+          <StatusPopover
+            anchorRef={statusBtnRef}
+            current={client.estado}
+            busy={savingStatus}
+            lang={lang}
+            onClose={()=>setShowStatusMenu(false)}
+            onPick={async (newEstado) => {
+              if (newEstado === client.estado) { setShowStatusMenu(false); return; }
+              setSavingStatus(true);
+              try {
+                await clientesApi.update(clienteId, { estado: newEstado });
+                const fresh = await clientesApi.get(clienteId);
+                setRawClient(fresh);
+                setShowStatusMenu(false);
+              } catch (e) {
+                alert((lang==='es'?'Error: ':'Error: ') + (e?.message || ''));
+              } finally {
+                setSavingStatus(false);
+              }
+            }}
+          />
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* ── Modal confirmación de eliminación ─────────
            Renderizado vía Portal a document.body para que `position:fixed`
@@ -702,16 +705,41 @@ const STATUS_OPTIONS = [
   { k:'BLOQUEADO', l:'Bloqueado', color:'#DC2626', hint:'Sin nuevas OCs.' },
 ];
 
-function StatusPopover({ current, busy, lang, onClose, onPick }) {
-  // Click fuera cierra
+function StatusPopover({ anchorRef, current, busy, lang, onClose, onPick }) {
   const ref = useRef(null);
+  // Posición fija calculada desde el ancla (botón "Estado").
+  // El ancho del popover (260px) lo alineamos a la derecha del botón.
+  const POP_W = 260;
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    const reposition = () => {
+      const a = anchorRef?.current;
+      if (!a) return;
+      const r = a.getBoundingClientRect();
+      const left = Math.max(8, r.right - POP_W); // alinea borde derecho del popover con borde derecho del botón
+      const top  = r.bottom + 6;                  // 6px debajo del botón
+      setPos({ top, left });
+    };
+    reposition();
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    };
+  }, [anchorRef]);
+
+  // Click fuera cierra (excluye al propio ancla para evitar toggle-loop)
   useEffect(() => {
     const onDoc = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) onClose?.();
+      if (ref.current && ref.current.contains(e.target)) return;
+      if (anchorRef?.current && anchorRef.current.contains(e.target)) return;
+      onClose?.();
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
-  }, [onClose]);
+  }, [onClose, anchorRef]);
 
   return (
     <motion.div
@@ -720,8 +748,8 @@ function StatusPopover({ current, busy, lang, onClose, onPick }) {
       animate={{ opacity:1, y:0, transition:{ duration:0.14 }}}
       exit   ={{ opacity:0, y:-4, transition:{ duration:0.10 }}}
       style={{
-        position:'absolute', top:'calc(100% + 6px)', right:0,
-        zIndex:50, minWidth:240,
+        position:'fixed', top: pos.top, left: pos.left,
+        zIndex:1000, width: POP_W,
         background:'#FFFFFF', borderRadius:12,
         boxShadow:'0 18px 40px -12px rgba(15,27,61,0.28)',
         border:'1px solid #EAEEF5', overflow:'hidden',
