@@ -14,7 +14,7 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiFetch, getToken, ApiError } from "../lib/api.js";
-import { IconCheck, IconRefresh } from "../lib/icons.jsx";
+import { IconCheck, IconRefresh, IconPlus, IconX, IconAlert, IconLock } from "../lib/icons.jsx";
 
 export default function RolesPermissions() {
   const { lang } = useOutletContext() || { lang: "es" };
@@ -27,15 +27,76 @@ export default function RolesPermissions() {
   const [saving, setSaving]         = useState(false);
   const [dirty, setDirty]           = useState(false);
   const [toast, setToast]           = useState(null);
+  // CRUD de roles
+  const [showCreate, setShowCreate] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(null);   // role obj a eliminar
+  const [crudBusy, setCrudBusy]     = useState(false);
 
   // Cargar roles
-  useEffect(() => {
-    let alive = true;
-    apiFetch("/permissions/roles/", { token: getToken() })
-      .then((d) => alive && setRoles(Array.isArray(d) ? d : (d?.results || [])))
-      .catch(() => {});
-    return () => { alive = false; };
+  const loadRoles = useCallback(async () => {
+    try {
+      const d = await apiFetch("/permissions/roles/", { token: getToken() });
+      const arr = Array.isArray(d) ? d : (d?.results || []);
+      setRoles(arr);
+      return arr;
+    } catch {
+      return [];
+    }
   }, []);
+
+  useEffect(() => { loadRoles(); }, [loadRoles]);
+
+  // ── Crear nuevo rol ──────────────────────────────────────
+  const createRole = async (form) => {
+    setCrudBusy(true);
+    try {
+      const created = await apiFetch("/roles/", {
+        method: "POST",
+        body: {
+          slug:        form.slug,
+          nombre:      form.nombre,
+          descripcion: form.descripcion || "",
+          color:       form.color || "#64748B",
+          orden:       Number(form.orden || 100),
+          is_active:   true,
+        },
+        token: getToken(),
+      });
+      await loadRoles();
+      setShowCreate(false);
+      // Auto-selecciona el rol recién creado
+      if (created?.slug) setSelRole(created.slug);
+      setToast(lang === "es" ? "✓ Rol creado" : "✓ Role created");
+    } catch (e) {
+      const msg = e?.payload?.detail || e?.payload?.slug?.[0] || e?.message || "Error";
+      setToast(`⚠️ ${msg}`);
+    } finally {
+      setCrudBusy(false);
+      setTimeout(() => setToast(null), 3500);
+    }
+  };
+
+  // ── Eliminar rol ─────────────────────────────────────────
+  const deleteRole = async (slug) => {
+    setCrudBusy(true);
+    try {
+      await apiFetch(`/roles/${slug}/`, { method: "DELETE", token: getToken() });
+      const fresh = await loadRoles();
+      // Si el rol borrado era el seleccionado, mover a otro disponible
+      if (slug === selectedRole) {
+        const next = fresh.find(r => r.is_active) || fresh[0];
+        if (next) setSelRole(next.slug);
+      }
+      setConfirmDel(null);
+      setToast(lang === "es" ? "✓ Rol eliminado (soft)" : "✓ Role removed (soft)");
+    } catch (e) {
+      const msg = e?.payload?.detail || e?.message || "Error";
+      setToast(`⚠️ ${msg}`);
+    } finally {
+      setCrudBusy(false);
+      setTimeout(() => setToast(null), 3500);
+    }
+  };
 
   // Cargar matriz al cambiar de rol
   const loadMatrix = useCallback(async () => {
@@ -166,6 +227,51 @@ export default function RolesPermissions() {
             {roleMeta.descripcion}
           </div>
         )}
+
+        {/* CRUD de roles · botones nuevo/eliminar */}
+        <button
+          type="button"
+          onClick={() => setShowCreate(true)}
+          title={lang === "es" ? "Crear nuevo rol" : "Create new role"}
+          style={{
+            background: "transparent",
+            color: "var(--mint, #00B286)",
+            border: "1.5px solid var(--mint, #00B286)",
+            padding: "8px 14px", borderRadius: 8,
+            fontSize: 12.5, fontWeight: 600,
+            cursor: "pointer",
+            display: "inline-flex", alignItems: "center", gap: 5,
+          }}
+        >
+          <IconPlus size={12}/> {lang === "es" ? "Nuevo rol" : "New role"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => roleMeta && setConfirmDel(roleMeta)}
+          disabled={!roleMeta || roleMeta.is_system}
+          title={
+            !roleMeta ? "" :
+            roleMeta.is_system
+              ? (lang === "es"
+                  ? "No se puede eliminar un rol del sistema"
+                  : "Cannot delete a system role")
+              : (lang === "es" ? "Eliminar este rol (soft delete)" : "Delete this role (soft delete)")
+          }
+          style={{
+            background: "transparent",
+            color: roleMeta?.is_system ? "#CBD5E1" : "#DC2626",
+            border: `1.5px solid ${roleMeta?.is_system ? "#E5E7EB" : "#DC262633"}`,
+            padding: "8px 14px", borderRadius: 8,
+            fontSize: 12.5, fontWeight: 600,
+            cursor: roleMeta?.is_system ? "not-allowed" : "pointer",
+            display: "inline-flex", alignItems: "center", gap: 5,
+          }}
+        >
+          {roleMeta?.is_system ? <IconLock size={11}/> : <IconX size={12}/>}
+          {lang === "es" ? "Eliminar" : "Delete"}
+        </button>
+
         <button
           onClick={save}
           disabled={!dirty || saving}
@@ -218,6 +324,32 @@ export default function RolesPermissions() {
         </div>
       )}
 
+      {/* Modal · Crear nuevo rol */}
+      <AnimatePresence>
+        {showCreate && (
+          <CreateRoleModal
+            lang={lang}
+            existingSlugs={roles.map(r => r.slug)}
+            busy={crudBusy}
+            onClose={() => setShowCreate(false)}
+            onCreate={createRole}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Modal · Confirmar eliminación */}
+      <AnimatePresence>
+        {confirmDel && (
+          <ConfirmDeleteModal
+            lang={lang}
+            role={confirmDel}
+            busy={crudBusy}
+            onClose={() => setConfirmDel(null)}
+            onConfirm={() => deleteRole(confirmDel.slug)}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Toast */}
       <AnimatePresence>
         {toast && (
@@ -240,6 +372,320 @@ export default function RolesPermissions() {
     </div>
   );
 }
+
+
+// ═════════════════════════════════════════════════════════════
+// CreateRoleModal · drawer compacto centrado
+// ═════════════════════════════════════════════════════════════
+function CreateRoleModal({ lang, existingSlugs, busy, onClose, onCreate }) {
+  const [form, setForm] = useState({
+    slug: "",
+    nombre: "",
+    descripcion: "",
+    color: "#3083FE",
+    orden: 100,
+  });
+  const upd = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const slugOk = /^[a-z][a-z0-9_-]{1,30}$/.test(form.slug);
+  const slugDup = existingSlugs.includes(form.slug);
+  const nameOk = (form.nombre || "").trim().length >= 3;
+  const canSubmit = slugOk && !slugDup && nameOk && !busy;
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        onClick={onClose}
+        style={{
+          position: "fixed", inset: 0, background: "rgba(11,30,58,0.45)", zIndex: 100,
+        }}
+      />
+      <motion.div
+        initial={{ opacity: 0, y: 20, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 20, scale: 0.96 }}
+        transition={{ duration: 0.18 }}
+        style={{
+          position: "fixed",
+          top: "50%", left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: "min(480px, 92vw)",
+          background: "#fff", borderRadius: 12,
+          boxShadow: "0 20px 60px -12px rgba(11,30,58,0.35)",
+          zIndex: 101,
+          overflow: "hidden",
+        }}
+      >
+        <header style={{
+          padding: "18px 22px",
+          background: "linear-gradient(135deg, #0B1E3A 0%, #1A2A5C 100%)",
+          color: "#fff",
+          display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <IconPlus size={16}/>
+          <div style={{ flex: 1 }}>
+            <div style={{ font: "500 10.5px/1 var(--font-body)", opacity: 0.7,
+              textTransform: "uppercase", letterSpacing: 0.6 }}>
+              {lang === "es" ? "Nuevo rol" : "New role"}
+            </div>
+            <div style={{ font: "700 16px/1.2 var(--font-body)", marginTop: 3 }}>
+              {lang === "es" ? "Definir rol RBAC" : "Define RBAC role"}
+            </div>
+          </div>
+          <button type="button" onClick={onClose}
+            style={{ background: "rgba(255,255,255,0.10)", color: "#fff",
+              border: "none", borderRadius: 6, padding: 6, cursor: "pointer" }}>
+            <IconX size={14}/>
+          </button>
+        </header>
+
+        <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* Slug */}
+          <div>
+            <ModalLabel>Slug · ID técnico</ModalLabel>
+            <input
+              value={form.slug}
+              onChange={e => upd("slug", e.target.value.toLowerCase().trim())}
+              placeholder="ej: marketing, gerente_cl"
+              style={modalInput}
+            />
+            <div style={{ font: "500 10.5px/1.4 var(--font-body)",
+              color: !form.slug ? "#94A3B8" : (slugOk && !slugDup) ? "#00B286" : "#DC2626",
+              marginTop: 4 }}>
+              {!form.slug
+                ? "Sólo minúsculas, números, _ y -. No se puede cambiar después."
+                : !slugOk
+                  ? "Inválido. Debe empezar con letra · 2-31 chars · sólo a-z 0-9 _ -"
+                  : slugDup
+                    ? "Ya existe un rol con ese slug."
+                    : "✓ Disponible"}
+            </div>
+          </div>
+
+          {/* Nombre */}
+          <div>
+            <ModalLabel>Nombre visible</ModalLabel>
+            <input
+              value={form.nombre}
+              onChange={e => upd("nombre", e.target.value)}
+              placeholder="ej: Marketing"
+              style={modalInput}
+            />
+          </div>
+
+          {/* Descripción */}
+          <div>
+            <ModalLabel>Descripción</ModalLabel>
+            <textarea
+              value={form.descripcion}
+              onChange={e => upd("descripcion", e.target.value)}
+              placeholder="Para qué se usa este rol…"
+              rows={2}
+              style={{ ...modalInput, resize: "vertical" }}
+            />
+          </div>
+
+          {/* Color + orden en fila */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: 12 }}>
+            <div>
+              <ModalLabel>Color</ModalLabel>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  type="color"
+                  value={form.color}
+                  onChange={e => upd("color", e.target.value)}
+                  style={{
+                    width: 40, height: 38, padding: 2, border: "1px solid #E5E7EB",
+                    borderRadius: 6, cursor: "pointer", background: "#fff",
+                  }}
+                />
+                <input
+                  value={form.color}
+                  onChange={e => upd("color", e.target.value)}
+                  placeholder="#3083FE"
+                  style={{ ...modalInput, font: "500 12px/1.2 ui-monospace, monospace" }}
+                />
+              </div>
+            </div>
+            <div>
+              <ModalLabel>Orden</ModalLabel>
+              <input
+                type="number"
+                value={form.orden}
+                onChange={e => upd("orden", e.target.value)}
+                min={1}
+                max={999}
+                style={{ ...modalInput, fontVariantNumeric: "tabular-nums" }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <footer style={{
+          padding: "14px 22px",
+          background: "#F8FAFC",
+          borderTop: "1px solid #E5E7EB",
+          display: "flex", justifyContent: "flex-end", gap: 8,
+        }}>
+          <button type="button" onClick={onClose} disabled={busy}
+            style={{
+              padding: "8px 16px", background: "transparent",
+              border: "1px solid #E5E7EB", color: "#334155",
+              font: "600 12.5px/1 var(--font-body)",
+              borderRadius: 8, cursor: busy ? "not-allowed" : "pointer",
+            }}>
+            {lang === "es" ? "Cancelar" : "Cancel"}
+          </button>
+          <button type="button"
+            onClick={() => onCreate(form)}
+            disabled={!canSubmit}
+            style={{
+              padding: "8px 18px",
+              background: canSubmit ? "var(--mint, #00B286)" : "#94A3B8",
+              color: "#fff", border: "none",
+              font: "700 12.5px/1 var(--font-body)",
+              borderRadius: 8,
+              cursor: canSubmit ? "pointer" : "not-allowed",
+              display: "inline-flex", alignItems: "center", gap: 6,
+            }}>
+            <IconCheck size={12}/>
+            {busy
+              ? (lang === "es" ? "Creando…" : "Creating…")
+              : (lang === "es" ? "Crear rol" : "Create role")}
+          </button>
+        </footer>
+      </motion.div>
+    </>
+  );
+}
+
+
+// ═════════════════════════════════════════════════════════════
+// ConfirmDeleteModal
+// ═════════════════════════════════════════════════════════════
+function ConfirmDeleteModal({ lang, role, busy, onClose, onConfirm }) {
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        onClick={onClose}
+        style={{
+          position: "fixed", inset: 0, background: "rgba(11,30,58,0.45)", zIndex: 100,
+        }}
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        transition={{ duration: 0.16 }}
+        style={{
+          position: "fixed",
+          top: "50%", left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: "min(420px, 92vw)",
+          background: "#fff", borderRadius: 12,
+          boxShadow: "0 20px 60px -12px rgba(11,30,58,0.35)",
+          zIndex: 101, overflow: "hidden",
+        }}
+      >
+        <div style={{ padding: "22px 24px" }}>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 12, marginBottom: 12,
+          }}>
+            <div style={{
+              width: 40, height: 40, borderRadius: "50%",
+              background: "rgba(220,38,38,0.10)",
+              color: "#DC2626",
+              display: "grid", placeItems: "center",
+            }}>
+              <IconAlert size={20}/>
+            </div>
+            <div>
+              <div style={{ font: "700 15px/1.2 var(--font-body)", color: "#0B1E3A" }}>
+                {lang === "es" ? "Eliminar rol" : "Delete role"}
+              </div>
+              <div style={{ font: "500 12px/1.4 var(--font-body)", color: "#64748B", marginTop: 2 }}>
+                {lang === "es" ? "Esta acción es soft-delete (is_active=false)." : "Soft delete (is_active=false)."}
+              </div>
+            </div>
+          </div>
+          <div style={{
+            padding: 12, background: "#F8FAFC", borderRadius: 8, marginBottom: 12,
+            font: "500 13px/1.5 var(--font-body)", color: "#334155",
+          }}>
+            <span style={{
+              display: "inline-block", width: 8, height: 8, borderRadius: 4,
+              background: role.color, marginRight: 6, verticalAlign: "middle",
+            }}/>
+            <strong>{role.nombre}</strong>{" "}
+            <span style={{ color: "#94A3B8", font: "500 11px/1 ui-monospace, monospace" }}>
+              ({role.slug})
+            </span>
+          </div>
+          <div style={{ font: "500 12.5px/1.5 var(--font-body)", color: "#475569" }}>
+            {lang === "es"
+              ? "Los usuarios con este rol mantendrán el acceso hasta que les asignes otro. Puedes reactivarlo más tarde con toggle-active."
+              : "Users with this role keep access until you reassign them. You can reactivate later via toggle-active."}
+          </div>
+        </div>
+        <footer style={{
+          padding: "14px 22px",
+          background: "#F8FAFC",
+          borderTop: "1px solid #E5E7EB",
+          display: "flex", justifyContent: "flex-end", gap: 8,
+        }}>
+          <button type="button" onClick={onClose} disabled={busy}
+            style={{
+              padding: "8px 16px", background: "transparent",
+              border: "1px solid #E5E7EB", color: "#334155",
+              font: "600 12.5px/1 var(--font-body)",
+              borderRadius: 8, cursor: busy ? "not-allowed" : "pointer",
+            }}>
+            {lang === "es" ? "Cancelar" : "Cancel"}
+          </button>
+          <button type="button" onClick={onConfirm} disabled={busy}
+            style={{
+              padding: "8px 18px",
+              background: busy ? "#94A3B8" : "#DC2626",
+              color: "#fff", border: "none",
+              font: "700 12.5px/1 var(--font-body)",
+              borderRadius: 8,
+              cursor: busy ? "not-allowed" : "pointer",
+              display: "inline-flex", alignItems: "center", gap: 6,
+            }}>
+            <IconX size={12}/>
+            {busy
+              ? (lang === "es" ? "Eliminando…" : "Deleting…")
+              : (lang === "es" ? "Sí, eliminar" : "Yes, delete")}
+          </button>
+        </footer>
+      </motion.div>
+    </>
+  );
+}
+
+
+// ─── Helpers visuales del modal ───
+function ModalLabel({ children }) {
+  return (
+    <label style={{
+      display: "block",
+      font: "600 11px/1 var(--font-body)", color: "#0B1E3A",
+      marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4,
+    }}>
+      {children}
+    </label>
+  );
+}
+
+const modalInput = {
+  width: "100%", padding: "9px 11px",
+  border: "1px solid #E5E7EB", borderRadius: 6,
+  font: "500 13px/1.2 var(--font-body)", color: "#0B1E3A",
+  background: "#fff", outline: "none",
+  boxSizing: "border-box",
+};
 
 
 // ─────────────────────────────────────────────────────────────────────
