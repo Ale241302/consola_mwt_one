@@ -48,50 +48,57 @@ export default function FileUploader({
 
   const triggerSelect = () => inputRef.current?.click();
 
-  // Sube un único archivo. Devuelve la key resultante o lanza.
+  // Sube un único archivo vía /api/storage/upload-proxy/ (multipart).
+  // Django recibe el binario por HTTPS y lo sube internamente a MinIO.
+  // Esto evita el problema de Mixed Content cuando MinIO no tiene SSL público.
   const uploadOne = async (file) => {
     if (file.size > maxSizeMb * 1024 * 1024) {
       throw new Error(`Archivo > ${maxSizeMb} MB (${(file.size/1024/1024).toFixed(1)} MB)`);
     }
-    // Paso 1 — pedir signed PUT URL al backend
-    const sign = await apiFetch("/storage/upload-url/", {
-      method: "POST",
-      body: {
-        filename:     file.name,
-        content_type: file.type || "application/octet-stream",
-        scope,
-      },
-      token: getToken(),
-    });
-    if (!sign?.upload_url || !sign?.key) {
-      throw new Error("Backend no devolvió upload_url");
-    }
-    if (sign.available === false) {
-      throw new Error("MinIO/S3 no está disponible (storage offline)");
-    }
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    fd.append("scope", scope);
+    fd.append("filename", file.name);
 
-    // Paso 2 — PUT directo a MinIO (NO pasa por Django).
-    // Usamos XMLHttpRequest para tener progreso real (fetch no lo expone bien).
-    await new Promise((resolve, reject) => {
+    // XHR para tener progreso real (fetch no expone upload progress bien).
+    return await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open("PUT", sign.upload_url);
-      xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+      // Mismo origen → respeta el HTTPS del navegador, no hay mixed-content.
+      xhr.open("POST", `${window.location.origin}/api/storage/upload-proxy/`);
+      const token = getToken();
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100));
       };
-      xhr.onload  = () => xhr.status >= 200 && xhr.status < 300
-        ? resolve()
-        : reject(new Error(`PUT falló (HTTP ${xhr.status})`));
-      xhr.onerror = () => reject(new Error("Network error en PUT a MinIO"));
-      xhr.send(file);
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const r = JSON.parse(xhr.responseText || "{}");
+            if (!r.ok || !r.key) {
+              reject(new Error(r.error || "Upload no devolvió key"));
+              return;
+            }
+            resolve({
+              key:          r.key,
+              filename:     file.name,
+              content_type: r.content_type || file.type || "application/octet-stream",
+              size:         file.size,
+            });
+          } catch (e) {
+            reject(new Error("Respuesta inválida del backend"));
+          }
+        } else {
+          let msg = `Upload falló (HTTP ${xhr.status})`;
+          try {
+            const r = JSON.parse(xhr.responseText || "{}");
+            if (r.error || r.detail) msg += `: ${r.error || r.detail}`;
+          } catch (_) {}
+          reject(new Error(msg));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Network error en upload"));
+      xhr.send(fd);
     });
-
-    return {
-      key:          sign.key,
-      filename:     file.name,
-      content_type: file.type || "application/octet-stream",
-      size:         file.size,
-    };
   };
 
   const handleFiles = async (fileList) => {

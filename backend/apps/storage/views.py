@@ -22,9 +22,11 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 
+from django.http import StreamingHttpResponse, Http404
+
 from .services import (
     generate_signed_url, paperless_ingest, ensure_bucket,
-    delete_object, make_object_key,
+    delete_object, make_object_key, put_object_stream, get_object_stream,
 )
 
 log = logging.getLogger(__name__)
@@ -92,6 +94,84 @@ class StorageViewSet(viewsets.ViewSet):
             "available":    sign["available"],
             "content_type": content_type,
         }, status=200 if sign["available"] else 503)
+
+    # ── Upload-proxy: el FE manda el archivo por HTTPS al backend, y
+    #    Django lo sube a MinIO internamente. Evita mixed-content cuando
+    #    MinIO no tiene SSL público. Cuesta 1 hop más pero funciona ya. ──
+    @action(detail=False, methods=["post"], url_path="upload-proxy",
+            parser_classes=[MultiPartParser, FormParser])
+    def upload_proxy(self, request):
+        """
+        multipart/form-data:
+          file:     <binario>          (requerido)
+          scope:    "producto/<id>"    (opcional, default "misc")
+          filename: nombre.png         (opcional, fallback al name del File)
+
+        Respuesta:
+          { ok, key, bucket, etag, content_type, size, error }
+        """
+        f = request.FILES.get("file")
+        if f is None:
+            return Response({"detail": "Falta 'file'"}, status=400)
+        scope        = (request.data.get("scope") or "misc").strip()
+        filename     = (request.data.get("filename") or f.name).strip()
+        content_type = f.content_type or "application/octet-stream"
+
+        key = make_object_key(scope, filename)
+        result = put_object_stream(key, f, content_type=content_type, length=f.size)
+        result["content_type"] = content_type
+        result["size"]         = f.size
+        return Response(result, status=200 if result.get("ok") else 502)
+
+    # ── Download-proxy: stream GET vía Django (HTTPS) en vez de exponer
+    #    la URL HTTP de MinIO. Permite que <img>/<iframe> en el FE
+    #    pidan archivos sin mixed-content. Usa GET para que cacheen. ──
+    @action(detail=False, methods=["get"], url_path="download",
+            permission_classes=[])    # AllowAny — la key UUID actúa como secret
+    def download(self, request):
+        """
+        GET /api/storage/download/?key=<key>
+
+        Streamea el objeto desde MinIO. Permite acceso sin auth porque
+        las keys contienen un UUID hex de 8 chars que es difícil de
+        adivinar (security through obscurity tipo signed-URL pre-S3).
+        Las keys solo se conocen leyendo el modelo del usuario, que SÍ
+        requiere auth. Para uso público de img/iframe en pages HTTPS.
+
+        Devuelve 404 si no existe, 503 si MinIO está offline.
+        """
+        key = request.query_params.get("key")
+        bkt = request.query_params.get("bucket") or None
+        if not key:
+            return Response({"detail": "Falta 'key'"}, status=400)
+        try:
+            resp = get_object_stream(key, bucket=bkt)
+        except Exception as e:
+            cls = type(e).__name__
+            if "NoSuchKey" in cls:
+                raise Http404("objeto no existe")
+            log.error("download(%s) falló: %s", key, e)
+            return Response({"detail": str(e)}, status=502)
+        if resp is None:
+            return Response({"detail": "minio_unavailable"}, status=503)
+
+        # Adivina el content-type del header de MinIO o por extensión.
+        ct = resp.headers.get("Content-Type") or "application/octet-stream"
+        # Cache 5 min en el browser para previews repetidos.
+        streamer = StreamingHttpResponse(
+            resp.stream(64 * 1024),   # chunks de 64KB
+            content_type=ct,
+        )
+        streamer["Cache-Control"] = "private, max-age=300"
+        # Sugerencia de filename (último segmento de la key)
+        fname = key.split("/")[-1]
+        streamer["Content-Disposition"] = f'inline; filename="{fname}"'
+        cl = resp.headers.get("Content-Length")
+        if cl:
+            streamer["Content-Length"] = cl
+        # Cerramos el upstream cuando el response termine
+        streamer._resource_closers.append(lambda: (resp.close(), resp.release_conn()))
+        return streamer
 
     # ── DELETE genérico: borra un objeto del bucket por su key.
     #    El llamador (Producto/Expediente/etc.) es responsable de

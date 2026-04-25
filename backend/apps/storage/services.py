@@ -188,6 +188,64 @@ def delete_object(key: str, *, bucket: Optional[str] = None) -> dict:
                 "error": f"{cls}: {e}"}
 
 
+def put_object_stream(key: str, file_stream, content_type: str = "application/octet-stream",
+                      length: int = -1, *, bucket: Optional[str] = None) -> dict:
+    """
+    Sube un objeto a MinIO directamente desde un stream (sin signed URL).
+    Útil cuando el browser no puede alcanzar MinIO (mixed-content / firewall) —
+    el FE manda el binario a Django (HTTPS) y Django lo proxea internamente.
+
+    Args:
+        key          → ruta destino en el bucket (usar make_object_key)
+        file_stream  → file-like object (request.FILES[name] funciona)
+        content_type → MIME del archivo
+        length       → tamaño en bytes (-1 = lectura total/streaming)
+        bucket       → override de settings.MINIO_BUCKET
+
+    Returns:
+        { ok, key, bucket, etag, error }
+    """
+    bucket = bucket or getattr(settings, "MINIO_BUCKET", "mwt-one")
+    client = _get_minio_client()
+    if client is None:
+        return {"ok": False, "key": key, "bucket": bucket, "etag": None,
+                "error": "minio_unavailable"}
+    ensure_bucket(bucket)
+    try:
+        # MinIO requiere el length exacto si <= 5MB; para más usa multipart.
+        # Si length=-1 (desconocido), pasamos part_size=10MB para multipart auto.
+        if length and length > 0:
+            result = client.put_object(bucket, key, file_stream, length,
+                                       content_type=content_type)
+        else:
+            result = client.put_object(bucket, key, file_stream, length=-1,
+                                       part_size=10 * 1024 * 1024,
+                                       content_type=content_type)
+        return {"ok": True, "key": key, "bucket": bucket,
+                "etag": getattr(result, "etag", None), "error": None}
+    except Exception as e:
+        log.error("put_object_stream(%s/%s) falló: %s", bucket, key, e)
+        return {"ok": False, "key": key, "bucket": bucket, "etag": None,
+                "error": f"{type(e).__name__}: {e}"}
+
+
+def get_object_stream(key: str, *, bucket: Optional[str] = None):
+    """
+    Devuelve un urllib3 HTTPResponse-like para el objeto pedido. El caller
+    debe llamar `.close()` cuando termine. Devuelve None si MinIO no está
+    disponible. Lanza excepción si el objeto no existe.
+
+    Útil para hacer streaming proxy desde Django:
+        resp = get_object_stream(key)
+        return StreamingHttpResponse(resp.stream(), content_type=...)
+    """
+    bucket = bucket or getattr(settings, "MINIO_BUCKET", "mwt-one")
+    client = _get_minio_client()
+    if client is None:
+        return None
+    return client.get_object(bucket, key)
+
+
 def make_object_key(scope: str, filename: str) -> str:
     """
     Genera una key única dentro del bucket: <scope>/<uuid>-<filename-saneado>.

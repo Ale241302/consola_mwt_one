@@ -69,28 +69,14 @@ export default function FilePreview({
   const fname      = filename || basename(keyOrUrl);
 
   useEffect(() => {
-    let cancelled = false;
     setError(null);
-    setSignedUrl(null);
-    if (!keyOrUrl) return;
+    if (!keyOrUrl) { setSignedUrl(null); return; }
     if (isAbsolute) { setSignedUrl(keyOrUrl); return; }
-
-    setLoading(true);
-    apiFetch(
-      `/storage/signed_url/?key=${encodeURIComponent(keyOrUrl)}&kind=get&ttl=900`,
-      { token: getToken() }
-    )
-      .then(d => {
-        if (cancelled) return;
-        if (!d?.url || d?.available === false) {
-          setError("Storage no disponible");
-        } else {
-          setSignedUrl(d.url);
-        }
-      })
-      .catch(e => { if (!cancelled) setError(e?.message || "fetch_failed"); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    // Stream proxy a través de Django (HTTPS, sin mixed-content).
+    // El endpoint /api/storage/download/ es AllowAny (la key UUID actúa
+    // como secret) — necesario para que <img src=...> y <iframe src=...>
+    // funcionen sin necesidad de mandar Authorization header.
+    setSignedUrl(`${window.location.origin}/api/storage/download/?key=${encodeURIComponent(keyOrUrl)}`);
   }, [keyOrUrl, isAbsolute]);
 
   if (!keyOrUrl) {
