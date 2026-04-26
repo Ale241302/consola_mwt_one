@@ -407,7 +407,8 @@ class TransferenciaViewSet(viewsets.ViewSet):
         body = request.data or {}
         token = body.get("idempotence_token")
         if token:
-            prev = Evento.objects.filter(idempotence_token=token, is_active=True).first()
+            # Evento es append-only: sin is_active (ver Evento docstring)
+            prev = Evento.objects.filter(idempotence_token=token).first()
             if prev:
                 t.refresh_from_db()
                 return Response(TransferenciaSerializer(t).data, status=200)
@@ -511,8 +512,10 @@ class LineaViewSet(viewsets.ViewSet):
 # Evento (audit trail — read-only + create)
 # ════════════════════════════════════════════════════════════
 class EventoViewSet(viewsets.ViewSet):
+    # Evento es append-only: la tabla NO tiene columna is_active
+    # (ver apps.transfers.models.Evento docstring + 91_transfers_audit.sql §6).
     def list(self, request):
-        qs = Evento.objects.filter(is_active=True).order_by("-created_at")
+        qs = Evento.objects.all().order_by("-created_at")
         tid = request.query_params.get("transferencia")
         if tid:
             qs = qs.filter(transferencia_id=tid)
@@ -522,7 +525,7 @@ class EventoViewSet(viewsets.ViewSet):
         data = {**request.data}
         token = data.get("idempotence_token")
         if token:
-            prev = Evento.objects.filter(idempotence_token=token, is_active=True).first()
+            prev = Evento.objects.filter(idempotence_token=token).first()
             if prev:
                 return Response(EventoSerializer(prev).data, status=200)
         s = EventoSerializer(data=data)

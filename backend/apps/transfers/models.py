@@ -134,6 +134,18 @@ class Linea(models.Model):
 
 # ── Evento (audit trail) ─────────────────────────────────────
 class Evento(models.Model):
+    """
+    Append-only audit trail. ⚠️ NO añadir is_active aquí.
+
+    La tabla transfers.evento NO tiene columna is_active por decisión de
+    diseño explícita (ver backend/sql/91_transfers_audit.sql §6 línea 157:
+    "transfers.evento es append-only — sin columna is_active").
+
+    Si se declara un BooleanField is_active en este modelo, Django lo
+    incluirá en cada INSERT (managed=False NO protege contra eso) y romperá
+    con: ProgrammingError: column "is_active" of relation "evento" does
+    not exist → HTTP 500 al crear/modificar transferencias.
+    """
     id                = models.UUIDField(primary_key=True)
     transferencia_id  = models.UUIDField()
     estado_prev       = models.CharField(max_length=32, null=True, blank=True)
@@ -142,7 +154,6 @@ class Evento(models.Model):
     actor_name        = models.CharField(max_length=128, null=True, blank=True)
     notes             = models.TextField(null=True, blank=True)
     idempotence_token = models.CharField(max_length=64, null=True, blank=True)
-    is_active         = models.BooleanField(default=True)
     created_at        = models.DateTimeField(auto_now_add=True)
 
     class Meta:
