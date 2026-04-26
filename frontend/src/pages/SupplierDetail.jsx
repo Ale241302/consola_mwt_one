@@ -13,7 +13,7 @@
 //   - Promociones      SupplierPromoEngine (Tab 2)
 //   - Auditoría ISO    SupplierAuditTab (Tab 3)
 // ─────────────────────────────────────────────────────────────
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -25,8 +25,48 @@ import {
   SUPPLIERS, SUPPLIER_PRODUCTS, SUPPLIER_EXPEDIENTE_REFS,
   SUPPLIER_AUDIT_SCORES, BRAND_PRODUCTS, EXPEDIENTES,
 } from "../data/mockData.js";
+import { proveedoresApi } from "../lib/api.js";
 import SupplierPromoEngine from "../components/proveedores/SupplierPromoEngine.jsx";
 import SupplierAuditTab from "../components/proveedores/SupplierAuditTab.jsx";
+
+// Banderitas por país — coincide con SupplierFormView
+const FLAG_BY_ISO2 = {
+  BR:'🇧🇷', CN:'🇨🇳', PE:'🇵🇪', MX:'🇲🇽', CO:'🇨🇴',
+  AR:'🇦🇷', CL:'🇨🇱', US:'🇺🇸', CY:'🇨🇾',
+};
+
+// Backend (snake_case) → shape que el componente ya consume.
+function adaptSupplier(b) {
+  if (!b) return null;
+  const certs = Array.isArray(b.certificaciones) ? b.certificaciones : [];
+  const cats  = Array.isArray(b.categorias)      ? b.categorias      : [];
+  // Mapeo de `clase` del backend (CRITICO/NORMAL/EVENTUAL) y los del
+  // form viejo (CRITICO/IMPORTANTE/ESTANDAR) — en cualquier caso se
+  // intenta hacer match con CLASE_META; si no hay, cae en ESTANDAR.
+  return {
+    id:                  b.id,
+    nombre_comercial:    b.nombre_comercial || b.razon_social || '—',
+    razon_social:        b.razon_social || b.nombre_comercial || '—',
+    pais:                b.pais_iso2 || '',
+    flag:                FLAG_BY_ISO2[(b.pais_iso2 || '').toUpperCase()] || '🌐',
+    clase:               b.clase || 'ESTANDAR',
+    status:              b.estado === 'ACTIVO' ? 'ACTIVO'
+                          : b.estado === 'PROSPECTO' ? 'EN_SELECCION'
+                          : b.estado || 'ACTIVO',
+    certs,
+    iso_score:           Number(b.score_iso) || 0,
+    lead_time_promised:  Number(b.lead_time_dias) || 0,
+    lead_time_real:      Number(b.lead_time_dias) || 0,   // backend aún no separa real
+    volumen_transaccionado: 0,    // proviene de /kpis/ (spend_ytd_usd)
+    expedientes_activos:    0,    // proviene de /kpis/ (oc_abiertas)
+    categoria_desc:      cats.length ? cats.join(' · ') : (b.notas_internas || ''),
+    producto_servicio:   b.producto_servicio || '',
+    onboarded:           (b.created_at || '').slice(0, 10),
+    contacto_nombre:     b.contacto_nombre || '',
+    contacto_email:      b.contacto_email  || '',
+    contacto_tel:        b.contacto_tel    || '',
+  };
+}
 
 const CLASE_META = {
   CRITICO:    { label:'CRÍTICO',    color:'#DC2626', soft:'rgba(220,38,38,0.12)' },
@@ -61,10 +101,64 @@ export default function ScreenSupplierDetail() {
   const { supplierId } = useParams();
   const { lang } = useOutletContext();
 
-  const supplier = SUPPLIERS.find(s => s.id === supplierId);
   const [tab, setTab] = useState('comercial');
+  const [supplier, setSupplier] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
 
-  if (!supplier) {
+  // Fetch del backend con fallback a mock (compat con SUP-001/etc.)
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setNotFound(false);
+    (async () => {
+      // 1) Intentar backend
+      try {
+        const data = await proveedoresApi.get(supplierId);
+        if (!alive) return;
+        const adapted = adaptSupplier(data);
+        if (adapted) {
+          // 2) Sumar KPIs reales (best-effort, no bloqueante)
+          try {
+            const k = await proveedoresApi.action('kpis', supplierId);
+            if (alive && k) {
+              adapted.expedientes_activos    = Number(k.oc_abiertas)   || 0;
+              adapted.volumen_transaccionado = Number(k.spend_ytd_usd) || 0;
+            }
+          } catch (_) { /* KPIs son opcionales */ }
+          if (alive) { setSupplier(adapted); setLoading(false); }
+          return;
+        }
+      } catch (_) { /* sigue al fallback */ }
+
+      // 3) Fallback al mock por si es un SUP-XXX legacy
+      const fromMock = SUPPLIERS.find(s => s.id === supplierId);
+      if (!alive) return;
+      if (fromMock) { setSupplier(fromMock); setLoading(false); }
+      else          { setNotFound(true);     setLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [supplierId]);
+
+  // Hooks que dependen de supplier (siempre antes del return condicional)
+  const productIndex = useMemo(() => {
+    const m = {};
+    BRAND_PRODUCTS.forEach(p => { m[p.sku] = p; });
+    return m;
+  }, []);
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="page">
+        <div className="card card-pad-lg empty">
+          <div className="heading-md">{lang==='es'?'Cargando proveedor…':'Loading supplier…'}</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (notFound || !supplier) {
     return (
       <div className="page">
         <div className="card card-pad-lg empty">
@@ -90,12 +184,6 @@ export default function ScreenSupplierDetail() {
 
   const products = SUPPLIER_PRODUCTS.filter(p => p.supplier_id === supplier.id);
   const expedientes = SUPPLIER_EXPEDIENTE_REFS.filter(e => e.supplier_id === supplier.id);
-
-  const productIndex = useMemo(() => {
-    const m = {};
-    BRAND_PRODUCTS.forEach(p => { m[p.sku] = p; });
-    return m;
-  }, []);
 
   const resolveExpedienteId = (ref) => {
     const hit = EXPEDIENTES.find(e => e.id === ref || e.ref === ref);
