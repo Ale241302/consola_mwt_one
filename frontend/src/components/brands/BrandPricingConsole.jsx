@@ -43,6 +43,32 @@ const IconPencil = ({ size = 13 }) => (
 );
 import { useRole } from "../../context/RoleContext.jsx";
 import { CLIENTS } from "../../data/mockData.js";
+import { apiFetch, getToken } from "../../lib/api.js";
+
+// Mapeo ISO-2 → emoji bandera (subset relevante para el grid de cards)
+const FLAG_BY_ISO2 = {
+  PE:'🇵🇪', CO:'🇨🇴', US:'🇺🇸', MX:'🇲🇽', AR:'🇦🇷',
+  CL:'🇨🇱', BR:'🇧🇷', UY:'🇺🇾', EC:'🇪🇨', CR:'🇨🇷',
+  PA:'🇵🇦', DO:'🇩🇴', GT:'🇬🇹', SV:'🇸🇻', HN:'🇭🇳',
+  ES:'🇪🇸', CN:'🇨🇳',
+};
+
+// Backend (BrandClientsSummaryView) → shape que el grid ya consume.
+function adaptClientSummary(r) {
+  return {
+    cliente_id:        r.cliente_id || r.id,
+    razon_social:      r.razon_social || '',
+    nombre_comercial:  r.nombre_comercial || r.razon_social || '',
+    pais_iso2:         (r.pais_iso2 || '').toUpperCase(),
+    flag:              r.flag || FLAG_BY_ISO2[(r.pais_iso2 || '').toUpperCase()] || '🌐',
+    canal:             (r.canal || 'DISTRIBUIDOR').toUpperCase(),
+    estado:            (r.estado || 'ACTIVO').toUpperCase(),
+    dias_credito:      Number(r.dias_credito || 0),
+    credito_limit_usd: Number(r.credito_limit_usd ?? r.credito_aprobado ?? 0),
+    comision_pct:      r.comision_pct == null ? null : Number(r.comision_pct),
+    assignment:        r.assignment || null,
+  };
+}
 
 // ─── Design tokens ───────────────────────────────────────────
 const NAVY  = "#0B1E3A";
@@ -88,25 +114,54 @@ export default function BrandPricingConsole({ brandId, lang = "es" }) {
   const [query,   setQuery]   = useState("");
   const [loading, setLoading] = useState(false);
 
-  // TODO: cuando el backend esté desplegado, llamar a
-  //   GET /api/commercial/brands/<brandId>/clients_summary/
-  // En mock mode usamos CLIENTS local + derivación de campos.
-  const clients = useMemo(() => {
-    return CLIENTS.map(c => ({
-      cliente_id:        c.id || c.uuid,
-      razon_social:      c.razon_social || c.cliente || c.name,
-      nombre_comercial:  c.nombre_comercial || c.name,
-      pais_iso2:         (c.country_code || c.pais_iso2 || "").toUpperCase(),
-      flag:              c.flag,
-      canal:             (c.canal || "DISTRIBUIDOR").toUpperCase(),
-      estado:            (c.estado || "ACTIVO").toUpperCase(),
-      dias_credito:      c.credito_dias ?? c.dias_credito ?? 0,
-      credito_limit_usd: c.credito_limit_usd ?? c.credito_limit ?? c.credito_aprobado ?? 0,
-      comision_pct:      c.comision_pct ?? null,
-      // assignment: null → muestra "sin asignación"; en prod vendría del backend.
-      assignment:        null,
-    }));
-  }, []);
+  // Clientes reales del backend con asignaciones de pricing por marca.
+  // Endpoint: GET /api/commercial/brands/<brandId>/clients_summary/
+  // Fallback al mock CLIENTS solo si backend falla o devuelve vacío
+  // (preserva la experiencia de demos sin BD seedeada).
+  const [clients, setClients] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!brandId) { setClients([]); return; }
+    setLoading(true);
+    apiFetch(`/commercial/brands/${brandId}/clients_summary/`, { token: getToken() })
+      .then(rows => {
+        if (cancelled) return;
+        const real = Array.isArray(rows) ? rows.map(adaptClientSummary) : [];
+        if (real.length > 0) setClients(real);
+        else setClients(CLIENTS.map(c => ({
+          cliente_id:        c.id || c.uuid,
+          razon_social:      c.razon_social || c.cliente || c.name,
+          nombre_comercial:  c.nombre_comercial || c.name,
+          pais_iso2:         (c.country_code || c.pais_iso2 || "").toUpperCase(),
+          flag:              c.flag,
+          canal:             (c.canal || "DISTRIBUIDOR").toUpperCase(),
+          estado:            (c.estado || "ACTIVO").toUpperCase(),
+          dias_credito:      c.credito_dias ?? c.dias_credito ?? 0,
+          credito_limit_usd: c.credito_limit_usd ?? c.credito_limit ?? c.credito_aprobado ?? 0,
+          comision_pct:      c.comision_pct ?? null,
+          assignment:        null,
+        })));
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.warn('[BrandPricingConsole] clients_summary failed, fallback al mock:', err);
+        setClients(CLIENTS.map(c => ({
+          cliente_id:        c.id || c.uuid,
+          razon_social:      c.razon_social || c.cliente || c.name,
+          nombre_comercial:  c.nombre_comercial || c.name,
+          pais_iso2:         (c.country_code || c.pais_iso2 || "").toUpperCase(),
+          flag:              c.flag,
+          canal:             (c.canal || "DISTRIBUIDOR").toUpperCase(),
+          estado:            (c.estado || "ACTIVO").toUpperCase(),
+          dias_credito:      c.credito_dias ?? c.dias_credito ?? 0,
+          credito_limit_usd: c.credito_limit_usd ?? c.credito_limit ?? c.credito_aprobado ?? 0,
+          comision_pct:      c.comision_pct ?? null,
+          assignment:        null,
+        })));
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [brandId]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
