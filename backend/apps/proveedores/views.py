@@ -11,11 +11,13 @@ from .models import (
     Proveedor, TipoCat, EstadoCat, IncotermCat, ClaseCat, ScoreIsoCat,
     SupplierPromoCode, SupplierAuditEvent,
     SupplierImportLog, SupplierCertificacion,
+    SupplierProductAssignment,
 )
 from .serializers import (
     ProveedorSerializer, ProveedorListSerializer,
     SupplierPromoCodeSerializer, SupplierAuditEventSerializer,
     SupplierImportLogSerializer, SupplierCertificacionSerializer,
+    SupplierProductAssignmentSerializer,
 )
 
 
@@ -202,6 +204,115 @@ class ProveedorViewSet(viewsets.ViewSet):
         s = SupplierPromoCodeSerializer(pc, data=request.data, partial=True)
         s.is_valid(raise_exception=True)
         s.save()
+        return Response(s.data)
+
+    # ── Catálogo de abastecimiento (productos asignados) ──
+    # Endpoint nested: /api/proveedores/{id}/products/
+    @action(detail=True, methods=["get", "post"], url_path="products")
+    def products(self, request, pk=None):
+        if request.method == "GET":
+            try:
+                qs = list(SupplierProductAssignment.objects
+                          .filter(supplier_id=pk, is_active=True)
+                          .order_by("product_sku"))
+
+                # ── Anotaciones dinámicas (cantidad_12m + ultima_po + nombre) ──
+                skus = [a.product_sku for a in qs]
+                qty_12m   = {}
+                ultima_po = {}
+                nombres   = {}
+
+                if skus:
+                    with connection.cursor() as c:
+                        # Cantidades compradas en los últimos 365 días a este
+                        # proveedor, agrupadas por SKU.
+                        c.execute("""
+                            SELECT l.sku, COALESCE(SUM(l.qty), 0) AS qty
+                            FROM expedientes.linea l
+                            JOIN expedientes.oc o ON o.id = l.oc_id
+                            WHERE l.is_active = TRUE
+                              AND o.is_active = TRUE
+                              AND o.proveedor_id = %s
+                              AND l.sku = ANY(%s)
+                              AND COALESCE(o.issued_at, o.created_at::date)
+                                  >= (NOW() - INTERVAL '365 days')::date
+                            GROUP BY l.sku
+                        """, [pk, skus])
+                        for sku, qty in c.fetchall():
+                            qty_12m[sku] = float(qty or 0)
+
+                        # Fecha de la última PO por SKU
+                        c.execute("""
+                            SELECT l.sku, MAX(COALESCE(o.issued_at, o.created_at::date))
+                            FROM expedientes.linea l
+                            JOIN expedientes.oc o ON o.id = l.oc_id
+                            WHERE l.is_active = TRUE
+                              AND o.is_active = TRUE
+                              AND o.proveedor_id = %s
+                              AND l.sku = ANY(%s)
+                            GROUP BY l.sku
+                        """, [pk, skus])
+                        for sku, fecha in c.fetchall():
+                            ultima_po[sku] = fecha
+
+                        # Nombres reales del producto (lookup por sku)
+                        c.execute("""
+                            SELECT sku, COALESCE(nombre, '') FROM productos.producto
+                            WHERE sku = ANY(%s) AND is_active = TRUE
+                        """, [skus])
+                        for sku, nombre in c.fetchall():
+                            nombres[sku] = nombre
+
+                ctx = {
+                    "request":   request,
+                    "qty_12m":   qty_12m,
+                    "ultima_po": ultima_po,
+                    "nombres":   nombres,
+                }
+                return Response(
+                    SupplierProductAssignmentSerializer(qs, many=True, context=ctx).data
+                )
+            except Exception as e:
+                log.warning("products GET error proveedor=%s : %s", pk, e)
+                return Response({"detail": "products no disponible: " + str(e)},
+                                status=400)
+
+        # POST — crear asignación nueva
+        data = {**request.data, "supplier_id": pk}
+        s = SupplierProductAssignmentSerializer(data=data, context={"request": request})
+        s.is_valid(raise_exception=True)
+        try:
+            s.save(id=uuid.uuid4(),
+                   created_by=getattr(request.user, "id", None))
+        except (IntegrityError, DataError) as e:
+            log.warning("products POST DB error proveedor=%s payload=%s : %s",
+                        pk, dict(request.data), e)
+            return Response({"detail": str(e)}, status=400)
+        return Response(s.data, status=201)
+
+    @action(detail=True, methods=["patch", "delete"],
+            url_path=r"products/(?P<assignment_id>[^/.]+)")
+    def product_detail(self, request, pk=None, assignment_id=None):
+        try:
+            row = SupplierProductAssignment.objects.get(
+                pk=assignment_id, supplier_id=pk
+            )
+        except SupplierProductAssignment.DoesNotExist:
+            return Response({"detail": "Asignación no existe"}, status=404)
+
+        if request.method == "DELETE":
+            row.is_active = False
+            row.save()
+            return Response(status=204)
+
+        s = SupplierProductAssignmentSerializer(
+            row, data=request.data, partial=True, context={"request": request}
+        )
+        s.is_valid(raise_exception=True)
+        try:
+            s.save()
+        except (IntegrityError, DataError) as e:
+            return Response({"detail": str(e)}, status=400)
         return Response(s.data)
 
     # ── Audit log (read-only + append) ────────────────

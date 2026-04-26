@@ -27,10 +27,12 @@ import {
   SUPPLIERS, SUPPLIER_PRODUCTS, SUPPLIER_EXPEDIENTE_REFS,
   SUPPLIER_AUDIT_SCORES, BRAND_PRODUCTS, EXPEDIENTES,
 } from "../data/mockData.js";
-import { proveedoresApi, productosApi, ocsApi } from "../lib/api.js";
+import { proveedoresApi, productosApi, ocsApi, apiFetch, getToken } from "../lib/api.js";
+import { useRole } from "../context/RoleContext.jsx";
 import SupplierPromoEngine from "../components/proveedores/SupplierPromoEngine.jsx";
 import SupplierAuditTab from "../components/proveedores/SupplierAuditTab.jsx";
 import AssignItemsModal from "../components/common/AssignItemsModal.jsx";
+import AssignSupplierProductModal from "../components/proveedores/AssignSupplierProductModal.jsx";
 
 // Banderitas por país — coincide con SupplierFormView
 const FLAG_BY_ISO2 = {
@@ -150,16 +152,17 @@ export default function ScreenSupplierDetail() {
     return m;
   }, []);
 
-  // ── Productos asignados al proveedor (backend real) ─────────
+  // ── Catálogo de abastecimiento (assignments backend) ─────────
   const isUuid = /^[0-9a-f-]{36}$/i.test(supplierId || '');
-  const [beProducts, setBeProducts] = useState([]);
+  const { isAdmin } = useRole();
+  const [beProducts, setBeProducts] = useState([]);          // [{id, supplier_id, product_sku, supplier_sku_code, moq, base_cost_usd?, production_lead_time_days, cantidad_12m, ultima_po_fecha, nombre_producto}]
   const [loadingBeProds, setLoadingBeProds] = useState(false);
 
   const reloadProducts = useCallback(async () => {
     if (!isUuid) { setBeProducts([]); return; }
     setLoadingBeProds(true);
     try {
-      const list = await productosApi.list({ proveedor: supplierId });
+      const list = await proveedoresApi.action('products', supplierId);
       setBeProducts(Array.isArray(list) ? list : []);
     } catch (_) {
       setBeProducts([]);
@@ -189,33 +192,13 @@ export default function ScreenSupplierDetail() {
 
   useEffect(() => { reloadOcs(); }, [reloadOcs]);
 
-  // ── Modal "Asignar productos" ────────────────────────────────
+  // ── Modal "Asignar SKU al proveedor" (catálogo abastecimiento) ─
   const [openAssignProds, setOpenAssignProds] = useState(false);
-  const [availProds, setAvailProds] = useState([]);
-  const [loadingAvailProds, setLoadingAvailProds] = useState(false);
 
-  const openAssignProductsModal = async () => {
-    setOpenAssignProds(true);
-    setLoadingAvailProds(true);
-    try {
-      // Mostrar TODOS los productos. Excluir los que ya están en este
-      // proveedor para no duplicar — el resto incluye sin proveedor +
-      // los de otros proveedores (al asignar, se reasignan).
-      const all = await productosApi.list();
-      const myIds = new Set(beProducts.map(p => p.id));
-      setAvailProds((all || []).filter(p => !myIds.has(p.id)));
-    } catch (e) {
-      setAvailProds([]);
-    } finally {
-      setLoadingAvailProds(false);
-    }
-  };
-
-  const handleAssignProducts = async (ids) => {
-    // Update batch: cada producto se reasigna a este proveedor.
-    await Promise.all(
-      ids.map(id => productosApi.update(id, { proveedor_principal_id: supplierId }))
-    );
+  const handleAssignProductBody = async (body) => {
+    // body = { product_sku, supplier_sku_code, moq, base_cost_usd?,
+    //          production_lead_time_days, notas? }
+    await proveedoresApi.action('products', supplierId, body);
     await reloadProducts();
   };
 
@@ -245,15 +228,18 @@ export default function ScreenSupplierDetail() {
     await reloadOcs();
   };
 
-  // ── Desasociar (poner el campo proveedor en null) ────────────
-  const handleUnassignProduct = async (productId, productLabel) => {
-    if (!productId) return;
+  // ── Desasociar (DELETE de la asignación, soft-delete) ────────
+  const handleUnassignProduct = async (assignmentId, sku) => {
+    if (!assignmentId) return;
     if (!window.confirm(
-      (lang==='es' ? '¿Quitar este SKU del proveedor?\n\n' : 'Remove this SKU from the supplier?\n\n')
-      + (productLabel || productId)
+      (lang==='es' ? '¿Quitar este SKU del catálogo del proveedor?\n\n' : 'Remove this SKU from the supplier catalog?\n\n')
+      + (sku || assignmentId)
     )) return;
     try {
-      await productosApi.update(productId, { proveedor_principal_id: null });
+      await apiFetch(`/proveedores/${supplierId}/products/${assignmentId}/`, {
+        method: 'DELETE',
+        token: getToken(),
+      });
       await reloadProducts();
     } catch (e) {
       alert((lang==='es' ? 'No se pudo desasociar: ' : 'Could not unassign: ') + (e?.message || e));
@@ -312,15 +298,21 @@ export default function ScreenSupplierDetail() {
   // Si es proveedor del backend (UUID), usamos las listas reales
   // adaptadas al shape que la tabla espera. Para SUP-XXX legacy mock,
   // seguimos con SUPPLIER_PRODUCTS / SUPPLIER_EXPEDIENTE_REFS.
+  // Adapter: el endpoint /products/ devuelve assignments (no productos crudos).
+  // Mapeamos al shape que la tabla consume.
   const products = isUuid
-    ? beProducts.map(p => ({
-        id:                 p.id,                        // UUID real (navegación + desasignar)
-        sku:                p.sku || p.id,
-        nombre:             p.nombre || '',
-        units_12m:          0,                          // backend no tracking aún
-        last_purchase_price: Number(p.precio_usd) || 0,
-        last_po_date:       (p.updated_at || '').slice(0, 10),
-        _backend:           p,
+    ? beProducts.map(a => ({
+        id:                  a.id,                        // UUID del assignment (no del producto)
+        sku:                 a.product_sku,
+        nombre:              a.nombre_producto || '',
+        supplier_sku_code:   a.supplier_sku_code || '',
+        moq:                 Number(a.moq) || 0,
+        base_cost_usd:       a.base_cost_usd != null ? Number(a.base_cost_usd) : null,
+        production_lead_time_days: Number(a.production_lead_time_days) || 0,
+        units_12m:           Number(a.cantidad_12m) || 0,
+        last_purchase_price: a.base_cost_usd != null ? Number(a.base_cost_usd) : 0,
+        last_po_date:        (a.ultima_po_fecha || '').slice(0, 10) || '—',
+        _backend:            a,
       }))
     : SUPPLIER_PRODUCTS.filter(p => p.supplier_id === supplier.id);
 
@@ -474,7 +466,7 @@ export default function ScreenSupplierDetail() {
                 <div style={{display:'flex', alignItems:'center', gap:10}}>
                   <span className="mono-sm">{products.length} SKU{products.length!==1?'s':''}</span>
                   {isUuid && (
-                    <button className="btn btn-xs" onClick={openAssignProductsModal}>
+                    <button className="btn btn-xs" onClick={()=>setOpenAssignProds(true)}>
                       <IconPlus size={11}/> {lang==='es'?'Asignar SKU':'Assign SKU'}
                     </button>
                   )}
@@ -492,10 +484,20 @@ export default function ScreenSupplierDetail() {
                 <table className="supplier-products-table">
                   <thead>
                     <tr>
-                      <th>SKU</th>
+                      <th>{lang==='es'?'SKU MWT':'MWT SKU'}</th>
                       <th>{lang==='es'?'Nombre':'Name'}</th>
+                      {isUuid && (
+                        <th>{lang==='es'?'Código fábrica':'Factory code'}</th>
+                      )}
+                      {isUuid && (
+                        <th className="ta-right">MOQ</th>
+                      )}
+                      {isUuid && isAdmin && (
+                        <th className="ta-right" style={{color:'#B45309'}}>
+                          🔒 {lang==='es'?'Costo FOB':'FOB cost'}
+                        </th>
+                      )}
                       <th className="ta-right">{lang==='es'?'Cantidad 12M':'Qty 12M'}</th>
-                      <th className="ta-right">{lang==='es'?'Último precio':'Last price'}</th>
                       <th>{lang==='es'?'Última PO':'Last PO'}</th>
                       {isUuid && <th className="ta-right" style={{width:48}}></th>}
                     </tr>
@@ -504,8 +506,18 @@ export default function ScreenSupplierDetail() {
                     {products.map((p, idx) => {
                       const ref = productIndex[p.sku];
                       const productName = p.nombre || ref?.nombre || '—';
+                      // Para navegar al detalle del producto necesitamos el
+                      // UUID del producto, no del assignment. En modo backend
+                      // no lo tenemos; resolvemos por SKU contra productIndex
+                      // si el mock lo tiene, sino sin navegación.
                       const goToProduct = () => {
-                        if (isUuid && p.id) navigate(`/productos/${p.id}`);
+                        if (!isUuid) return;
+                        // El mock productIndex no aporta UUID — buscamos
+                        // productosApi por sku al momento del click.
+                        productosApi.list({ q: p.sku }).then(res => {
+                          const hit = (res || []).find(x => x.sku === p.sku);
+                          if (hit?.id) navigate(`/productos/${hit.id}`);
+                        }).catch(() => {});
                       };
                       return (
                         <motion.tr
@@ -513,7 +525,7 @@ export default function ScreenSupplierDetail() {
                           initial={{ opacity:0, y:4 }}
                           animate={{ opacity:1, y:0, transition:{ delay: idx*0.03, duration:0.22 } }}
                           className="supplier-product-row"
-                          style={{ cursor: (isUuid && p.id) ? 'pointer' : 'default' }}
+                          style={{ cursor: isUuid ? 'pointer' : 'default' }}
                           onClick={goToProduct}
                         >
                           <td className="mono-sm">{p.sku}</td>
@@ -525,15 +537,29 @@ export default function ScreenSupplierDetail() {
                               </div>
                             )}
                           </td>
+                          {isUuid && (
+                            <td className="mono-sm" style={{color:'var(--text-secondary)'}}>
+                              {p.supplier_sku_code || '—'}
+                            </td>
+                          )}
+                          {isUuid && (
+                            <td className="ta-right tabular-nums">
+                              {p.moq > 0 ? p.moq.toLocaleString() : '—'}
+                            </td>
+                          )}
+                          {isUuid && isAdmin && (
+                            <td className="ta-right tabular-nums" style={{fontWeight:600, color:'#B45309'}}>
+                              {p.base_cost_usd != null
+                                ? fmtMoney(p.base_cost_usd)
+                                : <span style={{color:'var(--text-tertiary)'}}>—</span>}
+                            </td>
+                          )}
                           <td className="ta-right tabular-nums">{p.units_12m.toLocaleString()}</td>
-                          <td className="ta-right tabular-nums" style={{fontWeight:600}}>
-                            {fmtMoney(p.last_purchase_price)}
-                          </td>
                           <td className="caption">{p.last_po_date}</td>
                           {isUuid && (
                             <td className="ta-right">
                               <button className="btn btn-xs"
-                                      title={lang==='es'?'Quitar SKU del proveedor':'Unassign SKU'}
+                                      title={lang==='es'?'Quitar SKU del catálogo':'Unassign SKU'}
                                       onClick={(e)=>{
                                         e.stopPropagation();
                                         handleUnassignProduct(p.id, `${p.sku} · ${productName}`);
@@ -704,25 +730,14 @@ export default function ScreenSupplierDetail() {
         )}
       </AnimatePresence>
 
-      {/* ── Modal: Asignar productos al proveedor ── */}
+      {/* ── Modal: Asignar SKU al proveedor (catálogo abastecimiento) ── */}
       {openAssignProds && createPortal(
-        <AssignItemsModal
-          eyebrow={lang==='es'?'ASIGNAR SKUs':'ASSIGN SKUs'}
-          title={(lang==='es'?'Asignar productos a ':'Assign products to ') + supplier.nombre_comercial}
-          searchPlaceholder={lang==='es'?'Buscar SKU, nombre…':'Search SKU, name…'}
-          actionLabel={lang==='es'?'Asignar':'Assign'}
-          loading={loadingAvailProds}
-          emptyHint={lang==='es'
-            ? 'No hay más productos disponibles para asignar.'
-            : 'No more products available to assign.'}
-          items={availProds.map(p => ({
-            id:       p.id,
-            title:    `${p.sku || '—'}  ${p.nombre || ''}`.trim(),
-            subtitle: p.marca_nombre || '',
-            meta:     p.precio_usd != null ? `$${p.precio_usd}` : '',
-          }))}
+        <AssignSupplierProductModal
+          supplierName={supplier.nombre_comercial}
+          excludeSkus={beProducts.map(a => a.product_sku).filter(Boolean)}
+          lang={lang}
           onClose={()=>setOpenAssignProds(false)}
-          onAssign={handleAssignProducts}
+          onAssign={handleAssignProductBody}
         />,
         document.body
       )}

@@ -19,7 +19,7 @@ import { fmtMoney } from "../../lib/i18n.js";
 import {
   SUPPLIER_PROMO_CODES, SUPPLIER_PRODUCTS,
 } from "../../data/mockData.js";
-import { apiFetch, proveedoresApi, getToken } from "../../lib/api.js";
+import { apiFetch, proveedoresApi, productosApi, getToken } from "../../lib/api.js";
 
 const STATUS_META = {
   ACTIVO:   { label:'Activo',   color:'#0E8A6D', soft:'rgba(14,138,109,0.12)' },
@@ -91,10 +91,34 @@ export default function SupplierPromoEngine({ lang='es', supplierId, supplierNam
     () => isUuid ? [] : SUPPLIER_PROMO_CODES.filter(c => c.supplier_id === supplierId),
     [supplierId, isUuid]
   );
-  const supplierSkus = useMemo(
-    () => Array.from(new Set(SUPPLIER_PRODUCTS.filter(p => p.supplier_id === supplierId).map(p => p.sku))),
-    [supplierId]
-  );
+  // SKUs disponibles para "Alcance: SKUs específicos".
+  // Si es UUID → fetch del backend (productos asignados a este proveedor).
+  // Si es mock SUP-XXX → fallback a SUPPLIER_PRODUCTS legacy.
+  const [backendSkus, setBackendSkus] = useState([]);
+  useEffect(() => {
+    if (!isUuid) { setBackendSkus([]); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const list = await productosApi.list({ proveedor: supplierId });
+        if (!alive) return;
+        // Lista de objetos { sku, nombre } — para mostrar nombre legible
+        const skus = (list || [])
+          .map(p => ({ sku: p.sku || p.id, nombre: p.nombre || '' }))
+          .filter(x => x.sku);
+        setBackendSkus(skus);
+      } catch (_) { /* silencioso, fallback vacío */ }
+    })();
+    return () => { alive = false; };
+  }, [supplierId, isUuid]);
+
+  const supplierSkus = useMemo(() => {
+    if (isUuid) return backendSkus;                    // [{sku, nombre}]
+    // Legacy mock — solo skus, los envolvemos al mismo shape
+    return Array
+      .from(new Set(SUPPLIER_PRODUCTS.filter(p => p.supplier_id === supplierId).map(p => p.sku)))
+      .map(sku => ({ sku, nombre: '' }));
+  }, [isUuid, backendSkus, supplierId]);
 
   const reload = useCallback(async () => {
     if (!isUuid) return;
@@ -335,14 +359,21 @@ export default function SupplierPromoEngine({ lang='es', supplierId, supplierNam
                 <span className="caption" style={{color:'var(--text-tertiary)'}}>
                   {lang==='es'?'Sin SKUs registrados para este proveedor':'No SKUs registered for this supplier'}
                 </span>
-              ) : supplierSkus.map(sku => {
-                const on = form.scope_skus.includes(sku);
+              ) : supplierSkus.map(item => {
+                const sku = item.sku;
+                const on  = form.scope_skus.includes(sku);
                 return (
                   <button key={sku}
                           className={`sku-chip ${on?'is-on':''}`}
+                          title={item.nombre || sku}
                           onClick={()=>toggleSku(sku)}>
                     {on ? <IconCheck size={10}/> : null}
                     <span className="mono-sm">{sku}</span>
+                    {item.nombre && (
+                      <span style={{marginLeft:6, color:'var(--text-tertiary)', fontWeight:500}}>
+                        {item.nombre.length > 24 ? item.nombre.slice(0,24)+'…' : item.nombre}
+                      </span>
+                    )}
                   </button>
                 );
               })}

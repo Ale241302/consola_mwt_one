@@ -227,6 +227,35 @@ class SupplierImportLog(models.Model):
         ordering = ("-created_at",)
 
 
+class SupplierProductAssignment(models.Model):
+    """Catálogo de abastecimiento — qué SKUs MWT le compramos a este
+    proveedor, con el precio FOB negociado, MOQ y código que la fábrica
+    usa para el SKU. Tabla: 53_suppliers_product_assignments.sql.
+
+    base_cost_usd es CEO-ONLY (oculto por el serializer si no admin).
+    """
+    id                        = models.UUIDField(primary_key=True)
+    supplier_id               = models.UUIDField()                          # ⛔ sin FK
+    product_sku               = models.CharField(max_length=64)             # SKU canónico MWT
+
+    supplier_sku_code         = models.CharField(max_length=64, null=True, blank=True)
+    moq                       = models.IntegerField(default=0)
+    base_cost_usd             = models.DecimalField(max_digits=14, decimal_places=4,
+                                                     null=True, blank=True)
+    production_lead_time_days = models.IntegerField(default=0)
+
+    notas                     = models.TextField(null=True, blank=True)
+    is_active                 = models.BooleanField(default=True)
+    created_by                = models.UUIDField(null=True, blank=True)     # ⛔ sin FK
+    created_at                = models.DateTimeField(auto_now_add=True)
+    updated_at                = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'proveedores"."suppliers_product_assignments'
+        ordering = ("product_sku",)
+
+
 class SupplierCertificacion(models.Model):
     """Certificaciones ISO con vencimientos — 51_proveedores_audit.sql."""
     id                = models.UUIDField(primary_key=True)
