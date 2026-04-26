@@ -120,7 +120,13 @@ class ScoreIsoCat(models.Model):
 
 
 class SupplierPromoCode(models.Model):
-    """Códigos promocionales (por volumen / vigencia) — 51_proveedores_audit.sql."""
+    """Códigos promocionales (por volumen / vigencia) — 51_proveedores_audit.sql.
+
+    OJO: el SQL real usa los nombres `descuento_pct`, `descuento_monto`,
+    `vigencia_inicio`, `vigencia_fin`. Mantenemos los nombres Python que
+    el frontend espera (valor_pct, vigente_desde, …) y mapeamos a la
+    columna real con db_column=. Sin esto, el SELECT trona con 500.
+    """
     id              = models.UUIDField(primary_key=True)
     proveedor_id    = models.UUIDField()                            # ⛔ sin FK
     codigo          = models.CharField(max_length=32)
@@ -128,13 +134,22 @@ class SupplierPromoCode(models.Model):
 
     tipo_descuento  = models.CharField(max_length=16, default='PCT')
                         # PCT / FIXED / VOLUMEN / COMBO
-    valor_pct       = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    valor_fijo_usd  = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    min_volumen     = models.DecimalField(max_digits=14, decimal_places=3, default=0)
-    max_volumen     = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
+    valor_pct       = models.DecimalField(max_digits=5, decimal_places=2,
+                                           null=True, blank=True,
+                                           db_column='descuento_pct')
+    valor_fijo_usd  = models.DecimalField(max_digits=14, decimal_places=2,
+                                           null=True, blank=True,
+                                           db_column='descuento_monto')
+    moneda          = models.CharField(max_length=3, default='USD')
+    min_volumen     = models.DecimalField(max_digits=14, decimal_places=3,
+                                           null=True, blank=True)
+    max_volumen     = models.DecimalField(max_digits=14, decimal_places=3,
+                                           null=True, blank=True)
 
-    vigente_desde   = models.DateField(null=True, blank=True)
-    vigente_hasta   = models.DateField(null=True, blank=True)
+    vigente_desde   = models.DateField(null=True, blank=True,
+                                        db_column='vigencia_inicio')
+    vigente_hasta   = models.DateField(null=True, blank=True,
+                                        db_column='vigencia_fin')
 
     max_usos        = models.IntegerField(null=True, blank=True)
     usos_actuales   = models.IntegerField(default=0)

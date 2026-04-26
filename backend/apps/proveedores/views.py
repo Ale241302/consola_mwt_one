@@ -163,15 +163,29 @@ class ProveedorViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get", "post"], url_path="promo_codes")
     def promo_codes(self, request, pk=None):
         if request.method == "GET":
-            qs = (SupplierPromoCode.objects
-                  .filter(proveedor_id=pk, is_active=True)
-                  .order_by("-created_at"))
-            return Response(SupplierPromoCodeSerializer(qs, many=True).data)
+            try:
+                qs = list(SupplierPromoCode.objects
+                          .filter(proveedor_id=pk, is_active=True)
+                          .order_by("-created_at"))
+                return Response(SupplierPromoCodeSerializer(qs, many=True).data)
+            except Exception as e:
+                # Mismatch DB-modelo, etc. — devolvemos un payload vacío
+                # con detail diagnóstico en vez de 500 mudo.
+                log.warning("promo_codes GET error proveedor=%s : %s", pk, e)
+                return Response(
+                    {"detail": "promo_codes no disponible: " + str(e)},
+                    status=400,
+                )
 
         data = {**request.data, "proveedor_id": pk}
         s = SupplierPromoCodeSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
+        try:
+            s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
+        except (IntegrityError, DataError) as e:
+            log.warning("promo_codes POST DB error proveedor=%s payload=%s : %s",
+                        pk, dict(request.data), e)
+            return Response({"detail": str(e)}, status=400)
         return Response(s.data, status=201)
 
     @action(detail=True, methods=["patch", "delete"],
