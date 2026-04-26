@@ -463,6 +463,26 @@ export default function ScreenTransfers() {
                                 <IconTruck size={12}/> {lang==='es'?'Despachar':'Dispatch'}
                               </button>
                             )}
+                            {/* Rechazar: válido en PLANNED y APPROVED (catálogo
+                                transfers.transicion_cat). Después de IN_TRANSIT
+                                la mercancía ya está en flujo y no se cancela
+                                con un click — requiere reverso operacional. */}
+                            {t._backend_id && (t.status === 'planned' || t.status === 'approved') && (
+                              <button
+                                className="btn btn-danger-soft btn-sm"
+                                disabled={transitioning === t._backend_id}
+                                title={lang==='es'?'Cancelar la transferencia (no se puede deshacer)':'Cancel the transfer (cannot be undone)'}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const confirmMsg = lang==='es'
+                                    ? `¿Rechazar transferencia ${t.id}? Esta acción es definitiva.`
+                                    : `Reject transfer ${t.id}? This action is final.`;
+                                  if (window.confirm(confirmMsg)) transition(t, 'cancel');
+                                }}
+                              >
+                                <IconX size={12}/> {lang==='es'?'Rechazar':'Reject'}
+                              </button>
+                            )}
                             {t._backend_id && t.status === 'in_transit' && (
                               <button
                                 className="btn btn-accent btn-sm"

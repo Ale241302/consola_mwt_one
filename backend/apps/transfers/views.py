@@ -38,6 +38,7 @@ from .serializers import (
     TransferenciaSerializer, TransferenciaListSerializer,
     LineaSerializer, EventoSerializer, TransferenciaDocumentoSerializer,
 )
+from . import services as transfer_services
 
 
 # ════════════════════════════════════════════════════════════
@@ -278,7 +279,16 @@ class TransferenciaViewSet(viewsets.ViewSet):
     # Mantener `url_path="dispatch"` para compatibilidad con el frontend.
     @action(detail=True, methods=["post"], url_path="dispatch")
     def mark_dispatched(self, request, pk=None):
-        return self._transition(request, pk, "IN_TRANSIT", "Despachada")
+        resp = self._transition(request, pk, "IN_TRANSIT", "Despachada")
+        # Side-effect en stock: descontar del nodo origen.
+        if resp.status_code == 200:
+            try:
+                t = Transferencia.objects.get(pk=pk)
+                lineas = list(Linea.objects.filter(transferencia_id=t.id, is_active=True))
+                transfer_services.apply_outbound_at_origin(t, lineas)
+            except Exception:
+                log.exception("[mark_dispatched] efecto stock falló transfer=%s", pk)
+        return resp
 
     @action(detail=True, methods=["post"])
     def receive(self, request, pk=None):
@@ -335,8 +345,52 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 idempotence_token = body.get("idempotence_token"),
             )
 
+        # Side-effect en stock: sumar al destino + cerrar en_tránsito en origen.
+        try:
+            t.refresh_from_db()
+            lineas = list(Linea.objects.filter(transferencia_id=t.id, is_active=True))
+            transfer_services.apply_inbound_at_destination(t, lineas)
+        except Exception:
+            log.exception("[receive] efecto stock falló transfer=%s", t.id)
+
         t.refresh_from_db()
         return Response(TransferenciaSerializer(t).data)
+
+    @action(detail=True, methods=["post"], url_path="apply-to-stock")
+    def apply_to_stock(self, request, pk=None):
+        """
+        Endpoint de mantenimiento: re-aplica los efectos de stock para una
+        transferencia que ya pasó por sus estados sin haber actualizado
+        inventario.stock (caso de transferencias creadas antes de que el
+        side-effect estuviera implementado, o tras una excepción silenciosa).
+
+        Es idempotente — si los movimientos ya existen, no duplica.
+        """
+        try:
+            t = Transferencia.objects.get(pk=pk)
+        except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+
+        lineas = list(Linea.objects.filter(transferencia_id=t.id, is_active=True))
+        out_count = 0
+        in_count  = 0
+
+        # Outbound aplica si pasó por IN_TRANSIT alguna vez (o ya está más adelante)
+        if t.estado in ("IN_TRANSIT", "RECEIVED", "DISCREPANCY", "RECONCILED", "CLOSED"):
+            out_count = transfer_services.apply_outbound_at_origin(t, lineas)
+
+        # Inbound aplica si ya fue recibida
+        if t.estado in ("RECEIVED", "DISCREPANCY", "RECONCILED", "CLOSED"):
+            in_count = transfer_services.apply_inbound_at_destination(t, lineas)
+
+        return Response({
+            "transferencia_id": str(t.id),
+            "codigo":           t.codigo,
+            "estado":           t.estado,
+            "outbound_lineas_aplicadas": out_count,
+            "inbound_lineas_aplicadas":  in_count,
+            "detail": ("Efectos aplicados (idempotente: 0 = ya estaba al día)."),
+        })
 
     @action(detail=True, methods=["post"])
     def reconcile(self, request, pk=None):
