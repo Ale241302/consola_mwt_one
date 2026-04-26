@@ -20,7 +20,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   IconChevLeft, IconPackage, IconFolder, IconShield, IconTruck,
   IconDollar, IconMail, IconFileText, IconPercent, IconAlert, IconCheck,
-  IconPencil, IconPlus,
+  IconPencil, IconPlus, IconTrash,
 } from "../lib/icons.jsx";
 import { fmtMoney } from "../lib/i18n.js";
 import {
@@ -245,6 +245,35 @@ export default function ScreenSupplierDetail() {
     await reloadOcs();
   };
 
+  // ── Desasociar (poner el campo proveedor en null) ────────────
+  const handleUnassignProduct = async (productId, productLabel) => {
+    if (!productId) return;
+    if (!window.confirm(
+      (lang==='es' ? '¿Quitar este SKU del proveedor?\n\n' : 'Remove this SKU from the supplier?\n\n')
+      + (productLabel || productId)
+    )) return;
+    try {
+      await productosApi.update(productId, { proveedor_principal_id: null });
+      await reloadProducts();
+    } catch (e) {
+      alert((lang==='es' ? 'No se pudo desasociar: ' : 'Could not unassign: ') + (e?.message || e));
+    }
+  };
+
+  const handleUnassignOc = async (ocId, ocLabel) => {
+    if (!ocId) return;
+    if (!window.confirm(
+      (lang==='es' ? '¿Quitar esta OC del proveedor?\n\n' : 'Remove this PO from the supplier?\n\n')
+      + (ocLabel || ocId)
+    )) return;
+    try {
+      await ocsApi.update(ocId, { proveedor_id: null });
+      await reloadOcs();
+    } catch (e) {
+      alert((lang==='es' ? 'No se pudo desasociar: ' : 'Could not unassign: ') + (e?.message || e));
+    }
+  };
+
   // Loading state
   if (loading) {
     return (
@@ -285,7 +314,9 @@ export default function ScreenSupplierDetail() {
   // seguimos con SUPPLIER_PRODUCTS / SUPPLIER_EXPEDIENTE_REFS.
   const products = isUuid
     ? beProducts.map(p => ({
+        id:                 p.id,                        // UUID real (navegación + desasignar)
         sku:                p.sku || p.id,
+        nombre:             p.nombre || '',
         units_12m:          0,                          // backend no tracking aún
         last_purchase_price: Number(p.precio_usd) || 0,
         last_po_date:       (p.updated_at || '').slice(0, 10),
@@ -295,10 +326,11 @@ export default function ScreenSupplierDetail() {
 
   const expedientes = isUuid
     ? beOcs.map(o => ({
+        id:             o.id,                          // UUID real de la OC
         expediente_ref: o.codigo || o.id,
         estado:         (o.estado || 'REGISTRO').toUpperCase(),
         fecha:          (o.issued_at || o.created_at || '').slice(0, 10),
-        monto:          Number(o.total_usd) || 0,
+        monto:          Number(o.total_usd || o.total_value) || 0,
         _backend:       o,
       }))
     : SUPPLIER_EXPEDIENTE_REFS.filter(e => e.supplier_id === supplier.id);
@@ -465,21 +497,28 @@ export default function ScreenSupplierDetail() {
                       <th className="ta-right">{lang==='es'?'Cantidad 12M':'Qty 12M'}</th>
                       <th className="ta-right">{lang==='es'?'Último precio':'Last price'}</th>
                       <th>{lang==='es'?'Última PO':'Last PO'}</th>
+                      {isUuid && <th className="ta-right" style={{width:48}}></th>}
                     </tr>
                   </thead>
                   <tbody>
                     {products.map((p, idx) => {
                       const ref = productIndex[p.sku];
+                      const productName = p.nombre || ref?.nombre || '—';
+                      const goToProduct = () => {
+                        if (isUuid && p.id) navigate(`/productos/${p.id}`);
+                      };
                       return (
                         <motion.tr
-                          key={p.sku}
+                          key={p.id || p.sku}
                           initial={{ opacity:0, y:4 }}
                           animate={{ opacity:1, y:0, transition:{ delay: idx*0.03, duration:0.22 } }}
                           className="supplier-product-row"
+                          style={{ cursor: (isUuid && p.id) ? 'pointer' : 'default' }}
+                          onClick={goToProduct}
                         >
                           <td className="mono-sm">{p.sku}</td>
                           <td>
-                            <div className="heading-sm">{ref?.nombre || '—'}</div>
+                            <div className="heading-sm">{productName}</div>
                             {ref && (
                               <div className="caption" style={{color:'var(--text-tertiary)'}}>
                                 {ref.tipo_calzado} · {ref.color}
@@ -491,6 +530,18 @@ export default function ScreenSupplierDetail() {
                             {fmtMoney(p.last_purchase_price)}
                           </td>
                           <td className="caption">{p.last_po_date}</td>
+                          {isUuid && (
+                            <td className="ta-right">
+                              <button className="btn btn-xs"
+                                      title={lang==='es'?'Quitar SKU del proveedor':'Unassign SKU'}
+                                      onClick={(e)=>{
+                                        e.stopPropagation();
+                                        handleUnassignProduct(p.id, `${p.sku} · ${productName}`);
+                                      }}>
+                                <IconTrash size={11}/>
+                              </button>
+                            </td>
+                          )}
                         </motion.tr>
                       );
                     })}
@@ -567,12 +618,21 @@ export default function ScreenSupplierDetail() {
                               {fmtMoney(e.monto)}
                             </td>
                             <td className="ta-right">
-                              {expId && (
-                                <button className="btn btn-xs"
-                                        onClick={()=>navigate(`/expedientes/${expId}`)}>
-                                  <IconFileText size={11}/> {lang==='es'?'Ver':'View'}
-                                </button>
-                              )}
+                              <div style={{display:'inline-flex', gap:6, justifyContent:'flex-end'}}>
+                                {expId && (
+                                  <button className="btn btn-xs"
+                                          onClick={()=>navigate(`/expedientes/${expId}`)}>
+                                    <IconFileText size={11}/> {lang==='es'?'Ver':'View'}
+                                  </button>
+                                )}
+                                {isUuid && e.id && (
+                                  <button className="btn btn-xs"
+                                          title={lang==='es'?'Quitar OC del proveedor':'Unassign PO'}
+                                          onClick={()=>handleUnassignOc(e.id, e.expediente_ref)}>
+                                    <IconTrash size={11}/>
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </motion.tr>
                         );

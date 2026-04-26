@@ -64,6 +64,7 @@ class Oc(models.Model):
     codigo          = models.CharField(max_length=32, unique=True)
     client_id       = models.UUIDField(null=True, blank=True)
     brand_id        = models.UUIDField(null=True, blank=True)
+    proveedor_id    = models.UUIDField(null=True, blank=True)   # ⛔ sin FK (71_oc_proveedor.sql)
     proforma        = models.CharField(max_length=32, null=True, blank=True)
     sap             = models.CharField(max_length=32, null=True, blank=True)
     estado          = models.CharField(max_length=32, default="EMITIDA")
