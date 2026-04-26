@@ -114,6 +114,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
         return Response(data)
 
     def create(self, request):
+        import traceback
         data = {**request.data}
         # Compatibilidad: el FE envió por error `nodo_origen_id`/`nodo_destino_id`
         # antes de mapear a los nombres canónicos. Los normalizamos acá
@@ -123,9 +124,21 @@ class TransferenciaViewSet(viewsets.ViewSet):
         if "nodo_destino_id" in data and "destino_id" not in data:
             data["destino_id"] = data.pop("nodo_destino_id")
 
+        # has_discrepancy es columna generada en DB — limpiarla del payload
+        # si el FE la mandó accidentalmente (vendría con default true/false).
+        data.pop("has_discrepancy", None)
+        # snapshot_created_at lo seteamos nosotros más abajo, así que sacarlo
+        # del payload evita ambigüedad.
+        data.pop("snapshot_created_at", None)
+
         new_id = uuid.uuid4()
         s = TransferenciaSerializer(data=data)
-        s.is_valid(raise_exception=True)
+        try:
+            s.is_valid(raise_exception=True)
+        except Exception as e:
+            log.warning("Transferencia.create validation error payload=%s : %s", dict(data), e)
+            return Response({"detail": "Validación: " + str(e)}, status=400)
+
         try:
             with transaction.atomic():
                 s.save(id=new_id)   # bypass read_only_fields=("id",)
@@ -142,9 +155,15 @@ class TransferenciaViewSet(viewsets.ViewSet):
                     actor_name       = data.get("created_by_name"),
                     notes            = "Creación",
                 )
-        except (IntegrityError, DataError) as e:
-            log.warning("Transferencia.create DB error payload=%s : %s", dict(data), e)
-            return Response({"detail": str(e)}, status=400)
+        except Exception as e:
+            tb = traceback.format_exc()
+            log.error("Transferencia.create FAIL payload=%s\nERROR: %s\nTRACE:\n%s",
+                      dict(data), e, tb)
+            return Response({
+                "detail": str(e),
+                "type":   type(e).__name__,
+                "hint":   "Error al crear la transferencia. Revisar logs del backend.",
+            }, status=400)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
