@@ -283,7 +283,7 @@ export default function ScreenClienteDetail() {
       >
         <div className="client-hero-accent"/>
         <div className="client-hero-body">
-          <div className="client-flag hero-flag">{client.flag || '🌐'}</div>
+          {/* Círculo de bandera removido — el país aparece en el row de info debajo del nombre. */}
           <div style={{flex:1, minWidth:0}}>
             <div className="micro" style={{color: channel.color}}>{channel.label.toUpperCase()}</div>
             <h1 className="page-title" style={{margin:'2px 0 2px'}}>{client.name}</h1>

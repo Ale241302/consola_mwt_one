@@ -251,9 +251,8 @@ export default function ScreenClientes() {
               >
                 <div className="client-card-accent"/>
 
-                {/* Header */}
+                {/* Header (sin círculo de bandera — el país ya aparece debajo del nombre) */}
                 <div className="client-card-head">
-                  <div className="client-flag">{c.flag || '🌐'}</div>
                   <div style={{flex:1, minWidth:0}}>
                     <div className="client-name" title={c.cliente}>{c.name}</div>
                     <div className="client-loc">
