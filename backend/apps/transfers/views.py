@@ -126,9 +126,10 @@ class TransferenciaViewSet(viewsets.ViewSet):
         data.pop("has_discrepancy", None)
 
         new_id = uuid.uuid4()
-        s = TransferenciaSerializer(data=data)
-        s.is_valid(raise_exception=True)
+        log.info("[transferencia.create] payload normalizado=%s", dict(data))
         try:
+            s = TransferenciaSerializer(data=data)
+            s.is_valid(raise_exception=True)
             with transaction.atomic():
                 s.save(id=new_id)   # bypass read_only_fields=("id",)
                 Transferencia.objects.filter(pk=new_id).update(
@@ -144,8 +145,16 @@ class TransferenciaViewSet(viewsets.ViewSet):
                     notes            = "Creación",
                 )
         except (IntegrityError, DataError) as e:
-            log.warning("Transferencia.create DB error payload=%s : %s", dict(data), e)
+            log.warning("[transferencia.create] DB error payload=%s : %s", dict(data), e)
             return Response({"detail": str(e)}, status=400)
+        except Exception as e:
+            # ⚠️ Catch-all temporal para diagnosticar 500 mudo.
+            # log.exception imprime el traceback completo en stderr → docker logs.
+            log.exception("[transferencia.create] unexpected error payload=%s", dict(data))
+            return Response(
+                {"detail": f"{type(e).__name__}: {e}"},
+                status=500,
+            )
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
