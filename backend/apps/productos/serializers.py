@@ -35,6 +35,9 @@ class ProductoListSerializer(serializers.ModelSerializer):
             "categoria", "subcategoria",
             "unidad", "moneda", "costo_estandar", "precio_lista", "precio_distribuidor",
             "estado", "pais_origen_iso2", "is_active", "updated_at",
+            # Imagen principal (gallery[0]). El FE la renderiza como thumb
+            # en el grid; viene como key MinIO para usar con /api/storage/download/
+            "imagen_url",
         )
 
 

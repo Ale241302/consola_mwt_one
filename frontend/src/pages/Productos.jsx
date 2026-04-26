@@ -49,6 +49,9 @@ function mapProductoFromApi(r) {
     color:         colores[0] || "",
     ncm:           r.hs_code || "",
     list_price:    Number(r.precio_lista) || 0,
+    // Imagen principal (gallery[0]). Se renderiza vía /api/storage/download/
+    // si existe; si no, fallback a iniciales en el thumb.
+    imagen_url:    r.imagen_url || null,
     _raw:          r,
   };
 }
@@ -270,8 +273,25 @@ export default function ScreenProductos() {
                     onClick={()=>navigate(`/productos/${p.id}`)}
                   >
                     <td>
-                      <div className="product-thumb" style={{'--brand-color': brand?.color}}>
-                        {initials}
+                      <div className="product-thumb"
+                           style={{
+                             '--brand-color': brand?.color,
+                             // Fondo blanco para que la imagen no se vea con tinte;
+                             // override del estilo de iniciales cuando hay imagen.
+                             ...(p.imagen_url ? { background: '#FFFFFF', overflow: 'hidden' } : {}),
+                           }}>
+                        {p.imagen_url ? (
+                          <img
+                            src={`${window.location.origin}/api/storage/download/?key=${encodeURIComponent(p.imagen_url)}`}
+                            alt={p.nombre}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                            onError={(e) => {
+                              // Si la key es inválida (legacy), oculta y deja iniciales
+                              e.currentTarget.style.display = 'none';
+                              e.currentTarget.parentElement.textContent = initials;
+                            }}
+                          />
+                        ) : initials}
                       </div>
                     </td>
                     <td>
