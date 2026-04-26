@@ -36,7 +36,29 @@ import {
 } from "../data/mockData.js";
 import ProductExpedientesTab from "../components/productos/ProductExpedientesTab.jsx";
 import { useRole } from "../context/RoleContext.jsx";
-import { productosApi, marcasApi, tallasApi, nodosApi, apiFetch, getToken } from "../lib/api.js";
+import { productosApi, marcasApi, tallasApi, nodosApi, clientesApi, apiFetch, getToken } from "../lib/api.js";
+
+// Mock clients (mockData.CLIENTS) → shape lista compacta para los grids
+// "Excepciones por cliente" / "Override por cliente". El backend devuelve
+// id (UUID), razon_social, pais_iso2, nombre_comercial. Convertimos al
+// shape mock {id, name, country, flag} para no tener que reescribir todos
+// los grids; preserva compatibilidad con datos demo cuando el backend
+// devuelve lista vacía.
+const _FLAG_BY_ISO2 = {
+  PE:'🇵🇪', CO:'🇨🇴', US:'🇺🇸', MX:'🇲🇽', AR:'🇦🇷',
+  CL:'🇨🇱', BR:'🇧🇷', UY:'🇺🇾', EC:'🇪🇨', CR:'🇨🇷',
+  PA:'🇵🇦', DO:'🇩🇴', GT:'🇬🇹', SV:'🇸🇻', HN:'🇭🇳',
+  ES:'🇪🇸', CN:'🇨🇳',
+};
+function adaptClienteForGrid(c) {
+  const iso = (c.pais_iso2 || c.country_code || '').toUpperCase();
+  return {
+    id:      c.id || c.uuid,
+    name:    c.nombre_comercial || c.razon_social || '—',
+    country: c.pais || iso || '—',
+    flag:    _FLAG_BY_ISO2[iso] || c.flag || '🌐',
+  };
+}
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
 
@@ -64,6 +86,23 @@ export default function ScreenProductFormView() {
   //    por eso productos creados vía API mostraban form vacío) ──
   const [existing, setExisting] = useState(null);
   const [loadingExisting, setLoadingExisting] = useState(isEdit);
+
+  // Clientes reales del backend para los grids "Excepciones por cliente"
+  // y "Override por cliente". Fallback al mock CLIENTS si el endpoint
+  // falla o devuelve vacío (preserva demos sin BD seedeada).
+  const [realClients, setRealClients] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    clientesApi.list()
+      .then(rows => {
+        if (cancelled) return;
+        const real = Array.isArray(rows) ? rows.map(adaptClienteForGrid) : [];
+        if (real.length > 0) setRealClients(real);
+        else setRealClients(CLIENTS);
+      })
+      .catch(() => { if (!cancelled) setRealClients(CLIENTS); });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!isEdit) { setExisting(null); return; }
@@ -710,7 +749,7 @@ export default function ScreenProductFormView() {
               {lang==='es'?'Excepciones por cliente':'Per-client exceptions'}
             </div>
             <div className="client-switch-grid">
-              {CLIENTS.map(c => {
+              {realClients.map(c => {
                 const on = clientOverrides[c.id] === true;
                 return (
                   <button type="button" key={c.id}
@@ -763,7 +802,7 @@ export default function ScreenProductFormView() {
           {lang==='es'?'Override por cliente':'Per-client override'}
         </div>
         <div className="client-price-grid">
-          {CLIENTS.map(c => (
+          {realClients.map(c => (
             <div key={c.id} className="client-price-row">
               <span className="client-price-id">
                 <span>{c.flag}</span>
