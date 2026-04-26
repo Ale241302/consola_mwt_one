@@ -123,7 +123,7 @@ export default function ScreenSupplierDetail() {
         if (!alive) return;
         const adapted = adaptSupplier(data);
         if (adapted) {
-          // 2) Sumar KPIs reales (best-effort, no bloqueante)
+          // 2a) KPIs comerciales (volumen + OCs activas)
           try {
             const k = await proveedoresApi.action('kpis', supplierId);
             if (alive && k) {
@@ -131,6 +131,22 @@ export default function ScreenSupplierDetail() {
               adapted.volumen_transaccionado = Number(k.spend_ytd_usd) || 0;
             }
           } catch (_) { /* KPIs son opcionales */ }
+
+          // 2b) Score ISO real desde la última auditoría (PLB_SUPPLIER_EVAL)
+          //     El campo b.score_iso del modelo Proveedor NO es la fuente
+          //     de verdad — el score real vive en suppliers_iso_evaluations.
+          try {
+            const evals = await proveedoresApi.action('evaluations', supplierId);
+            if (alive && Array.isArray(evals) && evals.length > 0) {
+              // El backend ordena por -created_at, así que [0] es la más reciente.
+              const last = evals[0];
+              adapted.iso_score      = Number(last.score_total) || 0;
+              adapted.last_audit_date = (last.created_at || '').slice(0, 10);
+              adapted.last_audit_periodo  = last.periodo || '';
+              adapted.last_audit_decision = last.decision || '';
+            }
+          } catch (_) { /* sin auditorías → mantiene 0 */ }
+
           if (alive) { setSupplier(adapted); setLoading(false); }
           return;
         }
@@ -430,11 +446,14 @@ export default function ScreenSupplierDetail() {
         <div className="kpi-tile">
           <div className="k-label">{lang==='es'?'Score de calidad ISO':'ISO quality score'}</div>
           <div className="k-value tabular-nums" style={{color: tier.color}}>
-            {supplier.iso_score.toFixed(1)}
+            {(Number(supplier.iso_score) || 0).toFixed(2)}
           </div>
           <div className="k-sub">
             <IconShield size={10} style={{marginRight:4, verticalAlign:'-1px', color: tier.color}}/>
-            {tier.label} · {audit?.audit_date || '—'}
+            {tier.label}
+            {supplier.last_audit_periodo
+              ? ` · ${supplier.last_audit_periodo}`
+              : (supplier.last_audit_date ? ` · ${supplier.last_audit_date}` : ' · —')}
           </div>
         </div>
         <div className="kpi-tile">
