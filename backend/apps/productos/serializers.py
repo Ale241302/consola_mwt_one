@@ -38,6 +38,11 @@ class ProductoListSerializer(serializers.ModelSerializer):
             # Imagen principal (gallery[0]). El FE la renderiza como thumb
             # en el grid; viene como key MinIO para usar con /api/storage/download/
             "imagen_url",
+            # Ficha técnica (JSON) — necesaria para que el card del listado
+            # de productos en BrandDetail muestre capellada/suela/color/etc.
+            # Sin esto el frontend pintaba todas las specs como "—" porque
+            # esos campos viven dentro de `especificaciones`, no como columnas.
+            "especificaciones",
         )
 
 

@@ -29,20 +29,30 @@ import {
 } from "../data/mockData.js";
 
 // Backend (ProductoListSerializer) → shape que usa el grid de cards.
-// El backend list trae solo campos básicos (sku, nombre, precio, marca);
-// las specs detalladas (capellada, suela, etc.) viven en el detalle del
-// producto. Mostramos '' en las específicas para no romper el render.
+// Las specs (capellada, suela, color, normativa, segmento, cierre,
+// antiperforante, tipo_puntera, tipo_calzado) viven dentro del
+// JSONField `especificaciones`. El backend ahora lo expone en el list
+// serializer; aquí lo desempaquetamos al shape plano que el card espera.
 function adaptProductoFromApi(r) {
+  const e = (r.especificaciones && typeof r.especificaciones === 'object') ? r.especificaciones : {};
   return {
     id:                r.id,
     sku:               r.sku || '',
     nombre:            r.nombre || '',
     brand_id:          r.marca_id || null,
-    tipo_calzado:      r.subcategoria || r.categoria || '',
     list_price:        Number(r.precio_lista || 0),
     active_in_markets: r.pais_origen_iso2 ? [r.pais_origen_iso2] : [],
-    capellada: '', tipo_puntera: '', suela: '', normativa: '',
-    color: '', segmento: '', cierre: '', antiperforante: '',
+    // specs (preferimos `especificaciones`; subcategoria/categoria como
+    // fallback de tipo_calzado para datos viejos)
+    tipo_calzado:    e.tipo_calzado    || r.subcategoria || r.categoria || '',
+    tipo_puntera:    e.tipo_puntera    || '',
+    capellada:       e.capellada       || '',
+    suela:           e.suela           || '',
+    normativa:       e.normativa       || '',
+    color:           e.color           || '',
+    segmento:        e.segmento        || '',
+    cierre:          e.cierre          || '',
+    antiperforante:  e.antiperforante  || '',
   };
 }
 import CreateBrandDrawer from "../components/brands/CreateBrandDrawer.jsx";
