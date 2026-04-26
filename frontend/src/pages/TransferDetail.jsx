@@ -144,6 +144,32 @@ export default function ScreenTransferDetail() {
     setConfirmed(transferBase.status === 'received' || transferBase.status === 'reconciled');
   }, [transferBase]);
 
+  // ── Reconciliation math ─────
+  // ⚠️ Este useMemo TIENE que estar ANTES de los early returns. Si se
+  // declara después, React error #310 (hooks count cambia entre el render
+  // de "loading" y el de "ready") → pantalla en blanco.
+  const reco = useMemo(() => {
+    let totalTransfer = 0;
+    let totalReceived = 0;
+    let missingInput  = 0;
+    let deltaLines    = 0;
+    const lineMeta = (lines || []).map(l => {
+      const transfer = Number(l.qty_transfer || 0);
+      const received = l.qty_received === '' ? null : Number(l.qty_received);
+      totalTransfer += transfer;
+      if (received == null) {
+        missingInput += 1;
+        return { ...l, received, delta:0, has_delta:false, pending:true };
+      }
+      totalReceived += received;
+      const delta = received - transfer;
+      const has_delta = delta !== 0;
+      if (has_delta) deltaLines += 1;
+      return { ...l, received, delta, has_delta, pending:false };
+    });
+    return { totalTransfer, totalReceived, missingInput, deltaLines, lineMeta };
+  }, [lines]);
+
   // ── Early states ──
   if (isUuid && loadingBe && !transferBase) {
     return (
@@ -179,29 +205,6 @@ export default function ScreenTransferDetail() {
   const lmeta    = LEGAL_CONTEXT_META[transferBase.legal_context] || { label: transferBase.legal_context, color:'#64748B' };
   const smeta    = TRANSFER_STATUS_META[status] || TRANSFER_STATUS_META.planned;
   const totBase  = getTransferTotals(transferBase);
-
-  // ── Reconciliation math ─────
-  const reco = useMemo(() => {
-    let totalTransfer = 0;
-    let totalReceived = 0;
-    let missingInput  = 0;
-    let deltaLines    = 0;
-    const lineMeta = lines.map(l => {
-      const transfer = Number(l.qty_transfer || 0);
-      const received = l.qty_received === '' ? null : Number(l.qty_received);
-      totalTransfer += transfer;
-      if (received == null) {
-        missingInput += 1;
-        return { ...l, received, delta:0, has_delta:false, pending:true };
-      }
-      totalReceived += received;
-      const delta = received - transfer;
-      const has_delta = delta !== 0;
-      if (has_delta) deltaLines += 1;
-      return { ...l, received, delta, has_delta, pending:false };
-    });
-    return { totalTransfer, totalReceived, missingInput, deltaLines, lineMeta };
-  }, [lines]);
 
   const isActionable = status === 'in_transit' || (status === 'received' && !confirmed);
   const canConfirm   = reco.missingInput === 0 && isActionable;
