@@ -25,6 +25,8 @@ import {
   getDaysStockTier,
 } from "../data/mockData.js";
 import CreateTransferDrawer from "../components/inventario/CreateTransferDrawer.jsx";
+import ReceiveBatchModal   from "../components/inventario/ReceiveBatchModal.jsx";
+import { createPortal } from "react-dom";
 import { stockApi, nodosApi } from "../lib/api.js";
 
 // ── Helpers backend → UI ────────
@@ -65,7 +67,8 @@ export default function ScreenInventario() {
   const { lang } = useOutletContext();
   const [q, setQ] = useState('');
   const [nodeFilter, setNodeFilter] = useState('ALL');
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen]   = useState(false);
+  const [receiveOpen, setReceiveOpen] = useState(false);
 
   // ── Data desde API (fallback a mock) ────────
   const [apiStock,    setApiStock]    = useState([]);
@@ -161,7 +164,7 @@ export default function ScreenInventario() {
           <button className="btn btn-accent" onClick={()=>setDrawerOpen(true)}>
             <IconSwap size={14}/> {lang==='es'?'Nueva transferencia':'New transfer'}
           </button>
-          <button className="btn">
+          <button className="btn" onClick={()=>setReceiveOpen(true)}>
             <IconPlus size={14}/> {lang==='es'?'Recibir lote':'Receive lot'}
           </button>
         </div>
@@ -376,15 +379,26 @@ export default function ScreenInventario() {
         )}
       </div>
 
-      {/* Drawer */}
+      {/* Drawer · Nueva transferencia */}
       <AnimatePresence>
         {drawerOpen && (
           <CreateTransferDrawer
             lang={lang}
             onClose={()=>setDrawerOpen(false)}
+            onSaved={()=>{ setDrawerOpen(false); load(); }}
           />
         )}
       </AnimatePresence>
+
+      {/* Modal · Recibir lote */}
+      {receiveOpen && createPortal(
+        <ReceiveBatchModal
+          lang={lang}
+          onClose={()=>setReceiveOpen(false)}
+          onSaved={()=>{ setReceiveOpen(false); load(); }}
+        />,
+        document.body
+      )}
     </div>
   );
 }

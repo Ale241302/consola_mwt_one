@@ -1,9 +1,13 @@
 import uuid
-from django.db import connection, transaction
+import logging
+from decimal import Decimal, InvalidOperation
+from django.db import connection, transaction, IntegrityError, DataError
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
+log = logging.getLogger(__name__)
 
 from .models import (
     Stock, Movimiento, TipoMovimientoCat, MotivoCat,
@@ -320,6 +324,99 @@ class StockViewSet(viewsets.ViewSet):
             "committed_rows": committed,
             "status":         log.status,
         })
+
+    # ── Recibir lote (alta/incremento de stock) ─────────────
+    # POST /api/stock/receive_batch/
+    # body: { nodo_id, producto_id, lote?, cantidad,
+    #         costo_unitario_usd?, fecha_vencimiento?, notas? }
+    #
+    # Si ya existe Stock con (nodo_id, producto_id, lote) suma la
+    # cantidad al disponible. Si no, lo crea. Registra Movimiento
+    # tipo='RECEPCION' en la misma transacción.
+    @action(detail=False, methods=["post"], url_path="receive_batch")
+    def receive_batch(self, request):
+        body = request.data or {}
+        nodo_id     = body.get("nodo_id")
+        producto_id = body.get("producto_id")
+        lote        = (body.get("lote") or "").strip()
+        notas       = body.get("notas") or ""
+        fecha_venc  = body.get("fecha_vencimiento") or None
+
+        # Parseo numérico seguro
+        try:
+            cantidad = Decimal(str(body.get("cantidad", 0)))
+        except (InvalidOperation, TypeError):
+            return Response({"detail": "cantidad inválida"}, status=400)
+        try:
+            costo = Decimal(str(body.get("costo_unitario_usd", 0)))
+        except (InvalidOperation, TypeError):
+            costo = Decimal("0")
+
+        if not nodo_id or not producto_id:
+            return Response(
+                {"detail": "nodo_id y producto_id son obligatorios"}, status=400
+            )
+        if cantidad <= 0:
+            return Response({"detail": "cantidad debe ser > 0"}, status=400)
+
+        try:
+            with transaction.atomic():
+                # Buscar Stock existente — el unique (nodo, producto, lote)
+                # garantiza 0 o 1 fila.
+                qs = Stock.objects.filter(
+                    nodo_id=nodo_id, producto_id=producto_id, lote=lote
+                )
+                stock = qs.first()
+                created_new = stock is None
+
+                if created_new:
+                    stock = Stock.objects.create(
+                        id=uuid.uuid4(),
+                        nodo_id=nodo_id,
+                        producto_id=producto_id,
+                        lote=lote,
+                        cantidad_disponible=cantidad,
+                        cantidad_reservada=0,
+                        cantidad_en_transito=0,
+                        costo_unitario_usd=costo,
+                        costo_actual_usd=costo,
+                        fecha_vencimiento=fecha_venc,
+                        is_active=True,
+                    )
+                else:
+                    stock.cantidad_disponible = (stock.cantidad_disponible or 0) + cantidad
+                    if costo and costo > 0:
+                        stock.costo_actual_usd = costo
+                    if fecha_venc:
+                        stock.fecha_vencimiento = fecha_venc
+                    stock.last_movement_at = timezone.now()
+                    stock.save()
+
+                # Registrar Movimiento
+                Movimiento.objects.create(
+                    id=uuid.uuid4(),
+                    tipo="RECEPCION",
+                    motivo="RECIBIR_LOTE",
+                    producto_id=producto_id,
+                    nodo_destino_id=nodo_id,
+                    lote=lote,
+                    cantidad=cantidad,
+                    costo_unitario_usd=costo,
+                    notas=notas,
+                    user_id=getattr(request.user, "id", None),
+                    is_active=True,
+                )
+        except (IntegrityError, DataError) as e:
+            log.warning("receive_batch DB error nodo=%s producto=%s lote=%s : %s",
+                        nodo_id, producto_id, lote, e)
+            return Response({"detail": str(e)}, status=400)
+
+        return Response({
+            "detail":   "OK",
+            "stock_id": str(stock.id),
+            "created":  created_new,
+            "cantidad_disponible": float(stock.cantidad_disponible or 0),
+        }, status=201)
 
 
 # ============================================================
