@@ -56,11 +56,12 @@ import {
 // ── Backend → mock-shape adapters para tabs (Inventario / Transferencias) ──
 function adaptStockRowToInventory(r) {
   return {
-    sku:        r.producto_sku  || '',
-    node_id:    r.nodo_id        || null,
-    qty:        Number(r.cantidad_disponible || 0),
-    value:      Number(r.valor_disponible_usd || 0),
-    days_stock: Number(r.dias_stock_minimo ?? r.rotacion_dias ?? 0),
+    sku:         r.producto_sku  || '',
+    node_id:     r.nodo_id        || null,
+    producto_id: r.producto_id    || null,   // necesario para link → /productos/{id}
+    qty:         Number(r.cantidad_disponible || 0),
+    value:       Number(r.valor_disponible_usd || 0),
+    days_stock:  Number(r.dias_stock_minimo ?? r.rotacion_dias ?? 0),
     // nombre de producto fallback (PRODUCTS mock no tendrá los SKUs reales)
     _producto_nombre: r.producto_nombre || '',
   };
@@ -378,7 +379,13 @@ export default function ScreenNodoDetail() {
             exit   ={{ opacity: 0, y: -4, transition: { duration: 0.12 } }}
           >
             {tab === 'overview'    && <OverviewTab node={node} inventory={inventory} transfers={transfers} lang={lang}/>}
-            {tab === 'inventory'   && <InventoryTab inventory={inventory} lang={lang}/>}
+            {tab === 'inventory'   && (
+              <InventoryTab
+                inventory={inventory}
+                lang={lang}
+                onProductClick={(r) => r.producto_id && navigate(`/productos/${r.producto_id}`)}
+              />
+            )}
             {tab === 'transfers'   && <TransfersTab transfers={transfers} nodeId={nodeId} lang={lang}/>}
             {tab === 'automations' && <AutomationsTab autos={autos} lang={lang}/>}
             {tab === 'files'       && <FilesTab files={files} lang={lang} navigate={navigate}/>}
@@ -496,7 +503,7 @@ function OverviewTab({ node, inventory, transfers, lang }) {
 }
 
 /* ─────────────── Tab: Inventario (semáforo días stock) ─────────────── */
-function InventoryTab({ inventory, lang }) {
+function InventoryTab({ inventory, lang, onProductClick }) {
   const totalValue = inventory.reduce((a,r)=>a+(r.value||0), 0);
   const totalUnits = inventory.reduce((a,r)=>a+(r.qty||0),  0);
   return (
@@ -525,8 +532,14 @@ function InventoryTab({ inventory, lang }) {
               const productName = p?.name || r._producto_nombre || '—';
               const band = r.days_stock >= 35 ? 'green' : r.days_stock >= 21 ? 'amber' : 'red';
               const bandLabel = band === 'green' ? (lang==='es'?'Saludable':'Healthy') : band === 'amber' ? (lang==='es'?'Seguir':'Watch') : (lang==='es'?'Resurtir':'Restock');
+              const clickable = !!(r.producto_id && onProductClick);
               return (
-                <tr key={`${r.sku || 'row'}-${i}`}>
+                <tr
+                  key={`${r.sku || 'row'}-${i}`}
+                  onClick={clickable ? () => onProductClick(r) : undefined}
+                  style={clickable ? { cursor: 'pointer' } : undefined}
+                  title={clickable ? (lang==='es'?'Ver detalle del producto':'View product detail') : undefined}
+                >
                   <td style={{font:'600 12.5px/1.2 var(--font-mono)', color:'var(--interactive)'}}>{r.sku || '—'}</td>
                   <td>{productName}</td>
                   <td className="td-num">{(r.qty || 0).toLocaleString()}</td>

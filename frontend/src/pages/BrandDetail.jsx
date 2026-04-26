@@ -23,10 +23,28 @@ import {
   IconPlus, IconUpload, IconTag, IconPercent, IconX, IconSearch,
 } from "../lib/icons.jsx";
 import { fmtMoney, fmtMoneyDetail, fmtShortDate } from "../lib/i18n.js";
-import { marcasApi } from "../lib/api.js";
+import { marcasApi, productosApi } from "../lib/api.js";
 import {
   BRANDS, LEGAL_ENTITIES, EXPEDIENTES, BRAND_PRODUCTS, BRAND_ATTRIBUTES, OCS,
 } from "../data/mockData.js";
+
+// Backend (ProductoListSerializer) → shape que usa el grid de cards.
+// El backend list trae solo campos básicos (sku, nombre, precio, marca);
+// las specs detalladas (capellada, suela, etc.) viven en el detalle del
+// producto. Mostramos '' en las específicas para no romper el render.
+function adaptProductoFromApi(r) {
+  return {
+    id:                r.id,
+    sku:               r.sku || '',
+    nombre:            r.nombre || '',
+    brand_id:          r.marca_id || null,
+    tipo_calzado:      r.subcategoria || r.categoria || '',
+    list_price:        Number(r.precio_lista || 0),
+    active_in_markets: r.pais_origen_iso2 ? [r.pais_origen_iso2] : [],
+    capellada: '', tipo_puntera: '', suela: '', normativa: '',
+    color: '', segmento: '', cierre: '', antiperforante: '',
+  };
+}
 import CreateBrandDrawer from "../components/brands/CreateBrandDrawer.jsx";
 import ProductMassiveUpload from "../components/brands/ProductMassiveUpload.jsx";
 import BrandPricingConsole from "../components/brands/BrandPricingConsole.jsx";
@@ -161,10 +179,26 @@ export default function ScreenBrandDetail() {
 
   // ── TODOS los hooks ANTES de los returns condicionales (regla React) ──
   const bid = brand?.id;
-  const products = useMemo(
-    () => bid ? BRAND_PRODUCTS.filter(p => p.brand_id === bid) : [],
-    [bid]
-  );
+
+  // Productos reales del backend (filtrados por marca). Fallback al mock
+  // solo si la marca tiene UUID demo conocido y el backend no devuelve nada.
+  const [products, setProducts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!bid) { setProducts([]); return; }
+    productosApi.list({ marca: bid })
+      .then(rows => {
+        if (cancelled) return;
+        const real = Array.isArray(rows) ? rows.map(adaptProductoFromApi) : [];
+        if (real.length > 0) setProducts(real);
+        else setProducts(BRAND_PRODUCTS.filter(p => p.brand_id === bid));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProducts(BRAND_PRODUCTS.filter(p => p.brand_id === bid));
+      });
+    return () => { cancelled = true; };
+  }, [bid]);
   const expedientes = useMemo(
     () => bid ? EXPEDIENTES.filter(e => e.brand_id === bid) : [],
     [bid]
@@ -400,6 +434,7 @@ export default function ScreenBrandDetail() {
                 products={products}
                 onAddManual={()=>setShowNewProd(true)}
                 onMassUpload={()=>setMassUp(true)}
+                onProductClick={(p) => navigate(`/productos/${p.id}`)}
               />
             </motion.div>
           )}
@@ -594,7 +629,7 @@ function ResumenTab({ lang, brand, kpis, flags, expedientes }) {
 /* ═══════════════════════════════════════════════════════════════
    TAB · Productos — grid con specs + alta + masivo
    ═══════════════════════════════════════════════════════════════ */
-function ProductosTab({ lang, products, onAddManual, onMassUpload }) {
+function ProductosTab({ lang, products, onAddManual, onMassUpload, onProductClick }) {
   const [q, setQ] = useState('');
   const filtered = useMemo(() => {
     const n = q.trim().toLowerCase();
@@ -643,6 +678,16 @@ function ProductosTab({ lang, products, onAddManual, onMassUpload }) {
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0, transition: { delay: idx * 0.03 } }}
               whileHover={{ y: -2 }}
+              onClick={() => onProductClick && onProductClick(p)}
+              style={{ cursor: onProductClick ? 'pointer' : 'default' }}
+              role={onProductClick ? 'button' : undefined}
+              tabIndex={onProductClick ? 0 : undefined}
+              onKeyDown={(e) => {
+                if (onProductClick && (e.key === 'Enter' || e.key === ' ')) {
+                  e.preventDefault();
+                  onProductClick(p);
+                }
+              }}
             >
               <div className="product-card-head">
                 <div className="product-sku mono-sm">{p.sku}</div>
