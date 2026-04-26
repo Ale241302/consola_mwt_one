@@ -74,7 +74,11 @@ function mapProveedorFromApi(r) {
     producto_servicio: cats[0] || '—',
     clase:  TIPO_API_TO_CLASE[r.tipo] || 'ESTANDAR',
     status: ESTADO_API_TO_UI[r.estado] || 'EN_SELECCION',
-    iso_score: Number(r.rating) || 0,
+    // Score ISO real desde la última auditoría (suppliers_iso_evaluations).
+    // Si no hay auditorías, el backend devuelve null → cae a 0.
+    iso_score: r.iso_score_real != null ? Number(r.iso_score_real) : 0,
+    iso_decision: r.iso_decision_real || '',
+    iso_periodo:  r.iso_periodo_real  || '',
     volumen_transaccionado: 0,
     expedientes_activos: 0,
     lead_time_real:     lt,

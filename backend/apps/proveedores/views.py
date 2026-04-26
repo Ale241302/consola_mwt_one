@@ -40,7 +40,31 @@ class ProveedorViewSet(viewsets.ViewSet):
         q = request.query_params.get("q")
         if q:
             qs = qs.filter(razon_social__icontains=q)
-        return Response(ProveedorListSerializer(qs, many=True).data)
+
+        # ── Score ISO real desde la última auditoría (PLB_SUPPLIER_EVAL).
+        # Una sola query con DISTINCT ON, no N+1. Pasamos el dict por
+        # context al list serializer, que expone iso_score_real.
+        last_eval_by_supplier = {}
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT DISTINCT ON (supplier_id)
+                       supplier_id, score_total, decision, periodo, created_at
+                FROM proveedores.suppliers_iso_evaluations
+                WHERE is_active = TRUE
+                ORDER BY supplier_id, created_at DESC
+            """)
+            for sup_id, score, decision, periodo, created_at in c.fetchall():
+                last_eval_by_supplier[str(sup_id)] = {
+                    "score":   float(score) if score is not None else None,
+                    "decision": decision or "",
+                    "periodo":  periodo or "",
+                    "fecha":    created_at.date().isoformat() if created_at else "",
+                }
+
+        return Response(ProveedorListSerializer(
+            qs, many=True,
+            context={"last_eval_by_supplier": last_eval_by_supplier},
+        ).data)
 
     def retrieve(self, request, pk=None):
         try:

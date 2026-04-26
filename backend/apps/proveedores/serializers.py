@@ -64,6 +64,12 @@ def _is_admin(request) -> bool:
 
 
 class ProveedorListSerializer(serializers.ModelSerializer):
+    # Score ISO derivado de la última auditoría real
+    # (PLB_SUPPLIER_EVAL). El view inyecta el dict por context.
+    iso_score_real    = serializers.SerializerMethodField()
+    iso_decision_real = serializers.SerializerMethodField()
+    iso_periodo_real  = serializers.SerializerMethodField()
+
     class Meta:
         model  = Proveedor
         fields = (
@@ -72,7 +78,23 @@ class ProveedorListSerializer(serializers.ModelSerializer):
             "lead_time_dias", "incoterm_default", "rating",
             "clase", "score_iso", "producto_servicio",
             "is_active", "updated_at",
+            # Anotaciones dinámicas
+            "iso_score_real", "iso_decision_real", "iso_periodo_real",
         )
+
+    def _last_eval(self, obj):
+        m = (self.context or {}).get("last_eval_by_supplier") or {}
+        return m.get(str(obj.id)) or {}
+
+    def get_iso_score_real(self, obj):
+        v = self._last_eval(obj).get("score")
+        return v if v is not None else None
+
+    def get_iso_decision_real(self, obj):
+        return self._last_eval(obj).get("decision") or ""
+
+    def get_iso_periodo_real(self, obj):
+        return self._last_eval(obj).get("periodo") or ""
 
 
 class ProveedorSerializer(serializers.ModelSerializer):
