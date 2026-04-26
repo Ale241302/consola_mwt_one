@@ -116,7 +116,15 @@ class TransferenciaViewSet(viewsets.ViewSet):
         return Response(data)
 
     def create(self, request):
-        import traceback
+        import traceback, sys
+        # Debug: forzamos print a stderr para que SIEMPRE aparezca en
+        # docker compose logs aunque LOGGING esté silenciado.
+        print(">>> Transferencia.create CALLED", file=sys.stderr, flush=True)
+        try:
+            print(">>> request.data:", dict(request.data), file=sys.stderr, flush=True)
+        except Exception as _e:
+            print(">>> request.data crash:", _e, file=sys.stderr, flush=True)
+
         data = {**request.data}
         # Compatibilidad: el FE envió por error `nodo_origen_id`/`nodo_destino_id`
         # antes de mapear a los nombres canónicos. Los normalizamos acá
@@ -138,6 +146,10 @@ class TransferenciaViewSet(viewsets.ViewSet):
         try:
             s.is_valid(raise_exception=True)
         except Exception as e:
+            print(">>> Transferencia.create VALIDATION FAIL:", e,
+                  file=sys.stderr, flush=True)
+            print(">>> errors:", getattr(s, "errors", None),
+                  file=sys.stderr, flush=True)
             log.warning("Transferencia.create validation error payload=%s : %s", dict(data), e)
             return Response({"detail": "Validación: " + str(e)}, status=400)
 
@@ -159,6 +171,14 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 )
         except Exception as e:
             tb = traceback.format_exc()
+            # Forzamos a stderr — los handlers de logging del proyecto
+            # estaban tragando este error.
+            print(">>> Transferencia.create FAIL payload:", dict(data),
+                  file=sys.stderr, flush=True)
+            print(">>> ERROR:", type(e).__name__, str(e),
+                  file=sys.stderr, flush=True)
+            print(">>> TRACEBACK:", file=sys.stderr, flush=True)
+            print(tb, file=sys.stderr, flush=True)
             log.error("Transferencia.create FAIL payload=%s\nERROR: %s\nTRACE:\n%s",
                       dict(data), e, tb)
             return Response({
@@ -166,6 +186,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 "type":   type(e).__name__,
                 "hint":   "Error al crear la transferencia. Revisar logs del backend.",
             }, status=400)
+        print(">>> Transferencia.create OK id:", new_id, file=sys.stderr, flush=True)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
