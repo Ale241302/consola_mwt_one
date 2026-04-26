@@ -10,8 +10,8 @@
 //
 // No se persiste — demo. Botón "Guardar" lleva al dashboard.
 // ─────────────────────────────────────────────────────────────
-import React, { useState, useMemo } from "react";
-import { useNavigate, useOutletContext } from "react-router-dom";
+import React, { useState, useMemo, useEffect } from "react";
+import { useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   IconChevLeft, IconCheck, IconShield, IconTruck, IconUser, IconGlobe,
@@ -47,8 +47,10 @@ const PAISES = [
 export default function ScreenSupplierFormView() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
+  const { supplierId } = useParams();           // si existe → modo EDIT
+  const isEdit = Boolean(supplierId);
 
-  // Sugerir siguiente ID disponible
+  // Sugerir siguiente ID disponible (solo para modo CREATE)
   const suggestedId = useMemo(() => {
     const nums = SUPPLIERS.map(s => parseInt(s.id.split('-')[1], 10)).filter(Boolean);
     const next = (nums.length ? Math.max(...nums) : 0) + 1;
@@ -68,6 +70,40 @@ export default function ScreenSupplierFormView() {
     lead_time_estimado: '',
     certs: [],
   });
+  const [loadingExisting, setLoadingExisting] = useState(isEdit);
+
+  // Modo EDIT: traer datos del backend y poblar el form.
+  useEffect(() => {
+    if (!isEdit) return;
+    let alive = true;
+    (async () => {
+      try {
+        const b = await proveedoresApi.get(supplierId);
+        if (!alive || !b) return;
+        setForm({
+          id: b.id,
+          nombre_comercial:   b.nombre_comercial   || '',
+          razon_social:       b.razon_social       || '',
+          country_code:       b.pais_iso2          || 'BR',
+          producto_servicio:  b.producto_servicio  || '',
+          // Backend usa CRITICO/NORMAL/EVENTUAL; el form viejo usa
+          // CRITICO/IMPORTANTE/ESTANDAR. Cualquier valor desconocido
+          // cae en IMPORTANTE para no perder data.
+          clase: ['CRITICO','IMPORTANTE','ESTANDAR'].includes(b.clase) ? b.clase : 'IMPORTANTE',
+          contacto_nombre:    b.contacto_nombre    || '',
+          contacto_email:     b.contacto_email     || '',
+          contacto_tel:       b.contacto_tel       || '',
+          lead_time_estimado: b.lead_time_dias != null ? String(b.lead_time_dias) : '',
+          certs: Array.isArray(b.certificaciones) ? b.certificaciones : [],
+        });
+      } catch (e) {
+        alert((lang==='es' ? 'No se pudo cargar el proveedor: ' : 'Could not load supplier: ') + (e?.message || e));
+      } finally {
+        if (alive) setLoadingExisting(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [isEdit, supplierId, lang]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const toggleCert = (id) => setForm(f => ({
@@ -106,8 +142,13 @@ export default function ScreenSupplierFormView() {
       certificaciones:   form.certs || [],
     };
     try {
-      await proveedoresApi.create(body);
-      navigate('/proveedores');
+      if (isEdit) {
+        await proveedoresApi.update(supplierId, body);
+        navigate(`/proveedores/${supplierId}`);
+      } else {
+        await proveedoresApi.create(body);
+        navigate('/proveedores');
+      }
     } catch (e) {
       let msg = String(e?.message || e);
       try {
@@ -119,7 +160,10 @@ export default function ScreenSupplierFormView() {
         }
       } catch (_) {}
       setSaveError(msg);
-      alert((lang==='es' ? 'No se pudo crear el proveedor: ' : 'Could not create supplier: ') + msg);
+      const verb = isEdit
+        ? (lang==='es' ? 'No se pudo actualizar el proveedor: ' : 'Could not update supplier: ')
+        : (lang==='es' ? 'No se pudo crear el proveedor: '      : 'Could not create supplier: ');
+      alert(verb + msg);
     } finally {
       setSaving(false);
     }
@@ -130,25 +174,46 @@ export default function ScreenSupplierFormView() {
       {/* Header */}
       <div className="page-header">
         <div>
-          <button className="btn btn-ghost" style={{marginBottom:8}} onClick={()=>navigate('/proveedores')}>
-            <IconChevLeft size={14}/> {lang==='es'?'Volver a proveedores':'Back to suppliers'}
+          <button className="btn btn-ghost" style={{marginBottom:8}}
+                  onClick={()=> navigate(isEdit ? `/proveedores/${supplierId}` : '/proveedores')}>
+            <IconChevLeft size={14}/>
+            {isEdit
+              ? (lang==='es'?'Volver al proveedor':'Back to supplier')
+              : (lang==='es'?'Volver a proveedores':'Back to suppliers')}
           </button>
           <div className="micro" style={{marginBottom:6}}>
-            {lang==='es'?'ALTA DE PROVEEDOR':'NEW SUPPLIER'}
+            {isEdit
+              ? (lang==='es'?'EDITAR PROVEEDOR':'EDIT SUPPLIER')
+              : (lang==='es'?'ALTA DE PROVEEDOR':'NEW SUPPLIER')}
           </div>
-          <h1 className="page-title">{lang==='es'?'Nuevo Proveedor':'New Supplier'}</h1>
+          <h1 className="page-title">
+            {isEdit
+              ? (lang==='es'?'Editar Proveedor':'Edit Supplier')
+              : (lang==='es'?'Nuevo Proveedor':'New Supplier')}
+          </h1>
           <div className="page-subtitle">
-            {lang==='es'
-              ? 'Registra un proveedor con clasificación ISO 9001, clase operativa y certificaciones iniciales.'
-              : 'Onboard a supplier with ISO 9001 classification, operational class and initial certifications.'}
+            {isEdit
+              ? (lang==='es'
+                  ? 'Actualiza los datos del proveedor. Solo se guardan los campos que cambies.'
+                  : 'Update supplier data. Only changed fields are persisted.')
+              : (lang==='es'
+                  ? 'Registra un proveedor con clasificación ISO 9001, clase operativa y certificaciones iniciales.'
+                  : 'Onboard a supplier with ISO 9001 classification, operational class and initial certifications.')}
           </div>
         </div>
         <div className="flex ai-center gap-2">
-          <button className="btn" onClick={()=>navigate('/proveedores')}>
+          <button className="btn"
+                  onClick={()=> navigate(isEdit ? `/proveedores/${supplierId}` : '/proveedores')}>
             {lang==='es'?'Cancelar':'Cancel'}
           </button>
-          <button className="btn btn-accent" onClick={handleSave} disabled={!canSave}>
-            <IconCheck size={14}/> {lang==='es'?'Crear proveedor':'Create supplier'}
+          <button className="btn btn-accent" onClick={handleSave}
+                  disabled={!canSave || saving || loadingExisting}>
+            <IconCheck size={14}/>
+            {saving
+              ? (lang==='es'?'Guardando…':'Saving…')
+              : isEdit
+                ? (lang==='es'?'Guardar cambios':'Save changes')
+                : (lang==='es'?'Crear proveedor':'Create supplier')}
           </button>
         </div>
       </div>

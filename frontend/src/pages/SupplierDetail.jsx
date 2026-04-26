@@ -19,6 +19,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   IconChevLeft, IconPackage, IconFolder, IconShield, IconTruck,
   IconDollar, IconMail, IconFileText, IconPercent, IconAlert, IconCheck,
+  IconPencil,
 } from "../lib/icons.jsx";
 import { fmtMoney } from "../lib/i18n.js";
 import {
@@ -202,9 +203,11 @@ export default function ScreenSupplierDetail() {
             {lang==='es'?'DETALLE DE PROVEEDOR':'SUPPLIER DETAIL'}
           </div>
           <div className="sup-detail-title">
-            <span className="sup-detail-flag">{supplier.flag}</span>
             <h1 className="page-title" style={{margin:0}}>{supplier.nombre_comercial}</h1>
-            <span className="mono-sm" style={{color:'var(--text-tertiary)'}}>{supplier.id}</span>
+            {/* Solo mostramos el ID si es un código humano (PRV-XXX), nunca el UUID crudo */}
+            {supplier.id && !/^[0-9a-f-]{36}$/i.test(supplier.id) && (
+              <span className="mono-sm" style={{color:'var(--text-tertiary)'}}>{supplier.id}</span>
+            )}
           </div>
           <div className="page-subtitle">
             {supplier.razon_social} · {supplier.pais}
@@ -224,9 +227,18 @@ export default function ScreenSupplierDetail() {
           </div>
         </div>
         <div className="flex ai-center gap-2">
-          <a className="btn" href={`mailto:${supplier.contacto_email}`}>
-            <IconMail size={14}/> {supplier.contacto_nombre || supplier.contacto_email}
-          </a>
+          {/* Solo editable cuando viene del backend (UUID), no mocks SUP-XXX */}
+          {/^[0-9a-f-]{36}$/i.test(supplier.id) && (
+            <button className="btn"
+                    onClick={()=>navigate(`/proveedores/${supplier.id}/editar`)}>
+              <IconPencil size={14}/> {lang==='es'?'Editar':'Edit'}
+            </button>
+          )}
+          {supplier.contacto_email && (
+            <a className="btn" href={`mailto:${supplier.contacto_email}`}>
+              <IconMail size={14}/> {supplier.contacto_nombre || supplier.contacto_email}
+            </a>
+          )}
         </div>
       </div>
 

@@ -63,7 +63,10 @@ function mapProveedorFromApi(r) {
   const cert = Array.isArray(r.certificaciones) ? r.certificaciones : [];
   const lt   = Number(r.lead_time_dias) || 0;
   return {
-    id: r.codigo || r.id,
+    // UUID real (navegación, update, delete)
+    id: r.id,
+    // Código humano para mostrar (si no hay, se omite el chip)
+    codigo: r.codigo || '',
     nombre_comercial: r.nombre_comercial || r.razon_social || '',
     razon_social:     r.razon_social || '',
     pais:             COUNTRY_NAME[iso] || iso || '',
@@ -153,7 +156,7 @@ export default function ScreenProveedores() {
         if (claseFilter !== 'ALL' && s.clase !== claseFilter) return false;
         if (statusFilter !== 'ALL' && s.status !== statusFilter) return false;
         if (!needle) return true;
-        const hay = [s.id, s.nombre_comercial, s.razon_social, s.pais, s.producto_servicio].join(' ').toLowerCase();
+        const hay = [s.codigo, s.nombre_comercial, s.razon_social, s.pais, s.producto_servicio].join(' ').toLowerCase();
         return hay.includes(needle);
       })
       .sort((a, b) => {
@@ -277,16 +280,13 @@ export default function ScreenProveedores() {
                 style={{ cursor:'pointer' }}
                 onClick={()=>navigate(`/proveedores/${s.id}`)}
               >
-                {/* Head: flag + nombre + id */}
+                {/* Head: nombre + país + código (solo si existe) */}
                 <div className="sup-head">
-                  <div className="sup-flag-wrap">
-                    <span className="sup-flag">{s.flag}</span>
-                  </div>
                   <div className="sup-head-body">
                     <div className="heading-md sup-name">{s.nombre_comercial}</div>
                     <div className="caption sup-country">{s.pais}</div>
                   </div>
-                  <div className="mono-sm sup-id">{s.id}</div>
+                  {s.codigo && <div className="mono-sm sup-id">{s.codigo}</div>}
                 </div>
 
                 {/* Clase + status */}

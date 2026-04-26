@@ -10,15 +10,16 @@
 // Tabla de códigos:
 //   código · descripción · alcance · MOQ · % · uso X/Y · vigencia · ahorro total · estado
 // ─────────────────────────────────────────────────────────────
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  IconPercent, IconPlus, IconCheck, IconX, IconPackage, IconTag,
+  IconPercent, IconPlus, IconCheck, IconX, IconPackage, IconTag, IconTrash,
 } from "../../lib/icons.jsx";
 import { fmtMoney } from "../../lib/i18n.js";
 import {
   SUPPLIER_PROMO_CODES, SUPPLIER_PRODUCTS,
 } from "../../data/mockData.js";
+import { apiFetch, proveedoresApi, getToken } from "../../lib/api.js";
 
 const STATUS_META = {
   ACTIVO:   { label:'Activo',   color:'#0E8A6D', soft:'rgba(14,138,109,0.12)' },
@@ -26,20 +27,93 @@ const STATUS_META = {
   AGOTADO:  { label:'Agotado',  color:'#B45309', soft:'rgba(180,83,9,0.12)' },
 };
 
+// ── Adapters BE ↔ FE ──────────────────────────────────────────
+// Backend SupplierPromoCode (51_proveedores_audit.sql §3) →
+// el shape interno que usa la tabla y el form.
+function adaptCodeBE(b) {
+  if (!b) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  let status = 'ACTIVO';
+  if (b.is_active === false) status = 'EXPIRADO';
+  else if (b.vigente_hasta && b.vigente_hasta < today) status = 'EXPIRADO';
+  else if (b.max_usos && b.usos_actuales >= b.max_usos) status = 'AGOTADO';
+  const isSkuScope = b.scope && b.scope !== 'GLOBAL'
+                     && Array.isArray(b.scope_ids) && b.scope_ids.length > 0;
+  return {
+    id:           b.id,
+    supplier_id:  b.proveedor_id,
+    codigo:       b.codigo,
+    descripcion:  b.descripcion || '',
+    scope:        isSkuScope ? b.scope_ids : 'ALL',
+    moq:          Number(b.min_volumen) || 0,
+    pct:          Number(b.valor_pct)   || 0,
+    uses:         Number(b.usos_actuales) || 0,
+    limit:        Number(b.max_usos)      || 0,
+    start:        b.vigente_desde || '',
+    end:          b.vigente_hasta || '',
+    status,
+    ahorro_total: 0,            // backend no tracking yet
+  };
+}
+
+// FE form → backend POST body
+function buildPromoBody({ form, supplierId }) {
+  const isAll = form.scope === 'ALL';
+  return {
+    proveedor_id:    supplierId,
+    codigo:          form.codigo.toUpperCase().trim(),
+    descripcion:     form.descripcion || '',
+    tipo_descuento:  'PCT',
+    valor_pct:       Number(form.pct) || 0,
+    valor_fijo_usd:  0,
+    min_volumen:     Number(form.moq) || 0,
+    vigente_desde:   form.start || null,
+    vigente_hasta:   form.end   || null,
+    max_usos:        Number(form.limit) || null,
+    scope:           isAll ? 'GLOBAL'    : 'PRODUCTO',
+    scope_ids:       isAll ? []          : (form.scope_skus || []),
+    reglas_json:     {},
+  };
+}
+
 export default function SupplierPromoEngine({ lang='es', supplierId, supplierName='', supplierCode='SUP' }) {
-  // Códigos del supplier actual (en memoria — demo)
-  const existingCodes = useMemo(
-    () => SUPPLIER_PROMO_CODES.filter(c => c.supplier_id === supplierId),
-    [supplierId]
+  // Si supplierId NO es UUID (es un mock SUP-XXX), seguimos con el mock
+  // como antes para no romper la demo.
+  const isUuid = /^[0-9a-f-]{36}$/i.test(supplierId || '');
+
+  // ── Estado backend ──────────────────────────────────────────
+  const [backendCodes, setBackendCodes] = useState([]);
+  const [loading, setLoading] = useState(isUuid);
+  const [loadError, setLoadError] = useState(null);
+
+  // Códigos mock (legacy demo)
+  const mockCodes = useMemo(
+    () => isUuid ? [] : SUPPLIER_PROMO_CODES.filter(c => c.supplier_id === supplierId),
+    [supplierId, isUuid]
   );
   const supplierSkus = useMemo(
     () => Array.from(new Set(SUPPLIER_PRODUCTS.filter(p => p.supplier_id === supplierId).map(p => p.sku))),
     [supplierId]
   );
 
-  // Local state para códigos agregados en la sesión
-  const [sessionCodes, setSessionCodes] = useState([]);
-  const allCodes = [...sessionCodes, ...existingCodes];
+  const reload = useCallback(async () => {
+    if (!isUuid) return;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const data = await proveedoresApi.action('promo_codes', supplierId);
+      const list = Array.isArray(data) ? data.map(adaptCodeBE).filter(Boolean) : [];
+      setBackendCodes(list);
+    } catch (e) {
+      setLoadError(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }, [supplierId, isUuid]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const allCodes = [...backendCodes, ...mockCodes];
 
   // Form
   const [form, setForm] = useState({
@@ -64,25 +138,76 @@ export default function SupplierPromoEngine({ lang='es', supplierId, supplierNam
 
   const canSave = form.codigo.trim().length >= 3 && form.pct > 0 && form.pct <= 100 && form.limit > 0;
 
-  const handleAdd = () => {
-    const scope = form.scope === 'ALL' ? 'ALL' : form.scope_skus;
-    const newCode = {
-      id: `PC-SES-${Date.now()}`,
-      supplier_id: supplierId,
-      codigo: form.codigo.toUpperCase().replace(/\s+/g, '-'),
-      descripcion: form.descripcion || (lang==='es'?'Código sin descripción':'Code without description'),
-      scope,
-      moq: parseInt(form.moq, 10) || 0,
-      pct: parseFloat(form.pct) || 0,
-      uses: 0,
-      limit: parseInt(form.limit, 10) || 1,
-      start: form.start,
-      end: form.end,
-      status: 'ACTIVO',
-      ahorro_total: 0,
-    };
-    setSessionCodes(prev => [newCode, ...prev]);
-    setForm(f => ({ ...f, codigo:'', descripcion:'', scope_skus:[] }));
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+
+  const handleAdd = async () => {
+    // Demo (mock supplier_id no-UUID): comportamiento legacy en memoria
+    if (!isUuid) {
+      const scope = form.scope === 'ALL' ? 'ALL' : form.scope_skus;
+      const newCode = {
+        id: `PC-SES-${Date.now()}`,
+        supplier_id: supplierId,
+        codigo: form.codigo.toUpperCase().replace(/\s+/g, '-'),
+        descripcion: form.descripcion || (lang==='es'?'Código sin descripción':'Code without description'),
+        scope,
+        moq: parseInt(form.moq, 10) || 0,
+        pct: parseFloat(form.pct) || 0,
+        uses: 0,
+        limit: parseInt(form.limit, 10) || 1,
+        start: form.start,
+        end: form.end,
+        status: 'ACTIVO',
+        ahorro_total: 0,
+      };
+      setBackendCodes(prev => [newCode, ...prev]);  // reusamos la lista
+      setForm(f => ({ ...f, codigo:'', descripcion:'', scope_skus:[] }));
+      return;
+    }
+    // Backend real
+    setSaving(true);
+    try {
+      const body = buildPromoBody({ form, supplierId });
+      await proveedoresApi.action('promo_codes', supplierId, body);
+      await reload();
+      setForm(f => ({ ...f, codigo:'', descripcion:'', scope_skus:[] }));
+    } catch (e) {
+      let msg = String(e?.message || e);
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed && typeof parsed === 'object') {
+          msg = Object.entries(parsed)
+            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+            .join('  ·  ');
+        }
+      } catch (_) {}
+      alert((lang==='es' ? 'No se pudo crear el código: ' : 'Could not create code: ') + msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (code) => {
+    if (!isUuid) {
+      // mock-only: quitar de la lista local
+      setBackendCodes(prev => prev.filter(x => x.id !== code.id));
+      return;
+    }
+    if (!window.confirm(
+      (lang==='es' ? '¿Eliminar el código ' : 'Delete code ') + code.codigo + '?'
+    )) return;
+    setDeletingId(code.id);
+    try {
+      await apiFetch(`/proveedores/${supplierId}/promo_codes/${code.id}/`, {
+        method: 'DELETE',
+        token: getToken(),
+      });
+      await reload();
+    } catch (e) {
+      alert((lang==='es' ? 'No se pudo eliminar: ' : 'Could not delete: ') + (e?.message || e));
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   // Sugerencia de código
@@ -226,8 +351,12 @@ export default function SupplierPromoEngine({ lang='es', supplierId, supplierNam
         </div>
 
         <div style={{display:'flex', justifyContent:'flex-end', marginTop:8}}>
-          <button className="btn btn-accent" onClick={handleAdd} disabled={!canSave}>
-            <IconPlus size={14}/> {lang==='es'?'Agregar código':'Add code'}
+          <button className="btn btn-accent" onClick={handleAdd}
+                  disabled={!canSave || saving}>
+            <IconPlus size={14}/>
+            {saving
+              ? (lang==='es'?'Guardando…':'Saving…')
+              : (lang==='es'?'Agregar código':'Add code')}
           </button>
         </div>
       </motion.div>
@@ -239,6 +368,8 @@ export default function SupplierPromoEngine({ lang='es', supplierId, supplierNam
             <div className="heading-md">{lang==='es'?'Códigos de este proveedor':'Codes for this supplier'}</div>
             <div className="caption" style={{color:'var(--text-tertiary)'}}>
               {supplierName} · {allCodes.length} {lang==='es'?'códigos':'codes'}
+              {loading  && <span style={{marginLeft:8}}>· {lang==='es'?'cargando…':'loading…'}</span>}
+              {loadError && <span style={{marginLeft:8, color:'var(--critical)'}}>· {loadError}</span>}
             </div>
           </div>
         </div>
@@ -247,7 +378,9 @@ export default function SupplierPromoEngine({ lang='es', supplierId, supplierNam
           <div className="empty-state" style={{padding:'24px 12px'}}>
             <IconPercent size={20} style={{color:'var(--text-tertiary)'}}/>
             <div className="caption">
-              {lang==='es'?'Sin códigos emitidos aún':'No codes issued yet'}
+              {loading
+                ? (lang==='es'?'Cargando códigos…':'Loading codes…')
+                : (lang==='es'?'Sin códigos emitidos aún':'No codes issued yet')}
             </div>
           </div>
         ) : (
@@ -262,6 +395,7 @@ export default function SupplierPromoEngine({ lang='es', supplierId, supplierNam
                 <th>{lang==='es'?'Vigencia':'Validity'}</th>
                 <th className="ta-right">{lang==='es'?'Ahorro':'Savings'}</th>
                 <th>{lang==='es'?'Estado':'Status'}</th>
+                <th className="ta-right" style={{width:48}}></th>
               </tr>
             </thead>
             <tbody>
@@ -315,6 +449,14 @@ export default function SupplierPromoEngine({ lang='es', supplierId, supplierNam
                               style={{'--phase-color': st.color, '--phase-soft': st.soft}}>
                           <span className="dot"/>{st.label}
                         </span>
+                      </td>
+                      <td className="ta-right">
+                        <button className="btn btn-xs"
+                                title={lang==='es'?'Eliminar código':'Delete code'}
+                                disabled={deletingId === c.id}
+                                onClick={()=>handleDelete(c)}>
+                          <IconTrash size={11}/>
+                        </button>
                       </td>
                     </motion.tr>
                   );

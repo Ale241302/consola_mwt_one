@@ -99,6 +99,7 @@ export default function App() {
         <Route path="/tallas" element={<ScreenSizingEngine />} />
         <Route path="/proveedores" element={<ScreenProveedores />} />
         <Route path="/proveedores/nuevo" element={<ScreenSupplierFormView />} />
+        <Route path="/proveedores/:supplierId/editar" element={<ScreenSupplierFormView />} />
         <Route path="/proveedores/:supplierId" element={<ScreenSupplierDetail />} />
         <Route path="/templates" element={<ScreenEmailTemplates />} />
         <Route path="/notificaciones" element={<ScreenNotificaciones />} />
