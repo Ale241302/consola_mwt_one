@@ -89,7 +89,9 @@ class TransferenciaViewSet(viewsets.ViewSet):
             qs = qs.filter(needs_approval=True)
         has_disc = request.query_params.get("has_discrepancy")
         if has_disc in ("1", "true", "True"):
-            qs = qs.filter(has_discrepancy=True)
+            # has_discrepancy es columna GENERATED en DB y no está como Field
+            # del modelo. Usamos extra(where=…) para filtrar por SQL puro.
+            qs = qs.extra(where=["has_discrepancy = TRUE"])
         q = request.query_params.get("q")
         if q:
             qs = qs.filter(codigo__icontains=q)
@@ -356,7 +358,16 @@ class TransferenciaViewSet(viewsets.ViewSet):
             return Response({"detail": "Transferencia no existe"}, status=404)
 
         body = request.data or {}
-        if t.has_discrepancy and not body.get("reconciled_by_id"):
+        # has_discrepancy es columna GENERATED — la leemos con SQL crudo
+        # (no está en el modelo Django).
+        with connection.cursor() as _c:
+            _c.execute(
+                "SELECT has_discrepancy FROM transfers.transferencia WHERE id = %s",
+                [str(t.id)],
+            )
+            _row = _c.fetchone()
+        _has_disc = bool(_row[0]) if _row else False
+        if _has_disc and not body.get("reconciled_by_id"):
             return Response(
                 {"detail": "reconciled_by_id requerido cuando hay discrepancias"},
                 status=400,

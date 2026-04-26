@@ -1,10 +1,28 @@
+from django.db import connection
 from rest_framework import serializers
 from .models import (
     Transferencia, Linea, Evento, TransferenciaDocumento,
 )
 
 
+def _has_discrepancy_for(obj):
+    """Lee la columna generada has_discrepancy con SQL puro (no está
+    en el modelo Django para evitar que el ORM intente INSERTarla)."""
+    try:
+        with connection.cursor() as c:
+            c.execute(
+                "SELECT has_discrepancy FROM transfers.transferencia "
+                "WHERE id = %s", [str(obj.id)]
+            )
+            row = c.fetchone()
+            return bool(row[0]) if row else False
+    except Exception:
+        return False
+
+
 class TransferenciaListSerializer(serializers.ModelSerializer):
+    has_discrepancy = serializers.SerializerMethodField()
+
     class Meta:
         model  = Transferencia
         fields = (
@@ -17,11 +35,19 @@ class TransferenciaListSerializer(serializers.ModelSerializer):
             "is_active", "updated_at",
         )
 
+    def get_has_discrepancy(self, obj):
+        return _has_discrepancy_for(obj)
+
 
 class TransferenciaSerializer(serializers.ModelSerializer):
+    has_discrepancy = serializers.SerializerMethodField()
+
     class Meta:
         model  = Transferencia
         fields = "__all__"
+
+    def get_has_discrepancy(self, obj):
+        return _has_discrepancy_for(obj)
 
 
 class LineaSerializer(serializers.ModelSerializer):
