@@ -218,11 +218,12 @@ class ProveedorViewSet(viewsets.ViewSet):
                           .filter(supplier_id=pk, is_active=True)
                           .order_by("product_sku"))
 
-                # ── Anotaciones dinámicas (cantidad_12m + ultima_po + nombre) ──
+                # ── Anotaciones dinámicas (cantidad_12m + ultima_po + nombre + id) ──
                 skus = [a.product_sku for a in qs]
-                qty_12m   = {}
-                ultima_po = {}
-                nombres   = {}
+                qty_12m      = {}
+                ultima_po    = {}
+                nombres      = {}
+                producto_ids = {}
 
                 if skus:
                     with connection.cursor() as c:
@@ -257,19 +258,21 @@ class ProveedorViewSet(viewsets.ViewSet):
                         for sku, fecha in c.fetchall():
                             ultima_po[sku] = fecha
 
-                        # Nombres reales del producto (lookup por sku)
+                        # Nombres reales + UUID del producto (lookup por sku)
                         c.execute("""
-                            SELECT sku, COALESCE(nombre, '') FROM productos.producto
+                            SELECT sku, id, COALESCE(nombre, '') FROM productos.producto
                             WHERE sku = ANY(%s) AND is_active = TRUE
                         """, [skus])
-                        for sku, nombre in c.fetchall():
-                            nombres[sku] = nombre
+                        for sku, prod_id, nombre in c.fetchall():
+                            nombres[sku]      = nombre
+                            producto_ids[sku] = prod_id
 
                 ctx = {
-                    "request":   request,
-                    "qty_12m":   qty_12m,
-                    "ultima_po": ultima_po,
-                    "nombres":   nombres,
+                    "request":      request,
+                    "qty_12m":      qty_12m,
+                    "ultima_po":    ultima_po,
+                    "nombres":      nombres,
+                    "producto_ids": producto_ids,
                 }
                 return Response(
                     SupplierProductAssignmentSerializer(qs, many=True, context=ctx).data

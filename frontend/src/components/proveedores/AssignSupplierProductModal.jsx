@@ -17,31 +17,36 @@ import { useRole } from "../../context/RoleContext.jsx";
 
 export default function AssignSupplierProductModal({
   supplierName = "",
-  excludeSkus  = [],          // ya asignados, se filtran del autocomplete
+  excludeSkus  = [],          // ya asignados, se filtran del autocomplete (solo modo create)
+  existing     = null,        // si está, modal entra en modo EDIT (no permite cambiar el SKU)
   lang         = "es",
   onClose,
-  onAssign,                   // async (body) => res
+  onAssign,                   // async (body) => res — FE pasa POST o PATCH según corresponda
 }) {
   const { isAdmin } = useRole();
+  const isEdit = Boolean(existing);
 
   const [allProducts, setAllProducts] = useState([]);
-  const [loadingList, setLoadingList] = useState(true);
-  const [needle, setNeedle]           = useState("");
-  const [selectedSku, setSelectedSku] = useState("");
-  const [selectedName, setSelectedName] = useState("");
+  const [loadingList, setLoadingList] = useState(!isEdit);
+  const [needle, setNeedle]           = useState(
+    isEdit ? `${existing.product_sku} · ${existing.nombre_producto || ""}` : ""
+  );
+  const [selectedSku, setSelectedSku]   = useState(isEdit ? existing.product_sku : "");
+  const [selectedName, setSelectedName] = useState(isEdit ? (existing.nombre_producto || "") : "");
 
   const [form, setForm] = useState({
-    supplier_sku_code: "",
-    moq:               0,
-    base_cost_usd:     "",
-    production_lead_time_days: 0,
-    notas: "",
+    supplier_sku_code:         isEdit ? (existing.supplier_sku_code || "") : "",
+    moq:                       isEdit ? (existing.moq ?? 0) : 0,
+    base_cost_usd:             isEdit && existing.base_cost_usd != null ? String(existing.base_cost_usd) : "",
+    production_lead_time_days: isEdit ? (existing.production_lead_time_days ?? 0) : 0,
+    notas:                     isEdit ? (existing.notas || "") : "",
   });
   const [busy,  setBusy]  = useState(false);
   const [error, setError] = useState(null);
 
-  // Cargar catálogo de productos para el autocomplete
+  // Cargar catálogo de productos para el autocomplete (solo modo CREATE)
   useEffect(() => {
+    if (isEdit) return;            // en edit no se puede cambiar el SKU
     let alive = true;
     (async () => {
       try {
@@ -52,7 +57,7 @@ export default function AssignSupplierProductModal({
       }
     })();
     return () => { alive = false; };
-  }, []);
+  }, [isEdit]);
 
   // Productos filtrables (no asignados aún + match con búsqueda)
   const excluded = useMemo(() => new Set(excludeSkus), [excludeSkus]);
@@ -83,14 +88,18 @@ export default function AssignSupplierProductModal({
     setBusy(true);
     try {
       const body = {
-        product_sku:       selectedSku,
         supplier_sku_code: form.supplier_sku_code || null,
         moq:               Number(form.moq) || 0,
         production_lead_time_days: Number(form.production_lead_time_days) || 0,
         notas:             form.notas || null,
       };
-      if (isAdmin && form.base_cost_usd !== "") {
-        body.base_cost_usd = Number(form.base_cost_usd);
+      // El SKU solo se envía en modo CREATE — en EDIT está bloqueado.
+      if (!isEdit) body.product_sku = selectedSku;
+      if (isAdmin) {
+        // Permitir vaciar el costo en modo edit enviando null
+        body.base_cost_usd = form.base_cost_usd === ""
+          ? null
+          : Number(form.base_cost_usd);
       }
       await onAssign(body);
       onClose?.();
@@ -144,26 +153,32 @@ export default function AssignSupplierProductModal({
             font: "600 11px/1 inherit", color: "#3083FE",
             letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 8,
           }}>
-            {lang === "es" ? "ASIGNAR SKU AL PROVEEDOR" : "ASSIGN SKU TO SUPPLIER"}
+            {isEdit
+              ? (lang === "es" ? "EDITAR ASIGNACIÓN" : "EDIT ASSIGNMENT")
+              : (lang === "es" ? "ASIGNAR SKU AL PROVEEDOR" : "ASSIGN SKU TO SUPPLIER")}
           </div>
           <div style={{ font: "700 17px/1.3 inherit", color: "#0F1B3D", marginBottom: 4 }}>
-            {lang === "es" ? "Catálogo de abastecimiento" : "Supply catalog"}
+            {isEdit
+              ? (lang === "es" ? `Editar términos del SKU ${existing.product_sku}` : `Edit terms for ${existing.product_sku}`)
+              : (lang === "es" ? "Catálogo de abastecimiento" : "Supply catalog")}
           </div>
           <div style={{ font: "500 12.5px/1.4 inherit", color: "#64748B" }}>
-            {(lang === "es" ? "Definí los términos comerciales que esta fábrica usa para el SKU. " : "Define the commercial terms this factory uses for the SKU. ")}
+            {isEdit
+              ? (lang === "es" ? "Actualizá los términos comerciales. El SKU MWT no se puede cambiar — eliminá y reasigná si querés otro. " : "Update commercial terms. MWT SKU cannot change — unassign and reassign for a different one. ")
+              : (lang === "es" ? "Definí los términos comerciales que esta fábrica usa para el SKU. " : "Define the commercial terms this factory uses for the SKU. ")}
             {supplierName && <strong style={{ color: "#0F1B3D" }}>{supplierName}</strong>}
           </div>
         </div>
 
         {/* Body scrollable */}
         <div style={{ flex: 1, overflowY: "auto", padding: "0 22px 12px" }}>
-          {/* SKU autocomplete */}
+          {/* SKU autocomplete (deshabilitado en modo edit) */}
           <div style={{ marginBottom: 14 }}>
             <label style={{
               display: "block", font: "600 11.5px/1 inherit", color: "#3D4A6B",
               marginBottom: 6, letterSpacing: "0.04em",
             }}>
-              {lang === "es" ? "SKU MWT" : "MWT SKU"} *
+              {lang === "es" ? "SKU MWT" : "MWT SKU"} {!isEdit && "*"}
             </label>
             <input
               className="input"
@@ -171,10 +186,10 @@ export default function AssignSupplierProductModal({
               placeholder={lang === "es" ? "Buscar SKU o nombre…" : "Search SKU or name…"}
               value={needle}
               onChange={(e) => { setNeedle(e.target.value); setSelectedSku(""); setSelectedName(""); }}
-              disabled={busy}
-              style={{ width: "100%" }}
+              disabled={busy || isEdit}
+              style={{ width: "100%", background: isEdit ? "#F1F5F9" : undefined }}
             />
-            {!selectedSku && needle.trim().length > 0 && (
+            {!isEdit && !selectedSku && needle.trim().length > 0 && (
               <div style={{
                 marginTop: 6, maxHeight: 180, overflowY: "auto",
                 border: "1px solid #E5E7EB", borderRadius: 8,
@@ -325,8 +340,10 @@ export default function AssignSupplierProductModal({
             }}
           >
             {busy
-              ? (lang === "es" ? "Asignando…" : "Assigning…")
-              : (lang === "es" ? "Asignar SKU"  : "Assign SKU")}
+              ? (lang === "es" ? "Guardando…" : "Saving…")
+              : isEdit
+                ? (lang === "es" ? "Guardar cambios" : "Save changes")
+                : (lang === "es" ? "Asignar SKU"     : "Assign SKU")}
           </button>
         </div>
       </motion.div>

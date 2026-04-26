@@ -192,14 +192,33 @@ export default function ScreenSupplierDetail() {
 
   useEffect(() => { reloadOcs(); }, [reloadOcs]);
 
-  // ── Modal "Asignar SKU al proveedor" (catálogo abastecimiento) ─
+  // ── Modal "Asignar / Editar SKU del proveedor" ──────────────
   const [openAssignProds, setOpenAssignProds] = useState(false);
+  // Si está seteado, el modal entra en modo EDIT con sus datos
+  const [editingAssignment, setEditingAssignment] = useState(null);
 
   const handleAssignProductBody = async (body) => {
-    // body = { product_sku, supplier_sku_code, moq, base_cost_usd?,
-    //          production_lead_time_days, notas? }
-    await proveedoresApi.action('products', supplierId, body);
+    if (editingAssignment) {
+      // PATCH: actualizar la asignación existente
+      await apiFetch(
+        `/proveedores/${supplierId}/products/${editingAssignment.id}/`,
+        { method: 'PATCH', body, token: getToken() }
+      );
+    } else {
+      // POST: crear nueva asignación
+      await proveedoresApi.action('products', supplierId, body);
+    }
     await reloadProducts();
+  };
+
+  const closeProductModal = () => {
+    setOpenAssignProds(false);
+    setEditingAssignment(null);
+  };
+
+  const openEditAssignment = (assignment) => {
+    setEditingAssignment(assignment);
+    setOpenAssignProds(true);
   };
 
   // ── Modal "Asignar expedientes (OCs)" ────────────────────────
@@ -302,7 +321,8 @@ export default function ScreenSupplierDetail() {
   // Mapeamos al shape que la tabla consume.
   const products = isUuid
     ? beProducts.map(a => ({
-        id:                  a.id,                        // UUID del assignment (no del producto)
+        id:                  a.id,                        // UUID del assignment
+        producto_id:         a.producto_id || null,       // UUID del producto (navegación)
         sku:                 a.product_sku,
         nombre:              a.nombre_producto || '',
         supplier_sku_code:   a.supplier_sku_code || '',
@@ -506,18 +526,11 @@ export default function ScreenSupplierDetail() {
                     {products.map((p, idx) => {
                       const ref = productIndex[p.sku];
                       const productName = p.nombre || ref?.nombre || '—';
-                      // Para navegar al detalle del producto necesitamos el
-                      // UUID del producto, no del assignment. En modo backend
-                      // no lo tenemos; resolvemos por SKU contra productIndex
-                      // si el mock lo tiene, sino sin navegación.
+                      // Navegación directa con el UUID del producto que
+                      // viene precargado por el backend en el adapter.
+                      const canNavigate = isUuid && !!p.producto_id;
                       const goToProduct = () => {
-                        if (!isUuid) return;
-                        // El mock productIndex no aporta UUID — buscamos
-                        // productosApi por sku al momento del click.
-                        productosApi.list({ q: p.sku }).then(res => {
-                          const hit = (res || []).find(x => x.sku === p.sku);
-                          if (hit?.id) navigate(`/productos/${hit.id}`);
-                        }).catch(() => {});
+                        if (canNavigate) navigate(`/productos/${p.producto_id}`);
                       };
                       return (
                         <motion.tr
@@ -525,7 +538,7 @@ export default function ScreenSupplierDetail() {
                           initial={{ opacity:0, y:4 }}
                           animate={{ opacity:1, y:0, transition:{ delay: idx*0.03, duration:0.22 } }}
                           className="supplier-product-row"
-                          style={{ cursor: isUuid ? 'pointer' : 'default' }}
+                          style={{ cursor: canNavigate ? 'pointer' : 'default' }}
                           onClick={goToProduct}
                         >
                           <td className="mono-sm">{p.sku}</td>
@@ -558,14 +571,24 @@ export default function ScreenSupplierDetail() {
                           <td className="caption">{p.last_po_date}</td>
                           {isUuid && (
                             <td className="ta-right">
-                              <button className="btn btn-xs"
-                                      title={lang==='es'?'Quitar SKU del catálogo':'Unassign SKU'}
-                                      onClick={(e)=>{
-                                        e.stopPropagation();
-                                        handleUnassignProduct(p.id, `${p.sku} · ${productName}`);
-                                      }}>
-                                <IconTrash size={11}/>
-                              </button>
+                              <div style={{display:'inline-flex', gap:4, justifyContent:'flex-end'}}>
+                                <button className="btn btn-xs"
+                                        title={lang==='es'?'Editar términos':'Edit terms'}
+                                        onClick={(e)=>{
+                                          e.stopPropagation();
+                                          openEditAssignment(p._backend);
+                                        }}>
+                                  <IconPencil size={11}/>
+                                </button>
+                                <button className="btn btn-xs"
+                                        title={lang==='es'?'Quitar SKU del catálogo':'Unassign SKU'}
+                                        onClick={(e)=>{
+                                          e.stopPropagation();
+                                          handleUnassignProduct(p.id, `${p.sku} · ${productName}`);
+                                        }}>
+                                  <IconTrash size={11}/>
+                                </button>
+                              </div>
                             </td>
                           )}
                         </motion.tr>
@@ -731,13 +754,14 @@ export default function ScreenSupplierDetail() {
         )}
       </AnimatePresence>
 
-      {/* ── Modal: Asignar SKU al proveedor (catálogo abastecimiento) ── */}
+      {/* ── Modal: Asignar / Editar SKU del proveedor ── */}
       {openAssignProds && createPortal(
         <AssignSupplierProductModal
           supplierName={supplier.nombre_comercial}
           excludeSkus={beProducts.map(a => a.product_sku).filter(Boolean)}
+          existing={editingAssignment}     // null → modo CREATE; objeto → modo EDIT
           lang={lang}
-          onClose={()=>setOpenAssignProds(false)}
+          onClose={closeProductModal}
           onAssign={handleAssignProductBody}
         />,
         document.body

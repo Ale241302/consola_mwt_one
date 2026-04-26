@@ -133,6 +133,7 @@ class SupplierProductAssignmentSerializer(serializers.ModelSerializer):
     cantidad_12m    = serializers.SerializerMethodField()
     ultima_po_fecha = serializers.SerializerMethodField()
     nombre_producto = serializers.SerializerMethodField()
+    producto_id     = serializers.SerializerMethodField()   # UUID del producto (para navegación)
 
     class Meta:
         model  = SupplierProductAssignment
@@ -142,7 +143,7 @@ class SupplierProductAssignmentSerializer(serializers.ModelSerializer):
             "production_lead_time_days",
             "notas", "is_active", "created_at", "updated_at",
             # campos dinámicos
-            "cantidad_12m", "ultima_po_fecha", "nombre_producto",
+            "cantidad_12m", "ultima_po_fecha", "nombre_producto", "producto_id",
         )
         read_only_fields = ("id", "created_at", "updated_at")
 
@@ -160,6 +161,11 @@ class SupplierProductAssignmentSerializer(serializers.ModelSerializer):
     def get_nombre_producto(self, obj):
         m = (self.context or {}).get("nombres") or {}
         return m.get(obj.product_sku, "") or ""
+
+    def get_producto_id(self, obj):
+        m = (self.context or {}).get("producto_ids") or {}
+        v = m.get(obj.product_sku)
+        return str(v) if v else None
 
     # --- POL_VISIBILIDAD ---------------------------------------------
     def to_representation(self, instance):
