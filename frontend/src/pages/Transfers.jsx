@@ -40,6 +40,18 @@ const API_TO_MOCK_STATUS = {
 // Convierte un row del backend (transfers.transferencia) al shape que la tabla
 // ya sabe renderizar. Las líneas se dejan vacías: el detalle se lazy-loadea.
 function mapApiTransferToRow(r) {
+  // El list serializer del backend devuelve agregados (lines_count,
+  // total_qty_transfer, total_qty_received). Fabricamos un stub de `lines`
+  // con la longitud y totales correctos para que getTransferTotals(t)
+  // retorne valores reales en lugar de "0 SKU · 0 RESV.".
+  const linesCount     = Number(r.lines_count        || 0);
+  const totalTransfer  = Number(r.total_qty_transfer || 0);
+  const totalReceived  = Number(r.total_qty_received || 0);
+  const linesStub      = Array.from({ length: linesCount }, (_, i) => ({
+    qty_transfer: i === 0 ? totalTransfer : 0,
+    qty_reserve:  0,
+    qty_received: (i === 0 && totalReceived > 0) ? totalReceived : null,
+  }));
   return {
     id:             r.codigo || r.id,
     _backend_id:    r.id,
@@ -54,7 +66,9 @@ function mapApiTransferToRow(r) {
     dispatched_at:  r.dispatched_at || null,
     eta:            r.eta || null,
     received_at:    r.received_at || null,
-    lines:          [],
+    lines:          linesStub,
+    // discrepancia oficial del backend (no la inferida desde los stubs)
+    _has_discrepancy_be: !!r.has_discrepancy,
   };
 }
 

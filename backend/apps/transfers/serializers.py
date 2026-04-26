@@ -5,6 +5,12 @@ from .models import (
 
 
 class TransferenciaListSerializer(serializers.ModelSerializer):
+    # Agregados — sin estos el FE muestra "0 SKU · 0 RESV." porque
+    # no se trae el array `lines` en el listado.
+    lines_count        = serializers.SerializerMethodField()
+    total_qty_transfer = serializers.SerializerMethodField()
+    total_qty_received = serializers.SerializerMethodField()
+
     class Meta:
         model  = Transferencia
         fields = (
@@ -15,7 +21,26 @@ class TransferenciaListSerializer(serializers.ModelSerializer):
             "dispatched_at", "eta", "received_at",
             "discrepancy_count", "has_discrepancy",
             "is_active", "updated_at",
+            # agregados de líneas
+            "lines_count", "total_qty_transfer", "total_qty_received",
         )
+
+    def get_lines_count(self, obj):
+        return Linea.objects.filter(transferencia_id=obj.id, is_active=True).count()
+
+    def get_total_qty_transfer(self, obj):
+        from django.db.models import Sum
+        agg = Linea.objects.filter(
+            transferencia_id=obj.id, is_active=True
+        ).aggregate(t=Sum("qty_transfer"))
+        return int(agg["t"] or 0)
+
+    def get_total_qty_received(self, obj):
+        from django.db.models import Sum
+        agg = Linea.objects.filter(
+            transferencia_id=obj.id, is_active=True
+        ).aggregate(t=Sum("qty_received"))
+        return int(agg["t"] or 0)
 
 
 class TransferenciaSerializer(serializers.ModelSerializer):
