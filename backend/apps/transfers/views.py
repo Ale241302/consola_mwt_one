@@ -89,9 +89,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
             qs = qs.filter(needs_approval=True)
         has_disc = request.query_params.get("has_discrepancy")
         if has_disc in ("1", "true", "True"):
-            # has_discrepancy es columna GENERATED en DB y no está como Field
-            # del modelo. Usamos extra(where=…) para filtrar por SQL puro.
-            qs = qs.extra(where=["has_discrepancy = TRUE"])
+            qs = qs.filter(has_discrepancy=True)
         q = request.query_params.get("q")
         if q:
             qs = qs.filter(codigo__icontains=q)
@@ -163,20 +161,74 @@ class TransferenciaViewSet(viewsets.ViewSet):
 
         try:
             with transaction.atomic():
-                s.save(id=new_id)   # bypass read_only_fields=("id",)
-                # Snapshot timestamp y primer evento
-                Transferencia.objects.filter(pk=new_id).update(
-                    snapshot_created_at=timezone.now(),
-                )
+                # has_discrepancy es columna GENERATED en Postgres → la
+                # excluimos manualmente del INSERT con SQL crudo (mucho
+                # más simple que monkeypatchear el ORM). Validamos con
+                # el serializer para mantener la lógica de DRF.
+                vd = s.validated_data
+                with connection.cursor() as _c:
+                    _c.execute(
+                        """
+                        INSERT INTO transfers.transferencia
+                          (id, codigo, origen_id, destino_id,
+                           origen_label, destino_label,
+                           legal_context, estado, ref_tracking,
+                           needs_approval, value_usd, notes,
+                           created_by_id, created_by_name,
+                           dispatched_at, eta, received_at,
+                           reconciled_by_id, reconciled_by_name,
+                           reconciled_at, reconciled_note,
+                           snapshot_created_at, discrepancy_count,
+                           is_active)
+                        VALUES (%s, %s, %s, %s,
+                                %s, %s,
+                                %s, %s, %s,
+                                %s, %s, %s,
+                                %s, %s,
+                                %s, %s, %s,
+                                %s, %s,
+                                %s, %s,
+                                NOW(), %s,
+                                %s)
+                        """,
+                        [
+                            str(new_id),
+                            vd.get("codigo"),
+                            vd.get("origen_id"),
+                            vd.get("destino_id"),
+                            vd.get("origen_label"),
+                            vd.get("destino_label"),
+                            vd.get("legal_context", "INTERNAL"),
+                            vd.get("estado", "PLANNED"),
+                            vd.get("ref_tracking"),
+                            bool(vd.get("needs_approval", False)),
+                            vd.get("value_usd", 0),
+                            vd.get("notes"),
+                            vd.get("created_by_id"),
+                            vd.get("created_by_name"),
+                            vd.get("dispatched_at"),
+                            vd.get("eta"),
+                            vd.get("received_at"),
+                            vd.get("reconciled_by_id"),
+                            vd.get("reconciled_by_name"),
+                            vd.get("reconciled_at"),
+                            vd.get("reconciled_note"),
+                            int(vd.get("discrepancy_count", 0)),
+                            bool(vd.get("is_active", True)),
+                        ],
+                    )
                 Evento.objects.create(
                     id               = uuid.uuid4(),
                     transferencia_id = new_id,
                     estado_prev      = None,
-                    estado_nuevo     = s.data.get("estado", "PLANNED"),
+                    estado_nuevo     = vd.get("estado", "PLANNED"),
                     actor_id         = data.get("created_by_id"),
                     actor_name       = data.get("created_by_name"),
                     notes            = "Creación",
                 )
+                # Re-leer para devolver el shape completo al cliente
+                created = Transferencia.objects.get(pk=new_id)
+                response_data = TransferenciaSerializer(created).data
         except Exception as e:
             tb = traceback.format_exc()
             _dbg(f">>> SAVE FAIL payload: {dict(data)}")
@@ -190,7 +242,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 "hint":   "Error al crear la transferencia. Revisar logs del backend.",
             }, status=400)
         _dbg(f">>> OK id: {new_id}")
-        return Response(s.data, status=201)
+        return Response(response_data, status=201)
 
     def update(self, request, pk=None):
         try:
@@ -382,16 +434,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
             return Response({"detail": "Transferencia no existe"}, status=404)
 
         body = request.data or {}
-        # has_discrepancy es columna GENERATED — la leemos con SQL crudo
-        # (no está en el modelo Django).
-        with connection.cursor() as _c:
-            _c.execute(
-                "SELECT has_discrepancy FROM transfers.transferencia WHERE id = %s",
-                [str(t.id)],
-            )
-            _row = _c.fetchone()
-        _has_disc = bool(_row[0]) if _row else False
-        if _has_disc and not body.get("reconciled_by_id"):
+        if t.has_discrepancy and not body.get("reconciled_by_id"):
             return Response(
                 {"detail": "reconciled_by_id requerido cuando hay discrepancias"},
                 status=400,
