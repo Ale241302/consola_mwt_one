@@ -47,11 +47,42 @@ const STATUS_OPTIONS = [
   { k:'RETIRED',  l:'Retirado'  },
 ];
 import { tr, fmtMoney } from "../lib/i18n.js";
-import { nodosApi } from "../lib/api.js";
+import { nodosApi, stockApi, transferenciasApi } from "../lib/api.js";
 import {
   NODES, NODE_INVENTORY, NODE_TRANSFERS, NODE_AUTOMATIONS,
   LEGAL_ENTITIES, OPERATORS, PRODUCTS, EXPEDIENTES, OCS,
 } from "../data/mockData.js";
+
+// ── Backend → mock-shape adapters para tabs (Inventario / Transferencias) ──
+function adaptStockRowToInventory(r) {
+  return {
+    sku:        r.producto_sku  || '',
+    node_id:    r.nodo_id        || null,
+    qty:        Number(r.cantidad_disponible || 0),
+    value:      Number(r.valor_disponible_usd || 0),
+    days_stock: Number(r.dias_stock_minimo ?? r.rotacion_dias ?? 0),
+    // nombre de producto fallback (PRODUCTS mock no tendrá los SKUs reales)
+    _producto_nombre: r.producto_nombre || '',
+  };
+}
+const API_TO_MOCK_TRANSFER_STATUS = {
+  PLANNED: 'planned', APPROVED: 'approved', IN_TRANSIT: 'in_transit',
+  RECEIVED: 'received', RECONCILED: 'reconciled', CANCELLED: 'cancelled',
+  DISCREPANCY: 'received',
+};
+function adaptApiTransferToRow(t) {
+  return {
+    id:         t.codigo || t.id,
+    from:       t.origen_id  || null,
+    to:         t.destino_id || null,
+    from_label: t.origen_label  || '',
+    to_label:   t.destino_label || '',
+    date:       (t.dispatched_at || t.updated_at || '').slice(0, 10),
+    skus:       Number(t.lines_count || 0),
+    units:      Number(t.total_qty_transfer || 0),
+    status:     API_TO_MOCK_TRANSFER_STATUS[t.estado] || 'planned',
+  };
+}
 
 const TYPE_META = {
   marketplace: { label: 'Marketplace', color: '#481EE3' },
@@ -174,10 +205,49 @@ export default function ScreenNodoDetail() {
     return adaptBackendNode(rawNode);
   }, [rawNode]);
 
-  // Derivados — siguen leyendo mock (inventario/transfers/automations
-  // todavía no están migrados a backend; nodos nuevos los verán vacíos).
-  const inventory = useMemo(() => NODE_INVENTORY.filter(r => r.node_id === nodeId), [nodeId]);
-  const transfers = useMemo(() => NODE_TRANSFERS.filter(t => t.from === nodeId || t.to === nodeId), [nodeId]);
+  // Inventario y transferencias — backend real con fallback al mock para
+  // nodos demo que no existen en BD (compatibilidad con onboarding/screenshots).
+  const [inventory, setInventory] = useState([]);
+  const [transfers, setTransfers] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!nodeId) return;
+
+    // Stock del nodo
+    stockApi.list({ nodo: nodeId, solo_disponible: 0 })
+      .then(rows => {
+        if (cancelled) return;
+        const real = Array.isArray(rows) ? rows.map(adaptStockRowToInventory) : [];
+        if (real.length > 0) setInventory(real);
+        else setInventory(NODE_INVENTORY.filter(r => r.node_id === nodeId));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setInventory(NODE_INVENTORY.filter(r => r.node_id === nodeId));
+      });
+
+    // Transferencias: nodo como origen y como destino, en paralelo
+    Promise.all([
+      transferenciasApi.list({ origen:  nodeId }).catch(() => []),
+      transferenciasApi.list({ destino: nodeId }).catch(() => []),
+    ]).then(([asOrigin, asDest]) => {
+      if (cancelled) return;
+      const dedup = new Map();
+      for (const t of [...(asOrigin || []), ...(asDest || [])]) {
+        if (t && t.id) dedup.set(t.id, t);
+      }
+      const merged = Array.from(dedup.values()).map(adaptApiTransferToRow);
+      // Ordenar por fecha desc (id no, codigo no garantizan orden por fecha)
+      merged.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      if (merged.length > 0) setTransfers(merged);
+      else setTransfers(NODE_TRANSFERS.filter(t => t.from === nodeId || t.to === nodeId));
+    });
+
+    return () => { cancelled = true; };
+  }, [nodeId]);
+
+  // Automatizaciones siguen en mock (no migradas todavía)
   const autos     = useMemo(() => NODE_AUTOMATIONS.filter(a => a.node_id === nodeId), [nodeId]);
   const files     = useMemo(() =>
     EXPEDIENTES.filter(e => node && (e.destination || '').includes((node.location || '').split(',')[0] || '__none__'))
@@ -450,20 +520,21 @@ function InventoryTab({ inventory, lang }) {
             <th style={{width:220}}>{lang==='es'?'Días de stock':'Days of stock'}</th>
           </tr></thead>
           <tbody>
-            {inventory.map(r => {
+            {inventory.map((r, i) => {
               const p = PRODUCTS.find(pp => pp.sku === r.sku);
+              const productName = p?.name || r._producto_nombre || '—';
               const band = r.days_stock >= 35 ? 'green' : r.days_stock >= 21 ? 'amber' : 'red';
               const bandLabel = band === 'green' ? (lang==='es'?'Saludable':'Healthy') : band === 'amber' ? (lang==='es'?'Seguir':'Watch') : (lang==='es'?'Resurtir':'Restock');
               return (
-                <tr key={r.sku}>
-                  <td style={{font:'600 12.5px/1.2 var(--font-mono)', color:'var(--interactive)'}}>{r.sku}</td>
-                  <td>{p?.name || '—'}</td>
-                  <td className="td-num">{r.qty.toLocaleString()}</td>
+                <tr key={`${r.sku || 'row'}-${i}`}>
+                  <td style={{font:'600 12.5px/1.2 var(--font-mono)', color:'var(--interactive)'}}>{r.sku || '—'}</td>
+                  <td>{productName}</td>
+                  <td className="td-num">{(r.qty || 0).toLocaleString()}</td>
                   <td className="td-money">{fmtMoney(r.value)}</td>
                   <td>
                     <div className="flex ai-center gap-2">
                       <span className={`stock-dot dot-${band}`}/>
-                      <span className="tabular">{r.days_stock}d</span>
+                      <span className="tabular">{r.days_stock || 0}d</span>
                       <span className={`alert-chip ${band === 'green' ? 'gray' : band}`}>{bandLabel}</span>
                     </div>
                   </td>
@@ -505,25 +576,32 @@ function TransfersTab({ transfers, nodeId, lang }) {
           </tr></thead>
           <tbody>
             {transfers.map(t => {
-              const from = NODES.find(n => n.id === t.from);
-              const to   = NODES.find(n => n.id === t.to);
-              const isIn = t.to === nodeId;
+              const from      = NODES.find(n => n.id === t.from);
+              const to        = NODES.find(n => n.id === t.to);
+              const fromLabel = t.from_label || from?.node_id || '—';
+              const toLabel   = t.to_label   || to?.node_id   || '—';
+              const isIn      = t.to === nodeId;
               return (
                 <tr key={t.id}>
-                  <td>{t.date}</td>
+                  <td>{t.date || '—'}</td>
                   <td className="td-ref">{t.id}</td>
                   <td><span className={`badge ${isIn ? 'badge-info' : 'badge-mint'}`}>{isIn ? 'IN' : 'OUT'}</span></td>
                   <td>
-                    <span>{from?.node_id || '—'}</span>
+                    <span>{fromLabel}</span>
                     <span style={{color:'var(--text-tertiary)', margin:'0 6px'}}>→</span>
-                    <span>{to?.node_id || '—'}</span>
+                    <span>{toLabel}</span>
                   </td>
                   <td className="td-num">{t.skus}</td>
-                  <td className="td-num">{t.units.toLocaleString()}</td>
+                  <td className="td-num">{(t.units || 0).toLocaleString()}</td>
                   <td><TransferStatus status={t.status} lang={lang}/></td>
                 </tr>
               );
             })}
+            {transfers.length === 0 && (
+              <tr><td colSpan={7} className="caption" style={{textAlign:'center', padding:'16px 0'}}>
+                {lang==='es'?'Sin transferencias para este nodo':'No transfers for this node'}
+              </td></tr>
+            )}
           </tbody>
         </table>
       </div>
