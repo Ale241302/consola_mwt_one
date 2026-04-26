@@ -92,12 +92,7 @@ class Transferencia(models.Model):
     reconciled_note     = models.TextField(null=True, blank=True)
     snapshot_created_at = models.DateTimeField(null=True, blank=True)
     discrepancy_count   = models.IntegerField(default=0)
-    # has_discrepancy: columna GENERATED ALWAYS AS ... STORED en Postgres
-    # (91_transfers_audit.sql §). La declaramos para poder leerla en
-    # SELECT y filtrar con .filter(), PERO el view SOBRE-ESCRIBE el
-    # `_meta.local_concrete_fields` para excluirla del INSERT. Ver
-    # views.py · TransferenciaViewSet.create.
-    has_discrepancy     = models.BooleanField(default=False, editable=False)
+    has_discrepancy     = models.BooleanField(default=False)  # columna GENERATED en DB
 
     is_active        = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)
