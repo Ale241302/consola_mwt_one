@@ -45,6 +45,10 @@ class TransferenciaSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Transferencia
         fields = "__all__"
+        # `id` se inyecta por el ViewSet (s.save(id=uuid.uuid4())). Sin
+        # esto el serializer lo marca required y is_valid() falla antes
+        # de llegar al save → 500. Mismo patrón que proveedores/productos.
+        read_only_fields = ("id", "created_at", "updated_at")
 
     def get_has_discrepancy(self, obj):
         return _has_discrepancy_for(obj)
