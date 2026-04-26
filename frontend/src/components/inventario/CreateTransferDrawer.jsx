@@ -188,8 +188,9 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
       const estimated = totals.totalTransfer * 1;
       const body = {
         codigo:           `TRF-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase()}`,
-        nodo_origen_id:   form.nodo_origen,    // UUIDs reales
-        nodo_destino_id:  form.nodo_destino,
+        // Nombres canónicos del modelo Transferencia (no `nodo_*_id`)
+        origen_id:        form.nodo_origen,
+        destino_id:       form.nodo_destino,
         origen_label:     labelOfNode(form.nodo_origen),
         destino_label:    labelOfNode(form.nodo_destino),
         legal_context:    LEGAL_CONTEXT_TO_API[form.legal_context] || 'INTERNAL',

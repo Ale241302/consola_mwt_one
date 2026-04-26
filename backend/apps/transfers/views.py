@@ -18,12 +18,15 @@ Reglas:
 =====================================================================
 """
 import uuid
+import logging
 from decimal import Decimal
-from django.db import connection, transaction
+from django.db import connection, transaction, IntegrityError, DataError
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
+log = logging.getLogger(__name__)
 
 from apps.storage.services import delete_object as _storage_delete
 
@@ -112,24 +115,36 @@ class TransferenciaViewSet(viewsets.ViewSet):
 
     def create(self, request):
         data = {**request.data}
+        # Compatibilidad: el FE envió por error `nodo_origen_id`/`nodo_destino_id`
+        # antes de mapear a los nombres canónicos. Los normalizamos acá
+        # silenciosamente para no romper en transición.
+        if "nodo_origen_id"  in data and "origen_id"  not in data:
+            data["origen_id"]  = data.pop("nodo_origen_id")
+        if "nodo_destino_id" in data and "destino_id" not in data:
+            data["destino_id"] = data.pop("nodo_destino_id")
+
         new_id = uuid.uuid4()
         s = TransferenciaSerializer(data=data)
         s.is_valid(raise_exception=True)
-        with transaction.atomic():
-            s.save(id=new_id)   # bypass read_only_fields=("id",)
-            # Snapshot timestamp y primer evento
-            Transferencia.objects.filter(pk=new_id).update(
-                snapshot_created_at=timezone.now(),
-            )
-            Evento.objects.create(
-                id               = uuid.uuid4(),
-                transferencia_id = new_id,
-                estado_prev      = None,
-                estado_nuevo     = s.data.get("estado", "PLANNED"),
-                actor_id         = data.get("created_by_id"),
-                actor_name       = data.get("created_by_name"),
-                notes            = "Creación",
-            )
+        try:
+            with transaction.atomic():
+                s.save(id=new_id)   # bypass read_only_fields=("id",)
+                # Snapshot timestamp y primer evento
+                Transferencia.objects.filter(pk=new_id).update(
+                    snapshot_created_at=timezone.now(),
+                )
+                Evento.objects.create(
+                    id               = uuid.uuid4(),
+                    transferencia_id = new_id,
+                    estado_prev      = None,
+                    estado_nuevo     = s.data.get("estado", "PLANNED"),
+                    actor_id         = data.get("created_by_id"),
+                    actor_name       = data.get("created_by_name"),
+                    notes            = "Creación",
+                )
+        except (IntegrityError, DataError) as e:
+            log.warning("Transferencia.create DB error payload=%s : %s", dict(data), e)
+            return Response({"detail": str(e)}, status=400)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
