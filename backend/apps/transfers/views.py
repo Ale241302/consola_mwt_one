@@ -117,13 +117,23 @@ class TransferenciaViewSet(viewsets.ViewSet):
 
     def create(self, request):
         import traceback, sys
-        # Debug: forzamos print a stderr para que SIEMPRE aparezca en
-        # docker compose logs aunque LOGGING esté silenciado.
-        print(">>> Transferencia.create CALLED", file=sys.stderr, flush=True)
+        # Debug v2: stderr está siendo absorbido por gunicorn → escribir
+        # también a /tmp/mwt_debug.log para garantizar visibilidad.
+        def _dbg(msg):
+            try:
+                with open("/tmp/mwt_debug.log", "a") as _f:
+                    _f.write(f"{msg}\n")
+            except Exception: pass
+            print(msg, file=sys.stderr, flush=True)
+
+        _dbg("================================================================")
+        _dbg(">>> Transferencia.create CALLED")
         try:
-            print(">>> request.data:", dict(request.data), file=sys.stderr, flush=True)
+            _dbg(f">>> request.user={request.user!r} authenticated={getattr(request.user, 'is_authenticated', None)}")
+            _dbg(f">>> request.auth={request.auth!r}")
+            _dbg(f">>> request.data: {dict(request.data)}")
         except Exception as _e:
-            print(">>> request.data crash:", _e, file=sys.stderr, flush=True)
+            _dbg(f">>> request inspection crash: {_e}")
 
         data = {**request.data}
         # Compatibilidad: el FE envió por error `nodo_origen_id`/`nodo_destino_id`
@@ -146,10 +156,8 @@ class TransferenciaViewSet(viewsets.ViewSet):
         try:
             s.is_valid(raise_exception=True)
         except Exception as e:
-            print(">>> Transferencia.create VALIDATION FAIL:", e,
-                  file=sys.stderr, flush=True)
-            print(">>> errors:", getattr(s, "errors", None),
-                  file=sys.stderr, flush=True)
+            _dbg(f">>> VALIDATION FAIL: {type(e).__name__}: {e}")
+            _dbg(f">>> errors: {getattr(s, 'errors', None)}")
             log.warning("Transferencia.create validation error payload=%s : %s", dict(data), e)
             return Response({"detail": "Validación: " + str(e)}, status=400)
 
@@ -171,14 +179,9 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 )
         except Exception as e:
             tb = traceback.format_exc()
-            # Forzamos a stderr — los handlers de logging del proyecto
-            # estaban tragando este error.
-            print(">>> Transferencia.create FAIL payload:", dict(data),
-                  file=sys.stderr, flush=True)
-            print(">>> ERROR:", type(e).__name__, str(e),
-                  file=sys.stderr, flush=True)
-            print(">>> TRACEBACK:", file=sys.stderr, flush=True)
-            print(tb, file=sys.stderr, flush=True)
+            _dbg(f">>> SAVE FAIL payload: {dict(data)}")
+            _dbg(f">>> ERROR: {type(e).__name__}: {e}")
+            _dbg(f">>> TRACEBACK:\n{tb}")
             log.error("Transferencia.create FAIL payload=%s\nERROR: %s\nTRACE:\n%s",
                       dict(data), e, tb)
             return Response({
@@ -186,7 +189,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 "type":   type(e).__name__,
                 "hint":   "Error al crear la transferencia. Revisar logs del backend.",
             }, status=400)
-        print(">>> Transferencia.create OK id:", new_id, file=sys.stderr, flush=True)
+        _dbg(f">>> OK id: {new_id}")
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
