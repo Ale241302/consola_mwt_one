@@ -87,10 +87,11 @@ class OcViewSet(viewsets.ViewSet):
     def list(self, request):
         qs = Oc.objects.filter(is_active=True).order_by("-issued_at", "-created_at")
         mapping = {
-            "client":  "client_id",
-            "brand":   "brand_id",
-            "estado":  "estado",
-            "moneda":  "moneda",
+            "client":    "client_id",
+            "brand":     "brand_id",
+            "proveedor": "proveedor_id",
+            "estado":    "estado",
+            "moneda":    "moneda",
             "credit_band": "credit_band",
         }
         for param, field in mapping.items():

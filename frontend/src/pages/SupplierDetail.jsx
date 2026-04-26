@@ -13,22 +13,24 @@
 //   - Promociones      SupplierPromoEngine (Tab 2)
 //   - Auditoría ISO    SupplierAuditTab (Tab 3)
 // ─────────────────────────────────────────────────────────────
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IconChevLeft, IconPackage, IconFolder, IconShield, IconTruck,
   IconDollar, IconMail, IconFileText, IconPercent, IconAlert, IconCheck,
-  IconPencil,
+  IconPencil, IconPlus,
 } from "../lib/icons.jsx";
 import { fmtMoney } from "../lib/i18n.js";
 import {
   SUPPLIERS, SUPPLIER_PRODUCTS, SUPPLIER_EXPEDIENTE_REFS,
   SUPPLIER_AUDIT_SCORES, BRAND_PRODUCTS, EXPEDIENTES,
 } from "../data/mockData.js";
-import { proveedoresApi } from "../lib/api.js";
+import { proveedoresApi, productosApi, ocsApi } from "../lib/api.js";
 import SupplierPromoEngine from "../components/proveedores/SupplierPromoEngine.jsx";
 import SupplierAuditTab from "../components/proveedores/SupplierAuditTab.jsx";
+import AssignItemsModal from "../components/common/AssignItemsModal.jsx";
 
 // Banderitas por país — coincide con SupplierFormView
 const FLAG_BY_ISO2 = {
@@ -148,6 +150,101 @@ export default function ScreenSupplierDetail() {
     return m;
   }, []);
 
+  // ── Productos asignados al proveedor (backend real) ─────────
+  const isUuid = /^[0-9a-f-]{36}$/i.test(supplierId || '');
+  const [beProducts, setBeProducts] = useState([]);
+  const [loadingBeProds, setLoadingBeProds] = useState(false);
+
+  const reloadProducts = useCallback(async () => {
+    if (!isUuid) { setBeProducts([]); return; }
+    setLoadingBeProds(true);
+    try {
+      const list = await productosApi.list({ proveedor: supplierId });
+      setBeProducts(Array.isArray(list) ? list : []);
+    } catch (_) {
+      setBeProducts([]);
+    } finally {
+      setLoadingBeProds(false);
+    }
+  }, [supplierId, isUuid]);
+
+  useEffect(() => { reloadProducts(); }, [reloadProducts]);
+
+  // ── OCs asignadas al proveedor (backend real) ───────────────
+  const [beOcs, setBeOcs] = useState([]);
+  const [loadingBeOcs, setLoadingBeOcs] = useState(false);
+
+  const reloadOcs = useCallback(async () => {
+    if (!isUuid) { setBeOcs([]); return; }
+    setLoadingBeOcs(true);
+    try {
+      const list = await ocsApi.list({ proveedor: supplierId });
+      setBeOcs(Array.isArray(list) ? list : []);
+    } catch (_) {
+      setBeOcs([]);
+    } finally {
+      setLoadingBeOcs(false);
+    }
+  }, [supplierId, isUuid]);
+
+  useEffect(() => { reloadOcs(); }, [reloadOcs]);
+
+  // ── Modal "Asignar productos" ────────────────────────────────
+  const [openAssignProds, setOpenAssignProds] = useState(false);
+  const [availProds, setAvailProds] = useState([]);
+  const [loadingAvailProds, setLoadingAvailProds] = useState(false);
+
+  const openAssignProductsModal = async () => {
+    setOpenAssignProds(true);
+    setLoadingAvailProds(true);
+    try {
+      // Mostrar TODOS los productos. Excluir los que ya están en este
+      // proveedor para no duplicar — el resto incluye sin proveedor +
+      // los de otros proveedores (al asignar, se reasignan).
+      const all = await productosApi.list();
+      const myIds = new Set(beProducts.map(p => p.id));
+      setAvailProds((all || []).filter(p => !myIds.has(p.id)));
+    } catch (e) {
+      setAvailProds([]);
+    } finally {
+      setLoadingAvailProds(false);
+    }
+  };
+
+  const handleAssignProducts = async (ids) => {
+    // Update batch: cada producto se reasigna a este proveedor.
+    await Promise.all(
+      ids.map(id => productosApi.update(id, { proveedor_principal_id: supplierId }))
+    );
+    await reloadProducts();
+  };
+
+  // ── Modal "Asignar expedientes (OCs)" ────────────────────────
+  const [openAssignOcs, setOpenAssignOcs] = useState(false);
+  const [availOcs, setAvailOcs] = useState([]);
+  const [loadingAvailOcs, setLoadingAvailOcs] = useState(false);
+
+  const openAssignOcsModal = async () => {
+    setOpenAssignOcs(true);
+    setLoadingAvailOcs(true);
+    try {
+      const all = await ocsApi.list();
+      const myIds = new Set(beOcs.map(o => o.id));
+      setAvailOcs((all || []).filter(o => !myIds.has(o.id)));
+    } catch (_) {
+      setAvailOcs([]);
+    } finally {
+      setLoadingAvailOcs(false);
+    }
+  };
+
+  const handleAssignOcs = async (ids) => {
+    await Promise.all(
+      ids.map(id => ocsApi.update(id, { proveedor_id: supplierId }))
+    );
+    await reloadOcs();
+  };
+
   // Loading state
   if (loading) {
     return (
@@ -183,10 +280,36 @@ export default function ScreenSupplierDetail() {
     : 0;
   const ltTier = ltEff >= 95 ? '#00B286' : ltEff >= 80 ? '#B45309' : '#DC2626';
 
-  const products = SUPPLIER_PRODUCTS.filter(p => p.supplier_id === supplier.id);
-  const expedientes = SUPPLIER_EXPEDIENTE_REFS.filter(e => e.supplier_id === supplier.id);
+  // Si es proveedor del backend (UUID), usamos las listas reales
+  // adaptadas al shape que la tabla espera. Para SUP-XXX legacy mock,
+  // seguimos con SUPPLIER_PRODUCTS / SUPPLIER_EXPEDIENTE_REFS.
+  const products = isUuid
+    ? beProducts.map(p => ({
+        sku:                p.sku || p.id,
+        units_12m:          0,                          // backend no tracking aún
+        last_purchase_price: Number(p.precio_usd) || 0,
+        last_po_date:       (p.updated_at || '').slice(0, 10),
+        _backend:           p,
+      }))
+    : SUPPLIER_PRODUCTS.filter(p => p.supplier_id === supplier.id);
+
+  const expedientes = isUuid
+    ? beOcs.map(o => ({
+        expediente_ref: o.codigo || o.id,
+        estado:         (o.estado || 'REGISTRO').toUpperCase(),
+        fecha:          (o.issued_at || o.created_at || '').slice(0, 10),
+        monto:          Number(o.total_usd) || 0,
+        _backend:       o,
+      }))
+    : SUPPLIER_EXPEDIENTE_REFS.filter(e => e.supplier_id === supplier.id);
 
   const resolveExpedienteId = (ref) => {
+    // En modo backend, el ref ES el codigo o id real de la OC →
+    // buscar primero en las OCs reales para mantener navegación viva.
+    if (isUuid) {
+      const hit = beOcs.find(o => o.codigo === ref || o.id === ref);
+      return hit?.id || null;
+    }
     const hit = EXPEDIENTES.find(e => e.id === ref || e.ref === ref);
     return hit?.id || null;
   };
@@ -310,10 +433,20 @@ export default function ScreenSupplierDetail() {
                 <div>
                   <div className="heading-md">{lang==='es'?'Productos proveídos':'Supplied products'}</div>
                   <div className="caption" style={{color:'var(--text-tertiary)'}}>
-                    {lang==='es'?'SKUs con al menos 1 orden en los últimos 12 meses':'SKUs with ≥1 order in last 12 months'}
+                    {isUuid
+                      ? (lang==='es'?'SKUs cuyo proveedor principal es este':'SKUs whose primary supplier is this one')
+                      : (lang==='es'?'SKUs con al menos 1 orden en los últimos 12 meses':'SKUs with ≥1 order in last 12 months')}
+                    {loadingBeProds && <> · {lang==='es'?'cargando…':'loading…'}</>}
                   </div>
                 </div>
-                <span className="mono-sm">{products.length} SKU{products.length!==1?'s':''}</span>
+                <div style={{display:'flex', alignItems:'center', gap:10}}>
+                  <span className="mono-sm">{products.length} SKU{products.length!==1?'s':''}</span>
+                  {isUuid && (
+                    <button className="btn btn-xs" onClick={openAssignProductsModal}>
+                      <IconPlus size={11}/> {lang==='es'?'Asignar SKU':'Assign SKU'}
+                    </button>
+                  )}
+                </div>
               </div>
 
               {products.length === 0 ? (
@@ -373,9 +506,17 @@ export default function ScreenSupplierDetail() {
                   <div className="heading-md">{lang==='es'?'Expedientes asociados':'Associated files'}</div>
                   <div className="caption" style={{color:'var(--text-tertiary)'}}>
                     {lang==='es'?'Historial de POs y expedientes vinculados':'Historical POs & linked files'}
+                    {loadingBeOcs && <> · {lang==='es'?'cargando…':'loading…'}</>}
                   </div>
                 </div>
-                <span className="mono-sm">{expedientes.length}</span>
+                <div style={{display:'flex', alignItems:'center', gap:10}}>
+                  <span className="mono-sm">{expedientes.length}</span>
+                  {isUuid && (
+                    <button className="btn btn-xs" onClick={openAssignOcsModal}>
+                      <IconPlus size={11}/> {lang==='es'?'Asignar OC':'Assign PO'}
+                    </button>
+                  )}
+                </div>
               </div>
 
               {expedientes.length === 0 ? (
@@ -502,6 +643,52 @@ export default function ScreenSupplierDetail() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── Modal: Asignar productos al proveedor ── */}
+      {openAssignProds && createPortal(
+        <AssignItemsModal
+          eyebrow={lang==='es'?'ASIGNAR SKUs':'ASSIGN SKUs'}
+          title={(lang==='es'?'Asignar productos a ':'Assign products to ') + supplier.nombre_comercial}
+          searchPlaceholder={lang==='es'?'Buscar SKU, nombre…':'Search SKU, name…'}
+          actionLabel={lang==='es'?'Asignar':'Assign'}
+          loading={loadingAvailProds}
+          emptyHint={lang==='es'
+            ? 'No hay más productos disponibles para asignar.'
+            : 'No more products available to assign.'}
+          items={availProds.map(p => ({
+            id:       p.id,
+            title:    `${p.sku || '—'}  ${p.nombre || ''}`.trim(),
+            subtitle: p.marca_nombre || '',
+            meta:     p.precio_usd != null ? `$${p.precio_usd}` : '',
+          }))}
+          onClose={()=>setOpenAssignProds(false)}
+          onAssign={handleAssignProducts}
+        />,
+        document.body
+      )}
+
+      {/* ── Modal: Asignar OCs (expedientes) al proveedor ── */}
+      {openAssignOcs && createPortal(
+        <AssignItemsModal
+          eyebrow={lang==='es'?'ASIGNAR EXPEDIENTES':'ASSIGN POs'}
+          title={(lang==='es'?'Asignar órdenes de compra a ':'Assign purchase orders to ') + supplier.nombre_comercial}
+          searchPlaceholder={lang==='es'?'Buscar código OC…':'Search PO code…'}
+          actionLabel={lang==='es'?'Asignar':'Assign'}
+          loading={loadingAvailOcs}
+          emptyHint={lang==='es'
+            ? 'No hay más OCs disponibles para asignar.'
+            : 'No more POs available to assign.'}
+          items={availOcs.map(o => ({
+            id:       o.id,
+            title:    o.codigo || o.id,
+            subtitle: (o.estado || '') + (o.issued_at ? '  ·  ' + o.issued_at.slice(0,10) : ''),
+            meta:     o.total_usd != null ? `$${Number(o.total_usd).toLocaleString()}` : '',
+          }))}
+          onClose={()=>setOpenAssignOcs(false)}
+          onAssign={handleAssignOcs}
+        />,
+        document.body
+      )}
     </div>
   );
 }
