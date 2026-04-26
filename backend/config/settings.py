@@ -146,6 +146,9 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "apps.core.jwt_auth.MwtJWTAuthentication",
     ),
+    # Handler custom que escribe TODA excepción a /tmp/mwt_debug.log para
+    # diagnosticar 500s mudos. Mantiene comportamiento estándar de DRF.
+    "EXCEPTION_HANDLER": "apps.core.exception_handler.custom_exception_handler",
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
         "apps.core.permissions.RoleBasedPermission",
