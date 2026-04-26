@@ -37,6 +37,10 @@ class LineaSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Linea
         fields = "__all__"
+        # `id` se inyecta vía s.save(id=uuid.uuid4()) en el ViewSet.
+        # Sin read_only el validador lo marca required → 400
+        # {"id":["Este campo es requerido."]}.
+        read_only_fields = ("id", "created_at", "updated_at")
 
     def get_delta_qty(self, obj):
         try:
@@ -61,9 +65,13 @@ class EventoSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Evento
         fields = "__all__"
+        # `id` se inyecta vía s.save(id=uuid.uuid4()) en el ViewSet.
+        read_only_fields = ("id", "created_at")
 
 
 class TransferenciaDocumentoSerializer(serializers.ModelSerializer):
     class Meta:
         model  = TransferenciaDocumento
         fields = "__all__"
+        # `id` se inyecta vía s.save(id=uuid.uuid4()) en el ViewSet.
+        read_only_fields = ("id", "created_at", "updated_at")
