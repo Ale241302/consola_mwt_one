@@ -615,6 +615,8 @@ function TransferStatus({ status, lang }) {
     approved:   { cls: 'badge-info',    l: lang==='es'?'Aprobada':'Approved'   },
     in_transit: { cls: 'badge-warning', l: lang==='es'?'En tránsito':'In transit' },
     received:   { cls: 'badge-success', l: lang==='es'?'Recibida':'Received'   },
+    reconciled: { cls: 'badge-mint',    l: lang==='es'?'Reconciliada':'Reconciled' },
+    cancelled:  { cls: 'badge-danger',  l: lang==='es'?'Cancelada':'Cancelled'    },
   };
   const m = M[status] || M.planned;
   return <span className={`badge ${m.cls}`}><span className="dot"/>{m.l}</span>;
