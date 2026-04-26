@@ -17,6 +17,7 @@ import {
   IconChevLeft, IconCheck, IconShield, IconTruck, IconUser, IconGlobe,
 } from "../lib/icons.jsx";
 import { SUPPLIERS } from "../data/mockData.js";
+import { proveedoresApi } from "../lib/api.js";
 
 const CLASE_OPTIONS = [
   { value:'CRITICO',    label:'CRÍTICO',    desc:'Fabricante OEM de SKU vendible',         color:'#DC2626' },
@@ -76,12 +77,52 @@ export default function ScreenSupplierFormView() {
 
   const paisActual = PAISES.find(p => p.code === form.country_code);
 
-  const canSave = form.nombre_comercial.trim() && form.razon_social.trim()
-               && form.producto_servicio.trim() && form.contacto_email.trim();
+  // Por decisión de producto: ningún campo es obligatorio. El botón
+  // siempre está activo; el backend decide si alguno es required.
+  const canSave = true;
 
-  const handleSave = () => {
-    // Demo: aquí iría el POST al backend. De momento volvemos al listado.
-    navigate('/proveedores');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError(null);
+    // ── Mapeo FE shape → backend shape ──
+    // Ajustes de naming detectados en investigación:
+    //   country_code        → pais_iso2
+    //   lead_time_estimado  → lead_time_dias (number)
+    //   certs[]             → certificaciones (JSON)
+    //   id (SUP-001)        → DESCARTADO (backend genera UUID con s.save(id=...))
+    const body = {
+      nombre_comercial:  form.nombre_comercial || null,
+      razon_social:      form.razon_social || form.nombre_comercial || null,
+      pais_iso2:         form.country_code || null,
+      producto_servicio: form.producto_servicio || null,
+      clase:             form.clase || null,
+      contacto_nombre:   form.contacto_nombre || null,
+      contacto_email:    form.contacto_email || null,
+      contacto_tel:      form.contacto_tel || null,
+      lead_time_dias:    form.lead_time_estimado ? Number(form.lead_time_estimado) : 0,
+      certificaciones:   form.certs || [],
+    };
+    try {
+      await proveedoresApi.create(body);
+      navigate('/proveedores');
+    } catch (e) {
+      let msg = String(e?.message || e);
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed && typeof parsed === 'object') {
+          msg = Object.entries(parsed)
+            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+            .join('  ·  ');
+        }
+      } catch (_) {}
+      setSaveError(msg);
+      alert((lang==='es' ? 'No se pudo crear el proveedor: ' : 'Could not create supplier: ') + msg);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (

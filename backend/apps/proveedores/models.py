@@ -12,7 +12,7 @@ from django.db import models
 class Proveedor(models.Model):
     id                = models.UUIDField(primary_key=True)
     codigo            = models.CharField(max_length=32, null=True, blank=True, unique=True)
-    razon_social      = models.CharField(max_length=192)
+    razon_social      = models.CharField(max_length=192, null=True, blank=True)
     nombre_comercial  = models.CharField(max_length=160, null=True, blank=True)
     tax_id            = models.CharField(max_length=48,  null=True, blank=True)
     tipo              = models.CharField(max_length=24,  default="FABRICANTE")
