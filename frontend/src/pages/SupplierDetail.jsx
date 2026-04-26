@@ -725,7 +725,8 @@ export default function ScreenSupplierDetail() {
             exit={{ opacity:0, y:-4, transition:{ duration:0.12 } }}
             className="supplier-tab-body"
           >
-            <SupplierAuditTab lang={lang} supplierId={supplier.id}/>
+            <SupplierAuditTab lang={lang} supplierId={supplier.id}
+              supplierName={supplier.nombre_comercial}/>
           </motion.div>
         )}
       </AnimatePresence>

@@ -12,12 +12,14 @@ from .models import (
     SupplierPromoCode, SupplierAuditEvent,
     SupplierImportLog, SupplierCertificacion,
     SupplierProductAssignment,
+    SupplierIsoEvaluation,
 )
 from .serializers import (
     ProveedorSerializer, ProveedorListSerializer,
     SupplierPromoCodeSerializer, SupplierAuditEventSerializer,
     SupplierImportLogSerializer, SupplierCertificacionSerializer,
     SupplierProductAssignmentSerializer,
+    SupplierIsoEvaluationSerializer,
 )
 
 
@@ -314,6 +316,73 @@ class ProveedorViewSet(viewsets.ViewSet):
         except (IntegrityError, DataError) as e:
             return Response({"detail": str(e)}, status=400)
         return Response(s.data)
+
+    # ── Auditoría ISO (PLB_SUPPLIER_EVAL) ─────────────
+    # Endpoint: /api/proveedores/{id}/evaluations/
+    @action(detail=True, methods=["get", "post"], url_path="evaluations")
+    def evaluations(self, request, pk=None):
+        if request.method == "GET":
+            try:
+                qs = list(SupplierIsoEvaluation.objects
+                          .filter(supplier_id=pk, is_active=True)
+                          .order_by("-created_at"))
+
+                # Enriquecimiento: mapear evaluator_id → email para mostrar
+                # quién hizo la auditoría sin un join (CERO FK).
+                evaluator_emails = {}
+                ids = [str(e.evaluator_id) for e in qs if e.evaluator_id]
+                if ids:
+                    with connection.cursor() as c:
+                        c.execute("""
+                            SELECT id, COALESCE(email, full_name, '')
+                            FROM core.users
+                            WHERE id::text = ANY(%s)
+                        """, [ids])
+                        for uid, email in c.fetchall():
+                            evaluator_emails[str(uid)] = email
+
+                ctx = {"request": request, "evaluator_emails": evaluator_emails}
+                return Response(
+                    SupplierIsoEvaluationSerializer(qs, many=True, context=ctx).data
+                )
+            except Exception as e:
+                log.warning("evaluations GET error proveedor=%s : %s", pk, e)
+                return Response({"detail": "evaluations no disponible: " + str(e)},
+                                status=400)
+
+        # POST — registrar nueva auditoría
+        # Forzamos supplier_id desde la URL y evaluator_id desde el JWT.
+        # Eso evita que un cliente cambie la auditoría de proveedor o
+        # se autoinscriba como evaluador de otro.
+        data = {
+            **request.data,
+            "supplier_id":  pk,
+            "evaluator_id": getattr(request.user, "id", None),
+        }
+        # Removemos cualquier intento del FE de inyectar score_total/decision.
+        data.pop("score_total", None)
+        data.pop("decision", None)
+
+        s = SupplierIsoEvaluationSerializer(data=data, context={"request": request})
+        s.is_valid(raise_exception=True)
+        try:
+            s.save(id=uuid.uuid4())
+        except (IntegrityError, DataError) as e:
+            log.warning("evaluations POST DB error proveedor=%s payload=%s : %s",
+                        pk, dict(request.data), e)
+            return Response({"detail": str(e)}, status=400)
+        return Response(s.data, status=201)
+
+    @action(detail=True, methods=["delete"],
+            url_path=r"evaluations/(?P<eval_id>[^/.]+)")
+    def evaluation_detail(self, request, pk=None, eval_id=None):
+        try:
+            row = SupplierIsoEvaluation.objects.get(pk=eval_id, supplier_id=pk)
+        except SupplierIsoEvaluation.DoesNotExist:
+            return Response({"detail": "Auditoría no existe"}, status=404)
+        row.is_active = False
+        row.save()
+        return Response(status=204)
 
     # ── Audit log (read-only + append) ────────────────
     @action(detail=True, methods=["get", "post"], url_path="audit_log")

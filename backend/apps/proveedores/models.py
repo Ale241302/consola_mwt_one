@@ -227,6 +227,43 @@ class SupplierImportLog(models.Model):
         ordering = ("-created_at",)
 
 
+class SupplierIsoEvaluation(models.Model):
+    """Auditoría ISO 9001:2015 §8.4 — evaluación periódica del proveedor.
+    Tabla: 54_suppliers_iso_evaluations.sql.
+
+    Los 5 score_* son ingresados por el evaluador (1..5).
+    score_total y decision son CALCULADOS por el backend en el serializer
+    (PLB_SUPPLIER_EVAL — el frontend NO puede setearlos).
+    """
+    id                  = models.UUIDField(primary_key=True)
+    supplier_id         = models.UUIDField()                            # ⛔ sin FK
+    evaluator_id        = models.UUIDField(null=True, blank=True)       # ⛔ sin FK
+
+    periodo             = models.CharField(max_length=16)               # "Q2-2026"
+
+    score_calidad       = models.SmallIntegerField()
+    score_entrega       = models.SmallIntegerField()
+    score_comunicacion  = models.SmallIntegerField()
+    score_tecnica       = models.SmallIntegerField()
+    score_precio        = models.SmallIntegerField()
+
+    score_total         = models.DecimalField(max_digits=3, decimal_places=2)
+    decision            = models.CharField(max_length=16)
+                            # MANTENER / MONITOREAR / PLAN_MEJORA / DESCONTINUAR
+
+    comentarios         = models.TextField(null=True, blank=True)
+    documento_evidencia = models.CharField(max_length=500, null=True, blank=True)
+
+    is_active           = models.BooleanField(default=True)
+    created_at          = models.DateTimeField(auto_now_add=True)
+    updated_at          = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'proveedores"."suppliers_iso_evaluations'
+        ordering = ("-created_at",)
+
+
 class SupplierProductAssignment(models.Model):
     """Catálogo de abastecimiento — qué SKUs MWT le compramos a este
     proveedor, con el precio FOB negociado, MOQ y código que la fábrica
