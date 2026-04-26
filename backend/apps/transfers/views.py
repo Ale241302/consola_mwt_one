@@ -114,135 +114,39 @@ class TransferenciaViewSet(viewsets.ViewSet):
         return Response(data)
 
     def create(self, request):
-        import traceback, sys
-        # Debug v2: stderr está siendo absorbido por gunicorn → escribir
-        # también a /tmp/mwt_debug.log para garantizar visibilidad.
-        def _dbg(msg):
-            try:
-                with open("/tmp/mwt_debug.log", "a") as _f:
-                    _f.write(f"{msg}\n")
-            except Exception: pass
-            print(msg, file=sys.stderr, flush=True)
-
-        _dbg("================================================================")
-        _dbg(">>> Transferencia.create CALLED")
-        try:
-            _dbg(f">>> request.user={request.user!r} authenticated={getattr(request.user, 'is_authenticated', None)}")
-            _dbg(f">>> request.auth={request.auth!r}")
-            _dbg(f">>> request.data: {dict(request.data)}")
-        except Exception as _e:
-            _dbg(f">>> request inspection crash: {_e}")
-
         data = {**request.data}
-        # Compatibilidad: el FE envió por error `nodo_origen_id`/`nodo_destino_id`
-        # antes de mapear a los nombres canónicos. Los normalizamos acá
-        # silenciosamente para no romper en transición.
+        # Compat retro: el FE viejo enviaba `nodo_*_id`. Normalizamos.
         if "nodo_origen_id"  in data and "origen_id"  not in data:
             data["origen_id"]  = data.pop("nodo_origen_id")
         if "nodo_destino_id" in data and "destino_id" not in data:
             data["destino_id"] = data.pop("nodo_destino_id")
-
-        # has_discrepancy es columna generada en DB — limpiarla del payload
-        # si el FE la mandó accidentalmente (vendría con default true/false).
+        # has_discrepancy ahora es regular column con trigger automático
+        # (91c_transfers_has_discrepancy_unfreeze.sql), pero igual la
+        # ignoramos del payload — es derivada de discrepancy_count.
         data.pop("has_discrepancy", None)
-        # snapshot_created_at lo seteamos nosotros más abajo, así que sacarlo
-        # del payload evita ambigüedad.
-        data.pop("snapshot_created_at", None)
 
         new_id = uuid.uuid4()
         s = TransferenciaSerializer(data=data)
-        try:
-            s.is_valid(raise_exception=True)
-        except Exception as e:
-            _dbg(f">>> VALIDATION FAIL: {type(e).__name__}: {e}")
-            _dbg(f">>> errors: {getattr(s, 'errors', None)}")
-            log.warning("Transferencia.create validation error payload=%s : %s", dict(data), e)
-            return Response({"detail": "Validación: " + str(e)}, status=400)
-
+        s.is_valid(raise_exception=True)
         try:
             with transaction.atomic():
-                # has_discrepancy es columna GENERATED en Postgres → la
-                # excluimos manualmente del INSERT con SQL crudo (mucho
-                # más simple que monkeypatchear el ORM). Validamos con
-                # el serializer para mantener la lógica de DRF.
-                vd = s.validated_data
-                with connection.cursor() as _c:
-                    _c.execute(
-                        """
-                        INSERT INTO transfers.transferencia
-                          (id, codigo, origen_id, destino_id,
-                           origen_label, destino_label,
-                           legal_context, estado, ref_tracking,
-                           needs_approval, value_usd, notes,
-                           created_by_id, created_by_name,
-                           dispatched_at, eta, received_at,
-                           reconciled_by_id, reconciled_by_name,
-                           reconciled_at, reconciled_note,
-                           snapshot_created_at, discrepancy_count,
-                           is_active)
-                        VALUES (%s, %s, %s, %s,
-                                %s, %s,
-                                %s, %s, %s,
-                                %s, %s, %s,
-                                %s, %s,
-                                %s, %s, %s,
-                                %s, %s,
-                                %s, %s,
-                                NOW(), %s,
-                                %s)
-                        """,
-                        [
-                            str(new_id),
-                            vd.get("codigo"),
-                            vd.get("origen_id"),
-                            vd.get("destino_id"),
-                            vd.get("origen_label"),
-                            vd.get("destino_label"),
-                            vd.get("legal_context", "INTERNAL"),
-                            vd.get("estado", "PLANNED"),
-                            vd.get("ref_tracking"),
-                            bool(vd.get("needs_approval", False)),
-                            vd.get("value_usd", 0),
-                            vd.get("notes"),
-                            vd.get("created_by_id"),
-                            vd.get("created_by_name"),
-                            vd.get("dispatched_at"),
-                            vd.get("eta"),
-                            vd.get("received_at"),
-                            vd.get("reconciled_by_id"),
-                            vd.get("reconciled_by_name"),
-                            vd.get("reconciled_at"),
-                            vd.get("reconciled_note"),
-                            int(vd.get("discrepancy_count", 0)),
-                            bool(vd.get("is_active", True)),
-                        ],
-                    )
+                s.save(id=new_id)   # bypass read_only_fields=("id",)
+                Transferencia.objects.filter(pk=new_id).update(
+                    snapshot_created_at=timezone.now(),
+                )
                 Evento.objects.create(
                     id               = uuid.uuid4(),
                     transferencia_id = new_id,
                     estado_prev      = None,
-                    estado_nuevo     = vd.get("estado", "PLANNED"),
+                    estado_nuevo     = s.data.get("estado", "PLANNED"),
                     actor_id         = data.get("created_by_id"),
                     actor_name       = data.get("created_by_name"),
                     notes            = "Creación",
                 )
-                # Re-leer para devolver el shape completo al cliente
-                created = Transferencia.objects.get(pk=new_id)
-                response_data = TransferenciaSerializer(created).data
-        except Exception as e:
-            tb = traceback.format_exc()
-            _dbg(f">>> SAVE FAIL payload: {dict(data)}")
-            _dbg(f">>> ERROR: {type(e).__name__}: {e}")
-            _dbg(f">>> TRACEBACK:\n{tb}")
-            log.error("Transferencia.create FAIL payload=%s\nERROR: %s\nTRACE:\n%s",
-                      dict(data), e, tb)
-            return Response({
-                "detail": str(e),
-                "type":   type(e).__name__,
-                "hint":   "Error al crear la transferencia. Revisar logs del backend.",
-            }, status=400)
-        _dbg(f">>> OK id: {new_id}")
-        return Response(response_data, status=201)
+        except (IntegrityError, DataError) as e:
+            log.warning("Transferencia.create DB error payload=%s : %s", dict(data), e)
+            return Response({"detail": str(e)}, status=400)
+        return Response(s.data, status=201)
 
     def update(self, request, pk=None):
         try:
