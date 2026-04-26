@@ -1,8 +1,11 @@
 import uuid
-from django.db import connection, transaction
+import logging
+from django.db import connection, transaction, IntegrityError, DataError
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
+log = logging.getLogger(__name__)
 
 from .models import (
     Proveedor, TipoCat, EstadoCat, IncotermCat, ClaseCat, ScoreIsoCat,
@@ -45,7 +48,15 @@ class ProveedorViewSet(viewsets.ViewSet):
     def create(self, request):
         s = ProveedorSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
+        try:
+            s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
+        except (IntegrityError, DataError) as e:
+            # Devolvemos un 400 inteligible en vez de 500 mudo —
+            # esto evita que un NOT NULL/CHECK escondido tumbe la UI
+            # sin dejar rastro en logs (DEBUG=0).
+            log.warning("Proveedor.create DB error: %s · payload=%s",
+                        e, dict(request.data))
+            return Response({"detail": str(e)}, status=400)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
