@@ -21,30 +21,28 @@ import {
   IconTruck, IconPackage, IconNetwork, IconShip, IconGrid, IconGlobe,
 } from "../lib/icons.jsx";
 import {
-  INVENTORY as MOCK_INVENTORY,
-  NODES as MOCK_NODES,
-  TRANSFERS_IN_TRANSIT,
+  TRANSFERS_IN_TRANSIT,   // mock provisorio hasta que haya endpoint real
   getDaysStockTier,
 } from "../data/mockData.js";
 import CreateTransferDrawer from "../components/inventario/CreateTransferDrawer.jsx";
-import { stockApi, productosApi, nodosApi } from "../lib/api.js";
+import { stockApi, nodosApi } from "../lib/api.js";
 
 // ── Helpers backend → UI ────────
-function mapStockFromApi(r, prodMap, nodeMap) {
+// El backend ahora enriquece el payload con producto_sku, producto_nombre,
+// nodo_codigo, nodo_nombre — ya no necesitamos los maps externos.
+function mapStockFromApi(r) {
   const qty      = Number(r.cantidad_disponible || 0) + Number(r.cantidad_reservada || 0);
   const reserved = Number(r.cantidad_reservada || 0);
-  const prod     = prodMap?.[r.producto_id] || {};
-  const nodo     = nodeMap?.[r.nodo_id] || {};
   return {
-    sku:       prod.sku    || (r.producto_id ? r.producto_id.slice(0, 8) : '—'),
-    product:   prod.nombre || prod.sku || '—',
-    node:      nodo.name   || nodo.codigo || '—',
+    sku:       r.producto_sku    || (r.producto_id ? r.producto_id.slice(0, 8) : '—'),
+    product:   r.producto_nombre || r.producto_sku || '—',
+    node:      r.nodo_nombre     || r.nodo_codigo  || '—',
     lot:       r.lote || '—',
     qty,
     reserved,
     vendidos:  0,
-    received:  (r.created_at || '').slice(0, 10),
-    days_stock: 60, // valor por defecto hasta tener rotación real
+    received:  (r.last_movement_at || r.updated_at || '').slice(0, 10),
+    days_stock: Number(r.dias_stock_minimo) || 60,
     _raw: r,
   };
 }
@@ -77,21 +75,16 @@ export default function ScreenInventario() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [stockRaw, prodRaw, nodoRaw] = await Promise.all([
+      // El backend ahora enriquece /api/stock/ con sku/nombre/nodo —
+      // una sola llamada sin N+1 en el FE.
+      const [stockRaw, nodoRaw] = await Promise.all([
         stockApi.list().catch(() => []),
-        productosApi.list().catch(() => []),
         nodosApi.list().catch(() => []),
       ]);
       const stockItems = Array.isArray(stockRaw) ? stockRaw : (stockRaw?.results || []);
-      const prodItems  = Array.isArray(prodRaw)  ? prodRaw  : (prodRaw?.results  || []);
       const nodoItems  = Array.isArray(nodoRaw)  ? nodoRaw  : (nodoRaw?.results  || []);
 
-      const prodMap = {};
-      for (const p of prodItems) prodMap[p.id] = { sku: p.sku, nombre: p.nombre };
-      const nodeMap = {};
-      for (const n of nodoItems) nodeMap[n.id] = { name: n.nombre, codigo: n.codigo, flag: n.flag, type: n.tipo };
-
-      setApiStock(stockItems.map(r => mapStockFromApi(r, prodMap, nodeMap)));
+      setApiStock(stockItems.map(mapStockFromApi));
       setApiNodes(nodoItems.map(n => ({
         node_id: n.id,
         name:    n.nombre || n.codigo || '—',
@@ -109,8 +102,11 @@ export default function ScreenInventario() {
 
   useEffect(() => { load(); }, [load]);
 
-  const INVENTORY = !loading && apiStock.length > 0 ? apiStock : MOCK_INVENTORY;
-  const NODES     = !loading && apiNodes.length > 0 ? apiNodes : MOCK_NODES;
+  // Sin fallback a mock: si el backend no devuelve nada, mostramos
+  // la UI con arrays vacíos (la tabla / cards muestran "Sin datos"
+  // y el usuario sabe que tiene que cargar stock real).
+  const INVENTORY = apiStock;
+  const NODES     = apiNodes;
 
   // ── KPIs ────────
   const kpis = useMemo(() => {

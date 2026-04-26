@@ -8,6 +8,11 @@ from .models import (
 class StockListSerializer(serializers.ModelSerializer):
     valor_disponible_usd = serializers.SerializerMethodField()
     bajo_minimo          = serializers.SerializerMethodField()
+    # Enriquecimiento desde el view (context) — evita N+1 en el FE.
+    producto_sku    = serializers.SerializerMethodField()
+    producto_nombre = serializers.SerializerMethodField()
+    nodo_codigo     = serializers.SerializerMethodField()
+    nodo_nombre     = serializers.SerializerMethodField()
 
     class Meta:
         model  = Stock
@@ -20,6 +25,9 @@ class StockListSerializer(serializers.ModelSerializer):
             "ubicacion_fisica", "last_movement_at",
             "is_active", "updated_at",
             "valor_disponible_usd", "bajo_minimo",
+            # Anotaciones (read-only)
+            "producto_sku", "producto_nombre",
+            "nodo_codigo",  "nodo_nombre",
         )
 
     def get_valor_disponible_usd(self, obj):
@@ -34,6 +42,25 @@ class StockListSerializer(serializers.ModelSerializer):
             return float(obj.cantidad_disponible or 0) < float(obj.cantidad_minima or 0)
         except Exception:
             return False
+
+    # ── Enriquecimiento via context ──
+    # El view precarga dicts {uuid → {sku, nombre}} y {uuid → {codigo, nombre}}
+    # con DOS queries totales en vez de N+1. Si no hay context, vuelve "—".
+    def get_producto_sku(self, obj):
+        m = (self.context or {}).get("productos") or {}
+        return (m.get(str(obj.producto_id)) or {}).get("sku", "") or ""
+
+    def get_producto_nombre(self, obj):
+        m = (self.context or {}).get("productos") or {}
+        return (m.get(str(obj.producto_id)) or {}).get("nombre", "") or ""
+
+    def get_nodo_codigo(self, obj):
+        m = (self.context or {}).get("nodos") or {}
+        return (m.get(str(obj.nodo_id)) or {}).get("codigo", "") or ""
+
+    def get_nodo_nombre(self, obj):
+        m = (self.context or {}).get("nodos") or {}
+        return (m.get(str(obj.nodo_id)) or {}).get("nombre", "") or ""
 
 
 class StockSerializer(serializers.ModelSerializer):

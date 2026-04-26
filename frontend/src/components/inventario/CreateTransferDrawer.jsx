@@ -17,8 +17,7 @@ import {
   IconX, IconSwap, IconCheck, IconAlert, IconPlus, IconPackage,
   IconTruck, IconArrow, IconChevLeft, IconChevRight, IconFileText,
 } from "../../lib/icons.jsx";
-import { INVENTORY, NODES } from "../../data/mockData.js";
-import { transferenciasApi, transferLineasApi } from "../../lib/api.js";
+import { transferenciasApi, transferLineasApi, nodosApi, stockApi } from "../../lib/api.js";
 
 // Contexto legal — política estricta ENT_OPS_TRANSFERS
 const LEGAL_CONTEXT = [
@@ -38,11 +37,11 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
   const [saveError, setSaveErr] = useState(null);
 
   const [form, setForm] = useState({
-    nodo_origen:      '',
-    nodo_destino:     '',
+    nodo_origen:      '',   // UUID del nodo (backend)
+    nodo_destino:     '',   // UUID del nodo (backend)
     legal_context:    'internal',
     ref_tracking:     '',
-    lines:            [], // { key, sku, product, lot, stock_available, qty_transfer, qty_reserve }
+    lines:            [], // { key, sku, product, lot, stock_available, qty_transfer, qty_reserve, _stock_id }
   });
 
   // Bloquea el scroll del body mientras el drawer está abierto
@@ -54,17 +53,67 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // ── Inventario disponible en nodo_origen ────────
-  const availableRows = useMemo(() => {
-    if (!form.nodo_origen) return [];
-    return INVENTORY
-      .filter(i => i.node === form.nodo_origen && (i.qty - i.reserved) > 0)
-      .sort((a,b) => a.sku.localeCompare(b.sku));
-  }, [form.nodo_origen]);
+  // ── Cargar nodos reales al montar ─────────────────
+  const [nodes, setNodes] = useState([]);
+  const [loadingNodes, setLoadingNodes] = useState(true);
 
-  // Si cambia el origen, limpiamos las líneas (estaban basadas en otro nodo)
   useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const list = await nodosApi.list();
+        if (!alive) return;
+        const items = Array.isArray(list) ? list : (list?.results || []);
+        // Solo nodos activos
+        setNodes(items.filter(n => n.is_active !== false));
+      } catch (_) {
+        if (alive) setNodes([]);
+      } finally {
+        if (alive) setLoadingNodes(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // ── Stock disponible en nodo_origen (backend real) ───
+  const [availableRows, setAvailableRows] = useState([]);
+  const [loadingStock, setLoadingStock]   = useState(false);
+
+  useEffect(() => {
+    // Si cambia el origen, limpiamos las líneas y refetcheamos stock.
     setForm(f => ({ ...f, lines: [] }));
+    if (!form.nodo_origen) { setAvailableRows([]); return; }
+
+    let alive = true;
+    setLoadingStock(true);
+    (async () => {
+      try {
+        const list = await stockApi.list({
+          nodo: form.nodo_origen,
+          solo_disponible: 1,
+        });
+        if (!alive) return;
+        const items = Array.isArray(list) ? list : (list?.results || []);
+        // Adapter backend → shape que ya consume la UI
+        const rows = items
+          .map(s => ({
+            _stock_id: s.id,
+            sku:       s.producto_sku || (s.producto_id || '').slice(0, 8) || '—',
+            product:   s.producto_nombre || s.producto_sku || '—',
+            lot:       s.lote || '—',
+            qty:       Number(s.cantidad_disponible || 0) + Number(s.cantidad_reservada || 0),
+            reserved:  Number(s.cantidad_reservada || 0),
+          }))
+          .filter(r => (r.qty - r.reserved) > 0)
+          .sort((a, b) => a.sku.localeCompare(b.sku));
+        setAvailableRows(rows);
+      } catch (_) {
+        if (alive) setAvailableRows([]);
+      } finally {
+        if (alive) setLoadingStock(false);
+      }
+    })();
+    return () => { alive = false; };
   }, [form.nodo_origen]);
 
   // ── Helpers de líneas ────────
@@ -138,15 +187,17 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
       // Valor estimado ≈ unidades * 1 USD (placeholder hasta que tengamos costing)
       const estimated = totals.totalTransfer * 1;
       const body = {
-        codigo:         `TRF-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase()}`,
-        origen_label:   form.nodo_origen,
-        destino_label:  form.nodo_destino,
-        legal_context:  LEGAL_CONTEXT_TO_API[form.legal_context] || 'INTERNAL',
-        estado:         'PLANNED',
-        ref_tracking:   form.ref_tracking || '',
-        needs_approval: form.legal_context !== 'internal',
-        value_usd:      estimated,
-        is_active:      true,
+        codigo:           `TRF-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase()}`,
+        nodo_origen_id:   form.nodo_origen,    // UUIDs reales
+        nodo_destino_id:  form.nodo_destino,
+        origen_label:     labelOfNode(form.nodo_origen),
+        destino_label:    labelOfNode(form.nodo_destino),
+        legal_context:    LEGAL_CONTEXT_TO_API[form.legal_context] || 'INTERNAL',
+        estado:           'PLANNED',
+        ref_tracking:     form.ref_tracking || '',
+        needs_approval:   form.legal_context !== 'internal',
+        value_usd:        estimated,
+        is_active:        true,
       };
       const created = await transferenciasApi.create(body);
       const transferId = created?.id;
@@ -181,7 +232,18 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
     }
   };
 
-  const activeNodes = NODES.filter(n => n.status === 'ACTIVE');
+  // Helpers de display: el form guarda UUIDs, la UI muestra nombres.
+  const nodeById = useMemo(() => {
+    const m = {};
+    nodes.forEach(n => { m[n.id] = n; });
+    return m;
+  }, [nodes]);
+  const labelOfNode = (id) => {
+    const n = nodeById[id];
+    if (!n) return id || '—';
+    return [n.codigo, n.nombre].filter(Boolean).join(' · ') || id;
+  };
+  const activeNodes = nodes; // ya filtrado al cargar
   const legalMeta = LEGAL_CONTEXT.find(c => c.value === form.legal_context);
 
   return (
@@ -250,22 +312,34 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
                 <div className="form-field">
                   <label>{lang==='es'?'Nodo origen':'Origin node'} <span style={{color:'var(--critical)'}}>*</span></label>
                   <select className="select" value={form.nodo_origen}
+                          disabled={loadingNodes}
                           onChange={e=>set('nodo_origen', e.target.value)}>
-                    <option value="">— {lang==='es'?'Selecciona origen':'Select origin'} —</option>
+                    <option value="">
+                      — {loadingNodes
+                          ? (lang==='es'?'Cargando nodos…':'Loading nodes…')
+                          : (lang==='es'?'Selecciona origen':'Select origin')} —
+                    </option>
                     {activeNodes.map(n => (
-                      <option key={n.node_id} value={n.name}>{n.flag} {n.name} · {n.location}</option>
+                      <option key={n.id} value={n.id}>
+                        {n.codigo ? `${n.codigo} · ` : ''}{n.nombre || n.id}
+                        {n.pais_iso2 ? ` (${n.pais_iso2})` : ''}
+                      </option>
                     ))}
                   </select>
                 </div>
                 <div className="form-field">
                   <label>{lang==='es'?'Nodo destino':'Destination node'} <span style={{color:'var(--critical)'}}>*</span></label>
                   <select className="select" value={form.nodo_destino}
+                          disabled={loadingNodes}
                           onChange={e=>set('nodo_destino', e.target.value)}>
                     <option value="">— {lang==='es'?'Selecciona destino':'Select destination'} —</option>
                     {activeNodes
-                      .filter(n => n.name !== form.nodo_origen)
+                      .filter(n => n.id !== form.nodo_origen)
                       .map(n => (
-                        <option key={n.node_id} value={n.name}>{n.flag} {n.name} · {n.location}</option>
+                        <option key={n.id} value={n.id}>
+                          {n.codigo ? `${n.codigo} · ` : ''}{n.nombre || n.id}
+                          {n.pais_iso2 ? ` (${n.pais_iso2})` : ''}
+                        </option>
                     ))}
                   </select>
                 </div>
@@ -277,9 +351,9 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
                   initial={{ opacity:0 }}
                   animate={{ opacity:1 }}
                 >
-                  <span className="transfer-path-node">{form.nodo_origen}</span>
+                  <span className="transfer-path-node">{labelOfNode(form.nodo_origen)}</span>
                   <IconArrow size={16} style={{color:'var(--brand-accent)'}}/>
-                  <span className="transfer-path-node">{form.nodo_destino}</span>
+                  <span className="transfer-path-node">{labelOfNode(form.nodo_destino)}</span>
                 </motion.div>
               )}
 
@@ -333,14 +407,17 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
               <div className="card card-pad-sm transfer-sku-picker">
                 <div className="caption" style={{color:'var(--text-tertiary)', marginBottom:8}}>
                   {lang==='es'
-                    ? `SKUs con stock disponible en ${form.nodo_origen}`
-                    : `SKUs with available stock at ${form.nodo_origen}`}
+                    ? `SKUs con stock disponible en ${labelOfNode(form.nodo_origen)}`
+                    : `SKUs with available stock at ${labelOfNode(form.nodo_origen)}`}
+                  {loadingStock && <> · {lang==='es'?'cargando…':'loading…'}</>}
                 </div>
                 {availableRows.length === 0 ? (
                   <div className="empty-state" style={{padding:'16px 8px'}}>
                     <IconAlert size={18} style={{color:'var(--warning)'}}/>
                     <div className="caption">
-                      {lang==='es'?'No hay stock disponible en este nodo':'No available stock at this node'}
+                      {loadingStock
+                        ? (lang==='es'?'Consultando stock…':'Loading stock…')
+                        : (lang==='es'?'No hay stock disponible en este nodo':'No available stock at this node')}
                     </div>
                   </div>
                 ) : (
@@ -486,9 +563,9 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
                   {lang==='es'?'CONTEXTO':'CONTEXT'}
                 </div>
                 <div className="transfer-review-path" style={{marginTop:8}}>
-                  <span className="transfer-path-node">{form.nodo_origen}</span>
+                  <span className="transfer-path-node">{labelOfNode(form.nodo_origen)}</span>
                   <IconArrow size={16} style={{color:'var(--brand-accent)'}}/>
-                  <span className="transfer-path-node">{form.nodo_destino}</span>
+                  <span className="transfer-path-node">{labelOfNode(form.nodo_destino)}</span>
                 </div>
                 <div className="review-grid" style={{marginTop:10}}>
                   <div>

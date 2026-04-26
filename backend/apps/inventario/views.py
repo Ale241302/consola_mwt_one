@@ -40,8 +40,36 @@ class StockViewSet(viewsets.ViewSet):
             # Se evalúa en Python: cantidad_disponible < cantidad_minima
             rows = list(qs)
             rows = [r for r in rows if (r.cantidad_disponible or 0) < (r.cantidad_minima or 0)]
-            return Response(StockListSerializer(rows, many=True).data)
-        return Response(StockListSerializer(qs, many=True).data)
+        else:
+            rows = list(qs)
+
+        # Enriquecimiento — pre-carga sku/nombre de productos + codigo/nombre
+        # de nodos referenciados, en 2 queries únicas (no N+1).
+        producto_ids = list({str(r.producto_id) for r in rows if r.producto_id})
+        nodo_ids     = list({str(r.nodo_id)     for r in rows if r.nodo_id})
+        productos = {}
+        nodos     = {}
+        if producto_ids or nodo_ids:
+            with connection.cursor() as c:
+                if producto_ids:
+                    c.execute("""
+                        SELECT id, COALESCE(sku, ''), COALESCE(nombre, '')
+                        FROM productos.producto
+                        WHERE id::text = ANY(%s)
+                    """, [producto_ids])
+                    for pid, sku, nombre in c.fetchall():
+                        productos[str(pid)] = {"sku": sku, "nombre": nombre}
+                if nodo_ids:
+                    c.execute("""
+                        SELECT id, COALESCE(codigo, ''), COALESCE(nombre, '')
+                        FROM nodos.nodo
+                        WHERE id::text = ANY(%s)
+                    """, [nodo_ids])
+                    for nid, codigo, nombre in c.fetchall():
+                        nodos[str(nid)] = {"codigo": codigo, "nombre": nombre}
+
+        ctx = {"request": request, "productos": productos, "nodos": nodos}
+        return Response(StockListSerializer(rows, many=True, context=ctx).data)
 
     def retrieve(self, request, pk=None):
         try:
