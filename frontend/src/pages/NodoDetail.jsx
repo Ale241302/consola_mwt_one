@@ -240,7 +240,7 @@ export default function ScreenNodoDetail() {
       </div>
 
       <div className="node-hero" style={{ '--type-color': meta.color }}>
-        <div className="node-hero-flag">{node.flag || '🌐'}</div>
+        {/* Círculo de bandera removido — el país aparece en node-hero-meta. */}
         <div style={{flex:1, minWidth:0}}>
           <div className="micro">{meta.label.toUpperCase()} · {node.node_id}</div>
           <h1 className="page-title" style={{margin:'4px 0 6px'}}>{node.name}</h1>

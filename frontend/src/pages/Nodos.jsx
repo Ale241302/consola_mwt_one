@@ -237,7 +237,7 @@ export default function ScreenNodos() {
               >
                 <div className="node-card-accent"/>
                 <div className="node-card-head">
-                  <div className="node-flag">{n.flag || '🌐'}</div>
+                  {/* Círculo de bandera removido — el país ya está en node-loc abajo. */}
                   <div style={{flex:1, minWidth:0}}>
                     <div className="node-name">{n.name}</div>
                     <div className="node-loc">

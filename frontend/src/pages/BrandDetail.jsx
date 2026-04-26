@@ -239,7 +239,7 @@ export default function ScreenBrandDetail() {
       >
         <div className="brand-hero-accent"/>
         <div className="brand-hero-body">
-          <div className="brand-hero-badge">{brand.brand_id}</div>
+          {/* Badge de monograma removido — el código aparece en el row de info. */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="micro" style={{ color: tipo.color }}>{tipo.label}</div>
             <h1 className="page-title" style={{ margin: '2px 0 2px' }}>{brand.name}</h1>

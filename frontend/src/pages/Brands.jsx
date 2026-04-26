@@ -222,9 +222,8 @@ export default function ScreenBrands() {
                 {/* Glow superior con color de marca */}
                 <div className="brand-card-glow"/>
 
-                {/* Header: mono badge + status */}
+                {/* Header: nombre + status (monograma de iniciales removido). */}
                 <div className="brand-card-head">
-                  <div className="brand-badge-monogram">{b.brand_id}</div>
                   <div style={{flex:1, minWidth:0}}>
                     <div className="brand-name">{b.name}</div>
                     <div className="brand-code mono-sm">{b.brand_id}</div>
