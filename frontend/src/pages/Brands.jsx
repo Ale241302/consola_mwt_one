@@ -43,9 +43,16 @@ const ESTADO_API_TO_UI = {
 function mapBrandFromApi(r) {
   const slug = r.slug || (r.nombre || "").toLowerCase().replace(/\W+/g, "-").slice(0, 12);
   const mono = (r.nombre || "").split(/\s+/).map(s => s[0]).join("").slice(0, 3).toUpperCase();
-  const mercados = Array.isArray(r.territorios) && r.territorios.length > 0
-    ? r.territorios
-    : (r.pais_origen_iso2 ? [r.pais_origen_iso2] : []);
+  // ⚠️ El backend devuelve `mercados_activos` (array). `territorios` es un
+  // nombre legacy que NUNCA fue serializado — leerlo siempre daba undefined
+  // y caía al fallback `pais_origen_iso2`, que es el PAÍS DE ORIGEN, no los
+  // mercados donde la marca opera. Por eso el listado mostraba MX (el default
+  // del seed) mientras el detalle mostraba CO correctamente.
+  const mercados = Array.isArray(r.mercados_activos) && r.mercados_activos.length > 0
+    ? r.mercados_activos
+    : (Array.isArray(r.territorios) && r.territorios.length > 0
+        ? r.territorios
+        : (r.pais_origen_iso2 ? [r.pais_origen_iso2] : []));
   return {
     id:              r.id,
     brand_id:        mono || slug.slice(0, 3).toUpperCase(),
