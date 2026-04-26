@@ -263,8 +263,12 @@ class TransferenciaViewSet(viewsets.ViewSet):
     def approve(self, request, pk=None):
         return self._transition(request, pk, "APPROVED", "Aprobada")
 
-    @action(detail=True, methods=["post"])
-    def dispatch(self, request, pk=None):
+    # ⚠️ NO renombrar a `dispatch`: shadow del método core de DRF
+    # (View.dispatch) → rompe TODO el ViewSet con AssertionError
+    # ".accepted_renderer not set on Response" → HTTP 500 mudo.
+    # Mantener `url_path="dispatch"` para compatibilidad con el frontend.
+    @action(detail=True, methods=["post"], url_path="dispatch")
+    def mark_dispatched(self, request, pk=None):
         return self._transition(request, pk, "IN_TRANSIT", "Despachada")
 
     @action(detail=True, methods=["post"])
