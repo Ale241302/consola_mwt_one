@@ -282,7 +282,14 @@ export default function ScreenProductos() {
                            }}>
                         {p.imagen_url ? (
                           <img
-                            src={`${window.location.origin}/api/storage/download/?key=${encodeURIComponent(p.imagen_url)}`}
+                            src={
+                              // Si imagen_url ya es una URL absoluta (CDN externo,
+                              // ej. cdn.mwt.one), úsala directo. Si es un object_key
+                              // de MinIO, pásalo por /api/storage/download/.
+                              /^https?:\/\//i.test(p.imagen_url)
+                                ? p.imagen_url
+                                : `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(p.imagen_url)}`
+                            }
                             alt={p.nombre}
                             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                             onError={(e) => {
