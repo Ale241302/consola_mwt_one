@@ -27,8 +27,36 @@ import {
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
-import { apiFetch } from "../lib/api.js";
+import { apiFetch, clientesApi, marcasApi } from "../lib/api.js";
 import { CLIENTS, BRANDS } from "../data/mockData.js";
+
+// ─── Helpers backend → shape interno ──────────────────────────
+const _FLAG_ISO2 = {
+  PE:'🇵🇪', CO:'🇨🇴', US:'🇺🇸', MX:'🇲🇽', AR:'🇦🇷',
+  CL:'🇨🇱', BR:'🇧🇷', UY:'🇺🇾', EC:'🇪🇨', CR:'🇨🇷',
+  PA:'🇵🇦', DO:'🇩🇴', GT:'🇬🇹', SV:'🇸🇻', HN:'🇭🇳',
+  ES:'🇪🇸', CN:'🇨🇳',
+};
+function _adaptCliente(c) {
+  if (!c) return null;
+  const iso = (c.pais_iso2 || c.country_code || '').toUpperCase();
+  const limite = c.credito_aprobado ?? c.credito_limit_usd ?? c.credito_limit;
+  const dias   = c.dias_credito ?? c.credito_dias;
+  return {
+    id:                c.id || c.uuid,
+    name:              c.razon_social || c.nombre_comercial || c.name || '—',
+    razon_social:      c.razon_social,
+    country:           c.pais || c.country,
+    pais_iso2:         iso,
+    flag:              c.flag || _FLAG_ISO2[iso] || '🌐',
+    comision_pct:      c.comision_pct,
+    dias_credito:      dias,
+    credito_dias:      dias,
+    credito_aprobado:  limite,
+    credito_limit:     limite,
+    credito_limit_usd: limite,
+  };
+}
 
 // ─── Design tokens ───────────────────────────────────────────
 const NAVY  = "#0B1E3A";
@@ -61,15 +89,36 @@ export default function ScreenBrandClientPricingForm() {
   const { accessToken } = useAuth();
   const [resolvedPreview, setResolvedPreview] = useState(null);  // {count, items[]}
 
-  // Lookup cliente + marca
-  const client = useMemo(
-    () => CLIENTS.find(c => (c.id || c.uuid) === clienteId) || null,
-    [clienteId],
-  );
-  const brand = useMemo(
-    () => BRANDS.find(b => b.id === brandId) || null,
-    [brandId],
-  );
+  // Lookup cliente + marca · backend real con fallback al mock
+  const [client, setClient] = useState(null);
+  const [brand,  setBrand]  = useState(null);
+  const [lookupLoading, setLookupLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!clienteId) { setClient(null); setLookupLoading(false); return; }
+    setLookupLoading(true);
+    clientesApi.get(clienteId)
+      .then(c => { if (!cancelled) setClient(_adaptCliente(c)); })
+      .catch(() => {
+        const mockHit = CLIENTS.find(c => (c.id || c.uuid) === clienteId);
+        if (!cancelled) setClient(mockHit ? _adaptCliente(mockHit) : null);
+      })
+      .finally(() => { if (!cancelled) setLookupLoading(false); });
+    return () => { cancelled = true; };
+  }, [clienteId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!brandId) { setBrand(null); return; }
+    marcasApi.get(brandId)
+      .then(b => { if (!cancelled) setBrand(b); })
+      .catch(() => {
+        const mockHit = BRANDS.find(b => b.id === brandId);
+        if (!cancelled) setBrand(mockHit || null);
+      });
+    return () => { cancelled = true; };
+  }, [brandId]);
 
   // ── Estado del formulario ──
   const [file, setFile] = useState(null);
@@ -195,12 +244,26 @@ export default function ScreenBrandClientPricingForm() {
   };
 
   // ─── Render ───
+  if (lookupLoading) {
+    return (
+      <div className="page">
+        <div style={emptyCard}>
+          <div style={{ color: MUTED, fontSize: 13 }}>
+            {lang === "es" ? "Cargando cliente…" : "Loading client…"}
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (!client) {
     return (
       <div className="page">
         <div style={emptyCard}>
           <IconAlert size={22} style={{ color: MUTED, marginBottom: 8 }}/>
           <div>{lang === "es" ? "Cliente no encontrado." : "Client not found."}</div>
+          <div style={{ color: MUTED, fontSize: 11, marginTop: 6 }}>
+            ID: {clienteId}
+          </div>
           <button onClick={() => navigate("/marcas")}
                   style={{ ...btnGhost, marginTop: 14 }}>
             {lang === "es" ? "Volver" : "Back"}
