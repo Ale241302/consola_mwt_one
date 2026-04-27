@@ -1026,14 +1026,25 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
         if not f:
             return Response({"detail": "file es obligatorio (multipart)."}, status=400)
 
-        object_key = f"commercial/pricing/{bcpa.brand_id}/{bcpa.cliente_id}/{uuid.uuid4()}.xlsx"
-        bcpa.file_object_key  = object_key
-        bcpa.file_name        = getattr(f, "name", "price_list.xlsx")[:255]
-        bcpa.file_size_bytes  = getattr(f, "size", None)
-        bcpa.file_mime        = getattr(f, "content_type", None)
-        bcpa.file_uploaded_at = timezone.now()
-        bcpa.file_uploaded_by = getattr(request.user, "id", None)
-        bcpa.save()
+        try:
+            object_key = f"commercial/pricing/{bcpa.brand_id}/{bcpa.cliente_id}/{uuid.uuid4()}.xlsx"
+            bcpa.file_object_key  = object_key
+            bcpa.file_name        = getattr(f, "name", "price_list.xlsx")[:255]
+            bcpa.file_size_bytes  = getattr(f, "size", None)
+            bcpa.file_mime        = getattr(f, "content_type", None)
+            bcpa.file_uploaded_at = timezone.now()
+            # file_uploaded_by es UUIDField — solo seteamos si parece UUID
+            uid = getattr(request.user, "id", None)
+            try:
+                bcpa.file_uploaded_by = uuid.UUID(str(uid)) if uid else None
+            except Exception:
+                bcpa.file_uploaded_by = None
+            bcpa.save()
+        except Exception as exc:
+            log.exception("upload_file metadata save failed")
+            return Response({
+                "detail": f"Error al guardar metadata: {exc.__class__.__name__}: {exc}",
+            }, status=500)
 
         try:
             import openpyxl  # type: ignore
