@@ -1247,12 +1247,14 @@ def _resolve_price_for_assignment(gi, bcpa):
     else:
         dias = 0
     fi = _comex_factor_indice(dias, mercado="ME")
-    precio_calculadora = (precio_base * fc * fi).quantize(Decimal("0.0001"))
+    # Precio calculadora redondeado a 2 decimales (centavos USD) — coincide
+    # con la "Preço Líquido" del Excel (14,96 no 14,9647).
+    precio_calculadora = (precio_base * fc * fi).quantize(Decimal("0.01"))
     sp_pct  = Decimal(str(bcpa.sobre_precio_pct or 0))
     pp_pct  = Decimal(str(bcpa.pronto_pago_pct or 0))
     vol_pct = Decimal(str(bcpa.volumen_pct or 0))
     factor_mod = (Decimal("1") + sp_pct) * (Decimal("1") - pp_pct) * (Decimal("1") - vol_pct)
-    precio_final = (precio_calculadora * factor_mod).quantize(Decimal("0.0001"))
+    precio_final = (precio_calculadora * factor_mod).quantize(Decimal("0.01"))
     return {
         "sku":                gi.product_sku,
         "product_name":       gi.product_name,
