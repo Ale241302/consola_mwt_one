@@ -126,7 +126,12 @@ export default function BrandPricingConsole({ brandId, lang = "es" }) {
     apiFetch(`/commercial/brands/${brandId}/clients_summary/`, { token: getToken() })
       .then(rows => {
         if (cancelled) return;
-        const real = Array.isArray(rows) ? rows.map(adaptClientSummary) : [];
+        // El backend devuelve {brand_id, is_admin, count, clients: [...]}
+        // pero también soportamos respuesta directa como array por compatibilidad.
+        const list = Array.isArray(rows)
+          ? rows
+          : (Array.isArray(rows?.clients) ? rows.clients : []);
+        const real = list.map(adaptClientSummary);
         if (real.length > 0) setClients(real);
         else setClients(CLIENTS.map(c => ({
           cliente_id:        c.id || c.uuid,
