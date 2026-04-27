@@ -273,6 +273,35 @@ export default function ScreenProductFormView() {
   );
   const [clientPrices, setClientPrices] = useState(existingPricing?.client_prices || {});
 
+  // Resolved-prices waterfall: cuando cargamos un producto en modo edit,
+  // pedimos al backend los precios resueltos por cliente para este SKU
+  // (consume /api/commercial/products/<sku>/clients-pricing/). Pre-puebla
+  // los inputs de "Override por cliente" con el precio_final del waterfall
+  // (lista → calculadora COMEX → modificadores BCPA del cliente).
+  const [resolvedClientsPricing, setResolvedClientsPricing] = useState(null);
+  useEffect(() => {
+    if (!isEdit || !existing?.sku) return;
+    let cancelled = false;
+    apiFetch(`/commercial/products/${encodeURIComponent(existing.sku)}/clients-pricing/`,
+             { token: getToken() })
+      .then(res => {
+        if (cancelled || !res?.clients) return;
+        setResolvedClientsPricing(res);
+        // Pre-pobla overrides solo donde el usuario aún no escribió uno manual
+        setClientPrices(prev => {
+          const next = { ...prev };
+          for (const c of res.clients) {
+            if (next[c.cliente_id] === undefined && c.precio_final_usd) {
+              next[c.cliente_id] = Number(c.precio_final_usd);
+            }
+          }
+          return next;
+        });
+      })
+      .catch(() => { /* sin grade_item activo aún → silencioso */ });
+    return () => { cancelled = true; };
+  }, [isEdit, existing?.sku]);
+
   // ── Role-aware rendering ────────
   // isClient → ProductFormView se vuelve read-only + solo pestaña "Detalles".
   // isClient no puede editar, no puede ver gobernanza/pricing, no puede
@@ -798,28 +827,53 @@ export default function ScreenProductFormView() {
           </div>
         </div>
 
-        <div className="caption" style={{margin:'12px 0 6px', color:'var(--text-tertiary)'}}>
+        <div className="caption" style={{margin:'12px 0 6px', color:'var(--text-tertiary)',
+                                          display:'flex', alignItems:'center', gap:8}}>
           {lang==='es'?'Override por cliente':'Per-client override'}
+          {resolvedClientsPricing?.count > 0 && (
+            <span style={{background:'#1DE39422', color:'#00B286',
+                          padding:'2px 8px', borderRadius:6,
+                          fontSize:10, fontWeight:600}}>
+              {lang==='es'
+                ? `${resolvedClientsPricing.count} calculados (waterfall COMEX)`
+                : `${resolvedClientsPricing.count} resolved (COMEX waterfall)`}
+            </span>
+          )}
         </div>
         <div className="client-price-grid">
-          {realClients.map(c => (
-            <div key={c.id} className="client-price-row">
-              <span className="client-price-id">
-                <span>{c.flag}</span>
-                <span className="heading-sm">{c.name}</span>
-              </span>
-              <span className="price-editor-row price-editor-sm">
-                <span className="price-prefix">$</span>
-                <input className="input price-input-sm tabular-nums" type="number" step="0.01"
-                       value={clientPrices[c.id] ?? ''}
-                       placeholder={fmtMoney(Number(listPrice)||0).replace('$','').trim()}
-                       onChange={e=>{
-                         const v = e.target.value;
-                         setClientPrices({...clientPrices, [c.id]: v === '' ? undefined : Number(v)});
-                       }}/>
-              </span>
-            </div>
-          ))}
+          {realClients.map(c => {
+            const resolved = resolvedClientsPricing?.clients?.find(
+              r => r.cliente_id === c.id
+            );
+            return (
+              <div key={c.id} className="client-price-row">
+                <span className="client-price-id">
+                  <span>{c.flag}</span>
+                  <span className="heading-sm">{c.name}</span>
+                  {resolved && (
+                    <span style={{fontSize:9, color:'#00B286', fontWeight:600,
+                                  marginLeft:6, padding:'1px 5px',
+                                  background:'#1DE39418', borderRadius:4}}
+                          title={resolved.breakdown ? JSON.stringify(resolved.breakdown, null, 2) : ''}>
+                      ${Number(resolved.precio_calculadora).toFixed(2)} calc
+                    </span>
+                  )}
+                </span>
+                <span className="price-editor-row price-editor-sm">
+                  <span className="price-prefix">$</span>
+                  <input className="input price-input-sm tabular-nums" type="number" step="0.01"
+                         value={clientPrices[c.id] ?? ''}
+                         placeholder={resolved
+                           ? Number(resolved.precio_final_usd).toFixed(2)
+                           : fmtMoney(Number(listPrice)||0).replace('$','').trim()}
+                         onChange={e=>{
+                           const v = e.target.value;
+                           setClientPrices({...clientPrices, [c.id]: v === '' ? undefined : Number(v)});
+                         }}/>
+                </span>
+              </div>
+            );
+          })}
         </div>
 
         <div className="ceo-footnote" style={{marginTop:18}}>

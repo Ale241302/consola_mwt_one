@@ -35,6 +35,8 @@ from .views import (
     ResolveComexPriceView, PaymentIndexListView, PricingConstantListView,
     # Sprint M3c · brand↔client pricing assignment
     BrandClientPricingAssignmentViewSet, BrandClientsSummaryView,
+    # Sprint COMEX-resolved · resolved-prices por asignación / producto
+    ResolvedPricesByAssignmentView, ProductClientsPricingView,
 )
 
 
@@ -81,4 +83,12 @@ urlpatterns = [
     path("commercial/brands/<uuid:brand_id>/clients_summary/",
          BrandClientsSummaryView.as_view(),
          name="commercial-brand-clients-summary"),
+    # COMEX-resolved · tabla post-upload por asignación
+    path("commercial/brand-client-pricing/<uuid:pk>/resolved-prices/",
+         ResolvedPricesByAssignmentView.as_view(),
+         name="commercial-bcpa-resolved-prices"),
+    # Override por cliente en detalle del producto
+    path("commercial/products/<str:sku>/clients-pricing/",
+         ProductClientsPricingView.as_view(),
+         name="commercial-product-clients-pricing"),
 ]

@@ -26,6 +26,8 @@ import {
   IconDollar, IconPercent, IconClock, IconX, IconBoxes,
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
+import { apiFetch } from "../lib/api.js";
 import { CLIENTS, BRANDS } from "../data/mockData.js";
 
 // ─── Design tokens ───────────────────────────────────────────
@@ -56,6 +58,8 @@ export default function ScreenBrandClientPricingForm() {
   const navigate = useNavigate();
   const { lang } = useOutletContext() || { lang: "es" };
   const { isAdmin } = useRole();
+  const { accessToken } = useAuth();
+  const [resolvedPreview, setResolvedPreview] = useState(null);  // {count, items[]}
 
   // Lookup cliente + marca
   const client = useMemo(
@@ -132,18 +136,59 @@ export default function ScreenBrandClientPricingForm() {
       notas: notas || null,
     };
     try {
-      // TODO prod: llamar al backend real:
-      //   POST /api/commercial/brand-client-pricing/   con payload JSON
-      //   luego (si file): POST /.../<id>/upload-file/ multipart
-      await new Promise(r => setTimeout(r, 500));
-      console.log("[mock] save pricing assignment:", payload, file);
-      setBanner({ type: "success",
-        msg: lang === "es"
-          ? "Asignación de precios guardada."
-          : "Pricing assignment saved." });
-      setTimeout(() => navigate(`/marcas/${brandId}`), 800);
+      // 1) Crear asignación (snapshot de comisión + crédito se hace server-side)
+      const created = await apiFetch("/commercial/brand-client-pricing/", {
+        method: "POST",
+        body: payload,
+        token: accessToken,
+      });
+
+      // 2) Si hay archivo Excel, subirlo y disparar el parser openpyxl
+      let uploadResult = null;
+      if (file && created?.id) {
+        const fd = new FormData();
+        fd.append("file", file);
+        const API_BASE = import.meta.env.VITE_API_BASE || "/api";
+        const resp = await fetch(
+          `${API_BASE}/commercial/brand-client-pricing/${created.id}/upload-file/`,
+          { method: "POST",
+            headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+            body: fd },
+        );
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data?.detail || `HTTP ${resp.status}`);
+        uploadResult = data;
+      }
+
+      // 3) Pedir resolved-prices para previsualizar
+      let resolved = null;
+      if (created?.id) {
+        try {
+          resolved = await apiFetch(
+            `/commercial/brand-client-pricing/${created.id}/resolved-prices/?limit=20`,
+            { token: accessToken },
+          );
+        } catch { /* opcional */ }
+      }
+
+      setResolvedPreview(resolved);
+      const importedMsg = uploadResult
+        ? (lang === "es"
+            ? `Asignación creada · ${uploadResult.skus_imported} SKUs importados.`
+            : `Assignment created · ${uploadResult.skus_imported} SKUs imported.`)
+        : (lang === "es"
+            ? "Asignación de precios guardada."
+            : "Pricing assignment saved.");
+      setBanner({ type: "success", msg: importedMsg });
+
+      // Si NO se subió Excel, navegar; si sí, dejamos que el operador
+      // revise la tabla resolvedPreview antes de salir.
+      if (!file) {
+        setTimeout(() => navigate(`/marcas/${brandId}`), 800);
+      }
     } catch (err) {
-      setBanner({ type: "error", msg: String(err?.message || err) });
+      setBanner({ type: "error",
+        msg: String(err?.body?.detail || err?.message || err) });
     } finally {
       setSaving(false);
     }

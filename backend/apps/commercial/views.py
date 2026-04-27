@@ -31,7 +31,8 @@ import uuid
 import logging
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import transaction, connection
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -971,11 +972,8 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="upload-file",
             parser_classes=[MultiPartParser, FormParser])
     def upload_file(self, request, pk=None):
-        """Sube un Excel/CSV y lo asocia a la asignación.
-
-        El archivo real debería ir a MinIO (apps.storage) — aquí sólo
-        guardamos metadata + un object_key determinista. En modo demo
-        se guarda un fake key.
+        """Sube un Excel COMEX (Tabela de preços v6+), parsea y puebla
+        pricing.pricelist_version + pricing.grade_item.
         """
         try:
             bcpa = BrandClientPricingAssignment.objects.get(pk=pk, is_active=True)
@@ -986,9 +984,7 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
         if not f:
             return Response({"detail": "file es obligatorio (multipart)."}, status=400)
 
-        # Fake object_key demo (prod: subir a MinIO/Paperless).
         object_key = f"commercial/pricing/{bcpa.brand_id}/{bcpa.cliente_id}/{uuid.uuid4()}.xlsx"
-
         bcpa.file_object_key  = object_key
         bcpa.file_name        = getattr(f, "name", "price_list.xlsx")[:255]
         bcpa.file_size_bytes  = getattr(f, "size", None)
@@ -997,24 +993,80 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
         bcpa.file_uploaded_by = getattr(request.user, "id", None)
         bcpa.save()
 
-        return Response(self.get_serializer(bcpa).data, status=200)
+        try:
+            import openpyxl  # type: ignore
+        except ImportError:
+            return Response({"detail": "openpyxl no instalado.",
+                             "assignment": self.get_serializer(bcpa).data}, status=500)
+        try:
+            wb = openpyxl.load_workbook(f, data_only=True)
+        except Exception as exc:
+            return Response({"detail": f"Excel inválido: {exc}",
+                             "assignment": self.get_serializer(bcpa).data}, status=400)
+
+        sheet = "Tabela de Preços"
+        if sheet not in wb.sheetnames:
+            return Response({"detail": f"Hoja '{sheet}' no encontrada. Hojas: {wb.sheetnames}",
+                             "assignment": self.get_serializer(bcpa).data}, status=400)
+        tp = wb[sheet]
+
+        plv_id = uuid.uuid4()
+        codigo = f"COMEX-{bcpa.brand_id.hex[:8]}-{int(timezone.now().timestamp())}"
+        skus_imported = 0
+        skus_skipped = 0
+        sample = []
+
+        with transaction.atomic():
+            PriceListVersion.objects.create(
+                id=plv_id, brand_id=bcpa.brand_id, codigo=codigo,
+                nombre=bcpa.file_name or "COMEX upload",
+                descripcion=f"Upload via BCPA {bcpa.id}", currency="USD",
+                valid_from=bcpa.fecha_inicio or timezone.now().date(),
+                valid_to=bcpa.fecha_fin, storage_key=object_key, source="UPLOAD",
+                uploaded_by_id=getattr(request.user, "id", None),
+                metadata={"assignment_id": str(bcpa.id)},
+            )
+            grade_items = []
+            for row_idx in range(2, tp.max_row + 1):
+                sku_raw = tp.cell(row=row_idx, column=1).value
+                price_raw = tp.cell(row=row_idx, column=10).value
+                if sku_raw is None or price_raw is None:
+                    skus_skipped += 1; continue
+                try:
+                    sku = str(sku_raw).strip()
+                    price = Decimal(str(price_raw))
+                except Exception:
+                    skus_skipped += 1; continue
+                if not sku or price < 0:
+                    skus_skipped += 1; continue
+                product_name = (tp.cell(row=row_idx, column=2).value
+                                or tp.cell(row=row_idx, column=4).value or "")
+                ncm = tp.cell(row=row_idx, column=6).value
+                ca  = tp.cell(row=row_idx, column=7).value
+                centro = tp.cell(row=row_idx, column=9).value
+                grade_items.append(GradeItem(
+                    id=uuid.uuid4(), pricelist_version_id=plv_id,
+                    brand_id=bcpa.brand_id, product_sku=sku,
+                    product_name=str(product_name)[:240], unit_price_usd=price,
+                    grade_moq_total=0, size_multipliers={}, tags=[],
+                    metadata={"ncm": str(ncm) if ncm is not None else None,
+                              "ca":  str(ca)  if ca  is not None else None,
+                              "centro_facturacion": str(centro) if centro is not None else None,
+                              "row_excel": row_idx},
+                ))
+                if len(sample) < 5: sample.append(sku)
+                skus_imported += 1
+            if grade_items:
+                GradeItem.objects.bulk_create(grade_items, batch_size=200)
+
+        return Response({"assignment": self.get_serializer(bcpa).data,
+                         "pricelist_version_id": str(plv_id),
+                         "pricelist_codigo": codigo,
+                         "skus_imported": skus_imported,
+                         "skus_skipped": skus_skipped,
+                         "sample": sample}, status=200)
 
 
-# =====================================================================
-# GET /api/commercial/brands/<uuid>/clients_summary/
-#   — Lista clientes con datos financieros (para el grid de cards del
-#     Motor de Precios por marca). POL_VISIBILIDAD aplicada.
-#
-# Shape:
-#   [{
-#     "cliente_id", "razon_social", "flag", "estado",
-#     "dias_credito", "credito_limit_usd", "comision_pct",
-#     "assignment": {
-#        "id","file_name","fecha_inicio","fecha_fin",
-#        "sobre_precio_pct","pronto_pago_dias","pronto_pago_pct",
-#        "volumen_pct", ...
-#     } | null    ← presente si ya hay asignación vigente
-#   }, ...]
 # =====================================================================
 class BrandClientsSummaryView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1084,6 +1136,156 @@ class BrandClientsSummaryView(APIView):
         return Response({
             "brand_id": str(brand_id),
             "is_admin": is_admin,
+            "is_admin": is_admin,
             "count":    len(out),
             "clients":  out,
+        }, status=200)
+
+
+# =====================================================================
+# Helpers waterfall — fórmula COMEX + modificadores BCPA
+# =====================================================================
+def _comex_factor_comision(comision_pct):
+    import math
+    base = Decimal("1.0183")
+    bc = PricingConstant.objects.filter(slug="base_commission_rate", is_active=True).first()
+    if bc:
+        base = Decimal(str(bc.value))
+    return Decimal(f"{math.pow(float(base), float(100 * comision_pct)):.6f}")
+
+
+def _comex_factor_indice(dias, mercado="ME"):
+    pi = PaymentIndex.objects.filter(dias=dias, is_active=True).first()
+    if not pi:
+        return Decimal("1.0")
+    return Decimal(str(pi.factor_me if mercado == "ME" else pi.factor_mi))
+
+
+def _resolve_price_for_assignment(gi, bcpa):
+    precio_base = Decimal(str(gi.unit_price_usd))
+    comision = Decimal(str(bcpa.comision_pct_snapshot or 0))
+    fc = _comex_factor_comision(comision)
+    dias = int(bcpa.pronto_pago_dias or 0)
+    fi = _comex_factor_indice(dias, mercado="ME")
+    precio_calculadora = (precio_base * fc * fi).quantize(Decimal("0.0001"))
+    sp_pct  = Decimal(str(bcpa.sobre_precio_pct or 0))
+    pp_pct  = Decimal(str(bcpa.pronto_pago_pct or 0))
+    vol_pct = Decimal(str(bcpa.volumen_pct or 0))
+    factor_mod = (Decimal("1") + sp_pct) * (Decimal("1") - pp_pct) * (Decimal("1") - vol_pct)
+    precio_final = (precio_calculadora * factor_mod).quantize(Decimal("0.0001"))
+    return {
+        "sku":                gi.product_sku,
+        "product_name":       gi.product_name,
+        "precio_base_usd":    str(precio_base),
+        "comision_pct":       str(comision),
+        "factor_comision":    str(fc),
+        "pronto_pago_dias":   dias,
+        "factor_indice":      str(fi),
+        "precio_calculadora": str(precio_calculadora),
+        "sobre_precio_pct":   str(sp_pct),
+        "pronto_pago_pct":    str(pp_pct),
+        "volumen_pct":        str(vol_pct),
+        "factor_modificadores": str(factor_mod.quantize(Decimal("0.000001"))),
+        "precio_final_usd":   str(precio_final),
+    }
+
+
+# =====================================================================
+# GET /api/commercial/brand-client-pricing/<id>/resolved-prices/
+# =====================================================================
+class ResolvedPricesByAssignmentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            bcpa = BrandClientPricingAssignment.objects.get(pk=pk, is_active=True)
+        except BrandClientPricingAssignment.DoesNotExist:
+            return Response({"detail": "Asignación no encontrada."}, status=404)
+
+        plvs = PriceListVersion.objects.filter(
+            brand_id=bcpa.brand_id, is_active=True,
+        ).order_by("-valid_from")
+        plv_ids = [p.id for p in plvs]
+        items = GradeItem.objects.filter(
+            pricelist_version_id__in=plv_ids, is_active=True,
+        ).order_by("product_sku")
+
+        limit = int(request.query_params.get("limit", 1000))
+        sku_filter = request.query_params.get("sku")
+        if sku_filter:
+            items = items.filter(product_sku=sku_filter)
+
+        out = [_resolve_price_for_assignment(gi, bcpa) for gi in items[:limit]]
+        return Response({
+            "assignment_id":  str(bcpa.id),
+            "brand_id":       str(bcpa.brand_id),
+            "cliente_id":     str(bcpa.cliente_id),
+            "count":          len(out),
+            "items":          out,
+        }, status=200)
+
+
+# =====================================================================
+# GET /api/commercial/products/<sku>/clients-pricing/
+# =====================================================================
+class ProductClientsPricingView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, sku):
+        is_admin = _is_admin(request.user)
+        gi = (
+            GradeItem.objects.filter(product_sku=str(sku), is_active=True)
+            .order_by("-updated_at").first()
+        )
+        if not gi:
+            return Response({
+                "sku": sku, "found": False,
+                "detail": "SKU sin grade_item activo.",
+                "clients": [],
+            }, status=200)
+
+        bcpas = list(BrandClientPricingAssignment.objects.filter(
+            brand_id=gi.brand_id, is_active=True,
+        ))
+        cliente_ids = [str(b.cliente_id) for b in bcpas]
+        clientes_map = {}
+        if cliente_ids:
+            with connection.cursor() as cur:
+                cur.execute("""
+                    SELECT id, razon_social, nombre_comercial, pais_iso2
+                      FROM clientes.cliente
+                     WHERE is_active = TRUE
+                       AND id::text = ANY(%s)
+                """, [cliente_ids])
+                for row in cur.fetchall():
+                    clientes_map[str(row[0])] = {
+                        "razon_social":     row[1],
+                        "nombre_comercial": row[2],
+                        "pais_iso2":        row[3],
+                    }
+
+        out_clients = []
+        for bcpa in bcpas:
+            cli_id = str(bcpa.cliente_id)
+            cli = clientes_map.get(cli_id, {})
+            resolved = _resolve_price_for_assignment(gi, bcpa)
+            out_clients.append({
+                "cliente_id":         cli_id,
+                "razon_social":       cli.get("razon_social"),
+                "nombre_comercial":   cli.get("nombre_comercial"),
+                "pais_iso2":          cli.get("pais_iso2"),
+                "assignment_id":      str(bcpa.id),
+                "precio_calculadora": resolved["precio_calculadora"],
+                "precio_final_usd":   resolved["precio_final_usd"],
+                "breakdown":          resolved if is_admin else None,
+            })
+
+        return Response({
+            "sku":              str(sku),
+            "brand_id":         str(gi.brand_id),
+            "product_name":     gi.product_name,
+            "precio_base_usd":  str(gi.unit_price_usd),
+            "is_admin":         is_admin,
+            "count":            len(out_clients),
+            "clients":          out_clients,
         }, status=200)
