@@ -1031,7 +1031,11 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
             bcpa.file_object_key  = object_key
             bcpa.file_name        = getattr(f, "name", "price_list.xlsx")[:255]
             bcpa.file_size_bytes  = getattr(f, "size", None)
-            bcpa.file_mime        = getattr(f, "content_type", None)
+            # file_mime es VARCHAR(64). El MIME de xlsx es 71 chars
+            # ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            # así que truncamos a 64.
+            _mime = getattr(f, "content_type", None)
+            bcpa.file_mime        = _mime[:64] if _mime else None
             bcpa.file_uploaded_at = timezone.now()
             # file_uploaded_by es UUIDField — solo seteamos si parece UUID
             uid = getattr(request.user, "id", None)
