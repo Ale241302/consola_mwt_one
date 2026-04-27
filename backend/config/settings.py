@@ -92,6 +92,14 @@ LOCAL_APPS = [
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY + LOCAL_APPS
 
+# ─── Upload limits (Excel COMEX hasta 50 MB) ──────────────────
+# Default Django: 2.5 MB en memoria, 2.5 MB en POST. Lo subimos para
+# soportar pricelists grandes. nginx también está en 50M (frontend +
+# host consola.conf).
+DATA_UPLOAD_MAX_MEMORY_SIZE  = 50 * 1024 * 1024   # 50 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE  = 50 * 1024 * 1024   # 50 MB
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 5000
+
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
