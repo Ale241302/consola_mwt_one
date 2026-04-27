@@ -924,44 +924,86 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
         return qs.order_by("-updated_at")
 
     def create(self, request, *args, **kwargs):
-        data = dict(request.data)
-        if not data.get("id"):
-            data["id"] = str(uuid.uuid4())
+        """Crea una asignación cliente↔marca de pricing.
 
-        # Snapshot inmutable · leemos los términos del cliente ahora mismo
-        # y los congelamos en la asignación (aunque luego el cliente cambie
-        # su comisión, esta asignación guarda los valores que pactamos hoy).
-        cliente_id = data.get("cliente_id")
-        if cliente_id:
-            with connection.cursor() as cur:
-                cur.execute("""
-                    SELECT comision_pct, dias_credito, credito_aprobado
-                      FROM clientes.cliente
-                     WHERE id = %s AND is_active = TRUE
-                     LIMIT 1
-                """, [cliente_id])
-                row = cur.fetchone()
-                if row:
-                    data.setdefault("comision_pct_snapshot",  row[0])
-                    data.setdefault("credito_dias_snapshot",  row[1])
-                    data.setdefault("credito_limit_snapshot", row[2])
+        TODO_LOS_CAMPOS_OPCIONALES excepto brand_id y cliente_id.
+        - id: lo generamos server-side si no llega
+        - fecha_inicio: default = CURRENT_DATE si llega null/vacío
+        - modificadores (sobre_precio, pronto_pago, volumen, fechas): null OK
+        - snapshot del cliente: best-effort, tolerante a NULLs y errores SQL
+        """
+        try:
+            data = dict(request.data)
 
-        # Defensa en profundidad: si hay ya una asignación activa para este
-        # (brand_id, cliente_id), la inactivamos en la misma transacción
-        # para respetar el unique index parcial.
-        brand_id = data.get("brand_id")
-        if brand_id and cliente_id:
-            BrandClientPricingAssignment.objects.filter(
-                brand_id=brand_id, cliente_id=cliente_id, is_active=True,
-            ).update(is_active=False)
+            # ── 1. Defaults server-side ──
+            if not data.get("id"):
+                data["id"] = str(uuid.uuid4())
+            if not data.get("fecha_inicio"):
+                data["fecha_inicio"] = timezone.now().date().isoformat()
 
-        data["created_by_id"] = str(getattr(request.user, "id", "")) or None
-        data["updated_by_id"] = data["created_by_id"]
+            # Validación mínima (los únicos 2 obligatorios)
+            brand_id   = data.get("brand_id")
+            cliente_id = data.get("cliente_id")
+            if not brand_id or not cliente_id:
+                return Response(
+                    {"detail": "brand_id y cliente_id son obligatorios."},
+                    status=400,
+                )
 
-        ser = self.get_serializer(data=data)
-        ser.is_valid(raise_exception=True)
-        ser.save()
-        return Response(ser.data, status=201)
+            # ── 2. Snapshot del cliente (best-effort) ──
+            snap_comision = snap_dias = snap_limit = None
+            try:
+                with connection.cursor() as cur:
+                    cur.execute("""
+                        SELECT comision_pct, dias_credito, credito_aprobado
+                          FROM clientes.cliente
+                         WHERE id = %s AND is_active = TRUE
+                         LIMIT 1
+                    """, [cliente_id])
+                    row = cur.fetchone()
+                    if row:
+                        snap_comision, snap_dias, snap_limit = row
+            except Exception as exc:
+                log.warning("BCPA snapshot failed: %s", exc)
+
+            # ── 3. Atomic: invalidar asignación previa + crear la nueva ──
+            with transaction.atomic():
+                BrandClientPricingAssignment.objects.filter(
+                    brand_id=brand_id, cliente_id=cliente_id, is_active=True,
+                ).update(is_active=False)
+
+                # created_by_id / updated_by_id (tolerante a AnonymousUser)
+                user_id = getattr(request.user, "id", None)
+                if user_id:
+                    data["created_by_id"] = str(user_id)
+                    data["updated_by_id"] = str(user_id)
+
+                ser = self.get_serializer(data=data)
+                ser.is_valid(raise_exception=True)
+                instance = ser.save()
+
+                # Snapshot vía direct field assignment (read_only_fields o no
+                # del serializer). Solo seteamos campos efectivamente leídos.
+                snapshot_updates = {}
+                if snap_comision is not None:
+                    snapshot_updates["comision_pct_snapshot"] = snap_comision
+                if snap_dias is not None:
+                    snapshot_updates["credito_dias_snapshot"] = snap_dias
+                if snap_limit is not None:
+                    snapshot_updates["credito_limit_snapshot"] = snap_limit
+                if snapshot_updates:
+                    for k, v in snapshot_updates.items():
+                        setattr(instance, k, v)
+                    instance.save(update_fields=list(snapshot_updates.keys()))
+
+            return Response(self.get_serializer(instance).data, status=201)
+
+        except Exception as exc:
+            log.exception("BCPA create failed")
+            return Response(
+                {"detail": f"Error al crear asignación: {exc.__class__.__name__}: {exc}"},
+                status=500,
+            )
 
     def perform_destroy(self, instance):
         """Soft delete (los archivos permanecen en MinIO)."""
@@ -1243,7 +1285,6 @@ class ProductClientsPricingView(APIView):
                 "detail": "SKU sin grade_item activo.",
                 "clients": [],
             }, status=200)
-
         bcpas = list(BrandClientPricingAssignment.objects.filter(
             brand_id=gi.brand_id, is_active=True,
         ))

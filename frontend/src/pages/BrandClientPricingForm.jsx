@@ -172,10 +172,12 @@ export default function ScreenBrandClientPricingForm() {
   const save = async () => {
     setSaving(true);
     setBanner(null);
+    // Solo brand_id + cliente_id son obligatorios. El resto: si está vacío,
+    // ni siquiera lo enviamos (DRF lo trata como "no provisto" → null en BD).
     const payload = {
       brand_id:   brandId,
       cliente_id: clienteId,
-      fecha_inicio: fechaInicio,
+      fecha_inicio: fechaInicio || undefined,
       fecha_fin:  fechaFinIndef ? null : (fechaFin || null),
       sobre_precio_pct:  sobrePrecioPct > 0 ? (sobrePrecioPct / 100).toFixed(4) : null,
       pronto_pago_dias:  prontoPagoDias === "" ? null : Number(prontoPagoDias),

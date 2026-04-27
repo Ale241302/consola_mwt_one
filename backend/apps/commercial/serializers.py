@@ -229,13 +229,21 @@ class BrandClientPricingAssignmentSerializer(serializers.ModelSerializer):
     class Meta:
         model  = BrandClientPricingAssignment
         fields = "__all__"
+        # `id` se asigna server-side vía data["id"]=uuid.uuid4() en create()
+        # — NO lo marcamos read_only (si no, DRF lo descarta antes de save).
+        # Snapshot fields se setean post-save para no chocar con lo que envía
+        # el frontend (puede mandarlos null o no mandarlos).
         read_only_fields = (
-            "id",
             "file_uploaded_at", "file_uploaded_by",
-            "comision_pct_snapshot", "credito_dias_snapshot", "credito_limit_snapshot",
             "created_by_id", "updated_by_id",
             "created_at", "updated_at",
         )
+        extra_kwargs = {
+            # Hacemos fecha_inicio opcional en el serializer; el create()
+            # del viewset le pone CURRENT_DATE como fallback si llega null.
+            "fecha_inicio": {"required": False, "allow_null": True},
+            "id":           {"required": False},
+        }
 
 
 class BrandClientPricingAssignmentListSerializer(serializers.ModelSerializer):
