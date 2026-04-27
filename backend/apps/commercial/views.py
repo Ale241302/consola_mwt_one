@@ -1052,61 +1052,75 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
                              "assignment": self.get_serializer(bcpa).data}, status=400)
         tp = wb[sheet]
 
+        # Normalizar brand_id (puede llegar como UUID o string desde managed=False)
+        try:
+            brand_uuid = bcpa.brand_id if hasattr(bcpa.brand_id, 'hex') else uuid.UUID(str(bcpa.brand_id))
+        except Exception:
+            brand_uuid = uuid.uuid4()
+
         plv_id = uuid.uuid4()
-        codigo = f"COMEX-{bcpa.brand_id.hex[:8]}-{int(timezone.now().timestamp())}"
+        codigo = f"COMEX-{brand_uuid.hex[:8]}-{int(timezone.now().timestamp())}"
         skus_imported = 0
         skus_skipped = 0
         sample = []
 
-        with transaction.atomic():
-            PriceListVersion.objects.create(
-                id=plv_id, brand_id=bcpa.brand_id, codigo=codigo,
-                nombre=bcpa.file_name or "COMEX upload",
-                descripcion=f"Upload via BCPA {bcpa.id}", currency="USD",
-                valid_from=bcpa.fecha_inicio or timezone.now().date(),
-                valid_to=bcpa.fecha_fin, storage_key=object_key, source="UPLOAD",
-                uploaded_by_id=getattr(request.user, "id", None),
-                metadata={"assignment_id": str(bcpa.id)},
-            )
-            grade_items = []
-            for row_idx in range(2, tp.max_row + 1):
-                sku_raw = tp.cell(row=row_idx, column=1).value
-                price_raw = tp.cell(row=row_idx, column=10).value
-                if sku_raw is None or price_raw is None:
-                    skus_skipped += 1; continue
-                try:
-                    sku = str(sku_raw).strip()
-                    price = Decimal(str(price_raw))
-                except Exception:
-                    skus_skipped += 1; continue
-                if not sku or price < 0:
-                    skus_skipped += 1; continue
-                product_name = (tp.cell(row=row_idx, column=2).value
-                                or tp.cell(row=row_idx, column=4).value or "")
-                ncm = tp.cell(row=row_idx, column=6).value
-                ca  = tp.cell(row=row_idx, column=7).value
-                centro = tp.cell(row=row_idx, column=9).value
-                grade_items.append(GradeItem(
-                    id=uuid.uuid4(), pricelist_version_id=plv_id,
-                    brand_id=bcpa.brand_id, product_sku=sku,
-                    product_name=str(product_name)[:240], unit_price_usd=price,
-                    grade_moq_total=0, size_multipliers={}, tags=[],
-                    metadata={"ncm": str(ncm) if ncm is not None else None,
-                              "ca":  str(ca)  if ca  is not None else None,
-                              "centro_facturacion": str(centro) if centro is not None else None,
-                              "row_excel": row_idx},
-                ))
-                if len(sample) < 5: sample.append(sku)
-                skus_imported += 1
-            if grade_items:
-                GradeItem.objects.bulk_create(grade_items, batch_size=200)
-
-        return Response({"assignment": self.get_serializer(bcpa).data,
-                         "pricelist_version_id": str(plv_id),
-                         "pricelist_codigo": codigo,
-                         "skus_imported": skus_imported,
-                         "skus_skipped": skus_skipped,
-                         "sample": sample}, status=200)
+        try:
+         with transaction.atomic():
+             PriceListVersion.objects.create(
+                 id=plv_id, brand_id=bcpa.brand_id, codigo=codigo,
+                 nombre=bcpa.file_name or "COMEX upload",
+                 descripcion=f"Upload via BCPA {bcpa.id}", currency="USD",
+                 valid_from=bcpa.fecha_inicio or timezone.now().date(),
+                 valid_to=bcpa.fecha_fin, storage_key=object_key, source="UPLOAD",
+                 uploaded_by_id=getattr(request.user, "id", None),
+                 metadata={"assignment_id": str(bcpa.id)},
+             )
+             grade_items = []
+             for row_idx in range(2, tp.max_row + 1):
+                 sku_raw = tp.cell(row=row_idx, column=1).value
+                 price_raw = tp.cell(row=row_idx, column=10).value
+                 if sku_raw is None or price_raw is None:
+                     skus_skipped += 1; continue
+                 try:
+                     sku = str(sku_raw).strip()
+                     price = Decimal(str(price_raw))
+                 except Exception:
+                     skus_skipped += 1; continue
+                 if not sku or price < 0:
+                     skus_skipped += 1; continue
+                 product_name = (tp.cell(row=row_idx, column=2).value
+                                 or tp.cell(row=row_idx, column=4).value or "")
+                 ncm = tp.cell(row=row_idx, column=6).value
+                 ca  = tp.cell(row=row_idx, column=7).value
+                 centro = tp.cell(row=row_idx, column=9).value
+                 grade_items.append(GradeItem(
+                     id=uuid.uuid4(), pricelist_version_id=plv_id,
+                     brand_id=bcpa.brand_id, product_sku=sku,
+                     product_name=str(product_name)[:240], unit_price_usd=price,
+                     grade_moq_total=0, size_multipliers={}, tags=[],
+                     metadata={"ncm": str(ncm) if ncm is not None else None,
+                               "ca":  str(ca)  if ca  is not None else None,
+                               "centro_facturacion": str(centro) if centro is not None else None,
+                               "row_excel": row_idx},
+                 ))
+                 if len(sample) < 5: sample.append(sku)
+                 skus_imported += 1
+             if grade_items:
+                 GradeItem.objects.bulk_create(grade_items, batch_size=200)
+         return Response({"assignment": self.get_serializer(bcpa).data,
+                          "pricelist_version_id": str(plv_id),
+                          "pricelist_codigo": codigo,
+                          "skus_imported": skus_imported,
+                          "skus_skipped": skus_skipped,
+                          "sample": sample}, status=200)
+        except Exception as exc:
+            log.exception("upload_file failed")
+            return Response({
+                "detail": f"{exc.__class__.__name__}: {exc}",
+                "assignment": self.get_serializer(bcpa).data,
+                "skus_imported": skus_imported,
+                "skus_skipped": skus_skipped,
+            }, status=500)
 
 
 # =====================================================================
