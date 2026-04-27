@@ -1236,7 +1236,16 @@ def _resolve_price_for_assignment(gi, bcpa):
     precio_base = Decimal(str(gi.unit_price_usd))
     comision = Decimal(str(bcpa.comision_pct_snapshot or 0))
     fc = _comex_factor_comision(comision)
-    dias = int(bcpa.pronto_pago_dias or 0)
+    # D6 del Excel = días de pago para el factor índice. Prioridad:
+    #   1. pronto_pago_dias (override explícito de la asignación)
+    #   2. credito_dias_snapshot (snapshot de días de crédito del cliente)
+    #   3. 0 (contado, factor_me = 1.0)
+    if bcpa.pronto_pago_dias is not None:
+        dias = int(bcpa.pronto_pago_dias)
+    elif bcpa.credito_dias_snapshot is not None:
+        dias = int(bcpa.credito_dias_snapshot)
+    else:
+        dias = 0
     fi = _comex_factor_indice(dias, mercado="ME")
     precio_calculadora = (precio_base * fc * fi).quantize(Decimal("0.0001"))
     sp_pct  = Decimal(str(bcpa.sobre_precio_pct or 0))
