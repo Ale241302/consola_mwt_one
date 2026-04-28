@@ -623,8 +623,8 @@ export default function ScreenProductos() {
                   </div>
                   <div className="caption" style={{color:'var(--text-tertiary)', lineHeight:1.5}}>
                     {lang==='es'
-                      ? <>¿Seguro que quieres eliminar <strong>{deleteTarget.nombre || deleteTarget.sku}</strong>? El producto pasará a inactivo y se podrá restaurar luego.</>
-                      : <>Delete <strong>{deleteTarget.nombre || deleteTarget.sku}</strong>? It will be marked inactive and can be restored later.</>}
+                      ? <>¿Seguro que quieres eliminar <strong>{deleteTarget.nombre || deleteTarget.sku}</strong>? Esta acción es <strong>permanente</strong> y no se puede deshacer. El SKU quedará libre para reutilizarse.</>
+                      : <>Delete <strong>{deleteTarget.nombre || deleteTarget.sku}</strong>? This action is <strong>permanent</strong> and cannot be undone. The SKU will be freed for reuse.</>}
                   </div>
                   {deleteError && (
                     <div className="caption" style={{

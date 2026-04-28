@@ -64,11 +64,22 @@ class ProductoViewSet(viewsets.ViewSet):
     partial_update = update
 
     def destroy(self, request, pk=None):
+        """
+        HARD DELETE: borra la fila de productos.producto definitivamente.
+        Decisión de producto (no soft delete): permite reusar el SKU sin
+        chocar con UNIQUE(sku), y libera el catálogo de fantasmas.
+
+        Nota arquitectura: el patrón MWT es "sin FK gestionadas por Postgres";
+        las referencias huérfanas en inventario.stock / productos.talla_matriz /
+        productos.variante / productos.precio_history NO se cascadean
+        automáticamente. La app es responsable de filtrarlas (todas
+        chequean producto_id contra productos.producto en sus queries).
+        """
         try:
             instance = Producto.objects.get(pk=pk)
         except Producto.DoesNotExist:
             return Response(status=204)
-        # Capturar TODAS las keys ANTES del save/delete
+        # Capturar TODAS las keys ANTES del delete
         keys = [
             instance.imagen_url,
             instance.ficha_url,
@@ -76,7 +87,7 @@ class ProductoViewSet(viewsets.ViewSet):
         keys = [k for k in keys if k]
 
         with transaction.atomic():
-            Producto.objects.filter(pk=pk).update(is_active=False)
+            Producto.objects.filter(pk=pk).delete()
             # ON COMMIT: solo si la transacción de BD se confirma, borramos
             # el objeto del bucket. Evita huérfanos en caso de rollback.
             for k in keys:
