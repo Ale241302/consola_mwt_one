@@ -234,6 +234,54 @@ class ProductoViewSet(viewsets.ViewSet):
             log.exception("duplicate: fallo inesperado duplicando producto %s", pk)
             return Response({"detail": "Error duplicando producto"}, status=500)
 
+    # ── Eliminación masiva (hard delete) ──────────────────
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        """
+        Elimina múltiples productos en una sola transacción (HARD DELETE).
+        POST /api/productos/bulk-delete/
+        Body: { "ids": ["<uuid>", "<uuid>", ...] }
+
+        Misma política que destroy(): borra fila + cleanup de assets MinIO
+        vía transaction.on_commit. Las referencias huérfanas en otras
+        tablas (inventario, talla_matriz, variante) NO se cascadean
+        (patrón MWT sin FKs gestionadas por Postgres).
+
+        Respuesta:
+          { "deleted": <int>, "not_found": <int> }
+        """
+        ids_raw = (request.data or {}).get("ids")
+        if not isinstance(ids_raw, list) or not ids_raw:
+            return Response({"detail": "ids requerido (lista no vacía)"}, status=400)
+
+        # Validar UUIDs (filtra inválidos sin abortar)
+        valid_ids = []
+        for v in ids_raw:
+            try:
+                valid_ids.append(str(uuid.UUID(str(v))))
+            except (ValueError, TypeError):
+                continue
+
+        if not valid_ids:
+            return Response({"detail": "ningún id válido en la lista"}, status=400)
+
+        # Capturar TODAS las keys de assets ANTES del delete
+        instances = list(Producto.objects.filter(pk__in=valid_ids))
+        keys = []
+        for inst in instances:
+            if inst.imagen_url: keys.append(inst.imagen_url)
+            if inst.ficha_url:  keys.append(inst.ficha_url)
+
+        with transaction.atomic():
+            deleted_count, _ = Producto.objects.filter(pk__in=valid_ids).delete()
+            for k in keys:
+                transaction.on_commit(lambda key=k: _storage_delete(key))
+
+        return Response({
+            "deleted":   deleted_count,
+            "not_found": len(valid_ids) - deleted_count,
+        })
+
     # ── Carga masiva CSV (Hikashop export) ───────────────
     @action(
         detail=False,
@@ -332,12 +380,12 @@ class ProductoViewSet(viewsets.ViewSet):
                         nombre = (row.get("product_name") or "").strip() or product_code
                         descripcion = (row.get("product_description") or "").strip() or None
 
-                        # Precio: Decimal, "" → 0
-                        precio_raw = (row.get("price_value") or "").strip()
-                        try:
-                            precio = Decimal(precio_raw) if precio_raw else Decimal("0")
-                        except (InvalidOperation, ValueError):
-                            precio = Decimal("0")
+                        # Precio de lista: política del catálogo MWT — en carga masiva
+                        # SIEMPRE entra en 0. Los precios se definen después en el
+                        # Motor de Precios (PricingManagerTable) por mercado y cliente.
+                        # Las columnas `price_value` / `product_price_real_muitowork`
+                        # del CSV de Hikashop se ignoran a propósito.
+                        precio = Decimal("0")
 
                         # ⚠️ Galería e imagen principal / ficha técnica: NO se importan
                         # en carga masiva. Política del catálogo: las imágenes y PDFs se
@@ -364,8 +412,14 @@ class ProductoViewSet(viewsets.ViewSet):
                             if s.strip()
                         ]
 
+                        # Claves canónicas alineadas con el frontend (ProductFormView /
+                        # BrandDetail adapter). Nombres específicos:
+                        #   · `tipo_puntera`  ← NO `puntera` (el adapter lee tipo_puntera)
+                        #   · `segmento`      ← string CSV-joined (el adapter lee string,
+                        #                       no el array). `segmentos` se mantiene como
+                        #                       array auxiliar para queries futuros.
                         especificaciones = {
-                            "puntera":                 (row.get("product_puntera") or "").strip() or None,
+                            "tipo_puntera":            (row.get("product_puntera") or "").strip() or None,
                             "suela":                   (row.get("product_suela") or "").strip() or None,
                             "capellada":               capellada_val or None,
                             "cierre":                  (row.get("product_cierre") or "").strip() or None,
@@ -379,6 +433,9 @@ class ProductoViewSet(viewsets.ViewSet):
                             "cubrepuntera":            (row.get("product_cubrepuntera") or "").strip() or None,
                             "plantilla":               (row.get("product_plantilla") or "").strip() or None,
                             "componentes_reciclados":  (row.get("product_componentes_reciclados") or "").strip() or None,
+                            # `segmento` (string canónico que renderiza el card) +
+                            # `segmentos` (array para filtros/queries multi-valor).
+                            "segmento":                ", ".join(segmentos) if segmentos else None,
                             "segmentos":               segmentos,
                             "riesgos":                 riesgos,
                             # `images_gallery` y `files_gallery` quedan fuera del payload

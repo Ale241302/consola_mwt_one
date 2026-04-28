@@ -214,19 +214,52 @@ export default function ScreenProductos() {
     }
   };
 
-  // Modal de confirmación: en vez de window.confirm, abrimos un panel
-  // controlado por estado y delegamos la acción real a confirmDelete().
+  // Modal de confirmación: el target puede ser un solo producto (single)
+  // o un array de productos (bulk via checkboxes). El modal y el handler
+  // se adaptan dinámicamente según el shape.
   const onDelete = (p) => {
-    setDeleteTarget(p);
+    setDeleteTarget(p);          // single product
+    setDeleteError('');
+  };
+
+  const onBulkDelete = () => {
+    if (selected.size === 0) return;
+    const items = rows.filter(r => selected.has(r.id));
+    if (items.length === 0) return;
+    setDeleteTarget(items);      // array → modo bulk
     setDeleteError('');
   };
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
-    const p = deleteTarget;
+    const isBulk = Array.isArray(deleteTarget);
     setDeleteBusy(true);
     setDeleteError('');
-    // Optimista
+
+    if (isBulk) {
+      const ids = deleteTarget.map(p => p.id);
+      const idSet = new Set(ids);
+      // Optimista
+      setApiProductos(prev => prev.filter(x => !idSet.has(x.id)));
+      setSelected(prev => {
+        const n = new Set(prev);
+        ids.forEach(id => n.delete(id));
+        return n;
+      });
+      try {
+        await productosApi.action('bulk-delete', null, { ids });
+        setDeleteTarget(null);
+      } catch (e) {
+        await load(); // recargar si falla
+        setDeleteError((lang==='es'?'No se pudieron eliminar: ':'Bulk delete failed: ') + (e?.message || ''));
+      } finally {
+        setDeleteBusy(false);
+      }
+      return;
+    }
+
+    // Single
+    const p = deleteTarget;
     setApiProductos(prev => prev.filter(x => x.id !== p.id));
     setSelected(prev => {
       if (!prev.has(p.id)) return prev;
@@ -236,7 +269,7 @@ export default function ScreenProductos() {
       await productosApi.remove(p.id);
       setDeleteTarget(null);
     } catch (e) {
-      await load(); // recargar si falla
+      await load();
       setDeleteError((lang==='es'?'No se pudo eliminar: ':'Delete failed: ') + (e?.message || ''));
     } finally {
       setDeleteBusy(false);
@@ -308,6 +341,22 @@ export default function ScreenProductos() {
             <IconDownload size={14}/> {lang==='es'?'Exportar':'Export'}
             {selected.size > 0 && <span className="badge-count">{selected.size}</span>}
           </button>
+          {selected.size > 0 && !usingMock && (
+            <button
+              className="btn"
+              onClick={onBulkDelete}
+              style={{
+                color:'#fff',
+                background:'var(--critical, #EF4444)',
+                borderColor:'var(--critical, #EF4444)',
+              }}
+              title={lang==='es'?'Eliminar productos seleccionados':'Delete selected products'}
+            >
+              <IconTrash size={14}/>
+              {lang==='es'?'Eliminar seleccionados':'Delete selected'}
+              <span className="badge-count">{selected.size}</span>
+            </button>
+          )}
           <button className="btn btn-accent" onClick={()=>navigate('/productos/nuevo')}>
             <IconPlus size={14}/> {lang==='es'?'Nuevo producto':'New product'}
           </button>
@@ -617,15 +666,48 @@ export default function ScreenProductos() {
                 }}>
                   <IconTrash size={18}/>
                 </div>
-                <div>
+                <div style={{flex:1, minWidth:0}}>
                   <div className="heading-md" style={{marginBottom:4}}>
-                    {lang==='es'?'Eliminar producto':'Delete product'}
+                    {Array.isArray(deleteTarget)
+                      ? (lang==='es'
+                          ? `Eliminar ${deleteTarget.length} producto${deleteTarget.length === 1 ? '' : 's'}`
+                          : `Delete ${deleteTarget.length} product${deleteTarget.length === 1 ? '' : 's'}`)
+                      : (lang==='es'?'Eliminar producto':'Delete product')}
                   </div>
                   <div className="caption" style={{color:'var(--text-tertiary)', lineHeight:1.5}}>
-                    {lang==='es'
-                      ? <>¿Seguro que quieres eliminar <strong>{deleteTarget.nombre || deleteTarget.sku}</strong>? Esta acción es <strong>permanente</strong> y no se puede deshacer. El SKU quedará libre para reutilizarse.</>
-                      : <>Delete <strong>{deleteTarget.nombre || deleteTarget.sku}</strong>? This action is <strong>permanent</strong> and cannot be undone. The SKU will be freed for reuse.</>}
+                    {Array.isArray(deleteTarget) ? (
+                      lang==='es'
+                        ? <>¿Seguro que quieres eliminar <strong>{deleteTarget.length} productos seleccionados</strong>? Esta acción es <strong>permanente</strong> y no se puede deshacer. Todos los SKUs quedarán libres para reutilizarse.</>
+                        : <>Delete <strong>{deleteTarget.length} selected products</strong>? This action is <strong>permanent</strong> and cannot be undone. All SKUs will be freed for reuse.</>
+                    ) : (
+                      lang==='es'
+                        ? <>¿Seguro que quieres eliminar <strong>{deleteTarget.nombre || deleteTarget.sku}</strong>? Esta acción es <strong>permanente</strong> y no se puede deshacer. El SKU quedará libre para reutilizarse.</>
+                        : <>Delete <strong>{deleteTarget.nombre || deleteTarget.sku}</strong>? This action is <strong>permanent</strong> and cannot be undone. The SKU will be freed for reuse.</>
+                    )}
                   </div>
+                  {Array.isArray(deleteTarget) && deleteTarget.length > 0 && deleteTarget.length <= 8 && (
+                    <ul style={{
+                      margin:'8px 0 0 0', padding:'8px 12px',
+                      background:'rgba(11,30,58,0.04)', borderRadius:6,
+                      maxHeight:140, overflowY:'auto',
+                      fontSize:12, lineHeight:1.6,
+                      listStyle:'none',
+                    }}>
+                      {deleteTarget.map(p => (
+                        <li key={p.id} style={{display:'flex', gap:8, color:'var(--text-secondary)'}}>
+                          <span className="mono-sm" style={{minWidth:80, color:'var(--text-tertiary)'}}>{p.sku}</span>
+                          <span style={{flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{p.nombre}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {Array.isArray(deleteTarget) && deleteTarget.length > 8 && (
+                    <div className="caption" style={{marginTop:8, color:'var(--text-tertiary)', fontStyle:'italic'}}>
+                      {lang==='es'
+                        ? `Mostrando 8 de ${deleteTarget.length}. Todos serán eliminados.`
+                        : `Showing 8 of ${deleteTarget.length}. All will be deleted.`}
+                    </div>
+                  )}
                   {deleteError && (
                     <div className="caption" style={{
                       color:'var(--critical, #EF4444)', marginTop:10,
@@ -661,7 +743,11 @@ export default function ScreenProductos() {
                 >
                   {deleteBusy
                     ? (lang==='es'?'Eliminando…':'Deleting…')
-                    : (lang==='es'?'Eliminar':'Delete')}
+                    : Array.isArray(deleteTarget)
+                        ? (lang==='es'
+                            ? `Eliminar ${deleteTarget.length}`
+                            : `Delete ${deleteTarget.length}`)
+                        : (lang==='es'?'Eliminar':'Delete')}
                 </button>
               </div>
             </motion.div>
