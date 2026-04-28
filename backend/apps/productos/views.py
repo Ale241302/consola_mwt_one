@@ -316,13 +316,13 @@ class ProductoViewSet(viewsets.ViewSet):
                         except (InvalidOperation, ValueError):
                             precio = Decimal("0")
 
-                        # Imagen / ficha: primer item de la galería
-                        images_raw = row.get("images") or ""
-                        files_raw = row.get("files") or ""
-                        images_list = [u.strip() for u in images_raw.split(";") if u.strip()]
-                        files_list = [u.strip() for u in files_raw.split(";") if u.strip()]
-                        imagen_url = images_list[0] if images_list else None
-                        ficha_url = files_list[0] if files_list else None
+                        # ⚠️ Galería e imagen principal / ficha técnica: NO se importan
+                        # en carga masiva. Política del catálogo: las imágenes y PDFs se
+                        # adjuntan después por el operador desde el form de producto, para
+                        # garantizar control de calidad sobre los assets del CDN/MinIO.
+                        # Las columnas `images` y `files` del CSV de Hikashop se ignoran.
+                        imagen_url = None
+                        ficha_url = None
 
                         # Capellada: preferir product_capellada; fallback a product_capellado (typo Hikashop)
                         capellada_val = (row.get("product_capellada") or "").strip()
@@ -358,8 +358,9 @@ class ProductoViewSet(viewsets.ViewSet):
                             "componentes_reciclados":  (row.get("product_componentes_reciclados") or "").strip() or None,
                             "segmentos":               segmentos,
                             "riesgos":                 riesgos,
-                            "images_gallery":          images_list,
-                            "files_gallery":           files_list,
+                            # `images_gallery` y `files_gallery` quedan fuera del payload
+                            # a propósito: la galería y la ficha PDF NO se importan en
+                            # bulk. El operador las sube manualmente desde el form.
                         }
 
                         # ID nuevo inyectado desde la view (patrón del proyecto: sin FKs ORM, raw SQL)
