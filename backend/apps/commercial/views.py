@@ -32,6 +32,7 @@ import logging
 from decimal import Decimal
 
 from django.db import transaction, connection
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -575,10 +576,17 @@ class ResolveClientPriceView(APIView):
             product_sku=sku,
             is_active=True,
         ).order_by("unit_price_usd")
-        # filtramos a los que pertenezcan a pricelist_version activa
+        # Filtramos a las PLVs activas Y con ventana de validez vigente HOY:
+        #   valid_from <= today AND (valid_to IS NULL OR valid_to >= today)
+        # Esto soporta múltiples PLVs con fechas escalonadas: la del día gana,
+        # las futuras quedan latentes hasta que llegue su valid_from.
+        today = timezone.now().date()
         active_plv_ids = set(
             PriceListVersion.objects.filter(
-                brand_id=brand_id, is_active=True
+                brand_id=brand_id, is_active=True,
+                valid_from__lte=today,
+            ).filter(
+                Q(valid_to__isnull=True) | Q(valid_to__gte=today)
             ).values_list("id", flat=True)
         )
         grade_item = next(
@@ -1081,19 +1089,32 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
 
         try:
          with transaction.atomic():
-             # ── Desactivar PLVs previas de ESTA asignación ──
-             # Un re-upload sobre la misma BCPA debe REEMPLAZAR los precios,
-             # no acumularlos. Cada PLV creada por upload_file lleva
-             # metadata.assignment_id = bcpa.id; las identificamos así y las
-             # marcamos inactivas (junto con sus GradeItems) antes de crear
-             # la nueva. Sin este paso, la versión vieja seguía activa y el
-             # resolved-prices la incluía → SKUs duplicados y el precio nuevo
-             # menor no se reflejaba en la UI.
+             # ── Desactivar PLVs previas de ESTA asignación cuyo rango
+             #    de fechas SE SOLAPA con el nuevo upload ──
+             # Política temporal:
+             #   · Re-upload con MISMAS fechas (mismo rango)        → solapa → desactiva
+             #     vieja. Reemplazo idempotente.
+             #   · Upload con fechas FUTURAS (no solapa con activa) → coexisten.
+             #     La vigente hoy gana al resolver; cuando expira, la futura
+             #     toma el relevo automáticamente (filtrado por fecha en
+             #     resolve_client_price y resolved-prices).
+             #
+             # Lógica de solapamiento entre ranges A=[a1,a2] y B=[b1,b2]:
+             #     overlap ⇔ a1 <= b2 AND b1 <= a2  (con null = infinito)
+             new_from = bcpa.fecha_inicio or timezone.now().date()
+             new_to   = bcpa.fecha_fin  # None ⇒ +infinity
+
+             # existing.valid_to >= new_from  OR  existing.valid_to IS NULL
+             cond_a = Q(valid_to__gte=new_from) | Q(valid_to__isnull=True)
+             # existing.valid_from <= new_to  (si new_to es None, condición trivial)
+             cond_b = Q(valid_from__lte=new_to) if new_to is not None else Q()
+
              stale_plvs = list(PriceListVersion.objects.filter(
                  brand_id=bcpa.brand_id,
                  is_active=True,
                  metadata__assignment_id=str(bcpa.id),
-             ).values_list("id", flat=True))
+             ).filter(cond_a & cond_b).values_list("id", flat=True))
+
              if stale_plvs:
                  GradeItem.objects.filter(
                      pricelist_version_id__in=stale_plvs,
@@ -1103,8 +1124,9 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
                      id__in=stale_plvs,
                  ).update(is_active=False)
                  log.info(
-                     "upload_file: desactivadas %d PLVs previas de BCPA %s",
-                     len(stale_plvs), bcpa.id,
+                     "upload_file: desactivadas %d PLVs previas de BCPA %s "
+                     "(solapan con %s..%s)",
+                     len(stale_plvs), bcpa.id, new_from, new_to or "∞",
                  )
 
              PriceListVersion.objects.create(
@@ -1310,8 +1332,16 @@ class ResolvedPricesByAssignmentView(APIView):
         except BrandClientPricingAssignment.DoesNotExist:
             return Response({"detail": "Asignación no encontrada."}, status=404)
 
+        # Filtrar por fecha vigente (igual que resolve_client_price): solo
+        # PLVs cuya ventana valid_from..valid_to abarca HOY. Si el operador
+        # subió varios precios escalonados en el tiempo, esto muestra el
+        # que rige hoy y oculta los futuros/pasados.
+        today = timezone.now().date()
         plvs = PriceListVersion.objects.filter(
             brand_id=bcpa.brand_id, is_active=True,
+            valid_from__lte=today,
+        ).filter(
+            Q(valid_to__isnull=True) | Q(valid_to__gte=today)
         ).order_by("-valid_from")
         plv_ids = [p.id for p in plvs]
         items = GradeItem.objects.filter(
