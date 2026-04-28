@@ -68,6 +68,11 @@ export default function ScreenProductos() {
   // ── Selección múltiple ──
   const [selected, setSelected] = useState(() => new Set());
 
+  // Modal de confirmación para eliminar (reemplaza window.confirm).
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteBusy, setDeleteBusy]     = useState(false);
+  const [deleteError, setDeleteError]   = useState('');
+
   // ── Fetch backend + fallback mock ──
   const [apiProductos, setApiProductos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -209,11 +214,18 @@ export default function ScreenProductos() {
     }
   };
 
-  const onDelete = async (p) => {
-    const ok = confirm(lang==='es'
-      ? `¿Eliminar "${p.nombre || p.sku}"? Esta acción se puede revertir.`
-      : `Delete "${p.nombre || p.sku}"? This can be reverted.`);
-    if (!ok) return;
+  // Modal de confirmación: en vez de window.confirm, abrimos un panel
+  // controlado por estado y delegamos la acción real a confirmDelete().
+  const onDelete = (p) => {
+    setDeleteTarget(p);
+    setDeleteError('');
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    const p = deleteTarget;
+    setDeleteBusy(true);
+    setDeleteError('');
     // Optimista
     setApiProductos(prev => prev.filter(x => x.id !== p.id));
     setSelected(prev => {
@@ -222,9 +234,12 @@ export default function ScreenProductos() {
     });
     try {
       await productosApi.remove(p.id);
+      setDeleteTarget(null);
     } catch (e) {
       await load(); // recargar si falla
-      alert((lang==='es'?'No se pudo eliminar: ':'Delete failed: ') + (e?.message || ''));
+      setDeleteError((lang==='es'?'No se pudo eliminar: ':'Delete failed: ') + (e?.message || ''));
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -493,24 +508,57 @@ export default function ScreenProductos() {
                       </button>
                     </td>
                     <td onClick={(e)=>e.stopPropagation()} style={{textAlign:'center'}}>
-                      <button
-                        className="icon-btn"
-                        title={lang==='es'?'Duplicar':'Duplicate'}
-                        onClick={()=>onDuplicate(p)}
-                        disabled={usingMock}
-                        style={usingMock ? { opacity:0.4, cursor:'not-allowed' } : undefined}
-                      >
-                        <IconCopy size={14}/>
-                      </button>
-                      <button
-                        className="icon-btn"
-                        title={lang==='es'?'Eliminar':'Delete'}
-                        onClick={()=>onDelete(p)}
-                        disabled={usingMock}
-                        style={usingMock ? { opacity:0.4, cursor:'not-allowed' } : undefined}
-                      >
-                        <IconTrash size={14}/>
-                      </button>
+                      <div style={{
+                        display:'inline-flex',
+                        alignItems:'center',
+                        justifyContent:'center',
+                        gap:6,
+                      }}>
+                        <button
+                          className="icon-btn"
+                          title={lang==='es'?'Duplicar':'Duplicate'}
+                          onClick={()=>onDuplicate(p)}
+                          disabled={usingMock}
+                          style={{
+                            display:'inline-flex',
+                            alignItems:'center',
+                            justifyContent:'center',
+                            width:28,
+                            height:28,
+                            padding:0,
+                            border:'1px solid var(--border-subtle, #E5E7EB)',
+                            background:'transparent',
+                            borderRadius:6,
+                            cursor: usingMock ? 'not-allowed' : 'pointer',
+                            opacity: usingMock ? 0.4 : 1,
+                            color:'var(--text-secondary, #4B5563)',
+                          }}
+                        >
+                          <IconCopy size={14}/>
+                        </button>
+                        <button
+                          className="icon-btn"
+                          title={lang==='es'?'Eliminar':'Delete'}
+                          onClick={()=>onDelete(p)}
+                          disabled={usingMock}
+                          style={{
+                            display:'inline-flex',
+                            alignItems:'center',
+                            justifyContent:'center',
+                            width:28,
+                            height:28,
+                            padding:0,
+                            border:'1px solid var(--border-subtle, #E5E7EB)',
+                            background:'transparent',
+                            borderRadius:6,
+                            cursor: usingMock ? 'not-allowed' : 'pointer',
+                            opacity: usingMock ? 0.4 : 1,
+                            color:'var(--critical, #EF4444)',
+                          }}
+                        >
+                          <IconTrash size={14}/>
+                        </button>
+                      </div>
                     </td>
                   </motion.tr>
                 );
@@ -527,6 +575,99 @@ export default function ScreenProductos() {
           </div>
         )}
       </div>
+
+      {/* ─── Modal de confirmación de eliminar ─── */}
+      <AnimatePresence>
+        {deleteTarget && (
+          <motion.div
+            className="modal-backdrop"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => !deleteBusy && setDeleteTarget(null)}
+            style={{
+              position:'fixed', inset:0, zIndex:1000,
+              background:'rgba(11,30,58,0.45)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              padding:16,
+            }}
+          >
+            <motion.div
+              className="modal-panel"
+              initial={{ y: 20, opacity: 0, scale: 0.98 }}
+              animate={{ y: 0,  opacity: 1, scale: 1 }}
+              exit={{ y: 10, opacity: 0, scale: 0.98 }}
+              transition={{ type:'spring', stiffness: 280, damping: 28 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background:'#fff',
+                borderRadius:12,
+                width:'100%', maxWidth:420,
+                boxShadow:'0 12px 48px rgba(11,30,58,0.18)',
+                overflow:'hidden',
+              }}
+            >
+              <div style={{
+                padding:'20px 22px 8px 22px',
+                display:'flex', alignItems:'flex-start', gap:14,
+              }}>
+                <div style={{
+                  flexShrink:0, width:40, height:40, borderRadius:'50%',
+                  background:'rgba(239,68,68,0.1)',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  color:'var(--critical, #EF4444)',
+                }}>
+                  <IconTrash size={18}/>
+                </div>
+                <div>
+                  <div className="heading-md" style={{marginBottom:4}}>
+                    {lang==='es'?'Eliminar producto':'Delete product'}
+                  </div>
+                  <div className="caption" style={{color:'var(--text-tertiary)', lineHeight:1.5}}>
+                    {lang==='es'
+                      ? <>¿Seguro que quieres eliminar <strong>{deleteTarget.nombre || deleteTarget.sku}</strong>? El producto pasará a inactivo y se podrá restaurar luego.</>
+                      : <>Delete <strong>{deleteTarget.nombre || deleteTarget.sku}</strong>? It will be marked inactive and can be restored later.</>}
+                  </div>
+                  {deleteError && (
+                    <div className="caption" style={{
+                      color:'var(--critical, #EF4444)', marginTop:10,
+                      background:'rgba(239,68,68,0.08)', padding:'8px 10px',
+                      borderRadius:6, lineHeight:1.4,
+                    }}>
+                      {deleteError}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div style={{
+                padding:'14px 22px 18px 22px',
+                display:'flex', gap:8, justifyContent:'flex-end',
+              }}>
+                <button
+                  className="btn"
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={deleteBusy}
+                >
+                  {lang==='es'?'Cancelar':'Cancel'}
+                </button>
+                <button
+                  className="btn"
+                  onClick={confirmDelete}
+                  disabled={deleteBusy}
+                  style={{
+                    background:'var(--critical, #EF4444)',
+                    color:'#fff', borderColor:'var(--critical, #EF4444)',
+                    opacity: deleteBusy ? 0.7 : 1,
+                    cursor: deleteBusy ? 'wait' : 'pointer',
+                  }}
+                >
+                  {deleteBusy
+                    ? (lang==='es'?'Eliminando…':'Deleting…')
+                    : (lang==='es'?'Eliminar':'Delete')}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
