@@ -134,6 +134,9 @@ export default function ScreenBrandClientPricingForm() {
   const [notas, setNotas] = useState("");
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null);
+  // Spinner por badge editable del header (comisión / días crédito).
+  // Mantengo solo "una key en vuelo" porque el usuario edita uno a la vez.
+  const [savingFinTerm, setSavingFinTerm] = useState(null);  // 'comision' | 'dias' | null
   const [dragOver, setDragOver] = useState(false);
 
   // ── Drag-and-drop ──
@@ -318,18 +321,75 @@ export default function ScreenBrandClientPricingForm() {
           </div>
         </div>
 
-        {/* Snapshot financiero · CEO-ONLY */}
+        {/* Snapshot financiero · CEO-ONLY · comisión y días crédito editables */}
         {isAdmin && (
           <div style={{ display: "flex", gap: 22, alignItems: "center" }}>
             <SnapshotBadge
               label={lang === "es" ? "Comisión" : "Commission"}
               value={client.comision_pct != null ? `${(Number(client.comision_pct) * 100).toFixed(2)}%` : "—"}
               color={LIGHT}
+              editable
+              rawValue={client.comision_pct != null ? Number((Number(client.comision_pct) * 100).toFixed(4)) : null}
+              suffix="%"
+              parse={(s) => {
+                const n = Number(String(s).replace(",", "."));
+                return Number.isNaN(n) ? null : n;
+              }}
+              saving={savingFinTerm === "comision"}
+              onSave={async (newPct) => {
+                // Validación: 0 ≤ pct ≤ 100
+                if (newPct < 0 || newPct > 100) {
+                  setBanner({ type: "error",
+                    msg: lang === "es" ? "Comisión debe estar entre 0% y 100%." : "Commission must be 0%-100%." });
+                  return;
+                }
+                setSavingFinTerm("comision");
+                try {
+                  // Backend almacena fracción (0.0875 = 8.75%). Redondeo a 4 decimales.
+                  const fraction = Number((newPct / 100).toFixed(4));
+                  await clientesApi.update(clienteId, { comision_pct: fraction });
+                  setClient((c) => c ? { ...c, comision_pct: fraction } : c);
+                  setBanner({ type: "success",
+                    msg: lang === "es" ? "Comisión actualizada." : "Commission updated." });
+                } catch (e) {
+                  setBanner({ type: "error",
+                    msg: (lang === "es" ? "No se pudo actualizar comisión: " : "Update failed: ") + (e?.message || "") });
+                } finally {
+                  setSavingFinTerm(null);
+                }
+              }}
             />
             <SnapshotBadge
               label={lang === "es" ? "Días crédito" : "Credit days"}
               value={`${client.credito_dias ?? client.dias_credito ?? 0}d`}
               color="#FFFFFF"
+              editable
+              rawValue={client.credito_dias ?? client.dias_credito ?? 0}
+              suffix="d"
+              parse={(s) => {
+                const n = parseInt(String(s).trim(), 10);
+                return Number.isNaN(n) ? null : n;
+              }}
+              saving={savingFinTerm === "dias"}
+              onSave={async (newDias) => {
+                if (newDias < 0 || newDias > 365) {
+                  setBanner({ type: "error",
+                    msg: lang === "es" ? "Días crédito debe estar entre 0 y 365." : "Credit days must be 0-365." });
+                  return;
+                }
+                setSavingFinTerm("dias");
+                try {
+                  await clientesApi.update(clienteId, { dias_credito: newDias });
+                  setClient((c) => c ? { ...c, dias_credito: newDias, credito_dias: newDias } : c);
+                  setBanner({ type: "success",
+                    msg: lang === "es" ? "Días de crédito actualizados." : "Credit days updated." });
+                } catch (e) {
+                  setBanner({ type: "error",
+                    msg: (lang === "es" ? "No se pudo actualizar días crédito: " : "Update failed: ") + (e?.message || "") });
+                } finally {
+                  setSavingFinTerm(null);
+                }
+              }}
             />
             <SnapshotBadge
               label={lang === "es" ? "Límite" : "Limit"}
@@ -659,28 +719,99 @@ function SliderField({ value, onChange, min, max, step, unit = "%", labels = [],
 
 
 // ═════════════════════════════════════════════════════════════
-// Snapshot pill (header)
+// Snapshot pill (header). Modos:
+//   · read-only (default)        → solo muestra el valor.
+//   · editable (con onSave)      → click sobre el valor → input → Enter
+//                                   o blur dispara onSave(rawNumber).
+// El parent recibe el valor "crudo" (e.g. 8.75 para 8.75%, no 0.0875)
+// y se encarga de la conversión y persistencia.
 // ═════════════════════════════════════════════════════════════
-function SnapshotBadge({ label, value, color }) {
+function SnapshotBadge({ label, value, color, editable, rawValue, suffix, parse, onSave, saving }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef(null);
+
+  const startEdit = () => {
+    if (!editable || saving) return;
+    setDraft(rawValue == null || Number.isNaN(rawValue) ? "" : String(rawValue));
+    setIsEditing(true);
+    setTimeout(() => inputRef.current?.select?.(), 0);
+  };
+
+  const commit = async () => {
+    if (!editable) return;
+    const parsed = (parse || ((s) => Number(s)))(draft);
+    setIsEditing(false);
+    if (parsed != null && !Number.isNaN(parsed) && parsed !== rawValue) {
+      try { await onSave?.(parsed); } catch { /* parent maneja banner */ }
+    }
+  };
+
   return (
     <div style={{
       padding: "8px 14px",
       background: "rgba(255,255,255,0.08)",
-      borderRadius: 10, minWidth: 88,
-    }}>
+      borderRadius: 10, minWidth: 96,
+      cursor: editable && !isEditing ? "pointer" : "default",
+      transition: "background 0.18s",
+    }}
+      onClick={!isEditing ? startEdit : undefined}
+      onMouseEnter={(e) => { if (editable && !isEditing) e.currentTarget.style.background = "rgba(255,255,255,0.14)"; }}
+      onMouseLeave={(e) => { if (editable && !isEditing) e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
+      title={editable && !isEditing ? "Click para editar" : undefined}
+    >
       <div style={{
         font: "500 9.5px/1 var(--font-body)", opacity: 0.65,
         textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4,
         display: "inline-flex", alignItems: "center", gap: 4,
       }}>
-        <IconLock size={8}/> {label}
+        {editable
+          ? <span style={{ width: 8, height: 8, borderRadius: 4, background: "#1DE394", boxShadow: "0 0 0 2px rgba(29,227,148,0.25)" }} />
+          : <IconLock size={8}/>}
+        {label}
       </div>
-      <div style={{
-        font: "700 16px/1 var(--font-body)",
-        color, fontVariantNumeric: "tabular-nums",
-      }}>
-        {value}
-      </div>
+      {isEditing ? (
+        <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
+          <input
+            ref={inputRef}
+            type="number"
+            step="any"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); commit(); }
+              if (e.key === "Escape") { setIsEditing(false); }
+            }}
+            disabled={saving}
+            style={{
+              width: 72,
+              font: "700 16px/1 var(--font-body)",
+              color: color,
+              background: "rgba(0,0,0,0.25)",
+              border: `1px solid ${color}`,
+              borderRadius: 4,
+              padding: "2px 4px",
+              outline: "none",
+              fontVariantNumeric: "tabular-nums",
+              MozAppearance: "textfield",
+            }}
+          />
+          {suffix && (
+            <span style={{ font: "700 14px/1 var(--font-body)", color, opacity: 0.85 }}>
+              {suffix}
+            </span>
+          )}
+        </div>
+      ) : (
+        <div style={{
+          font: "700 16px/1 var(--font-body)",
+          color, fontVariantNumeric: "tabular-nums",
+          opacity: saving ? 0.55 : 1,
+        }}>
+          {saving ? "…" : value}
+        </div>
+      )}
     </div>
   );
 }
