@@ -134,6 +134,10 @@ export default function ScreenBrandDetail() {
   const [rawBrand, setRawBrand] = useState(null);
   const [loading,  setLoading]  = useState(true);
   const [loadErr,  setLoadErr]  = useState(null);
+  // Trigger manual de refresh para la marca (incluye KPIs como
+  // active_skus). Se bumpea junto al productsReloadKey al cerrar
+  // operaciones que cambian el catálogo.
+  const [brandReloadKey, setBrandReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,7 +156,7 @@ export default function ScreenBrandDetail() {
         setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [brandId]);
+  }, [brandId, brandReloadKey]);
 
   const brand = useMemo(() => {
     if (!rawBrand) return null;
@@ -193,6 +197,10 @@ export default function ScreenBrandDetail() {
   // Productos reales del backend (filtrados por marca). Fallback al mock
   // solo si la marca tiene UUID demo conocido y el backend no devuelve nada.
   const [products, setProducts] = useState([]);
+  // Trigger manual de refresh: cambiar este número re-corre el useEffect
+  // de productos. Lo bumpeamos después de cargas masivas, altas y deletes
+  // para que la lista se actualice sin recargar la página.
+  const [productsReloadKey, setProductsReloadKey] = useState(0);
   useEffect(() => {
     let cancelled = false;
     if (!bid) { setProducts([]); return; }
@@ -208,7 +216,7 @@ export default function ScreenBrandDetail() {
         setProducts(BRAND_PRODUCTS.filter(p => p.brand_id === bid));
       });
     return () => { cancelled = true; };
-  }, [bid]);
+  }, [bid, productsReloadKey]);
   const expedientes = useMemo(
     () => bid ? EXPEDIENTES.filter(e => e.brand_id === bid) : [],
     [bid]
@@ -543,6 +551,16 @@ export default function ScreenBrandDetail() {
                   marcaId={brandId}
                   onParsed={(r)=>{
                     console.log('[brands] products parsed:', r);
+                    // Tras una carga masiva CSV exitosa (csvDirect=true) o
+                    // un commit de Excel (committed_rows>0), refrescamos la
+                    // lista de productos sin necesidad de recargar la página.
+                    const importedSomething =
+                      (r?.csvDirect && (r.created > 0 || r.updated > 0)) ||
+                      (r?.committed && r.committed > 0);
+                    if (importedSomething) {
+                      setProductsReloadKey(k => k + 1);
+                      setBrandReloadKey(k => k + 1);
+                    }
                   }}
                   onClose={()=>setMassUp(false)}
                 />
@@ -561,6 +579,9 @@ export default function ScreenBrandDetail() {
             onCreated={(payload)=>{
               console.log('[mock] new product:', payload);
               setShowNewProd(false);
+              // Tras un alta manual exitosa, refrescar lista + KPIs.
+              setProductsReloadKey(k => k + 1);
+              setBrandReloadKey(k => k + 1);
             }}
           />
         )}
