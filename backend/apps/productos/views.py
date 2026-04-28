@@ -201,10 +201,17 @@ class ProductoViewSet(viewsets.ViewSet):
         try:
             base_sku = src.sku or "PRODUCTO"
             candidate = None
-            # Primer intento: -COPY ; luego -COPY-2 .. -COPY-99
+            # Primer intento: -COPY ; luego -COPY-2 .. -COPY-99.
+            # La unicidad ahora es por marca: chequeamos en la MISMA marca del
+            # original y solo entre filas activas (los soft-deleted no bloquean).
             for i in range(1, 100):
                 attempt = f"{base_sku}-COPY" if i == 1 else f"{base_sku}-COPY-{i}"
-                if not Producto.objects.filter(sku=attempt).exists():
+                exists_qs = Producto.objects.filter(
+                    sku=attempt,
+                    marca_id=src.marca_id,
+                    is_active=True,
+                )
+                if not exists_qs.exists():
                     candidate = attempt
                     break
             if candidate is None:
@@ -308,13 +315,18 @@ class ProductoViewSet(viewsets.ViewSet):
                         # las filas main tienen parent_category=''. Por eso NO filtramos
                         # por parent_category — confiamos en product_type='main'.
 
-                        # Productos no publicados (product_published='0') se importan como
-                        # INACTIVO/is_active=FALSE para preservar el dato pero no listarlos
-                        # en el catálogo activo. La spec original pedía skip, pero ~90% de
-                        # los products del CSV están unpublished — perdíamos casi todo.
+                        # Productos no publicados (product_published='0') se importan con
+                        # estado='INACTIVO' (no aparecen "en venta") pero is_active=TRUE
+                        # (sí están en el catálogo / pueden listarse / contar como SKU
+                        # registrado). Esto separa dos conceptos:
+                        #   · is_active = "está en el catálogo" (toggle de la UI)
+                        #   · estado   = ACTIVO/INACTIVO/DESCONTINUADO/PROXIMAMENTE
+                        # Importante para idempotencia: el pre-check de unicidad usa
+                        # is_active=TRUE, así que TODOS los importados (publicados o no)
+                        # bloquean re-creaciones del mismo SKU en la misma marca.
                         is_published = (row.get("product_published") or "").strip() != "0"
                         estado_val = "ACTIVO" if is_published else "INACTIVO"
-                        is_active_val = is_published
+                        is_active_val = True
 
                         sku = product_code
                         nombre = (row.get("product_name") or "").strip() or product_code
@@ -377,12 +389,33 @@ class ProductoViewSet(viewsets.ViewSet):
                         # ID nuevo inyectado desde la view (patrón del proyecto: sin FKs ORM, raw SQL)
                         new_id = str(uuid.uuid4())
 
-                        # Política: si el SKU ya existe en la BD → SKIP (no actualizar,
-                        # no crear). El constraint UNIQUE(sku) es GLOBAL; usamos
-                        # ON CONFLICT (sku) DO NOTHING para preservar el dato existente.
-                        # RETURNING id solo devuelve fila cuando el INSERT efectivamente
-                        # insertó: ausencia de fila ⇒ conflicto ⇒ skip.
+                        # Política de unicidad por marca:
+                        #   · Si el (sku, marca_id) YA existe ACTIVO en la BD → SKIP.
+                        #   · Si existe sólo soft-deleted (is_active=FALSE) → CREAR (legacy).
+                        #   · Si existe en OTRA marca → CREAR (mismo SKU, distinta marca = OK).
+                        #
+                        # El constraint a nivel BD es ahora UNIQUE(sku, marca_id) parcial
+                        # WHERE is_active=TRUE (ver 41c_productos_sku_marca_active.sql),
+                        # pero hacemos pre-check explícito para poder contar skipped vs
+                        # created correctamente (ON CONFLICT no distingue cuando el INSERT
+                        # mismo viene con is_active=FALSE, donde la unicidad parcial no
+                        # se dispara).
                         with connection.cursor() as c:
+                            c.execute(
+                                """
+                                SELECT 1 FROM productos.producto
+                                WHERE sku = %s
+                                  AND marca_id = %s
+                                  AND is_active = TRUE
+                                LIMIT 1
+                                """,
+                                [sku, str(brand_uuid)],
+                            )
+                            if c.fetchone():
+                                # Ya existe activo en esta marca → omitir
+                                skipped += 1
+                                continue
+
                             c.execute(
                                 """
                                 INSERT INTO productos.producto
@@ -392,7 +425,6 @@ class ProductoViewSet(viewsets.ViewSet):
                                 VALUES (%s, %s, %s, %s, %s, 'CALZADO', NULL, 'PAR',
                                         'USD', %s, %s, %s, %s::jsonb,
                                         %s, 'INTERNAL', %s, NOW(), NOW())
-                                ON CONFLICT (sku) DO NOTHING
                                 RETURNING id;
                                 """,
                                 [
@@ -409,11 +441,10 @@ class ProductoViewSet(viewsets.ViewSet):
                                     is_active_val,
                                 ],
                             )
-                            result = c.fetchone()
-                            if result:
+                            if c.fetchone():
                                 created += 1
                             else:
-                                # SKU ya existe en la BD → omitir
+                                # No debería ocurrir (sin ON CONFLICT), pero por defensa
                                 skipped += 1
 
                     except Exception as e:
