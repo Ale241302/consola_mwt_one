@@ -1081,6 +1081,32 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
 
         try:
          with transaction.atomic():
+             # ── Desactivar PLVs previas de ESTA asignación ──
+             # Un re-upload sobre la misma BCPA debe REEMPLAZAR los precios,
+             # no acumularlos. Cada PLV creada por upload_file lleva
+             # metadata.assignment_id = bcpa.id; las identificamos así y las
+             # marcamos inactivas (junto con sus GradeItems) antes de crear
+             # la nueva. Sin este paso, la versión vieja seguía activa y el
+             # resolved-prices la incluía → SKUs duplicados y el precio nuevo
+             # menor no se reflejaba en la UI.
+             stale_plvs = list(PriceListVersion.objects.filter(
+                 brand_id=bcpa.brand_id,
+                 is_active=True,
+                 metadata__assignment_id=str(bcpa.id),
+             ).values_list("id", flat=True))
+             if stale_plvs:
+                 GradeItem.objects.filter(
+                     pricelist_version_id__in=stale_plvs,
+                     is_active=True,
+                 ).update(is_active=False)
+                 PriceListVersion.objects.filter(
+                     id__in=stale_plvs,
+                 ).update(is_active=False)
+                 log.info(
+                     "upload_file: desactivadas %d PLVs previas de BCPA %s",
+                     len(stale_plvs), bcpa.id,
+                 )
+
              PriceListVersion.objects.create(
                  id=plv_id, brand_id=bcpa.brand_id, codigo=codigo,
                  nombre=bcpa.file_name or "COMEX upload",
