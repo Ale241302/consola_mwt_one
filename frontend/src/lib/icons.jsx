@@ -70,6 +70,7 @@ export const IconGlobe        = mkIcon(<><circle cx="12" cy="12" r="9"/><path d=
 export const IconCommand      = mkIcon(<path d="M6 6h3a3 3 0 1 0-3-3v3zM18 6h-3a3 3 0 1 1 3-3v3zM6 18h3a3 3 0 1 1-3 3v-3zM18 18h-3a3 3 0 1 0 3 3v-3zM6 6h12v12H6z"/>);
 export const IconPencil       = mkIcon(<><path d="M14 4l6 6L9 21H3v-6z"/><path d="m14 4 6 6"/></>);
 export const IconTrash        = mkIcon(<><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/><path d="M10 11v6M14 11v6"/></>);
+export const IconCopy         = mkIcon(<><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></>);
 // ─── AI Hub ────────────────────────────────────────────────────────────
 export const IconBot          = mkIcon(<><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4"/><circle cx="12" cy="3" r="1"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M9 17h6"/></>);
 export const IconBrain        = mkIcon(<><path d="M9 4a3 3 0 0 0-3 3v1a3 3 0 0 0-2 5 3 3 0 0 0 2 5v1a3 3 0 0 0 5 2"/><path d="M15 4a3 3 0 0 1 3 3v1a3 3 0 0 0 2 5 3 3 0 0 1-2 5v1a3 3 0 0 1-5 2"/><path d="M12 5v14"/></>);

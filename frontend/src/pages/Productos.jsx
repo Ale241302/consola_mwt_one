@@ -21,6 +21,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   IconPlus, IconSearch, IconPackage, IconSliders,
   IconDollar, IconTag, IconWarehouse, IconSparkle,
+  IconCopy, IconTrash, IconDownload,
 } from "../lib/icons.jsx";
 import { fmtMoney } from "../lib/i18n.js";
 import {
@@ -49,6 +50,7 @@ function mapProductoFromApi(r) {
     color:         colores[0] || "",
     ncm:           r.hs_code || "",
     list_price:    Number(r.precio_lista) || 0,
+    is_active:     r.is_active !== false,    // default true si viene undefined
     // Imagen principal (gallery[0]). Se renderiza vía /api/storage/download/
     // si existe; si no, fallback a iniciales en el thumb.
     imagen_url:    r.imagen_url || null,
@@ -62,6 +64,9 @@ export default function ScreenProductos() {
 
   const [q, setQ] = useState('');
   const [brandFilter, setBrandFilter] = useState('ALL');
+
+  // ── Selección múltiple ──
+  const [selected, setSelected] = useState(() => new Set());
 
   // ── Fetch backend + fallback mock ──
   const [apiProductos, setApiProductos] = useState([]);
@@ -86,6 +91,10 @@ export default function ScreenProductos() {
   const BRAND_PRODUCTS = !loading && apiProductos.length > 0
     ? apiProductos
     : MOCK_BRAND_PRODUCTS;
+
+  // Mock fallback: cuando no hay datos reales, las acciones (toggle/duplicate/delete)
+  // se deshabilitan porque el mock no responde a /api/productos.
+  const usingMock = !loading && apiProductos.length === 0;
 
   // ── Maps de referencia ────────
   const brandMap = useMemo(() => {
@@ -151,6 +160,117 @@ export default function ScreenProductos() {
       .sort((a, b) => (a.sku || '').localeCompare(b.sku || ''));
   }, [q, brandFilter, BRAND_PRODUCTS]);
 
+  // ── Helpers de selección ────────
+  const toggleOne = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleAll = () => {
+    setSelected(prev => {
+      const allSelected = rows.length > 0 && rows.every(r => prev.has(r.id));
+      if (allSelected) {
+        // Deselecciona los rows actualmente filtrados
+        const next = new Set(prev);
+        rows.forEach(r => next.delete(r.id));
+        return next;
+      }
+      // Selecciona todos los rows actualmente filtrados (preservando previos fuera del filtro)
+      const next = new Set(prev);
+      rows.forEach(r => next.add(r.id));
+      return next;
+    });
+  };
+  const clearSelection = () => setSelected(new Set());
+  const allFilteredSelected = rows.length > 0 && rows.every(r => selected.has(r.id));
+
+  // ── Handlers de fila ────────
+  const onToggleActive = async (p) => {
+    const next = !p.is_active;
+    // Optimista
+    setApiProductos(prev => prev.map(x => x.id === p.id ? { ...x, is_active: next } : x));
+    try {
+      await productosApi.update(p.id, { is_active: next });
+    } catch (e) {
+      // Rollback
+      setApiProductos(prev => prev.map(x => x.id === p.id ? { ...x, is_active: !next } : x));
+      alert((lang==='es'?'No se pudo actualizar: ':'Update failed: ') + (e?.message || ''));
+    }
+  };
+
+  const onDuplicate = async (p) => {
+    try {
+      await productosApi.action('duplicate', p.id, {});
+      await load();
+    } catch (e) {
+      alert((lang==='es'?'No se pudo duplicar: ':'Duplicate failed: ') + (e?.message || ''));
+    }
+  };
+
+  const onDelete = async (p) => {
+    const ok = confirm(lang==='es'
+      ? `¿Eliminar "${p.nombre || p.sku}"? Esta acción se puede revertir.`
+      : `Delete "${p.nombre || p.sku}"? This can be reverted.`);
+    if (!ok) return;
+    // Optimista
+    setApiProductos(prev => prev.filter(x => x.id !== p.id));
+    setSelected(prev => {
+      if (!prev.has(p.id)) return prev;
+      const n = new Set(prev); n.delete(p.id); return n;
+    });
+    try {
+      await productosApi.remove(p.id);
+    } catch (e) {
+      await load(); // recargar si falla
+      alert((lang==='es'?'No se pudo eliminar: ':'Delete failed: ') + (e?.message || ''));
+    }
+  };
+
+  // ── Export CSV ────────
+  const csvEscape = (v) => {
+    const s = v == null ? '' : String(v);
+    if (/[;"\n\r]/.test(s)) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  };
+  const onExport = () => {
+    const toExport = selected.size > 0
+      ? rows.filter(r => selected.has(r.id))
+      : rows;
+    const header = ['sku','nombre','marca','categoria','color','precio_lista','activo'];
+    const lines = [header.join(';')];
+    toExport.forEach(p => {
+      const marca = p.brand_nombre || brandMap[p.brand_id]?.name || '';
+      lines.push([
+        csvEscape(p.sku),
+        csvEscape(p.nombre),
+        csvEscape(marca),
+        csvEscape(p.tipo_calzado),
+        csvEscape(p.color),
+        csvEscape(p.list_price),
+        csvEscape(p.is_active ? 'true' : 'false'),
+      ].join(';'));
+    });
+    // BOM UTF-8 al inicio para que Excel detecte codificación
+    const csv = '﻿' + lines.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth()+1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `productos_${yyyy}${mm}${dd}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   return (
     <div className="page">
       <div className="page-header">
@@ -168,6 +288,10 @@ export default function ScreenProductos() {
         <div className="flex ai-center gap-2">
           <button className="btn" onClick={()=>navigate('/tallas')}>
             <IconSliders size={14}/> {lang==='es'?'Motor de Tallas':'Sizing Engine'}
+          </button>
+          <button className="btn" onClick={onExport} disabled={rows.length === 0}>
+            <IconDownload size={14}/> {lang==='es'?'Exportar':'Export'}
+            {selected.size > 0 && <span className="badge-count">{selected.size}</span>}
           </button>
           <button className="btn btn-accent" onClick={()=>navigate('/productos/nuevo')}>
             <IconPlus size={14}/> {lang==='es'?'Nuevo producto':'New product'}
@@ -249,11 +373,21 @@ export default function ScreenProductos() {
         <table className="products-table">
           <thead>
             <tr>
+              <th style={{width:36}}>
+                <input
+                  type="checkbox"
+                  checked={allFilteredSelected}
+                  onChange={toggleAll}
+                  aria-label={lang==='es'?'Seleccionar todo':'Select all'}
+                />
+              </th>
               <th style={{width:52}}></th>
               <th>SKU</th>
               <th>{lang==='es'?'Nombre':'Name'}</th>
               <th>{lang==='es'?'Marca':'Brand'}</th>
               <th className="ta-right">{lang==='es'?'Precio Lista':'List Price'}</th>
+              <th style={{width:80, textAlign:'center'}}>{lang==='es'?'Activo':'Active'}</th>
+              <th style={{width:96, textAlign:'center'}}>{lang==='es'?'Acciones':'Actions'}</th>
             </tr>
           </thead>
           <tbody>
@@ -272,6 +406,14 @@ export default function ScreenProductos() {
                     className="product-row"
                     onClick={()=>navigate(`/productos/${p.id}`)}
                   >
+                    <td onClick={(e)=>e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(p.id)}
+                        onChange={()=>toggleOne(p.id)}
+                        aria-label={`Select ${p.sku}`}
+                      />
+                    </td>
                     <td>
                       <div className="product-thumb"
                            style={{
@@ -323,6 +465,52 @@ export default function ScreenProductos() {
                     </td>
                     <td className="ta-right tabular-nums" style={{fontWeight:600}}>
                       {fmtMoney(p.list_price)}
+                    </td>
+                    <td onClick={(e)=>e.stopPropagation()} style={{textAlign:'center'}}>
+                      <button
+                        onClick={()=>onToggleActive(p)}
+                        disabled={usingMock}
+                        title={p.is_active
+                          ? (lang==='es'?'Activo':'Active')
+                          : (lang==='es'?'Inactivo':'Inactive')}
+                        style={{
+                          width:32, height:18, padding:0, border:'none',
+                          cursor: usingMock ? 'not-allowed' : 'pointer',
+                          opacity: usingMock ? 0.5 : 1,
+                          borderRadius:9999,
+                          background: p.is_active ? '#00B286' : '#D1D5DB',
+                          position:'relative', transition:'background 0.18s',
+                          verticalAlign:'middle',
+                        }}
+                      >
+                        <span style={{
+                          position:'absolute', top:2, left:2, width:14, height:14,
+                          background:'#fff', borderRadius:'50%',
+                          transform: p.is_active ? 'translateX(14px)' : 'translateX(0)',
+                          transition:'transform 0.18s',
+                          boxShadow:'0 1px 2px rgba(0,0,0,0.2)',
+                        }}/>
+                      </button>
+                    </td>
+                    <td onClick={(e)=>e.stopPropagation()} style={{textAlign:'center'}}>
+                      <button
+                        className="icon-btn"
+                        title={lang==='es'?'Duplicar':'Duplicate'}
+                        onClick={()=>onDuplicate(p)}
+                        disabled={usingMock}
+                        style={usingMock ? { opacity:0.4, cursor:'not-allowed' } : undefined}
+                      >
+                        <IconCopy size={14}/>
+                      </button>
+                      <button
+                        className="icon-btn"
+                        title={lang==='es'?'Eliminar':'Delete'}
+                        onClick={()=>onDelete(p)}
+                        disabled={usingMock}
+                        style={usingMock ? { opacity:0.4, cursor:'not-allowed' } : undefined}
+                      >
+                        <IconTrash size={14}/>
+                      </button>
                     </td>
                   </motion.tr>
                 );

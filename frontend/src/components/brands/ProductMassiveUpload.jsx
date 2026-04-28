@@ -1,17 +1,23 @@
 // ─────────────────────────────────────────────────────────────
-// ProductMassiveUpload — Dropzone Excel para catálogo masivo
+// ProductMassiveUpload — Dropzone Excel/CSV para catálogo masivo
 // Agente responsable: [AG-FRONTEND]
 //
-// Flujo real (2-step):
-//   1. Usuario suelta .xlsx/.csv → parsea con SheetJS en cliente
+// Flujo Excel (2-step, .xlsx / .xls):
+//   1. Usuario suelta .xlsx → parsea con SheetJS en cliente
 //   2. Auto-mapping columnas Excel ↔ atributos canónicos
 //   3. Confirm import → POST /api/marcas/{marcaId}/upload_productos_preview/
 //   4. Si preview OK → POST /api/marcas/{marcaId}/upload_productos_commit/
 //      con idempotence_token para que reintentos sean seguros.
 //
+// Flujo CSV directo (Hikashop, .csv):
+//   1. Usuario suelta .csv → NO se parsea en cliente.
+//   2. POST multipart /api/productos/bulk-upload-csv/?brand_id={marcaId}
+//      con el archivo crudo en `file`. El backend devuelve
+//      {created, updated, skipped, errors[]}.
+//
 // Nota: `marcaId` es obligatorio para que el upload sea real; si no viene,
 // el componente sigue funcionando en modo "solo-cliente" y emite onParsed
-// con las filas parseadas (útil para testing del parser).
+// con las filas parseadas (útil para testing del parser Excel).
 // ─────────────────────────────────────────────────────────────
 import React, { useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -20,7 +26,7 @@ import {
   IconUpload, IconFileText, IconX, IconCheck, IconAlert, IconRefresh, IconDownload,
 } from "../../lib/icons.jsx";
 import { BRAND_ATTRIBUTES } from "../../data/mockData.js";
-import { marcasApi } from "../../lib/api.js";
+import { marcasApi, getToken } from "../../lib/api.js";
 
 /* Campos canónicos target (fila orden de detección) */
 const CANONICAL_FIELDS = [
@@ -86,9 +92,47 @@ export default function ProductMassiveUpload({ lang='es', marcaId, onParsed, onC
   const [serverResult, setServerResult] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
-  /* Parse real con SheetJS */
+  // ─────────────────────────────────────────────────────────────
+  // Flujo Hikashop / bulk-upload-csv
+  // Sube el CSV crudo en multipart al endpoint nuevo. NO parseamos
+  // en cliente: el backend procesa las 95 columnas Hikashop directamente.
+  // ─────────────────────────────────────────────────────────────
+  async function uploadCsvDirect(file) {
+    setFileName(file.name);
+    setStage('uploading');
+    setErrorMsg('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const token = getToken();
+      const url = `${import.meta.env.VITE_API_BASE || '/api'}/productos/bulk-upload-csv/?brand_id=${encodeURIComponent(marcaId)}`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.detail || `HTTP ${resp.status}`);
+      setServerResult({ csvDirect: true, ...data });
+      setStage('done');
+      onParsed && onParsed({ csvDirect: true, ...data, fileName: file.name });
+    } catch (e) {
+      console.error('[ProductMassiveUpload] csv upload failed', e);
+      setErrorMsg(`${lang==='es'?'Error al subir CSV: ':'CSV upload failed: '}${e.message || ''}`);
+      setStage('error');
+    }
+  }
+
+  /* Parse real con SheetJS — solo para .xlsx / .xls.
+     Para .csv saltamos al flujo directo Hikashop. */
   const parseFile = (file) => {
-    setFileName(file?.name || 'catalogo.xlsx');
+    const name = file?.name || '';
+    if (name.toLowerCase().endsWith('.csv')) {
+      // Flujo Hikashop / bulk-upload-csv: subir crudo, sin parsear.
+      uploadCsvDirect(file);
+      return;
+    }
+    setFileName(name || 'catalogo.xlsx');
     setStage('parsing');
     setErrorMsg('');
     const reader = new FileReader();
@@ -280,7 +324,7 @@ export default function ProductMassiveUpload({ lang='es', marcaId, onParsed, onC
         </div>
       )}
 
-      {/* ─── Uploading (preview + commit) ─── */}
+      {/* ─── Uploading (preview + commit · o CSV directo Hikashop) ─── */}
       {stage === 'uploading' && (
         <div className="dropzone dropzone-parsing">
           <motion.div className="dropzone-icon"
@@ -292,7 +336,9 @@ export default function ProductMassiveUpload({ lang='es', marcaId, onParsed, onC
             {lang==='es'?'Subiendo al servidor…':'Uploading to server…'}
           </div>
           <div className="caption" style={{color:'var(--text-tertiary)'}}>
-            {rows.length} {lang==='es'?'filas':'rows'} · {fileName}
+            {rows.length > 0
+              ? <>{rows.length} {lang==='es'?'filas':'rows'} · {fileName}</>
+              : fileName}
           </div>
         </div>
       )}
@@ -447,12 +493,34 @@ export default function ProductMassiveUpload({ lang='es', marcaId, onParsed, onC
             {lang==='es'?'Import confirmado':'Import confirmed'}
           </div>
           <div className="caption" style={{color:'var(--text-tertiary)'}}>
-            {serverResult?.committed_rows ?? rows.length}{' '}
-            {lang==='es'?'productos creados':'products created'}
-            {serverResult?.invalid > 0 && (
-              <> · {serverResult.invalid} {lang==='es'?'rechazadas':'rejected'}</>
+            {(serverResult?.csvDirect || serverResult?.created != null) ? (
+              lang==='es'
+                ? <>{serverResult?.created ?? 0} creados, {serverResult?.updated ?? 0} actualizados, {serverResult?.skipped ?? 0} saltados. {serverResult?.errors?.length ?? 0} errores.</>
+                : <>{serverResult?.created ?? 0} created, {serverResult?.updated ?? 0} updated, {serverResult?.skipped ?? 0} skipped. {serverResult?.errors?.length ?? 0} errors.</>
+            ) : (
+              <>
+                {serverResult?.committed_rows ?? rows.length}{' '}
+                {lang==='es'?'productos creados':'products created'}
+                {serverResult?.invalid > 0 && (
+                  <> · {serverResult.invalid} {lang==='es'?'rechazadas':'rejected'}</>
+                )}
+              </>
             )}
           </div>
+          {(serverResult?.csvDirect || serverResult?.created != null) && serverResult?.errors?.length > 0 && (
+            <ul className="caption" style={{color:'var(--text-tertiary)', marginTop:8, maxHeight:120, overflow:'auto', textAlign:'left'}}>
+              {serverResult.errors.slice(0, 10).map((e, i) => (
+                <li key={i}>
+                  {typeof e === 'string'
+                    ? e
+                    : <>{lang==='es'?'Fila':'Row'} {e.row ?? '?'}: {e.message || (e.missing || []).join(', ') || JSON.stringify(e)}</>}
+                </li>
+              ))}
+              {serverResult.errors.length > 10 && (
+                <li>+ {serverResult.errors.length - 10} {lang==='es'?'más':'more'}</li>
+              )}
+            </ul>
+          )}
           <div className="mass-helpers">
             <button type="button" className="btn btn-ghost btn-sm" onClick={reset}>
               <IconRefresh size={12}/> {lang==='es'?'Otro archivo':'Another file'}
