@@ -32,7 +32,7 @@ import logging
 from decimal import Decimal
 
 from django.db import transaction, connection
-from django.db.models import Q
+from django.db.models import Q, Case, When, Value, IntegerField
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -568,31 +568,41 @@ class ResolveClientPriceView(APIView):
             is_active=True,
         ).order_by("-valid_from").first()
 
-        # Buscar grade_item para grade_moq / size_multipliers / cost (siempre)
-        # (tomamos el grade_item que pertenece al pricelist_version ACTIVO
-        #  que tenga el precio MIN para este sku/brand)
-        grade_qs = GradeItem.objects.filter(
-            brand_id=brand_id,
-            product_sku=sku,
-            is_active=True,
-        ).order_by("unit_price_usd")
-        # Filtramos a las PLVs activas Y con ventana de validez vigente HOY:
-        #   valid_from <= today AND (valid_to IS NULL OR valid_to >= today)
-        # Esto soporta múltiples PLVs con fechas escalonadas: la del día gana,
-        # las futuras quedan latentes hasta que llegue su valid_from.
+        # ── Selección de la PLV ganadora ──
+        # Reglas (en este orden):
+        #   1. Solo PLVs ACTIVE Y vigentes hoy (valid_from <= today AND
+        #      (valid_to IS NULL OR valid_to >= today)).
+        #   2. Closed-window (valid_to IS NOT NULL) gana sobre open-window
+        #      (valid_to IS NULL). Razón: si el operador especificó fecha_fin,
+        #      es una ventana intencional con prioridad sobre listas "por
+        #      defecto"/sin caducidad.
+        #   3. Empate → created_at DESC (la más reciente cargada gana).
+        #
+        # Antes la lógica era MIN(unit_price_usd), lo cual elegía la lista
+        # más barata sin importar qué tan vieja fuera — incorrecto cuando
+        # hay varias listas históricas activas.
         today = timezone.now().date()
-        active_plv_ids = set(
+        winning_plv = (
             PriceListVersion.objects.filter(
                 brand_id=brand_id, is_active=True,
                 valid_from__lte=today,
             ).filter(
                 Q(valid_to__isnull=True) | Q(valid_to__gte=today)
-            ).values_list("id", flat=True)
+            ).annotate(
+                _has_end=Case(
+                    When(valid_to__isnull=False, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            ).order_by("_has_end", "-created_at").first()
         )
-        grade_item = next(
-            (gi for gi in grade_qs if gi.pricelist_version_id in active_plv_ids),
-            None,
-        )
+        grade_item = None
+        if winning_plv:
+            grade_item = GradeItem.objects.filter(
+                pricelist_version_id=winning_plv.id,
+                product_sku=sku,
+                is_active=True,
+            ).first()
 
         if cpa:
             base_price = Decimal(str(cpa.cached_client_price))
@@ -601,7 +611,12 @@ class ResolveClientPriceView(APIView):
         elif grade_item:
             base_price = Decimal(str(grade_item.unit_price_usd))
             source = "PRICELIST"
-            notes.append("Precio resuelto por MIN sobre pricelist_versions activas.")
+            notes.append(
+                f"Precio resuelto por priority-order sobre pricelist_versions vigentes "
+                f"(closed-window > open-window > created_at DESC). "
+                f"PLV ganadora: {winning_plv.codigo} "
+                f"({winning_plv.valid_from}..{winning_plv.valid_to or '∞'})."
+            )
 
         if grade_item:
             grade_moq = grade_item.grade_moq_total
@@ -1332,21 +1347,34 @@ class ResolvedPricesByAssignmentView(APIView):
         except BrandClientPricingAssignment.DoesNotExist:
             return Response({"detail": "Asignación no encontrada."}, status=404)
 
-        # Filtrar por fecha vigente (igual que resolve_client_price): solo
-        # PLVs cuya ventana valid_from..valid_to abarca HOY. Si el operador
-        # subió varios precios escalonados en el tiempo, esto muestra el
-        # que rige hoy y oculta los futuros/pasados.
+        # Selección de la PLV ganadora (mismo criterio que resolve_client_price):
+        #   1. PLVs ACTIVE y vigentes HOY.
+        #   2. Closed-window (valid_to IS NOT NULL) gana sobre open-window.
+        #   3. Empate → created_at DESC (la más reciente).
+        # Solo mostramos los SKUs de esa PLV — antes mostraba todos de todas
+        # las activas, lo que producía duplicados (mismo SKU N veces) y daba
+        # la impresión de que el sistema no actualizaba los precios.
         today = timezone.now().date()
-        plvs = PriceListVersion.objects.filter(
-            brand_id=bcpa.brand_id, is_active=True,
-            valid_from__lte=today,
-        ).filter(
-            Q(valid_to__isnull=True) | Q(valid_to__gte=today)
-        ).order_by("-valid_from")
-        plv_ids = [p.id for p in plvs]
-        items = GradeItem.objects.filter(
-            pricelist_version_id__in=plv_ids, is_active=True,
-        ).order_by("product_sku")
+        winning_plv = (
+            PriceListVersion.objects.filter(
+                brand_id=bcpa.brand_id, is_active=True,
+                valid_from__lte=today,
+            ).filter(
+                Q(valid_to__isnull=True) | Q(valid_to__gte=today)
+            ).annotate(
+                _has_end=Case(
+                    When(valid_to__isnull=False, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            ).order_by("_has_end", "-created_at").first()
+        )
+        if winning_plv:
+            items = GradeItem.objects.filter(
+                pricelist_version_id=winning_plv.id, is_active=True,
+            ).order_by("product_sku")
+        else:
+            items = GradeItem.objects.none()
 
         limit = int(request.query_params.get("limit", 1000))
         sku_filter = request.query_params.get("sku")
@@ -1360,6 +1388,17 @@ class ResolvedPricesByAssignmentView(APIView):
             "cliente_id":     str(bcpa.cliente_id),
             "count":          len(out),
             "items":          out,
+            # Info de la PLV ganadora (transparencia para debugging y UI):
+            "winning_plv": {
+                "id":         str(winning_plv.id),
+                "codigo":     winning_plv.codigo,
+                "valid_from": winning_plv.valid_from.isoformat() if winning_plv.valid_from else None,
+                "valid_to":   winning_plv.valid_to.isoformat()   if winning_plv.valid_to   else None,
+                "created_at": winning_plv.created_at.isoformat() if winning_plv.created_at else None,
+                "selected_by": (
+                    "closed_window" if winning_plv.valid_to else "latest_open_window"
+                ),
+            } if winning_plv else None,
         }, status=200)
 
 
