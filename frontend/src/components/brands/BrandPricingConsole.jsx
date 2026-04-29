@@ -67,7 +67,24 @@ function adaptClientSummary(r) {
     credito_limit_usd: Number(r.credito_limit_usd ?? r.credito_aprobado ?? 0),
     comision_pct:      r.comision_pct == null ? null : Number(r.comision_pct),
     assignment:        r.assignment || null,
+    // Sprint Parent-Child: el FE sangra subsidiarias bajo su padre.
+    parent_id:         r.parent_id || null,
+    parent_name:       null,
   };
+}
+
+// Ordena padres seguidos de sus subsidiarias para mantener jerarquia visual.
+function sortClientsHierarchy(clients) {
+  const out = []; const seen = new Set();
+  clients.filter(c => !c.parent_id).forEach(parent => {
+    out.push(parent); seen.add(parent.cliente_id);
+    clients.filter(c => c.parent_id === parent.cliente_id).forEach(sub => {
+      out.push({ ...sub, parent_name: parent.razon_social || parent.nombre_comercial });
+      seen.add(sub.cliente_id);
+    });
+  });
+  clients.forEach(c => { if (!seen.has(c.cliente_id)) out.push(c); });
+  return out;
 }
 
 // ─── Design tokens ───────────────────────────────────────────
@@ -131,7 +148,7 @@ export default function BrandPricingConsole({ brandId, lang = "es" }) {
         const list = Array.isArray(rows)
           ? rows
           : (Array.isArray(rows?.clients) ? rows.clients : []);
-        const real = list.map(adaptClientSummary);
+        const real = sortClientsHierarchy(list.map(adaptClientSummary));
         if (real.length > 0) setClients(real);
         else setClients(CLIENTS.map(c => ({
           cliente_id:        c.id || c.uuid,
@@ -285,6 +302,7 @@ function ClientPricingCard({ client, lang, isAdmin, onOpen, onEdit, index = 0 })
   const meta = COUNTRY_META[client.pais_iso2] || { flag: "🌐", label: client.pais_iso2 };
   const estadoStyle = ESTADO_COLORS[client.estado] || ESTADO_COLORS.ACTIVO;
   const hasAssignment = !!client.assignment;
+  const isSubsidiary = !!client.parent_id;
 
   const comisionPctNum = client.comision_pct != null ? Number(client.comision_pct) * 100 : null;
 
@@ -300,14 +318,17 @@ function ClientPricingCard({ client, lang, isAdmin, onOpen, onEdit, index = 0 })
       style={{
         background: "#FFFFFF",
         border: "1px solid #E5E7EB",
+        // Subsidiarias: borde izquierdo Mint + sangria.
+        borderLeft: isSubsidiary ? `4px solid ${MINT}` : "1px solid #E5E7EB",
         borderRadius: 12,
         overflow: "hidden",
         cursor: "pointer",
         display: "flex", flexDirection: "column",
         transition: "box-shadow 160ms ease, transform 160ms ease",
+        marginLeft: isSubsidiary ? 18 : 0,
       }}
     >
-      {/* Header con bandera + nombre + lápiz */}
+      {/* Header con bandera + nombre + lapiz */}
       <div style={{ padding: "14px 16px", display: "flex", alignItems: "flex-start", gap: 10 }}>
         <div style={{
           width: 40, height: 40, borderRadius: 8,
@@ -320,9 +341,23 @@ function ClientPricingCard({ client, lang, isAdmin, onOpen, onEdit, index = 0 })
           <div style={{
             font: "700 14px/1.2 var(--font-body)", color: NAVY,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            display: "flex", alignItems: "center", gap: 6,
           }}>
-            {client.razon_social}
+            {isSubsidiary && (
+              <span style={{ color: MINT, fontWeight: 800 }} title="Subsidiaria">↳</span>
+            )}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+              {client.razon_social}
+            </span>
           </div>
+          {isSubsidiary && client.parent_name && (
+            <div style={{
+              font: "600 10px/1.3 var(--font-body)", color: MINT,
+              marginTop: 1, letterSpacing: 0.2,
+            }}>
+              {lang === "es" ? "Hija de " : "Child of "}{client.parent_name}
+            </div>
+          )}
           <div style={{
             font: "500 11px/1.3 var(--font-body)", color: MUTED,
             marginTop: 2,

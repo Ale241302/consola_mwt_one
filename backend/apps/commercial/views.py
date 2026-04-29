@@ -1243,10 +1243,13 @@ class BrandClientsSummaryView(APIView):
         #    por ahora; en fase 2 podemos enlazar con expedientes.expediente
         #    WHERE brand_id = ...).
         with connection.cursor() as cur:
+            # Sprint Parent-Child: incluimos parent_id para que el FE
+            # pueda renderizar la jerarquia con sangria.
             cur.execute("""
                 SELECT id, razon_social, nombre_comercial, pais_iso2,
                        estado, dias_credito,
-                       credito_aprobado, comision_pct
+                       credito_aprobado, comision_pct,
+                       parent_id
                   FROM clientes.cliente
                  WHERE is_active = TRUE
                  ORDER BY razon_social
@@ -1291,6 +1294,8 @@ class BrandClientsSummaryView(APIView):
                 "pais_iso2":        r["pais_iso2"],
                 "estado":           r["estado"],
                 "dias_credito":     r["dias_credito"],
+                # Parent-Child (sprint 2026-04-29) — FE sangra subsidiarias.
+                "parent_id":        str(r["parent_id"]) if r.get("parent_id") else None,
                 # CEO-ONLY — enmascarado para no-admin
                 "credito_limit_usd": str(r["credito_aprobado"]) if is_admin and r["credito_aprobado"] is not None else None,
                 "comision_pct":      str(r["comision_pct"])    if is_admin and r["comision_pct"]    is not None else None,
