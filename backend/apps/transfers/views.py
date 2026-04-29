@@ -33,12 +33,15 @@ from apps.storage.services import delete_object as _storage_delete
 from .models import (
     Transferencia, Linea, Evento, TransferenciaDocumento,
     EstadoTransferCat, LegalContextCat, TransicionCat,
+    CostLine, CostKindCat,
 )
 from .serializers import (
     TransferenciaSerializer, TransferenciaListSerializer,
     LineaSerializer, EventoSerializer, TransferenciaDocumentoSerializer,
+    CostLineSerializer, CostKindCatSerializer,
 )
 from . import services as transfer_services
+from . import ocr_customs
 
 
 # ════════════════════════════════════════════════════════════
@@ -112,6 +115,11 @@ class TransferenciaViewSet(viewsets.ViewSet):
             TransferenciaDocumento.objects.filter(transferencia_id=t.id, is_active=True),
             many=True,
         ).data
+        # Sprint Transfer Engine v2 — costos asociados.
+        data["cost_lines"] = CostLineSerializer(
+            CostLine.objects.filter(transferencia_id=t.id, is_active=True).order_by("kind"),
+            many=True,
+        ).data
         return Response(data)
 
     def create(self, request):
@@ -121,18 +129,21 @@ class TransferenciaViewSet(viewsets.ViewSet):
             data["origen_id"]  = data.pop("nodo_origen_id")
         if "nodo_destino_id" in data and "destino_id" not in data:
             data["destino_id"] = data.pop("nodo_destino_id")
-        # has_discrepancy ahora es regular column con trigger automático
-        # (91c_transfers_has_discrepancy_unfreeze.sql), pero igual la
-        # ignoramos del payload — es derivada de discrepancy_count.
         data.pop("has_discrepancy", None)
 
+        # Sprint Transfer Engine v2 — el FE manda 'lineas' y 'cost_lines'
+        # inline en el mismo POST. Las separamos del payload de transferencia.
+        inline_lineas     = data.pop("lineas",     None) or data.pop("transfer_lines", None) or []
+        inline_cost_lines = data.pop("cost_lines", None) or []
+
         new_id = uuid.uuid4()
-        log.info("[transferencia.create] payload normalizado=%s", dict(data))
+        log.info("[transferencia.create] payload normalizado=%s lineas=%d costs=%d",
+                 dict(data), len(inline_lineas), len(inline_cost_lines))
         try:
             s = TransferenciaSerializer(data=data)
             s.is_valid(raise_exception=True)
             with transaction.atomic():
-                s.save(id=new_id)   # bypass read_only_fields=("id",)
+                s.save(id=new_id)
                 Transferencia.objects.filter(pk=new_id).update(
                     snapshot_created_at=timezone.now(),
                 )
@@ -145,12 +156,25 @@ class TransferenciaViewSet(viewsets.ViewSet):
                     actor_name       = data.get("created_by_name"),
                     notes            = "Creación",
                 )
+                # Persistir líneas de producto inline (si vinieron).
+                for raw in inline_lineas:
+                    line_data = {**raw, "transferencia_id": str(new_id)}
+                    line_data.pop("id", None)
+                    ls = LineaSerializer(data=line_data)
+                    ls.is_valid(raise_exception=True)
+                    ls.save(id=uuid.uuid4())
+                # Persistir cost lines inline (trigger SQL recalcula total_cost_usd).
+                for raw in inline_cost_lines:
+                    cost_data = {**raw, "transferencia_id": str(new_id)}
+                    cost_data.pop("id", None)
+                    cost_data.pop("amount_usd", None)
+                    cs = CostLineSerializer(data=cost_data)
+                    cs.is_valid(raise_exception=True)
+                    cs.save(id=uuid.uuid4())
         except (IntegrityError, DataError) as e:
             log.warning("[transferencia.create] DB error payload=%s : %s", dict(data), e)
             return Response({"detail": str(e)}, status=400)
         except Exception as e:
-            # ⚠️ Catch-all temporal para diagnosticar 500 mudo.
-            # log.exception imprime el traceback completo en stderr → docker logs.
             log.exception("[transferencia.create] unexpected error payload=%s", dict(data))
             return Response(
                 {"detail": f"{type(e).__name__}: {e}"},
@@ -206,6 +230,94 @@ class TransferenciaViewSet(viewsets.ViewSet):
     def select_legal_contexts(self, request):
         return Response([{"codigo": c.codigo, "label": c.label, "descripcion": c.descripcion}
                          for c in LegalContextCat.objects.filter(is_active=True)])
+
+    @action(detail=False, methods=["get"], url_path="select_cost_kinds")
+    def select_cost_kinds(self, request):
+        """Catálogo de tipos de costo (DAI, IVA, ALMACENAJE, FLETE, etc.)."""
+        return Response(CostKindCatSerializer(
+            CostKindCat.objects.filter(is_active=True), many=True
+        ).data)
+
+    # ── OCR Aduanal — extracción con gpt-5-nano ───────────────
+    # POST /api/transferencias/ocr_customs/
+    # Recibe: multipart con `file` (PDF / imagen).
+    # Devuelve: {lines: [{kind, label, amount, currency, confidence}], ...}
+    @action(detail=False, methods=["post"], url_path="ocr_customs")
+    def ocr_customs(self, request):
+        f = request.FILES.get("file") or request.FILES.get("upload")
+        if not f:
+            return Response(
+                {"detail": "Falta el archivo. Usa multipart con campo `file`."},
+                status=400,
+            )
+        if f.size > 25 * 1024 * 1024:
+            return Response(
+                {"detail": "Archivo > 25MB. Comprime el PDF antes de subirlo."},
+                status=413,
+            )
+        try:
+            payload = ocr_customs.extract_customs_costs(
+                file_bytes   = f.read(),
+                filename     = f.name,
+                content_type = f.content_type or "application/octet-stream",
+            )
+        except Exception as e:
+            log.exception("[ocr_customs] uncaught error file=%s", f.name)
+            return Response({"detail": f"OCR falló: {type(e).__name__}: {e}"}, status=500)
+
+        # Auditoría: si vino un transferencia_id en el form, persistimos
+        # el payload en transferencia_documento.ocr_payload_json.
+        trf_id = (request.data.get("transferencia_id") or
+                  request.data.get("transfer_id"))
+        doc_id = request.data.get("document_id")
+        if trf_id and doc_id:
+            try:
+                TransferenciaDocumento.objects.filter(
+                    pk=doc_id, transferencia_id=trf_id,
+                ).update(
+                    ocr_processed_at = timezone.now(),
+                    ocr_payload_json = payload,
+                )
+            except Exception:
+                log.exception("[ocr_customs] no pude persistir payload en doc=%s", doc_id)
+
+        return Response(payload)
+
+    # ── Cost lines CRUD inline (sub-recurso de transferencia) ──
+    # GET    /api/transferencias/{id}/cost-lines/
+    # POST   /api/transferencias/{id}/cost-lines/
+    # DELETE /api/transferencias/{id}/cost-lines/{cost_id}/
+    @action(detail=True, methods=["get", "post"], url_path="cost-lines")
+    def cost_lines(self, request, pk=None):
+        try:
+            t = Transferencia.objects.get(pk=pk, is_active=True)
+        except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+        if request.method.upper() == "GET":
+            qs = CostLine.objects.filter(
+                transferencia_id=t.id, is_active=True
+            ).order_by("kind", "created_at")
+            return Response(CostLineSerializer(qs, many=True).data)
+        body = {**request.data, "transferencia_id": str(t.id)}
+        body.pop("id", None)
+        body.pop("amount_usd", None)
+        s = CostLineSerializer(data=body)
+        s.is_valid(raise_exception=True)
+        s.save(id=uuid.uuid4())
+        return Response(s.data, status=201)
+
+    @action(detail=True, methods=["delete"], url_path=r"cost-lines/(?P<cost_id>[^/.]+)")
+    def cost_line_delete(self, request, pk=None, cost_id=None):
+        try:
+            t = Transferencia.objects.get(pk=pk, is_active=True)
+        except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+        updated = CostLine.objects.filter(
+            pk=cost_id, transferencia_id=t.id, is_active=True
+        ).update(is_active=False)
+        if not updated:
+            return Response({"detail": "Cost line no encontrada"}, status=404)
+        return Response(status=204)
 
     @action(detail=False, methods=["get"])
     def select_transiciones(self, request):

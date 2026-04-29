@@ -16,6 +16,8 @@ python-dotenv==1.0.1
 gunicorn==23.0.0
 # AI Hub (apps.ai_hub)
 anthropic==0.39.0
+# OCR Aduanal del Motor de Transferencias (apps.transfers.ocr_customs · gpt-5-nano)
+openai==1.54.0
 pypdf==5.1.0
 pillow==10.4.0
 # Motor de Precios COMEX — parseo Excel (Tabela de preços v6+)

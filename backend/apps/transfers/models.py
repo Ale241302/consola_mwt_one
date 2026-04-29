@@ -182,6 +182,10 @@ class TransferenciaDocumento(models.Model):
     uploaded_by       = models.UUIDField(null=True, blank=True)         # ⛔ sin FK
     uploaded_by_name  = models.CharField(max_length=128, null=True, blank=True)
 
+    # Sprint Transfer Engine v2 (91e_transfers_cost_lines.sql)
+    ocr_processed_at  = models.DateTimeField(null=True, blank=True)
+    ocr_payload_json  = models.JSONField(null=True, blank=True)
+
     is_active         = models.BooleanField(default=True)
     created_at        = models.DateTimeField(auto_now_add=True)
     updated_at        = models.DateTimeField(auto_now=True)
@@ -189,4 +193,58 @@ class TransferenciaDocumento(models.Model):
     class Meta:
         managed  = False
         db_table = 'transfers"."transferencia_documento'
+        ordering = ("-created_at",)
+
+
+# ── Catálogo de tipo de costo (sprint Transfer Engine v2) ────
+class CostKindCat(models.Model):
+    codigo      = models.CharField(max_length=32, primary_key=True)
+    label       = models.CharField(max_length=64)
+    descripcion = models.TextField(null=True, blank=True)
+    is_fiscal   = models.BooleanField(default=False)
+    color       = models.CharField(max_length=16, null=True, blank=True)
+    orden       = models.IntegerField(default=100)
+    is_active   = models.BooleanField(default=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'transfers"."cost_kind_cat'
+        ordering = ("orden", "label")
+
+
+# ── Línea de costo (DUA / aduana / flete / seguro) ───────────
+class CostLine(models.Model):
+    """Costo incremental asociado a una transferencia.
+
+    Source:
+      · MANUAL  → tipeado por el usuario.
+      · OCR_DUA → extraído por gpt-5-nano del DUA.
+      · SYSTEM  → calculado automáticamente.
+
+    `amount_usd` es columna GENERATED en BD: amount * fx_to_usd.
+    """
+    id                 = models.UUIDField(primary_key=True)
+    transferencia_id   = models.UUIDField()                  # ⛔ sin FK
+    kind               = models.CharField(max_length=32)     # → cost_kind_cat
+    label              = models.CharField(max_length=160, null=True, blank=True)
+
+    amount             = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    currency           = models.CharField(max_length=3, default="USD")
+    fx_to_usd          = models.DecimalField(max_digits=14, decimal_places=6, default=1)
+    amount_usd         = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    # ↑ GENERATED en DB; el ORM no debe intentar escribirla.
+
+    source             = models.CharField(max_length=16, default="MANUAL")
+    document_id        = models.UUIDField(null=True, blank=True)        # ⛔ sin FK
+    ocr_confidence     = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+
+    notes              = models.TextField(null=True, blank=True)
+
+    is_active          = models.BooleanField(default=True)
+    created_at         = models.DateTimeField(auto_now_add=True)
+    updated_at         = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'transfers"."cost_line'
         ordering = ("-created_at",)

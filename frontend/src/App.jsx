@@ -17,6 +17,7 @@ import ScreenWizard from "./pages/Wizard.jsx";
 import CreateExpedienteWizard from "./pages/CreateExpedienteWizard.jsx";
 import ScreenTransfers from "./pages/Transfers.jsx";
 import ScreenTransferDetail from "./pages/TransferDetail.jsx";
+import ScreenCreateTransferWizard from "./pages/CreateTransferWizard.jsx";
 import ScreenNodos from "./pages/Nodos.jsx";
 import ScreenNodoDetail from "./pages/NodoDetail.jsx";
 import ScreenClientes from "./pages/Clientes.jsx";
@@ -77,6 +78,8 @@ export default function App() {
         <Route path="/expedientes/nuevo" element={<CreateExpedienteWizard />} />
         <Route path="/portal/nueva-oc"  element={<CreateExpedienteWizard />} />
         <Route path="/transferencias" element={<ScreenTransfers />} />
+        {/* Wizard full-page · debe ir ANTES de :transferId para no matchear "nueva" como id */}
+        <Route path="/transferencias/nueva" element={<ScreenCreateTransferWizard />} />
         <Route path="/transferencias/:transferId" element={<ScreenTransferDetail />} />
         <Route path="/nodos" element={<ScreenNodos />} />
         <Route path="/nodos/:nodeId" element={<ScreenNodoDetail />} />

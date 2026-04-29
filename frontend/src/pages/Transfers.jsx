@@ -200,7 +200,9 @@ export default function ScreenTransfers() {
           </div>
         </div>
         <div className="flex ai-center gap-2">
-          <button className="btn btn-accent" onClick={() => setDrawer(true)}>
+          {/* Sprint Transfer Engine v2: el drawer queda en archivo pero ya no
+              se usa — el botón navega al wizard full-page /transferencias/nueva. */}
+          <button className="btn btn-accent" onClick={() => navigate('/transferencias/nueva')}>
             <IconSwap size={14}/> {lang==='es'?'Nueva transferencia':'New transfer'}
           </button>
         </div>

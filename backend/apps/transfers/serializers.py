@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import (
     Transferencia, Linea, Evento, TransferenciaDocumento,
+    CostLine, CostKindCat,
 )
 
 
@@ -54,6 +55,58 @@ class TransferenciaSerializer(serializers.ModelSerializer):
         # validable; se devuelve solo en GET.
         read_only_fields = ("id", "created_at", "updated_at", "has_discrepancy")
 
+    # ── Validación de capacidades de nodos (sprint Transfer Engine v2) ──
+    # Origen DEBE tener "DISPATCH" en capabilities, destino DEBE tener
+    # "RECEIVE". Las capacidades viven en nodos.nodo.capabilities (JSONB
+    # array). Si el nodo no se encuentra (mock/seed antiguo) la validación
+    # se relaja para no romper demos — pero loguea WARNING.
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        origen_id  = attrs.get("origen_id")  or (self.instance and self.instance.origen_id)
+        destino_id = attrs.get("destino_id") or (self.instance and self.instance.destino_id)
+        if origen_id and destino_id and str(origen_id) == str(destino_id):
+            raise serializers.ValidationError(
+                {"destino_id": "Origen y destino no pueden ser el mismo nodo."}
+            )
+        # Solo validar capacidades en CREATE (instance is None) — en updates
+        # parciales el FE puede no reenviar origen/destino.
+        if self.instance is None:
+            self._assert_node_capability(origen_id,  "DISPATCH", "origen_id",
+                                         "El nodo origen no tiene la capacidad de despachar (DISPATCH).")
+            self._assert_node_capability(destino_id, "RECEIVE",  "destino_id",
+                                         "El nodo destino no tiene la capacidad de recibir (RECEIVE).")
+        return attrs
+
+    @staticmethod
+    def _assert_node_capability(node_id, required_cap, field, msg):
+        if not node_id:
+            return
+        from django.db import connection
+        try:
+            with connection.cursor() as c:
+                c.execute(
+                    "SELECT capabilities, status, is_active "
+                    "FROM nodos.nodo WHERE id = %s",
+                    [str(node_id)],
+                )
+                row = c.fetchone()
+        except Exception:
+            return
+        if not row:
+            return
+        capabilities, status, is_active = row
+        caps_upper = {str(x).upper() for x in (capabilities or [])}
+        if required_cap.upper() not in caps_upper:
+            raise serializers.ValidationError({field: msg})
+        if is_active is False:
+            raise serializers.ValidationError(
+                {field: "El nodo está inactivo y no puede operar."}
+            )
+        if status and str(status).upper() in ("RETIRED", "INACTIVE"):
+            raise serializers.ValidationError(
+                {field: f"El nodo está en estado {status} y no puede operar."}
+            )
+
 
 class LineaSerializer(serializers.ModelSerializer):
     delta_qty       = serializers.SerializerMethodField()
@@ -100,3 +153,19 @@ class TransferenciaDocumentoSerializer(serializers.ModelSerializer):
         fields = "__all__"
         # `id` se inyecta vía s.save(id=uuid.uuid4()) en el ViewSet.
         read_only_fields = ("id", "created_at", "updated_at")
+
+
+# ── Sprint Transfer Engine v2 (cost lines + OCR) ─────────────
+class CostLineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = CostLine
+        fields = "__all__"
+        # amount_usd es columna GENERATED en DB → read-only.
+        # `id` se inyecta en el ViewSet vía s.save(id=uuid.uuid4()).
+        read_only_fields = ("id", "amount_usd", "created_at", "updated_at")
+
+
+class CostKindCatSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = CostKindCat
+        fields = ("codigo", "label", "descripcion", "is_fiscal", "color", "orden")

@@ -1,0 +1,1057 @@
+// ─────────────────────────────────────────────────────────────
+// CreateTransferWizard — Motor de transferencias (FULL PAGE)
+// Sprint Transfer Engine v2 · 2026-04-29
+// Agente responsable: [AG-FRONTEND]
+//
+// Reemplaza al CreateTransferDrawer (modal lateral). Vive en
+// /transferencias/nueva como página dedicada del shell.
+//
+// 4 pasos:
+//   1. Contexto y Nodos    — origen / destino / motivo + Dropzone DUA
+//   2. Costos Operativos   — tabla editable (auto-llenada por OCR)
+//   3. Productos           — líneas con stock disponible en origen
+//   4. Validación          — totales, desglose, costo total, registrar
+//
+// Tokens: Navy #0B1E3A · Mint #00B286 · tabular-nums.
+// ─────────────────────────────────────────────────────────────
+import React, { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { useNavigate, useOutletContext } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  IconChevLeft, IconChevRight, IconCheck, IconX, IconAlert, IconPlus,
+  IconUpload, IconRefresh, IconTruck, IconArrow, IconFileText,
+  IconPackage, IconDollar,
+} from "../lib/icons.jsx";
+import { fmtMoney } from "../lib/i18n.js";
+import {
+  transferenciasApi, nodosApi, stockApi,
+} from "../lib/api.js";
+
+// ── Catálogo legal (espejo del backend transfers.legal_context_cat) ──
+const LEGAL_CONTEXT = [
+  { codigo:"INTERNAL",        label:"Interno / Redistribución", desc:"Movimiento intra-entidad, sin fiscalía",     color:"#64748B" },
+  { codigo:"NATIONALIZATION", label:"Nacionalización",          desc:"Ingreso fiscal · DUA / despacho aduanero",   color:"#481EE3" },
+  { codigo:"EXPORT",          label:"Reexportación",            desc:"Salida internacional bajo régimen",          color:"#3083FE" },
+  { codigo:"DISTRIBUTION",    label:"Distribución",             desc:"Envío a distribuidor / marketplace",         color:"#00B286" },
+  { codigo:"CONSIGNMENT",     label:"Consignación",             desc:"Propiedad retenida · reporte semanal",       color:"#B45309" },
+];
+const NEEDS_CUSTOMS_DOC = new Set(["NATIONALIZATION", "EXPORT"]);
+
+// ── Capacidades canónicas (espejo backend serializer.validate) ──
+const CAP_DISPATCH = "DISPATCH";
+const CAP_RECEIVE  = "RECEIVE";
+
+// ── Catálogo de tipos de costo (fallback si /select_cost_kinds falla) ──
+const COST_KINDS_FALLBACK = [
+  { codigo:"DAI",           label:"Aranceles (DAI)",     is_fiscal:true,  color:"#481EE3" },
+  { codigo:"IVA",           label:"Impuestos (IVA)",     is_fiscal:true,  color:"#7C3AED" },
+  { codigo:"ALMACENAJE",    label:"Almacenaje aduanal",  is_fiscal:false, color:"#0891B2" },
+  { codigo:"AGENCIAMIENTO", label:"Agenciamiento",       is_fiscal:false, color:"#0EA5E9" },
+  { codigo:"MANIPULEO",     label:"Manipuleo / handling",is_fiscal:false, color:"#06B6D4" },
+  { codigo:"FLETE",         label:"Flete",               is_fiscal:false, color:"#3083FE" },
+  { codigo:"SEGURO",        label:"Seguro",              is_fiscal:false, color:"#10B981" },
+  { codigo:"CONSOLIDACION", label:"Consolidación",       is_fiscal:false, color:"#22C55E" },
+  { codigo:"OTRO",          label:"Otro",                is_fiscal:false, color:"#64748B" },
+];
+
+const STEPS = [
+  { id:1, label:"Contexto y nodos" },
+  { id:2, label:"Costos operativos" },
+  { id:3, label:"Productos" },
+  { id:4, label:"Validación y totales" },
+];
+
+// ─────────────────────────────────────────────────────────────
+// COMPONENTE PRINCIPAL
+// ─────────────────────────────────────────────────────────────
+export default function CreateTransferWizard() {
+  const navigate = useNavigate();
+  const { lang = "es" } = useOutletContext() || {};
+  const [step, setStep] = useState(1);
+
+  // Estado global del wizard
+  const [origenId,      setOrigenId]      = useState("");
+  const [destinoId,     setDestinoId]     = useState("");
+  const [legalContext,  setLegalContext]  = useState("INTERNAL");
+  const [refTracking,   setRefTracking]   = useState("");
+  const [notes,         setNotes]         = useState("");
+  const [costLines,     setCostLines]     = useState([]);  // [{tmpId, kind, label, amount, currency, source, ocr_confidence}]
+  const [productLines,  setProductLines]  = useState([]);  // [{tmpId, sku, producto_id, product_label, size, qty_transfer, qty_reserve, disponible}]
+  const [docFile,       setDocFile]       = useState(null);
+  const [ocrLoading,    setOcrLoading]    = useState(false);
+  const [ocrResult,     setOcrResult]     = useState(null);
+  const [saving,        setSaving]        = useState(false);
+  const [error,         setError]         = useState(null);
+
+  // Catálogos
+  const [nodos,        setNodos]         = useState([]);
+  const [costKinds,    setCostKinds]     = useState(COST_KINDS_FALLBACK);
+  const [stockOrigen,  setStockOrigen]   = useState([]);
+
+  // ── Carga catálogos al montar ──
+  useEffect(() => {
+    nodosApi.list({ is_active: true }).then((d) => {
+      const arr = Array.isArray(d) ? d : (d?.results || []);
+      setNodos(arr);
+    }).catch(() => setNodos([]));
+
+    transferenciasApi.action("select_cost_kinds").then((d) => {
+      if (Array.isArray(d) && d.length) setCostKinds(d);
+    }).catch(() => {});
+  }, []);
+
+  // ── Cuando cambia el origen, traer su stock ──
+  useEffect(() => {
+    if (!origenId) { setStockOrigen([]); return; }
+    stockApi.list({ nodo_id: origenId, qty_disponible__gt: 0 }).then((d) => {
+      const arr = Array.isArray(d) ? d : (d?.results || []);
+      setStockOrigen(arr);
+    }).catch(() => setStockOrigen([]));
+  }, [origenId]);
+
+  // ── Filtrado dinámico de nodos por capacidad ──
+  const nodosOrigen  = useMemo(() => nodos.filter((n) => hasCap(n, CAP_DISPATCH)), [nodos]);
+  const nodosDestino = useMemo(() => nodos.filter((n) => hasCap(n, CAP_RECEIVE) && n.id !== origenId), [nodos, origenId]);
+
+  // ── Validación de paso ──
+  const canAdvance = useMemo(() => {
+    if (step === 1) {
+      if (!origenId || !destinoId || origenId === destinoId) return false;
+      if (NEEDS_CUSTOMS_DOC.has(legalContext) && !docFile && costLines.length === 0) {
+        // Permitimos avanzar sin doc, pero el banner del paso 1 advierte
+        return true;
+      }
+      return true;
+    }
+    if (step === 2) return true;  // costos son opcionales
+    if (step === 3) {
+      return productLines.length > 0
+          && productLines.every((l) => l.qty_transfer > 0 && l.sku);
+    }
+    return true;
+  }, [step, origenId, destinoId, legalContext, docFile, costLines, productLines]);
+
+  // ── OCR Aduanal ──
+  const runOCR = useCallback(async (file) => {
+    setOcrLoading(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      // postMultipart a /api/transferencias/ocr_customs/
+      const res = await fetch("/api/transferencias/ocr_customs/", {
+        method: "POST", body: fd,
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.detail || `HTTP ${res.status}`);
+      }
+      const payload = await res.json();
+      setOcrResult(payload);
+      // Auto-llenar costLines con lo extraído (source = OCR_DUA)
+      if (Array.isArray(payload.lines) && payload.lines.length) {
+        const ocrLines = payload.lines.map((l, i) => ({
+          tmpId:          `ocr-${Date.now()}-${i}`,
+          kind:           l.kind,
+          label:          l.label || labelForKind(costKinds, l.kind),
+          amount:         Number(l.amount || 0),
+          currency:       l.currency || "USD",
+          fx_to_usd:      1,
+          source:         "OCR_DUA",
+          ocr_confidence: Number(l.confidence || 0),
+        }));
+        setCostLines((prev) => [...ocrLines, ...prev]);
+      }
+    } catch (e) {
+      setError(e?.message || "OCR falló");
+    } finally {
+      setOcrLoading(false);
+    }
+  }, [costKinds]);
+
+  const handleDoc = (file) => {
+    setDocFile(file);
+    setOcrResult(null);
+    if (NEEDS_CUSTOMS_DOC.has(legalContext)) {
+      runOCR(file);
+    }
+  };
+
+  // ── Helpers de productos ──
+  const addProductLine = (s) => {
+    if (!s) return;
+    if (productLines.some((l) => l.sku === s.sku && l.size === s.size)) return;
+    setProductLines((prev) => [...prev, {
+      tmpId:         `pl-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      sku:           s.sku,
+      producto_id:   s.producto_id,
+      product_label: s.product_label || s.product_name || s.sku,
+      size:          s.size || s.talla || "",
+      qty_transfer:  0,
+      qty_reserve:   0,
+      disponible:    Number(s.qty_disponible || s.disponible || 0),
+      unit_cost:     Number(s.unit_cost || 0),
+    }]);
+  };
+  const updateProductLine = (tmpId, patch) => {
+    setProductLines((prev) => prev.map((l) => l.tmpId === tmpId ? { ...l, ...patch } : l));
+  };
+  const removeProductLine = (tmpId) => {
+    setProductLines((prev) => prev.filter((l) => l.tmpId !== tmpId));
+  };
+
+  // ── Helpers de costos ──
+  const addCostLine = () => {
+    setCostLines((prev) => [...prev, {
+      tmpId:    `c-${Date.now()}-${Math.random().toString(36).slice(2,5)}`,
+      kind:     "OTRO",
+      label:    "",
+      amount:   0,
+      currency: "USD",
+      fx_to_usd: 1,
+      source:   "MANUAL",
+    }]);
+  };
+  const updateCostLine = (tmpId, patch) => {
+    setCostLines((prev) => prev.map((c) => c.tmpId === tmpId ? { ...c, ...patch } : c));
+  };
+  const removeCostLine = (tmpId) => {
+    setCostLines((prev) => prev.filter((c) => c.tmpId !== tmpId));
+  };
+
+  // ── Totales ──
+  const totals = useMemo(() => {
+    const totalUnits   = productLines.reduce((a, l) => a + Number(l.qty_transfer || 0), 0);
+    const totalReserve = productLines.reduce((a, l) => a + Number(l.qty_reserve  || 0), 0);
+    const totalFree    = totalUnits - totalReserve;
+    const totalCostUsd = costLines.reduce((a, c) =>
+      a + Number(c.amount || 0) * Number(c.fx_to_usd || 1), 0);
+    const totalValueUsd = productLines.reduce((a, l) =>
+      a + Number(l.qty_transfer || 0) * Number(l.unit_cost || 0), 0);
+    return { totalUnits, totalReserve, totalFree, totalCostUsd, totalValueUsd };
+  }, [productLines, costLines]);
+
+  // ── Submit final ──
+  const submit = async () => {
+    if (saving) return;
+    setSaving(true); setError(null);
+    try {
+      const payload = {
+        codigo:        `TRF-${new Date().toISOString().slice(0,10).replace(/-/g,"")}-${Math.random().toString(36).slice(2,6).toUpperCase()}`,
+        origen_id:     origenId,
+        destino_id:    destinoId,
+        origen_label:  nodos.find((n) => n.id === origenId)?.codigo || "",
+        destino_label: nodos.find((n) => n.id === destinoId)?.codigo || "",
+        legal_context: legalContext,
+        ref_tracking:  refTracking || null,
+        notes:         notes || null,
+        estado:        "PLANNED",
+        value_usd:     totals.totalValueUsd,
+        lineas: productLines.map((l) => ({
+          producto_id:   l.producto_id || null,
+          sku:           l.sku,
+          product_label: l.product_label,
+          size:          l.size || null,
+          qty_transfer:  Number(l.qty_transfer) || 0,
+          qty_reserve:   Number(l.qty_reserve)  || 0,
+          unit_cost:     Number(l.unit_cost)    || null,
+        })),
+        cost_lines: costLines.map((c) => ({
+          kind:           c.kind,
+          label:          c.label || labelForKind(costKinds, c.kind),
+          amount:         Number(c.amount) || 0,
+          currency:       c.currency || "USD",
+          fx_to_usd:      Number(c.fx_to_usd) || 1,
+          source:         c.source || "MANUAL",
+          ocr_confidence: c.ocr_confidence ?? null,
+        })),
+      };
+      const created = await transferenciasApi.create(payload);
+      navigate(`/transferencias/${created.id}`);
+    } catch (e) {
+      setError(e?.message || (lang === "es" ? "Error al crear la transferencia" : "Error creating transfer"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  return (
+    <div className="page" style={{ paddingBottom: 80 }}>
+      {/* ── Header ─────────────────────── */}
+      <div className="page-header" style={{ marginBottom: 18 }}>
+        <div>
+          <button className="btn btn-ghost btn-sm" onClick={() => navigate("/transferencias")}>
+            <IconChevLeft size={12}/> {lang === "es" ? "Volver a transferencias" : "Back"}
+          </button>
+          <div className="micro" style={{ marginTop: 8, marginBottom: 4 }}>
+            {lang === "es" ? "MOTOR DE TRANSFERENCIAS" : "TRANSFER ENGINE"}
+          </div>
+          <h1 className="page-title">
+            {lang === "es" ? "Nueva transferencia inter-nodos" : "New inter-node transfer"}
+          </h1>
+        </div>
+      </div>
+
+      {/* ── Stepper ─────────────────────── */}
+      <div className="card card-pad-lg" style={{ marginBottom: 18 }}>
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 12, flexWrap: "wrap",
+        }}>
+          {STEPS.map((s, idx) => {
+            const done = step > s.id;
+            const active = step === s.id;
+            return (
+              <React.Fragment key={s.id}>
+                <button
+                  type="button"
+                  onClick={() => { if (s.id < step) setStep(s.id); }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 14px", borderRadius: 999,
+                    border: active ? "1.5px solid #00B286" : "1px solid var(--border, #E1E6ED)",
+                    background: active ? "rgba(0,178,134,0.06)" : (done ? "rgba(0,178,134,0.10)" : "#fff"),
+                    color: active ? "#0B1E3A" : (done ? "#00B286" : "var(--text-secondary)"),
+                    fontWeight: 600, fontSize: 13,
+                    cursor: s.id < step ? "pointer" : "default",
+                  }}>
+                  <span style={{
+                    width: 22, height: 22, borderRadius: 99,
+                    background: active ? "#00B286" : (done ? "#00B286" : "#E1E6ED"),
+                    color: (active || done) ? "#fff" : "#64748B",
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 12, fontWeight: 700,
+                  }}>
+                    {done ? <IconCheck size={11}/> : s.id}
+                  </span>
+                  <span>{s.label}</span>
+                </button>
+                {idx < STEPS.length - 1 && (
+                  <span style={{ flex: 1, height: 1, background: "#E1E6ED", maxWidth: 60 }}/>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Contenido del paso ────────── */}
+      <AnimatePresence mode="wait">
+        <motion.div key={step}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0,  transition: { duration: 0.22 } }}
+          exit   ={{ opacity: 0, y: -8, transition: { duration: 0.14 } }}>
+
+          {step === 1 && (
+            <Step1Context
+              lang={lang}
+              nodosOrigen={nodosOrigen} nodosDestino={nodosDestino}
+              origenId={origenId}     setOrigenId={setOrigenId}
+              destinoId={destinoId}   setDestinoId={setDestinoId}
+              legalContext={legalContext} setLegalContext={setLegalContext}
+              refTracking={refTracking}   setRefTracking={setRefTracking}
+              notes={notes}               setNotes={setNotes}
+              docFile={docFile}           onDocFile={handleDoc}
+              ocrLoading={ocrLoading}     ocrResult={ocrResult}
+              error={error}
+            />
+          )}
+
+          {step === 2 && (
+            <Step2Costs
+              lang={lang}
+              costKinds={costKinds}
+              costLines={costLines}
+              addCostLine={addCostLine}
+              updateCostLine={updateCostLine}
+              removeCostLine={removeCostLine}
+              totals={totals}
+            />
+          )}
+
+          {step === 3 && (
+            <Step3Products
+              lang={lang}
+              origenLabel={nodos.find((n) => n.id === origenId)?.codigo || ""}
+              stockOrigen={stockOrigen}
+              productLines={productLines}
+              addProductLine={addProductLine}
+              updateProductLine={updateProductLine}
+              removeProductLine={removeProductLine}
+            />
+          )}
+
+          {step === 4 && (
+            <Step4Summary
+              lang={lang}
+              origen={nodos.find((n) => n.id === origenId)}
+              destino={nodos.find((n) => n.id === destinoId)}
+              legalContext={legalContext}
+              refTracking={refTracking}
+              productLines={productLines}
+              costLines={costLines}
+              costKinds={costKinds}
+              totals={totals}
+            />
+          )}
+
+        </motion.div>
+      </AnimatePresence>
+
+      {/* ── Footer nav ────────────────── */}
+      <div className="card card-pad-lg" style={{
+        marginTop: 18, position: "sticky", bottom: 16, zIndex: 5,
+        boxShadow: "0 8px 24px rgba(15,27,61,0.08)",
+      }}>
+        {error && (
+          <div style={{
+            padding: "10px 14px", marginBottom: 12, borderRadius: 8,
+            background: "#FEE2E2", border: "1px solid #FCA5A5",
+            color: "#991B1B", fontSize: 13,
+          }}>
+            <IconAlert size={12} style={{ verticalAlign: -1, marginRight: 6 }}/>
+            {error}
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+          <button className="btn btn-ghost"
+                  disabled={step === 1}
+                  onClick={() => setStep((s) => Math.max(1, s - 1))}>
+            <IconChevLeft size={12}/> {lang === "es" ? "Anterior" : "Back"}
+          </button>
+          {step < 4 ? (
+            <button className="btn btn-accent"
+                    disabled={!canAdvance}
+                    onClick={() => setStep((s) => Math.min(4, s + 1))}
+                    style={{ minWidth: 180 }}>
+              {lang === "es" ? "Siguiente" : "Next"} <IconChevRight size={12}/>
+            </button>
+          ) : (
+            <button className="btn btn-accent"
+                    disabled={saving || productLines.length === 0}
+                    onClick={submit}
+                    style={{
+                      minWidth: 220,
+                      background: "var(--btn-primary, #00B286)",
+                      borderColor: "var(--btn-primary, #00B286)",
+                    }}>
+              {saving
+                ? (lang === "es" ? "Registrando…" : "Saving…")
+                : <>{lang === "es" ? "Registrar transferencia" : "Register transfer"} <IconCheck size={12}/></>
+              }
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// STEP 1 · Contexto y Nodos
+// ═════════════════════════════════════════════════════════════
+function Step1Context({
+  lang, nodosOrigen, nodosDestino,
+  origenId, setOrigenId, destinoId, setDestinoId,
+  legalContext, setLegalContext, refTracking, setRefTracking,
+  notes, setNotes, docFile, onDocFile, ocrLoading, ocrResult,
+}) {
+  const dropRef = useRef(null);
+  const [dragOver, setDragOver] = useState(false);
+  const showDropzone = NEEDS_CUSTOMS_DOC.has(legalContext);
+
+  return (
+    <div className="card card-pad-lg">
+      <h2 className="heading-md" style={{ marginBottom: 14 }}>
+        {lang === "es" ? "Paso 1 · Contexto de la transferencia" : "Step 1 · Transfer context"}
+      </h2>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 18 }}>
+        <Field label={lang === "es" ? "Nodo origen *" : "Origin node *"}>
+          <select className="input" value={origenId} onChange={(e) => setOrigenId(e.target.value)}>
+            <option value="">{lang === "es" ? "— Selecciona origen —" : "— Select origin —"}</option>
+            {nodosOrigen.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.codigo} · {n.nombre} {n.pais_iso2 ? `(${n.pais_iso2})` : ""}
+              </option>
+            ))}
+          </select>
+          <span className="caption" style={{ color: "var(--text-tertiary)" }}>
+            {lang === "es" ? "Solo nodos con capacidad DISPATCH" : "Only nodes with DISPATCH capability"}
+          </span>
+        </Field>
+        <Field label={lang === "es" ? "Nodo destino *" : "Destination node *"}>
+          <select className="input" value={destinoId} onChange={(e) => setDestinoId(e.target.value)}>
+            <option value="">{lang === "es" ? "— Selecciona destino —" : "— Select destination —"}</option>
+            {nodosDestino.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.codigo} · {n.nombre} {n.pais_iso2 ? `(${n.pais_iso2})` : ""}
+              </option>
+            ))}
+          </select>
+          <span className="caption" style={{ color: "var(--text-tertiary)" }}>
+            {lang === "es" ? "Solo nodos con capacidad RECEIVE" : "Only nodes with RECEIVE capability"}
+          </span>
+        </Field>
+      </div>
+
+      <div style={{ marginBottom: 18 }}>
+        <Field label={lang === "es" ? "Motivo / Contexto legal *" : "Reason / Legal context *"}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+            {LEGAL_CONTEXT.map((c) => (
+              <button key={c.codigo} type="button"
+                      onClick={() => setLegalContext(c.codigo)}
+                      style={{
+                        textAlign: "left", padding: "12px 14px",
+                        border: legalContext === c.codigo
+                          ? `2px solid ${c.color}` : "1px solid var(--border, #E1E6ED)",
+                        background: legalContext === c.codigo
+                          ? `${c.color}10` : "#fff",
+                        borderRadius: 10, cursor: "pointer",
+                      }}>
+                <div style={{ fontWeight: 700, color: "#0B1E3A", marginBottom: 3 }}>
+                  {c.label}
+                </div>
+                <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+                  {c.desc}
+                </div>
+              </button>
+            ))}
+          </div>
+        </Field>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <Field label={lang === "es" ? "Referencia de tracking (opcional)" : "Tracking reference (optional)"}>
+          <input className="input" value={refTracking}
+                 onChange={(e) => setRefTracking(e.target.value)}
+                 placeholder="BL / AWB / TRK"/>
+          <span className="caption" style={{ color: "var(--text-tertiary)" }}>
+            {lang === "es" ? "Bill of Lading, Air Waybill o tracking del courier" : "Bill of Lading, Air Waybill, or courier tracking"}
+          </span>
+        </Field>
+        <Field label={lang === "es" ? "Notas (opcional)" : "Notes (optional)"}>
+          <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)}/>
+        </Field>
+      </div>
+
+      {/* Dropzone aduanal — solo si motivo lo requiere */}
+      {showDropzone && (
+        <motion.div initial={{ opacity:0, height:0 }} animate={{ opacity:1, height:"auto" }}
+                    style={{ marginTop: 22 }}>
+          <Field label={lang === "es" ? "Documento aduanal (DUA) — análisis con IA" : "Customs document (DUA) — AI analysis"}>
+            <div ref={dropRef}
+                 onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                 onDragLeave={() => setDragOver(false)}
+                 onDrop={(e) => {
+                   e.preventDefault(); setDragOver(false);
+                   const f = e.dataTransfer.files?.[0];
+                   if (f) onDocFile(f);
+                 }}
+                 style={{
+                   border: `2px dashed ${dragOver ? "#00B286" : "#CBD5E1"}`,
+                   borderRadius: 12,
+                   padding: 28, textAlign: "center",
+                   background: dragOver ? "rgba(0,178,134,0.04)" : "#FAFBFD",
+                   transition: "background 0.15s, border 0.15s",
+                 }}>
+              {ocrLoading ? (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+                  <IconRefresh size={20} style={{ color: "#00B286", animation: "spin 1.2s linear infinite" }}/>
+                  <div>
+                    <div style={{ fontWeight: 700, color: "#0B1E3A" }}>
+                      {lang === "es" ? "Analizando con IA…" : "Analyzing with AI…"}
+                    </div>
+                    <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+                      gpt-5-nano · OCR aduanal
+                    </div>
+                  </div>
+                </div>
+              ) : docFile ? (
+                <div>
+                  <IconCheck size={26} style={{ color: "#00B286", margin: "0 auto 8px", display: "block" }}/>
+                  <div style={{ fontWeight: 700, color: "#0B1E3A" }}>
+                    <IconFileText size={12} style={{ verticalAlign: -1, marginRight: 4 }}/>
+                    {docFile.name}
+                  </div>
+                  <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
+                    {ocrResult?.lines?.length
+                      ? (lang === "es"
+                          ? `${ocrResult.lines.length} costos detectados — revisalos en el paso 2.`
+                          : `${ocrResult.lines.length} costs detected — review in step 2.`)
+                      : (ocrResult?.error
+                          ? `⚠ ${ocrResult.error}`
+                          : (lang === "es" ? "Documento cargado." : "Document uploaded."))}
+                  </div>
+                  <label className="btn btn-ghost btn-sm" style={{ marginTop: 10, cursor: "pointer" }}>
+                    {lang === "es" ? "Cambiar archivo" : "Change file"}
+                    <input type="file" accept="application/pdf,image/*" style={{ display: "none" }}
+                           onChange={(e) => { const f = e.target.files?.[0]; if (f) onDocFile(f); }}/>
+                  </label>
+                </div>
+              ) : (
+                <div>
+                  <IconUpload size={26} style={{ color: "#3083FE", margin: "0 auto 8px", display: "block" }}/>
+                  <div style={{ fontWeight: 700, color: "#0B1E3A" }}>
+                    {lang === "es" ? "Arrastra el DUA / liquidación aquí" : "Drag the DUA / customs receipt here"}
+                  </div>
+                  <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
+                    PDF, JPG o PNG · max 25 MB
+                  </div>
+                  <label className="btn btn-ghost" style={{ marginTop: 12, cursor: "pointer" }}>
+                    {lang === "es" ? "o seleccionar archivo" : "or pick a file"}
+                    <input type="file" accept="application/pdf,image/*" style={{ display: "none" }}
+                           onChange={(e) => { const f = e.target.files?.[0]; if (f) onDocFile(f); }}/>
+                  </label>
+                </div>
+              )}
+            </div>
+          </Field>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// STEP 2 · Costos Operativos
+// ═════════════════════════════════════════════════════════════
+function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, removeCostLine, totals }) {
+  return (
+    <div className="card card-pad-lg">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <h2 className="heading-md">
+          {lang === "es" ? "Paso 2 · Costos operativos" : "Step 2 · Operating costs"}
+        </h2>
+        <button className="btn btn-ghost btn-sm" onClick={addCostLine}>
+          <IconPlus size={11}/> {lang === "es" ? "Agregar costo" : "Add cost"}
+        </button>
+      </div>
+
+      {costLines.length === 0 ? (
+        <div className="empty" style={{ padding: 30 }}>
+          <IconDollar size={22} style={{ color: "var(--text-tertiary)" }}/>
+          <div className="caption" style={{ color: "var(--text-tertiary)", maxWidth: 460, textAlign: "center" }}>
+            {lang === "es"
+              ? "Sin costos asociados. Si el motivo requiere DUA, los costos detectados por la IA aparecerán aquí automáticamente."
+              : "No costs yet. If the reason requires DUA, AI-detected costs will appear here automatically."}
+          </div>
+        </div>
+      ) : (
+        <div className="card card-pad-0" style={{ overflow: "hidden" }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{lang === "es" ? "Tipo" : "Kind"}</th>
+                <th>{lang === "es" ? "Detalle" : "Label"}</th>
+                <th style={{ textAlign: "right" }}>{lang === "es" ? "Monto" : "Amount"}</th>
+                <th style={{ textAlign: "center" }}>{lang === "es" ? "Moneda" : "Curr."}</th>
+                <th style={{ textAlign: "right" }}>FX→USD</th>
+                <th style={{ textAlign: "right" }}>USD</th>
+                <th style={{ textAlign: "center" }}>{lang === "es" ? "Origen" : "Source"}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {costLines.map((c) => {
+                const usd = Number(c.amount || 0) * Number(c.fx_to_usd || 1);
+                const isOcr = c.source === "OCR_DUA";
+                const lowConf = isOcr && Number(c.ocr_confidence || 0) < 60;
+                return (
+                  <tr key={c.tmpId}>
+                    <td>
+                      <select className="input" style={{ minWidth: 150 }}
+                              value={c.kind}
+                              onChange={(e) => updateCostLine(c.tmpId, { kind: e.target.value })}>
+                        {costKinds.map((k) => (
+                          <option key={k.codigo} value={k.codigo}>{k.label}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input className="input" value={c.label || ""}
+                             onChange={(e) => updateCostLine(c.tmpId, { label: e.target.value })}
+                             placeholder={labelForKind(costKinds, c.kind)}/>
+                    </td>
+                    <td>
+                      <input className="input tabular-nums" type="number" step="0.01" min="0"
+                             style={{ width: 110, textAlign: "right" }}
+                             value={c.amount}
+                             onChange={(e) => updateCostLine(c.tmpId, { amount: e.target.value })}/>
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      <input className="input mono-sm"
+                             style={{ width: 60, textAlign: "center" }}
+                             value={c.currency}
+                             onChange={(e) => updateCostLine(c.tmpId, { currency: e.target.value.toUpperCase().slice(0,3) })}/>
+                    </td>
+                    <td>
+                      <input className="input tabular-nums" type="number" step="0.0001" min="0"
+                             style={{ width: 90, textAlign: "right" }}
+                             value={c.fx_to_usd}
+                             onChange={(e) => updateCostLine(c.tmpId, { fx_to_usd: e.target.value })}/>
+                    </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#0B1E3A" }}>
+                      ${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      {isOcr ? (
+                        <span title={`Confianza ${c.ocr_confidence ?? "?"}%`}
+                              style={{
+                                padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700,
+                                background: lowConf ? "#FEF3C7" : "rgba(0,178,134,0.12)",
+                                color: lowConf ? "#92400E" : "#00B286",
+                              }}>
+                          IA · {Math.round(c.ocr_confidence ?? 0)}%
+                        </span>
+                      ) : (
+                        <span style={{
+                          padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600,
+                          background: "#F3F5F8", color: "#64748B",
+                        }}>MANUAL</span>
+                      )}
+                    </td>
+                    <td>
+                      <button className="btn btn-ghost btn-sm"
+                              onClick={() => removeCostLine(c.tmpId)}
+                              style={{ color: "#D64545" }}>
+                        <IconX size={11}/>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
+                <td colSpan={5} style={{ textAlign: "right", color: "#0B1E3A" }}>
+                  {lang === "es" ? "Total costos USD" : "Total costs USD"}
+                </td>
+                <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 15 }}>
+                  ${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                </td>
+                <td colSpan={2}></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// STEP 3 · Productos
+// ═════════════════════════════════════════════════════════════
+function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProductLine, updateProductLine, removeProductLine }) {
+  const [search, setSearch] = useState("");
+  const filtered = useMemo(() => {
+    const n = search.trim().toLowerCase();
+    if (!n) return stockOrigen.slice(0, 60);
+    return stockOrigen.filter((s) => {
+      const hay = [s.sku, s.product_label, s.product_name, s.lote, s.size, s.talla].join(" ").toLowerCase();
+      return hay.includes(n);
+    }).slice(0, 60);
+  }, [search, stockOrigen]);
+
+  return (
+    <div className="card card-pad-lg">
+      <h2 className="heading-md" style={{ marginBottom: 14 }}>
+        {lang === "es" ? "Paso 3 · Productos y cantidades" : "Step 3 · Products & quantities"}
+      </h2>
+
+      <div className="caption" style={{ color: "var(--text-tertiary)", marginBottom: 10 }}>
+        {lang === "es" ? "SKUs con stock disponible en " : "SKUs with stock available in "}
+        <strong style={{ color: "#0B1E3A" }}>{origenLabel || "—"}</strong>
+      </div>
+
+      <input className="input" placeholder={lang === "es" ? "Buscar SKU, producto, lote…" : "Search SKU, product, lot…"}
+             value={search} onChange={(e) => setSearch(e.target.value)}
+             style={{ marginBottom: 12 }}/>
+
+      <div style={{
+        maxHeight: 200, overflowY: "auto",
+        border: "1px solid var(--border, #E1E6ED)", borderRadius: 8,
+        marginBottom: 18,
+      }}>
+        {filtered.length === 0 ? (
+          <div className="caption" style={{ padding: 18, textAlign: "center", color: "var(--text-tertiary)" }}>
+            {stockOrigen.length === 0
+              ? (lang === "es" ? "Sin stock en el nodo origen." : "No stock at origin node.")
+              : (lang === "es" ? "Sin coincidencias." : "No matches.")}
+          </div>
+        ) : (
+          filtered.map((s) => (
+            <button key={`${s.id || s.sku}-${s.lote || ''}`} type="button"
+                    onClick={() => addProductLine(s)}
+                    style={{
+                      width: "100%", textAlign: "left", padding: "10px 14px",
+                      border: "none", borderBottom: "1px solid #F3F5F8", background: "#fff",
+                      cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#F7F9FC"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
+              <IconPackage size={14} style={{ color: "#3083FE", flexShrink: 0 }}/>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, color: "#0B1E3A", fontSize: 13 }}>
+                  <span className="mono-sm">{s.sku}</span>
+                  {s.size || s.talla ? <span style={{ marginLeft: 8 }}>· {s.size || s.talla}</span> : null}
+                  {s.lote && <span className="caption" style={{ marginLeft: 8 }}>L: {s.lote}</span>}
+                </div>
+                <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+                  {s.product_label || s.product_name || ""}
+                </div>
+              </div>
+              <span className="badge badge-outline tabular-nums">
+                {Number(s.qty_disponible || s.disponible || 0)}u
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <h3 className="heading-sm">{lang === "es" ? "Líneas de la transferencia" : "Transfer lines"}</h3>
+        <span className="caption" style={{ color: "var(--text-tertiary)" }}>
+          {productLines.length} {productLines.length === 1 ? (lang === "es" ? "línea" : "line") : (lang === "es" ? "líneas" : "lines")}
+        </span>
+      </div>
+
+      {productLines.length === 0 ? (
+        <div className="empty" style={{ padding: 30 }}>
+          <IconTruck size={22} style={{ color: "var(--text-tertiary)" }}/>
+          <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+            {lang === "es" ? "Selecciona productos del listado superior." : "Pick products from the list above."}
+          </div>
+        </div>
+      ) : (
+        <div className="card card-pad-0">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>SKU / {lang === "es" ? "Lote" : "Lot"}</th>
+                <th>{lang === "es" ? "Producto" : "Product"}</th>
+                <th style={{ textAlign: "right" }}>{lang === "es" ? "Disp. origen" : "Avail. orig."}</th>
+                <th style={{ textAlign: "right" }}>{lang === "es" ? "Transferir" : "Transfer"}</th>
+                <th style={{ textAlign: "right" }}>{lang === "es" ? "Reservar" : "Reserve"}</th>
+                <th style={{ textAlign: "right" }}>{lang === "es" ? "Libre" : "Free"}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {productLines.map((l) => {
+                const free = Math.max(0, Number(l.qty_transfer || 0) - Number(l.qty_reserve || 0));
+                const overstock = Number(l.qty_transfer || 0) > Number(l.disponible || 0);
+                return (
+                  <tr key={l.tmpId} style={overstock ? { background: "#FEF3C7" } : null}>
+                    <td className="mono-sm">
+                      <div>{l.sku}</div>
+                      {l.size && <div className="caption">{l.size}</div>}
+                    </td>
+                    <td>{l.product_label}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>{l.disponible}</td>
+                    <td>
+                      <input className="input tabular-nums" type="number" min="0" max={l.disponible}
+                             style={{ width: 80, textAlign: "right" }}
+                             value={l.qty_transfer}
+                             onChange={(e) => updateProductLine(l.tmpId, { qty_transfer: Number(e.target.value) })}/>
+                    </td>
+                    <td>
+                      <input className="input tabular-nums" type="number" min="0" max={l.qty_transfer}
+                             style={{ width: 80, textAlign: "right" }}
+                             value={l.qty_reserve}
+                             onChange={(e) => updateProductLine(l.tmpId, { qty_reserve: Math.min(Number(e.target.value), Number(l.qty_transfer || 0)) })}/>
+                    </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600, color: "#00B286" }}>
+                      {free}
+                    </td>
+                    <td>
+                      <button className="btn btn-ghost btn-sm"
+                              onClick={() => removeProductLine(l.tmpId)}
+                              style={{ color: "#D64545" }}>
+                        <IconX size={11}/>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// STEP 4 · Validación y totales
+// ═════════════════════════════════════════════════════════════
+function Step4Summary({ lang, origen, destino, legalContext, refTracking, productLines, costLines, costKinds, totals }) {
+  const legalLabel = LEGAL_CONTEXT.find((c) => c.codigo === legalContext)?.label || legalContext;
+  return (
+    <div className="card card-pad-lg">
+      <h2 className="heading-md" style={{ marginBottom: 14 }}>
+        {lang === "es" ? "Paso 4 · Validación y totales" : "Step 4 · Validation & totals"}
+      </h2>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginBottom: 18 }}>
+        <SummaryBox title={lang === "es" ? "CONTEXTO" : "CONTEXT"}>
+          <Row k={lang === "es" ? "Origen → Destino" : "Origin → Destination"}
+               v={<><strong>{origen?.codigo || "—"}</strong> <IconArrow size={11}/> <strong>{destino?.codigo || "—"}</strong></>}/>
+          <Row k={lang === "es" ? "Motivo" : "Reason"} v={legalLabel}/>
+          <Row k="Tracking" v={refTracking || "—"}/>
+        </SummaryBox>
+        <SummaryBox title={lang === "es" ? "MÉTRICAS" : "METRICS"}>
+          <Row k={lang === "es" ? "Líneas" : "Lines"} v={<strong className="tabular-nums">{productLines.length}</strong>}/>
+          <Row k={lang === "es" ? "Unidades a mover" : "Units to move"} v={<strong className="tabular-nums">{totals.totalUnits}</strong>}/>
+          <Row k={lang === "es" ? "Pre-reservadas" : "Pre-reserved"} v={<span className="tabular-nums">{totals.totalReserve}</span>}/>
+          <Row k={lang === "es" ? "Libres al llegar" : "Free at arrival"} v={<span className="tabular-nums" style={{ color: "#00B286", fontWeight: 700 }}>{totals.totalFree}</span>}/>
+        </SummaryBox>
+      </div>
+
+      <div style={{
+        background: "linear-gradient(135deg, #0B1E3A 0%, #1A2A5C 100%)",
+        color: "#fff", padding: "20px 22px", borderRadius: 14, marginBottom: 18,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+          <span className="micro" style={{ color: "rgba(255,255,255,0.6)", letterSpacing: 1 }}>
+            {lang === "es" ? "COSTO TOTAL INCREMENTAL" : "TOTAL INCREMENTAL COST"}
+          </span>
+          <span className="caption" style={{ color: "rgba(255,255,255,0.7)" }}>
+            {costLines.length} {lang === "es" ? "líneas" : "lines"}
+          </span>
+        </div>
+        <div className="tabular-nums" style={{ fontSize: 36, fontWeight: 700, color: "#1DE394" }}>
+          ${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} <span style={{ fontSize: 18, fontWeight: 400, color: "rgba(255,255,255,0.7)" }}>USD</span>
+        </div>
+        <div className="caption" style={{ color: "rgba(255,255,255,0.6)", marginTop: 4 }}>
+          {lang === "es" ? "Incluye aranceles, IVA, almacenaje, flete y seguros." : "Includes duties, VAT, storage, freight and insurance."}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <h3 className="heading-sm" style={{ marginBottom: 8 }}>{lang === "es" ? "Desglose de productos" : "Product breakdown"}</h3>
+        <div className="card card-pad-0">
+          <table className="table">
+            <thead>
+              <tr><th>SKU</th><th>{lang === "es" ? "Producto" : "Product"}</th><th>{lang === "es" ? "Lote/Talla" : "Lot/Size"}</th><th style={{ textAlign:"right" }}>{lang === "es" ? "Mover" : "Move"}</th><th style={{ textAlign:"right" }}>Res.</th><th style={{ textAlign:"right" }}>{lang === "es" ? "Libre" : "Free"}</th></tr>
+            </thead>
+            <tbody>
+              {productLines.map((l) => (
+                <tr key={l.tmpId}>
+                  <td className="mono-sm">{l.sku}</td>
+                  <td>{l.product_label}</td>
+                  <td>{l.size || "—"}</td>
+                  <td className="tabular-nums" style={{ textAlign:"right" }}>{l.qty_transfer}</td>
+                  <td className="tabular-nums" style={{ textAlign:"right" }}>{l.qty_reserve}</td>
+                  <td className="tabular-nums" style={{ textAlign:"right", color:"#00B286", fontWeight: 600 }}>
+                    {Math.max(0, Number(l.qty_transfer) - Number(l.qty_reserve))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {costLines.length > 0 && (
+        <div>
+          <h3 className="heading-sm" style={{ marginBottom: 8 }}>{lang === "es" ? "Desglose de costos" : "Cost breakdown"}</h3>
+          <div className="card card-pad-0">
+            <table className="table">
+              <thead>
+                <tr><th>{lang === "es" ? "Tipo" : "Kind"}</th><th>{lang === "es" ? "Detalle" : "Label"}</th><th style={{ textAlign:"right" }}>{lang === "es" ? "Monto" : "Amount"}</th><th>{lang === "es" ? "Origen" : "Source"}</th></tr>
+              </thead>
+              <tbody>
+                {costLines.map((c) => {
+                  const usd = Number(c.amount || 0) * Number(c.fx_to_usd || 1);
+                  const k = costKinds.find((x) => x.codigo === c.kind);
+                  return (
+                    <tr key={c.tmpId}>
+                      <td>
+                        <span style={{
+                          padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 600,
+                          background: `${k?.color || "#64748B"}20`, color: k?.color || "#64748B",
+                        }}>{k?.label || c.kind}</span>
+                      </td>
+                      <td>{c.label || "—"}</td>
+                      <td className="tabular-nums" style={{ textAlign:"right" }}>
+                        ${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })} {c.currency !== "USD" && <span className="caption">({c.currency} {Number(c.amount).toLocaleString()})</span>}
+                      </td>
+                      <td>
+                        <span className="caption" style={{
+                          color: c.source === "OCR_DUA" ? "#00B286" : "#64748B",
+                          fontWeight: 600,
+                        }}>{c.source === "OCR_DUA" ? "IA" : "MANUAL"}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// HELPERS
+// ═════════════════════════════════════════════════════════════
+function hasCap(node, cap) {
+  const arr = node?.capabilities || [];
+  if (!Array.isArray(arr) || arr.length === 0) {
+    // Compat con seeds viejos sin capabilities — permitir todo
+    return true;
+  }
+  return arr.map((c) => String(c).toUpperCase()).includes(cap);
+}
+
+function labelForKind(catalog, kind) {
+  return catalog.find((k) => k.codigo === kind)?.label || kind;
+}
+
+function getToken() {
+  try {
+    const raw = localStorage.getItem("mwt-auth");
+    if (raw) {
+      const p = JSON.parse(raw);
+      return p?.access || p?.token || "";
+    }
+  } catch {}
+  return localStorage.getItem("mwt_access") || localStorage.getItem("access") || "";
+}
+
+function Field({ label, children }) {
+  return (
+    <label style={{ display: "block" }}>
+      <span style={{
+        display: "block", fontSize: 11, fontWeight: 700,
+        color: "var(--text-tertiary)", letterSpacing: 0.4,
+        textTransform: "uppercase", marginBottom: 6,
+      }}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function SummaryBox({ title, children }) {
+  return (
+    <div style={{ border: "1px solid var(--border, #E1E6ED)", borderRadius: 12, padding: 16 }}>
+      <div className="micro" style={{ color: "#00B286", fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Row({ k, v }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px dashed #F1F4F9" }}>
+      <span className="caption" style={{ color: "var(--text-tertiary)" }}>{k}</span>
+      <span style={{ color: "#0B1E3A" }}>{v}</span>
+    </div>
+  );
+}
