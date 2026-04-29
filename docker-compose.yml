@@ -44,20 +44,9 @@ x-backend-env: &backend-env
   REDIS_URL:   redis://redis:6379/0
   SQL_DIR:     /sql
   TZ:          America/Mexico_City
-  # ── SMTP / Email ──────────────────────────────────────────────
-  # Si EMAIL_HOST_PASSWORD está vacío, Django cae a console.EmailBackend
-  # (los emails se imprimen en stdout · debug). Setealas en .env del VPS.
-  EMAIL_HOST:          ${EMAIL_HOST:-mail.mwt.one}
-  EMAIL_PORT:          ${EMAIL_PORT:-465}
-  EMAIL_USE_SSL:       ${EMAIL_USE_SSL:-True}
-  EMAIL_USE_TLS:       ${EMAIL_USE_TLS:-False}
-  EMAIL_HOST_USER:     ${EMAIL_HOST_USER:-info@mwt.one}
-  EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
-  DEFAULT_FROM_EMAIL:  ${DEFAULT_FROM_EMAIL:-info@mwt.one}
-  EMAIL_TIMEOUT:       ${EMAIL_TIMEOUT:-20}
-  EMAIL_DOC_USER:      ${EMAIL_DOC_USER:-mw_doc@mwt.one}
-  EMAIL_DOC_PASSWORD:  ${EMAIL_DOC_PASSWORD:-}
-  DEFAULT_REPLY_TO:    ${DEFAULT_REPLY_TO:-trade@mwt.one}
+  # NOTA EMAIL_*: NO se declaran aquí porque sus valores contienen `$`
+  # (ej. EMAIL_DOC_PASSWORD=…$Nd5n) y compose haría doble expansion.
+  # Se inyectan vía `env_file: .env` en el servicio django.
 
 services:
 
@@ -121,6 +110,11 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
+    # env_file: pasa el .env al container SIN re-expansion (necesario
+    # para vars que tienen `$` en su valor, ej. EMAIL_*_PASSWORD).
+    # `environment` (anchor) tiene precedencia sobre env_file en compose.
+    env_file:
+      - .env
     environment: *backend-env
     volumes:
       - ./backend:/app
