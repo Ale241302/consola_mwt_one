@@ -5,6 +5,9 @@ from .views import (
     TransicionCatViewSet, EventLogViewSet, OcrParsingLogViewSet,
 )
 from .views_wizard import create_from_oc
+from .views_simplified_wizard import (
+    ParseTemplateView, CatalogRequestAssignmentView,
+)
 
 router = DefaultRouter()
 router.register(r"ocs",             OcViewSet,           basename="ocs")
@@ -21,4 +24,9 @@ urlpatterns = router.urls + [
     # client_id se fuerza al del JWT (ignora payload), y mode/freight/transport
     # se setean a NULL para esperar review del CEO.
     path("expedientes/create-from-oc/", create_from_oc, name="expedientes-create-from-oc"),
+    # Sprint Wizard Simplificado (2026-04-29)
+    path("expedientes/parse-template/", ParseTemplateView.as_view(),
+         name="expedientes-parse-template"),
+    path("catalog/request-assignment/", CatalogRequestAssignmentView.as_view(),
+         name="catalog-request-assignment"),
 ]

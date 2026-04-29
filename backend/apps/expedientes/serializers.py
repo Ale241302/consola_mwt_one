@@ -42,6 +42,21 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
 
 
 class ExpedienteSerializer(serializers.ModelSerializer):
+    """Serializer principal del Expediente.
+
+    Sprint Wizard Simplificado (2026-04-29):
+      Los campos comerciales/logisticos pasan a OPCIONALES en el create.
+      El expediente nace en estado REGISTRO sin esos datos; el OPERATOR
+      los completa en el detalle antes de la transicion T2 (REGISTRO ->
+      PRODUCCION). El frontend NO debe pedirlos en el wizard.
+    """
+    brand_id        = serializers.UUIDField(required=False, allow_null=True)
+    modo_operacion  = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    moneda          = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    incoterm        = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    freight_mode    = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    dispatch_mode   = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
     class Meta:
         model  = Expediente
         fields = "__all__"

@@ -15,6 +15,7 @@ import ScreenPagos from "./pages/Pagos.jsx";
 import ScreenInventario from "./pages/Inventario.jsx";
 import ScreenWizard from "./pages/Wizard.jsx";
 import CreateExpedienteWizard from "./pages/CreateExpedienteWizard.jsx";
+import CreateExpedienteWizardLite from "./pages/CreateExpedienteWizardLite.jsx";
 import ScreenTransfers from "./pages/Transfers.jsx";
 import ScreenTransferDetail from "./pages/TransferDetail.jsx";
 import ScreenCreateTransferWizard from "./pages/CreateTransferWizard.jsx";
@@ -75,8 +76,11 @@ export default function App() {
         <Route path="/inventario" element={<ScreenInventario />} />
         <Route path="/wizard" element={<ScreenWizard />} />
         {/* Nuevo wizard multirol (ADMIN 4 pasos / CLIENT 3 pasos) — reemplazo de /wizard */}
-        <Route path="/expedientes/nuevo" element={<CreateExpedienteWizard />} />
-        <Route path="/portal/nueva-oc"  element={<CreateExpedienteWizard />} />
+        {/* Sprint Wizard Lite (2026-04-29) — wizard simplificado de 3 pasos */}
+        <Route path="/expedientes/nuevo" element={<CreateExpedienteWizardLite />} />
+        <Route path="/portal/nueva-oc"  element={<CreateExpedienteWizardLite />} />
+        {/* Wizard pesado legacy (con OCR/marca/moneda) — accesible solo para fallback */}
+        <Route path="/expedientes/nuevo-completo" element={<CreateExpedienteWizard />} />
         <Route path="/transferencias" element={<ScreenTransfers />} />
         {/* Wizard full-page · debe ir ANTES de :transferId para no matchear "nueva" como id */}
         <Route path="/transferencias/nueva" element={<ScreenCreateTransferWizard />} />

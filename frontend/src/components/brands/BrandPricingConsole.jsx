@@ -328,15 +328,8 @@ function ClientPricingCard({ client, lang, isAdmin, onOpen, onEdit, index = 0 })
         marginLeft: isSubsidiary ? 18 : 0,
       }}
     >
-      {/* Header con bandera + nombre + lapiz */}
+      {/* Header con nombre + lapiz (chip de pais removido a pedido del CEO) */}
       <div style={{ padding: "14px 16px", display: "flex", alignItems: "flex-start", gap: 10 }}>
-        <div style={{
-          width: 40, height: 40, borderRadius: 8,
-          background: SOFT, display: "grid", placeItems: "center",
-          font: "28px/1 var(--font-body)", flexShrink: 0,
-        }}>
-          {meta.flag || (client.flag || "🌐")}
-        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
             font: "700 14px/1.2 var(--font-body)", color: NAVY,
