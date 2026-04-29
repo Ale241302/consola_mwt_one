@@ -107,6 +107,13 @@ class Transferencia(models.Model):
     awb_document_id     = models.UUIDField(null=True, blank=True)         # ⛔ sin FK
     liquidation_method  = models.CharField(max_length=16, default="BY_VALUE")
 
+    # Sprint v4 (91h) — Lifecycle + Gap contable
+    approved_at             = models.DateTimeField(null=True, blank=True)
+    dispatch_document_id    = models.UUIDField(null=True, blank=True)
+    receipt_document_id     = models.UUIDField(null=True, blank=True)
+    exception_document_id   = models.UUIDField(null=True, blank=True)
+    gap_justification       = models.TextField(null=True, blank=True)
+
     is_active        = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     updated_at       = models.DateTimeField(auto_now=True)
@@ -141,6 +148,9 @@ class Linea(models.Model):
     # `landed_cost_usd` = unit_value + (cost_share_usd / qty_transfer).
     cost_share_usd       = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
     landed_cost_usd      = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+
+    # Sprint v4 (91h) — Cantidad realmente despachada
+    qty_dispatched       = models.IntegerField(null=True, blank=True)
 
     is_active        = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)

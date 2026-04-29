@@ -29,6 +29,8 @@ import {
 } from "../data/mockData.js";
 import { transferenciasApi, transferLineasApi } from "../lib/api.js";
 import TransferLiquidationPanel from "../components/transfers/TransferLiquidationPanel.jsx";
+import TransferStateStepper from "../components/transfers/TransferStateStepper.jsx";
+import TransferInvoicePrintView from "../components/transfers/TransferInvoicePrintView.jsx";
 
 // ── Helpers format ─────────────────────────
 function fmtDate(s) {
@@ -105,6 +107,10 @@ export default function ScreenTransferDetail() {
   const [loadingBe, setLoadingBe]   = useState(false);
   const [loadError, setLoadError]   = useState(null);
   const [saving, setSaving]         = useState(false);
+  const [advancing, setAdvancing]   = useState(false);
+  const [advanceErr, setAdvanceErr] = useState(null);
+  const [printingPayload, setPrintingPayload] = useState(null);
+  const [loadingPdf, setLoadingPdf] = useState(false);
 
   const isUuid = typeof transferId === "string" && UUID_RE.test(transferId);
 
@@ -125,6 +131,33 @@ export default function ScreenTransferDetail() {
   }, [isUuid, transferId]);
 
   useEffect(() => { loadBackend(); }, [loadBackend]);
+
+  // Sprint v4 — avanzar estado y abrir PDF
+  const handleAdvance = useCallback(async () => {
+    if (!isUuid || advancing) return;
+    setAdvancing(true); setAdvanceErr(null);
+    try {
+      await transferenciasApi.action("advance", transferId, {});
+      await loadBackend();
+    } catch (e) {
+      setAdvanceErr(e?.body?.detail || e?.message || "advance_failed");
+    } finally {
+      setAdvancing(false);
+    }
+  }, [isUuid, advancing, transferId, loadBackend]);
+
+  const handleOpenPrint = useCallback(async () => {
+    if (!isUuid) return;
+    setLoadingPdf(true);
+    try {
+      const payload = await transferenciasApi.action("invoice_payload", transferId);
+      setPrintingPayload(payload);
+    } catch (e) {
+      alert(e?.message || "No se pudo generar el documento.");
+    } finally {
+      setLoadingPdf(false);
+    }
+  }, [isUuid, transferId]);
 
   // Resuelve base del dato: backend > mock
   const transferBase = useMemo(() => {
@@ -360,6 +393,31 @@ export default function ScreenTransferDetail() {
         />
       </motion.div>
 
+      {/* ── Stepper de ciclo de vida (sprint v4) ── */}
+      <TransferStateStepper
+        currentStatus={transferBase.status}
+        hasDiscrepancy={!!transferBase._raw?.has_discrepancy}
+        onAdvance={handleAdvance}
+        busy={advancing}
+        lang={lang}
+        canAdvance={transferBase.status !== 'cancelled' && transferBase.status !== 'closed'}
+        blockReason={advanceErr}
+      />
+
+      {/* ── Botón generar PDF / Imprimir ── */}
+      <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'flex-end' }}>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={handleOpenPrint}
+          disabled={loadingPdf || !isUuid}
+          style={{ fontWeight: 600 }}>
+          {loadingPdf
+            ? (lang === 'es' ? 'Generando…' : 'Generating…')
+            : (lang === 'es' ? '📄 Generar Factura / Remisión PDF' : '📄 Generate Invoice / Waybill PDF')}
+        </button>
+      </div>
+
       {/* ── Metadata por motivo legal (sprint Transfer Engine v2) ── */}
       <LegalContextDataCard lang={lang}
                             legalContext={transferBase.legal_context}
@@ -525,6 +583,19 @@ export default function ScreenTransferDetail() {
             </div>
             <div className="body-sm">{transferBase.notes}</div>
           </div>
+        </div>
+      )}
+      {/* ── Modal full-screen del Print View (sprint v4) ── */}
+      {printingPayload && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 1000,
+          background: '#F8FAFC', overflowY: 'auto',
+        }}>
+          <TransferInvoicePrintView
+            payload={printingPayload}
+            lang={lang}
+            onClose={() => setPrintingPayload(null)}
+          />
         </div>
       )}
     </div>

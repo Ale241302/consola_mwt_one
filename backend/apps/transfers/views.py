@@ -578,6 +578,22 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 {"detail": "reconciled_by_id requerido cuando hay discrepancias"},
                 status=400,
             )
+        # Sprint v4 — REGLA DURA: si hay gap contable (has_discrepancy),
+        # se exige exception_document_id o crear documento inline + gap_justification.
+        if t.has_discrepancy:
+            exc_doc_id = body.get("exception_document_id") or t.exception_document_id
+            gap_just   = (body.get("gap_justification") or "").strip()
+            if not exc_doc_id and not gap_just:
+                return Response(
+                    {"detail":
+                        "Gap contable detectado. Para reconciliar, adjuntá un acta "
+                        "de excepción (exception_document_id) o registrá una "
+                        "justificación (gap_justification).",
+                     "code": "EXCEPTION_DOC_REQUIRED",
+                     "discrepancy_count": int(t.discrepancy_count or 0)},
+                    status=409,
+                )
+            # Si vino justificación pero no doc, persistimos solo la justif.
         if not _validate_transition(t.estado, "RECONCILED", t.legal_context):
             return Response(
                 {"detail": f"Transición ilegal: {t.estado} → RECONCILED"},
@@ -586,11 +602,13 @@ class TransferenciaViewSet(viewsets.ViewSet):
 
         with transaction.atomic():
             Transferencia.objects.filter(pk=t.id).update(
-                estado             = "RECONCILED",
-                reconciled_by_id   = body.get("reconciled_by_id"),
-                reconciled_by_name = body.get("reconciled_by_name"),
-                reconciled_at      = timezone.now(),
-                reconciled_note    = body.get("reconciled_note"),
+                estado                = "RECONCILED",
+                reconciled_by_id      = body.get("reconciled_by_id"),
+                reconciled_by_name    = body.get("reconciled_by_name"),
+                reconciled_at         = timezone.now(),
+                reconciled_note       = body.get("reconciled_note"),
+                exception_document_id = body.get("exception_document_id") or t.exception_document_id,
+                gap_justification     = body.get("gap_justification") or t.gap_justification,
             )
             Evento.objects.create(
                 id                = uuid.uuid4(),
@@ -609,6 +627,165 @@ class TransferenciaViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"])
     def close(self, request, pk=None):
         return self._transition(request, pk, "CLOSED", "Cerrada (read-only)")
+
+    # Sprint v4 — advance unificado: ejecuta la siguiente transición segun estado.
+    @action(detail=True, methods=["post"], url_path="advance")
+    def advance(self, request, pk=None):
+        """Wrapper que despacha a la transicion correcta segun el estado actual.
+        Body: { actor_id, actor_name, ...payload de la transicion correspondiente }
+        """
+        try:
+            t = Transferencia.objects.get(pk=pk, is_active=True)
+        except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+        st = (t.estado or "").upper()
+        if st == "PLANNED":
+            return self.approve(request, pk)
+        if st == "APPROVED":
+            return self.mark_dispatched(request, pk)
+        if st == "IN_TRANSIT":
+            return self.receive(request, pk)
+        if st == "RECEIVED":
+            return self.reconcile(request, pk)
+        if st == "RECONCILED":
+            return self.close(request, pk)
+        return Response(
+            {"detail": f"Estado {st} no admite avance automatico."},
+            status=400,
+        )
+
+    # Sprint v4 — payload JSON de factura/remision para PDF en frontend.
+    @action(detail=True, methods=["get"], url_path="invoice_payload")
+    def invoice_payload(self, request, pk=None):
+        """Devuelve JSON estructurado para renderizar la factura/remision."""
+        try:
+            t = Transferencia.objects.get(pk=pk, is_active=True)
+        except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+        try:
+            report = liquidation_engine.calcular_liquidacion(t, persist=False)
+        except Exception:
+            report = None
+        is_dist = (t.legal_context or "").upper() == "DISTRIBUTION"
+        ctx = t.context_data or {}
+        tp_amount = float(ctx.get("transfer_pricing_amount") or 0)
+        tp_currency = ctx.get("transfer_pricing_currency") or "USD"
+
+        lineas = list(Linea.objects.filter(transferencia_id=t.id, is_active=True).order_by("created_at"))
+        cost_lines = list(CostLine.objects.filter(transferencia_id=t.id, is_active=True).order_by("kind"))
+        documentos = list(TransferenciaDocumento.objects.filter(transferencia_id=t.id, is_active=True))
+        eventos = list(Evento.objects.filter(transferencia_id=t.id).order_by("-created_at")[:30])
+
+        def doc_brief(d):
+            if not d:
+                return None
+            return {
+                "id": str(d.id),
+                "tipo": d.tipo,
+                "titulo": d.titulo,
+                "numero_ref": d.numero_ref,
+                "fecha_emision": d.fecha_emision.isoformat() if d.fecha_emision else None,
+            }
+        def find_doc(uid):
+            for d in documentos:
+                if str(d.id) == str(uid): return d
+            return None
+
+        return Response({
+            "kind": "FACTURA_INTERNA" if is_dist else "REMISION_INTERNA",
+            "transferencia": {
+                "id":            str(t.id),
+                "codigo":        t.codigo,
+                "legal_context": t.legal_context,
+                "estado":        t.estado,
+                "ref_tracking":  t.ref_tracking,
+                "value_usd":     float(t.value_usd or 0),
+                "total_cost_usd": float(t.total_cost_usd or 0),
+                "context_data":  ctx,
+            },
+            "origen": {
+                "id":    str(t.origen_id) if t.origen_id else None,
+                "label": t.origen_label or "",
+            },
+            "destino": {
+                "id":    str(t.destino_id) if t.destino_id else None,
+                "label": t.destino_label or "",
+            },
+            "fechas": {
+                "created_at":     t.created_at.isoformat() if t.created_at else None,
+                "approved_at":    t.approved_at.isoformat() if t.approved_at else None,
+                "dispatched_at":  t.dispatched_at.isoformat() if t.dispatched_at else None,
+                "received_at":    t.received_at.isoformat() if t.received_at else None,
+                "reconciled_at":  t.reconciled_at.isoformat() if t.reconciled_at else None,
+                "liquidated_at":  t.liquidated_at.isoformat() if t.liquidated_at else None,
+            },
+            "personas": {
+                "created_by_name":    t.created_by_name or "",
+                "approved_by_name":   t.approved_by_name or "",
+                "received_by_name":   t.received_by_name or "",
+                "reconciled_by_name": t.reconciled_by_name or "",
+            },
+            "documentos": {
+                "factura":        doc_brief(next((d for d in documentos if d.tipo == "FACTURA"), None)),
+                "dua":            doc_brief(find_doc(t.dua_document_id) or next((d for d in documentos if d.tipo == "DUA"), None)),
+                "bl_awb":         doc_brief(find_doc(t.awb_document_id) or next((d for d in documentos if d.tipo in ("BL","AWB")), None)),
+                "remision":       doc_brief(next((d for d in documentos if d.tipo == "REMISION"), None)),
+                "despacho":       doc_brief(find_doc(t.dispatch_document_id) or next((d for d in documentos if d.tipo == "DESPACHO"), None)),
+                "acta_recepcion": doc_brief(find_doc(t.receipt_document_id) or next((d for d in documentos if d.tipo == "ACTA_RECEPCION"), None)),
+                "excepcion":      doc_brief(find_doc(t.exception_document_id) or next((d for d in documentos if d.tipo == "EXCEPCION"), None)),
+            },
+            "transfer_pricing": {
+                "applies":  is_dist and tp_amount > 0,
+                "amount":   tp_amount,
+                "currency": tp_currency,
+                "basis":    ctx.get("transfer_pricing_basis") or "PER_UNIT",
+                "requires_tp_approval": bool(ctx.get("requires_tp_approval")),
+            },
+            "lineas": [{
+                "sku":              l.sku or "",
+                "product_label":    l.product_label or "",
+                "size":             l.size or "",
+                "qty_planned":      int(l.qty_transfer or 0),
+                "qty_dispatched":   int(l.qty_dispatched) if l.qty_dispatched is not None else None,
+                "qty_received":     int(l.qty_received) if l.qty_received is not None else None,
+                "unit_value_usd":   float(l.unit_value or 0),
+                "unit_cost_usd":    float(l.unit_cost or 0),
+                "cost_share_usd":   float(l.cost_share_usd) if l.cost_share_usd is not None else 0.0,
+                "landed_cost_usd":  float(l.landed_cost_usd) if l.landed_cost_usd is not None else None,
+                "estado_discrepancia": l.estado_discrepancia,
+                "tp_unit_amount":   tp_amount if is_dist and (ctx.get("transfer_pricing_basis") == "PER_UNIT") else None,
+            } for l in lineas],
+            "cost_breakdown": [{
+                "kind":       c.kind,
+                "label":      c.label or "",
+                "amount":     float(c.amount or 0),
+                "currency":   c.currency,
+                "fx_to_usd":  float(c.fx_to_usd or 1),
+                "amount_usd": float(c.amount_usd or 0),
+                "source":     c.source,
+            } for c in cost_lines],
+            "totales": {
+                "fob_total_usd":         report["summary"]["fob_total_usd"]   if report else 0.0,
+                "extra_costs_total_usd": report["summary"]["extra_costs_total_usd"] if report else 0.0,
+                "landed_total_usd":      report["summary"]["landed_total_usd"] if report else 0.0,
+                "avg_landed_per_unit_usd": report["summary"]["avg_landed_per_unit_usd"] if report else 0.0,
+                "units_total":           report["summary"]["units_total"]    if report else sum(int(l.qty_transfer or 0) for l in lineas),
+                "lines_count":           len(lineas),
+            },
+            "audit_trail": [{
+                "estado_prev":  e.estado_prev,
+                "estado_nuevo": e.estado_nuevo,
+                "actor_name":   e.actor_name or "",
+                "notes":        e.notes or "",
+                "created_at":   e.created_at.isoformat() if e.created_at else None,
+            } for e in eventos],
+            "gap_info": {
+                "has_discrepancy":      bool(t.has_discrepancy),
+                "discrepancy_count":    int(t.discrepancy_count or 0),
+                "exception_document":   doc_brief(find_doc(t.exception_document_id)),
+                "gap_justification":    t.gap_justification or "",
+            },
+        })
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
