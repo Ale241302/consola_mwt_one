@@ -1162,7 +1162,7 @@ function ContextDataSection({ lang, legalContext, contextData, setCtx }) {
     return (
       <div style={{ marginTop: 22, padding: 18, border: "2px solid #00B286", borderRadius: 12, background: "rgba(0,178,134,0.05)" }}>
         <div className="micro" style={{ color: "#00B286", letterSpacing: 1, marginBottom: 8 }}>
-          {lbl("TRANSFER PRICING (ART-16) ★", "TRANSFER PRICING (ART-16) ★")}
+          {lbl("TRANSFER PRICING ★", "TRANSFER PRICING ★")}
         </div>
         <div className="caption" style={{ color: "#0B1E3A", marginBottom: 14, lineHeight: 1.5 }}>
           ⚠ {lbl(

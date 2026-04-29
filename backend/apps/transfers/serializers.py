@@ -120,7 +120,7 @@ class TransferenciaSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "context_data": (
                         "DISTRIBUTION requiere transfer_pricing_amount > 0 "
-                        "(precio de transferencia ART-16)."
+                        "(precio de transferencia)."
                     )
                 })
             try:

@@ -582,7 +582,7 @@ function LegalContextDataCard({ lang, legalContext, contextData, costLines, tota
   } else if (ctx === "DISTRIBUTION") {
     const tp = Number(cd.transfer_pricing_amount || 0);
     if (tp > 0) items.push([
-      lbl("Transfer Pricing (ART-16)", "Transfer Pricing (ART-16)"),
+      lbl("Transfer Pricing", "Transfer Pricing"),
       <span style={{ fontWeight: 700, color: "#00B286" }} className="tabular-nums">
         ${tp.toLocaleString("en-US", { maximumFractionDigits: 2 })} {cd.transfer_pricing_currency || "USD"} · {cd.transfer_pricing_basis || "PER_UNIT"}
       </span>
@@ -615,7 +615,7 @@ function LegalContextDataCard({ lang, legalContext, contextData, costLines, tota
     INTERNAL:        lbl("LOGÍSTICA INTERNA", "INTERNAL LOGISTICS"),
     NATIONALIZATION: lbl("DOCUMENTOS DE IMPORTACIÓN", "IMPORT DOCUMENTS"),
     EXPORT:          lbl("EXPORTACIÓN INTERNACIONAL", "INTERNATIONAL EXPORT"),
-    DISTRIBUTION:    lbl("TRANSFER PRICING (ART-16)", "TRANSFER PRICING (ART-16)"),
+    DISTRIBUTION:    lbl("TRANSFER PRICING", "TRANSFER PRICING"),
     CONSIGNMENT:     lbl("CONSIGNACIÓN", "CONSIGNMENT"),
   };
   const accent = colorByCtx[ctx] || "#64748B";
