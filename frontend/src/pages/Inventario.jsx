@@ -14,7 +14,7 @@
 //   SKU · Producto · Nodo · Lote · Stock · Reservado · Disponible · Vendidos · Recibido · Salud
 // ─────────────────────────────────────────────────────────────
 import React, { useMemo, useState, useEffect, useCallback } from "react";
-import { useOutletContext } from "react-router-dom";
+import { useOutletContext, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IconSwap, IconPlus, IconSearch, IconX, IconWarehouse, IconAlert,
@@ -65,6 +65,7 @@ const HEALTH_META = {
 
 export default function ScreenInventario() {
   const { lang } = useOutletContext();
+  const navigate = useNavigate();
   const [q, setQ] = useState('');
   const [nodeFilter, setNodeFilter] = useState('ALL');
   const [drawerOpen, setDrawerOpen]   = useState(false);
@@ -161,7 +162,8 @@ export default function ScreenInventario() {
           </div>
         </div>
         <div className="flex ai-center gap-2">
-          <button className="btn btn-accent" onClick={()=>setDrawerOpen(true)}>
+          {/* Sprint Transfer Engine v2: navega al wizard full-page en vez del drawer viejo. */}
+          <button className="btn btn-accent" onClick={()=>navigate('/transferencias/nueva')}>
             <IconSwap size={14}/> {lang==='es'?'Nueva transferencia':'New transfer'}
           </button>
           <button className="btn" onClick={()=>setReceiveOpen(true)}>
@@ -379,16 +381,8 @@ export default function ScreenInventario() {
         )}
       </div>
 
-      {/* Drawer · Nueva transferencia */}
-      <AnimatePresence>
-        {drawerOpen && (
-          <CreateTransferDrawer
-            lang={lang}
-            onClose={()=>setDrawerOpen(false)}
-            onSaved={()=>{ setDrawerOpen(false); load(); }}
-          />
-        )}
-      </AnimatePresence>
+      {/* Drawer · Nueva transferencia DEPRECATED — sustituido por el
+          wizard full-page /transferencias/nueva (sprint Transfer Engine v2). */}
 
       {/* Modal · Recibir lote */}
       {receiveOpen && createPortal(
