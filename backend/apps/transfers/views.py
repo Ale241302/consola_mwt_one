@@ -42,6 +42,7 @@ from .serializers import (
 )
 from . import services as transfer_services
 from . import ocr_customs
+from . import liquidation as liquidation_engine
 
 
 # ════════════════════════════════════════════════════════════
@@ -318,6 +319,61 @@ class TransferenciaViewSet(viewsets.ViewSet):
         if not updated:
             return Response({"detail": "Cost line no encontrada"}, status=404)
         return Response(status=204)
+
+    # Liquidacion / Landed Cost (sprint Transfer Engine v3)
+    # GET  /api/transferencias/{id}/liquidation_report/  preview (no persiste)
+    # POST /api/transferencias/{id}/liquidate/           ejecuta y persiste
+    @action(detail=True, methods=["get"], url_path="liquidation_report")
+    def liquidation_report(self, request, pk=None):
+        """Devuelve el reporte (factura interna) sin persistir cambios."""
+        try:
+            t = Transferencia.objects.get(pk=pk, is_active=True)
+        except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+        report = liquidation_engine.calcular_liquidacion(t, persist=False)
+        return Response(report)
+
+    @action(detail=True, methods=["post"], url_path="liquidate")
+    def liquidate(self, request, pk=None):
+        """Ejecuta el calculo de Landed Cost y persiste por linea."""
+        try:
+            t = Transferencia.objects.get(pk=pk, is_active=True)
+        except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+        method = (request.data.get("method") or "BY_VALUE").upper()
+        if method not in ("BY_VALUE", "BY_QUANTITY", "BY_VOLUME"):
+            return Response({"detail": f"method invalido: {method}"}, status=400)
+        Transferencia.objects.filter(pk=t.id).update(liquidation_method=method)
+        t.refresh_from_db()
+
+        actor_id = request.data.get("actor_id") or (
+            getattr(request.user, "id", None) if request.user else None
+        )
+        actor_name = request.data.get("actor_name") or (
+            getattr(request.user, "full_name", "") or
+            getattr(request.user, "username", "") or
+            getattr(request.user, "email", "")
+        )
+        try:
+            report = liquidation_engine.calcular_liquidacion(
+                t, persist=True,
+                actor_id=actor_id, actor_name=actor_name,
+            )
+        except Exception as e:
+            log.exception("[liquidate] error transfer=%s", pk)
+            return Response({"detail": f"{type(e).__name__}: {e}"}, status=500)
+
+        landed = report["summary"]["landed_total_usd"]
+        Evento.objects.create(
+            id               = uuid.uuid4(),
+            transferencia_id = t.id,
+            estado_prev      = t.estado,
+            estado_nuevo     = t.estado,
+            actor_id         = actor_id,
+            actor_name       = (actor_name or "")[:128],
+            notes            = "Liquidacion ejecutada (method=%s, landed_total=$%.2f)." % (method, landed),
+        )
+        return Response(report, status=200)
 
     @action(detail=False, methods=["get"])
     def select_transiciones(self, request):

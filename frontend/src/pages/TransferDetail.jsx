@@ -28,6 +28,7 @@ import {
   TRANSFERS, TRANSFER_STATUS_META, LEGAL_CONTEXT_META, getTransferTotals,
 } from "../data/mockData.js";
 import { transferenciasApi, transferLineasApi } from "../lib/api.js";
+import TransferLiquidationPanel from "../components/transfers/TransferLiquidationPanel.jsx";
 
 // ── Helpers format ─────────────────────────
 function fmtDate(s) {
@@ -365,6 +366,9 @@ export default function ScreenTransferDetail() {
                             contextData={transferBase.context_data}
                             costLines={transferBase.cost_lines}
                             totalCostUsd={transferBase.total_cost_usd}/>
+
+      {/* ── Liquidación / Landed Cost (sprint Transfer Engine v3) ── */}
+      <TransferLiquidationPanel transfer={transferBase} lang={lang} onLiquidated={loadBackend}/>
 
       {/* ── Reconciliación banner ── */}
       {status === 'received' && willNeedReconcile && (

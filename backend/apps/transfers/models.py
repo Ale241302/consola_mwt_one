@@ -99,6 +99,14 @@ class Transferencia(models.Model):
     # _validate_context_data() en el serializer.
     context_data        = models.JSONField(default=dict, blank=True)
 
+    # Sprint Transfer Engine v3 — Landed Cost (91g_transfers_landed_cost.sql)
+    liquidated_at       = models.DateTimeField(null=True, blank=True)
+    liquidated_by_id    = models.UUIDField(null=True, blank=True)         # ⛔ sin FK
+    liquidated_by_name  = models.CharField(max_length=128, null=True, blank=True)
+    dua_document_id     = models.UUIDField(null=True, blank=True)         # ⛔ sin FK
+    awb_document_id     = models.UUIDField(null=True, blank=True)         # ⛔ sin FK
+    liquidation_method  = models.CharField(max_length=16, default="BY_VALUE")
+
     is_active        = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     updated_at       = models.DateTimeField(auto_now=True)
@@ -127,6 +135,12 @@ class Linea(models.Model):
     estado_discrepancia  = models.CharField(max_length=32, null=True, blank=True)
     snapshot_unit_cost   = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
     snapshot_created_at  = models.DateTimeField(null=True, blank=True)
+
+    # ── Sprint Transfer Engine v3 — Landed Cost (91g) ──
+    # `cost_share_usd` = porción TOTAL del prorrateo (no per-unit).
+    # `landed_cost_usd` = unit_value + (cost_share_usd / qty_transfer).
+    cost_share_usd       = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    landed_cost_usd      = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
 
     is_active        = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)
