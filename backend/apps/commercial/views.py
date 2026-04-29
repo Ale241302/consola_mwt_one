@@ -1185,11 +1185,42 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
                  skus_imported += 1
              if grade_items:
                  GradeItem.objects.bulk_create(grade_items, batch_size=200)
+
+             # ── Auto-clear CPAs override del cliente para los SKUs subidos ──
+             # Si el operador sube un Excel nuevo, asume que esos precios son
+             # los nuevos. Cualquier override manual previo (introducido desde
+             # el detalle del producto u otro flujo) queda obsoleto y se desactiva.
+             # Usamos SOFT-delete (is_active=FALSE) para preservar trazabilidad
+             # — los CPAs viejos quedan en la BD pero ya no aplican en el waterfall.
+             cpas_cleared = 0
+             if grade_items:
+                 imported_skus = list({gi.product_sku for gi in grade_items})
+                 # Hacemos en chunks de 1000 para evitar query gigante con un Excel
+                 # grande (ANY() con miles de SKUs en un IN clause es OK pero por
+                 # las dudas).
+                 chunk = 1000
+                 for i in range(0, len(imported_skus), chunk):
+                     chunk_skus = imported_skus[i:i + chunk]
+                     n = ClientAssignment.objects.filter(
+                         client_id=bcpa.cliente_id,
+                         brand_id=bcpa.brand_id,
+                         brand_sku__in=chunk_skus,
+                         is_active=True,
+                     ).update(is_active=False)
+                     cpas_cleared += n
+                 if cpas_cleared:
+                     log.info(
+                         "upload_file: desactivados %d CPA overrides para "
+                         "cliente %s / marca %s (SKUs del Excel)",
+                         cpas_cleared, bcpa.cliente_id, bcpa.brand_id,
+                     )
+
          return Response({"assignment": self.get_serializer(bcpa).data,
                           "pricelist_version_id": str(plv_id),
                           "pricelist_codigo": codigo,
                           "skus_imported": skus_imported,
                           "skus_skipped": skus_skipped,
+                          "cpas_cleared": cpas_cleared,
                           "sample": sample}, status=200)
         except Exception as exc:
             log.exception("upload_file failed")
