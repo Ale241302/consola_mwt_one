@@ -101,11 +101,15 @@ export default function CreateTransferWizard() {
   }, []);
 
   // ── Cuando cambia el origen, traer su stock ──
+  // El endpoint /api/stock/ filtra por `?nodo=<id>` (no nodo_id) y
+  // `?solo_disponible=1` aplica WHERE cantidad_disponible > 0 server-side.
   useEffect(() => {
     if (!origenId) { setStockOrigen([]); return; }
-    stockApi.list({ nodo_id: origenId, qty_disponible__gt: 0 }).then((d) => {
+    stockApi.list({ nodo: origenId, solo_disponible: 1 }).then((d) => {
       const arr = Array.isArray(d) ? d : (d?.results || []);
-      setStockOrigen(arr);
+      // Defensa client-side: si el backend ignora el filter, recortamos acá.
+      const onNode = arr.filter((r) => !r.nodo_id || String(r.nodo_id) === String(origenId));
+      setStockOrigen(onNode.map(adaptStockRow));
     }).catch(() => setStockOrigen([]));
   }, [origenId]);
 
@@ -181,16 +185,20 @@ export default function CreateTransferWizard() {
   // ── Helpers de productos ──
   const addProductLine = (s) => {
     if (!s) return;
-    if (productLines.some((l) => l.sku === s.sku && l.size === s.size)) return;
+    // Clave de unicidad: sku + lote + size (mismo SKU puede venir en
+    // varios lotes con cantidades distintas).
+    const key = (l) => `${l.sku}|${l.lote || ""}|${l.size || ""}`;
+    if (productLines.some((l) => key(l) === `${s.sku}|${s.lote || ""}|${s.size || ""}`)) return;
     setProductLines((prev) => [...prev, {
       tmpId:         `pl-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
       sku:           s.sku,
       producto_id:   s.producto_id,
-      product_label: s.product_label || s.product_name || s.sku,
-      size:          s.size || s.talla || "",
+      product_label: s.product_label || s.sku,
+      size:          s.size || "",
+      lote:          s.lote || "",
       qty_transfer:  0,
       qty_reserve:   0,
-      disponible:    Number(s.qty_disponible || s.disponible || 0),
+      disponible:    Number(s.qty_disponible || 0),
       unit_cost:     Number(s.unit_cost || 0),
     }]);
   };
@@ -749,7 +757,7 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
     const n = search.trim().toLowerCase();
     if (!n) return stockOrigen.slice(0, 60);
     return stockOrigen.filter((s) => {
-      const hay = [s.sku, s.product_label, s.product_name, s.lote, s.size, s.talla].join(" ").toLowerCase();
+      const hay = [s.sku, s.product_label, s.lote, s.size].join(" ").toLowerCase();
       return hay.includes(n);
     }).slice(0, 60);
   }, [search, stockOrigen]);
@@ -782,7 +790,7 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
           </div>
         ) : (
           filtered.map((s) => (
-            <button key={`${s.id || s.sku}-${s.lote || ''}`} type="button"
+            <button key={s.id} type="button"
                     onClick={() => addProductLine(s)}
                     style={{
                       width: "100%", textAlign: "left", padding: "10px 14px",
@@ -794,16 +802,16 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
               <IconPackage size={14} style={{ color: "#3083FE", flexShrink: 0 }}/>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, color: "#0B1E3A", fontSize: 13 }}>
-                  <span className="mono-sm">{s.sku}</span>
-                  {s.size || s.talla ? <span style={{ marginLeft: 8 }}>· {s.size || s.talla}</span> : null}
+                  <span className="mono-sm">{s.sku || "—"}</span>
+                  {s.size && <span style={{ marginLeft: 8 }}>· {s.size}</span>}
                   {s.lote && <span className="caption" style={{ marginLeft: 8 }}>L: {s.lote}</span>}
                 </div>
                 <div className="caption" style={{ color: "var(--text-tertiary)" }}>
-                  {s.product_label || s.product_name || ""}
+                  {s.product_label || ""}
                 </div>
               </div>
               <span className="badge badge-outline tabular-nums">
-                {Number(s.qty_disponible || s.disponible || 0)}u
+                {Number(s.qty_disponible || 0)}u
               </span>
             </button>
           ))
@@ -846,7 +854,8 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
                   <tr key={l.tmpId} style={overstock ? { background: "#FEF3C7" } : null}>
                     <td className="mono-sm">
                       <div>{l.sku}</div>
-                      {l.size && <div className="caption">{l.size}</div>}
+                      {l.lote && <div className="caption">L: {l.lote}</div>}
+                      {l.size && <div className="caption">· {l.size}</div>}
                     </td>
                     <td>{l.product_label}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>{l.disponible}</td>
@@ -941,7 +950,11 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                 <tr key={l.tmpId}>
                   <td className="mono-sm">{l.sku}</td>
                   <td>{l.product_label}</td>
-                  <td>{l.size || "—"}</td>
+                  <td>
+                    {l.lote && <div className="mono-sm">L: {l.lote}</div>}
+                    {l.size && <div className="caption">{l.size}</div>}
+                    {!l.lote && !l.size && "—"}
+                  </td>
                   <td className="tabular-nums" style={{ textAlign:"right" }}>{l.qty_transfer}</td>
                   <td className="tabular-nums" style={{ textAlign:"right" }}>{l.qty_reserve}</td>
                   <td className="tabular-nums" style={{ textAlign:"right", color:"#00B286", fontWeight: 600 }}>
@@ -999,6 +1012,29 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
 // ═════════════════════════════════════════════════════════════
 // HELPERS
 // ═════════════════════════════════════════════════════════════
+// Adapta el shape de /api/stock/ al shape del wizard.
+//   producto_sku → sku
+//   producto_nombre → product_label
+//   talla → size
+//   cantidad_disponible → qty_disponible
+//   costo_unitario_usd → unit_cost
+function adaptStockRow(r) {
+  return {
+    id:            r.id || `${r.producto_id}-${r.lote || ""}-${r.nodo_id}`,
+    sku:           r.producto_sku || r.sku || "",
+    producto_id:   r.producto_id || null,
+    product_label: r.producto_nombre || r.producto_sku || "",
+    size:          r.talla || r.size || "",
+    lote:          r.lote || "",
+    qty_disponible: Number(r.cantidad_disponible || 0),
+    qty_reservada: Number(r.cantidad_reservada || 0),
+    unit_cost:     Number(r.costo_unitario_usd || r.costo_actual_usd || 0),
+    nodo_id:       r.nodo_id,
+    nodo_codigo:   r.nodo_codigo || r.nodo_nombre || "",
+    _raw:          r,
+  };
+}
+
 function hasCap(node, cap) {
   const arr = node?.capabilities || [];
   if (!Array.isArray(arr) || arr.length === 0) {
