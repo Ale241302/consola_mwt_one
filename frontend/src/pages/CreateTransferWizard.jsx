@@ -101,15 +101,34 @@ export default function CreateTransferWizard() {
   }, []);
 
   // ── Cuando cambia el origen, traer su stock ──
-  // El endpoint /api/stock/ filtra por `?nodo=<id>` (no nodo_id) y
-  // `?solo_disponible=1` aplica WHERE cantidad_disponible > 0 server-side.
+  // /api/stock/?nodo=<id> devuelve TODAS las filas del ledger del nodo
+  // (incluso negativas: ej. ajustes -10). NO usamos solo_disponible=1
+  // porque filtraría server-side las negativas → el disponible quedaría
+  // inflado. Agrupamos por (producto_id + lote) y sumamos cantidades —
+  // el resultado es la cantidad NETA real disponible en el nodo.
   useEffect(() => {
     if (!origenId) { setStockOrigen([]); return; }
-    stockApi.list({ nodo: origenId, solo_disponible: 1 }).then((d) => {
+    stockApi.list({ nodo: origenId }).then((d) => {
       const arr = Array.isArray(d) ? d : (d?.results || []);
-      // Defensa client-side: si el backend ignora el filter, recortamos acá.
       const onNode = arr.filter((r) => !r.nodo_id || String(r.nodo_id) === String(origenId));
-      setStockOrigen(onNode.map(adaptStockRow));
+      const buckets = new Map();
+      for (const r of onNode) {
+        const key = `${r.producto_id || r.producto_sku || ""}|${r.lote || ""}`;
+        const a = adaptStockRow(r);
+        const prev = buckets.get(key);
+        if (prev) {
+          prev.qty_disponible += a.qty_disponible;
+          prev.qty_reservada  += a.qty_reservada;
+          if (a.qty_disponible > 0 && (!prev.unit_cost || a.unit_cost > 0)) {
+            prev.unit_cost = a.unit_cost || prev.unit_cost;
+          }
+        } else {
+          buckets.set(key, { ...a, _key: key });
+        }
+      }
+      // Solo mostramos buckets con neto > 0 (no se puede transferir cero/negativo)
+      const consolidated = Array.from(buckets.values()).filter((s) => s.qty_disponible > 0);
+      setStockOrigen(consolidated);
     }).catch(() => setStockOrigen([]));
   }, [origenId]);
 
@@ -790,7 +809,7 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
           </div>
         ) : (
           filtered.map((s) => (
-            <button key={s.id} type="button"
+            <button key={s._key || s.id} type="button"
                     onClick={() => addProductLine(s)}
                     style={{
                       width: "100%", textAlign: "left", padding: "10px 14px",
