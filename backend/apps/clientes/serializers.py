@@ -100,6 +100,17 @@ class ClienteSerializer(serializers.ModelSerializer):
     credito_disponible = serializers.SerializerMethodField()
     tasa_utilizacion   = serializers.SerializerMethodField()
 
+    # ── Parent-Child (sprint Parent-Child · 2026-04-29) ──
+    # `parent_id` es el VARCHAR(36) que vive en la tabla; lo exponemos
+    # tal cual para CRUD. `parent` es un dict de conveniencia que lee
+    # el padre por joins en runtime (no rompe el "cero FK" porque es
+    # una sola query adicional, no una relación física).
+    parent              = serializers.SerializerMethodField()
+    is_parent           = serializers.BooleanField(read_only=True)
+    is_subsidiary       = serializers.BooleanField(read_only=True)
+    subsidiarias_count  = serializers.SerializerMethodField()
+    kpis_pool           = serializers.SerializerMethodField()
+
     class Meta:
         model  = Cliente
         fields = (
@@ -108,6 +119,9 @@ class ClienteSerializer(serializers.ModelSerializer):
             "codigo_marluvas", "cedula_juridica",
             # Clasificación
             "tipo", "segmento",
+            # Parent-Child
+            "parent_id", "parent", "is_parent", "is_subsidiary",
+            "subsidiarias_count",
             # Ubicación
             "pais_iso2", "ciudad", "direccion", "direccion_entrega",
             # Contacto
@@ -120,6 +134,7 @@ class ClienteSerializer(serializers.ModelSerializer):
             "credito_aprobado",           # ← dejamos expuesto para compat legacy
             "credito_usado",
             "credito_disponible", "tasa_utilizacion",
+            "kpis_pool",                 # ← consolidación padre + subsidiarias
             "comision_pct",
             # Estado
             "estado", "estado_operativo",
@@ -133,6 +148,8 @@ class ClienteSerializer(serializers.ModelSerializer):
             "id", "created_at", "updated_at",
             "credito_disponible", "tasa_utilizacion",
             "credito_usado",
+            "parent", "is_parent", "is_subsidiary",
+            "subsidiarias_count", "kpis_pool",
         )
 
     # ── POL_VISIBILIDAD · gate CEO-ONLY ────────────────────────
@@ -239,12 +256,66 @@ class ClienteSerializer(serializers.ModelSerializer):
         usado    = float(o.credito_usado    or 0)
         return round((usado / aprobado) * 100, 2) if aprobado > 0 else 0.0
 
+    # ── Parent-Child resolvers (sprint Parent-Child) ───────────
+    def get_parent(self, o):
+        p = o.get_parent()
+        if not p:
+            return None
+        return {
+            "id":           str(p.id),
+            "razon_social": p.razon_social or p.nombre_comercial or "",
+            "nombre_comercial": p.nombre_comercial,
+        }
+
+    def get_subsidiarias_count(self, o):
+        return o.get_subsidiaries().count() if o.is_parent else 0
+
+    def get_kpis_pool(self, o):
+        """KPIs financieros consolidados (padre + subsidiarias activas).
+
+        El front-end usa este dict para renderizar los KPIs del header
+        de la ficha de cliente. Si la entidad es subsidiaria, los valores
+        reflejan el pool del PADRE (límite operativo compartido).
+        """
+        return o.calcular_kpis_consolidados()
+
+    # ── Validación parent_id (regla 2 niveles) ─────────────────
+    def validate_parent_id(self, value):
+        """Anidación máxima 2 niveles + chequeo de existencia."""
+        if value in (None, "", 0):
+            return None
+        v = str(value).strip()
+        # Auto-referencia (en update; en create id aún no existe)
+        if self.instance and str(self.instance.id) == v:
+            raise serializers.ValidationError(
+                "Un cliente no puede ser su propio padre."
+            )
+        parent = Cliente.objects.filter(id=v).first()
+        if not parent:
+            raise serializers.ValidationError(
+                "Cliente padre no encontrado."
+            )
+        if parent.parent_id is not None:
+            raise serializers.ValidationError(
+                "Anidación > 2 niveles prohibida. "
+                "El cliente seleccionado ya es subsidiaria."
+            )
+        if not parent.is_active:
+            raise serializers.ValidationError(
+                "El cliente padre está inactivo."
+            )
+        return v
+
 
 # ═════════════════════════════════════════════════════════════════════
-# Lista ligera para el grid (Clientes.jsx)
+# Lista ligera para el grid (Clientes.jsx) y para subsidiarias
 # ═════════════════════════════════════════════════════════════════════
 class ClienteListSerializer(serializers.ModelSerializer):
-    """Versión ligera · no expone comision_pct en el listado."""
+    """Versión ligera · no expone comision_pct en el listado.
+
+    Incluye `parent_id` y `subsidiarias_count` para que el dashboard y
+    el grid de subsidiarias compartan el mismo serializer.
+    """
     credito_disponible = serializers.SerializerMethodField()
     tasa_utilizacion   = serializers.SerializerMethodField()
     credito_limit_usd  = serializers.DecimalField(
@@ -252,6 +323,10 @@ class ClienteListSerializer(serializers.ModelSerializer):
         max_digits=14, decimal_places=2,
         required=False, allow_null=True,
     )
+    is_parent          = serializers.BooleanField(read_only=True)
+    is_subsidiary      = serializers.BooleanField(read_only=True)
+    subsidiarias_count = serializers.SerializerMethodField()
+    expedientes_activos = serializers.SerializerMethodField()
 
     class Meta:
         model  = Cliente
@@ -260,10 +335,19 @@ class ClienteListSerializer(serializers.ModelSerializer):
             "codigo_marluvas", "cedula_juridica",
             "tipo", "segmento", "pais_iso2", "ciudad",
             "estado",
+            # Parent-Child
+            "parent_id", "is_parent", "is_subsidiary", "subsidiarias_count",
+            # Crédito
             "credito_aprobado", "credito_limit_usd", "credito_usado",
             "credito_disponible", "tasa_utilizacion", "dias_credito",
+            # Asignación
             "nodo_asignado_id", "responsable_id",
+            # Comercial
             "canal", "incoterm", "medio_pago",
+            "contacto_nombre", "contacto_email",
+            "direccion_entrega",
+            # Stats
+            "expedientes_activos",
             "is_active", "updated_at",
         )
 
@@ -274,6 +358,32 @@ class ClienteListSerializer(serializers.ModelSerializer):
         aprobado = float(o.credito_aprobado or 0)
         usado    = float(o.credito_usado    or 0)
         return round((usado / aprobado) * 100, 2) if aprobado > 0 else 0.0
+
+    def get_subsidiarias_count(self, o):
+        return o.get_subsidiaries().count() if o.is_parent else 0
+
+    def get_expedientes_activos(self, o):
+        """Cuenta de expedientes abiertos del cliente (raw SQL — sin FK).
+
+        En padre cuenta padre + subsidiarias (pool consolidado).
+        Si la tabla expedientes.expediente aún no existe, devuelve 0.
+        """
+        from django.db import connection
+        ids = o.pool_ids() if o.is_parent else [str(o.id)]
+        if not ids:
+            return 0
+        try:
+            with connection.cursor() as c:
+                placeholders = ",".join(["%s"] * len(ids))
+                c.execute(
+                    f"SELECT COUNT(*) FROM expedientes.expediente "
+                    f"WHERE cliente_id::text IN ({placeholders}) "
+                    f"AND estado NOT IN ('CERRADO','CANCELADO')",
+                    ids,
+                )
+                return int(c.fetchone()[0] or 0)
+        except Exception:
+            return 0
 
 
 # ═════════════════════════════════════════════════════════════════════

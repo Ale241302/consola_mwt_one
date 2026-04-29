@@ -46,6 +46,20 @@ class ClienteViewSet(viewsets.ViewSet):
 
     def list(self, request):
         qs = Cliente.objects.filter(is_active=True).order_by("razon_social")
+
+        # ── REGLA Parent-Child (sprint 2026-04-29) ──
+        # El dashboard top-level NO muestra subsidiarias por defecto, para
+        # que la jerarquía sea legible. Override:
+        #   ?is_parent=true   (default) → solo top-level (parent_id IS NULL)
+        #   ?is_parent=false           → solo subsidiarias
+        #   ?is_parent=all              → todos sin filtro (legacy)
+        is_parent_q = (request.query_params.get("is_parent") or "true").lower()
+        if is_parent_q == "true":
+            qs = qs.filter(parent_id__isnull=True)
+        elif is_parent_q == "false":
+            qs = qs.filter(parent_id__isnull=False)
+        # 'all' o cualquier otro valor → no filtra
+
         mapping = {
             "tipo":     "tipo",
             "estado":   "estado",
@@ -54,6 +68,7 @@ class ClienteViewSet(viewsets.ViewSet):
             "nodo":     "nodo_asignado_id",
             "canal":    "canal",
             "incoterm": "incoterm",
+            "parent":   "parent_id",  # filtrar subsidiarias de un padre específico
         }
         for param, field in mapping.items():
             v = request.query_params.get(param)
@@ -96,8 +111,75 @@ class ClienteViewSet(viewsets.ViewSet):
     partial_update = update
 
     def destroy(self, request, pk=None):
+        # Soft delete + cascada lógica a subsidiarias activas (Parent-Child).
+        # Si el padre se desactiva, sus subsidiarias también — mantienen el
+        # historial pero salen del dashboard. Reversible vía PATCH is_active.
         Cliente.objects.filter(pk=pk).update(is_active=False)
+        Cliente.objects.filter(parent_id=str(pk), is_active=True).update(is_active=False)
         return Response(status=204)
+
+    # ═══════════════════════════════════════════════════════════════
+    # Parent-Child actions (sprint 2026-04-29)
+    # ═══════════════════════════════════════════════════════════════
+    @action(detail=True, methods=["get", "post"], url_path="subsidiarias")
+    def subsidiarias(self, request, pk=None):
+        """GET → lista subsidiarias activas del cliente padre.
+        POST → crea una nueva subsidiaria con parent_id=pk.
+
+        Validación: el cliente {pk} NO puede ser ya una subsidiaria
+        (regla 2 niveles).
+        """
+        try:
+            parent = Cliente.objects.get(pk=pk, is_active=True)
+        except Cliente.DoesNotExist:
+            return Response({"detail": "Cliente padre no existe."}, status=404)
+
+        if parent.is_subsidiary:
+            return Response(
+                {"detail": "Una subsidiaria no puede tener subsidiarias "
+                           "(anidación máxima: 2 niveles)."},
+                status=400,
+            )
+
+        if request.method.upper() == "GET":
+            subs = (Cliente.objects
+                    .filter(parent_id=str(pk), is_active=True)
+                    .order_by("razon_social"))
+            return Response(
+                ClienteListSerializer(subs, many=True, context=self._ctx(request)).data
+            )
+
+        # POST → crear subsidiaria
+        data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+        data["parent_id"] = str(parent.id)
+        # Heredar campos sensatos del padre si no vienen en el payload.
+        data.setdefault("pais_iso2",       parent.pais_iso2)
+        data.setdefault("moneda",          parent.moneda)
+        data.setdefault("dias_credito",    parent.dias_credito)
+        data.setdefault("incoterm",        parent.incoterm)
+        data.setdefault("medio_pago",      parent.medio_pago)
+        data.setdefault("canal",           parent.canal)
+        data.setdefault("tipo",            parent.tipo)
+        data.setdefault("segmento",        parent.segmento)
+        data.setdefault("visibility_tier", parent.visibility_tier)
+
+        s = ClienteSerializer(data=data, context=self._ctx(request))
+        s.is_valid(raise_exception=True)
+        s.save(id=uuid.uuid4())
+        return Response(s.data, status=201)
+
+    @action(detail=True, methods=["get"], url_path="kpis_pool")
+    def kpis_pool(self, request, pk=None):
+        """KPIs financieros consolidados del pool padre + subsidiarias.
+
+        El FE usa este endpoint como single-source para los tiles del
+        header (Crédito, Total facturado, DSO, Expedientes activos).
+        """
+        try:
+            cli = Cliente.objects.get(pk=pk, is_active=True)
+        except Cliente.DoesNotExist:
+            return Response({"detail": "Cliente no existe"}, status=404)
+        return Response(cli.calcular_kpis_consolidados())
 
     # ── Selects ────────────────────────────────────────
     @action(detail=False, methods=["get"])
@@ -172,36 +254,75 @@ class ClienteViewSet(viewsets.ViewSet):
     # ── KPIs comerciales del cliente ──────────────────
     @action(detail=True, methods=["get"])
     def kpis(self, request, pk=None):
+        """KPIs operativos (expedientes + ventas YTD).
+
+        Soporta consolidación Parent-Child:
+          ?consolidate=true  → padre incluye subsidiarias (default si is_parent)
+          ?consolidate=false → solo el cliente {pk}
+        """
+        # Resolver el cliente para decidir el alcance del pool
+        try:
+            cli = Cliente.objects.get(pk=pk, is_active=True)
+        except Cliente.DoesNotExist:
+            return Response({"detail": "Cliente no existe"}, status=404)
+
+        # Default: padre consolida; subsidiaria no.
+        consolidate_q = (request.query_params.get("consolidate") or "").lower()
+        if consolidate_q == "true":
+            consolidate = True
+        elif consolidate_q == "false":
+            consolidate = False
+        else:
+            consolidate = cli.is_parent
+
+        if consolidate and cli.is_parent:
+            client_ids = cli.pool_ids()
+        else:
+            client_ids = [str(pk)]
+
         total_exp = exp_abiertos = exp_mora = 0
         ventas_ytd = 0.0
         with connection.cursor() as c:
             try:
-                c.execute("SELECT COUNT(*) FROM expedientes.expediente WHERE cliente_id = %s", [pk])
+                placeholders = ",".join(["%s"] * len(client_ids))
+                c.execute(
+                    f"SELECT COUNT(*) FROM expedientes.expediente "
+                    f"WHERE cliente_id::text IN ({placeholders})",
+                    client_ids,
+                )
                 total_exp = c.fetchone()[0]
                 c.execute(
-                    "SELECT COUNT(*) FROM expedientes.expediente "
-                    "WHERE cliente_id = %s AND estado NOT IN ('CERRADO','CANCELADO')", [pk]
+                    f"SELECT COUNT(*) FROM expedientes.expediente "
+                    f"WHERE cliente_id::text IN ({placeholders}) "
+                    f"AND estado NOT IN ('CERRADO','CANCELADO')",
+                    client_ids,
                 )
                 exp_abiertos = c.fetchone()[0]
                 c.execute(
-                    "SELECT COALESCE(SUM(subtotal_usd),0) FROM expedientes.expediente "
-                    "WHERE cliente_id = %s "
-                    "AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW())", [pk]
+                    f"SELECT COALESCE(SUM(subtotal_usd),0) FROM expedientes.expediente "
+                    f"WHERE cliente_id::text IN ({placeholders}) "
+                    f"AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW())",
+                    client_ids,
                 )
                 ventas_ytd = float(c.fetchone()[0])
                 c.execute(
-                    "SELECT COUNT(*) FROM expedientes.expediente "
-                    "WHERE cliente_id = %s AND estado = 'MORA'", [pk]
+                    f"SELECT COUNT(*) FROM expedientes.expediente "
+                    f"WHERE cliente_id::text IN ({placeholders}) AND estado = 'MORA'",
+                    client_ids,
                 )
                 exp_mora = c.fetchone()[0]
             except Exception:
                 # Si expedientes.expediente aún no existe, devolvemos ceros.
                 pass
+
         return Response({
             "total_expedientes":    total_exp,
             "expedientes_abiertos": exp_abiertos,
             "ventas_ytd_usd":       ventas_ytd,
             "expedientes_mora":     exp_mora,
+            # Metadata Parent-Child
+            "consolidated":         consolidate and cli.is_parent,
+            "pool_size":            len(client_ids),
         })
 
     # ── Semáforo de crédito (BE = fuente única) ───────

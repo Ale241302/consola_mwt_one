@@ -38,26 +38,42 @@ import ProductExpedientesTab from "../components/productos/ProductExpedientesTab
 import { useRole } from "../context/RoleContext.jsx";
 import { productosApi, marcasApi, tallasApi, nodosApi, clientesApi, apiFetch, getToken } from "../lib/api.js";
 
-// Mock clients (mockData.CLIENTS) → shape lista compacta para los grids
-// "Excepciones por cliente" / "Override por cliente". El backend devuelve
-// id (UUID), razon_social, pais_iso2, nombre_comercial. Convertimos al
-// shape mock {id, name, country, flag} para no tener que reescribir todos
-// los grids; preserva compatibilidad con datos demo cuando el backend
-// devuelve lista vacía.
-const _FLAG_BY_ISO2 = {
-  PE:'🇵🇪', CO:'🇨🇴', US:'🇺🇸', MX:'🇲🇽', AR:'🇦🇷',
-  CL:'🇨🇱', BR:'🇧🇷', UY:'🇺🇾', EC:'🇪🇨', CR:'🇨🇷',
-  PA:'🇵🇦', DO:'🇩🇴', GT:'🇬🇹', SV:'🇸🇻', HN:'🇭🇳',
-  ES:'🇪🇸', CN:'🇨🇳',
-};
+// Backend → shape lista compacta para los grids
+// "Excepciones por cliente" / "Override por cliente".
+//
+// Sprint Parent-Child (2026-04-29): incluye parent_id y parent_name
+// para que el grid pueda renderizar la jerarquía y aplicar herencia
+// por defecto (la subsidiaria hereda visibilidad / precio del padre).
 function adaptClienteForGrid(c) {
-  const iso = (c.pais_iso2 || c.country_code || '').toUpperCase();
   return {
-    id:      c.id || c.uuid,
-    name:    c.nombre_comercial || c.razon_social || '—',
-    country: c.pais || iso || '—',
-    flag:    _FLAG_BY_ISO2[iso] || c.flag || '🌐',
+    id:           c.id || c.uuid,
+    name:         c.nombre_comercial || c.razon_social || '—',
+    parent_id:    c.parent_id || null,
+    parent_name:  null,   // se rellena en orderClientsHierarchy()
   };
+}
+
+// Ordena clientes con padres primero, seguidos de sus subsidiarias
+// (sangradas). Pre-resuelve parent_name para mostrar contexto.
+function orderClientsHierarchy(clients) {
+  const byId = new Map(clients.map(c => [c.id, c]));
+  const parents = clients.filter(c => !c.parent_id);
+  const out = [];
+  parents.forEach(p => {
+    out.push(p);
+    clients
+      .filter(c => c.parent_id === p.id)
+      .forEach(s => {
+        out.push({ ...s, parent_name: p.name });
+      });
+  });
+  // Subsidiarias huérfanas (padre no en la lista) — al final por seguridad
+  clients.forEach(c => {
+    if (c.parent_id && !byId.has(c.parent_id) && !out.find(o => o.id === c.id)) {
+      out.push(c);
+    }
+  });
+  return out;
 }
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
@@ -93,11 +109,16 @@ export default function ScreenProductFormView() {
   const [realClients, setRealClients] = useState([]);
   useEffect(() => {
     let cancelled = false;
-    clientesApi.list()
+    // is_parent=all → incluye padres + subsidiarias en el mismo listado
+    // (Parent-Child sprint). orderClientsHierarchy las agrupa con el
+    // padre arriba y la subsidiaria sangrada debajo.
+    clientesApi.list({ is_parent: "all" })
       .then(rows => {
         if (cancelled) return;
-        const real = Array.isArray(rows) ? rows.map(adaptClienteForGrid) : [];
-        if (real.length > 0) setRealClients(real);
+        const arr = Array.isArray(rows) ? rows : (rows?.results || []);
+        const adapted = arr.map(adaptClienteForGrid);
+        const ordered = orderClientsHierarchy(adapted);
+        if (ordered.length > 0) setRealClients(ordered);
         else setRealClients(CLIENTS);
       })
       .catch(() => { if (!cancelled) setRealClients(CLIENTS); });
@@ -851,17 +872,65 @@ export default function ScreenProductFormView() {
             </div>
             <div className="client-switch-grid">
               {realClients.map(c => {
-                const on = clientOverrides[c.id] === true;
+                const isSubsidiary = !!c.parent_id;
+                const hasExplicit = c.id in clientOverrides;
+                const inherited = isSubsidiary && !hasExplicit
+                  ? clientOverrides[c.parent_id] === true
+                  : null;
+                const on = hasExplicit
+                  ? clientOverrides[c.id] === true
+                  : (inherited === true);
+                const isInherited = isSubsidiary && !hasExplicit;
                 return (
                   <button type="button" key={c.id}
                           className={`client-switch ${on ? 'client-switch-on' : ''}`}
-                          onClick={()=>setClientOverrides({...clientOverrides, [c.id]: !on})}>
-                    <span className="client-switch-flag">{c.flag}</span>
-                    <span className="client-switch-body">
-                      <span className="heading-sm">{c.name}</span>
-                      <span className="caption">{c.country}</span>
+                          data-subsidiary={isSubsidiary || undefined}
+                          data-inherited={isInherited || undefined}
+                          onClick={()=>setClientOverrides({...clientOverrides, [c.id]: !on})}
+                          style={isSubsidiary ? { paddingLeft: 22 } : undefined}>
+                    <span className="client-switch-body" style={{flex:1}}>
+                      <span className="heading-sm">
+                        {isSubsidiary && (
+                          <span style={{
+                            display:'inline-block', marginRight:6,
+                            color:'#00B286', fontWeight:700,
+                          }} title={lang==='es'?'Subsidiaria':'Subsidiary'}>↳</span>
+                        )}
+                        {c.name}
+                      </span>
+                      {isSubsidiary && c.parent_name && (
+                        <span className="caption" style={{color:'var(--text-tertiary)'}}>
+                          {isInherited
+                            ? (lang==='es'
+                                ? `Hereda de ${c.parent_name}`
+                                : `Inherits from ${c.parent_name}`)
+                            : (lang==='es'
+                                ? `Hijo de ${c.parent_name} · override propio`
+                                : `Child of ${c.parent_name} · own override`)}
+                        </span>
+                      )}
                     </span>
-                    <span className={`mini-switch ${on ? 'mini-on' : ''}`}>
+                    {isSubsidiary && hasExplicit && (
+                      <span
+                        title={lang==='es'?'Volver a heredar del padre':'Revert to parent inheritance'}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const next = { ...clientOverrides };
+                          delete next[c.id];
+                          setClientOverrides(next);
+                        }}
+                        style={{
+                          fontSize: 10, padding: '2px 6px',
+                          borderRadius: 4, marginRight: 6,
+                          background: 'rgba(0,178,134,0.10)',
+                          color: '#00B286', fontWeight: 600,
+                          cursor: 'pointer',
+                        }}>
+                        ↺ {lang==='es'?'heredar':'inherit'}
+                      </span>
+                    )}
+                    <span className={`mini-switch ${on ? 'mini-on' : ''}`}
+                          style={isInherited ? { opacity: 0.55 } : undefined}>
                       <span className="mini-thumb"/>
                     </span>
                   </button>
@@ -1016,35 +1085,85 @@ export default function ScreenProductFormView() {
             const resolved = resolvedClientsPricing?.clients?.find(
               r => r.cliente_id === c.id
             );
+            // Parent-Child: si es subsidiaria sin precio explícito,
+            // hereda del padre (clientPrices[parent_id]) o, en su
+            // ausencia, del precio de lista. Ese es el "default".
+            const isSubsidiary  = !!c.parent_id;
+            const hasOwnPrice   = clientPrices[c.id] != null && Number(clientPrices[c.id]) > 0;
+            const parentPrice   = isSubsidiary
+              && clientPrices[c.parent_id] != null
+              && Number(clientPrices[c.parent_id]) > 0
+                ? Number(clientPrices[c.parent_id])
+                : null;
+            const isInherited   = isSubsidiary && !hasOwnPrice;
+            const inheritedFrom = isInherited ? parentPrice : null;
+            const inputValue = hasOwnPrice
+              ? clientPrices[c.id]
+              : (resolved
+                  ? Number(resolved.precio_final_usd).toFixed(2)
+                  : '');
+            const placeholder = inheritedFrom != null
+              ? Number(inheritedFrom).toFixed(2)
+              : (resolved
+                  ? Number(resolved.precio_final_usd).toFixed(2)
+                  : fmtMoney(Number(listPrice)||0).replace('$','').trim());
+
             return (
-              <div key={c.id} className="client-price-row">
+              <div key={c.id} className="client-price-row"
+                   data-subsidiary={isSubsidiary || undefined}
+                   data-inherited={isInherited || undefined}
+                   style={isSubsidiary ? { paddingLeft: 22 } : undefined}>
                 <span className="client-price-id">
-                  <span>{c.flag}</span>
+                  {isSubsidiary && (
+                    <span style={{color:'#00B286', fontWeight:700, marginRight:2}}
+                          title={lang==='es'?'Subsidiaria':'Subsidiary'}>↳</span>
+                  )}
                   <span className="heading-sm">{c.name}</span>
+                  {isSubsidiary && c.parent_name && (
+                    <span className="caption"
+                          style={{color:'var(--text-tertiary)', marginLeft:8}}
+                          title={lang==='es'?'Cliente padre':'Parent client'}>
+                      ({c.parent_name}{isInherited
+                        ? (lang==='es' ? ' · hereda precio' : ' · inherits price')
+                        : (lang==='es' ? ' · precio propio' : ' · own price')})
+                    </span>
+                  )}
                 </span>
-                <span className="price-editor-row price-editor-sm"
-                      title={resolved?.breakdown
-                        ? JSON.stringify(resolved.breakdown, null, 2)
-                        : (lang==='es'?'Precio calculado por waterfall COMEX':'Price calculated by COMEX waterfall')}>
-                  <span className="price-prefix">$</span>
-                  <input className="input price-input-sm tabular-nums" type="number" step="0.01"
-                         value={
-                           // Si hay override > 0, lo respetamos (override manual).
-                           // Si no, mostramos el calc del waterfall directamente en el input
-                           // — antes vivía en el badge verde "$X calc" que ya quitamos.
-                           (clientPrices[c.id] != null && Number(clientPrices[c.id]) > 0)
-                             ? clientPrices[c.id]
-                             : (resolved
-                                 ? Number(resolved.precio_final_usd).toFixed(2)
-                                 : '')
-                         }
-                         placeholder={resolved
-                           ? Number(resolved.precio_final_usd).toFixed(2)
-                           : fmtMoney(Number(listPrice)||0).replace('$','').trim()}
-                         onChange={e=>{
-                           const v = e.target.value;
-                           setClientPrices({...clientPrices, [c.id]: v === '' ? undefined : Number(v)});
-                         }}/>
+                <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                  {isSubsidiary && hasOwnPrice && (
+                    <button type="button"
+                            title={lang==='es'?'Volver a heredar precio del padre':'Revert to parent price'}
+                            onClick={() => {
+                              const next = { ...clientPrices };
+                              delete next[c.id];
+                              setClientPrices(next);
+                            }}
+                            style={{
+                              fontSize: 10, padding: '2px 6px', borderRadius: 4,
+                              background: 'rgba(0,178,134,0.10)', color: '#00B286',
+                              fontWeight: 600, border: 'none', cursor: 'pointer',
+                            }}>
+                      ↺ {lang==='es'?'heredar':'inherit'}
+                    </button>
+                  )}
+                  <span className="price-editor-row price-editor-sm"
+                        title={resolved?.breakdown
+                          ? JSON.stringify(resolved.breakdown, null, 2)
+                          : (isInherited
+                              ? (lang==='es'?'Hereda precio del cliente padre':'Inherits price from parent client')
+                              : (lang==='es'?'Precio calculado por waterfall COMEX':'Price calculated by COMEX waterfall'))}
+                        style={isInherited
+                          ? { background:'rgba(0,178,134,0.04)', border:'1px dashed rgba(0,178,134,0.30)' }
+                          : undefined}>
+                    <span className="price-prefix">$</span>
+                    <input className="input price-input-sm tabular-nums" type="number" step="0.01"
+                           value={inputValue}
+                           placeholder={placeholder}
+                           onChange={e=>{
+                             const v = e.target.value;
+                             setClientPrices({...clientPrices, [c.id]: v === '' ? undefined : Number(v)});
+                           }}/>
+                  </span>
                 </span>
               </div>
             );

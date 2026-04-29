@@ -17,13 +17,16 @@ import {
   IconChevLeft, IconMapPin, IconUser, IconMail, IconCreditCard,
   IconClock, IconAlert, IconCheck, IconX, IconShield, IconDollar,
   IconTrend, IconBoxes, IconFolder, IconHistory, IconGlobe, IconLock,
-  IconRefresh,
+  IconRefresh, IconUsers,
 } from "../lib/icons.jsx";
 import { fmtMoney, fmtShortDate } from "../lib/i18n.js";
 import { clientesApi } from "../lib/api.js";
 import {
   CLIENTS, EXPEDIENTES, CLIENT_PAYMENTS, CLIENT_PRODUCTS_BOUGHT, OCS,
 } from "../data/mockData.js";
+// Parent-Child (sprint 2026-04-29) — tab Subsidiarias y toggle de consolidación
+import SubsidiariasTab from "../components/clientes/SubsidiariasTab.jsx";
+import ConsolidateToggle from "../components/clientes/ConsolidateToggle.jsx";
 
 // ── Banderitas por país (mismo subset que NodoDetail) ──
 const FLAG_BY_ISO2 = {
@@ -55,6 +58,13 @@ function adaptBackendClient(raw) {
     credito_limit:     Number(raw.credito_limit_usd ?? raw.credito_aprobado ?? 0),
     credito_used:      Number(raw.credito_usado ?? 0),
     credito_dias:      Number(raw.dias_credito ?? 0),
+    // ── Parent-Child (sprint 2026-04-29) ──
+    parent_id:         raw.parent_id || null,
+    parent:            raw.parent || null,                  // {id, razon_social}
+    is_parent:         raw.is_parent ?? !raw.parent_id,
+    is_subsidiary:     raw.is_subsidiary ?? !!raw.parent_id,
+    subsidiarias_count: Number(raw.subsidiarias_count ?? 0),
+    kpis_pool:         raw.kpis_pool || null,
     // crudo por si tabs futuros lo quieren
     _raw: raw,
   };
@@ -108,6 +118,10 @@ export default function ScreenClienteDetail() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
   const [tab, setTab] = useState('expedientes');
+  // Toggle Consolidar (sprint Parent-Child) — solo visible en padre.
+  // Si está ON, las tabs Expedientes / Pagos / Productos consolidan
+  // padre + subsidiarias. OFF muestra solo la entidad actual.
+  const [consolidate, setConsolidate] = useState(true);
   // showEdit/setShowEdit ya no se usa — la edición es una página aparte.
   // Lo mantengo declarado para no romper la función si algún effect lo refería.
   const [showEdit, setShowEdit] = useState(false);   // eslint-disable-line no-unused-vars
@@ -263,11 +277,22 @@ export default function ScreenClienteDetail() {
   return (
     <div className="page">
       {/* ── Breadcrumb ────────────── */}
-      <div className="flex ai-center gap-2" style={{marginBottom: 12}}>
+      <div className="flex ai-center gap-2" style={{marginBottom: 12, flexWrap:'wrap'}}>
         <button className="btn btn-ghost" onClick={()=>navigate('/clientes')}>
           <IconChevLeft size={14}/> {lang==='es'?'Clientes':'Clients'}
         </button>
         <span className="caption" style={{color:'var(--text-tertiary)'}}>/</span>
+        {/* Si es subsidiaria, breadcrumb anidado: Clientes / [Padre] / [Sub] */}
+        {client.is_subsidiary && client.parent && (
+          <>
+            <button className="btn btn-ghost"
+                    style={{padding:'4px 8px'}}
+                    onClick={()=>navigate(`/clientes/${client.parent.id}`)}>
+              {client.parent.razon_social || client.parent.nombre_comercial}
+            </button>
+            <span className="caption" style={{color:'var(--text-tertiary)'}}>/</span>
+          </>
+        )}
         <span className="caption">{client.name}</span>
         <span className="badge badge-outline" style={{marginLeft: 8}}>
           <IconLock size={10}/> CEO-ONLY
@@ -285,6 +310,37 @@ export default function ScreenClienteDetail() {
         <div className="client-hero-body">
           {/* Círculo de bandera removido — el país aparece en el row de info debajo del nombre. */}
           <div style={{flex:1, minWidth:0}}>
+            {/* Chip "Cliente padre" — solo visible en subsidiarias */}
+            {client.is_subsidiary && client.parent && (
+              <button
+                onClick={()=>navigate(`/clientes/${client.parent.id}`)}
+                className="parent-chip"
+                style={{
+                  display:'inline-flex', alignItems:'center', gap:6,
+                  padding:'4px 10px', marginBottom: 6,
+                  background:'rgba(0,178,134,0.10)',
+                  border:'1px solid rgba(0,178,134,0.25)',
+                  borderRadius: 999,
+                  font:'600 11px/1 inherit',
+                  color:'#0F1B3D',
+                  cursor:'pointer',
+                  transition:'background 0.18s ease',
+                }}
+                onMouseOver={e=>e.currentTarget.style.background='rgba(0,178,134,0.18)'}
+                onMouseOut ={e=>e.currentTarget.style.background='rgba(0,178,134,0.10)'}
+              >
+                <IconChevLeft size={11} style={{color:'#00B286'}}/>
+                <span style={{
+                  color:'#00B286', textTransform:'uppercase',
+                  letterSpacing:'0.08em', fontSize:10,
+                }}>
+                  {lang==='es'?'Cliente padre:':'Parent client:'}
+                </span>
+                <strong style={{color:'#0F1B3D'}}>
+                  {client.parent.razon_social || client.parent.nombre_comercial}
+                </strong>
+              </button>
+            )}
             <div className="micro" style={{color: channel.color}}>{channel.label.toUpperCase()}</div>
             <h1 className="page-title" style={{margin:'2px 0 2px'}}>{client.name}</h1>
             <div className="caption" style={{display:'flex', gap:14, flexWrap:'wrap'}}>
@@ -434,30 +490,53 @@ export default function ScreenClienteDetail() {
       </div>
 
       {/* ── Tabs ─────────────────── */}
-      <div className="tab-bar" style={{marginTop: 20}}>
-        <button className="tab-btn" data-active={tab==='expedientes'} onClick={()=>setTab('expedientes')}>
-          <IconFolder size={12}/> {lang==='es'?'Expedientes activos':'Active files'}
-          <span className="tab-count">{expedientesActivos.length}</span>
-        </button>
-        <button className="tab-btn" data-active={tab==='pagos'} onClick={()=>setTab('pagos')}>
-          <IconDollar size={12}/> {lang==='es'?'Pagos':'Payments'}
-          <span className="tab-count">{pagosCliente.length}</span>
-        </button>
-        <button className="tab-btn" data-active={tab==='productos'} onClick={()=>setTab('productos')}>
-          <IconBoxes size={12}/> {lang==='es'?'Productos comprados':'Products bought'}
-          <span className="tab-count">{productosCliente.length}</span>
-        </button>
-        <button className="tab-btn" data-active={tab==='alertas'} onClick={()=>setTab('alertas')}>
-          <IconAlert size={12}/> {lang==='es'?'Alertas':'Alerts'}
-          <span className="tab-count">{alertas.filter(a => a.severity !== 'ok').length}</span>
-        </button>
+      <div className="tab-bar" style={{marginTop: 20, display:'flex', alignItems:'center'}}>
+        <div style={{display:'flex', flex:1, flexWrap:'wrap'}}>
+          <button className="tab-btn" data-active={tab==='expedientes'} onClick={()=>setTab('expedientes')}>
+            <IconFolder size={12}/> {lang==='es'?'Expedientes activos':'Active files'}
+            <span className="tab-count">{expedientesActivos.length}</span>
+          </button>
+          <button className="tab-btn" data-active={tab==='pagos'} onClick={()=>setTab('pagos')}>
+            <IconDollar size={12}/> {lang==='es'?'Pagos':'Payments'}
+            <span className="tab-count">{pagosCliente.length}</span>
+          </button>
+          <button className="tab-btn" data-active={tab==='productos'} onClick={()=>setTab('productos')}>
+            <IconBoxes size={12}/> {lang==='es'?'Productos comprados':'Products bought'}
+            <span className="tab-count">{productosCliente.length}</span>
+          </button>
+          <button className="tab-btn" data-active={tab==='alertas'} onClick={()=>setTab('alertas')}>
+            <IconAlert size={12}/> {lang==='es'?'Alertas':'Alerts'}
+            <span className="tab-count">{alertas.filter(a => a.severity !== 'ok').length}</span>
+          </button>
+          {/* Subsidiarias — solo PADRE puede tener subsidiarias (max 2 niveles) */}
+          {client.is_parent && (
+            <button className="tab-btn" data-active={tab==='subsidiarias'}
+                    onClick={()=>setTab('subsidiarias')}>
+              <IconUsers size={12}/> {lang==='es'?'Subsidiarias':'Subsidiaries'}
+              <span className="tab-count">{client.subsidiarias_count || 0}</span>
+            </button>
+          )}
+        </div>
+        {/* Toggle Consolidar — solo padre, oculto en tab Subsidiarias / Alertas */}
+        {client.is_parent && client.subsidiarias_count > 0
+          && tab !== 'subsidiarias' && tab !== 'alertas' && (
+          <ConsolidateToggle
+            value={consolidate}
+            onChange={setConsolidate}
+            lang={lang}
+          />
+        )}
       </div>
 
       <div className="tab-panel">
         <AnimatePresence mode="wait">
           {tab === 'expedientes' && (
             <motion.div key="exp" initial={{opacity:0, y:6}} animate={{opacity:1, y:0}} exit={{opacity:0}} transition={{duration:0.18}}>
-              <ExpedientesTab lang={lang} expedientes={expedientesActivos} onOpen={(exp)=>{
+              <ExpedientesTab lang={lang}
+                              expedientes={expedientesActivos}
+                              consolidate={consolidate}
+                              isParent={client.is_parent}
+                              onOpen={(exp)=>{
                 const oc = OCS.find(o => o.expedientes.includes(exp.id));
                 if (oc) navigate(`/expedientes/${oc.id}/exp/${exp.id}`);
               }}/>
@@ -465,17 +544,24 @@ export default function ScreenClienteDetail() {
           )}
           {tab === 'pagos' && (
             <motion.div key="pay" initial={{opacity:0, y:6}} animate={{opacity:1, y:0}} exit={{opacity:0}} transition={{duration:0.18}}>
-              <PagosTab lang={lang} pagos={pagosCliente}/>
+              <PagosTab lang={lang} pagos={pagosCliente}
+                        consolidate={consolidate} isParent={client.is_parent}/>
             </motion.div>
           )}
           {tab === 'productos' && (
             <motion.div key="prod" initial={{opacity:0, y:6}} animate={{opacity:1, y:0}} exit={{opacity:0}} transition={{duration:0.18}}>
-              <ProductosTab lang={lang} productos={productosCliente}/>
+              <ProductosTab lang={lang} productos={productosCliente}
+                            consolidate={consolidate} isParent={client.is_parent}/>
             </motion.div>
           )}
           {tab === 'alertas' && (
             <motion.div key="alr" initial={{opacity:0, y:6}} animate={{opacity:1, y:0}} exit={{opacity:0}} transition={{duration:0.18}}>
               <AlertasTab lang={lang} alertas={alertas}/>
+            </motion.div>
+          )}
+          {tab === 'subsidiarias' && client.is_parent && (
+            <motion.div key="subs" initial={{opacity:0, y:6}} animate={{opacity:1, y:0}} exit={{opacity:0}} transition={{duration:0.18}}>
+              <SubsidiariasTab parent={client._raw || client} lang={lang}/>
             </motion.div>
           )}
         </AnimatePresence>
@@ -500,16 +586,44 @@ export default function ScreenClienteDetail() {
 /* ────────────────────────────────────────────────────
    TAB · Expedientes activos — reloj de crédito semáforo
    ──────────────────────────────────────────────────── */
-function ExpedientesTab({ lang, expedientes, onOpen }) {
+function ConsolidatedBanner({ lang, isParent, consolidate }) {
+  if (!isParent || !consolidate) return null;
+  return (
+    <div style={{
+      display:'flex', alignItems:'center', gap:6,
+      padding:'8px 12px', marginBottom: 10,
+      background:'rgba(0,178,134,0.06)',
+      border:'1px dashed rgba(0,178,134,0.30)',
+      borderRadius:8,
+      font:'500 12px/1.4 inherit', color:'#0F1B3D',
+    }}>
+      <span style={{
+        width:6, height:6, borderRadius:99, background:'#00B286', flexShrink:0,
+      }}/>
+      <span>
+        {lang==='es'
+          ? 'Vista consolidada · incluye padre + subsidiarias activas.'
+          : 'Consolidated view · includes parent + active subsidiaries.'}
+      </span>
+    </div>
+  );
+}
+
+function ExpedientesTab({ lang, expedientes, onOpen, consolidate, isParent }) {
   if (!expedientes.length) {
     return (
-      <div className="card card-pad-lg empty">
-        <IconFolder size={22} style={{color:'var(--text-tertiary)'}}/>
-        <div className="heading-md">{lang==='es'?'Sin expedientes activos':'No active files'}</div>
-      </div>
+      <>
+        <ConsolidatedBanner lang={lang} isParent={isParent} consolidate={consolidate}/>
+        <div className="card card-pad-lg empty">
+          <IconFolder size={22} style={{color:'var(--text-tertiary)'}}/>
+          <div className="heading-md">{lang==='es'?'Sin expedientes activos':'No active files'}</div>
+        </div>
+      </>
     );
   }
   return (
+    <>
+      <ConsolidatedBanner lang={lang} isParent={isParent} consolidate={consolidate}/>
     <div className="card card-pad-0">
       <table className="table">
         <thead>
@@ -548,19 +662,23 @@ function ExpedientesTab({ lang, expedientes, onOpen }) {
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
 /* ────────────────────────────────────────────────────
    TAB · Pagos — Payment Status Machine
    ──────────────────────────────────────────────────── */
-function PagosTab({ lang, pagos }) {
+function PagosTab({ lang, pagos, consolidate, isParent }) {
   if (!pagos.length) {
     return (
-      <div className="card card-pad-lg empty">
-        <IconDollar size={22} style={{color:'var(--text-tertiary)'}}/>
-        <div className="heading-md">{lang==='es'?'Sin pagos registrados':'No payments recorded'}</div>
-      </div>
+      <>
+        <ConsolidatedBanner lang={lang} isParent={isParent} consolidate={consolidate}/>
+        <div className="card card-pad-lg empty">
+          <IconDollar size={22} style={{color:'var(--text-tertiary)'}}/>
+          <div className="heading-md">{lang==='es'?'Sin pagos registrados':'No payments recorded'}</div>
+        </div>
+      </>
     );
   }
 
@@ -572,6 +690,7 @@ function PagosTab({ lang, pagos }) {
 
   return (
     <>
+      <ConsolidatedBanner lang={lang} isParent={isParent} consolidate={consolidate}/>
       {/* Mini-dashboard de estados */}
       <div className="status-machine-strip">
         {Object.entries(PAYMENT_STATUS).map(([k, m]) => (
@@ -621,17 +740,22 @@ function PagosTab({ lang, pagos }) {
 /* ────────────────────────────────────────────────────
    TAB · Productos comprados — inteligencia
    ──────────────────────────────────────────────────── */
-function ProductosTab({ lang, productos }) {
+function ProductosTab({ lang, productos, consolidate, isParent }) {
   if (!productos.length) {
     return (
-      <div className="card card-pad-lg empty">
-        <IconBoxes size={22} style={{color:'var(--text-tertiary)'}}/>
-        <div className="heading-md">{lang==='es'?'Sin historial de compras':'No purchase history'}</div>
-      </div>
+      <>
+        <ConsolidatedBanner lang={lang} isParent={isParent} consolidate={consolidate}/>
+        <div className="card card-pad-lg empty">
+          <IconBoxes size={22} style={{color:'var(--text-tertiary)'}}/>
+          <div className="heading-md">{lang==='es'?'Sin historial de compras':'No purchase history'}</div>
+        </div>
+      </>
     );
   }
   const totalRevenue = productos.reduce((a, p) => a + p.revenue_12m, 0);
   return (
+    <>
+      <ConsolidatedBanner lang={lang} isParent={isParent} consolidate={consolidate}/>
     <div className="card card-pad-0">
       <table className="table">
         <thead>
@@ -668,6 +792,7 @@ function ProductosTab({ lang, productos }) {
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 

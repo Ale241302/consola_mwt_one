@@ -48,7 +48,7 @@ function mapClienteFromApi(r) {
     id:               r.id,
     name:             r.nombre_comercial || r.razon_social || "",
     cliente:          r.razon_social || "",
-    codigo_marluvas:  (r.tax_id || r.id || "").toString().slice(0, 10),
+    codigo_marluvas:  r.codigo_marluvas || (r.tax_id || r.id || "").toString().slice(0, 10),
     country:          COUNTRY_NAME[r.pais_iso2] || r.pais_iso2 || "",
     country_code:     r.pais_iso2 || "",
     flag:             FLAG_ISO[r.pais_iso2] || "🌐",
@@ -59,7 +59,9 @@ function mapClienteFromApi(r) {
     credito_limit:    Number(r.credito_aprobado) || 0,
     credito_used:     Number(r.credito_usado)    || 0,
     credito_dias:     Number(r.dias_credito)     || 0,
-    incoterm:         "EXW",   // backend aún no lo modela
+    incoterm:         r.incoterm || "EXW",
+    // Parent-Child (sprint 2026-04-29) — badge en card
+    subsidiarias_count: Number(r.subsidiarias_count || 0),
     _raw:             r,
   };
 }
@@ -95,7 +97,9 @@ export default function ScreenClientes() {
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     try {
-      const data = await clientesApi.list();
+      // sprint Parent-Child: dashboard top-level NO incluye subsidiarias.
+      // Backend default es is_parent=true, lo dejamos explícito por claridad.
+      const data = await clientesApi.list({ is_parent: "true" });
       const arr  = Array.isArray(data) ? data : (data?.results || []);
       setApiClients(arr.map(mapClienteFromApi));
     } catch (e) {
@@ -307,12 +311,18 @@ export default function ScreenClientes() {
                   </div>
                 </div>
 
-                {/* Footer: expedientes activos + incoterm */}
+                {/* Footer: expedientes activos + subsidiarias + incoterm */}
                 <div className="client-card-foot">
                   <span className="footstat">
                     <strong>{activeExps}</strong>
                     <span className="caption">{lang==='es'?'expedientes activos':'active files'}</span>
                   </span>
+                  {c.subsidiarias_count > 0 && (
+                    <span className="footstat" title={lang==='es'?'Subsidiarias del cliente':'Client subsidiaries'}>
+                      <strong style={{color:'#00B286'}}>{c.subsidiarias_count}</strong>
+                      <span className="caption">{lang==='es'?'subsidiarias':'subsidiaries'}</span>
+                    </span>
+                  )}
                   <span className="incoterm-pill" title={`Incoterm default · ${c.incoterm}`}>
                     {c.incoterm}
                   </span>
