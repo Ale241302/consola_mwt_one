@@ -26,7 +26,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   IconPlus, IconUpload, IconCheck, IconX, IconPaperclip,
   IconPackage, IconShield, IconDollar, IconLock, IconSparkle,
-  IconFileText, IconSliders, IconFolder, IconChevLeft,
+  IconFileText, IconSliders, IconFolder, IconChevLeft, IconRefresh,
 } from "../lib/icons.jsx";
 import { fmtMoney } from "../lib/i18n.js";
 import {
@@ -287,11 +287,17 @@ export default function ScreenProductFormView() {
       .then(res => {
         if (cancelled || !res?.clients) return;
         setResolvedClientsPricing(res);
-        // Pre-pobla overrides solo donde el usuario aún no escribió uno manual
+        // Pre-pobla overrides cuando NO hay valor válido (undefined, null o 0).
+        // Tratamos 0 como "sin override" porque la UI muestra el calc cuando
+        // el override no es positivo — el usuario no quiere que el 0 se quede
+        // pegado tras subir un Excel nuevo. Si quiere setear "$0 real" debe
+        // usar otro flujo (TBD: toggle "gratis").
         setClientPrices(prev => {
           const next = { ...prev };
           for (const c of res.clients) {
-            if (next[c.cliente_id] === undefined && c.precio_final_usd) {
+            const current = next[c.cliente_id];
+            const noValidOverride = (current == null) || Number(current) <= 0;
+            if (noValidOverride && c.precio_final_usd) {
               next[c.cliente_id] = Number(c.precio_final_usd);
             }
           }
@@ -370,6 +376,72 @@ export default function ScreenProductFormView() {
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
+
+  // ── Sync overrides → calculados (waterfall) para todos los clientes ──
+  // Estado del botón "Actualizar precios calculados a todos los clientes":
+  // - syncStatus: 'idle' | 'confirm' | 'syncing' | 'done' | 'error'
+  // - syncMsg: mensaje breve para mostrar tras la operación
+  const [syncStatus, setSyncStatus] = useState('idle');
+  const [syncMsg, setSyncMsg]       = useState('');
+
+  /**
+   * Re-pega los precios calculados (waterfall COMEX) en `client_prices` para
+   * TODOS los clientes con asignación activa, persiste el producto y
+   * refresca el panel sin recargar la página.
+   *
+   * Útil cuando se subió un Excel nuevo y los overrides manuales del
+   * detalle del producto quedaron obsoletos. El usuario puede aceptar el
+   * recálculo en bloque sin tener que tocar cada input.
+   */
+  const handleSyncCalculatedPrices = async () => {
+    if (!isEdit || !existing?.sku || !productId) return;
+    setSyncStatus('syncing');
+    setSyncMsg('');
+    try {
+      // 1. Refetch del waterfall (precios calculados frescos)
+      const fresh = await apiFetch(
+        `/commercial/products/${encodeURIComponent(existing.sku)}/clients-pricing/`,
+        { token: getToken() },
+      );
+      if (!fresh?.clients?.length) {
+        setSyncStatus('error');
+        setSyncMsg(lang === 'es'
+          ? 'No hay precios calculados disponibles para este SKU.'
+          : 'No calculated prices available for this SKU.');
+        return;
+      }
+
+      // 2. Construir el nuevo mapa client_prices con los precios finales del waterfall
+      const newClientPrices = { ...clientPrices };
+      let updatedCount = 0;
+      for (const c of fresh.clients) {
+        if (c.cliente_id && c.precio_final_usd != null) {
+          newClientPrices[c.cliente_id] = Number(c.precio_final_usd);
+          updatedCount += 1;
+        }
+      }
+
+      // 3. PATCH parcial al producto: solo `especificaciones.client_prices`.
+      //    Mantenemos el resto de `especificaciones` intacto.
+      const currentEspec = existing?.especificaciones || {};
+      const patchedEspec = { ...currentEspec, client_prices: newClientPrices };
+      await productosApi.update(productId, { especificaciones: patchedEspec });
+
+      // 4. Actualizar estados locales (sin recargar la página)
+      setClientPrices(newClientPrices);
+      setResolvedClientsPricing(fresh);
+      setSyncStatus('done');
+      setSyncMsg(lang === 'es'
+        ? `${updatedCount} cliente(s) actualizados con el precio calculado.`
+        : `${updatedCount} client(s) updated with calculated price.`);
+      // Limpiar el mensaje a los 4s
+      setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
+    } catch (e) {
+      setSyncStatus('error');
+      setSyncMsg((lang === 'es' ? 'Error al sincronizar: ' : 'Sync failed: ')
+                 + (e?.message || ''));
+    }
+  };
 
   const resolveMarcaId = (idOrSlug) => {
     if (!idOrSlug) return null;
@@ -828,7 +900,8 @@ export default function ScreenProductFormView() {
         </div>
 
         <div className="caption" style={{margin:'12px 0 6px', color:'var(--text-tertiary)',
-                                          display:'flex', alignItems:'center', gap:8}}>
+                                          display:'flex', alignItems:'center', gap:8,
+                                          flexWrap:'wrap'}}>
           {lang==='es'?'Override por cliente':'Per-client override'}
           {resolvedClientsPricing?.count > 0 && (
             <span style={{background:'#1DE39422', color:'#00B286',
@@ -839,7 +912,105 @@ export default function ScreenProductFormView() {
                 : `${resolvedClientsPricing.count} resolved (COMEX waterfall)`}
             </span>
           )}
+          {/* Botón: aplicar precio calculado a todos los clientes */}
+          {isEdit && resolvedClientsPricing?.count > 0 && (
+            <button
+              type="button"
+              onClick={() => setSyncStatus('confirm')}
+              disabled={syncStatus === 'syncing'}
+              style={{
+                marginLeft:'auto',
+                display:'inline-flex', alignItems:'center', gap:6,
+                padding:'4px 10px',
+                fontSize:11, fontWeight:600,
+                color:'#fff',
+                background: syncStatus === 'syncing' ? '#9CA3AF' : '#00B286',
+                border:'none', borderRadius:6,
+                cursor: syncStatus === 'syncing' ? 'wait' : 'pointer',
+                transition:'background 0.18s',
+              }}
+              title={lang==='es'
+                ? 'Sobreescribe los inputs de override con los precios calculados (waterfall COMEX)'
+                : 'Overwrite override inputs with calculated prices (COMEX waterfall)'}
+            >
+              <IconRefresh size={11}/>
+              {syncStatus === 'syncing'
+                ? (lang==='es'?'Actualizando…':'Updating…')
+                : (lang==='es'?'Actualizar todos los clientes':'Update all clients')}
+            </button>
+          )}
+          {/* Banner de feedback */}
+          {syncStatus === 'done' && syncMsg && (
+            <span style={{color:'#065F46', background:'#1DE39422',
+                          padding:'2px 8px', borderRadius:6,
+                          fontSize:10, fontWeight:600,
+                          width:'100%', marginTop:4}}>
+              ✓ {syncMsg}
+            </span>
+          )}
+          {syncStatus === 'error' && syncMsg && (
+            <span style={{color:'#991B1B', background:'#FEE2E2',
+                          padding:'2px 8px', borderRadius:6,
+                          fontSize:10, fontWeight:600,
+                          width:'100%', marginTop:4}}>
+              ⚠ {syncMsg}
+            </span>
+          )}
         </div>
+
+        {/* Modal de confirmación para actualizar todos los clientes */}
+        {syncStatus === 'confirm' && (
+          <div
+            onClick={() => setSyncStatus('idle')}
+            style={{
+              position:'fixed', inset:0, zIndex:1000,
+              background:'rgba(11,30,58,0.45)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              padding:16,
+            }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                background:'#fff', borderRadius:12, width:'100%', maxWidth:440,
+                padding:'20px 22px',
+                boxShadow:'0 12px 48px rgba(11,30,58,0.18)',
+              }}
+            >
+              <div style={{display:'flex', alignItems:'flex-start', gap:14, marginBottom:8}}>
+                <div style={{
+                  flexShrink:0, width:40, height:40, borderRadius:'50%',
+                  background:'rgba(0,178,134,0.12)', color:'#00B286',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                }}>
+                  <IconRefresh size={18}/>
+                </div>
+                <div>
+                  <div className="heading-md" style={{marginBottom:4}}>
+                    {lang==='es'?'Actualizar todos los clientes':'Update all clients'}
+                  </div>
+                  <div className="caption" style={{color:'var(--text-tertiary)', lineHeight:1.5}}>
+                    {lang==='es'
+                      ? <>Se sobreescribirán los <strong>{resolvedClientsPricing?.count}</strong> overrides manuales con los precios calculados por el waterfall COMEX. Esta acción guarda el producto inmediatamente.</>
+                      : <>The <strong>{resolvedClientsPricing?.count}</strong> manual overrides will be overwritten with the prices calculated by the COMEX waterfall. This saves the product immediately.</>}
+                  </div>
+                </div>
+              </div>
+              <div style={{display:'flex', gap:8, justifyContent:'flex-end', marginTop:14}}>
+                <button className="btn" onClick={() => setSyncStatus('idle')}>
+                  {lang==='es'?'Cancelar':'Cancel'}
+                </button>
+                <button
+                  className="btn"
+                  onClick={handleSyncCalculatedPrices}
+                  style={{background:'#00B286', color:'#fff', borderColor:'#00B286'}}
+                >
+                  {lang==='es'?'Actualizar y guardar':'Update and save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="client-price-grid">
           {realClients.map(c => {
             const resolved = resolvedClientsPricing?.clients?.find(
@@ -850,19 +1021,23 @@ export default function ScreenProductFormView() {
                 <span className="client-price-id">
                   <span>{c.flag}</span>
                   <span className="heading-sm">{c.name}</span>
-                  {resolved && (
-                    <span style={{fontSize:9, color:'#00B286', fontWeight:600,
-                                  marginLeft:6, padding:'1px 5px',
-                                  background:'#1DE39418', borderRadius:4}}
-                          title={resolved.breakdown ? JSON.stringify(resolved.breakdown, null, 2) : ''}>
-                      ${Number(resolved.precio_calculadora).toFixed(2)} calc
-                    </span>
-                  )}
                 </span>
-                <span className="price-editor-row price-editor-sm">
+                <span className="price-editor-row price-editor-sm"
+                      title={resolved?.breakdown
+                        ? JSON.stringify(resolved.breakdown, null, 2)
+                        : (lang==='es'?'Precio calculado por waterfall COMEX':'Price calculated by COMEX waterfall')}>
                   <span className="price-prefix">$</span>
                   <input className="input price-input-sm tabular-nums" type="number" step="0.01"
-                         value={clientPrices[c.id] ?? ''}
+                         value={
+                           // Si hay override > 0, lo respetamos (override manual).
+                           // Si no, mostramos el calc del waterfall directamente en el input
+                           // — antes vivía en el badge verde "$X calc" que ya quitamos.
+                           (clientPrices[c.id] != null && Number(clientPrices[c.id]) > 0)
+                             ? clientPrices[c.id]
+                             : (resolved
+                                 ? Number(resolved.precio_final_usd).toFixed(2)
+                                 : '')
+                         }
                          placeholder={resolved
                            ? Number(resolved.precio_final_usd).toFixed(2)
                            : fmtMoney(Number(listPrice)||0).replace('$','').trim()}
