@@ -21,6 +21,7 @@ Regla de oro MWT: cero FK físicas → todos los vínculos (user_id,
 role_slug, legal_entity_id) son UUID/string planos con índices.
 =====================================================================
 """
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
 
@@ -40,6 +41,14 @@ class MwtUser(models.Model):
     avatar_url           = models.TextField(null=True, blank=True)
 
     legal_entity_id      = models.UUIDField(null=True, blank=True)
+    # Sprint Usuarios multi-empresa (A4d) — array de UUIDs en texto plano,
+    # SIN FK. Contiene todos los clientes a los que el usuario tiene scope.
+    # `legal_entity_id` (singular) se mantiene como "empresa primaria" =
+    # primer elemento del array (retrocompat con Portal/Wizard legacy).
+    legal_entity_ids     = ArrayField(
+        models.CharField(max_length=36),
+        default=list, blank=True,
+    )
 
     role_default         = models.CharField(max_length=32, default="viewer")
     is_superuser         = models.BooleanField(default=False)

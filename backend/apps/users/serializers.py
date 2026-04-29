@@ -61,7 +61,8 @@ class MwtUserListSerializer(serializers.ModelSerializer):
         fields = (
             "id", "email_plain", "full_name", "contact_email", "phone",
             "preferred_language", "timezone", "avatar_url",
-            "legal_entity_id", "role_default", "is_superuser",
+            "legal_entity_id", "legal_entity_ids",
+            "role_default", "is_superuser",
             "last_login_at", "failed_login_count", "locked_until",
             "is_active", "created_at", "updated_at",
         )
@@ -77,6 +78,12 @@ class MwtUserSerializer(serializers.ModelSerializer):
     El PATCH/POST puede recibir `addresses[]` en el payload, pero la
     persistencia la hace `_process_addresses_atomic()` en el ViewSet
     (transaction.atomic con create/update/soft-delete por id).
+
+    Sprint Usuarios multi-empresa (2026-04-29):
+      · `legal_entity_ids` (array) es el campo CANÓNICO de scope.
+      · `legal_entity_id`  (singular) se sincroniza al primer elemento
+        del array (retrocompat con Portal / Wizard / código legacy
+        que solo lee el campo singular).
     """
     addresses = serializers.SerializerMethodField(read_only=True)
 
@@ -94,6 +101,28 @@ class MwtUserSerializer(serializers.ModelSerializer):
             "-is_default", "-created_at",
         )
         return UserAddressSerializer(qs, many=True).data
+
+    # ── Sincronización legal_entity_id ↔ legal_entity_ids ──────────
+    # Los dos campos quedan acoplados en write para que código legacy
+    # (Portal B2B, Wizard) que solo lee el singular siga funcionando.
+    def _sync_entity_fields(self, attrs):
+        ids   = attrs.get("legal_entity_ids", None)
+        prim  = attrs.get("legal_entity_id",  None)
+        # Caso 1: viene array → primario = primer elemento
+        if isinstance(ids, list):
+            ids = [str(x) for x in ids if x]   # normalizar a str y dropear falsy
+            attrs["legal_entity_ids"] = ids
+            attrs["legal_entity_id"]  = ids[0] if ids else None
+            return
+        # Caso 2: viene solo singular → array = [singular]
+        if prim is not None and "legal_entity_ids" not in attrs:
+            attrs["legal_entity_ids"] = [str(prim)] if prim else []
+            return
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        self._sync_entity_fields(attrs)
+        return attrs
 
 
 # ─────────────────────────────────────────────────────────────────────

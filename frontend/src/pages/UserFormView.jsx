@@ -20,7 +20,7 @@
 //
 // Acciones inline: Cancelar · Guardar · (edit) Reset password · Inactivar
 // =====================================================================
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -62,6 +62,7 @@ const EMPTY_USER = {
   timezone: "America/Lima",
   role_default: "viewer",
   legal_entity_id: null,
+  legal_entity_ids: [],
   is_active: true,
   addresses: [],
   password: "",
@@ -83,6 +84,18 @@ export default function UserFormView() {
   const [companies, setCompanies] = useState([]);
   const [companySearch, setCompanySearch] = useState("");
   const [companyOpen, setCompanyOpen] = useState(false);
+  const companyBoxRef = useRef(null);
+
+  // Click fuera del selector cierra el dropdown.
+  useEffect(() => {
+    if (!companyOpen) return;
+    const onDocClick = (e) => {
+      if (!companyBoxRef.current) return;
+      if (!companyBoxRef.current.contains(e.target)) setCompanyOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [companyOpen]);
 
   // ── Cargar empresas (selector) ───────────────────────────
   // Fuente: /api/clientes/?is_parent=all  (incluye padres + subsidiarias).
@@ -112,7 +125,11 @@ export default function UserFormView() {
     setLoading(true);
     try {
       const u = await apiFetch(`/users/${userId}/`, { token: getToken() });
-      setUser({ ...EMPTY_USER, ...u, password: "" });
+      // Normalizar legal_entity_ids: si el backend solo devuelve el singular,
+      // construimos el array; si está vacío y hay singular, lo incluimos.
+      const ids = Array.isArray(u.legal_entity_ids) ? u.legal_entity_ids.slice() : [];
+      if (u.legal_entity_id && !ids.includes(u.legal_entity_id)) ids.unshift(u.legal_entity_id);
+      setUser({ ...EMPTY_USER, ...u, legal_entity_ids: ids, password: "" });
       setDirty(false);
     } catch (e) {
       setError(e?.message || "No se pudo cargar el usuario");
@@ -240,10 +257,31 @@ export default function UserFormView() {
     }
   };
 
-  // ── Empresa seleccionada ────────────────────────────────
-  const selectedCompany = useMemo(() =>
-    companies.find((c) => c.id === user.legal_entity_id) || null,
-    [companies, user.legal_entity_id]);
+  // ── Empresas seleccionadas (multi · sprint Usuarios M-Empresa) ──
+  // legal_entity_ids es la fuente canónica. Compat: si solo hay
+  // legal_entity_id (singular legacy), lo derivamos.
+  const selectedIds = useMemo(() => {
+    const ids = Array.isArray(user.legal_entity_ids) ? user.legal_entity_ids.slice() : [];
+    if (user.legal_entity_id && !ids.includes(user.legal_entity_id)) ids.unshift(user.legal_entity_id);
+    return ids;
+  }, [user.legal_entity_ids, user.legal_entity_id]);
+  const selectedCompanies = useMemo(
+    () => selectedIds.map((id) => companies.find((c) => c.id === id)).filter(Boolean),
+    [selectedIds, companies]
+  );
+
+  // Helper: sincroniza legal_entity_ids + legal_entity_id (primero del array).
+  const setLegalEntityIds = (next) => {
+    const arr = Array.from(new Set(next.filter(Boolean)));
+    patch({ legal_entity_ids: arr, legal_entity_id: arr[0] || null });
+  };
+  const toggleCompany = (id) => {
+    setLegalEntityIds(
+      selectedIds.includes(id)
+        ? selectedIds.filter((x) => x !== id)
+        : [...selectedIds, id]
+    );
+  };
 
   const filteredCompanies = useMemo(() => {
     // 1. Filtrado por búsqueda (razón social / comercial / RUC).
@@ -487,121 +525,131 @@ export default function UserFormView() {
                    ? "OBLIGATORIO para rol CLIENT — el cliente solo verá expedientes/OCs/documentos de esta empresa."
                    : "Opcional. Para roles internos de MWT no asigna empresa (quedan con scope global). Los datos corporativos vienen del módulo Clientes."
                }>
-        {selectedCompany ? (
+        {/* Chips de empresas seleccionadas — multi-empresa (sprint M-Empresa) */}
+        {selectedCompanies.length > 0 && (
           <div style={{
-            padding: "12px 16px", border: "1px solid var(--mint)",
-            background: "rgba(0,178,134,0.06)", borderRadius: 10,
-            display: "flex", alignItems: "center", gap: 14,
+            display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10,
           }}>
-            <span style={{ fontSize: 24 }}>{selectedCompany.flag || "🏢"}</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--navy)",
-                            display: "flex", alignItems: "center", gap: 6 }}>
-                {selectedCompany.parent_id && (
-                  <span style={{ color: "#00B286", fontWeight: 700 }}
-                        title="Subsidiaria">↳</span>
-                )}
-                {selectedCompany.razon_social}
-              </div>
-              <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
-                RUC/CUIT: <code>{selectedCompany.tax_id || "—"}</code>
-                {selectedCompany.country && <> · {selectedCompany.country}</>}
-                {selectedCompany.parent_id && (() => {
-                  const parent = companies.find((p) => p.id === selectedCompany.parent_id);
-                  return parent ? (
-                    <> · <span style={{ color: "#00B286" }}>
-                      hija de {parent.razon_social}
-                    </span></>
-                  ) : null;
-                })()}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => patch({ legal_entity_id: null })}
-              className="btn btn-ghost btn-sm"
-              style={{ color: "#D64545" }}
-            >
-              <IconX size={12}/> Quitar
-            </button>
-          </div>
-        ) : (
-          <div style={{ position: "relative" }}>
-            <input
-              placeholder="Buscar empresa por razón social, RUC/CUIT o nombre comercial…"
-              value={companySearch}
-              onChange={(e) => { setCompanySearch(e.target.value); setCompanyOpen(true); }}
-              onFocus={() => setCompanyOpen(true)}
-              style={styles.input}
-            />
-            {companyOpen && filteredCompanies.length > 0 && (
-              <div style={{
-                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20,
-                background: "#fff", border: "1px solid var(--border)",
-                borderRadius: 8, marginTop: 4, maxHeight: 280, overflowY: "auto",
-                boxShadow: "0 8px 24px rgba(11,30,58,0.15)",
-              }}>
-                {filteredCompanies.map((c) => {
-                  const isSubsidiary = !!c.parent_id;
-                  const parent = isSubsidiary
-                    ? companies.find((p) => p.id === c.parent_id)
-                    : null;
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => {
-                        patch({ legal_entity_id: c.id });
-                        setCompanyOpen(false);
-                        setCompanySearch("");
-                      }}
-                      style={{
-                        width: "100%", textAlign: "left",
-                        padding: "10px 14px", paddingLeft: isSubsidiary ? 28 : 14,
-                        border: "none",
-                        borderBottom: "1px solid #F3F5F8", background: "#fff",
-                        cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = "#F7F9FC"}
-                      onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
-                    >
-                      {isSubsidiary && (
-                        <span style={{ color: "#00B286", fontWeight: 700, marginRight: -4 }}
-                              title="Subsidiaria">↳</span>
-                      )}
-                      <span style={{ fontSize: 18 }}>{c.flag || "🏢"}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)" }}>
-                          {c.razon_social}
-                        </div>
-                        <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                          RUC/CUIT: {c.tax_id || "—"}
-                          {c.country && <> · {c.country}</>}
-                          {isSubsidiary && parent && (
-                            <> · <span style={{ color: "#00B286" }}>
-                              hija de {parent.razon_social}
-                            </span></>
-                          )}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            {companyOpen && filteredCompanies.length === 0 && (
-              <div style={{
-                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20,
-                background: "#fff", border: "1px solid var(--border)",
-                borderRadius: 8, marginTop: 4, padding: 14,
-                fontSize: 12, color: "var(--text-tertiary)",
-                boxShadow: "0 8px 24px rgba(11,30,58,0.15)",
-              }}>
-                Sin coincidencias. Las empresas se gestionan en el módulo Clientes.
-              </div>
-            )}
+            {selectedCompanies.map((c) => {
+              const isSub = !!c.parent_id;
+              const parent = isSub ? companies.find((p) => p.id === c.parent_id) : null;
+              return (
+                <span key={c.id} style={{
+                  display: "inline-flex", alignItems: "center", gap: 8,
+                  padding: "6px 8px 6px 12px",
+                  background: "rgba(0,178,134,0.08)",
+                  border: "1px solid rgba(0,178,134,0.30)",
+                  borderRadius: 999, fontSize: 12,
+                }}>
+                  {isSub && (
+                    <span style={{ color: "#00B286", fontWeight: 700 }}
+                          title="Subsidiaria">↳</span>
+                  )}
+                  <span style={{ fontWeight: 600, color: "var(--navy)" }}>
+                    {c.razon_social}
+                  </span>
+                  {isSub && parent && (
+                    <span style={{ color: "#00B286", fontSize: 11 }}>
+                      · hija de {parent.razon_social}
+                    </span>
+                  )}
+                  <button type="button"
+                          onClick={() => toggleCompany(c.id)}
+                          aria-label="Quitar empresa"
+                          style={{
+                            padding: "2px 6px", border: "none", background: "transparent",
+                            color: "#64748B", cursor: "pointer",
+                            borderRadius: 999, lineHeight: 1,
+                          }}
+                          onMouseOver={(e) => e.currentTarget.style.background = "rgba(214,69,69,0.10)"}
+                          onMouseOut ={(e) => e.currentTarget.style.background = "transparent"}>
+                    <IconX size={11}/>
+                  </button>
+                </span>
+              );
+            })}
           </div>
         )}
+
+        {/* Buscador + dropdown — siempre visible (multi-empresa). Click fuera cierra. */}
+        <div style={{ position: "relative" }} ref={companyBoxRef}>
+          <input
+            placeholder={selectedCompanies.length > 0
+              ? "Agregar otra empresa…"
+              : "Buscar empresa por razón social, RUC/CUIT o nombre comercial…"}
+            value={companySearch}
+            onChange={(e) => { setCompanySearch(e.target.value); setCompanyOpen(true); }}
+            onFocus={() => setCompanyOpen(true)}
+            style={styles.input}
+          />
+          {companyOpen && filteredCompanies.length > 0 && (
+            <div style={{
+              position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20,
+              background: "#fff", border: "1px solid var(--border)",
+              borderRadius: 8, marginTop: 4, maxHeight: 320, overflowY: "auto",
+              boxShadow: "0 8px 24px rgba(11,30,58,0.15)",
+            }}>
+              {filteredCompanies.map((c) => {
+                const isSubsidiary = !!c.parent_id;
+                const parent = isSubsidiary
+                  ? companies.find((p) => p.id === c.parent_id)
+                  : null;
+                const isSelected = selectedIds.includes(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => { toggleCompany(c.id); setCompanySearch(""); }}
+                    style={{
+                      width: "100%", textAlign: "left",
+                      padding: "10px 14px", paddingLeft: isSubsidiary ? 32 : 14,
+                      border: "none",
+                      borderBottom: "1px solid #F3F5F8",
+                      background: isSelected ? "rgba(0,178,134,0.06)" : "#fff",
+                      cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background =
+                      isSelected ? "rgba(0,178,134,0.12)" : "#F7F9FC"}
+                    onMouseLeave={(e) => e.currentTarget.style.background =
+                      isSelected ? "rgba(0,178,134,0.06)" : "#fff"}
+                  >
+                    {isSubsidiary && (
+                      <span style={{ color: "#00B286", fontWeight: 700, marginRight: -4 }}
+                            title="Subsidiaria">↳</span>
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)" }}>
+                        {c.razon_social}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                        RUC/CUIT: {c.tax_id || "—"}
+                        {isSubsidiary && parent && (
+                          <> · <span style={{ color: "#00B286" }}>
+                            hija de {parent.razon_social}
+                          </span></>
+                        )}
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <IconCheck size={14} style={{ color: "#00B286", flexShrink: 0 }}/>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {companyOpen && filteredCompanies.length === 0 && (
+            <div style={{
+              position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20,
+              background: "#fff", border: "1px solid var(--border)",
+              borderRadius: 8, marginTop: 4, padding: 14,
+              fontSize: 12, color: "var(--text-tertiary)",
+              boxShadow: "0 8px 24px rgba(11,30,58,0.15)",
+            }}>
+              Sin coincidencias. Las empresas se gestionan en el módulo Clientes.
+            </div>
+          )}
+        </div>
       </Section>
 
       {/* D · Idioma + zona */}
