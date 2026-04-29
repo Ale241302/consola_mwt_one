@@ -474,16 +474,39 @@ function OverviewTab({ node, inventory, transfers, lang }) {
         <div className="card-title">{lang==='es'?'Movimientos recientes':'Recent movements'}</div>
         <table className="table" style={{marginTop: 10}}>
           <thead><tr>
-            <th>ID</th><th>Fecha</th><th>Dirección</th><th>SKUs</th><th style={{textAlign:'right'}}>Unidades</th><th>Estado</th>
+            <th>ID</th><th>Fecha</th>
+            <th>{lang==='es'?'Rol del nodo':'Node role'}</th>
+            <th>{lang==='es'?'Contraparte':'Counterparty'}</th>
+            <th>SKUs</th><th style={{textAlign:'right'}}>Unidades</th><th>Estado</th>
           </tr></thead>
           <tbody>
             {transfers.slice(0, 5).map(t => {
               const isIn = t.to === node.id;
+              const counterpartyLabel = isIn ? (t.from_label || '—') : (t.to_label || '—');
               return (
                 <tr key={t.id}>
                   <td className="td-ref">{t.id}</td>
                   <td>{t.date}</td>
-                  <td><span className={`badge ${isIn ? 'badge-info' : 'badge-mint'}`}>{isIn ? 'IN' : 'OUT'}</span></td>
+                  <td>
+                    <span style={{
+                      display:'inline-flex', alignItems:'center', gap:6,
+                      padding:'3px 10px', borderRadius:999, fontSize:11, fontWeight:700,
+                      background: isIn ? 'rgba(48,131,254,0.10)' : 'rgba(0,178,134,0.10)',
+                      color:    isIn ? '#3083FE' : '#00B286',
+                      border:   isIn ? '1px solid rgba(48,131,254,0.30)' : '1px solid rgba(0,178,134,0.30)',
+                    }}>
+                      {isIn ? '↓' : '↑'}{' '}
+                      {isIn
+                        ? (lang==='es' ? 'RECIBIÓ' : 'RECEIVED')
+                        : (lang==='es' ? 'DESPACHÓ' : 'DISPATCHED')}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="caption" style={{color:'var(--text-tertiary)', marginRight:4}}>
+                      {isIn ? (lang==='es'?'desde':'from') : (lang==='es'?'hacia':'to')}
+                    </span>
+                    <strong style={{color:'var(--text-primary,#0B1E3A)'}}>{counterpartyLabel}</strong>
+                  </td>
                   <td>{t.skus}</td>
                   <td className="td-num">{t.units.toLocaleString()}</td>
                   <td><TransferStatus status={t.status} lang={lang}/></td>
@@ -491,7 +514,7 @@ function OverviewTab({ node, inventory, transfers, lang }) {
               );
             })}
             {transfers.length === 0 && (
-              <tr><td colSpan={6} className="caption" style={{textAlign:'center', padding:'16px 0'}}>
+              <tr><td colSpan={7} className="caption" style={{textAlign:'center', padding:'16px 0'}}>
                 {lang==='es'?'Sin movimientos registrados':'No movements recorded'}
               </td></tr>
             )}
@@ -581,7 +604,8 @@ function TransfersTab({ transfers, nodeId, lang }) {
           <thead><tr>
             <th>{lang==='es'?'Fecha':'Date'}</th>
             <th>ID</th>
-            <th>{lang==='es'?'Dirección':'Direction'}</th>
+            <th>{lang==='es'?'Rol del nodo':'Node role'}</th>
+            <th>{lang==='es'?'Contraparte':'Counterparty'}</th>
             <th>{lang==='es'?'Origen → Destino':'From → To'}</th>
             <th style={{textAlign:'right'}}>SKUs</th>
             <th style={{textAlign:'right'}}>{lang==='es'?'Unidades':'Units'}</th>
@@ -594,15 +618,35 @@ function TransfersTab({ transfers, nodeId, lang }) {
               const fromLabel = t.from_label || from?.node_id || '—';
               const toLabel   = t.to_label   || to?.node_id   || '—';
               const isIn      = t.to === nodeId;
+              const counterpartyLabel = isIn ? fromLabel : toLabel;
               return (
                 <tr key={t.id}>
                   <td>{t.date || '—'}</td>
                   <td className="td-ref">{t.id}</td>
-                  <td><span className={`badge ${isIn ? 'badge-info' : 'badge-mint'}`}>{isIn ? 'IN' : 'OUT'}</span></td>
                   <td>
-                    <span>{fromLabel}</span>
+                    <span style={{
+                      display:'inline-flex', alignItems:'center', gap:6,
+                      padding:'3px 10px', borderRadius:999, fontSize:11, fontWeight:700,
+                      background: isIn ? 'rgba(48,131,254,0.10)' : 'rgba(0,178,134,0.10)',
+                      color:    isIn ? '#3083FE' : '#00B286',
+                      border:   isIn ? '1px solid rgba(48,131,254,0.30)' : '1px solid rgba(0,178,134,0.30)',
+                    }}>
+                      {isIn ? '↓' : '↑'}{' '}
+                      {isIn
+                        ? (lang==='es' ? 'RECIBIÓ' : 'RECEIVED')
+                        : (lang==='es' ? 'DESPACHÓ' : 'DISPATCHED')}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="caption" style={{color:'var(--text-tertiary)', marginRight:4}}>
+                      {isIn ? (lang==='es'?'desde':'from') : (lang==='es'?'hacia':'to')}
+                    </span>
+                    <strong style={{color:'var(--text-primary,#0B1E3A)'}}>{counterpartyLabel}</strong>
+                  </td>
+                  <td>
+                    <span style={{ color: isIn ? 'var(--text-tertiary)' : 'var(--text-primary,#0B1E3A)', fontWeight: isIn ? 400 : 600 }}>{fromLabel}</span>
                     <span style={{color:'var(--text-tertiary)', margin:'0 6px'}}>→</span>
-                    <span>{toLabel}</span>
+                    <span style={{ color: isIn ? 'var(--text-primary,#0B1E3A)' : 'var(--text-tertiary)', fontWeight: isIn ? 600 : 400 }}>{toLabel}</span>
                   </td>
                   <td className="td-num">{t.skus}</td>
                   <td className="td-num">{(t.units || 0).toLocaleString()}</td>
@@ -611,7 +655,7 @@ function TransfersTab({ transfers, nodeId, lang }) {
               );
             })}
             {transfers.length === 0 && (
-              <tr><td colSpan={7} className="caption" style={{textAlign:'center', padding:'16px 0'}}>
+              <tr><td colSpan={8} className="caption" style={{textAlign:'center', padding:'16px 0'}}>
                 {lang==='es'?'Sin transferencias para este nodo':'No transfers for this node'}
               </td></tr>
             )}
