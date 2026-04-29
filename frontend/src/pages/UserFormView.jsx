@@ -24,8 +24,30 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { apiFetch, getToken, ApiError } from "../lib/api.js";
+import { apiFetch, getToken, clientesApi, ApiError } from "../lib/api.js";
 import { ROLES_DEMO } from "../lib/usersRolesMock.js";
+
+// ── Normalización clientes → shape del selector de empresa ─────────────
+// El backend de /api/clientes/ devuelve {id, razon_social, nombre_comercial,
+// tax_id, pais_iso2, parent_id, …}. El selector legacy esperaba {id,
+// razon_social, nombre_comercial, tax_id, country, flag}. Adaptamos aquí.
+const _COMPANY_FLAG = {
+  PE:"🇵🇪", CO:"🇨🇴", US:"🇺🇸", MX:"🇲🇽", AR:"🇦🇷",
+  CL:"🇨🇱", BR:"🇧🇷", UY:"🇺🇾", EC:"🇪🇨", CR:"🇨🇷",
+  PA:"🇵🇦", DO:"🇩🇴", GT:"🇬🇹", ES:"🇪🇸", CN:"🇨🇳",
+};
+function adaptClienteAsCompany(c) {
+  return {
+    id:               c.id,
+    razon_social:     c.razon_social || c.nombre_comercial || "—",
+    nombre_comercial: c.nombre_comercial || "",
+    tax_id:           c.tax_id || c.codigo_marluvas || "",
+    country:          (c.pais_iso2 || "").toUpperCase(),
+    flag:             _COMPANY_FLAG[(c.pais_iso2 || "").toUpperCase()] || "🏢",
+    parent_id:        c.parent_id || null,
+    is_active:        c.is_active !== false,
+  };
+}
 import {
   IconChevLeft, IconCheck, IconPlus, IconX, IconLock, IconRefresh,
 } from "../lib/icons.jsx";
@@ -63,11 +85,24 @@ export default function UserFormView() {
   const [companyOpen, setCompanyOpen] = useState(false);
 
   // ── Cargar empresas (selector) ───────────────────────────
+  // Fuente: /api/clientes/?is_parent=all  (incluye padres + subsidiarias).
+  // Antes usaba /api/legal-entities/ (mock). Sprint Parent-Child 2026-04-29:
+  // el módulo Clientes es la fuente única de verdad de las empresas.
+  // Fallback a /legal-entities/ si el primario falla (preserva demos).
   useEffect(() => {
     let alive = true;
-    apiFetch("/legal-entities/", { token: getToken() })
-      .then((d) => alive && setCompanies(Array.isArray(d) ? d : (d?.results || [])))
-      .catch(() => {});
+    clientesApi.list({ is_parent: "all" })
+      .then((d) => {
+        if (!alive) return;
+        const arr = Array.isArray(d) ? d : (d?.results || []);
+        setCompanies(arr.map(adaptClienteAsCompany));
+      })
+      .catch(() => {
+        // Fallback: endpoint legacy / mock
+        apiFetch("/legal-entities/", { token: getToken() })
+          .then((d) => alive && setCompanies(Array.isArray(d) ? d : (d?.results || [])))
+          .catch(() => {});
+      });
     return () => { alive = false; };
   }, []);
 
@@ -211,12 +246,46 @@ export default function UserFormView() {
     [companies, user.legal_entity_id]);
 
   const filteredCompanies = useMemo(() => {
-    if (!companySearch.trim()) return companies;
-    const needle = companySearch.toLowerCase();
-    return companies.filter((c) =>
-      (c.razon_social || "").toLowerCase().includes(needle) ||
-      (c.nombre_comercial || "").toLowerCase().includes(needle) ||
-      (c.tax_id || "").toLowerCase().includes(needle));
+    // 1. Filtrado por búsqueda (razón social / comercial / RUC).
+    const needle = companySearch.trim().toLowerCase();
+    const matches = !needle
+      ? companies
+      : companies.filter((c) =>
+          (c.razon_social || "").toLowerCase().includes(needle) ||
+          (c.nombre_comercial || "").toLowerCase().includes(needle) ||
+          (c.tax_id || "").toLowerCase().includes(needle));
+
+    // 2. Ordenar con padres seguidos de sus subsidiarias (jerarquía visible).
+    //    Si una subsidiaria matchea pero el padre no, mostramos el padre
+    //    como contexto (clickeable) además de la subsidiaria.
+    const byId = new Map(companies.map((c) => [c.id, c]));
+    const matchedIds = new Set(matches.map((c) => c.id));
+    const out = [];
+    const pushed = new Set();
+    const pushOnce = (c) => {
+      if (!c || pushed.has(c.id)) return;
+      out.push(c);
+      pushed.add(c.id);
+    };
+    // Primero los padres top-level que matchearon (o cuyas hijas matchearon).
+    companies
+      .filter((c) => !c.parent_id)
+      .forEach((parent) => {
+        const subs = companies.filter((s) => s.parent_id === parent.id);
+        const parentMatch = matchedIds.has(parent.id);
+        const anySubMatch = subs.some((s) => matchedIds.has(s.id));
+        if (parentMatch || anySubMatch) {
+          pushOnce(parent);
+          subs.forEach((s) => {
+            if (!needle || matchedIds.has(s.id) || parentMatch) pushOnce(s);
+          });
+        }
+      });
+    // Subsidiarias huérfanas (padre fuera del dataset).
+    matches.forEach((c) => {
+      if (c.parent_id && !byId.has(c.parent_id)) pushOnce(c);
+    });
+    return out;
   }, [companies, companySearch]);
 
   // ── Direcciones helpers ─────────────────────────────────
@@ -426,12 +495,25 @@ export default function UserFormView() {
           }}>
             <span style={{ fontSize: 24 }}>{selectedCompany.flag || "🏢"}</span>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--navy)" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--navy)",
+                            display: "flex", alignItems: "center", gap: 6 }}>
+                {selectedCompany.parent_id && (
+                  <span style={{ color: "#00B286", fontWeight: 700 }}
+                        title="Subsidiaria">↳</span>
+                )}
                 {selectedCompany.razon_social}
               </div>
               <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
                 RUC/CUIT: <code>{selectedCompany.tax_id || "—"}</code>
                 {selectedCompany.country && <> · {selectedCompany.country}</>}
+                {selectedCompany.parent_id && (() => {
+                  const parent = companies.find((p) => p.id === selectedCompany.parent_id);
+                  return parent ? (
+                    <> · <span style={{ color: "#00B286" }}>
+                      hija de {parent.razon_social}
+                    </span></>
+                  ) : null;
+                })()}
               </div>
             </div>
             <button
@@ -459,35 +541,52 @@ export default function UserFormView() {
                 borderRadius: 8, marginTop: 4, maxHeight: 280, overflowY: "auto",
                 boxShadow: "0 8px 24px rgba(11,30,58,0.15)",
               }}>
-                {filteredCompanies.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => {
-                      patch({ legal_entity_id: c.id });
-                      setCompanyOpen(false);
-                      setCompanySearch("");
-                    }}
-                    style={{
-                      width: "100%", textAlign: "left",
-                      padding: "10px 14px", border: "none",
-                      borderBottom: "1px solid #F3F5F8", background: "#fff",
-                      cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "#F7F9FC"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
-                  >
-                    <span style={{ fontSize: 18 }}>{c.flag || "🏢"}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)" }}>
-                        {c.razon_social}
+                {filteredCompanies.map((c) => {
+                  const isSubsidiary = !!c.parent_id;
+                  const parent = isSubsidiary
+                    ? companies.find((p) => p.id === c.parent_id)
+                    : null;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => {
+                        patch({ legal_entity_id: c.id });
+                        setCompanyOpen(false);
+                        setCompanySearch("");
+                      }}
+                      style={{
+                        width: "100%", textAlign: "left",
+                        padding: "10px 14px", paddingLeft: isSubsidiary ? 28 : 14,
+                        border: "none",
+                        borderBottom: "1px solid #F3F5F8", background: "#fff",
+                        cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = "#F7F9FC"}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
+                    >
+                      {isSubsidiary && (
+                        <span style={{ color: "#00B286", fontWeight: 700, marginRight: -4 }}
+                              title="Subsidiaria">↳</span>
+                      )}
+                      <span style={{ fontSize: 18 }}>{c.flag || "🏢"}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)" }}>
+                          {c.razon_social}
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                          RUC/CUIT: {c.tax_id || "—"}
+                          {c.country && <> · {c.country}</>}
+                          {isSubsidiary && parent && (
+                            <> · <span style={{ color: "#00B286" }}>
+                              hija de {parent.razon_social}
+                            </span></>
+                          )}
+                        </div>
                       </div>
-                      <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                        RUC/CUIT: {c.tax_id || "—"} · {c.country}
-                      </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             )}
             {companyOpen && filteredCompanies.length === 0 && (
