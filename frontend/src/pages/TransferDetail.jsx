@@ -69,6 +69,9 @@ function mapApiDetailToTransfer(r) {
     destino:        r.destino_label || '—',
     legal_context:  r.legal_context || 'INTERNAL',
     ref_tracking:   r.ref_tracking || '',
+    context_data:   r.context_data || {},
+    cost_lines:     Array.isArray(r.cost_lines) ? r.cost_lines : [],
+    total_cost_usd: Number(r.total_cost_usd || 0),
     needs_approval: !!r.needs_approval,
     value_usd:      Number(r.value_usd || 0),
     created_at:     r.created_at || r.updated_at || null,
@@ -356,6 +359,13 @@ export default function ScreenTransferDetail() {
         />
       </motion.div>
 
+      {/* ── Metadata por motivo legal (sprint Transfer Engine v2) ── */}
+      <LegalContextDataCard lang={lang}
+                            legalContext={transferBase.legal_context}
+                            contextData={transferBase.context_data}
+                            costLines={transferBase.cost_lines}
+                            totalCostUsd={transferBase.total_cost_usd}/>
+
       {/* ── Reconciliación banner ── */}
       {status === 'received' && willNeedReconcile && (
         <motion.div
@@ -539,6 +549,141 @@ function TotalBlock({ label, value, valueClass }) {
     <div className="trf-total-block">
       <div className="micro" style={{ marginBottom:4 }}>{label}</div>
       <div className={`trf-total-value tabular-nums ${valueClass || ''}`}>{value}</div>
+    </div>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// LegalContextDataCard — muestra los campos específicos del motivo
+// (sprint Transfer Engine v2 · 2026-04-29)
+// ─────────────────────────────────────────────────────────────
+function LegalContextDataCard({ lang, legalContext, contextData, costLines, totalCostUsd }) {
+  const cd = contextData || {};
+  const ctx = (legalContext || "INTERNAL").toUpperCase();
+  const lbl = (es, en) => lang === "es" ? es : en;
+  const hasCosts = Array.isArray(costLines) && costLines.length > 0;
+  const hasCtxFields = Object.values(cd || {}).some(v => v !== "" && v !== null && v !== undefined && v !== false);
+  if (!hasCtxFields && !hasCosts && ctx === "INTERNAL") return null;
+
+  const items = [];
+  if (ctx === "INTERNAL") {
+    if (cd.carrier_name)    items.push([lbl("Carrier", "Carrier"),                 cd.carrier_name]);
+    if (cd.conductor_name)  items.push([lbl("Conductor", "Driver"),                cd.conductor_name]);
+    if (cd.vehicle_plate)   items.push([lbl("Placa", "Plate"),                     <code className="mono-sm">{cd.vehicle_plate}</code>]);
+    if (cd.vehicle_id)      items.push([lbl("ID vehículo", "Vehicle ID"),          <code className="mono-sm">{cd.vehicle_id}</code>]);
+  } else if (ctx === "NATIONALIZATION") {
+    if (cd.bl_awb_number)   items.push(["BL / AWB",                                <code className="mono-sm">{cd.bl_awb_number}</code>]);
+    if (cd.dua_number)      items.push([lbl("Nº DUA", "DUA #"),                    <code className="mono-sm">{cd.dua_number}</code>]);
+  } else if (ctx === "EXPORT") {
+    if (cd.international_carrier) items.push([lbl("Carrier internac.", "Intl carrier"), cd.international_carrier]);
+    if (cd.container_number)      items.push([lbl("Contenedor", "Container"),           <code className="mono-sm">{cd.container_number}</code>]);
+    if (cd.awb_bl_number)         items.push(["BL / AWB",                                <code className="mono-sm">{cd.awb_bl_number}</code>]);
+  } else if (ctx === "DISTRIBUTION") {
+    const tp = Number(cd.transfer_pricing_amount || 0);
+    if (tp > 0) items.push([
+      lbl("Transfer Pricing (ART-16)", "Transfer Pricing (ART-16)"),
+      <span style={{ fontWeight: 700, color: "#00B286" }} className="tabular-nums">
+        ${tp.toLocaleString("en-US", { maximumFractionDigits: 2 })} {cd.transfer_pricing_currency || "USD"} · {cd.transfer_pricing_basis || "PER_UNIT"}
+      </span>
+    ]);
+    if (cd.requires_tp_approval) items.push([
+      lbl("Aprobación", "Approval"),
+      <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "#FEF3C7", color: "#92400E" }}>
+        ⚠ {lbl("Requiere aprobación TP", "TP approval required")}
+      </span>
+    ]);
+    if (cd.crosses_border) items.push([
+      lbl("Cruza frontera", "Crosses border"),
+      <span style={{ color: "#481EE3", fontWeight: 600 }}>{lbl("Sí · DUA requerido", "Yes · DUA required")}</span>
+    ]);
+    if (cd.awb_bl_number) items.push(["BL / AWB", <code className="mono-sm">{cd.awb_bl_number}</code>]);
+  } else if (ctx === "CONSIGNMENT") {
+    if (cd.report_frequency) items.push([lbl("Frecuencia reporte", "Report frequency"), cd.report_frequency]);
+    if (cd.contract_ref)     items.push([lbl("Contrato", "Contract"),                   <code className="mono-sm">{cd.contract_ref}</code>]);
+    if (cd.awb_bl_number)    items.push(["BL / AWB",                                     <code className="mono-sm">{cd.awb_bl_number}</code>]);
+  }
+
+  const colorByCtx = {
+    INTERNAL:        "#64748B",
+    NATIONALIZATION: "#481EE3",
+    EXPORT:          "#3083FE",
+    DISTRIBUTION:    "#00B286",
+    CONSIGNMENT:     "#B45309",
+  };
+  const titleByCtx = {
+    INTERNAL:        lbl("LOGÍSTICA INTERNA", "INTERNAL LOGISTICS"),
+    NATIONALIZATION: lbl("DOCUMENTOS DE IMPORTACIÓN", "IMPORT DOCUMENTS"),
+    EXPORT:          lbl("EXPORTACIÓN INTERNACIONAL", "INTERNATIONAL EXPORT"),
+    DISTRIBUTION:    lbl("TRANSFER PRICING (ART-16)", "TRANSFER PRICING (ART-16)"),
+    CONSIGNMENT:     lbl("CONSIGNACIÓN", "CONSIGNMENT"),
+  };
+  const accent = colorByCtx[ctx] || "#64748B";
+
+  return (
+    <div className="card card-pad-md" style={{
+      marginTop: 16, borderLeft: `4px solid ${accent}`,
+    }}>
+      <div className="micro" style={{ color: accent, letterSpacing: 1, marginBottom: 10 }}>
+        {titleByCtx[ctx] || ctx}
+      </div>
+      {items.length > 0 ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+          {items.map(([k, v], i) => (
+            <div key={i} style={{ padding: "8px 0", borderBottom: "1px dashed #F1F4F9" }}>
+              <div className="caption" style={{ color: "var(--text-tertiary)", marginBottom: 2 }}>{k}</div>
+              <div style={{ color: "#0B1E3A" }}>{v}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+          {lbl("Sin metadata adicional para este motivo.", "No additional metadata for this reason.")}
+        </div>
+      )}
+
+      {hasCosts && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #F1F4F9" }}>
+          <div className="micro" style={{ color: "#0B1E3A", letterSpacing: 1, marginBottom: 8 }}>
+            {lbl("COSTOS ASOCIADOS", "ASSOCIATED COSTS")} · {costLines.length}
+          </div>
+          <div className="card card-pad-0">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{lbl("Tipo", "Kind")}</th>
+                  <th>{lbl("Detalle", "Label")}</th>
+                  <th style={{ textAlign: "right" }}>USD</th>
+                  <th>{lbl("Origen", "Source")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {costLines.map((c) => (
+                  <tr key={c.id}>
+                    <td><span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 600, background: "#F3F5F8", color: "#0B1E3A" }}>{c.kind}</span></td>
+                    <td>{c.label || "—"}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>
+                      ${Number(c.amount_usd || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                    </td>
+                    <td>
+                      <span className="caption" style={{ color: c.source === "OCR_DUA" ? "#00B286" : "#64748B", fontWeight: 600 }}>
+                        {c.source === "OCR_DUA" ? "IA" : c.source}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
+                  <td colSpan={2} style={{ textAlign: "right" }}>{lbl("Total USD", "Total USD")}</td>
+                  <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286" }}>
+                    ${Number(totalCostUsd || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                  </td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

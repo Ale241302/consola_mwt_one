@@ -75,6 +75,7 @@ export default function CreateTransferWizard() {
   const [legalContext,  setLegalContext]  = useState("INTERNAL");
   const [refTracking,   setRefTracking]   = useState("");
   const [notes,         setNotes]         = useState("");
+  const [contextData,   setContextData]   = useState({});
   const [costLines,     setCostLines]     = useState([]);  // [{tmpId, kind, label, amount, currency, source, ocr_confidence}]
   const [productLines,  setProductLines]  = useState([]);  // [{tmpId, sku, producto_id, product_label, size, qty_transfer, qty_reserve, disponible}]
   const [docFile,       setDocFile]       = useState(null);
@@ -155,6 +156,9 @@ export default function CreateTransferWizard() {
     }).catch(() => setStockOrigen([]));
   }, [origenId]);
 
+  // ── Reset contextData al cambiar el motivo (campos pueden no aplicar) ──
+  useEffect(() => { setContextData({}); }, [legalContext]);
+
   // ── Filtrado dinámico de nodos por capacidad ──
   const nodosOrigen  = useMemo(() => nodos.filter((n) => hasCap(n, CAP_DISPATCH)), [nodos]);
   const nodosDestino = useMemo(() => nodos.filter((n) => hasCap(n, CAP_RECEIVE) && n.id !== origenId), [nodos, origenId]);
@@ -163,9 +167,10 @@ export default function CreateTransferWizard() {
   const canAdvance = useMemo(() => {
     if (step === 1) {
       if (!origenId || !destinoId || origenId === destinoId) return false;
-      if (NEEDS_CUSTOMS_DOC.has(legalContext) && !docFile && costLines.length === 0) {
-        // Permitimos avanzar sin doc, pero el banner del paso 1 advierte
-        return true;
+      // DISTRIBUTION requiere transfer_pricing_amount > 0
+      if (legalContext === "DISTRIBUTION") {
+        const tp = Number(contextData?.transfer_pricing_amount || 0);
+        if (!tp || tp <= 0) return false;
       }
       return true;
     }
@@ -298,6 +303,7 @@ export default function CreateTransferWizard() {
         notes:         notes || null,
         estado:        "PLANNED",
         value_usd:     totals.totalValueUsd,
+        context_data:  contextData || {},
         lineas: productLines.map((l) => ({
           producto_id:   l.producto_id || null,
           sku:           l.sku,
@@ -405,6 +411,7 @@ export default function CreateTransferWizard() {
               notes={notes}               setNotes={setNotes}
               docFile={docFile}           onDocFile={handleDoc}
               ocrLoading={ocrLoading}     ocrResult={ocrResult}
+              contextData={contextData}   setContextData={setContextData}
               error={error}
             />
           )}
@@ -507,7 +514,9 @@ function Step1Context({
   origenId, setOrigenId, destinoId, setDestinoId,
   legalContext, setLegalContext, refTracking, setRefTracking,
   notes, setNotes, docFile, onDocFile, ocrLoading, ocrResult,
+  contextData, setContextData,
 }) {
+  const setCtx = (patch) => setContextData((p) => ({ ...(p || {}), ...patch }));
   const dropRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
   const showDropzone = NEEDS_CUSTOMS_DOC.has(legalContext);
@@ -586,6 +595,10 @@ function Step1Context({
           <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)}/>
         </Field>
       </div>
+
+      {/* ── Sub-sección condicional según motivo (sprint Transfer Engine v2) ── */}
+      <ContextDataSection lang={lang} legalContext={legalContext}
+                          contextData={contextData} setCtx={setCtx} />
 
       {/* Dropzone aduanal — solo si motivo lo requiere */}
       {showDropzone && (
@@ -1049,6 +1062,199 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
       )}
     </div>
   );
+}
+
+// ═════════════════════════════════════════════════════════════
+// SUB-FORM CONDICIONAL POR MOTIVO LEGAL
+// ═════════════════════════════════════════════════════════════
+function ContextDataSection({ lang, legalContext, contextData, setCtx }) {
+  const cd = contextData || {};
+  const lbl = (es, en) => lang === "es" ? es : en;
+
+  if (legalContext === "INTERNAL") {
+    return (
+      <div style={{ marginTop: 22, padding: 18, border: "1px solid var(--border, #E1E6ED)", borderRadius: 12, background: "rgba(100,116,139,0.04)" }}>
+        <div className="micro" style={{ color: "#64748B", letterSpacing: 1, marginBottom: 12 }}>
+          {lbl("LOGÍSTICA LOCAL", "LOCAL LOGISTICS")}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label={lbl("Transportista / Carrier", "Carrier")}>
+            <input className="input" value={cd.carrier_name || ""}
+                   onChange={(e) => setCtx({ carrier_name: e.target.value })}
+                   placeholder={lbl("Ej. Servientrega, TCC", "e.g. local courier")} />
+          </Field>
+          <Field label={lbl("Conductor (nombre)", "Driver name")}>
+            <input className="input" value={cd.conductor_name || ""}
+                   onChange={(e) => setCtx({ conductor_name: e.target.value })} />
+          </Field>
+          <Field label={lbl("Placa del vehículo", "Vehicle plate")}>
+            <input className="input mono-sm" value={cd.vehicle_plate || ""}
+                   onChange={(e) => setCtx({ vehicle_plate: e.target.value.toUpperCase() })}
+                   placeholder="ABC-123" />
+          </Field>
+          <Field label={lbl("ID interno del vehículo", "Vehicle ID")}>
+            <input className="input mono-sm" value={cd.vehicle_id || ""}
+                   onChange={(e) => setCtx({ vehicle_id: e.target.value })} />
+          </Field>
+        </div>
+      </div>
+    );
+  }
+
+  if (legalContext === "NATIONALIZATION") {
+    return (
+      <div style={{ marginTop: 22, padding: 18, border: "1px solid rgba(72,30,227,0.3)", borderRadius: 12, background: "rgba(72,30,227,0.04)" }}>
+        <div className="micro" style={{ color: "#481EE3", letterSpacing: 1, marginBottom: 12 }}>
+          {lbl("DOCUMENTOS DE IMPORTACIÓN", "IMPORT DOCUMENTS")}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label={lbl("Número BL / AWB", "BL / AWB number")}>
+            <input className="input mono-sm" value={cd.bl_awb_number || ""}
+                   onChange={(e) => setCtx({ bl_awb_number: e.target.value })}
+                   placeholder="MAEU-123456789" />
+          </Field>
+          <Field label={lbl("Número DUA / liquidación", "DUA / customs ref")}>
+            <input className="input mono-sm" value={cd.dua_number || ""}
+                   onChange={(e) => setCtx({ dua_number: e.target.value })}
+                   placeholder="2026-PE-001234" />
+          </Field>
+        </div>
+        <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 8 }}>
+          {lbl("Subí abajo el DUA — la IA extraerá DAI, IVA y almacenaje automáticamente.",
+               "Upload the DUA below — AI will extract duties, VAT and storage costs automatically.")}
+        </div>
+      </div>
+    );
+  }
+
+  if (legalContext === "EXPORT") {
+    return (
+      <div style={{ marginTop: 22, padding: 18, border: "1px solid rgba(48,131,254,0.3)", borderRadius: 12, background: "rgba(48,131,254,0.04)" }}>
+        <div className="micro" style={{ color: "#3083FE", letterSpacing: 1, marginBottom: 12 }}>
+          {lbl("EXPORTACIÓN INTERNACIONAL", "INTERNATIONAL EXPORT")}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label={lbl("Carrier internacional", "International carrier")}>
+            <input className="input" value={cd.international_carrier || ""}
+                   onChange={(e) => setCtx({ international_carrier: e.target.value })}
+                   placeholder="Maersk, MSC, DHL Express…" />
+          </Field>
+          <Field label={lbl("Número de contenedor", "Container number")}>
+            <input className="input mono-sm" value={cd.container_number || ""}
+                   onChange={(e) => setCtx({ container_number: e.target.value.toUpperCase() })}
+                   placeholder="MAEU1234567" />
+          </Field>
+          <Field label={lbl("BL / AWB internacional", "International BL/AWB")}>
+            <input className="input mono-sm" value={cd.awb_bl_number || ""}
+                   onChange={(e) => setCtx({ awb_bl_number: e.target.value })} />
+          </Field>
+        </div>
+        <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 8 }}>
+          {lbl("Subí abajo el DUA de salida — opcional, pero recomendado para anclar costos de exportación.",
+               "Upload the export DUA below — optional but recommended to track export costs.")}
+        </div>
+      </div>
+    );
+  }
+
+  if (legalContext === "DISTRIBUTION") {
+    const tp = Number(cd.transfer_pricing_amount || 0);
+    return (
+      <div style={{ marginTop: 22, padding: 18, border: "2px solid #00B286", borderRadius: 12, background: "rgba(0,178,134,0.05)" }}>
+        <div className="micro" style={{ color: "#00B286", letterSpacing: 1, marginBottom: 8 }}>
+          {lbl("TRANSFER PRICING (ART-16) ★", "TRANSFER PRICING (ART-16) ★")}
+        </div>
+        <div className="caption" style={{ color: "#0B1E3A", marginBottom: 14, lineHeight: 1.5 }}>
+          ⚠ {lbl(
+            "Este movimiento implica cambio de dueño. Requiere precio de transferencia y aprobación CEO/Compliance.",
+            "This movement transfers ownership. Requires transfer pricing and CEO/Compliance approval."
+          )}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 14 }}>
+          <Field label={lbl("Precio de transferencia *", "Transfer price *")}>
+            <input className="input tabular-nums" type="number" step="0.01" min="0"
+                   value={cd.transfer_pricing_amount || ""}
+                   onChange={(e) => setCtx({ transfer_pricing_amount: e.target.value })}
+                   required />
+          </Field>
+          <Field label={lbl("Moneda", "Currency")}>
+            <input className="input mono-sm" value={cd.transfer_pricing_currency || "USD"}
+                   onChange={(e) => setCtx({ transfer_pricing_currency: e.target.value.toUpperCase().slice(0,3) })}
+                   maxLength={3} />
+          </Field>
+          <Field label={lbl("Base", "Basis")}>
+            <select className="input" value={cd.transfer_pricing_basis || "PER_UNIT"}
+                    onChange={(e) => setCtx({ transfer_pricing_basis: e.target.value })}>
+              <option value="PER_UNIT">{lbl("Por unidad", "Per unit")}</option>
+              <option value="TOTAL">{lbl("Total", "Total")}</option>
+              <option value="COST_PLUS">Cost plus</option>
+              <option value="RESALE_MINUS">Resale minus</option>
+              <option value="CUP">CUP (Comparable)</option>
+            </select>
+          </Field>
+        </div>
+        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label={lbl("BL / AWB / Tracking", "BL / AWB / Tracking")}>
+            <input className="input mono-sm" value={cd.awb_bl_number || ""}
+                   onChange={(e) => setCtx({ awb_bl_number: e.target.value })} />
+          </Field>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 24 }}>
+            <input type="checkbox" checked={!!cd.crosses_border}
+                   onChange={(e) => setCtx({ crosses_border: e.target.checked })} />
+            <span className="caption" style={{ color: "#0B1E3A", fontWeight: 600 }}>
+              {lbl("Cruza frontera (requiere DUA)", "Crosses border (DUA required)")}
+            </span>
+          </label>
+        </div>
+        {tp > 0 && (
+          <div className="caption" style={{ color: "#00B286", fontWeight: 600, marginTop: 10 }}>
+            ✓ {lbl(
+              "Transferencia quedará en estado PLANNED hasta aprobación de Transfer Pricing.",
+              "Transfer will stay in PLANNED until Transfer Pricing is approved."
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (legalContext === "CONSIGNMENT") {
+    return (
+      <div style={{ marginTop: 22, padding: 18, border: "1px solid rgba(180,83,9,0.3)", borderRadius: 12, background: "rgba(180,83,9,0.04)" }}>
+        <div className="micro" style={{ color: "#B45309", letterSpacing: 1, marginBottom: 12 }}>
+          {lbl("CONSIGNACIÓN", "CONSIGNMENT")}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label={lbl("Frecuencia de reporte", "Report frequency")}>
+            <select className="input" value={cd.report_frequency || "WEEKLY"}
+                    onChange={(e) => setCtx({ report_frequency: e.target.value })}>
+              <option value="WEEKLY">{lbl("Semanal", "Weekly")}</option>
+              <option value="BIWEEKLY">{lbl("Quincenal", "Biweekly")}</option>
+              <option value="MONTHLY">{lbl("Mensual", "Monthly")}</option>
+              <option value="ON_DEMAND">{lbl("Bajo demanda", "On demand")}</option>
+            </select>
+          </Field>
+          <Field label={lbl("Referencia de contrato", "Contract ref")}>
+            <input className="input mono-sm" value={cd.contract_ref || ""}
+                   onChange={(e) => setCtx({ contract_ref: e.target.value })}
+                   placeholder="CONS-2026-001" />
+          </Field>
+          <Field label={lbl("BL / AWB / Tracking", "BL / AWB / Tracking")}>
+            <input className="input mono-sm" value={cd.awb_bl_number || ""}
+                   onChange={(e) => setCtx({ awb_bl_number: e.target.value })} />
+          </Field>
+        </div>
+        <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 8 }}>
+          {lbl(
+            "La propiedad NO se transfiere. El distribuidor reporta consumo según la frecuencia indicada.",
+            "Ownership is RETAINED. The receiver reports consumption per the indicated frequency."
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 // ═════════════════════════════════════════════════════════════

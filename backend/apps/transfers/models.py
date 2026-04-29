@@ -94,6 +94,11 @@ class Transferencia(models.Model):
     discrepancy_count   = models.IntegerField(default=0)
     has_discrepancy     = models.BooleanField(default=False)  # columna GENERATED en DB
 
+    # Sprint Transfer Engine v2 — metadata condicional por legal_context
+    # (91f_transfers_context_data.sql). El shape varía por motivo; ver
+    # _validate_context_data() en el serializer.
+    context_data        = models.JSONField(default=dict, blank=True)
+
     is_active        = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     updated_at       = models.DateTimeField(auto_now=True)
