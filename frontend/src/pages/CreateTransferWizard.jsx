@@ -101,20 +101,33 @@ export default function CreateTransferWizard() {
   }, []);
 
   // ── Cuando cambia el origen, traer su stock ──
-  // /api/stock/?nodo=<id> devuelve TODAS las filas del ledger del nodo
-  // (incluso negativas: ej. ajustes -10). NO usamos solo_disponible=1
-  // porque filtraría server-side las negativas → el disponible quedaría
-  // inflado. Agrupamos por (producto_id + lote) y sumamos cantidades —
-  // el resultado es la cantidad NETA real disponible en el nodo.
+  //
+  // /api/stock/?nodo=<id> devuelve TODAS las filas del ledger del nodo,
+  // incluyendo ajustes negativos. Tres casos a manejar:
+  //   a) Filas con (producto + lote específico)  → bucket normal por lote.
+  //   b) Mismo producto + mismo lote en varias filas → sumar.
+  //   c) Ajustes con lote VACÍO (ej -10 sin lote
+  //      asignado por mala captura) → aplicarlos al
+  //      bucket con MÁS unidades del mismo producto.
+  // Después de consolidar, ocultamos buckets con neto <= 0.
   useEffect(() => {
     if (!origenId) { setStockOrigen([]); return; }
     stockApi.list({ nodo: origenId }).then((d) => {
       const arr = Array.isArray(d) ? d : (d?.results || []);
       const onNode = arr.filter((r) => !r.nodo_id || String(r.nodo_id) === String(origenId));
-      const buckets = new Map();
+
+      const buckets   = new Map();
+      const noLoteAdj = new Map();
+
       for (const r of onNode) {
-        const key = `${r.producto_id || r.producto_sku || ""}|${r.lote || ""}`;
         const a = adaptStockRow(r);
+        const productoId = a.producto_id || a.sku || "";
+        if (!a.lote) {
+          const cur = noLoteAdj.get(productoId) || 0;
+          noLoteAdj.set(productoId, cur + a.qty_disponible);
+          continue;
+        }
+        const key = `${productoId}|${a.lote}`;
         const prev = buckets.get(key);
         if (prev) {
           prev.qty_disponible += a.qty_disponible;
@@ -126,7 +139,17 @@ export default function CreateTransferWizard() {
           buckets.set(key, { ...a, _key: key });
         }
       }
-      // Solo mostramos buckets con neto > 0 (no se puede transferir cero/negativo)
+
+      // Aplicar ajustes sin lote al bucket más grande del mismo producto.
+      for (const [productoId, adj] of noLoteAdj.entries()) {
+        if (adj === 0) continue;
+        const productBuckets = Array.from(buckets.values())
+          .filter((b) => (b.producto_id || b.sku) === productoId)
+          .sort((a, b) => b.qty_disponible - a.qty_disponible);
+        if (productBuckets.length === 0) continue;
+        productBuckets[0].qty_disponible += adj;
+      }
+
       const consolidated = Array.from(buckets.values()).filter((s) => s.qty_disponible > 0);
       setStockOrigen(consolidated);
     }).catch(() => setStockOrigen([]));
