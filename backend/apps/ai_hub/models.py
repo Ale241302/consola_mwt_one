@@ -93,6 +93,14 @@ class AiSkill(models.Model):
 
     id                  = models.UUIDField(primary_key=True)
     codigo              = models.CharField(max_length=48)
+    # Sprint Transfer Engine v3.5 (2026-04-30): columnas para routing LLM
+    # creadas por SQL 91i_transfers_legal_documents.sql. Sin ellas, el
+    # endpoint /api/ai/skills/<key>/ no puede hacer .filter(skill_key=...).
+    skill_key           = models.CharField(max_length=64, null=True, blank=True)
+    display_name        = models.CharField(max_length=160, null=True, blank=True)
+    model_id            = models.CharField(max_length=64, null=True, blank=True)
+    model_provider_id   = models.CharField(max_length=32, null=True, blank=True)
+
     nombre              = models.CharField(max_length=120)
     descripcion         = models.TextField(null=True, blank=True)
     system_prompt       = models.TextField()
