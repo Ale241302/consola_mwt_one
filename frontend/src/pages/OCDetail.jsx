@@ -52,7 +52,21 @@ export default function ScreenOCDetail() {
     else navigate('/expedientes');
   };
 
-  const oc = OCS.find(o => o.id === ocId) || OCS[0];
+  // Si el ocId no matchea ningún mock, NO cayemos a OCS[0] (eso pintaba
+  // datos quemados de Andes Retail Co. cuando el usuario aterrizaba con
+  // un codigo real como EXP-2026-0001). En su lugar redirigimos al
+  // listado para que el usuario reintente desde ahí. Una alternativa
+  // sería fetch al API de OCs, pero por ahora el listado es suficiente.
+  const ocFromMock = OCS.find(o => o.id === ocId);
+  if (!ocFromMock) {
+    // Soft-redirect dentro de un useEffect-like effect: hacemos navigate
+    // y devolvemos null para no renderizar el detalle con datos basura.
+    if (typeof window !== "undefined") {
+      Promise.resolve().then(() => navigate('/expedientes', { replace: true }));
+    }
+    return null;
+  }
+  const oc = ocFromMock;
   const client = CLIENTS.find(c => c.id === oc.client_id);
   const brand  = BRANDS.find(b => b.id === oc.brand_id);
 

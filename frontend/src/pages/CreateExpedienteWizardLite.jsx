@@ -135,14 +135,14 @@ export default function CreateExpedienteWizardLite() {
       };
 
       const resp = await expedientesApi.create(payload);
-      const codigo = resp?.codigo || resp?.codigo_expediente || resp?.id;
-      // Redirect al formato canónico /expedientes/OC-{codigo} si el backend
-      // ya devolvió un codigo de OC, sino caemos al UUID puro.
-      const oc = resp?.oc?.codigo || resp?.oc_codigo;
-      if (oc) {
-        navigate(`/expedientes/${encodeURIComponent(oc)}`);
-      } else if (codigo) {
-        navigate(`/expedientes/${encodeURIComponent(codigo)}`);
+      // Redirect al detalle del expediente recién creado.
+      // La ruta canónica es /expedientes/<oc_id_or_none>/exp/<expediente_uuid>.
+      // Como el wizard simplificado no crea OC, usamos "none" como placeholder
+      // (ExpedienteDetail tolera ese valor — solo usa expedienteId).
+      const expId = resp?.id;
+      const ocId  = resp?.oc_id || resp?.oc?.id || "none";
+      if (expId) {
+        navigate(`/expedientes/${encodeURIComponent(ocId)}/exp/${encodeURIComponent(expId)}`);
       } else {
         navigate("/expedientes");
       }

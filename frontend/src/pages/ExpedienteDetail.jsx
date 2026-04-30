@@ -1,7 +1,8 @@
 // Expediente detail — the hero screen
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtMoneyDetail, fmtDate, relativeTime } from "../lib/i18n.js";
+import { expedientesApi, clientesApi, marcasApi, lineasApi } from "../lib/api.js";
 import {
   Badge, StatusBadge, Progress, StateTimeline, CreditBar, CountryFlag,
 } from "../components/ui/primitives.jsx";
@@ -34,9 +35,90 @@ export default function ScreenExpedienteDetail() {
     if (map[key]) navigate(map[key]);
   };
 
-  const exp = EXPEDIENTES.find(e => e.id === expedienteId) || EXPEDIENTES[2];
-  const client = CLIENTS.find(c => c.id === exp.client_id) || CLIENTS[0];
-  const brand = BRANDS.find(b => b.id === exp.brand_id) || BRANDS[0];
+  // ── Datos: mocks (HERO) o fetch real desde API ─────────────────
+  // El expediente recién creado por el wizard simplificado vive en BD,
+  // no en EXPEDIENTES (mock). Hacemos fetch al API; mientras carga,
+  // usamos el mock fallback solo si el id coincide con HERO_ID.
+  const isHeroOrMock = EXPEDIENTES.some(e => e.id === expedienteId);
+  const [apiExp,    setApiExp]    = useState(null);
+  const [apiClient, setApiClient] = useState(null);
+  const [apiBrand,  setApiBrand]  = useState(null);
+  const [apiLines,  setApiLines]  = useState([]);
+  const [loading,   setLoading]   = useState(!isHeroOrMock);
+  const [notFound,  setNotFound]  = useState(false);
+
+  useEffect(() => {
+    if (isHeroOrMock || expedienteId === HERO_ID) return;
+    let cancel = false;
+    setLoading(true); setNotFound(false);
+    expedientesApi.get(expedienteId)
+      .then(async (e) => {
+        if (cancel) return;
+        setApiExp(e);
+        // Hidratar cliente y marca en paralelo (best-effort)
+        const [cli, br, ln] = await Promise.all([
+          e.client_id ? clientesApi.get(e.client_id).catch(() => null) : Promise.resolve(null),
+          e.brand_id  ? marcasApi.get(e.brand_id).catch(() => null)    : Promise.resolve(null),
+          lineasApi.list({ expediente: expedienteId }).catch(() => ({ results: [] })),
+        ]);
+        if (cancel) return;
+        setApiClient(cli);
+        setApiBrand(br);
+        setApiLines(Array.isArray(ln) ? ln : (ln?.results || []));
+      })
+      .catch(() => { if (!cancel) setNotFound(true); })
+      .finally(() => { if (!cancel) setLoading(false); });
+    return () => { cancel = true; };
+  }, [expedienteId, isHeroOrMock]);
+
+  // Mapper: API → shape esperado por el UI viejo (mock-shape).
+  // Solo poblamos los campos que necesita el header + tabs principales.
+  // Los desconocidos quedan en valores neutros para que la UI no rompa.
+  const mockExp = EXPEDIENTES.find(e => e.id === expedienteId) || EXPEDIENTES[2];
+  const exp = apiExp ? {
+    ...mockExp,                                  // estructura base con defaults
+    id:               apiExp.id,
+    ref:              apiExp.codigo,
+    codigo:           apiExp.codigo,
+    estado:           apiExp.estado,
+    status:           (apiExp.estado || "").toLowerCase() || "registro",
+    client_id:        apiExp.client_id,
+    brand_id:         apiExp.brand_id,
+    oc_id:            apiExp.oc_id,
+    oc_client:        apiExp.oc_id || "—",
+    proforma:         apiExp.proforma || "",
+    sap:              apiExp.sap || "",
+    modo_operacion:   apiExp.modo_operacion,
+    moneda:           apiExp.moneda || "USD",
+    origin:           apiExp.origin || "—",
+    destination:      apiExp.destination || "—",
+    origin_country:   apiExp.origin_country || "",
+    destination_country: apiExp.destination_country || "",
+    freight_mode:     apiExp.freight_mode || "SEA",
+    dispatch_mode:    apiExp.dispatch_mode || "FCL",
+    incoterm:         apiExp.incoterm || "",
+    eta:              apiExp.eta || null,
+    total_cost:       Number(apiExp.total_cost || 0),
+    total_invoiced:   Number(apiExp.total_invoiced || 0),
+    total_paid:       Number(apiExp.total_paid || 0),
+    balance:          Number(apiExp.balance || 0),
+    container_count:  apiExp.container_count || 0,
+    product_count:    apiLines.length || 0,
+    is_blocked:       !!apiExp.is_blocked,
+    block_reason:     apiExp.block_reason || "",
+    phase_signal:     apiExp.phase_signal || "green",
+    is_active:        apiExp.is_active !== false,
+    // Campos descriptivos hidratados de cliente/marca:
+    client:           apiClient?.razon_social || apiClient?.nombre || apiClient?.codigo || "—",
+    client_country:   apiClient?.pais_iso2 || "",
+    brand:            apiBrand?.nombre || apiBrand?.brand_code || "—",
+  } : mockExp;
+
+  const client = apiClient || CLIENTS.find(c => c.id === exp.client_id) || CLIENTS[0];
+  const brand  = apiBrand
+              ? { ...BRANDS[0], id: apiBrand.id, nombre: apiBrand.nombre,
+                  brand_code: apiBrand.brand_code, color: apiBrand.color || BRANDS[0].color }
+              : (BRANDS.find(b => b.id === exp.brand_id) || BRANDS[0]);
 
   // ── Role-aware strip-down ─────────────────────────────────────
   // Si isClient → ocultamos tabs "Costos" y "Actividad" (esta última
@@ -60,11 +142,44 @@ export default function ScreenExpedienteDetail() {
 
   // Only use rich HERO data if this is the hero expediente
   const isHero = exp.id === HERO_ID;
-  const lines = isHero ? HERO_LINES : [];
+  // Líneas reales desde API si existe el expediente en BD; HERO_LINES
+  // solo cuando es el hero mock.
+  const lines = isHero ? HERO_LINES : (apiLines.length ? apiLines : []);
   const costs = isHero ? HERO_COSTS : [];
   const pagos = isHero ? HERO_PAGOS : [];
   const artifacts = isHero ? HERO_ARTIFACTS : [];
   const activity = isHero ? HERO_ACTIVITY : [];
+
+  // Loading / not-found para expedientes reales que aún no llegan del API
+  if (loading) {
+    return (
+      <div className="page" style={{ maxWidth: 1500, padding: 32 }}>
+        <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+          {lang === "es" ? "Cargando expediente…" : "Loading file…"}
+        </div>
+      </div>
+    );
+  }
+  if (notFound) {
+    return (
+      <div className="page" style={{ maxWidth: 1500, padding: 32 }}>
+        <button className="btn btn-ghost btn-sm" onClick={onBack}
+                style={{ marginBottom: 14 }}>
+          <IconChevLeft size={14}/> {lang === "es" ? "Volver" : "Back"}
+        </button>
+        <div className="card card-pad-lg" style={{ textAlign: "center", padding: 48 }}>
+          <div style={{ fontWeight: 800, fontSize: 18, color: "#0B1E3A" }}>
+            {lang === "es" ? "Expediente no encontrado" : "File not found"}
+          </div>
+          <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 6 }}>
+            {lang === "es"
+              ? `No existe un expediente con id ${expedienteId}.`
+              : `No file with id ${expedienteId}.`}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const dates = isHero ? {
     REGISTRO: '2026-01-14', PRODUCCION: '2026-02-08',
