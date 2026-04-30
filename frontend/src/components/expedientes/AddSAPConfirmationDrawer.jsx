@@ -27,6 +27,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   IconX, IconUpload, IconFileText, IconCheck, IconAlert,
   IconChevRight, IconPackage, IconShield, IconSparkle,
+  IconSearch, IconPlus, IconTrash,
 } from "../../lib/icons.jsx";
 import { getToken } from "../../lib/api.js";
 
@@ -104,33 +105,58 @@ export default function AddSAPConfirmationDrawer({
   const [fechaFab, setFechaFab]           = useState(todayISO());
   const [file, setFile]                   = useState(null);
   const [fileError, setFileError]         = useState(null);
-  const [confirmedQtys, setConfirmedQtys] = useState(() => {
-    const m = {};
-    (lines || []).forEach(l => { m[l.id] = Number(l.qty || 0); });
-    return m;
-  });
+  const [confirmedQtys, setConfirmedQtys] = useState({});
+  // Set de IDs de líneas que el usuario explícitamente agregó a este SAP.
+  // Sólo estas se envían al backend en el submit (no las del expediente
+  // que no fueron incluidas).
+  const [addedLineIds, setAddedLineIds]   = useState(() => new Set());
+  // Estado del buscador SKU
+  const [searchQ, setSearchQ]             = useState("");
+  const [pickerOpen, setPickerOpen]       = useState(false);
   const [submitting, setSubmitting]       = useState(false);
   const [apiError, setApiError]           = useState(null);
 
-  // Cuando cambian las lines (el drawer se reusa), reinicia el mapa
+  // Reset al re-abrir
   useEffect(() => {
     if (!open) return;
-    const m = {};
-    (lines || []).forEach(l => { m[l.id] = Number(l.qty || 0); });
-    setConfirmedQtys(m);
+    setAddedLineIds(new Set());
+    setConfirmedQtys({});
+    setSearchQ("");
+    setPickerOpen(false);
     setApiError(null);
   }, [open, lines]);
 
   const fileInputRef = useRef(null);
 
   // ───── computed ─────
+  // Líneas agregadas por el usuario (subset filtrado por addedLineIds)
+  const addedLines = useMemo(() => {
+    return (lines || []).filter(l => addedLineIds.has(l.id));
+  }, [lines, addedLineIds]);
+
+  // Resultados del buscador: líneas del expediente que NO están aún
+  // agregadas y matchean el query (SKU o talla).
+  const searchResults = useMemo(() => {
+    const q = searchQ.trim().toLowerCase();
+    if (!q) return [];
+    return (lines || [])
+      .filter(l => !addedLineIds.has(l.id))
+      .filter(l => {
+        const sku = String(l.sku || "").toLowerCase();
+        const sz  = String(l.size || l.talla || "").toLowerCase();
+        const lbl = String(l.descripcion || l.product || l.product_label || "").toLowerCase();
+        return sku.includes(q) || sz.includes(q) || lbl.includes(q);
+      })
+      .slice(0, 12);
+  }, [lines, addedLineIds, searchQ]);
+
   const cutTotal = useMemo(() => {
-    return (lines || []).reduce((acc, l) => {
+    return addedLines.reduce((acc, l) => {
       const orig = Number(l.qty || 0);
       const conf = Number(confirmedQtys[l.id] ?? orig);
       return acc + Math.max(orig - conf, 0);
     }, 0);
-  }, [lines, confirmedQtys]);
+  }, [addedLines, confirmedQtys]);
 
   const hasCuts = cutTotal > 0;
 
@@ -138,10 +164,13 @@ export default function AddSAPConfirmationDrawer({
     if (!sapId.trim()) return false;
     if (!fechaFab) return false;
     if (!expediente?.id) return false;
-    // al menos una línea con qty > 0
-    const anyQty = (lines || []).some(l => Number(confirmedQtys[l.id] ?? 0) > 0);
+    // al menos una línea agregada con qty confirmada > 0
+    if (addedLines.length === 0) return false;
+    const anyQty = addedLines.some(l =>
+      Number(confirmedQtys[l.id] ?? l.qty ?? 0) > 0
+    );
     return anyQty;
-  }, [sapId, fechaFab, expediente, confirmedQtys, lines]);
+  }, [sapId, fechaFab, expediente, confirmedQtys, addedLines]);
 
   const wrongState = expediente && expediente.estado && expediente.estado !== "REGISTRO";
 
@@ -152,8 +181,43 @@ export default function AddSAPConfirmationDrawer({
   };
   const applyAll100 = () => {
     const m = {};
-    (lines || []).forEach(l => { m[l.id] = Number(l.qty || 0); });
+    addedLines.forEach(l => { m[l.id] = Number(l.qty || 0); });
     setConfirmedQtys(m);
+  };
+  const addLineToSap = (line) => {
+    setAddedLineIds(prev => {
+      const n = new Set(prev);
+      n.add(line.id);
+      return n;
+    });
+    // Inicializar la qty confirmada al valor solicitado
+    setConfirmedQtys(prev => ({ ...prev, [line.id]: Number(line.qty || 0) }));
+    // Limpiar el buscador para el siguiente add
+    setSearchQ("");
+    setPickerOpen(false);
+  };
+  const removeLineFromSap = (lineId) => {
+    setAddedLineIds(prev => {
+      const n = new Set(prev);
+      n.delete(lineId);
+      return n;
+    });
+    setConfirmedQtys(prev => {
+      const { [lineId]: _, ...rest } = prev;
+      return rest;
+    });
+  };
+  const addAllRemaining = () => {
+    const all = new Set(addedLineIds);
+    const newQtys = { ...confirmedQtys };
+    (lines || []).forEach(l => {
+      if (!all.has(l.id)) {
+        all.add(l.id);
+        newQtys[l.id] = Number(l.qty || 0);
+      }
+    });
+    setAddedLineIds(all);
+    setConfirmedQtys(newQtys);
   };
   const pickFile = () => fileInputRef.current?.click();
   const onFileSelected = (e) => {
@@ -184,7 +248,10 @@ export default function AddSAPConfirmationDrawer({
     setSubmitting(true);
     setApiError(null);
     try {
-      const lineasConfirmadas = (lines || []).map(l => ({
+      // Enviamos SOLO las líneas que el usuario explícitamente agregó
+      // a este SAP (no todas las del expediente). Las que no estén en
+      // este SAP quedan disponibles para asignar a futuros SAPs.
+      const lineasConfirmadas = addedLines.map(l => ({
         linea_id: l.id,
         qty_confirmada: Number(confirmedQtys[l.id] ?? l.qty ?? 0),
       }));
@@ -393,89 +460,202 @@ export default function AddSAPConfirmationDrawer({
               )}
             </section>
 
-            {/* ══ Sección 2 · Conciliación de productos ═ */}
+            {/* ══ Sección 2 · Productos a incluir en este SAP ═ */}
             <section className="sap-section">
               <div className="sap-section-head">
                 <span className="sap-section-num" style={{ background: BLUE }}>2</span>
                 <div>
                   <div className="heading-sm">
-                    {lang === "es" ? "Conciliación de Productos" : "Product Reconciliation"}
+                    {lang === "es"
+                      ? "Productos en este SAP"
+                      : "Products in this SAP"}
                   </div>
                   <div className="caption">
                     {lang === "es"
-                      ? "¿La fábrica aceptó el 100% o recortó cantidades? Ajustá cada línea."
-                      : "Did the factory accept 100% or cut quantities? Adjust each line."}
+                      ? "Buscá por SKU y agregá sólo las líneas que la fábrica confirmó. Las que no agregues quedan disponibles para futuros SAPs."
+                      : "Search by SKU and add only the lines confirmed by the factory. Unselected lines stay available for future SAPs."}
                   </div>
                 </div>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={applyAll100}
-                  style={{ marginLeft: "auto" }}
-                >
-                  <IconCheck size={11}/> {lang === "es" ? "Aceptar 100%" : "Accept 100%"}
-                </button>
+                {addedLines.length > 0 && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={applyAll100}
+                    style={{ marginLeft: "auto" }}
+                  >
+                    <IconCheck size={11}/> {lang === "es" ? "Aceptar 100%" : "Accept 100%"}
+                  </button>
+                )}
               </div>
 
-              <div className="sap-lines-table">
-                <div className="sap-lines-head">
-                  <div>{lang === "es" ? "Producto" : "Product"}</div>
-                  <div className="text-right">{lang === "es" ? "Solicitado" : "Requested"}</div>
-                  <div className="text-right">{lang === "es" ? "Confirmado" : "Confirmed"}</div>
-                  <div className="text-right">Δ</div>
+              {/* ── Buscador SKU ── */}
+              <div style={{ position: "relative", marginBottom: 12 }}>
+                <div style={{
+                  position: "relative",
+                  display: "flex", alignItems: "center", gap: 8,
+                  border: "1px solid var(--border)", borderRadius: 10,
+                  padding: "8px 12px", background: "white",
+                }}>
+                  <IconSearch size={14} style={{ color: "var(--text-tertiary)" }}/>
+                  <input
+                    type="text"
+                    value={searchQ}
+                    onChange={(e) => { setSearchQ(e.target.value); setPickerOpen(true); }}
+                    onFocus={() => setPickerOpen(true)}
+                    placeholder={lang === "es"
+                      ? "Buscar por SKU, talla o nombre…"
+                      : "Search by SKU, size or name…"}
+                    style={{
+                      flex: 1, border: 0, outline: "none",
+                      background: "transparent", fontSize: 14,
+                    }}
+                  />
+                  {(lines || []).length > 0 && addedLines.length < (lines || []).length && (
+                    <button
+                      type="button"
+                      onClick={addAllRemaining}
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: 11 }}>
+                      {lang === "es" ? "Agregar todas" : "Add all"}
+                    </button>
+                  )}
                 </div>
 
-                {(lines || []).length === 0 && (
+                {/* Dropdown de resultados */}
+                {pickerOpen && searchQ.trim() && (
+                  <div style={{
+                    position: "absolute", top: "calc(100% + 4px)",
+                    left: 0, right: 0, zIndex: 10,
+                    background: "white", border: "1px solid var(--border)",
+                    borderRadius: 10, maxHeight: 260, overflowY: "auto",
+                    boxShadow: "0 8px 24px -8px rgba(15,27,61,0.18)",
+                  }}>
+                    {searchResults.length === 0 ? (
+                      <div style={{
+                        padding: "12px 14px", color: "var(--text-tertiary)",
+                        fontSize: 13, textAlign: "center",
+                      }}>
+                        {lang === "es"
+                          ? "Sin coincidencias en líneas del expediente"
+                          : "No matches in expediente lines"}
+                      </div>
+                    ) : (
+                      searchResults.map(l => (
+                        <button
+                          key={l.id} type="button"
+                          onClick={() => addLineToSap(l)}
+                          style={{
+                            width: "100%", textAlign: "left", border: 0,
+                            padding: "10px 14px", background: "white",
+                            cursor: "pointer", display: "flex",
+                            alignItems: "center", gap: 12,
+                            borderBottom: "1px solid var(--border-subtle)",
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(48,131,254,0.05)"}
+                          onMouseLeave={(e) => e.currentTarget.style.background = "white"}
+                        >
+                          <IconPackage size={14} style={{ color: BLUE, flexShrink: 0 }}/>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div className="mono" style={{ fontWeight: 700, color: NAVY, fontSize: 13 }}>
+                              {l.sku || "—"}
+                              {(l.size || l.talla) && (
+                                <span style={{
+                                  marginLeft: 8, padding: "1px 7px", borderRadius: 4,
+                                  background: "rgba(11,30,58,0.06)", fontSize: 10,
+                                  color: NAVY, fontWeight: 700,
+                                }}>{l.size || l.talla}</span>
+                              )}
+                            </div>
+                            <div className="caption" style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
+                              {fmtNumber(l.qty)} u · {l.descripcion || l.product || l.product_label || ""}
+                            </div>
+                          </div>
+                          <IconPlus size={13} style={{ color: MINT }}/>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Tabla de líneas agregadas ── */}
+              <div className="sap-lines-table">
+                {addedLines.length === 0 ? (
                   <div className="sap-empty">
-                    <IconPackage size={20} style={{ opacity: 0.35 }}/>
+                    <IconPackage size={22} style={{ opacity: 0.35 }}/>
                     <div className="heading-sm">
-                      {lang === "es" ? "Sin líneas asignadas" : "No lines assigned"}
+                      {lang === "es"
+                        ? "Aún no agregás líneas a este SAP"
+                        : "No lines added to this SAP yet"}
                     </div>
                     <div className="caption">
                       {lang === "es"
-                        ? "Este expediente no tiene líneas para confirmar."
-                        : "This expediente has no lines to confirm."}
+                        ? "Usá el buscador de arriba para incluir las líneas que cubre este número SAP."
+                        : "Use the search above to include lines covered by this SAP number."}
                     </div>
                   </div>
-                )}
-
-                {(lines || []).map(l => {
-                  const orig = Number(l.qty || 0);
-                  const conf = Number(confirmedQtys[l.id] ?? orig);
-                  const delta = conf - orig;
-                  const tone = delta === 0 ? "ok" : delta < 0 ? "cut" : "over";
-                  return (
-                    <div key={l.id} className="sap-line-row">
-                      <div className="sap-line-refs">
-                        <div className="mono heading-sm" style={{ color: NAVY }}>
-                          {l.sku || "—"}
-                        </div>
-                        <div className="caption text-sec" style={{ marginTop: 2 }}>
-                          {l.size ? `${lang === "es" ? "Talla" : "Size"} ${l.size} · ` : ""}
-                          {l.descripcion || l.product || ""}
-                        </div>
-                      </div>
-                      <div className="sap-line-cell tabular-nums text-right">
-                        {fmtNumber(orig)}
-                      </div>
-                      <div className="sap-line-cell text-right">
-                        <input
-                          type="number"
-                          className="input input-sm tabular-nums sap-qty-input"
-                          value={conf}
-                          min={0}
-                          max={orig * 2}
-                          onChange={(e) => updateQty(l.id, e.target.value)}
-                          data-tone={tone}
-                        />
-                      </div>
-                      <div className="sap-line-cell tabular-nums text-right">
-                        <span className="sap-delta" data-tone={tone}>
-                          {delta === 0 ? "—" : (delta > 0 ? `+${fmtNumber(delta)}` : fmtNumber(delta))}
-                        </span>
-                      </div>
+                ) : (
+                  <>
+                    <div className="sap-lines-head" style={{
+                      gridTemplateColumns: "1fr 90px 90px 60px 36px",
+                    }}>
+                      <div>{lang === "es" ? "Producto" : "Product"}</div>
+                      <div className="text-right">{lang === "es" ? "Solicitado" : "Requested"}</div>
+                      <div className="text-right">{lang === "es" ? "Confirmado" : "Confirmed"}</div>
+                      <div className="text-right">Δ</div>
+                      <div></div>
                     </div>
-                  );
-                })}
+                    {addedLines.map(l => {
+                      const orig = Number(l.qty || 0);
+                      const conf = Number(confirmedQtys[l.id] ?? orig);
+                      const delta = conf - orig;
+                      const tone = delta === 0 ? "ok" : delta < 0 ? "cut" : "over";
+                      return (
+                        <div key={l.id} className="sap-line-row" style={{
+                          gridTemplateColumns: "1fr 90px 90px 60px 36px",
+                        }}>
+                          <div className="sap-line-refs">
+                            <div className="mono heading-sm" style={{ color: NAVY }}>
+                              {l.sku || "—"}
+                            </div>
+                            <div className="caption text-sec" style={{ marginTop: 2 }}>
+                              {(l.size || l.talla) ? `${lang === "es" ? "Talla" : "Size"} ${l.size || l.talla} · ` : ""}
+                              {l.descripcion || l.product || l.product_label || ""}
+                            </div>
+                          </div>
+                          <div className="sap-line-cell tabular-nums text-right">
+                            {fmtNumber(orig)}
+                          </div>
+                          <div className="sap-line-cell text-right">
+                            <input
+                              type="number"
+                              className="input input-sm tabular-nums sap-qty-input"
+                              value={conf}
+                              min={0}
+                              max={orig * 2}
+                              onChange={(e) => updateQty(l.id, e.target.value)}
+                              data-tone={tone}
+                            />
+                          </div>
+                          <div className="sap-line-cell tabular-nums text-right">
+                            <span className="sap-delta" data-tone={tone}>
+                              {delta === 0 ? "—" : (delta > 0 ? `+${fmtNumber(delta)}` : fmtNumber(delta))}
+                            </span>
+                          </div>
+                          <div className="sap-line-cell" style={{ textAlign: "center" }}>
+                            <button
+                              type="button"
+                              onClick={() => removeLineFromSap(l.id)}
+                              className="btn btn-ghost btn-sm"
+                              title={lang === "es" ? "Quitar de este SAP" : "Remove from this SAP"}
+                              style={{ color: RED, padding: "4px 6px" }}>
+                              <IconTrash size={13}/>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
               </div>
 
               {hasCuts && (

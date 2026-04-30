@@ -205,8 +205,13 @@ export default function ScreenOCDetail() {
         deferred_qty:   0,
         deferred_unit_price: 0,
         show_deferred_to_client: false,
-        // Marca el origen del precio para futura UX (tooltip "Precio CPA")
-        _price_source:  cpaPx != null ? "CPA" : "LIST",
+        // Marca el origen del precio para futura UX (tooltip).
+        //   FROZEN  → unit_price persistido en BD al crear el expediente
+        //   LIVE    → backfill best-effort vía lookup en cpaPriceMap
+        //   NONE    → ninguna fuente (línea sin producto_id resuelto)
+        _price_source:  persistedPrice > 0
+                          ? "FROZEN"
+                          : (livePrice > 0 ? "LIVE" : "NONE"),
       };
     }),
     // Campos del header / KPIs que NO aplican a una OC recién creada
