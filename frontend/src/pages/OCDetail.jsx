@@ -88,6 +88,12 @@ export default function ScreenOCDetail() {
   const [showAddProduct, setShowAddProduct]       = useState(false);
   const [sapDrawerOpen, setSapDrawerOpen]         = useState(false);
   const [sapDrawerExp, setSapDrawerExp]           = useState(null);
+  // Modal "Editar número SAP" — todo el state vive acá para no
+  // depender de window.prompt (que rompe el design system MWT).
+  const [editSapModal, setEditSapModal]           = useState({
+    open: false, oldSap: '', newSap: '', expId: null, lineIds: [], error: null,
+  });
+  const [editSapSaving, setEditSapSaving]         = useState(false);
 
   useEffect(() => {
     if (ocFromMock) return;
@@ -367,42 +373,54 @@ export default function ScreenOCDetail() {
   };
 
   // ── Editar el número SAP de un grupo ─────────────────────────
-  // Patch al expediente (sap + numero_sap) y a las líneas del grupo
-  // (linea.sap). Tras éxito, recarga la página para ver el cambio.
-  const editSapNumber = async (oldSap, expId, lineIds) => {
-    const next = window.prompt(
-      lang === 'es'
-        ? `Nuevo número SAP (actual: ${oldSap || '—'}):`
-        : `New SAP number (current: ${oldSap || '—'}):`,
-      oldSap || ''
-    );
-    if (next == null) return;                  // cancelado
-    const trimmed = String(next).trim();
-    if (trimmed === oldSap) return;            // sin cambio
+  // Abre un modal con tokens MWT (no window.prompt — ese diálogo
+  // del browser no respeta Navy/Mint, no se ve nada bien). El estado
+  // del modal vive en `editSapModal` y el guardado en `editSapSaving`.
+  const openEditSapModal = (oldSap, expId, lineIds) => {
+    setEditSapModal({
+      open:   true,
+      oldSap: oldSap || '',
+      newSap: oldSap || '',
+      expId:  expId || null,
+      lineIds: Array.isArray(lineIds) ? lineIds : [],
+      error:  null,
+    });
+  };
+  const saveEditSap = async () => {
+    const m = editSapModal;
+    if (!m || !m.open) return;
+    const trimmed = String(m.newSap || '').trim();
     if (!trimmed) {
-      window.alert(lang === 'es'
-        ? 'El número SAP no puede estar vacío.'
-        : 'SAP number cannot be empty.');
+      setEditSapModal(prev => ({ ...prev,
+        error: lang === 'es'
+          ? 'El número SAP no puede estar vacío.'
+          : 'SAP number cannot be empty.',
+      }));
       return;
     }
+    if (trimmed === m.oldSap) {
+      setEditSapModal(prev => ({ ...prev, open: false }));
+      return;
+    }
+    setEditSapSaving(true);
     try {
-      // 1) Actualiza el expediente
-      if (expId) {
-        await expedientesApi.update(expId, { sap: trimmed, numero_sap: trimmed });
+      if (m.expId) {
+        await expedientesApi.update(m.expId, { sap: trimmed, numero_sap: trimmed });
       }
-      // 2) Actualiza cada línea del grupo (best-effort, defensivo)
-      if (Array.isArray(lineIds)) {
-        await Promise.all(lineIds.map(lid =>
+      if (m.lineIds && m.lineIds.length > 0) {
+        await Promise.all(m.lineIds.map(lid =>
           lineasApi.update(lid, { sap: trimmed }).catch(() => null)
         ));
       }
-      // 3) Reload soft de la página
+      setEditSapModal(prev => ({ ...prev, open: false }));
       navigate(0);
     } catch (e) {
-      window.alert(
-        (lang === 'es' ? 'No pude actualizar el SAP: ' : 'Could not update SAP: ')
-        + (e?.body?.detail || e?.message || 'error')
-      );
+      setEditSapModal(prev => ({ ...prev,
+        error: (lang === 'es' ? 'No pude actualizar el SAP: ' : 'Could not update SAP: ')
+              + (e?.body?.detail || e?.message || 'error'),
+      }));
+    } finally {
+      setEditSapSaving(false);
     }
   };
 
@@ -571,6 +589,167 @@ export default function ScreenOCDetail() {
         />
       )}
 
+      {/* ── Modal · Editar número SAP (tokens MWT) ───────────────── */}
+      {editSapModal.open && (
+        <div
+          onClick={() => !editSapSaving && setEditSapModal(p => ({ ...p, open: false }))}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(11,30,58,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white', borderRadius: 14,
+              width: 'min(440px, 96vw)',
+              boxShadow: '0 30px 60px -20px rgba(15,27,61,0.55)',
+              overflow: 'hidden',
+              display: 'flex', flexDirection: 'column',
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              padding: '14px 20px', borderBottom: '1px solid var(--border-subtle)',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              background: 'linear-gradient(135deg, rgba(72,30,227,0.04), rgba(0,178,134,0.03))',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{
+                  width: 32, height: 32, borderRadius: 8,
+                  background: '#481EE3', color: 'white',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <IconPencil size={14}/>
+                </div>
+                <div>
+                  <div className="micro" style={{ color: 'var(--text-tertiary)', letterSpacing: 1 }}>
+                    {lang === 'es' ? 'EDITAR' : 'EDIT'}
+                  </div>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: '#0B1E3A' }}>
+                    {lang === 'es' ? 'Número SAP del grupo' : 'Group SAP number'}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={editSapSaving}
+                onClick={() => setEditSapModal(p => ({ ...p, open: false }))}
+                className="btn btn-ghost btn-sm"
+                style={{ padding: '6px 8px' }}
+              >
+                <IconX size={11}/>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: 20, display: 'grid', gap: 12 }}>
+              <div>
+                <div className="micro" style={{
+                  fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                  color: 'var(--text-tertiary)', textTransform: 'uppercase',
+                  marginBottom: 6,
+                }}>
+                  {lang === 'es' ? 'SAP actual' : 'Current SAP'}
+                </div>
+                <div className="mono-sm" style={{
+                  padding: '8px 12px', borderRadius: 8,
+                  background: 'rgba(11,30,58,0.04)',
+                  color: '#0B1E3A', fontWeight: 600,
+                  fontFamily: 'var(--font-mono)', fontSize: 13,
+                }}>
+                  {editSapModal.oldSap || '—'}
+                </div>
+              </div>
+              <label style={{ display: 'block' }}>
+                <div className="micro" style={{
+                  fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                  color: 'var(--text-tertiary)', textTransform: 'uppercase',
+                  marginBottom: 6,
+                }}>
+                  {lang === 'es' ? 'Nuevo número SAP *' : 'New SAP number *'}
+                </div>
+                <input
+                  type="text"
+                  className="input mono-sm"
+                  autoFocus
+                  value={editSapModal.newSap}
+                  disabled={editSapSaving}
+                  onChange={(e) => setEditSapModal(p => ({
+                    ...p, newSap: e.target.value, error: null,
+                  }))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveEditSap();
+                    if (e.key === 'Escape' && !editSapSaving) {
+                      setEditSapModal(p => ({ ...p, open: false }));
+                    }
+                  }}
+                  placeholder="SAP-2026-NNNNN"
+                  style={{
+                    width: '100%', fontFamily: 'var(--font-mono)',
+                    fontSize: 14, padding: '10px 12px',
+                    border: editSapModal.error
+                      ? '1.5px solid #DC2626'
+                      : '1px solid var(--border)',
+                    borderRadius: 8,
+                  }}
+                />
+              </label>
+              {editSapModal.error && (
+                <div style={{
+                  padding: '8px 12px', borderRadius: 8,
+                  background: '#FEE2E2', color: '#991B1B',
+                  border: '1px solid #FCA5A5', fontSize: 13,
+                }}>
+                  <IconAlert size={11} style={{ verticalAlign: -1, marginRight: 6 }}/>
+                  {editSapModal.error}
+                </div>
+              )}
+              <div className="caption" style={{
+                color: 'var(--text-tertiary)', fontSize: 12, lineHeight: 1.4,
+              }}>
+                {lang === 'es'
+                  ? `Se actualizará el SAP del expediente y de las ${editSapModal.lineIds.length} línea(s) del grupo.`
+                  : `Will update the expediente SAP and the ${editSapModal.lineIds.length} line(s) in this group.`}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{
+              padding: '12px 20px', borderTop: '1px solid var(--border-subtle)',
+              background: 'rgba(11,30,58,0.02)',
+              display: 'flex', justifyContent: 'flex-end', gap: 8,
+            }}>
+              <button
+                type="button"
+                disabled={editSapSaving}
+                onClick={() => setEditSapModal(p => ({ ...p, open: false }))}
+                className="btn btn-ghost"
+              >
+                {lang === 'es' ? 'Cancelar' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                disabled={editSapSaving || !editSapModal.newSap.trim()
+                          || editSapModal.newSap.trim() === editSapModal.oldSap}
+                onClick={saveEditSap}
+                className="btn btn-accent"
+                style={{
+                  fontWeight: 700, minWidth: 140,
+                  background: '#00B286', borderColor: '#00B286',
+                }}
+              >
+                {editSapSaving
+                  ? (lang === 'es' ? 'Guardando…' : 'Saving…')
+                  : (lang === 'es' ? 'Guardar' : 'Save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── KPI row ─────
           Para CLIENT ocultamos el "Credit clock" (días de crédito gastados)
           porque es métrica interna de cobranza. Dejamos coverage, logistics
@@ -693,7 +872,7 @@ export default function ScreenOCDetail() {
                               title={lang === 'es' ? 'Editar número SAP' : 'Edit SAP number'}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                editSapNumber(
+                                openEditSapModal(
                                   g.sap,
                                   g.exp_id,
                                   (g.lines || []).map(l => l.id),
