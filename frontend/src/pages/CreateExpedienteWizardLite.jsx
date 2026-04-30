@@ -24,7 +24,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   IconChevLeft, IconChevRight, IconCheck, IconX, IconUpload, IconAlert,
   IconRefresh, IconUser, IconPackage, IconPlus, IconSearch, IconLock,
-  IconMail,
+  IconMail, IconTrash,
 } from "../lib/icons.jsx";
 import {
   clientesApi, expedientesApi, productosApi, tallasApi, apiFetch, getToken,
@@ -677,9 +677,11 @@ function Step2Productos({
                 <th>SKU</th>
                 <th>{lang === "es" ? "Producto" : "Product"}</th>
                 <th>{lang === "es" ? "Talla" : "Size"}</th>
-                <th style={{ textAlign: "right" }}>{lang === "es" ? "Cantidad" : "Qty"}</th>
+                <th style={{ textAlign: "right", paddingRight: 24 }}>
+                  {lang === "es" ? "Cantidad" : "Qty"}
+                </th>
                 <th>{lang === "es" ? "Estado" : "Status"}</th>
-                <th></th>
+                <th style={{ width: 56, textAlign: "center" }}></th>
               </tr>
             </thead>
             <tbody>
@@ -691,11 +693,12 @@ function Step2Productos({
                     <td className="mono-sm">{l.sku}</td>
                     <td>{l.product_label || "—"}</td>
                     <td>{l.talla || "—"}</td>
-                    <td>
+                    <td style={{ textAlign: "right", paddingRight: 24 }}>
                       <input className="input tabular-nums" type="number" min="1"
                              value={l.cantidad}
                              onChange={(e) => updateLine(l.tmpId, { cantidad: Number(e.target.value) })}
-                             style={{ width: 90, textAlign: "right" }}/>
+                             style={{ width: 90, textAlign: "right",
+                                      display: "inline-block" }}/>
                     </td>
                     <td>
                       {unassigned ? (
@@ -722,11 +725,16 @@ function Step2Productos({
                         </span>
                       )}
                     </td>
-                    <td>
+                    <td style={{ textAlign: "center", width: 56 }}>
                       <button className="btn btn-ghost btn-sm"
                               onClick={() => removeLine(l.tmpId)}
-                              style={{ color: "#D64545" }}>
-                        <IconX size={11}/>
+                              title={lang === "es" ? "Eliminar línea" : "Remove line"}
+                              style={{
+                                color: "#D64545",
+                                padding: "6px 8px",
+                                borderRadius: 6,
+                              }}>
+                        <IconTrash size={13}/>
                       </button>
                     </td>
                   </tr>
