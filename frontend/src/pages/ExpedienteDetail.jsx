@@ -75,11 +75,12 @@ export default function ScreenExpedienteDetail() {
   }, [expedienteId, isHeroOrMock]);
 
   // Mapper: API → shape esperado por el UI viejo (mock-shape).
-  // Solo poblamos los campos que necesita el header + tabs principales.
-  // Los desconocidos quedan en valores neutros para que la UI no rompa.
+  // ⚠ NO hacemos spread de mockExp — eso filtraba defaults seed (CIF/SEA/
+  // FCL, "Lote invierno 2026...", fechas falsas, etc.). Construimos el
+  // objeto con defaults vacíos explícitos. DetailRow se encarga de
+  // mostrar "—" cuando llegan vacíos.
   const mockExp = EXPEDIENTES.find(e => e.id === expedienteId) || EXPEDIENTES[2];
   const exp = apiExp ? {
-    ...mockExp,                                  // estructura base con defaults
     id:               apiExp.id,
     ref:              apiExp.codigo,
     codigo:           apiExp.codigo,
@@ -88,19 +89,23 @@ export default function ScreenExpedienteDetail() {
     client_id:        apiExp.client_id,
     brand_id:         apiExp.brand_id,
     oc_id:            apiExp.oc_id,
-    oc_client:        apiExp.oc_id || "—",
+    oc_client:        apiExp.oc_id || "",
     proforma:         apiExp.proforma || "",
     sap:              apiExp.sap || "",
-    modo_operacion:   apiExp.modo_operacion,
-    moneda:           apiExp.moneda || "USD",
-    origin:           apiExp.origin || "—",
-    destination:      apiExp.destination || "—",
+    modo_operacion:   apiExp.modo_operacion || "",
+    // Aliases para compat con el UI mock (lee `exp.mode` / `exp.currency`)
+    mode:             apiExp.modo_operacion || "",
+    currency:         apiExp.moneda || "",
+    moneda:           apiExp.moneda || "",
+    origin:           apiExp.origin || "",
+    destination:      apiExp.destination || "",
     origin_country:   apiExp.origin_country || "",
     destination_country: apiExp.destination_country || "",
-    freight_mode:     apiExp.freight_mode || "SEA",
-    dispatch_mode:    apiExp.dispatch_mode || "FCL",
+    freight_mode:     apiExp.freight_mode || "",
+    dispatch_mode:    apiExp.dispatch_mode || "",
     incoterm:         apiExp.incoterm || "",
     eta:              apiExp.eta || null,
+    shipment_date:    apiExp.shipment_date || null,
     total_cost:       Number(apiExp.total_cost || 0),
     total_invoiced:   Number(apiExp.total_invoiced || 0),
     total_paid:       Number(apiExp.total_paid || 0),
@@ -111,10 +116,16 @@ export default function ScreenExpedienteDetail() {
     block_reason:     apiExp.block_reason || "",
     phase_signal:     apiExp.phase_signal || "green",
     is_active:        apiExp.is_active !== false,
+    // Notas: el modelo guarda `notas` (string), el UI lee `exp.notes`.
+    notas:            apiExp.notas || "",
+    notes:            apiExp.notas || "",
+    created_at:       apiExp.created_at || null,
+    updated_at:       apiExp.updated_at || null,
+    last_event_at:    apiExp.last_event_at || apiExp.updated_at || null,
     // Campos descriptivos hidratados de cliente/marca:
-    client:           apiClient?.razon_social || apiClient?.nombre || apiClient?.codigo || "—",
+    client:           apiClient?.razon_social || apiClient?.nombre || apiClient?.codigo || "",
     client_country:   apiClient?.pais_iso2 || "",
-    brand:            apiBrand?.nombre || apiBrand?.brand_code || "—",
+    brand:            apiBrand?.nombre || apiBrand?.brand_code || "",
   } : mockExp;
 
   // Mapear cliente API → shape esperado por el UI mock-based.
@@ -472,18 +483,29 @@ function OverviewTab({ exp, lang, lines, activity }) {
             <th style={{textAlign:'right'}}>{lang==='es' ? 'Margen' : 'Margin'}</th>
           </tr></thead>
           <tbody>
-            {lines.map(l => (
-              <tr key={l.id}>
-                <td><span className="mono-sm" style={{fontWeight:600, color:'var(--interactive)'}}>{l.sku}</span></td>
-                <td>{l.name}</td>
-                <td className="td-num tabular">{l.qty}</td>
-                <td className="td-money">{fmtMoneyDetail(l.unit_price)}</td>
-                <td className="td-money">{fmtMoney(l.qty * l.unit_price)}</td>
-                <td className="td-num">
-                  <Badge kind="mint">{(l.margin*100).toFixed(1)}%</Badge>
-                </td>
-              </tr>
-            ))}
+            {lines.map(l => {
+              // Coerción defensiva: los campos del API llegan como strings
+              // (Decimal serializado). Sin Number(), `qty * unit_price` hace
+              // string concat y `(margin*100)` es NaN%.
+              const qty   = Number(l.qty || 0);
+              const unit  = Number(l.unit_price || 0);
+              const sub   = Number(l.total_price ?? (qty * unit));
+              const margin = Number(l.margin ?? 0);
+              return (
+                <tr key={l.id}>
+                  <td><span className="mono-sm" style={{fontWeight:600, color:'var(--interactive)'}}>{l.sku}</span></td>
+                  <td>{l.name || l.product_label || l.descripcion || ''}</td>
+                  <td className="td-num tabular">{qty}</td>
+                  <td className="td-money">{fmtMoneyDetail(unit)}</td>
+                  <td className="td-money">{fmtMoney(sub)}</td>
+                  <td className="td-num">
+                    {margin > 0
+                      ? <Badge kind="mint">{(margin*100).toFixed(1)}%</Badge>
+                      : <span className="caption" style={{color:'var(--text-tertiary)'}}>—</span>}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -502,10 +524,17 @@ function OverviewTab({ exp, lang, lines, activity }) {
 }
 
 function DetailRow({ label, value }) {
+  // Tratar como vacío: null, undefined, "", "—" → mostrar guion gris
+  // para que la UI no quede con "undefined" o textos falsos.
+  const isEmpty = value == null || value === "" || value === "—";
   return (
     <div>
       <div className="micro" style={{ marginBottom: 4 }}>{label}</div>
-      <div className="body-md text-prim" style={{ fontWeight: 500 }}>{value}</div>
+      <div className="body-md text-prim" style={{ fontWeight: 500 }}>
+        {isEmpty
+          ? <span style={{ color: 'var(--text-tertiary)' }}>—</span>
+          : value}
+      </div>
     </div>
   );
 }

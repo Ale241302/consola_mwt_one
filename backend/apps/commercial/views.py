@@ -519,6 +519,87 @@ class CommissionBaseCatViewSet(viewsets.ReadOnlyModelViewSet):
 from rest_framework.views import APIView
 
 
+# ---------------------------------------------------------------------
+# Helper reutilizable: compute_client_price()
+#
+# Misma lógica que ResolveClientPriceView.post pero CALLABLE desde
+# otros módulos (ej. expedientes.views.ExpedienteViewSet.create) sin
+# depender de un Request HTTP. Devuelve el `final_price` como Decimal
+# o None si no se puede resolver.
+#
+# Sin enriquecimientos CEO (cost/margen/commission) — solo el precio.
+# ---------------------------------------------------------------------
+def compute_client_price(client_id, brand_id, product_sku, days_req=0):
+    """Aplica el waterfall (CPA → PriceListVersion → EPP) y devuelve el
+    precio final como Decimal. Ignora errores: cualquier fallo devuelve
+    None y deja que el caller use su fallback."""
+    from django.utils import timezone
+    if not client_id or not brand_id or not product_sku:
+        return None
+    try:
+        days_req = int(days_req or 0)
+
+        # 1) CPA override
+        cpa = ClientAssignment.objects.filter(
+            client_id=client_id, brand_id=brand_id,
+            brand_sku=product_sku, is_active=True,
+        ).order_by("-valid_from").first()
+
+        base_price = None
+        if cpa:
+            base_price = Decimal(str(cpa.cached_client_price))
+        else:
+            # 2) PriceListVersion + GradeItem
+            today = timezone.now().date()
+            winning_plv = (
+                PriceListVersion.objects.filter(
+                    brand_id=brand_id, is_active=True,
+                    valid_from__lte=today,
+                ).filter(
+                    Q(valid_to__isnull=True) | Q(valid_to__gte=today)
+                ).annotate(
+                    _has_end=Case(
+                        When(valid_to__isnull=False, then=Value(0)),
+                        default=Value(1),
+                        output_field=IntegerField(),
+                    )
+                ).order_by("_has_end", "-created_at").first()
+            )
+            if winning_plv:
+                grade_item = GradeItem.objects.filter(
+                    pricelist_version_id=winning_plv.id,
+                    product_sku=product_sku,
+                    is_active=True,
+                ).first()
+                if grade_item:
+                    base_price = Decimal(str(grade_item.unit_price_usd))
+
+        if base_price is None:
+            return None
+
+        # 3) Early Payment tier (descuento)
+        discount_pct = Decimal("0")
+        policy = EarlyPaymentPolicy.objects.filter(
+            client_id=client_id, brand_id=brand_id, is_active=True,
+        ).order_by("-valid_from").first()
+        if policy:
+            tier = EarlyPaymentTier.objects.filter(
+                policy_id=policy.id, is_active=True,
+                payment_days__gte=days_req,
+            ).order_by("payment_days").first()
+            if tier is None:
+                tier = EarlyPaymentTier.objects.filter(
+                    policy_id=policy.id, is_active=True,
+                ).order_by("-payment_days").first()
+            if tier:
+                discount_pct = Decimal(str(tier.discount_pct))
+
+        final_price = (base_price * (Decimal("100") - discount_pct) / Decimal("100"))
+        return final_price.quantize(Decimal("0.0001"))
+    except Exception:
+        return None
+
+
 class ResolveClientPriceView(APIView):
     """POST /api/commercial/resolve_client_price/
 

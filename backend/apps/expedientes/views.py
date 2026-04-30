@@ -342,44 +342,48 @@ class ExpedienteViewSet(viewsets.ViewSet):
         line_count = 0
         if isinstance(raw_lines, list) and raw_lines:
             # ── Resolver precio cliente UNA VEZ por producto (frozen) ──
-            # El precio cliente vive en producto.especificaciones.client_prices
-            # y debe quedar CONGELADO en linea.unit_price al momento de crear
-            # el expediente. Esto preserva el histórico: si mañana cambia el
-            # precio del cliente, esta OC mantiene el precio del día de
-            # creación. Es contabilidad básica.
+            # El precio se calcula con el WATERFALL COMEX (mismo que usa
+            # /api/commercial/resolve_client_price/):
+            #   1) CPA (Client-Product Assignment override)
+            #   2) PriceListVersion + GradeItem (mejor PLV vigente)
+            #   3) Early-Payment Tier (descuento por days_req)
+            # Si todo falla, fallback a producto.precio_lista.
             #
-            # ⚠ Defensiva: cualquier fallo aquí (UUID inválido, JSONB mal
-            # formado, producto.producto no existe) se traga y deja
-            # price_map vacío → líneas se crean con unit_price=0 sin
-            # romper el flujo principal.
+            # El precio queda CONGELADO en linea.unit_price → la historia
+            # de la OC es inmutable contra cambios futuros del catálogo.
+            from apps.commercial.views import compute_client_price
+
             client_id_val = payload.get("client_id")
             price_map = {}   # { producto_id (str): unit_price (Decimal) }
             try:
                 unique_pids = {str(ln.get("producto_id")) for ln in raw_lines
                                if isinstance(ln, dict) and ln.get("producto_id")}
-                # Filtrar valores que no parecen UUIDs (longitud != 36)
                 unique_pids = {p for p in unique_pids if isinstance(p, str) and len(p) == 36}
                 if unique_pids:
                     with connection.cursor() as c:
                         placeholders = ",".join(["%s::uuid"] * len(unique_pids))
                         c.execute(f"""
-                            SELECT id::text, especificaciones, precio_lista
+                            SELECT id::text, sku, brand_id::text, precio_lista
                               FROM productos.producto
                              WHERE id IN ({placeholders})
                         """, list(unique_pids))
-                        for pid, espec, pl in c.fetchall():
-                            try:
-                                cli_map = (espec or {}).get("client_prices") or {}
-                            except Exception:
-                                cli_map = {}
-                            override = None
-                            if client_id_val:
-                                v = cli_map.get(str(client_id_val))
-                                if v is not None:
-                                    try: override = Decimal(str(v))
-                                    except Exception: override = None
-                            if override is not None and override > 0:
-                                price_map[pid] = override
+                        for pid, sku_db, brand_id, pl in c.fetchall():
+                            # 1) Intentar waterfall COMEX
+                            waterfall_price = None
+                            if client_id_val and brand_id and sku_db:
+                                try:
+                                    waterfall_price = compute_client_price(
+                                        client_id  = client_id_val,
+                                        brand_id   = brand_id,
+                                        product_sku= sku_db,
+                                        days_req   = 0,
+                                    )
+                                except Exception as e:
+                                    log.warning("[expediente.create] waterfall pid=%s: %s", pid, e)
+                                    waterfall_price = None
+                            # 2) Si la waterfall no resolvió, fallback a precio_lista
+                            if waterfall_price is not None and waterfall_price > 0:
+                                price_map[pid] = waterfall_price
                             else:
                                 try:
                                     price_map[pid] = Decimal(str(pl or 0))
