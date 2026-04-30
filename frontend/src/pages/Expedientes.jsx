@@ -146,9 +146,21 @@ export default function ScreenExpedientes() {
   };
   const onOpenOC = (ocId) => navigate(`/expedientes/${ocId}`);
   const onOpenExpediente = (id) => {
-    const oc = OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(id));
-    if (oc) navigate(`/expedientes/${oc.id}/exp/${id}`);
-    else navigate('/expedientes');
+    // 1) Buscar el expediente en la lista para leer su oc_id directamente.
+    //    El backend devuelve oc_id como UUID en expedientes.expediente; los
+    //    mocks lo emiten también. Si no hay oc_id, intentamos por compat
+    //    con el shape viejo (mocks) donde la OC tenía un array `expedientes`.
+    const exp = EXPEDIENTES.find(e => e.id === id);
+    const ocId = exp?.oc_id
+              || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(id))?.id;
+    if (ocId) {
+      navigate(`/expedientes/${ocId}/exp/${id}`);
+      return;
+    }
+    // 3) Sin oc_id (expediente sin OC vinculada — caso raro): vamos al
+    //    detalle directamente vía la ruta sin OC. ExpedienteDetail tolera
+    //    /expedientes/none/exp/<id> y carga por el id propio.
+    navigate(`/expedientes/none/exp/${id}`);
   };
 
   const [q, setQ] = useState('');
@@ -495,8 +507,12 @@ export default function ScreenExpedientes() {
                         // Para CLIENT, el click directo en la fila abre el
                         // detalle de la OC (no hay expandible con data interna).
                         if (isClient) {
-                          const oc = OCS.find(o => o.code === e.oc_client) || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));
+                          const oc = OCS.find(o => o.code === e.oc_client)
+                                  || OCS.find(o => o.id === e.oc_id)
+                                  || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));
                           if (oc) navigate(`/expedientes/${oc.id}`);
+                          else if (e.oc_id) navigate(`/expedientes/${e.oc_id}`);
+                          else onOpenExpediente(e.id);
                           return;
                         }
                         setExpandedId(isOpen ? null : e.id);
@@ -621,9 +637,14 @@ export default function ScreenExpedientes() {
                     )}
                     <td onClick={(ev)=>{
                          ev.stopPropagation();
-                         // Va a la vista intermedia de la OC (PO-xxxx-xxxxx)
-                         const oc = OCS.find(o => o.code === e.oc_client) || OCS.find(o => o.expedientes.includes(e.id));
+                         // Va a la vista intermedia de la OC (PO-xxxx-xxxxx).
+                         // Buscar primero por code (mocks) y luego por oc_id (real),
+                         // con fallback al detalle del expediente si no hay OC.
+                         const oc = OCS.find(o => o.code === e.oc_client)
+                                 || OCS.find(o => o.id === e.oc_id)
+                                 || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));
                          if (oc) navigate(`/expedientes/${oc.id}`);
+                         else if (e.oc_id) navigate(`/expedientes/${e.oc_id}`);
                          else onOpenExpediente(e.id);
                        }}
                        title={tr(lang,'oc_detail')}>
