@@ -81,8 +81,17 @@ def _node_has_receive(node_id) -> tuple[bool, str]:
     if not capabilities:
         return True, ""
 
-    # Normalización: lowercase, trim
-    raw_caps = capabilities if isinstance(capabilities, list) else []
+    # Normalización: psycopg2 puede devolver JSONB como list (ya parseado)
+    # O como str (json crudo). En el segundo caso lo parseamos a list.
+    raw_caps = capabilities
+    if isinstance(raw_caps, str):
+        try:
+            import json as _json
+            raw_caps = _json.loads(raw_caps)
+        except Exception:
+            raw_caps = []
+    if not isinstance(raw_caps, list):
+        raw_caps = []
     caps_norm = {str(x or "").strip().lower() for x in raw_caps}
     RECEIVE_ALIASES = {
         "receive", "recibir", "received",
