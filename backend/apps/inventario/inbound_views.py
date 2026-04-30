@@ -48,7 +48,16 @@ def _is_ceo(request):
 
 
 def _node_has_receive(node_id) -> tuple[bool, str]:
-    """Devuelve (ok, reason)."""
+    """Valida que el nodo destino exista, esté activo y tenga la
+    capability RECEIVE.
+
+    Tolerante a múltiples representaciones del valor:
+      · 'receive', 'RECEIVE', 'Receive'   (inglés en cualquier caso)
+      · 'recibir', 'RECIBIR'              (español, por seeds antiguos)
+      · 'receive_inbound', 'inbound', 'in' (alias)
+    Si el nodo no tiene capabilities pobladas (NULL / array vacío),
+    asumimos que sí puede recibir (no bloqueamos por data faltante).
+    """
     if not node_id:
         return False, "destination_node_id requerido."
     try:
@@ -67,10 +76,26 @@ def _node_has_receive(node_id) -> tuple[bool, str]:
         return False, "El nodo destino está inactivo."
     if st and str(st).upper() in ("RETIRED", "INACTIVE"):
         return False, f"El nodo está en estado {st}."
-    caps = {str(x).upper() for x in (capabilities or [])}
-    if caps and "RECEIVE" not in caps:
-        return False, "El nodo destino no tiene la capacidad RECEIVE."
-    return True, ""
+
+    # Sin capabilities → no bloqueamos (compat con seeds que no las pueblan)
+    if not capabilities:
+        return True, ""
+
+    # Normalización: lowercase, trim
+    raw_caps = capabilities if isinstance(capabilities, list) else []
+    caps_norm = {str(x or "").strip().lower() for x in raw_caps}
+    RECEIVE_ALIASES = {
+        "receive", "recibir", "received",
+        "receive_inbound", "inbound", "in",
+        "receive_capability", "recv",
+    }
+    if caps_norm & RECEIVE_ALIASES:
+        return True, ""
+    # Mensaje de error con las capabilities reales para debug
+    return False, (
+        f"El nodo destino no tiene la capacidad RECEIVE. "
+        f"Capabilities actuales: {sorted(caps_norm) or '(vacío)'}"
+    )
 
 
 def _next_codigo() -> str:
