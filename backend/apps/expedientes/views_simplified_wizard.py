@@ -101,14 +101,24 @@ def _read_template_rows(file_bytes: bytes, filename: str) -> list[dict]:
     if text is None:
         raise RuntimeError("No pude decodificar el archivo (utf-8 / latin-1).")
 
+    # Saltar directiva Excel `sep=;` si está presente en la primera línea.
+    # Microsoft Excel respeta este prefijo para forzar el separador
+    # independientemente del locale (MX/CO/PE/ES usan `;`). El parser CSV
+    # de Python no la entiende, por eso la quitamos antes de pasarla al
+    # Sniffer para que detecte el delimitador real.
+    text_for_parsing = text
+    first_line = text.split("\n", 1)[0].strip().lower() if text else ""
+    if first_line.startswith("sep="):
+        text_for_parsing = text.split("\n", 1)[1] if "\n" in text else ""
+
     # Detectar separador
     sniffer = csv.Sniffer()
-    sample = text[:2048]
+    sample = text_for_parsing[:2048]
     try:
         dialect = sniffer.sniff(sample, delimiters=",;|\t")
     except csv.Error:
         dialect = csv.excel
-    reader = csv.reader(io.StringIO(text), dialect=dialect)
+    reader = csv.reader(io.StringIO(text_for_parsing), dialect=dialect)
     header = None
     for r_idx, row in enumerate(reader):
         if not row or all((c or "").strip() == "" for c in row):

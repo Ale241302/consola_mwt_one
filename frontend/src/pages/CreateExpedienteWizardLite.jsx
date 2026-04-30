@@ -36,7 +36,27 @@ const STEPS = [
   { id: 3, label: "Revisar y crear" },
 ];
 
-const TEMPLATE_CSV = "SKU,Talla,Cantidad\n";
+// Plantilla compatible con Excel en locales LATAM/ES.
+//
+// Por qué `sep=;` en la primera línea:
+//   Excel en MX/CO/PE/ES usa `;` como separador por default (porque la
+//   coma `,` es separador decimal). Si el CSV usa `,`, Excel lo abre
+//   todo en una sola columna. La directiva `sep=` (Microsoft) instruye
+//   a Excel sobre qué separador usar, ignorando el locale.
+//   Excel también respeta CSVs con `;` directamente.
+//
+// Por qué BOM UTF-8 (﻿):
+//   Sin BOM, Excel asume Windows-1252 y rompe tildes / "ñ".
+//
+// El parser del backend ya hace csv.Sniffer() sobre los delimitadores
+// `,;|\t` y acepta ambos transparentemente.
+const TEMPLATE_CSV =
+  "﻿" +
+  "sep=;\n" +
+  "SKU;Talla;Cantidad\n" +
+  "ABC-123;M;10\n" +
+  "ABC-123;L;5\n" +
+  "XYZ-999;UNICA;20\n";
 
 // ─────────────────────────────────────────────────────────────
 export default function CreateExpedienteWizardLite() {
