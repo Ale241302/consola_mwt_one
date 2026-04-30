@@ -31,6 +31,7 @@ import { StatusBadge, CreditDot, CountryFlag } from "../components/ui/primitives
 import {
   IconChevLeft, IconChevDown, IconChevRight, IconDownload, IconPlus,
   IconFolder, IconPlane, IconShip, IconAlert, IconX, IconSearch, IconPackage,
+  IconPencil,
 } from "../lib/icons.jsx";
 import {
   OCS, CLIENTS, BRANDS, EXPEDIENTES, PRODUCTS, HERO_OC_ID,
@@ -365,6 +366,46 @@ export default function ScreenOCDetail() {
     }
   };
 
+  // ── Editar el número SAP de un grupo ─────────────────────────
+  // Patch al expediente (sap + numero_sap) y a las líneas del grupo
+  // (linea.sap). Tras éxito, recarga la página para ver el cambio.
+  const editSapNumber = async (oldSap, expId, lineIds) => {
+    const next = window.prompt(
+      lang === 'es'
+        ? `Nuevo número SAP (actual: ${oldSap || '—'}):`
+        : `New SAP number (current: ${oldSap || '—'}):`,
+      oldSap || ''
+    );
+    if (next == null) return;                  // cancelado
+    const trimmed = String(next).trim();
+    if (trimmed === oldSap) return;            // sin cambio
+    if (!trimmed) {
+      window.alert(lang === 'es'
+        ? 'El número SAP no puede estar vacío.'
+        : 'SAP number cannot be empty.');
+      return;
+    }
+    try {
+      // 1) Actualiza el expediente
+      if (expId) {
+        await expedientesApi.update(expId, { sap: trimmed, numero_sap: trimmed });
+      }
+      // 2) Actualiza cada línea del grupo (best-effort, defensivo)
+      if (Array.isArray(lineIds)) {
+        await Promise.all(lineIds.map(lid =>
+          lineasApi.update(lid, { sap: trimmed }).catch(() => null)
+        ));
+      }
+      // 3) Reload soft de la página
+      navigate(0);
+    } catch (e) {
+      window.alert(
+        (lang === 'es' ? 'No pude actualizar el SAP: ' : 'Could not update SAP: ')
+        + (e?.body?.detail || e?.message || 'error')
+      );
+    }
+  };
+
   // Totals computed from edited lines
   const computedTotal = allLines.reduce((a, l) => a + (l.qty * l.unit_price), 0);
   const computedDeferred = allLines.reduce((a, l) => a + ((l.deferred_qty||0) * (l.deferred_unit_price||0)), 0);
@@ -521,10 +562,11 @@ export default function ScreenOCDetail() {
           }}
           lines={sapDrawerLines}
           onSuccess={() => {
-            // Optimistic refresh: el backend devolvió el expediente con
-            // estado=PRODUCCION. En la versión con backend real, acá
-            // invalidamos el fetch del OC. Para mock, solo cerramos.
+            // Cierra el drawer y recarga la página para reflejar el
+            // cambio de estado del expediente y la nueva línea con SAP.
+            // navigate(0) hace soft-reload manteniendo el JWT y la URL.
             setSapDrawerOpen(false);
+            setTimeout(() => navigate(0), 200);
           }}
         />
       )}
@@ -643,6 +685,29 @@ export default function ScreenOCDetail() {
                           >
                             <IconFolder size={12}/> {g.sap}
                           </a>
+                          {/* Pencil — editar número SAP del grupo. CEO-ONLY. */}
+                          {can('register_sap') && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              title={lang === 'es' ? 'Editar número SAP' : 'Edit SAP number'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                editSapNumber(
+                                  g.sap,
+                                  g.exp_id,
+                                  (g.lines || []).map(l => l.id),
+                                );
+                              }}
+                              style={{
+                                padding: '2px 6px', color: '#481EE3',
+                                background: 'transparent', border: 0,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <IconPencil size={11}/>
+                            </button>
+                          )}
                           <span className="caption" style={{color:'var(--text-tertiary)'}}>→</span>
                           <span className="caption">{exp?.ref}</span>
                           <span className={'transport-chip ' + (g.transport_mode === 'AEREO' ? 'air' : 'sea')}>
@@ -673,80 +738,57 @@ export default function ScreenOCDetail() {
                     </div>
                   </div>
 
-                  {/* Lines */}
+                  {/* Lines — vista resumida del grupo SAP.
+                      Sólo PRODUCTO, TALLA, CANTIDAD. La gestión completa
+                      (precios, diferido, etc.) vive en "Productos OC"
+                      más abajo, así esta sección queda limpia. */}
                   {isOpen && (
                     <div className="sap-lines">
-                      <div className="sap-lines-head">
-                        <div style={{flex: '1 1 auto', minWidth: 200}}>{tr(lang,'product_line')}</div>
-                        <div style={{width: 60, textAlign:'center'}}>{lang==='es'?'Talla':'Size'}</div>
-                        <div style={{width: 80, textAlign:'right'}}>{lang==='es'?'Cant.':'Qty'}</div>
-                        <div style={{width: 100, textAlign:'right'}}>{tr(lang,'unit_price_lbl')}</div>
-                        <div style={{width: 110, textAlign:'right'}}>{tr(lang,'total_price_lbl')}</div>
-                        {/* Columnas "diferido" (qty + precio) + toggle de visibilidad:
-                            CEO-ONLY. CLIENT nunca las ve — nunca debe enterarse que
-                            existe un concepto "deferred" interno. */}
-                        {isAdmin && (
-                          <div style={{width: 190, textAlign:'center', borderLeft:'1px dashed var(--divider)', paddingLeft: 12, color:'var(--brand-accent-dark,#0E8A6D)'}}>
-                            🔒 {tr(lang,'deferred_price_col')}
-                          </div>
-                        )}
-                        {isAdmin && (
-                          <div style={{width: 90, textAlign:'center'}}>{tr(lang,'visible_to_client_short')}</div>
-                        )}
-                        {/* Para CLIENT, si el CEO publicó un "precio acordado" en alguna
-                            línea del grupo, lo mostramos agregado al final (read-only). */}
-                        {isClient && g.lines.some(l => l.show_deferred_to_client) && (
-                          <div style={{width: 170, textAlign:'right', borderLeft:'1px dashed var(--divider)', paddingLeft: 12}}>
-                            {tr(lang, 'agreed_price') || (lang==='es' ? 'Precio acordado' : 'Agreed price')}
-                          </div>
-                        )}
+                      <div className="sap-lines-head" style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 90px 90px',
+                        gap: 12,
+                        padding: '8px 14px',
+                      }}>
+                        <div style={{ textAlign: 'left' }}>
+                          {tr(lang,'product_line')}
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                          {lang==='es' ? 'Talla' : 'Size'}
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          {lang==='es' ? 'Cant.' : 'Qty'}
+                        </div>
                       </div>
                       {g.lines.map(l => (
-                        <div key={l.id} className="sap-line">
-                          <div style={{flex: '1 1 auto', minWidth: 200}}>
-                            <div className="body-sm" style={{fontWeight: 500}}>{l.product}</div>
-                            <div className="caption" style={{fontFamily:'var(--font-mono)', marginTop: 2}}>{l.sku}</div>
+                        <div key={l.id} className="sap-line" style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 90px 90px',
+                          gap: 12,
+                          padding: '10px 14px',
+                          alignItems: 'center',
+                        }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div className="body-sm" style={{
+                              fontWeight: 500,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}>{l.product}</div>
+                            <div className="caption" style={{
+                              fontFamily: 'var(--font-mono)', marginTop: 2,
+                            }}>{l.sku}</div>
                           </div>
-                          <div style={{width: 60, textAlign:'center'}}>
+                          <div style={{ textAlign: 'center' }}>
                             <span className="size-chip">{l.size}</span>
                           </div>
-                          <div style={{width: 80, textAlign:'right', fontVariantNumeric:'tabular-nums'}}>{l.qty.toLocaleString()}</div>
-                          <div style={{width: 100, textAlign:'right', fontVariantNumeric:'tabular-nums', color:'var(--text-secondary)'}}>
-                            ${l.unit_price.toFixed(2)}
+                          <div style={{
+                            textAlign: 'right',
+                            fontVariantNumeric: 'tabular-nums',
+                            fontWeight: 600,
+                          }}>
+                            {Number(l.qty || 0).toLocaleString()}
                           </div>
-                          <div style={{width: 110, textAlign:'right', fontVariantNumeric:'tabular-nums', fontWeight: 600}}>
-                            {fmtMoney(l.total_price)}
-                          </div>
-                          {/* ADMIN: inputs editables de deferred_qty / deferred_unit_price. */}
-                          {isAdmin && (
-                            <div style={{width: 190, borderLeft:'1px dashed var(--divider)', paddingLeft: 12, display:'flex', gap: 6, alignItems:'center', justifyContent:'center'}}>
-                              <div className="deferred-input">
-                                <span>qty</span>
-                                <input type="number" value={l.deferred_qty || 0} min={0} max={l.qty}
-                                  onChange={(e)=>updateLine(l.id, { deferred_qty: +e.target.value })}/>
-                              </div>
-                              <div className="deferred-input">
-                                <span>$</span>
-                                <input type="number" value={l.deferred_unit_price || 0} min={0} step="0.01"
-                                  onChange={(e)=>updateLine(l.id, { deferred_unit_price: +e.target.value })}/>
-                              </div>
-                            </div>
-                          )}
-                          {/* ADMIN: switch de visibilidad para publicar el precio al cliente. */}
-                          {isAdmin && (
-                            <div style={{width: 90, textAlign:'center'}}>
-                              <div className="switch sm" data-on={l.show_deferred_to_client}
-                                   onClick={()=>updateLine(l.id, { show_deferred_to_client: !l.show_deferred_to_client })}/>
-                            </div>
-                          )}
-                          {/* CLIENT: "Precio acordado" como lectura. Nunca "deferred". */}
-                          {isClient && g.lines.some(ll => ll.show_deferred_to_client) && (
-                            <div style={{width: 170, textAlign:'right', borderLeft:'1px dashed var(--divider)', paddingLeft: 12, fontVariantNumeric:'tabular-nums', fontWeight: 600}}>
-                              {l.show_deferred_to_client && l.deferred_qty > 0 && l.deferred_unit_price > 0
-                                ? fmtMoney(l.deferred_qty * l.deferred_unit_price)
-                                : <span className="caption" style={{color:'var(--text-tertiary)'}}>—</span>}
-                            </div>
-                          )}
                         </div>
                       ))}
                     </div>
