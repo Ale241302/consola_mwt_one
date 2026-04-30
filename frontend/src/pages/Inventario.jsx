@@ -35,16 +35,26 @@ import { stockApi, nodosApi } from "../lib/api.js";
 function mapStockFromApi(r) {
   const qty      = Number(r.cantidad_disponible || 0) + Number(r.cantidad_reservada || 0);
   const reserved = Number(r.cantidad_reservada || 0);
+  // dias_stock_minimo: si el backend no provee velocity real (ventas
+  // diarias × stock disponible), no inventamos un 60d falso — devolvemos
+  // null y la UI muestra "—". Solo cuando el backend tiene cálculo real
+  // se renderiza el chip de salud (verde/ámbar/rojo).
+  const diasRaw = r.dias_stock_minimo;
+  const diasNum = (diasRaw === null || diasRaw === undefined || diasRaw === '')
+    ? null
+    : Number(diasRaw);
   return {
     sku:       r.producto_sku    || (r.producto_id ? r.producto_id.slice(0, 8) : '—'),
     product:   r.producto_nombre || r.producto_sku || '—',
     node:      r.nodo_nombre     || r.nodo_codigo  || '—',
+    // Sprint Inbound v2 — talla del lote (granularidad por size)
+    size:      r.size || r.talla || '',
     lot:       r.lote || '—',
     qty,
     reserved,
     vendidos:  0,
     received:  (r.last_movement_at || r.updated_at || '').slice(0, 10),
-    days_stock: Number(r.dias_stock_minimo) || 60,
+    days_stock: diasNum,
     _raw: r,
   };
 }
@@ -304,6 +314,10 @@ export default function ScreenInventario() {
               <th style={{width:32}}></th>
               <th>SKU</th>
               <th>{lang==='es'?'Producto':'Product'}</th>
+              {/* Talla — granularidad del stock (sprint Inbound v2) */}
+              <th style={{ textAlign: 'center', width: 70 }}>
+                {lang==='es'?'Talla':'Size'}
+              </th>
               <th>{lang==='es'?'Nodo':'Node'}</th>
               <th>{lang==='es'?'Lote':'Lot'}</th>
               <th className="ta-right">{lang==='es'?'Stock':'Stock'}</th>
@@ -311,7 +325,12 @@ export default function ScreenInventario() {
               <th className="ta-right">{lang==='es'?'Disponible':'Available'}</th>
               <th className="ta-right">{lang==='es'?'Vendidos':'Sold'}</th>
               <th>{lang==='es'?'Recibido':'Received'}</th>
-              <th className="ta-right">{lang==='es'?'Días':'Days'}</th>
+              <th className="ta-right"
+                  title={lang==='es'
+                    ? 'Días de stock estimados según velocity. Solo se calcula si el nodo tiene ventas históricas configuradas.'
+                    : 'Estimated days of stock based on velocity. Only computed if the node has historical sales configured.'}>
+                {lang==='es'?'Días':'Days'}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -342,6 +361,17 @@ export default function ScreenInventario() {
                     <td>
                       <div className="body-sm">{i.product}</div>
                     </td>
+                    <td style={{ textAlign: 'center' }}>
+                      {i.size
+                        ? <span style={{
+                            display: 'inline-block',
+                            padding: '2px 10px', borderRadius: 999,
+                            background: 'rgba(72,30,227,0.10)', color: '#481EE3',
+                            fontSize: 11, fontWeight: 700,
+                            fontFamily: 'var(--font-mono)',
+                          }}>{i.size}</span>
+                        : <span style={{ color: 'var(--text-tertiary)' }}>—</span>}
+                    </td>
                     <td>
                       <span className="inv-node-chip">
                         <IconWarehouse size={10}/> {i.node}
@@ -362,11 +392,23 @@ export default function ScreenInventario() {
                     </td>
                     <td className="caption mono-sm">{i.received}</td>
                     <td className="ta-right">
-                      <span className="health-pill"
-                            style={{'--h-color': h.color, '--h-soft': h.soft}}>
-                        <span className="dot"/>
-                        <span className="tabular-nums">{i.days_stock}d</span>
-                      </span>
+                      {i.days_stock != null ? (
+                        <span className="health-pill"
+                              title={lang==='es'
+                                ? `${i.days_stock} días estimados según velocity`
+                                : `${i.days_stock} estimated days based on velocity`}
+                              style={{'--h-color': h.color, '--h-soft': h.soft}}>
+                          <span className="dot"/>
+                          <span className="tabular-nums">{i.days_stock}d</span>
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}
+                              title={lang==='es'
+                                ? 'Sin velocity configurada para este nodo/producto. Se calcula a partir de ventas históricas.'
+                                : 'No velocity configured. Computed from historical sales.'}>
+                          —
+                        </span>
+                      )}
                     </td>
                   </motion.tr>
                 );
