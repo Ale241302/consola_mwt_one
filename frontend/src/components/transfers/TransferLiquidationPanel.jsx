@@ -14,13 +14,15 @@
 //
 // Tokens: Navy #0B1E3A · Mint #00B286 · tabular-nums.
 // ─────────────────────────────────────────────────────────────
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
   IconCheck, IconX, IconPlus, IconAlert, IconRefresh, IconFileText,
-  IconDollar, IconLock, IconClipboard,
+  IconDollar, IconLock, IconClipboard, IconUpload, IconTrash,
 } from "../../lib/icons.jsx";
-import { transferenciasApi } from "../../lib/api.js";
+import {
+  transferenciasApi, transferDetailApi, currencyCatApi,
+} from "../../lib/api.js";
 
 // ── Catálogo fallback de tipos de costo (espejo del backend) ──
 const COST_KINDS_FALLBACK = [
@@ -57,6 +59,43 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   const [error,      setError]      = useState(null);
   const [success,    setSuccess]    = useState(null);
   const [confirming, setConfirming] = useState(false);
+
+  // Sprint 2026-04-30 — OCR upload + currencies catalog
+  const [ocrBusy,    setOcrBusy]    = useState(false);
+  const [ocrSummary, setOcrSummary] = useState(null);
+  const [currencies, setCurrencies] = useState(
+    CURRENCIES.map((c) => ({ codigo: c, nombre: c, symbol: "" }))
+  );
+  const fileInputRef = useRef(null);
+
+  // Catálogo ISO 4217 (47 monedas) — el SELECT de moneda lo usa.
+  useEffect(() => {
+    currencyCatApi.list({ is_active: "true", limit: 100 })
+      .then((d) => {
+        const arr = Array.isArray(d) ? d : (d?.results || []);
+        if (arr.length) setCurrencies(arr);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Maneja el archivo subido para OCR auto-merge.
+  const handleOcrUpload = async (file) => {
+    if (!file || !transferId) return;
+    setOcrBusy(true);
+    setOcrSummary(null);
+    setError(null);
+    try {
+      const res = await transferDetailApi.uploadCostOcr(transferId, file);
+      setOcrSummary(res?.summary || null);
+      // Recarga cost lines y preview
+      await load();
+    } catch (e) {
+      setError(e?.body?.detail || e?.message || "ocr_failed");
+    } finally {
+      setOcrBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   // ── Carga inicial: cost lines + preview report ──
   const load = useCallback(async () => {
@@ -279,16 +318,99 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
 
       {/* ── Sección 2 · Registro de Costos Multidivisa ── */}
       <div className="card card-pad-md" style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-          <div className="micro" style={{ color: "#00B286", letterSpacing: 1 }}>
-            {lang === "es" ? "2 · COSTOS INCREMENTALES MULTIDIVISA" : "2 · MULTI-CURRENCY INCREMENTAL COSTS"}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10, gap: 12 }}>
+          <div>
+            <div className="micro" style={{ color: "#00B286", letterSpacing: 1 }}>
+              {lang === "es" ? "2 · COSTOS INCREMENTALES MULTIDIVISA" : "2 · MULTI-CURRENCY INCREMENTAL COSTS"}
+            </div>
+            <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
+              {lang === "es"
+                ? "Sube una DUA, factura aduanal o liquidación → el motor IA detecta y agrega/fusiona costos automáticamente."
+                : "Upload a customs declaration or invoice — the AI engine detects and merges costs."}
+            </div>
           </div>
           {!isLiquidated && (
-            <button className="btn btn-ghost btn-sm" onClick={addCost} disabled={saving}>
-              <IconPlus size={11}/> {lang === "es" ? "Agregar costo" : "Add cost"}
-            </button>
+            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={ocrBusy || saving}
+                className="btn"
+                style={{
+                  background: ocrBusy ? "#F3F5F8" : "#0B1E3A",
+                  color: ocrBusy ? "#64748B" : "#fff",
+                  fontSize: 12, padding: "6px 12px", borderRadius: 8,
+                  fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6,
+                }}
+                title={lang === "es" ? "Subir DUA / factura para OCR" : "Upload customs doc for OCR"}
+              >
+                <IconUpload size={12}/>
+                {ocrBusy
+                  ? (lang === "es" ? "Procesando…" : "Processing…")
+                  : (lang === "es" ? "Subir documento (IA)" : "Upload doc (AI)")}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={addCost} disabled={saving}>
+                <IconPlus size={11}/> {lang === "es" ? "Agregar costo" : "Add cost"}
+              </button>
+            </div>
           )}
         </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,image/*"
+          style={{ display: "none" }}
+          onChange={(e) => handleOcrUpload(e.target.files?.[0])}
+        />
+
+        {/* OCR summary banner */}
+        {ocrSummary && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{
+              background: "rgba(0,178,134,0.08)",
+              border: "1px solid rgba(0,178,134,0.20)",
+              borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontSize: 13,
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <IconCheck size={14} style={{ color: "#00B286" }}/>
+              <span>
+                <strong style={{ color: "#00B286" }}>
+                  {ocrSummary.added} {lang === "es" ? "nueva(s)" : "new"} ·{" "}
+                  {ocrSummary.merged} {lang === "es" ? "fusionada(s)" : "merged"}
+                </strong>
+                {ocrSummary.document_reference && (
+                  <span style={{ color: "var(--text-tertiary)", marginLeft: 8 }}>
+                    · {lang === "es" ? "Doc:" : "Doc:"} <code className="mono-sm">{ocrSummary.document_reference}</code>
+                  </span>
+                )}
+                {ocrSummary.confidence && (
+                  <span style={{
+                    marginLeft: 8, padding: "1px 8px", borderRadius: 999,
+                    background: "rgba(72,30,227,0.10)", color: "#481EE3",
+                    fontSize: 10.5, fontWeight: 700,
+                  }}>
+                    {ocrSummary.confidence}
+                  </span>
+                )}
+              </span>
+            </div>
+            {ocrSummary.gaps_detected && ocrSummary.gaps_detected.length > 0 && (
+              <span style={{
+                color: "#B45309", fontSize: 11.5, fontWeight: 600,
+                display: "inline-flex", alignItems: "center", gap: 4,
+              }}>
+                <IconAlert size={11}/> {ocrSummary.gaps_detected.length} gap{ocrSummary.gaps_detected.length !== 1 ? "s" : ""}
+              </span>
+            )}
+            <button onClick={() => setOcrSummary(null)} className="btn btn-ghost btn-sm"
+                    style={{ color: "#64748B", fontSize: 14, padding: "0 6px" }}>×</button>
+          </motion.div>
+        )}
 
         {costLines.length === 0 ? (
           <div className="caption" style={{ color: "var(--text-tertiary)", padding: 18, textAlign: "center" }}>
@@ -340,11 +462,19 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                onBlur={() => persistCost(c)}/>
                       </td>
                       <td>
-                        <select className="input mono-sm" style={{ width: 76 }}
+                        {/* Sprint 2026-04-30 — SELECT con catálogo ISO 4217
+                            (47 monedas) cargado desde
+                            /api/commercial/catalogs/currencies/. */}
+                        <select className="input mono-sm" style={{ width: 90 }}
                                 value={c.currency} disabled={isLiquidated}
                                 onChange={(e) => updateCost(c.id, { currency: e.target.value })}
                                 onBlur={() => persistCost(c)}>
-                          {CURRENCIES.map((cur) => <option key={cur} value={cur}>{cur}</option>)}
+                          {currencies.map((cur) => (
+                            <option key={cur.codigo} value={cur.codigo}
+                                    title={`${cur.nombre || cur.codigo}${cur.symbol ? " (" + cur.symbol + ")" : ""}`}>
+                              {cur.codigo}
+                            </option>
+                          ))}
                         </select>
                       </td>
                       <td>
@@ -374,8 +504,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         {!isLiquidated && (
                           <button className="btn btn-ghost btn-sm"
                                   onClick={() => removeCost(c.id)}
-                                  style={{ color: "#D64545" }} disabled={saving}>
-                            <IconX size={11}/>
+                                  style={{ color: "#D64545" }} disabled={saving}
+                                  title={lang === "es" ? "Eliminar costo" : "Remove cost"}>
+                            <IconTrash size={12}/>
                           </button>
                         )}
                       </td>

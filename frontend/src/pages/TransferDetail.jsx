@@ -31,9 +31,8 @@ import { transferenciasApi, transferLineasApi } from "../lib/api.js";
 import TransferLiquidationPanel from "../components/transfers/TransferLiquidationPanel.jsx";
 import TransferStateStepper from "../components/transfers/TransferStateStepper.jsx";
 import TransferInvoicePrintView from "../components/transfers/TransferInvoicePrintView.jsx";
-// Sprint 2026-04-30 — paneles editables para costos (con OCR auto-merge)
-// y notas (ledger JSONB).
-import TransferCostsPanel  from "../components/transfers/TransferCostsPanel.jsx";
+// Sprint 2026-04-30 — panel de notas (ledger JSONB). El panel de costos
+// editable + OCR auto-merge vive directamente dentro de TransferLiquidationPanel.
 import TransferNotesPanel  from "../components/transfers/TransferNotesPanel.jsx";
 
 // ── Helpers format ─────────────────────────
@@ -425,25 +424,16 @@ export default function ScreenTransferDetail() {
 
       {/* ── Metadata por motivo legal (sprint Transfer Engine v2) ── */}
       {/* Pasamos costLines=[] para que la vieja sección de costos NO se
-          renderice — ahora la maneja TransferCostsPanel editable. */}
+          renderice — la maneja TransferLiquidationPanel (con OCR upload). */}
       <LegalContextDataCard lang={lang}
                             legalContext={transferBase.legal_context}
                             contextData={transferBase.context_data}
                             costLines={[]}
                             totalCostUsd={0}/>
 
-      {/* ── Costos editables + OCR auto-merge (sprint 2026-04-30) ── */}
-      {isUuid && (
-        <TransferCostsPanel
-          lang={lang}
-          transferId={transferBase._backend_id}
-          costLines={transferBase.cost_lines}
-          totalCostUsd={transferBase.total_cost_usd}
-          onChanged={loadBackend}
-        />
-      )}
-
-      {/* ── Liquidación / Landed Cost (sprint Transfer Engine v3) ── */}
+      {/* ── Liquidación / Landed Cost (sprint Transfer Engine v3) ──
+          Incluye costos editables (CRUD) + dropzone OCR auto-merge
+          (sprint 2026-04-30). */}
       <TransferLiquidationPanel transfer={transferBase} lang={lang} onLiquidated={loadBackend}/>
 
       {/* ── Reconciliación banner ── */}
@@ -591,15 +581,17 @@ export default function ScreenTransferDetail() {
         </div>
       )}
 
-      {/* ── Notes ledger editable (sprint 2026-04-30) ── */}
-      {isUuid && (
-        <TransferNotesPanel
-          lang={lang}
-          transferId={transferBase._backend_id}
-          initialNotes={transferBase.notes_log}
-          legacyNote={transferBase.notes}
-        />
-      )}
+      {/* ── Notes ledger editable (sprint 2026-04-30) ──
+          Sin gate isUuid porque el backend acepta codigo (TRF-YYYY-NNNN)
+          O UUID en todas las acciones gracias a _resolve_trf(). */}
+      <TransferNotesPanel
+        lang={lang}
+        transferId={transferBase._backend_id || transferBase.id}
+        initialNotes={transferBase.notes_log}
+        legacyNote={transferBase.notes}
+      />
+      {/* Quitamos el import directo de TransferCostsPanel — la sección
+          de costos vive en TransferLiquidationPanel arriba. */}
       {/* ── Modal full-screen del Print View (sprint v4) ── */}
       {printingPayload && (
         <div style={{

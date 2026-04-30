@@ -61,6 +61,27 @@ def _validate_transition(estado_from, estado_to, legal_context=None):
     return generic
 
 
+def _resolve_trf(pk):
+    """Resuelve una Transferencia a partir de pk, aceptando UUID o codigo.
+    Sprint 2026-04-30: el FE puede navegar a /transferencias/{codigo} (URL
+    legible TRF-YYYY-NNNN) y todas las acciones detail-level deben seguir
+    funcionando. Si pk no es UUID, intentamos lookup por codigo.
+    """
+    if pk is None:
+        raise Transferencia.DoesNotExist()
+    s = str(pk)
+    # ¿Parece UUID?
+    import re as _re
+    UUID_RE = _re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", _re.I)
+    if UUID_RE.match(s):
+        try:
+            return Transferencia.objects.get(pk=s, is_active=True)
+        except Transferencia.DoesNotExist:
+            pass
+    # Fallback codigo (ej. TRF-2026-0024)
+    return Transferencia.objects.get(codigo=s, is_active=True)
+
+
 def _confidence_to_pct(level):
     """Convierte 'HIGH'/'MEDIUM'/'LOW' del SKILL_OCR_ADUANAS en un %."""
     if level is None:
@@ -116,7 +137,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
 
     def retrieve(self, request, pk=None):
         try:
-            t = Transferencia.objects.get(pk=pk, is_active=True)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
         data = TransferenciaSerializer(t).data
@@ -199,7 +220,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
 
     def update(self, request, pk=None):
         try:
-            t = Transferencia.objects.get(pk=pk)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
         prev_estado = t.estado
@@ -232,7 +253,11 @@ class TransferenciaViewSet(viewsets.ViewSet):
     partial_update = update
 
     def destroy(self, request, pk=None):
-        Transferencia.objects.filter(pk=pk).update(is_active=False)
+        try:
+            t = _resolve_trf(pk)
+        except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+        Transferencia.objects.filter(pk=t.id).update(is_active=False)
         return Response(status=204)
 
     # ── Selects ────────────────────────────────────────
@@ -305,7 +330,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get", "post"], url_path="cost-lines")
     def cost_lines(self, request, pk=None):
         try:
-            t = Transferencia.objects.get(pk=pk, is_active=True)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
         if request.method.upper() == "GET":
@@ -324,7 +349,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["delete"], url_path=r"cost-lines/(?P<cost_id>[^/.]+)")
     def cost_line_delete(self, request, pk=None, cost_id=None):
         try:
-            t = Transferencia.objects.get(pk=pk, is_active=True)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
         updated = CostLine.objects.filter(
@@ -345,7 +370,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path="upload-cost-ocr")
     def upload_cost_ocr(self, request, pk=None):
         try:
-            t = Transferencia.objects.get(pk=pk, is_active=True)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
 
@@ -460,7 +485,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get", "post"], url_path="notes")
     def notes_action(self, request, pk=None):
         try:
-            t = Transferencia.objects.get(pk=pk, is_active=True)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
 
@@ -490,7 +515,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["delete"], url_path=r"notes/(?P<note_id>[^/.]+)")
     def notes_delete(self, request, pk=None, note_id=None):
         try:
-            t = Transferencia.objects.get(pk=pk, is_active=True)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
         log_arr = [n for n in (t.notes_log or []) if n.get("id") != note_id]
@@ -506,7 +531,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
     def liquidation_report(self, request, pk=None):
         """Devuelve el reporte (factura interna) sin persistir cambios."""
         try:
-            t = Transferencia.objects.get(pk=pk, is_active=True)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
         report = liquidation_engine.calcular_liquidacion(t, persist=False)
@@ -516,7 +541,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
     def liquidate(self, request, pk=None):
         """Ejecuta el calculo de Landed Cost y persiste por linea."""
         try:
-            t = Transferencia.objects.get(pk=pk, is_active=True)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
         method = (request.data.get("method") or "BY_VALUE").upper()
@@ -630,7 +655,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
         # Side-effect en stock: descontar del nodo origen.
         if resp.status_code == 200:
             try:
-                t = Transferencia.objects.get(pk=pk)
+                t = _resolve_trf(pk)
                 lineas = list(Linea.objects.filter(transferencia_id=t.id, is_active=True))
                 transfer_services.apply_outbound_at_origin(t, lineas)
             except Exception:
@@ -645,7 +670,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
           { lineas: [{id, qty_received}], actor_id, actor_name, idempotence_token }
         """
         try:
-            t = Transferencia.objects.get(pk=pk)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
 
@@ -714,7 +739,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
         Es idempotente — si los movimientos ya existen, no duplica.
         """
         try:
-            t = Transferencia.objects.get(pk=pk)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
 
@@ -747,7 +772,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 actor_id, actor_name, idempotence_token }
         """
         try:
-            t = Transferencia.objects.get(pk=pk)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
 
@@ -814,7 +839,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
         Body: { actor_id, actor_name, ...payload de la transicion correspondiente }
         """
         try:
-            t = Transferencia.objects.get(pk=pk, is_active=True)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
         st = (t.estado or "").upper()
@@ -838,7 +863,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
     def invoice_payload(self, request, pk=None):
         """Devuelve JSON estructurado para renderizar la factura/remision."""
         try:
-            t = Transferencia.objects.get(pk=pk, is_active=True)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
         try:
@@ -972,7 +997,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
 
     def _transition(self, request, pk, nuevo_estado, note):
         try:
-            t = Transferencia.objects.get(pk=pk)
+            t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
 
@@ -993,7 +1018,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
 
         prev_estado = t.estado
         with transaction.atomic():
-            Transferencia.objects.filter(pk=pk).update(estado=nuevo_estado)
+            Transferencia.objects.filter(pk=t.id).update(estado=nuevo_estado)
             Evento.objects.create(
                 id                = uuid.uuid4(),
                 transferencia_id  = t.id,
