@@ -8,6 +8,9 @@ from .views_wizard import create_from_oc
 from .views_simplified_wizard import (
     ParseTemplateView, CatalogRequestAssignmentView,
 )
+from .views_matchmaker import (
+    UploadMatchView, ResolveMatchView, MatchHistoryView,
+)
 
 router = DefaultRouter()
 router.register(r"ocs",             OcViewSet,           basename="ocs")
@@ -29,4 +32,14 @@ urlpatterns = router.urls + [
          name="expedientes-parse-template"),
     path("catalog/request-assignment/", CatalogRequestAssignmentView.as_view(),
          name="catalog-request-assignment"),
+
+    # Sprint Document Matchmaker (2026-04-29) — IA cross-check de
+    # documentos (OC / Proforma / Confirmación SAP) contra líneas del
+    # expediente. Genera log auditable en expedientes.document_match_log.
+    path("expedientes/<uuid:expediente_id>/upload-match/",
+         UploadMatchView.as_view(), name="expedientes-upload-match"),
+    path("expedientes/<uuid:expediente_id>/resolve-match/",
+         ResolveMatchView.as_view(), name="expedientes-resolve-match"),
+    path("expedientes/<uuid:expediente_id>/match-history/",
+         MatchHistoryView.as_view(), name="expedientes-match-history"),
 ]

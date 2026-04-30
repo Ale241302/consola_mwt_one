@@ -13,6 +13,7 @@ import ScreenPipeline from "./pages/Pipeline.jsx";
 import ScreenPortal from "./pages/Portal.jsx";
 import ScreenPagos from "./pages/Pagos.jsx";
 import ScreenInventario from "./pages/Inventario.jsx";
+import InboundReceptionWizard from "./pages/InboundReceptionWizard.jsx";
 import ScreenWizard from "./pages/Wizard.jsx";
 import CreateExpedienteWizard from "./pages/CreateExpedienteWizard.jsx";
 import CreateExpedienteWizardLite from "./pages/CreateExpedienteWizardLite.jsx";
@@ -74,6 +75,8 @@ export default function App() {
         <Route path="/portal" element={<ScreenPortal />} />
         <Route path="/financiero" element={<ScreenPagos />} />
         <Route path="/inventario" element={<ScreenInventario />} />
+        {/* Sprint Inbound Engine v1 (2026-04-29) — wizard full-page */}
+        <Route path="/inventario/recepcion" element={<InboundReceptionWizard />} />
         <Route path="/wizard" element={<ScreenWizard />} />
         {/* Nuevo wizard multirol (ADMIN 4 pasos / CLIENT 3 pasos) — reemplazo de /wizard */}
         {/* Sprint Wizard Lite (2026-04-29) — wizard simplificado de 3 pasos */}

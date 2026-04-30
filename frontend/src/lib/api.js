@@ -313,6 +313,54 @@ export const expedientesApi    = resource("expedientes");
 export const lineasApi         = resource("lineas");
 export const documentosApi     = resource("documentos");
 export const cobrosApi         = resource("cobros");
+
+// ---------------------------------------------------------------------
+// Inbound Engine v1 (sprint 2026-04-29)
+//   POST /api/inventory/ocr-receipt/    (multipart: file)
+//   POST /api/inventory/receive/        (json: cabecera + lines[])
+//   GET  /api/inventario-recepciones/   (lista paginada)
+//   GET  /api/inventario-recepciones/{id}/ (detalle)
+// ---------------------------------------------------------------------
+export const recepcionesApi = resource("inventario-recepciones");
+export const inboundApi = {
+  ocrReceipt: async (file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return postMultipart("/inventory/ocr-receipt/", fd, { token: getToken() });
+  },
+  receive: (payload) =>
+    apiFetch("/inventory/receive/", {
+      method: "POST", body: payload, token: getToken(),
+    }),
+};
+
+// ---------------------------------------------------------------------
+// Document Matchmaker (sprint 2026-04-29)
+//   POST /api/expedientes/{id}/upload-match/   (multipart: file, document_type)
+//   POST /api/expedientes/{id}/resolve-match/  (json: log_id, actions[], note)
+//   GET  /api/expedientes/{id}/match-history/  (lista paginada last 50)
+// ---------------------------------------------------------------------
+export const documentMatchmakerApi = {
+  upload: async (expedienteId, file, documentType) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("document_type", documentType);
+    return postMultipart(
+      `/expedientes/${expedienteId}/upload-match/`,
+      fd,
+      { token: getToken() },
+    );
+  },
+  resolve: (expedienteId, payload) =>
+    apiFetch(`/expedientes/${expedienteId}/resolve-match/`, {
+      method: "POST",
+      body:   payload,
+      token:  getToken(),
+    }),
+  history: (expedienteId) =>
+    apiFetch(`/expedientes/${expedienteId}/match-history/`, { token: getToken() }),
+};
+
 export const pagosApi          = resource("pagos");
 export const conciliacionesApi = resource("conciliaciones");
 export const transferenciasApi    = resource("transferencias");

@@ -166,7 +166,10 @@ export default function ScreenInventario() {
           <button className="btn btn-accent" onClick={()=>navigate('/transferencias/nueva')}>
             <IconSwap size={14}/> {lang==='es'?'Nueva transferencia':'New transfer'}
           </button>
-          <button className="btn" onClick={()=>setReceiveOpen(true)}>
+          {/* Sprint Inbound Engine v1 (2026-04-29):
+              navega al wizard full-page en /inventario/recepcion
+              en vez de abrir el drawer viejo. */}
+          <button className="btn" onClick={()=>navigate('/inventario/recepcion')}>
             <IconPlus size={14}/> {lang==='es'?'Recibir lote':'Receive lot'}
           </button>
         </div>
