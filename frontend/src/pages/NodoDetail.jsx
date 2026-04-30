@@ -59,9 +59,13 @@ function adaptStockRowToInventory(r) {
     sku:         r.producto_sku  || '',
     node_id:     r.nodo_id        || null,
     producto_id: r.producto_id    || null,   // necesario para link → /productos/{id}
+    // Sprint Inbound v2 — granularidad por talla (size). Cada fila de
+    // stock es una talla del mismo SKU; el tab "Inventario" del nodo
+    // las muestra como filas separadas con su chip violeta.
+    size:        r.size || r.talla || '',
+    lote:        r.lote || '',
     qty:         Number(r.cantidad_disponible || 0),
     value:       Number(r.valor_disponible_usd || 0),
-    days_stock:  Number(r.dias_stock_minimo ?? r.rotacion_dias ?? 0),
     // nombre de producto fallback (PRODUCTS mock no tendrá los SKUs reales)
     _producto_nombre: r.producto_nombre || '',
   };
@@ -545,40 +549,46 @@ function InventoryTab({ inventory, lang, onProductClick }) {
           <thead><tr>
             <th>SKU</th>
             <th>{lang==='es'?'Producto':'Product'}</th>
+            {/* Sprint Inbound v2 — granularidad por talla. */}
+            <th style={{textAlign:'center', width:80}}>{lang==='es'?'Talla':'Size'}</th>
+            <th style={{textAlign:'center', width:100}}>{lang==='es'?'Lote':'Lot'}</th>
             <th style={{textAlign:'right'}}>{lang==='es'?'Cant.':'Qty'}</th>
             <th style={{textAlign:'right'}}>{lang==='es'?'Valor':'Value'}</th>
-            <th style={{width:220}}>{lang==='es'?'Días de stock':'Days of stock'}</th>
           </tr></thead>
           <tbody>
             {inventory.map((r, i) => {
               const p = PRODUCTS.find(pp => pp.sku === r.sku);
               const productName = p?.name || r._producto_nombre || '—';
-              const band = r.days_stock >= 35 ? 'green' : r.days_stock >= 21 ? 'amber' : 'red';
-              const bandLabel = band === 'green' ? (lang==='es'?'Saludable':'Healthy') : band === 'amber' ? (lang==='es'?'Seguir':'Watch') : (lang==='es'?'Resurtir':'Restock');
               const clickable = !!(r.producto_id && onProductClick);
               return (
                 <tr
-                  key={`${r.sku || 'row'}-${i}`}
+                  key={`${r.sku || 'row'}-${r.size || ''}-${r.lote || ''}-${i}`}
                   onClick={clickable ? () => onProductClick(r) : undefined}
                   style={clickable ? { cursor: 'pointer' } : undefined}
                   title={clickable ? (lang==='es'?'Ver detalle del producto':'View product detail') : undefined}
                 >
                   <td style={{font:'600 12.5px/1.2 var(--font-mono)', color:'var(--interactive)'}}>{r.sku || '—'}</td>
                   <td>{productName}</td>
+                  <td style={{textAlign:'center'}}>
+                    {r.size
+                      ? <span style={{
+                          display:'inline-block', padding:'2px 10px', borderRadius:999,
+                          background:'rgba(72,30,227,0.10)', color:'#481EE3',
+                          fontSize:11, fontWeight:700,
+                          fontFamily:'var(--font-mono)',
+                        }}>{r.size}</span>
+                      : <span style={{color:'var(--text-tertiary)'}}>—</span>}
+                  </td>
+                  <td style={{textAlign:'center', fontFamily:'var(--font-mono)', fontSize:11.5, color:'var(--text-tertiary)'}}>
+                    {r.lote || '—'}
+                  </td>
                   <td className="td-num">{(r.qty || 0).toLocaleString()}</td>
                   <td className="td-money">{fmtMoney(r.value)}</td>
-                  <td>
-                    <div className="flex ai-center gap-2">
-                      <span className={`stock-dot dot-${band}`}/>
-                      <span className="tabular">{r.days_stock || 0}d</span>
-                      <span className={`alert-chip ${band === 'green' ? 'gray' : band}`}>{bandLabel}</span>
-                    </div>
-                  </td>
                 </tr>
               );
             })}
             {inventory.length === 0 && (
-              <tr><td colSpan={5} className="caption" style={{textAlign:'center', padding:'16px 0'}}>
+              <tr><td colSpan={6} className="caption" style={{textAlign:'center', padding:'16px 0'}}>
                 {lang==='es'?'Este nodo aún no tiene inventario':'This node has no inventory yet'}
               </td></tr>
             )}

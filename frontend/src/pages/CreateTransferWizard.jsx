@@ -24,7 +24,7 @@ import {
 } from "../lib/icons.jsx";
 import { fmtMoney } from "../lib/i18n.js";
 import {
-  transferenciasApi, nodosApi, stockApi, apiFetch,
+  transferenciasApi, nodosApi, stockApi, apiFetch, currencyCatApi,
 } from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
 
@@ -102,6 +102,11 @@ export default function CreateTransferWizard() {
   const [nodos,        setNodos]         = useState([]);
   const [costKinds,    setCostKinds]     = useState(COST_KINDS_FALLBACK);
   const [stockOrigen,  setStockOrigen]   = useState([]);
+  // ISO 4217 — pricing.currency_cat (47 monedas seedeadas en SQL 64).
+  // Default: USD por si el endpoint falla o aún no está disponible.
+  const [currencies,   setCurrencies]    = useState([
+    { codigo: "USD", nombre: "US Dollar", symbol: "$" },
+  ]);
 
   // ── Carga catálogos al montar ──
   useEffect(() => {
@@ -110,6 +115,16 @@ export default function CreateTransferWizard() {
       setNodos(arr);
     }).catch(() => setNodos([]));
 
+    // Catálogo de monedas ISO 4217 — el FE puebla un SELECT en Step 2
+    // para que los costos operativos puedan registrarse en la moneda
+    // del documento aduanal (DUA en COP, factura en EUR, etc.).
+    currencyCatApi.list({ is_active: "true", limit: 100 })
+      .then((d) => {
+        const arr = Array.isArray(d) ? d : (d?.results || []);
+        if (arr.length > 0) setCurrencies(arr);
+      })
+      .catch(() => { /* mantén el default USD */ });
+
     transferenciasApi.action("select_cost_kinds").then((d) => {
       if (Array.isArray(d) && d.length) setCostKinds(d);
     }).catch(() => {});
@@ -117,14 +132,15 @@ export default function CreateTransferWizard() {
 
   // ── Cuando cambia el origen, traer su stock ──
   //
-  // /api/stock/?nodo=<id> devuelve TODAS las filas del ledger del nodo,
-  // incluyendo ajustes negativos. Tres casos a manejar:
-  //   a) Filas con (producto + lote específico)  → bucket normal por lote.
-  //   b) Mismo producto + mismo lote en varias filas → sumar.
-  //   c) Ajustes con lote VACÍO (ej -10 sin lote
-  //      asignado por mala captura) → aplicarlos al
-  //      bucket con MÁS unidades del mismo producto.
-  // Después de consolidar, ocultamos buckets con neto <= 0.
+  // /api/stock/?nodo=<id> devuelve TODAS las filas del ledger del nodo
+  // del nodo. Consolidamos por (producto, lote, talla):
+  //   · Si lote es vacío ("" o "—"), el bucket aún se crea con lote="(sin lote)".
+  //     Antes había una regla que descartaba estas filas y solo las usaba
+  //     como "ajuste" sobre buckets existentes — eso hacía desaparecer
+  //     productos cuyo único stock estuviera sin lote. Sprint 2026-04-30:
+  //     siempre se crea bucket aunque el lote esté vacío.
+  //   · Filas con misma (producto, lote, talla) se suman.
+  //   · Buckets con qty_disponible <= 0 se ocultan al final.
   useEffect(() => {
     if (!origenId) { setStockOrigen([]); return; }
     stockApi.list({ nodo: origenId }).then((d) => {
@@ -135,22 +151,16 @@ export default function CreateTransferWizard() {
       // Cada talla del mismo SKU tiene su bucket independiente para que
       // el operador pueda transferir, ej., 5 unidades de talla 43 sin
       // tocar las 3 unidades de talla 44 del mismo lote.
-      const buckets   = new Map();
-      const noLoteAdj = new Map();
+      const buckets = new Map();
 
       for (const r of onNode) {
         const a = adaptStockRow(r);
         const productoId = a.producto_id || a.sku || "";
         const tallaKey   = (a.size || "").toUpperCase();
-        if (!a.lote) {
-          // Ajustes sin lote → se aplican al bucket más grande del
-          // mismo producto + talla.
-          const k = `${productoId}|${tallaKey}`;
-          const cur = noLoteAdj.get(k) || 0;
-          noLoteAdj.set(k, cur + a.qty_disponible);
-          continue;
-        }
-        const key = `${productoId}|${a.lote}|${tallaKey}`;
+        // Lote vacío → usamos la string vacía "" como key. Sigue siendo
+        // un bucket válido, el wizard lo enviará con lote="" al backend.
+        const loteKey    = (a.lote || "").trim();
+        const key = `${productoId}|${loteKey}|${tallaKey}`;
         const prev = buckets.get(key);
         if (prev) {
           prev.qty_disponible += a.qty_disponible;
@@ -159,23 +169,8 @@ export default function CreateTransferWizard() {
             prev.unit_cost = a.unit_cost || prev.unit_cost;
           }
         } else {
-          buckets.set(key, { ...a, _key: key });
+          buckets.set(key, { ...a, lote: loteKey, _key: key });
         }
-      }
-
-      // Aplicar ajustes sin lote al bucket más grande del mismo
-      // (producto, talla).
-      for (const [pidTalla, adj] of noLoteAdj.entries()) {
-        if (adj === 0) continue;
-        const [productoId, tallaKey] = pidTalla.split("|");
-        const productBuckets = Array.from(buckets.values())
-          .filter((b) =>
-            (b.producto_id || b.sku) === productoId
-            && String(b.size || "").toUpperCase() === tallaKey
-          )
-          .sort((a, b) => b.qty_disponible - a.qty_disponible);
-        if (productBuckets.length === 0) continue;
-        productBuckets[0].qty_disponible += adj;
       }
 
       const consolidated = Array.from(buckets.values()).filter((s) => s.qty_disponible > 0);
@@ -473,6 +468,7 @@ export default function CreateTransferWizard() {
               updateCostLine={updateCostLine}
               removeCostLine={removeCostLine}
               totals={totals}
+              currencies={currencies}
             />
           )}
 
@@ -1240,7 +1236,7 @@ function Label({ children }) {
 // ═════════════════════════════════════════════════════════════
 // STEP 2 · Costos Operativos
 // ═════════════════════════════════════════════════════════════
-function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, removeCostLine, totals }) {
+function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, removeCostLine, totals, currencies = [] }) {
   return (
     <div className="card card-pad-lg">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -1314,10 +1310,22 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
                              onChange={(e) => updateCostLine(c.tmpId, { amount: e.target.value })}/>
                     </td>
                     <td style={{ textAlign: "center" }}>
-                      <input className="input mono-sm"
-                             style={{ width: "100%", textAlign: "center" }}
-                             value={c.currency}
-                             onChange={(e) => updateCostLine(c.tmpId, { currency: e.target.value.toUpperCase().slice(0,3) })}/>
+                      {/* Sprint 2026-04-30: select con catálogo ISO 4217.
+                          Antes era input texto; ahora se carga desde
+                          /api/commercial/catalogs/currencies/ (47 monedas). */}
+                      <select className="input mono-sm"
+                              style={{ width: "100%", textAlign: "center", padding: "6px 4px" }}
+                              value={c.currency || "USD"}
+                              onChange={(e) => updateCostLine(c.tmpId, { currency: e.target.value })}>
+                        {currencies.length === 0
+                          ? <option value="USD">USD</option>
+                          : currencies.map((cur) => (
+                              <option key={cur.codigo} value={cur.codigo}
+                                      title={`${cur.nombre || cur.codigo}${cur.symbol ? " (" + cur.symbol + ")" : ""}`}>
+                                {cur.codigo}
+                              </option>
+                            ))}
+                      </select>
                     </td>
                     <td style={{ textAlign: "right", paddingRight: 18 }}>
                       <input className="input tabular-nums" type="number" step="0.0001" min="0"
