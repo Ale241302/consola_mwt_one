@@ -479,12 +479,32 @@ class RecepcionViewSet(viewsets.ViewSet):
                 qs = qs.filter(**{f: v})
         if request.query_params.get("has_discrepancy") in ("1", "true", "True"):
             qs = qs.filter(has_discrepancy=True)
+
+        # Sprint 2026-04-30 — filtros por producto / lote / talla.
+        # Permiten al StockLotDetailDrawer del FE encontrar la recepción
+        # que creó la fila (nodo, producto, lote, talla) en inventario.stock.
+        producto = request.query_params.get("producto")
+        lote     = request.query_params.get("lote")
+        talla    = request.query_params.get("talla") or request.query_params.get("size")
+        if producto or lote or talla:
+            line_qs = RecepcionLinea.objects.filter(is_active=True)
+            if producto:
+                line_qs = line_qs.filter(producto_id=producto)
+            if lote is not None:
+                line_qs = line_qs.filter(lote_code=lote)
+            if talla:
+                line_qs = line_qs.filter(talla__iexact=talla)
+            rec_ids = list(line_qs.values_list("recepcion_id", flat=True).distinct())
+            qs = qs.filter(id__in=rec_ids)
+
         mask = not _is_ceo(request)
         return Response([{
             "id":                     str(r.id),
             "codigo":                 r.codigo,
+            "destination_node_id":    str(r.destination_node_id) if r.destination_node_id else None,
             "destination_node_label": r.destination_node_label,
             "source_type":            r.source_type,
+            "reference_id":           str(r.reference_id) if r.reference_id else None,
             "reference_label":        r.reference_label,
             "estado":                 r.estado,
             "has_discrepancy":        r.has_discrepancy,

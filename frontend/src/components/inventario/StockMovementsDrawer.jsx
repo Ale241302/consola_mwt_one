@@ -2,26 +2,31 @@
 // MWT.ONE · components/inventario/StockMovementsDrawer.jsx
 // Agente responsable: [AG-FRONTEND]
 //
-// Drawer lateral que muestra el historial de movimientos para una fila
-// de stock identificada por (nodo, producto, lote). Se abre desde la
-// columna "Recibido" en /inventario.
+// Drawer "Detalle del lote" — abierto desde la columna "Recibido" en
+// /inventario. Muestra la recepción que creó la fila de stock con la
+// misma riqueza que el Step 3 del wizard de inbound:
 //
-// Por cada movimiento muestra:
-//   · Tipo (RECEPCION verde / TRANSFER azul / SALIDA rojo / AJUSTE gris)
-//   · Contexto del nodo:
-//       - RECEPCION  → "Recibido en {nodo destino}"
-//       - TRANSFER   → "{nodo origen} → {nodo destino}"
-//       - SALIDA     → "Salida desde {nodo origen}"
-//       - AJUSTE     → "Ajuste en {nodo}"
-//   · Cantidad · Costo unitario USD · Notas · Fecha
-//   · Link a recepción / transfer / expediente si referencia_id está
+//   1. Header navy con producto · SKU · talla · lote · nodo · stock KPIs.
+//   2. Tarjeta de cabecera de la recepción:
+//        · Código (REC-YYYY-NNNN), nodo destino, tipo de origen,
+//          referencia, estado, recibido_at, recibido_por.
+//        · Documento de soporte (si existe document_artifact_id).
+//        · Notas.
+//   3. KPIs (Líneas · Productos · Unidades · Valor USD).
+//   4. Tabla "Productos por talla":
+//        SKU · Producto · Talla · Cantidad · Costo unit. · Total línea.
+//   5. Excepciones (gaps con justificación) si has_discrepancy.
+//   6. Si NO hay recepción que matche (ajuste manual / transfer), se
+//      cae a un estado vacío explicando que esta fila no nació de un
+//      packing list / inbound formal.
 //
-// Sin FK físicas — los nombres de nodo se resuelven con nodosApi.list().
+// Endpoint: /api/inventario-recepciones/?nodo=X&producto=Y&lote=Z&talla=T
+// El backend devuelve la lista resumida; el detalle completo se pide
+// con /api/inventario-recepciones/{id}/.
 // =====================================================================
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { useNavigate } from "react-router-dom";
-import { movimientosApi, nodosApi } from "../../lib/api.js";
+import { recepcionesApi } from "../../lib/api.js";
 
 // ── Tokens MWT ─────────────────────────────────────────────
 const NAVY    = "#0B1E3A";
@@ -32,17 +37,19 @@ const AMBER   = "#B45309";
 const RED     = "#DC2626";
 const GREY    = "#6B7280";
 
-// Mapa visual por tipo de movimiento.
-const TIPO_META = {
-  RECEPCION: { color: MINT,   label: "Recepción",  arrow: "↓" },
-  TRANSFER:  { color: BLUE,   label: "Transfer",   arrow: "→" },
-  ENTRADA:   { color: MINT,   label: "Entrada",    arrow: "↓" },
-  SALIDA:    { color: RED,    label: "Salida",     arrow: "↑" },
-  AJUSTE:    { color: VIOLET, label: "Ajuste",     arrow: "±" },
-  MERMA:     { color: RED,    label: "Merma",      arrow: "↓" },
-  RETORNO:   { color: AMBER,  label: "Retorno",    arrow: "↺" },
-  RESERVA:   { color: AMBER,  label: "Reserva",    arrow: "•" },
-  LIBERA:    { color: GREY,   label: "Libera",     arrow: "•" },
+const SOURCE_LABELS = {
+  SUPPLIER_PO:   { es: "Orden de compra a proveedor", en: "Supplier PO",   color: BLUE   },
+  TRANSFER_IN:   { es: "Transferencia entrante",      en: "Transfer in",   color: VIOLET },
+  BLIND_RECEIPT: { es: "Ajuste ciego (sin documento)",en: "Blind receipt", color: AMBER  },
+  RETURN:        { es: "Devolución / RMA",            en: "Return / RMA",  color: GREY   },
+};
+
+const ESTADO_LABELS = {
+  DRAFT:        { es: "Borrador",   en: "Draft",      color: GREY  },
+  RECEIVED:     { es: "Recibido",   en: "Received",   color: MINT  },
+  RECONCILED:   { es: "Conciliado", en: "Reconciled", color: BLUE  },
+  REJECTED:     { es: "Rechazado",  en: "Rejected",   color: RED   },
+  CLOSED:       { es: "Cerrado",    en: "Closed",     color: NAVY  },
 };
 
 function fmtDate(s) {
@@ -56,67 +63,51 @@ function fmtDate(s) {
   } catch { return String(s).slice(0, 16); }
 }
 
-export default function StockMovementsDrawer({ lang = "es", row, onClose }) {
-  const navigate = useNavigate();
-  const [loading, setLoading]   = useState(true);
-  const [movs, setMovs]         = useState([]);
-  const [nodeMap, setNodeMap]   = useState({});
-  const [err, setErr]           = useState(null);
+function fmtMoney(n, currency = "USD") {
+  const v = Number(n || 0);
+  try {
+    return v.toLocaleString(undefined, {
+      style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
+  } catch {
+    return `$${v.toFixed(2)} ${currency}`;
+  }
+}
 
-  // ── Carga inicial: movimientos + nodos para resolver nombres ────
+export default function StockLotDetailDrawer({ lang = "es", row, onClose }) {
+  const [loading,   setLoading]   = useState(true);
+  const [recepcion, setRecepcion] = useState(null);
+  const [err,       setErr]       = useState(null);
+  // Reservado para v2: tabs de transferencias entrantes / movimientos manuales.
+
+  // ── Carga: encontrar recepción que matchee (nodo, producto, lote, talla) ─
   useEffect(() => {
     if (!row) return;
     let alive = true;
     setLoading(true);
     setErr(null);
+    setRecepcion(null);
 
     (async () => {
       try {
-        // El backend acepta filter por producto + lote (sprint 2026-04-30).
-        // El nodo se filtra client-side porque queremos OR entre origen/destino.
-        const params = { limit: 500 };
+        const params = {};
+        if (row.nodeId)    params.nodo     = row.nodeId;
         if (row.productId) params.producto = row.productId;
         if (row.lot && row.lot !== "—") params.lote = row.lot;
-        const [movRes, nodoRes] = await Promise.all([
-          movimientosApi.list(params).catch(() => []),
-          nodosApi.list().catch(() => []),
-        ]);
+        if (row.size)      params.talla    = row.size;
+
+        const list = await recepcionesApi.list(params).catch(() => []);
+        const items = Array.isArray(list) ? list : (list?.results || []);
+        if (!items.length) {
+          if (alive) { setLoading(false); setRecepcion(null); }
+          return;
+        }
+        // Tomamos la más reciente (orden -created_at del backend).
+        const head = items[0];
+        // Pedimos el detalle completo (cabecera + líneas + excepciones).
+        const detail = await recepcionesApi.get(head.id).catch(() => null);
         if (!alive) return;
-
-        const movItems = Array.isArray(movRes) ? movRes : (movRes?.results || []);
-        const nodoItems = Array.isArray(nodoRes) ? nodoRes : (nodoRes?.results || []);
-
-        // Mapa id → {codigo, nombre} para resolver origen/destino.
-        const nm = {};
-        nodoItems.forEach(n => {
-          nm[String(n.id)] = {
-            codigo: n.codigo || "",
-            nombre: n.nombre || n.codigo || "—",
-          };
-        });
-        if (alive) setNodeMap(nm);
-
-        // Filtro: lote igual + el nodo de la fila aparece como origen
-        // o destino. Así obtenemos: la RECEPCION que creó el lote, y
-        // todas las TRANSFERs que entraron o salieron de ese nodo.
-        const wantLote = (row.lot || "").trim();
-        const wantNode = String(row.nodeId || "");
-        const filtered = movItems.filter(m => {
-          const lote = (m.lote || "").trim();
-          if (lote !== wantLote) return false;
-          if (!wantNode) return true;
-          return String(m.nodo_origen_id || "") === wantNode
-              || String(m.nodo_destino_id || "") === wantNode;
-        });
-
-        // Orden descendente por fecha.
-        filtered.sort((a, b) => {
-          const da = new Date(a.created_at || 0).getTime();
-          const db = new Date(b.created_at || 0).getTime();
-          return db - da;
-        });
-
-        if (alive) setMovs(filtered);
+        setRecepcion(detail || head);
       } catch (e) {
         if (alive) setErr(String(e?.message || e));
       } finally {
@@ -127,121 +118,18 @@ export default function StockMovementsDrawer({ lang = "es", row, onClose }) {
     return () => { alive = false; };
   }, [row]);
 
-  // ── Utilidades de render ────────────────────────────────
-  const resolveNode = (id) => {
-    if (!id) return null;
-    const n = nodeMap[String(id)];
-    if (!n) return { codigo: String(id).slice(0, 6), nombre: "—" };
-    return n;
-  };
-
-  // Línea de contexto del nodo según tipo de movimiento.
-  function NodeContextLine({ m }) {
-    const tipo = (m.tipo || "").toUpperCase();
-    const origen  = resolveNode(m.nodo_origen_id);
-    const destino = resolveNode(m.nodo_destino_id);
-
-    const wrapper = {
-      display: "flex", alignItems: "center", gap: 8,
-      fontSize: 13, color: NAVY, marginTop: 4,
-    };
-    const chip = (label, color) => (
-      <span style={{
-        display: "inline-flex", alignItems: "center", gap: 4,
-        padding: "2px 8px", borderRadius: 999,
-        background: `${color}14`, color, border: `1px solid ${color}33`,
-        fontSize: 11.5, fontWeight: 600,
-      }}>{label}</span>
-    );
-    const arrow = (
-      <span style={{ color: GREY, fontWeight: 700 }}>→</span>
-    );
-
-    if (tipo === "RECEPCION" || tipo === "ENTRADA") {
-      return (
-        <div style={wrapper}>
-          <span style={{ color: GREY, fontSize: 11 }}>
-            {lang === "es" ? "Recibido en" : "Received at"}
-          </span>
-          {chip(destino?.nombre || "—", MINT)}
-        </div>
-      );
-    }
-    if (tipo === "TRANSFER") {
-      return (
-        <div style={wrapper}>
-          {chip(origen?.nombre || "—", BLUE)}
-          {arrow}
-          {chip(destino?.nombre || "—", MINT)}
-        </div>
-      );
-    }
-    if (tipo === "SALIDA") {
-      return (
-        <div style={wrapper}>
-          <span style={{ color: GREY, fontSize: 11 }}>
-            {lang === "es" ? "Salida desde" : "Out from"}
-          </span>
-          {chip(origen?.nombre || "—", RED)}
-        </div>
-      );
-    }
-    if (tipo === "AJUSTE") {
-      return (
-        <div style={wrapper}>
-          <span style={{ color: GREY, fontSize: 11 }}>
-            {lang === "es" ? "Ajuste en" : "Adjusted at"}
-          </span>
-          {chip((destino?.nombre || origen?.nombre || "—"), VIOLET)}
-        </div>
-      );
-    }
-    return (
-      <div style={wrapper}>
-        {origen && chip(origen.nombre, GREY)}
-        {origen && destino && arrow}
-        {destino && chip(destino.nombre, GREY)}
-      </div>
-    );
-  }
-
-  // Link a la entidad referenciada por el movimiento (recepcion / transfer)
-  function ReferenceLink({ m }) {
-    const tipoRef = (m.referencia_tipo || "").toUpperCase();
-    const id      = m.referencia_id;
-    if (!id) return null;
-    let label = null;
-    let go = null;
-    if (tipoRef === "RECEPCION") {
-      label = lang === "es" ? "Ver recepción" : "View reception";
-      // (cuando exista ruta dedicada → /inventario/recepcion/:id)
-      go = () => navigate(`/inventario/recepcion?id=${id}`);
-    } else if (tipoRef === "TRANSFER" || tipoRef === "TRANSFERENCIA") {
-      label = lang === "es" ? "Ver transferencia" : "View transfer";
-      go = () => navigate(`/transferencias/${id}`);
-    } else if (tipoRef === "EXPEDIENTE") {
-      label = lang === "es" ? "Ver expediente" : "View file";
-      go = () => navigate(`/expedientes/${id}`);
-    } else {
-      return null;
-    }
-    return (
-      <button
-        type="button"
-        onClick={go}
-        style={{
-          display: "inline-flex", alignItems: "center", gap: 4,
-          background: "transparent", border: "none",
-          color: VIOLET, fontSize: 11.5, fontWeight: 600,
-          cursor: "pointer", padding: 0, marginTop: 6,
-        }}
-      >
-        {label} ↗
-      </button>
-    );
-  }
-
   if (!row) return null;
+
+  // ── Cálculos derivados (cuando hay recepción) ───────────
+  const lines = recepcion?.lines || [];
+  const exceptions = recepcion?.exceptions || [];
+  const totalUnits   = lines.reduce((a, l) => a + Number(l.received_qty || 0), 0);
+  const totalValue   = lines.reduce((a, l) => a + Number(l.line_value_usd || 0), 0);
+  const skuCount     = new Set(lines.map(l => l.product_sku)).size;
+  const sourceMeta   = SOURCE_LABELS[(recepcion?.source_type || "").toUpperCase()]
+                       || { es: recepcion?.source_type, en: recepcion?.source_type, color: GREY };
+  const estadoMeta   = ESTADO_LABELS[(recepcion?.estado || "").toUpperCase()]
+                       || { es: recepcion?.estado, en: recepcion?.estado, color: GREY };
 
   return (
     <>
@@ -257,13 +145,13 @@ export default function StockMovementsDrawer({ lang = "es", row, onClose }) {
       />
       {/* Drawer */}
       <motion.aside
-        initial={{ x: 480, opacity: 0 }}
+        initial={{ x: 640, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
-        exit={{ x: 480, opacity: 0 }}
+        exit={{ x: 640, opacity: 0 }}
         transition={{ type: "spring", damping: 28, stiffness: 240 }}
         style={{
           position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 200,
-          width: "min(560px, 100vw)",
+          width: "min(720px, 100vw)",
           background: "#fff",
           borderLeft: "1px solid var(--border-soft, rgba(11,30,58,0.10))",
           boxShadow: "0 24px 60px -20px rgba(11,30,58,0.30)",
@@ -271,99 +159,19 @@ export default function StockMovementsDrawer({ lang = "es", row, onClose }) {
           overflow: "hidden",
         }}
       >
-        {/* Header */}
-        <div style={{
-          padding: "20px 24px",
-          background: `linear-gradient(135deg, ${NAVY} 0%, #1a2f54 100%)`,
-          color: "#fff",
-        }}>
-          <div style={{
-            display: "flex", justifyContent: "space-between",
-            alignItems: "flex-start", gap: 12,
-          }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{
-                fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase",
-                color: "rgba(255,255,255,0.62)", marginBottom: 6, fontWeight: 600,
-              }}>
-                {lang === "es" ? "DETALLE DEL LOTE" : "LOT DETAIL"}
-              </div>
-              <div style={{
-                fontSize: 18, fontWeight: 700, lineHeight: 1.25,
-              }}>
-                {row.product || row.sku}
-              </div>
-              <div style={{
-                marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap",
-                fontFamily: "var(--font-mono)", fontSize: 11.5,
-              }}>
-                <span style={{
-                  padding: "3px 10px", borderRadius: 999,
-                  background: "rgba(0,178,134,0.20)", color: "#7ee5c0",
-                  fontWeight: 600,
-                }}>{row.sku}</span>
-                {row.size && (
-                  <span style={{
-                    padding: "3px 10px", borderRadius: 999,
-                    background: "rgba(72,30,227,0.30)", color: "#cfc1ff",
-                    fontWeight: 700,
-                  }}>{row.size}</span>
-                )}
-                <span style={{
-                  padding: "3px 10px", borderRadius: 999,
-                  background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.86)",
-                }}>{lang === "es" ? "Lote " : "Lot "}{row.lot}</span>
-                <span style={{
-                  padding: "3px 10px", borderRadius: 999,
-                  background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.86)",
-                }}>{row.node}</span>
-              </div>
-            </div>
-            <button
-              type="button" onClick={onClose}
-              aria-label={lang === "es" ? "Cerrar" : "Close"}
-              style={{
-                background: "rgba(255,255,255,0.10)", border: "none",
-                color: "#fff", borderRadius: 8,
-                width: 32, height: 32, cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 18,
-              }}
-            >×</button>
-          </div>
+        {/* ── Header navy con stock KPIs ────────────────────── */}
+        <Header row={row} lang={lang} onClose={onClose} />
 
-          {/* KPIs del lote */}
-          <div style={{
-            display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
-            gap: 12, marginTop: 16,
-          }}>
-            <KpiTile label={lang === "es" ? "Stock" : "Stock"}
-                     value={(row.qty || 0).toLocaleString()} />
-            <KpiTile label={lang === "es" ? "Reservado" : "Reserved"}
-                     value={(row.reserved || 0).toLocaleString()}
-                     accent="#fbbf24" />
-            <KpiTile label={lang === "es" ? "Disponible" : "Available"}
-                     value={((row.qty || 0) - (row.reserved || 0)).toLocaleString()}
-                     accent="#7ee5c0" />
-          </div>
-        </div>
-
-        {/* Body — timeline de movimientos */}
+        {/* ── Body con scroll ───────────────────────────────── */}
         <div style={{
-          flex: 1, overflowY: "auto", padding: "20px 24px",
+          flex: 1, overflowY: "auto", padding: "20px 24px 28px",
           background: "var(--bg-soft, #FAFBFC)",
         }}>
-          <div style={{
-            fontSize: 11, letterSpacing: 1, textTransform: "uppercase",
-            color: GREY, fontWeight: 600, marginBottom: 12,
-          }}>
-            {lang === "es" ? "Historial de movimientos" : "Movement history"}
-            <span style={{ marginLeft: 8, color: NAVY }}>· {movs.length}</span>
-          </div>
-
           {loading && (
-            <div style={{ color: GREY, fontSize: 13, padding: 24, textAlign: "center" }}>
-              {lang === "es" ? "Cargando movimientos…" : "Loading movements…"}
+            <div style={{
+              padding: 32, textAlign: "center", color: GREY, fontSize: 13,
+            }}>
+              {lang === "es" ? "Cargando detalle de la recepción…" : "Loading reception detail…"}
             </div>
           )}
 
@@ -376,118 +184,261 @@ export default function StockMovementsDrawer({ lang = "es", row, onClose }) {
             </div>
           )}
 
-          {!loading && !err && movs.length === 0 && (
-            <div style={{
-              padding: 24, textAlign: "center", color: GREY,
-              fontSize: 13, border: "1px dashed rgba(11,30,58,0.18)",
-              borderRadius: 10, background: "#fff",
-            }}>
-              {lang === "es"
-                ? "Sin movimientos registrados para este lote en este nodo."
-                : "No movements recorded for this lot at this node."}
-            </div>
+          {!loading && !err && !recepcion && (
+            <EmptyNoRecepcion lang={lang} row={row} />
           )}
 
-          {!loading && !err && movs.map((m, idx) => {
-            const tipo = (m.tipo || "").toUpperCase();
-            const meta = TIPO_META[tipo] || { color: GREY, label: tipo, arrow: "•" };
-            const tipoNode = String(m.nodo_destino_id || "") === String(row.nodeId)
-              ? "DESTINO" : "ORIGEN";
-            const sign = (tipo === "RECEPCION" || tipo === "ENTRADA"
-                          || (tipo === "TRANSFER" && tipoNode === "DESTINO"))
-              ? "+" : (tipo === "SALIDA" || (tipo === "TRANSFER" && tipoNode === "ORIGEN"))
-                       ? "−" : "±";
-            return (
-              <div
-                key={m.id || idx}
-                style={{
-                  position: "relative",
-                  background: "#fff",
-                  border: "1px solid rgba(11,30,58,0.08)",
-                  borderRadius: 10,
-                  padding: "12px 14px 12px 18px",
-                  marginBottom: 10,
-                  // Borde izquierdo del color del tipo
-                  boxShadow: `inset 4px 0 0 0 ${meta.color}`,
-                }}
+          {!loading && !err && recepcion && (
+            <>
+              {/* Cabecera de la recepción */}
+              <Section
+                title={lang === "es" ? "Recepción" : "Reception"}
+                code={recepcion.codigo}
               >
-                <div style={{
-                  display: "flex", justifyContent: "space-between",
-                  alignItems: "flex-start", gap: 12,
-                }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    {/* Tipo + motivo */}
-                    <div style={{
-                      display: "flex", alignItems: "center", gap: 8,
-                      flexWrap: "wrap",
+                <RowKV
+                  label={lang === "es" ? "Nodo destino" : "Destination node"}
+                  value={recepcion.destination_node_label || "—"}
+                />
+                <RowKV
+                  label={lang === "es" ? "Tipo de origen" : "Source type"}
+                  value={
+                    <span style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "2px 10px", borderRadius: 999,
+                      background: `${sourceMeta.color}14`, color: sourceMeta.color,
+                      fontSize: 12, fontWeight: 600,
                     }}>
+                      {lang === "es" ? sourceMeta.es : sourceMeta.en}
+                    </span>
+                  }
+                />
+                {recepcion.reference_label && (
+                  <RowKV
+                    label={lang === "es" ? "Referencia" : "Reference"}
+                    value={
                       <span style={{
-                        display: "inline-flex", alignItems: "center", gap: 4,
-                        padding: "3px 10px", borderRadius: 999,
-                        background: `${meta.color}14`, color: meta.color,
-                        fontSize: 11, fontWeight: 700, letterSpacing: 0.4,
+                        fontFamily: "var(--font-mono)", fontSize: 12.5,
+                        color: NAVY, fontWeight: 600,
+                      }}>{recepcion.reference_label}</span>
+                    }
+                  />
+                )}
+                <RowKV
+                  label={lang === "es" ? "Estado" : "Status"}
+                  value={
+                    <span style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "2px 10px", borderRadius: 999,
+                      background: `${estadoMeta.color}14`, color: estadoMeta.color,
+                      fontSize: 12, fontWeight: 600, letterSpacing: 0.4,
+                    }}>
+                      ✓ {(lang === "es" ? estadoMeta.es : estadoMeta.en)?.toUpperCase()}
+                    </span>
+                  }
+                />
+                <RowKV
+                  label={lang === "es" ? "Recibido" : "Received at"}
+                  value={fmtDate(recepcion.received_at)}
+                />
+                {recepcion.received_by_name && (
+                  <RowKV
+                    label={lang === "es" ? "Recibido por" : "Received by"}
+                    value={recepcion.received_by_name}
+                  />
+                )}
+                {/* Documento de soporte */}
+                {recepcion.document_artifact_id && (
+                  <RowKV
+                    label={lang === "es" ? "Documento" : "Document"}
+                    value={
+                      <span style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        color: VIOLET, fontSize: 12.5, fontWeight: 600,
                       }}>
-                        <span>{meta.arrow}</span>
-                        {meta.label.toUpperCase()}
-                      </span>
-                      {m.motivo && (
+                        <DocIcon />
                         <span style={{
-                          fontSize: 11, color: GREY, fontFamily: "var(--font-mono)",
-                        }}>{m.motivo}</span>
+                          fontFamily: "var(--font-mono)", fontSize: 11,
+                        }}>{String(recepcion.document_artifact_id).slice(0, 8)}…</span>
+                        {(recepcion.ocr_confidence_avg != null) && (
+                          <span style={{
+                            marginLeft: 6, padding: "1px 8px", borderRadius: 999,
+                            background: "rgba(72,30,227,0.10)", color: VIOLET,
+                            fontSize: 10.5, fontWeight: 700,
+                          }}>
+                            OCR {Number(recepcion.ocr_confidence_avg).toFixed(0)}%
+                          </span>
+                        )}
+                      </span>
+                    }
+                  />
+                )}
+                {recepcion.notes && (
+                  <RowKV
+                    label={lang === "es" ? "Notas" : "Notes"}
+                    value={
+                      <div style={{
+                        fontSize: 12.5, color: NAVY, lineHeight: 1.45,
+                        background: "rgba(11,30,58,0.04)",
+                        padding: "6px 10px", borderRadius: 6,
+                      }}>{recepcion.notes}</div>
+                    }
+                  />
+                )}
+              </Section>
+
+              {/* KPIs (líneas, productos, unidades, valor) */}
+              <KpiStrip
+                tiles={[
+                  { label: lang === "es" ? "Líneas" : "Lines",       value: lines.length },
+                  { label: lang === "es" ? "Productos" : "Products", value: skuCount },
+                  { label: lang === "es" ? "Unidades" : "Units",     value: totalUnits.toLocaleString() },
+                  ...(totalValue > 0 ? [{
+                    label: lang === "es" ? "Valor USD" : "Value USD",
+                    value: fmtMoney(totalValue),
+                    accent: MINT,
+                  }] : []),
+                ]}
+              />
+
+              {/* Productos por talla — tabla detallada */}
+              <Section title={lang === "es" ? "Productos por talla" : "Products by size"}>
+                <LinesTable lines={lines} lang={lang} highlightLote={row.lot} highlightSize={row.size} />
+              </Section>
+
+              {/* Excepciones / gaps */}
+              {exceptions.length > 0 && (
+                <Section
+                  title={lang === "es" ? "Excepciones" : "Exceptions"}
+                  accent={AMBER}
+                >
+                  {exceptions.map((e) => (
+                    <div key={e.id} style={{
+                      padding: "10px 12px", borderRadius: 8, marginBottom: 8,
+                      background: "rgba(180,83,9,0.06)",
+                      border: "1px solid rgba(180,83,9,0.20)",
+                    }}>
+                      <div style={{
+                        display: "flex", justifyContent: "space-between",
+                        alignItems: "center", gap: 8, marginBottom: 4,
+                      }}>
+                        <span style={{
+                          padding: "2px 8px", borderRadius: 999,
+                          background: AMBER, color: "#fff",
+                          fontSize: 10, fontWeight: 700, letterSpacing: 0.5,
+                        }}>{e.tipo}</span>
+                        <span style={{
+                          fontFamily: "var(--font-mono)", fontSize: 12,
+                          color: AMBER, fontWeight: 700,
+                        }}>
+                          {e.delta_qty > 0 ? "+" : ""}{e.delta_qty}
+                          <span style={{ color: GREY, fontWeight: 400, marginLeft: 6 }}>
+                            ({e.received_qty} / {e.expected_qty})
+                          </span>
+                        </span>
+                      </div>
+                      {e.justification && (
+                        <div style={{
+                          fontSize: 12, color: NAVY,
+                          fontStyle: "italic",
+                        }}>"{e.justification}"</div>
                       )}
                     </div>
-
-                    {/* Contexto del nodo */}
-                    <NodeContextLine m={m} />
-
-                    {/* Notas */}
-                    {m.notas && (
-                      <div style={{
-                        marginTop: 6, fontSize: 12, color: NAVY,
-                        background: "rgba(11,30,58,0.04)", padding: "6px 8px",
-                        borderRadius: 6,
-                      }}>
-                        {m.notas}
-                      </div>
-                    )}
-
-                    <ReferenceLink m={m} />
-                  </div>
-
-                  {/* Cantidad + costo + fecha (lado derecho) */}
-                  <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    <div style={{
-                      fontSize: 18, fontWeight: 700, color: meta.color,
-                      fontFamily: "var(--font-mono)",
-                    }}>
-                      {sign}{Math.abs(Number(m.cantidad || 0)).toLocaleString()}
-                    </div>
-                    {Number(m.costo_unitario_usd || 0) > 0 && (
-                      <div style={{
-                        fontSize: 11, color: GREY,
-                        fontFamily: "var(--font-mono)", marginTop: 2,
-                      }}>
-                        ${Number(m.costo_unitario_usd).toFixed(2)} / u
-                      </div>
-                    )}
-                    <div style={{
-                      fontSize: 10.5, color: GREY, marginTop: 4,
-                    }}>
-                      {fmtDate(m.created_at)}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+                  ))}
+                </Section>
+              )}
+            </>
+          )}
         </div>
       </motion.aside>
     </>
   );
 }
 
-// ── Sub-component: KPI tile dentro del header del drawer ─────────
-function KpiTile({ label, value, accent }) {
+// =====================================================================
+// Sub-componentes
+// =====================================================================
+
+function Header({ row, lang, onClose }) {
+  return (
+    <div style={{
+      padding: "20px 24px",
+      background: `linear-gradient(135deg, ${NAVY} 0%, #1a2f54 100%)`,
+      color: "#fff",
+    }}>
+      <div style={{
+        display: "flex", justifyContent: "space-between",
+        alignItems: "flex-start", gap: 12,
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase",
+            color: "rgba(255,255,255,0.62)", marginBottom: 6, fontWeight: 600,
+          }}>
+            {lang === "es" ? "DETALLE DEL LOTE" : "LOT DETAIL"}
+          </div>
+          <div style={{
+            fontSize: 18, fontWeight: 700, lineHeight: 1.25,
+          }}>
+            {row.product || row.sku}
+          </div>
+          <div style={{
+            marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap",
+            fontFamily: "var(--font-mono)", fontSize: 11.5,
+          }}>
+            <span style={{
+              padding: "3px 10px", borderRadius: 999,
+              background: "rgba(0,178,134,0.20)", color: "#7ee5c0",
+              fontWeight: 600,
+            }}>{row.sku}</span>
+            {row.size && (
+              <span style={{
+                padding: "3px 10px", borderRadius: 999,
+                background: "rgba(72,30,227,0.30)", color: "#cfc1ff",
+                fontWeight: 700,
+              }}>{row.size}</span>
+            )}
+            <span style={{
+              padding: "3px 10px", borderRadius: 999,
+              background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.86)",
+            }}>{lang === "es" ? "Lote " : "Lot "}{row.lot}</span>
+            <span style={{
+              padding: "3px 10px", borderRadius: 999,
+              background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.86)",
+            }}>{row.node}</span>
+          </div>
+        </div>
+        <button
+          type="button" onClick={onClose}
+          aria-label={lang === "es" ? "Cerrar" : "Close"}
+          style={{
+            background: "rgba(255,255,255,0.10)", border: "none",
+            color: "#fff", borderRadius: 8,
+            width: 32, height: 32, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 18,
+          }}
+        >×</button>
+      </div>
+
+      {/* KPIs del lote (stock actual) */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
+        gap: 12, marginTop: 16,
+      }}>
+        <KpiTileNavy label={lang === "es" ? "Stock" : "Stock"}
+                     value={(row.qty || 0).toLocaleString()} />
+        <KpiTileNavy label={lang === "es" ? "Reservado" : "Reserved"}
+                     value={(row.reserved || 0).toLocaleString()}
+                     accent="#fbbf24" />
+        <KpiTileNavy label={lang === "es" ? "Disponible" : "Available"}
+                     value={((row.qty || 0) - (row.reserved || 0)).toLocaleString()}
+                     accent="#7ee5c0" />
+      </div>
+    </div>
+  );
+}
+
+function KpiTileNavy({ label, value, accent }) {
   return (
     <div style={{
       background: "rgba(255,255,255,0.08)",
@@ -504,5 +455,233 @@ function KpiTile({ label, value, accent }) {
         fontFamily: "var(--font-mono)", marginTop: 2,
       }}>{value}</div>
     </div>
+  );
+}
+
+function Section({ title, code, accent, children }) {
+  return (
+    <div style={{
+      background: "#fff",
+      border: "1px solid rgba(11,30,58,0.08)",
+      borderRadius: 12,
+      padding: "14px 16px",
+      marginBottom: 14,
+    }}>
+      <div style={{
+        display: "flex", justifyContent: "space-between",
+        alignItems: "baseline", marginBottom: 12,
+      }}>
+        <div style={{
+          fontSize: 11, letterSpacing: 1, textTransform: "uppercase",
+          color: accent || GREY, fontWeight: 700,
+        }}>{title}</div>
+        {code && (
+          <div style={{
+            fontFamily: "var(--font-mono)", fontSize: 12,
+            color: NAVY, fontWeight: 700,
+          }}>{code}</div>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function RowKV({ label, value }) {
+  return (
+    <div style={{
+      display: "grid", gridTemplateColumns: "140px 1fr",
+      gap: 12, padding: "5px 0",
+      fontSize: 13, alignItems: "center",
+    }}>
+      <div style={{
+        fontSize: 11, letterSpacing: 0.4, textTransform: "uppercase",
+        color: GREY, fontWeight: 600,
+      }}>{label}</div>
+      <div style={{ color: NAVY }}>{value}</div>
+    </div>
+  );
+}
+
+function KpiStrip({ tiles }) {
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: `repeat(${tiles.length}, 1fr)`,
+      gap: 10, marginBottom: 14,
+    }}>
+      {tiles.map((t, i) => (
+        <div key={i} style={{
+          background: "#fff",
+          border: "1px solid rgba(11,30,58,0.08)",
+          borderRadius: 10,
+          padding: "10px 12px",
+        }}>
+          <div style={{
+            fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase",
+            color: GREY, fontWeight: 600, marginBottom: 4,
+          }}>{t.label}</div>
+          <div style={{
+            fontSize: 17, fontWeight: 700,
+            color: t.accent || NAVY,
+            fontFamily: "var(--font-mono)",
+          }}>{t.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LinesTable({ lines, lang, highlightLote, highlightSize }) {
+  if (!lines.length) {
+    return (
+      <div style={{ color: GREY, fontSize: 13, padding: 12 }}>
+        {lang === "es" ? "Sin líneas registradas." : "No lines recorded."}
+      </div>
+    );
+  }
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{
+        width: "100%", borderCollapse: "separate", borderSpacing: 0,
+        fontSize: 12.5,
+      }}>
+        <thead>
+          <tr style={{
+            color: GREY, fontSize: 10.5, letterSpacing: 0.5,
+            textTransform: "uppercase", fontWeight: 700,
+            background: "rgba(11,30,58,0.03)",
+          }}>
+            <th style={th()}>SKU</th>
+            <th style={th()}>{lang === "es" ? "Producto" : "Product"}</th>
+            <th style={{ ...th(), textAlign: "center" }}>{lang === "es" ? "Talla" : "Size"}</th>
+            <th style={{ ...th(), textAlign: "center" }}>{lang === "es" ? "Lote" : "Lot"}</th>
+            <th style={{ ...th(), textAlign: "right" }}>{lang === "es" ? "Cantidad" : "Qty"}</th>
+            <th style={{ ...th(), textAlign: "right" }}>{lang === "es" ? "Costo" : "Cost"}</th>
+            <th style={{ ...th(), textAlign: "right" }}>{lang === "es" ? "Total" : "Total"}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((l) => {
+            const isHighlight =
+              (highlightLote && (l.lote_code || "") === highlightLote) &&
+              (!highlightSize || (l.talla || "").toUpperCase() === highlightSize.toUpperCase());
+            return (
+              <tr key={l.id}
+                  style={{
+                    background: isHighlight ? "rgba(0,178,134,0.06)" : "transparent",
+                    borderTop: "1px solid rgba(11,30,58,0.06)",
+                  }}>
+                <td style={{ ...td(), fontFamily: "var(--font-mono)", color: VIOLET, fontWeight: 600 }}>
+                  {l.product_sku || "—"}
+                </td>
+                <td style={{ ...td(), color: NAVY }}>{l.product_label || "—"}</td>
+                <td style={{ ...td(), textAlign: "center" }}>
+                  {l.talla
+                    ? <span style={{
+                        padding: "2px 8px", borderRadius: 999,
+                        background: "rgba(72,30,227,0.10)", color: VIOLET,
+                        fontSize: 11, fontWeight: 700,
+                        fontFamily: "var(--font-mono)",
+                      }}>{l.talla}</span>
+                    : <span style={{ color: GREY }}>—</span>}
+                </td>
+                <td style={{
+                  ...td(), textAlign: "center",
+                  fontFamily: "var(--font-mono)", color: GREY, fontSize: 11.5,
+                }}>{l.lote_code || "—"}</td>
+                <td style={{ ...td(), textAlign: "right", fontFamily: "var(--font-mono)", fontWeight: 600 }}>
+                  {Number(l.received_qty || 0).toLocaleString()}
+                  {l.expected_qty != null && l.received_qty != null
+                    && Number(l.expected_qty) !== Number(l.received_qty) && (
+                    <span style={{
+                      display: "inline-block", marginLeft: 4,
+                      fontSize: 10, color: AMBER, fontWeight: 700,
+                    }}>
+                      ({Number(l.received_qty) - Number(l.expected_qty) > 0 ? "+" : ""}
+                      {Number(l.received_qty) - Number(l.expected_qty)})
+                    </span>
+                  )}
+                </td>
+                <td style={{ ...td(), textAlign: "right", fontFamily: "var(--font-mono)", color: GREY }}>
+                  {l.unit_cost_usd != null
+                    ? fmtMoney(l.unit_cost_usd)
+                    : <span style={{ color: GREY }}>—</span>}
+                </td>
+                <td style={{ ...td(), textAlign: "right", fontFamily: "var(--font-mono)", fontWeight: 700, color: MINT }}>
+                  {l.line_value_usd != null
+                    ? fmtMoney(l.line_value_usd)
+                    : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EmptyNoRecepcion({ lang, row }) {
+  return (
+    <div style={{
+      padding: "32px 20px", textAlign: "center",
+      background: "#fff", border: "1px dashed rgba(11,30,58,0.18)",
+      borderRadius: 12,
+    }}>
+      <div style={{
+        width: 48, height: 48, borderRadius: "50%",
+        background: "rgba(72,30,227,0.08)", color: VIOLET,
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        marginBottom: 12, fontSize: 22,
+      }}>📦</div>
+      <div style={{
+        fontSize: 14, fontWeight: 700, color: NAVY, marginBottom: 6,
+      }}>
+        {lang === "es"
+          ? "Esta fila de stock no nació de una recepción formal."
+          : "This stock row was not created by a formal reception."}
+      </div>
+      <div style={{
+        fontSize: 12.5, color: GREY, lineHeight: 1.5, maxWidth: 420, margin: "0 auto",
+      }}>
+        {lang === "es"
+          ? "Probablemente fue creada por una transferencia interna, un ajuste manual o un import de stock inicial. Cuando registres la entrada con el wizard de recepción, aquí verás el packing list, las líneas, los costos y las excepciones."
+          : "It was probably created by an internal transfer, a manual adjustment or an initial stock import. When you register inbound through the reception wizard, you'll see the packing list, lines, costs and exceptions here."}
+      </div>
+      <div style={{
+        marginTop: 16, padding: "8px 12px",
+        background: "rgba(11,30,58,0.04)", borderRadius: 8,
+        fontSize: 11.5, color: GREY,
+        display: "inline-flex", alignItems: "center", gap: 8,
+        fontFamily: "var(--font-mono)",
+      }}>
+        <span>Stock actual:</span>
+        <strong style={{ color: NAVY }}>{(row.qty || 0).toLocaleString()} u</strong>
+        <span>·</span>
+        <span>{row.size || "ÚNICA"}</span>
+        <span>·</span>
+        <span>{row.lot || "—"}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Estilos compartidos ──────────────────────────────────────
+function th() {
+  return { padding: "8px 8px", textAlign: "left" };
+}
+function td() {
+  return { padding: "10px 8px", textAlign: "left", verticalAlign: "middle" };
+}
+
+function DocIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z"
+            stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+      <path d="M10 2v3h3" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+      <path d="M5.5 8h5M5.5 10.5h5M5.5 13h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+    </svg>
   );
 }
