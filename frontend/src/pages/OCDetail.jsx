@@ -1079,18 +1079,18 @@ export default function ScreenOCDetail() {
                 <th style={{width:140}}>SKU</th>
                 <th>{lang==='es'?'Nombre':'Name'}</th>
                 <th style={{width:70, textAlign:'center'}}>{lang==='es'?'Talla':'Size'}</th>
-                <th style={{width:90, textAlign:'right'}}>{lang==='es'?'Cant.':'Qty'}</th>
-                <th style={{width:100, textAlign:'right'}}>{lang==='es'?'Precio':'Price'}</th>
-                <th style={{width:110, textAlign:'right'}}>{lang==='es'?'Total':'Total'}</th>
-                <th style={{width:130}}>SAP</th>
+                <th style={{width:80, textAlign:'right'}}>{lang==='es'?'Cant.':'Qty'}</th>
+                <th style={{width:140, textAlign:'right'}}>{lang==='es'?'Precio':'Price'}</th>
+                <th style={{width:120, textAlign:'right'}}>{lang==='es'?'Total':'Total'}</th>
+                <th style={{width:140}}>SAP</th>
                 {/* Columnas deferred qty/price: CEO-ONLY. */}
                 {isAdmin && (
-                  <th style={{width:100, textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
+                  <th style={{width:90, textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
                     🔒 {lang==='es'?'Cant. dif.':'Def. qty'}
                   </th>
                 )}
                 {isAdmin && (
-                  <th style={{width:110, textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
+                  <th style={{width:120, textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
                     🔒 {lang==='es'?'Precio dif.':'Def. price'}
                   </th>
                 )}
@@ -1121,11 +1121,21 @@ export default function ScreenOCDetail() {
                   {/* Precio unitario editable → capability edit_oc_line_unit_price. */}
                   {can('edit_oc_line_unit_price') ? (
                     <td className="td-edit" style={{textAlign:'right'}}>
-                      <div className="edit-input-money">
+                      <div className="edit-input-money" style={{
+                        // Prevenir que el input se recorte: que ocupe todo
+                        // el ancho disponible de la celda y los dígitos no
+                        // queden cortados (síntoma reportado: "$ 14,9_").
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        width: '100%', justifyContent: 'flex-end',
+                      }}>
                         <span>$</span>
                         <input className="edit-input tabular" type="number" min={0} step="0.01"
                           value={l.unit_price}
-                          onChange={e=>updateLine(l.id, { unit_price: +e.target.value })}/>
+                          onChange={e=>updateLine(l.id, { unit_price: +e.target.value })}
+                          style={{
+                            width: '100%', minWidth: 80, maxWidth: 110,
+                            textAlign: 'right',
+                          }}/>
                       </div>
                     </td>
                   ) : (
@@ -1150,16 +1160,24 @@ export default function ScreenOCDetail() {
                     <td className="td-edit" style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 4%, transparent)'}}>
                       <input className="edit-input tabular" type="number" min={0} max={l.qty}
                         value={l.deferred_qty || 0}
-                        onChange={e=>updateLine(l.id, { deferred_qty: +e.target.value })}/>
+                        onChange={e=>updateLine(l.id, { deferred_qty: +e.target.value })}
+                        style={{ width: '100%', minWidth: 60, textAlign: 'right' }}/>
                     </td>
                   )}
                   {isAdmin && (
                     <td className="td-edit" style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 4%, transparent)'}}>
-                      <div className="edit-input-money">
+                      <div className="edit-input-money" style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        width: '100%', justifyContent: 'flex-end',
+                      }}>
                         <span>$</span>
                         <input className="edit-input tabular" type="number" min={0} step="0.01"
                           value={l.deferred_unit_price || 0}
-                          onChange={e=>updateLine(l.id, { deferred_unit_price: +e.target.value })}/>
+                          onChange={e=>updateLine(l.id, { deferred_unit_price: +e.target.value })}
+                          style={{
+                            width: '100%', minWidth: 70, maxWidth: 90,
+                            textAlign: 'right',
+                          }}/>
                       </div>
                     </td>
                   )}
