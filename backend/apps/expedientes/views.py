@@ -274,19 +274,31 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # El wizard simplificado no pide OC explícitamente, pero la
         # jerarquía de la UI espera que cada expediente tenga una OC
         # padre (vista intermedia /expedientes/<oc_id>). Generamos una
-        # OC mínima en estado EMITIDA con codigo OC-YYYY-NNNN si el
+        # OC mínima en estado EMITIDA con codigo PO-YYYY-NNNN si el
         # payload no la trae. R6 (sin FK) — el vínculo expediente.oc_id
         # es solo lógico.
+        # IMPORTANTE: usamos prefijo `PO-` (Purchase Order) para mantener
+        # la convención de la data legacy (PO-2026-04100, etc.) y evitar
+        # split-brain de prefijos OC- vs PO-.
         if not payload.get("oc_id"):
             year = date.today().year
             with connection.cursor() as c:
-                c.execute(
-                    "SELECT COUNT(*) FROM expedientes.oc WHERE codigo LIKE %s",
-                    [f"OC-{year}-%"],
-                )
+                # Contamos AMBOS prefijos legacy (PO- y OC-) para el
+                # secuencial siguiente, y nos quedamos con el max.
+                c.execute("""
+                    SELECT COALESCE(MAX(
+                        CASE
+                            WHEN codigo ~ '^(PO|OC)-[0-9]+-[0-9]+$'
+                            THEN CAST(split_part(codigo, '-', 3) AS INTEGER)
+                            ELSE 0
+                        END
+                    ), 0)
+                    FROM expedientes.oc
+                    WHERE codigo LIKE %s OR codigo LIKE %s
+                """, [f"PO-{year}-%", f"OC-{year}-%"])
                 n_oc = (c.fetchone() or [0])[0]
             new_oc_id = uuid.uuid4()
-            new_oc_codigo = f"OC-{year}-{(n_oc + 1):04d}"
+            new_oc_codigo = f"PO-{year}-{(n_oc + 1):05d}"
             with connection.cursor() as c:
                 c.execute("""
                     INSERT INTO expedientes.oc (
