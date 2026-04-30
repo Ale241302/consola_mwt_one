@@ -238,6 +238,20 @@ class ExpedienteViewSet(viewsets.ViewSet):
         denied = _deny_client_mutation(request, action_label="expediente.create")
         if denied is not None: return denied
 
+        # ⚠ Wrap completo: cualquier excepción inesperada se devuelve como
+        # JSON 500 con detalle, NO como página HTML del Django default.
+        # Esto facilita debug en el frontend (la respuesta sigue siendo
+        # JSON parseable) y evita que el wizard explote con un parse error.
+        try:
+            return self._do_create(request)
+        except Exception as e:
+            log.exception("[expediente.create] unhandled exception")
+            return Response({
+                "detail": f"server_error: {type(e).__name__}",
+                "error":  str(e)[:500],
+            }, status=500)
+
+    def _do_create(self, request):
         # Sprint Wizard Simplificado (2026-04-29):
         #   El wizard manda payload mínimo (client_id + estado + lines[])
         #   sin id ni codigo. Aquí auto-generamos ambos antes de validar
@@ -333,34 +347,47 @@ class ExpedienteViewSet(viewsets.ViewSet):
             # el expediente. Esto preserva el histórico: si mañana cambia el
             # precio del cliente, esta OC mantiene el precio del día de
             # creación. Es contabilidad básica.
+            #
+            # ⚠ Defensiva: cualquier fallo aquí (UUID inválido, JSONB mal
+            # formado, producto.producto no existe) se traga y deja
+            # price_map vacío → líneas se crean con unit_price=0 sin
+            # romper el flujo principal.
             client_id_val = payload.get("client_id")
-            unique_pids = {ln.get("producto_id") for ln in raw_lines
-                           if isinstance(ln, dict) and ln.get("producto_id")}
             price_map = {}   # { producto_id (str): unit_price (Decimal) }
-            if unique_pids:
-                with connection.cursor() as c:
-                    placeholders = ",".join(["%s"] * len(unique_pids))
-                    c.execute(f"""
-                        SELECT id::text, especificaciones, precio_lista
-                          FROM productos.producto
-                         WHERE id IN ({placeholders})
-                    """, list(map(str, unique_pids)))
-                    for pid, espec, pl in c.fetchall():
-                        # especificaciones llega como dict (jsonb) o None
-                        cli_map = (espec or {}).get("client_prices") or {}
-                        override = None
-                        if client_id_val:
-                            v = cli_map.get(str(client_id_val))
-                            if v is not None:
-                                try: override = Decimal(str(v))
-                                except Exception: override = None
-                        if override is not None and override > 0:
-                            price_map[pid] = override
-                        else:
+            try:
+                unique_pids = {str(ln.get("producto_id")) for ln in raw_lines
+                               if isinstance(ln, dict) and ln.get("producto_id")}
+                # Filtrar valores que no parecen UUIDs (longitud != 36)
+                unique_pids = {p for p in unique_pids if isinstance(p, str) and len(p) == 36}
+                if unique_pids:
+                    with connection.cursor() as c:
+                        placeholders = ",".join(["%s::uuid"] * len(unique_pids))
+                        c.execute(f"""
+                            SELECT id::text, especificaciones, precio_lista
+                              FROM productos.producto
+                             WHERE id IN ({placeholders})
+                        """, list(unique_pids))
+                        for pid, espec, pl in c.fetchall():
                             try:
-                                price_map[pid] = Decimal(str(pl or 0))
+                                cli_map = (espec or {}).get("client_prices") or {}
                             except Exception:
-                                price_map[pid] = Decimal("0")
+                                cli_map = {}
+                            override = None
+                            if client_id_val:
+                                v = cli_map.get(str(client_id_val))
+                                if v is not None:
+                                    try: override = Decimal(str(v))
+                                    except Exception: override = None
+                            if override is not None and override > 0:
+                                price_map[pid] = override
+                            else:
+                                try:
+                                    price_map[pid] = Decimal(str(pl or 0))
+                                except Exception:
+                                    price_map[pid] = Decimal("0")
+            except Exception as e:
+                log.warning("[expediente.create] price_map fetch failed: %s", e)
+                price_map = {}
 
             with connection.cursor() as c:
                 for ln in raw_lines:
