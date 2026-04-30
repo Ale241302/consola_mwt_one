@@ -268,7 +268,13 @@ export default function CreateTransferWizard() {
       qty_transfer:  0,
       qty_reserve:   0,
       disponible:    Number(s.qty_disponible || 0),
+      // unit_cost = costo histórico del lote en el stock origen (referencia).
       unit_cost:     Number(s.unit_cost || 0),
+      // unit_value = valor a usar en la base FOB del prorrateo de Landed Cost
+      // (sprint Transfer Engine v3). Default: el unit_cost del stock origen
+      // — el operador puede editarlo si el valor declarado para aduanas es
+      // distinto al costo de adquisición.
+      unit_value:    Number(s.unit_cost || 0),
     }]);
   };
   const updateProductLine = (tmpId, patch) => {
@@ -304,8 +310,11 @@ export default function CreateTransferWizard() {
     const totalFree    = totalUnits - totalReserve;
     const totalCostUsd = costLines.reduce((a, c) =>
       a + Number(c.amount || 0) * Number(c.fx_to_usd || 1), 0);
+    // FOB base = qty * unit_value (no unit_cost). El unit_value es el
+    // declarado por el operador en Step 3 — puede diferir del costo
+    // histórico del lote.
     const totalValueUsd = productLines.reduce((a, l) =>
-      a + Number(l.qty_transfer || 0) * Number(l.unit_cost || 0), 0);
+      a + Number(l.qty_transfer || 0) * Number(l.unit_value || l.unit_cost || 0), 0);
     return { totalUnits, totalReserve, totalFree, totalCostUsd, totalValueUsd };
   }, [productLines, costLines]);
 
@@ -342,6 +351,9 @@ export default function CreateTransferWizard() {
           qty_transfer:  Number(l.qty_transfer) || 0,
           qty_reserve:   Number(l.qty_reserve)  || 0,
           unit_cost:     Number(l.unit_cost)    || null,
+          // Sprint 2026-04-30 — unit_value persistido para que el motor
+          // de Landed Cost (BY_VALUE) tenga la base FOB de prorrateo.
+          unit_value:    Number(l.unit_value)   || Number(l.unit_cost) || null,
         })),
         cost_lines: costLines.map((c) => ({
           kind:           c.kind,
@@ -1530,12 +1542,14 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
           <table className="table" style={{ tableLayout: "fixed" }}>
             <colgroup>
               <col style={{ width: 130 }}/>{/* SKU / Lote */}
-              <col style={{ width: 80 }}/>{/* Talla */}
+              <col style={{ width: 70 }}/>{/* Talla */}
               <col/>                        {/* Producto */}
-              <col style={{ width: 100 }}/>{/* Disp. origen */}
-              <col style={{ width: 100 }}/>{/* Transferir */}
-              <col style={{ width: 100 }}/>{/* Reservar */}
-              <col style={{ width: 80 }}/>{/* Libre */}
+              <col style={{ width: 90 }}/>{/* Disp. origen */}
+              <col style={{ width: 90 }}/>{/* Transferir */}
+              <col style={{ width: 90 }}/>{/* Reservar */}
+              <col style={{ width: 70 }}/>{/* Libre */}
+              <col style={{ width: 110 }}/>{/* Valor unit. */}
+              <col style={{ width: 110 }}/>{/* Subtotal FOB */}
               <col style={{ width: 50 }}/>{/* Trash */}
             </colgroup>
             <thead>
@@ -1543,10 +1557,19 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
                 <th>SKU / {lang === "es" ? "Lote" : "Lot"}</th>
                 <th style={{ textAlign: "center" }}>{lang === "es" ? "Talla" : "Size"}</th>
                 <th>{lang === "es" ? "Producto" : "Product"}</th>
-                <th style={{ textAlign: "right", paddingRight: 14 }}>{lang === "es" ? "Disp. origen" : "Avail. orig."}</th>
-                <th style={{ textAlign: "right", paddingRight: 14 }}>{lang === "es" ? "Transferir" : "Transfer"}</th>
-                <th style={{ textAlign: "right", paddingRight: 14 }}>{lang === "es" ? "Reservar" : "Reserve"}</th>
-                <th style={{ textAlign: "right", paddingRight: 14 }}>{lang === "es" ? "Libre" : "Free"}</th>
+                <th style={{ textAlign: "right", paddingRight: 12 }}>{lang === "es" ? "Disp." : "Avail."}</th>
+                <th style={{ textAlign: "right", paddingRight: 12 }}>{lang === "es" ? "Transferir" : "Transfer"}</th>
+                <th style={{ textAlign: "right", paddingRight: 12 }}>{lang === "es" ? "Reservar" : "Reserve"}</th>
+                <th style={{ textAlign: "right", paddingRight: 12 }}>{lang === "es" ? "Libre" : "Free"}</th>
+                {/* Sprint 2026-04-30 — Valor unitario USD declarado para
+                    el cálculo de Landed Cost (BY_VALUE). */}
+                <th style={{ textAlign: "right", paddingRight: 12 }}
+                    title={lang === "es"
+                      ? "Valor unitario USD (FOB declarado). Default = costo del lote."
+                      : "Unit value USD (declared FOB). Default = lot cost."}>
+                  {lang === "es" ? "Val. unit. (USD)" : "Unit val. (USD)"}
+                </th>
+                <th style={{ textAlign: "right", paddingRight: 12 }}>{lang === "es" ? "Subtotal FOB" : "Subtotal FOB"}</th>
                 <th></th>
               </tr>
             </thead>
@@ -1554,6 +1577,7 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
               {productLines.map((l) => {
                 const free = Math.max(0, Number(l.qty_transfer || 0) - Number(l.qty_reserve || 0));
                 const overstock = Number(l.qty_transfer || 0) > Number(l.disponible || 0);
+                const subtotal = Number(l.qty_transfer || 0) * Number(l.unit_value || l.unit_cost || 0);
                 return (
                   <tr key={l.tmpId} style={overstock ? { background: "#FEF3C7" } : null}>
                     <td className="mono-sm">
@@ -1571,21 +1595,38 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
                         : <span className="caption" style={{ color: "var(--text-tertiary)" }}>—</span>}
                     </td>
                     <td>{l.product_label}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 14 }}>{l.disponible}</td>
-                    <td style={{ textAlign: "right", paddingRight: 14 }}>
+                    <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 12 }}>{l.disponible}</td>
+                    <td style={{ textAlign: "right", paddingRight: 12 }}>
                       <input className="input tabular-nums" type="number" min="0" max={l.disponible}
                              style={{ width: "100%", textAlign: "right" }}
                              value={l.qty_transfer}
                              onChange={(e) => updateProductLine(l.tmpId, { qty_transfer: Number(e.target.value) })}/>
                     </td>
-                    <td style={{ textAlign: "right", paddingRight: 14 }}>
+                    <td style={{ textAlign: "right", paddingRight: 12 }}>
                       <input className="input tabular-nums" type="number" min="0" max={l.qty_transfer}
                              style={{ width: "100%", textAlign: "right" }}
                              value={l.qty_reserve}
                              onChange={(e) => updateProductLine(l.tmpId, { qty_reserve: Math.min(Number(e.target.value), Number(l.qty_transfer || 0)) })}/>
                     </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 14, fontWeight: 600, color: "#00B286" }}>
+                    <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 12, fontWeight: 600, color: "#00B286" }}>
                       {free}
+                    </td>
+                    {/* Valor unitario USD — input editable, default = unit_cost */}
+                    <td style={{ textAlign: "right", paddingRight: 12 }}>
+                      <input className="input tabular-nums" type="number" min="0" step="0.01"
+                             style={{ width: "100%", textAlign: "right" }}
+                             value={l.unit_value ?? l.unit_cost ?? 0}
+                             onChange={(e) => updateProductLine(l.tmpId, { unit_value: Number(e.target.value) })}
+                             title={l.unit_cost
+                               ? `${lang === "es" ? "Costo histórico:" : "Historical cost:"} $${Number(l.unit_cost).toFixed(2)}`
+                               : undefined}/>
+                    </td>
+                    {/* Subtotal FOB = qty * unit_value, read-only display */}
+                    <td className="tabular-nums" style={{
+                      textAlign: "right", paddingRight: 12,
+                      fontWeight: 700, color: "#0B1E3A",
+                    }}>
+                      ${subtotal.toLocaleString("en-US", { maximumFractionDigits: 2 })}
                     </td>
                     <td style={{ textAlign: "center" }}>
                       <button className="btn btn-ghost btn-sm"
@@ -1598,6 +1639,32 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
                   </tr>
                 );
               })}
+              {/* Totals row — total FOB sumando subtotales de cada línea */}
+              <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
+                <td colSpan={4} style={{ textAlign: "right", color: "#0B1E3A", paddingRight: 12 }}>
+                  {lang === "es" ? "Totales" : "Totals"}
+                </td>
+                <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 12 }}>
+                  {productLines.reduce((a, l) => a + Number(l.qty_transfer || 0), 0)}
+                </td>
+                <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 12 }}>
+                  {productLines.reduce((a, l) => a + Number(l.qty_reserve || 0), 0)}
+                </td>
+                <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 12, color: "#00B286" }}>
+                  {productLines.reduce((a, l) =>
+                    a + Math.max(0, Number(l.qty_transfer || 0) - Number(l.qty_reserve || 0)), 0)}
+                </td>
+                <td colSpan={1}></td>
+                <td className="tabular-nums" style={{
+                  textAlign: "right", paddingRight: 12,
+                  color: "#00B286", fontSize: 14,
+                }}>
+                  ${productLines.reduce((a, l) =>
+                    a + Number(l.qty_transfer || 0) * Number(l.unit_value || l.unit_cost || 0), 0
+                  ).toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                </td>
+                <td></td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -1896,16 +1963,21 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                 <th style={{ width: 100 }}>SKU</th>
                 <th>{lang === "es" ? "Producto" : "Product"}</th>
                 <th style={{ textAlign: "center", width: 70 }}>{lang === "es" ? "Talla" : "Size"}</th>
-                <th style={{ textAlign: "center", width: 100 }}>{lang === "es" ? "Lote" : "Lot"}</th>
-                <th style={{ textAlign: "right", width: 80 }}>{lang === "es" ? "Mover" : "Move"}</th>
-                <th style={{ textAlign: "right", width: 80 }}>Res.</th>
-                <th style={{ textAlign: "right", width: 80 }}>{lang === "es" ? "Libre" : "Free"}</th>
+                <th style={{ textAlign: "center", width: 90 }}>{lang === "es" ? "Lote" : "Lot"}</th>
+                <th style={{ textAlign: "right", width: 70 }}>{lang === "es" ? "Mover" : "Move"}</th>
+                {/* Sprint 2026-04-30 — valor unitario y subtotal FOB. */}
+                <th style={{ textAlign: "right", width: 90 }}>{lang === "es" ? "Val. unit." : "Unit val."}</th>
+                <th style={{ textAlign: "right", width: 100 }}>{lang === "es" ? "Subtotal FOB" : "Subtotal FOB"}</th>
                 <th style={{ textAlign: "right", width: 110 }}>{lang === "es" ? "Costo asig." : "Cost alloc."}</th>
+                <th style={{ textAlign: "right", width: 110 }}>{lang === "es" ? "Landed unit." : "Landed unit."}</th>
               </tr>
             </thead>
             <tbody>
               {productLines.map((l) => {
-                const lineCost = costPerUnit * Number(l.qty_transfer || 0);
+                const lineCost     = costPerUnit * Number(l.qty_transfer || 0);
+                const unitVal      = Number(l.unit_value || l.unit_cost || 0);
+                const subtotalFob  = Number(l.qty_transfer || 0) * unitVal;
+                const landedUnit   = unitVal + costPerUnit;
                 return (
                   <tr key={l.tmpId}>
                     <td className="mono-sm" style={{ color: "#481EE3", fontWeight: 600 }}>{l.sku}</td>
@@ -1924,12 +1996,17 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                       {l.lote || "—"}
                     </td>
                     <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600 }}>{l.qty_transfer}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "#B45309" }}>{l.qty_reserve}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontWeight: 600 }}>
-                      {Math.max(0, Number(l.qty_transfer) - Number(l.qty_reserve))}
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#0B1E3A" }}>
+                      ${unitVal.toLocaleString("en-US", { maximumFractionDigits: 4 })}
                     </td>
                     <td className="tabular-nums" style={{ textAlign: "right", color: "#0B1E3A", fontWeight: 600 }}>
-                      ${lineCost.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                      ${subtotalFob.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#B45309", fontWeight: 600 }}>
+                      +${lineCost.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontWeight: 700 }}>
+                      ${landedUnit.toLocaleString("en-US", { maximumFractionDigits: 4 })}
                     </td>
                   </tr>
                 );
@@ -1937,10 +2014,15 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
               <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
                 <td colSpan={4} style={{ color: "#0B1E3A" }}>{lang === "es" ? "Total" : "Total"}</td>
                 <td className="tabular-nums" style={{ textAlign: "right" }}>{totals.totalUnits}</td>
-                <td className="tabular-nums" style={{ textAlign: "right" }}>{totals.totalReserve}</td>
-                <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286" }}>{totals.totalFree}</td>
+                <td></td>
+                <td className="tabular-nums" style={{ textAlign: "right", color: "#0B1E3A", fontSize: 13 }}>
+                  ${totals.totalValueUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                </td>
                 <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 14 }}>
-                  ${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                  +${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                </td>
+                <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 14 }}>
+                  ${(totals.totalValueUsd + totals.totalCostUsd).toLocaleString("en-US", { maximumFractionDigits: 2 })}
                 </td>
               </tr>
             </tbody>
