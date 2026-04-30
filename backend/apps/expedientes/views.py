@@ -202,10 +202,25 @@ class ExpedienteViewSet(viewsets.ViewSet):
         return Response(ExpedienteListSerializer(qs, many=True).data)
 
     def retrieve(self, request, pk=None):
+        # Lookup tolerante: el `pk` puede venir como UUID (canónico) o
+        # como `codigo` legible (ej. EXP-2026-0001 desde URLs guardadas).
+        # 1) Intentar UUID primero. Si pk no es UUID válido, ValueError /
+        #    django.core.exceptions.ValidationError saltan; los atrapamos.
+        # 2) Fallback por codigo.
+        e = None
         try:
             e = Expediente.objects.get(pk=pk, is_active=True)
         except Expediente.DoesNotExist:
-            return Response({"detail": "Expediente no existe"}, status=404)
+            e = None
+        except Exception:
+            # pk no es UUID parseable (formato corto / con guiones tipo
+            # codigo). Lo manejamos con el fallback por codigo.
+            e = None
+        if e is None:
+            try:
+                e = Expediente.objects.get(codigo=pk, is_active=True)
+            except Expediente.DoesNotExist:
+                return Response({"detail": "Expediente no existe"}, status=404)
         return Response(ExpedienteSerializer(e).data)
 
     def create(self, request):

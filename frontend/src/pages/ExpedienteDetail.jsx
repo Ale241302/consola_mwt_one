@@ -55,11 +55,14 @@ export default function ScreenExpedienteDetail() {
       .then(async (e) => {
         if (cancel) return;
         setApiExp(e);
-        // Hidratar cliente y marca en paralelo (best-effort)
+        // Hidratar cliente y marca en paralelo (best-effort).
+        // OJO: para listar las líneas usamos `e.id` (UUID canónico), no el
+        // `expedienteId` del URL — éste puede ser el codigo legible
+        // (EXP-2026-0001) y el filtro del backend espera UUID.
         const [cli, br, ln] = await Promise.all([
           e.client_id ? clientesApi.get(e.client_id).catch(() => null) : Promise.resolve(null),
           e.brand_id  ? marcasApi.get(e.brand_id).catch(() => null)    : Promise.resolve(null),
-          lineasApi.list({ expediente: expedienteId }).catch(() => ({ results: [] })),
+          lineasApi.list({ expediente: e.id }).catch(() => ({ results: [] })),
         ]);
         if (cancel) return;
         setApiClient(cli);
