@@ -179,12 +179,15 @@ export default function ScreenOCDetail() {
     lines:        apiOcLines.map(l => {
       const sku = String(l.sku || "").toUpperCase();
       const qty = Number(l.qty || 0);
-      // Precio del cliente: lookup por producto_id en el mapa CPA.
-      // Si el producto tiene override en `especificaciones.client_prices`
-      // para este cliente → ese precio. Si no → fallback a precio_lista.
-      // Si producto_id es null (línea libre), usamos unit_price del API.
-      const cpaPx = l.producto_id ? cpaPriceMap[l.producto_id] : null;
-      const unit  = cpaPx != null && cpaPx > 0 ? cpaPx : Number(l.unit_price || 0);
+      // Precio: PRIORIZAMOS el unit_price persistido en DB (frozen al
+      // momento de crear el expediente). Esto preserva el histórico —
+      // si mañana cambia el precio del cliente, esta OC mantiene el
+      // precio del día de creación. Solo si la línea histórica tiene
+      // unit_price=0 (líneas creadas antes del fix), caemos al lookup
+      // live como mejor esfuerzo de backfill visual.
+      const persistedPrice = Number(l.unit_price || 0);
+      const livePrice      = l.producto_id ? Number(cpaPriceMap[l.producto_id] || 0) : 0;
+      const unit = persistedPrice > 0 ? persistedPrice : livePrice;
       return {
         id:             l.id,
         sku:            l.sku,

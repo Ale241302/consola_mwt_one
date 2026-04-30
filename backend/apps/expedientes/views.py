@@ -327,6 +327,41 @@ class ExpedienteViewSet(viewsets.ViewSet):
         oc_id_val = payload.get("oc_id")
         line_count = 0
         if isinstance(raw_lines, list) and raw_lines:
+            # ── Resolver precio cliente UNA VEZ por producto (frozen) ──
+            # El precio cliente vive en producto.especificaciones.client_prices
+            # y debe quedar CONGELADO en linea.unit_price al momento de crear
+            # el expediente. Esto preserva el histórico: si mañana cambia el
+            # precio del cliente, esta OC mantiene el precio del día de
+            # creación. Es contabilidad básica.
+            client_id_val = payload.get("client_id")
+            unique_pids = {ln.get("producto_id") for ln in raw_lines
+                           if isinstance(ln, dict) and ln.get("producto_id")}
+            price_map = {}   # { producto_id (str): unit_price (Decimal) }
+            if unique_pids:
+                with connection.cursor() as c:
+                    placeholders = ",".join(["%s"] * len(unique_pids))
+                    c.execute(f"""
+                        SELECT id::text, especificaciones, precio_lista
+                          FROM productos.producto
+                         WHERE id IN ({placeholders})
+                    """, list(map(str, unique_pids)))
+                    for pid, espec, pl in c.fetchall():
+                        # especificaciones llega como dict (jsonb) o None
+                        cli_map = (espec or {}).get("client_prices") or {}
+                        override = None
+                        if client_id_val:
+                            v = cli_map.get(str(client_id_val))
+                            if v is not None:
+                                try: override = Decimal(str(v))
+                                except Exception: override = None
+                        if override is not None and override > 0:
+                            price_map[pid] = override
+                        else:
+                            try:
+                                price_map[pid] = Decimal(str(pl or 0))
+                            except Exception:
+                                price_map[pid] = Decimal("0")
+
             with connection.cursor() as c:
                 for ln in raw_lines:
                     if not isinstance(ln, dict):
@@ -342,6 +377,12 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         cantidad = 0
                     if cantidad <= 0:
                         continue
+                    # Precio congelado: lookup en price_map por producto_id.
+                    # Fallback: 0 (línea sin producto resuelto, ej. SKU libre).
+                    pid = str(ln.get("producto_id")) if ln.get("producto_id") else None
+                    unit_price = price_map.get(pid, Decimal("0")) if pid else Decimal("0")
+                    total_price = (unit_price * Decimal(cantidad)).quantize(Decimal("0.01"))
+
                     # Schema real (70_expedientes.sql) — columnas que SÍ existen:
                     #   id, oc_id (NOT NULL), expediente_id, producto_id,
                     #   sku, size (NO 'talla'), qty, unit_cost, unit_price,
@@ -354,19 +395,20 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         c.execute("""
                             INSERT INTO expedientes.linea (
                                 id, oc_id, expediente_id, producto_id,
-                                sku, size, qty,
+                                sku, size, qty, unit_price, total_price,
                                 estado, is_active, created_at, updated_at
                             ) VALUES (
                                 %s, %s, %s, %s,
-                                %s, %s, %s,
+                                %s, %s, %s, %s, %s,
                                 'PENDIENTE_SAP', TRUE, NOW(), NOW()
                             )
                         """, [
                             str(uuid.uuid4()),
                             str(oc_id_val) if oc_id_val else None,
                             str(new_id),
-                            str(ln.get("producto_id")) if ln.get("producto_id") else None,
+                            pid,
                             sku, talla, cantidad,
+                            unit_price, total_price,
                         ])
                         line_count += 1
                     except Exception as e:
