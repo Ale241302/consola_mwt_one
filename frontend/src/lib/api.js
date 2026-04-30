@@ -366,6 +366,33 @@ export const conciliacionesApi = resource("conciliaciones");
 export const transferenciasApi    = resource("transferencias");
 export const transferLineasApi    = resource("transfer-lineas");
 export const transferEventosApi   = resource("transfer-eventos");
+
+// Transfer detail · sprint 2026-04-30
+//   POST  /api/transferencias/{id}/cost-lines/                add manual
+//   DELETE /api/transferencias/{id}/cost-lines/{cost_id}/     soft delete
+//   POST  /api/transferencias/{id}/upload-cost-ocr/          multipart, OCR auto-merge
+//   GET / POST /api/transferencias/{id}/notes/                ledger
+//   DELETE     /api/transferencias/{id}/notes/{note_id}/      remove
+export const transferDetailApi = {
+  // Costos
+  addCost:    (trfId, body)        => apiFetch(`/transferencias/${trfId}/cost-lines/`,
+                                              { method: "POST", body, token: getToken() }),
+  removeCost: (trfId, costId)      => apiFetch(`/transferencias/${trfId}/cost-lines/${costId}/`,
+                                              { method: "DELETE", token: getToken() }),
+  uploadCostOcr: async (trfId, file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return postMultipart(`/transferencias/${trfId}/upload-cost-ocr/`, fd,
+                         { token: getToken() });
+  },
+  // Notas
+  listNotes:   (trfId)             => apiFetch(`/transferencias/${trfId}/notes/`,
+                                              { token: getToken() }),
+  addNote:     (trfId, text)       => apiFetch(`/transferencias/${trfId}/notes/`,
+                                              { method: "POST", body: { text }, token: getToken() }),
+  removeNote:  (trfId, noteId)     => apiFetch(`/transferencias/${trfId}/notes/${noteId}/`,
+                                              { method: "DELETE", token: getToken() }),
+};
 export const emailTemplatesApi    = resource("email-templates");
 export const emailTemplateVersionsApi = resource("email-template-versions");
 export const notificationLogsApi  = resource("notification-logs");

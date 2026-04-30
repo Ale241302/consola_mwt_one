@@ -123,6 +123,12 @@ class Transferencia(models.Model):
     freight_quote_document_id    = models.CharField(max_length=36, null=True, blank=True)  # EXPORT
     remission_guide_document_id  = models.CharField(max_length=36, null=True, blank=True)  # CONSIGNMENT
 
+    # Sprint v3.5 (91l) — ledger de notas operativas. Cada elemento:
+    # {id, text, created_at, created_by_name}. Reemplaza el campo plano
+    # `notes` que solo permitía 1 nota. Append-only desde el FE; el
+    # delete actualiza el array filtrando el id.
+    notes_log        = models.JSONField(default=list, blank=True)
+
     is_active        = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     updated_at       = models.DateTimeField(auto_now=True)

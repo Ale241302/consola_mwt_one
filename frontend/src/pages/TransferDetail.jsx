@@ -31,6 +31,10 @@ import { transferenciasApi, transferLineasApi } from "../lib/api.js";
 import TransferLiquidationPanel from "../components/transfers/TransferLiquidationPanel.jsx";
 import TransferStateStepper from "../components/transfers/TransferStateStepper.jsx";
 import TransferInvoicePrintView from "../components/transfers/TransferInvoicePrintView.jsx";
+// Sprint 2026-04-30 — paneles editables para costos (con OCR auto-merge)
+// y notas (ledger JSONB).
+import TransferCostsPanel  from "../components/transfers/TransferCostsPanel.jsx";
+import TransferNotesPanel  from "../components/transfers/TransferNotesPanel.jsx";
 
 // ── Helpers format ─────────────────────────
 function fmtDate(s) {
@@ -85,6 +89,7 @@ function mapApiDetailToTransfer(r) {
     approved_by:    r.approved_by_name || '',
     received_by:    r.received_by_name || '',
     notes:          r.notes || '',
+    notes_log:      Array.isArray(r.notes_log) ? r.notes_log : [],
     lines: lineas.map(l => ({
       _line_id:        l.id,
       sku:             l.sku || '',
@@ -419,11 +424,24 @@ export default function ScreenTransferDetail() {
       </div>
 
       {/* ── Metadata por motivo legal (sprint Transfer Engine v2) ── */}
+      {/* Pasamos costLines=[] para que la vieja sección de costos NO se
+          renderice — ahora la maneja TransferCostsPanel editable. */}
       <LegalContextDataCard lang={lang}
                             legalContext={transferBase.legal_context}
                             contextData={transferBase.context_data}
-                            costLines={transferBase.cost_lines}
-                            totalCostUsd={transferBase.total_cost_usd}/>
+                            costLines={[]}
+                            totalCostUsd={0}/>
+
+      {/* ── Costos editables + OCR auto-merge (sprint 2026-04-30) ── */}
+      {isUuid && (
+        <TransferCostsPanel
+          lang={lang}
+          transferId={transferBase._backend_id}
+          costLines={transferBase.cost_lines}
+          totalCostUsd={transferBase.total_cost_usd}
+          onChanged={loadBackend}
+        />
+      )}
 
       {/* ── Liquidación / Landed Cost (sprint Transfer Engine v3) ── */}
       <TransferLiquidationPanel transfer={transferBase} lang={lang} onLiquidated={loadBackend}/>
@@ -573,17 +591,14 @@ export default function ScreenTransferDetail() {
         </div>
       )}
 
-      {/* ── Notes ── */}
-      {transferBase.notes && (
-        <div className="card card-pad-md" style={{ marginTop:16, display:'flex', gap:10, alignItems:'flex-start' }}>
-          <IconFileText size={14} style={{ color:'var(--text-sec)', marginTop:2 }}/>
-          <div>
-            <div className="micro" style={{ marginBottom:4 }}>
-              {lang==='es'?'NOTAS':'NOTES'}
-            </div>
-            <div className="body-sm">{transferBase.notes}</div>
-          </div>
-        </div>
+      {/* ── Notes ledger editable (sprint 2026-04-30) ── */}
+      {isUuid && (
+        <TransferNotesPanel
+          lang={lang}
+          transferId={transferBase._backend_id}
+          initialNotes={transferBase.notes_log}
+          legacyNote={transferBase.notes}
+        />
       )}
       {/* ── Modal full-screen del Print View (sprint v4) ── */}
       {printingPayload && (

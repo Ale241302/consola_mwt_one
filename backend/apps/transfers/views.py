@@ -61,6 +61,20 @@ def _validate_transition(estado_from, estado_to, legal_context=None):
     return generic
 
 
+def _confidence_to_pct(level):
+    """Convierte 'HIGH'/'MEDIUM'/'LOW' del SKILL_OCR_ADUANAS en un %."""
+    if level is None:
+        return None
+    if isinstance(level, (int, float)):
+        try:
+            v = float(level)
+            return v if v <= 100 else 100.0
+        except Exception:
+            return None
+    s = str(level).upper().strip()
+    return {"HIGH": 90.0, "MEDIUM": 70.0, "LOW": 45.0}.get(s)
+
+
 def _recompute_line_discrepancy(linea):
     """OK / WITHIN_TOLERANCE / OVER / UNDER según qty_received vs qty_transfer."""
     if linea.qty_received is None:
@@ -319,6 +333,171 @@ class TransferenciaViewSet(viewsets.ViewSet):
         if not updated:
             return Response({"detail": "Cost line no encontrada"}, status=404)
         return Response(status=204)
+
+    # ── OCR de costos sobre la transferencia ya creada ─────────────
+    # POST /api/transferencias/{id}/upload-cost-ocr/
+    # multipart con `file` (PDF/imagen del DUA, factura aduanal, etc.).
+    # Llama a SKILL_OCR_ADUANAS, parsea el JSON {cost_lines: [...]} y
+    # hace MERGE inteligente:
+    #   · Si ya existe una CostLine con (kind, currency) match → SUMA al amount.
+    #   · Si no existe → crea una nueva CostLine source=OCR_DUA.
+    # Devuelve el listado actualizado + un summary { added, merged }.
+    @action(detail=True, methods=["post"], url_path="upload-cost-ocr")
+    def upload_cost_ocr(self, request, pk=None):
+        try:
+            t = Transferencia.objects.get(pk=pk, is_active=True)
+        except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+
+        f = request.FILES.get("file") or request.FILES.get("upload")
+        if not f:
+            return Response({"detail": "Falta el archivo (`file`)."}, status=400)
+        if f.size > 25 * 1024 * 1024:
+            return Response({"detail": "Archivo > 25MB."}, status=413)
+
+        try:
+            payload = ocr_customs.extract_customs_costs(
+                file_bytes   = f.read(),
+                filename     = f.name,
+                content_type = f.content_type or "application/octet-stream",
+            )
+        except Exception as e:
+            log.exception("[upload_cost_ocr] OCR failed file=%s", f.name)
+            return Response({"detail": f"OCR falló: {type(e).__name__}: {e}"}, status=500)
+
+        # Estructura esperada del OCR (per SKILL_OCR_ADUANAS):
+        #   {
+        #     "document_reference": "...",
+        #     "cost_lines": [
+        #       {"cost_type": "arancel_aduana", "amount": 1250.50,
+        #        "currency": "USD", "description": "..."},
+        #       ...
+        #     ],
+        #     "confidence": "HIGH|MEDIUM|LOW",
+        #     "gaps_detected": [...]
+        #   }
+        # Aceptamos también el shape antiguo (kind/label) por compat.
+        proposed = []
+        for c in (payload.get("cost_lines") or []):
+            kind = (c.get("cost_type") or c.get("kind") or "").strip()
+            label = c.get("description") or c.get("label") or payload.get("document_reference") or ""
+            try:
+                amount = float(c.get("amount") or 0)
+            except Exception:
+                amount = 0.0
+            currency = (c.get("currency") or "USD").upper()[:3]
+            if not kind or amount <= 0:
+                continue
+            proposed.append({
+                "kind": kind, "label": label,
+                "amount": amount, "currency": currency,
+                "ocr_confidence": _confidence_to_pct(payload.get("confidence")),
+            })
+
+        existing = list(CostLine.objects.filter(
+            transferencia_id=t.id, is_active=True
+        ))
+        added, merged = 0, 0
+        with transaction.atomic():
+            for p in proposed:
+                # MERGE: misma kind + currency → sumamos
+                match = next(
+                    (e for e in existing
+                     if (e.kind or "").lower() == p["kind"].lower()
+                     and (e.currency or "USD").upper() == p["currency"]),
+                    None,
+                )
+                if match:
+                    new_amount = float(match.amount or 0) + p["amount"]
+                    CostLine.objects.filter(pk=match.id).update(
+                        amount=new_amount,
+                        # Si la nota actual no tiene la referencia OCR, agregamos
+                        notes=(match.notes or "") + (
+                            f"\n[OCR {payload.get('document_reference','')}] +{p['amount']} {p['currency']}"
+                            if p["amount"] else ""
+                        ),
+                        ocr_confidence=p["ocr_confidence"] or match.ocr_confidence,
+                    )
+                    merged += 1
+                else:
+                    # Nueva línea source=OCR_DUA
+                    new_cost = {
+                        "transferencia_id": str(t.id),
+                        "kind": p["kind"],
+                        "label": p["label"][:160],
+                        "amount": p["amount"],
+                        "currency": p["currency"],
+                        "fx_to_usd": 1.0 if p["currency"] == "USD" else 1.0,
+                        "source": "OCR_DUA",
+                        "ocr_confidence": p["ocr_confidence"],
+                    }
+                    new_cost.pop("amount_usd", None)
+                    cs = CostLineSerializer(data=new_cost)
+                    cs.is_valid(raise_exception=True)
+                    cs.save(id=uuid.uuid4())
+                    added += 1
+
+        # Devolver el listado fresco + summary
+        fresh = CostLine.objects.filter(
+            transferencia_id=t.id, is_active=True
+        ).order_by("kind", "created_at")
+        return Response({
+            "summary": {
+                "added":  added,
+                "merged": merged,
+                "skipped": len(payload.get("cost_lines") or []) - added - merged,
+                "document_reference": payload.get("document_reference"),
+                "confidence":         payload.get("confidence"),
+                "gaps_detected":      payload.get("gaps_detected") or [],
+            },
+            "cost_lines": CostLineSerializer(fresh, many=True).data,
+        })
+
+    # ── Notas (ledger JSONB) ─────────────────────────────────────
+    # POST   /api/transferencias/{id}/notes/
+    #        body: { text: "..." }                → agrega
+    # DELETE /api/transferencias/{id}/notes/{note_id}/  → elimina por id
+    @action(detail=True, methods=["get", "post"], url_path="notes")
+    def notes_action(self, request, pk=None):
+        try:
+            t = Transferencia.objects.get(pk=pk, is_active=True)
+        except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+
+        if request.method.upper() == "GET":
+            return Response({"notes_log": t.notes_log or []})
+
+        text = (request.data.get("text") or "").strip()
+        if not text:
+            return Response({"detail": "Texto vacío."}, status=400)
+        new_note = {
+            "id":              str(uuid.uuid4()),
+            "text":            text[:2000],
+            "created_at":      timezone.now().isoformat(),
+            "created_by_id":   str(getattr(request.user, "id", "") or ""),
+            "created_by_name": (
+                getattr(request.user, "full_name", None)
+                or getattr(request.user, "email", None)
+                or request.data.get("actor_name")
+                or ""
+            ),
+        }
+        log_arr = list(t.notes_log or [])
+        log_arr.append(new_note)
+        Transferencia.objects.filter(pk=t.id).update(notes_log=log_arr)
+        return Response({"note": new_note, "notes_log": log_arr}, status=201)
+
+    @action(detail=True, methods=["delete"], url_path=r"notes/(?P<note_id>[^/.]+)")
+    def notes_delete(self, request, pk=None, note_id=None):
+        try:
+            t = Transferencia.objects.get(pk=pk, is_active=True)
+        except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+        log_arr = [n for n in (t.notes_log or []) if n.get("id") != note_id]
+        if len(log_arr) == len(t.notes_log or []):
+            return Response({"detail": "Nota no encontrada"}, status=404)
+        Transferencia.objects.filter(pk=t.id).update(notes_log=log_arr)
+        return Response({"notes_log": log_arr})
 
     # Liquidacion / Landed Cost (sprint Transfer Engine v3)
     # GET  /api/transferencias/{id}/liquidation_report/  preview (no persiste)
