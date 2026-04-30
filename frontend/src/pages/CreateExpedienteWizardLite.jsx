@@ -27,7 +27,7 @@ import {
   IconMail,
 } from "../lib/icons.jsx";
 import {
-  clientesApi, expedientesApi, productosApi, apiFetch, getToken,
+  clientesApi, expedientesApi, productosApi, tallasApi, apiFetch, getToken,
 } from "../lib/api.js";
 
 const STEPS = [
@@ -766,6 +766,11 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
   const [picked, setPicked]     = useState(null);   // {sku, label, tallas:[{talla, qty}]}
   const [loading, setLoading]   = useState(false);
   const [cpaSet, setCpaSet]     = useState(new Set()); // skus asignados al cliente
+  // Catálogo del Motor de Tallas — lo necesitamos para resolver los
+  // UUIDs guardados en p.tallas a labels humanos (43, 44, M, L, …).
+  // El producto las guarda como UUIDs porque las tallas viven en
+  // sizing.talla con sistemas distintos (CALZADO, ROPA, …).
+  const [sizingMap, setSizingMap] = useState({}); // { uuid: {label, sistema} }
 
   // Cargar CPA del cliente una vez
   useEffect(() => {
@@ -777,6 +782,22 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
       })
       .catch(() => {});
   }, [clientId]);
+
+  // Cargar catálogo de tallas (Motor de Tallas) una sola vez al montar
+  useEffect(() => {
+    tallasApi.list({ limit: 500 })
+      .then((d) => {
+        const arr = Array.isArray(d) ? d : (d?.results || []);
+        const map = {};
+        for (const sz of arr) {
+          // Misma prioridad de label que ProductFormView.jsx (sección C)
+          const label = sz.talla_base || sz.eu || sz.us_men || sz.nombre || sz.codigo || "—";
+          map[String(sz.id)] = { label, sistema: sz.sistema || "OTRO" };
+        }
+        setSizingMap(map);
+      })
+      .catch(() => setSizingMap({}));
+  }, []);
 
   // Buscar productos
   useEffect(() => {
@@ -792,18 +813,52 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
       .finally(() => setLoading(false));
   }, [search]);
 
-  const pick = (p) => {
+  const pick = async (p) => {
     const sku = (p.sku || "").toUpperCase();
     const isAssigned = cpaSet.size === 0 || cpaSet.has(sku);
-    // Tallas — leer de p.tallas si existe, sino default genérico.
-    const tallasList = Array.isArray(p.tallas) && p.tallas.length
-      ? p.tallas.map((t) => (typeof t === "object" ? t.codigo : t)).filter(Boolean)
-      : ["XS", "S", "M", "L", "XL", "XXL"];
-    setPicked({
+
+    // El list serializer (ProductoListSerializer) NO incluye `tallas`,
+    // así que necesitamos un retrieve para conseguir el array de UUIDs
+    // de tallas asignadas en el Motor de Tallas. Si el GET falla, caemos
+    // a "ÚNICA" en vez de inventar XS-XXL (esa lista no aplica al SKU).
+    let tallaIds = [];
+    let tempPicked = {
       sku,
       product_label: p.nombre || p.product_label || sku,
       producto_id:   p.id,
       is_assigned:   isAssigned,
+      loading_sizes: true,
+      tallas: [],
+    };
+    setPicked(tempPicked);
+
+    try {
+      const full = await productosApi.get(p.id);
+      tallaIds = Array.isArray(full?.tallas) ? full.tallas : [];
+    } catch {
+      tallaIds = [];
+    }
+
+    let tallasList = [];
+    for (const t of tallaIds) {
+      if (typeof t === "object" && t) {
+        const lbl = t.talla_base || t.eu || t.us_men || t.codigo || t.nombre;
+        if (lbl) tallasList.push(lbl);
+      } else {
+        const m = sizingMap[String(t)];
+        if (m?.label) tallasList.push(m.label);
+      }
+    }
+    // Sin tallas resueltas → TALLA ÚNICA (NO inventar XS-XXL).
+    if (tallasList.length === 0) {
+      tallasList = ["ÚNICA"];
+    }
+    // De-duplicar y ordenar (43 antes que 44; M antes que XL no — orden natural)
+    tallasList = Array.from(new Set(tallasList));
+
+    setPicked({
+      ...tempPicked,
+      loading_sizes: false,
       tallas: tallasList.map((t) => ({ talla: t, qty: 0 })),
     });
   };
@@ -927,12 +982,31 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
               <div className="caption" style={{ color: "var(--text-tertiary)", marginBottom: 8 }}>
                 {lang === "es" ? "Ingresá la cantidad por talla:" : "Enter quantity per size:"}
               </div>
+              {picked.loading_sizes ? (
+                <div className="caption" style={{
+                  padding: 18, textAlign: "center", color: "var(--text-tertiary)",
+                  background: "rgba(11,30,58,0.03)", borderRadius: 8, marginBottom: 14,
+                }}>
+                  {lang === "es" ? "Cargando tallas asignadas…" : "Loading assigned sizes…"}
+                </div>
+              ) : picked.tallas.length === 1 && picked.tallas[0].talla === "ÚNICA" ? (
+                <div className="caption" style={{
+                  padding: "10px 12px", marginBottom: 14, borderRadius: 8,
+                  background: "rgba(245,158,11,0.06)",
+                  border: "1px solid rgba(245,158,11,0.20)", color: "#92400E",
+                  fontSize: 12,
+                }}>
+                  ⚠ {lang === "es"
+                       ? "Este SKU no tiene tallas asignadas en el Motor de Tallas. Usá talla ÚNICA o asigná tallas en el detalle del producto."
+                       : "This SKU has no sizes assigned in the Sizing Engine. Use SINGLE size or assign sizes in the product detail."}
+                </div>
+              ) : null}
               <div style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))",
                 gap: 10, marginBottom: 14,
               }}>
-                {picked.tallas.map((t, idx) => (
+                {!picked.loading_sizes && picked.tallas.map((t, idx) => (
                   <div key={t.talla} style={{
                     border: "1px solid var(--border)", borderRadius: 8,
                     padding: "10px 12px", background: "#fff",
