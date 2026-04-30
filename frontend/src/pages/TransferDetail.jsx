@@ -243,6 +243,11 @@ export default function ScreenTransferDetail() {
     );
   }
 
+  // Si no hay _backend_id, estamos viendo data mock (transferencia de
+  // demo, no existe en BD). Mostramos un banner ámbar arriba para que
+  // el usuario sepa que las mutaciones (add cost / OCR / notes) no
+  // van a persistir y vea cómo crear una real.
+  const isMockOnly = !transferBase._backend_id;
   const lmeta    = LEGAL_CONTEXT_META[transferBase.legal_context] || { label: transferBase.legal_context, color:'#64748B' };
   const smeta    = TRANSFER_STATUS_META[status] || TRANSFER_STATUS_META.planned;
   const totBase  = getTransferTotals(transferBase);
@@ -302,6 +307,39 @@ export default function ScreenTransferDetail() {
 
   return (
     <div className="page">
+      {/* Banner: data mock (sin persistencia real) */}
+      {isMockOnly && (
+        <div style={{
+          marginBottom: 14,
+          padding: "10px 14px",
+          background: "rgba(180,83,9,0.08)",
+          border: "1px solid rgba(180,83,9,0.20)",
+          borderRadius: 10,
+          fontSize: 13,
+          display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <IconAlert size={14} style={{ color: "#B45309" }}/>
+          <span style={{ color: "#0B1E3A", flex: 1 }}>
+            {lang === "es" ? (
+              <>
+                <strong>Transferencia de demo</strong> — no existe en la base de datos. Las acciones (agregar costo, subir DUA, notas) no se guardarán.
+                Para crear una real, ve a{" "}
+                <a href="/transferencias/nueva" style={{ color: "#481EE3", fontWeight: 600 }}>
+                  /transferencias/nueva
+                </a>.
+              </>
+            ) : (
+              <>
+                <strong>Demo transfer</strong> — not in database. Mutations won't persist.
+                Create a real one at{" "}
+                <a href="/transferencias/nueva" style={{ color: "#481EE3", fontWeight: 600 }}>
+                  /transferencias/nueva
+                </a>.
+              </>
+            )}
+          </span>
+        </div>
+      )}
       {/* ── Header ── */}
       <div className="page-header">
         <div>
@@ -583,12 +621,14 @@ export default function ScreenTransferDetail() {
 
       {/* ── Notes ledger editable (sprint 2026-04-30) ──
           Sin gate isUuid porque el backend acepta codigo (TRF-YYYY-NNNN)
-          O UUID en todas las acciones gracias a _resolve_trf(). */}
+          O UUID en todas las acciones gracias a _resolve_trf().
+          Si la transferencia es mock-only, panel queda en readOnly. */}
       <TransferNotesPanel
         lang={lang}
         transferId={transferBase._backend_id || transferBase.id}
         initialNotes={transferBase.notes_log}
         legacyNote={transferBase.notes}
+        readOnly={isMockOnly}
       />
       {/* Quitamos el import directo de TransferCostsPanel — la sección
           de costos vive en TransferLiquidationPanel arriba. */}
