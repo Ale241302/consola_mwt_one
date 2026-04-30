@@ -11,9 +11,11 @@
 //     migración 91l_transfers_notes_log.sql).
 // =====================================================================
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { IconTrash, IconFileText, IconPlus } from "../../lib/icons.jsx";
 import { transferDetailApi } from "../../lib/api.js";
+import ConfirmModal from "../common/ConfirmModal.jsx";
 
 const NAVY  = "#0B1E3A";
 const MINT  = "#00B286";
@@ -48,6 +50,10 @@ export default function TransferNotesPanel({
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // Modal de confirmación para eliminar (reemplaza window.confirm).
+  const [pendingDelete, setPendingDelete] = useState(null); // {id, text} | null
+  const [deleteBusy,    setDeleteBusy]    = useState(false);
+  const [deleteError,   setDeleteError]   = useState(null);
 
   // Si el padre vuelve a montar con notes nuevas (después de un reload),
   // sincronizamos.
@@ -71,20 +77,32 @@ export default function TransferNotesPanel({
     }
   };
 
-  const removeNote = async (noteId) => {
-    if (!noteId || noteId === "legacy") {
-      // Soporte para borrar la nota legacy (plana). Solo la quitamos del UI;
-      // el backend la sigue manteniendo en `notes` hasta que el CEO decida
-      // limpiar manualmente (la migración 91l ya hace backfill).
+  // Abre el modal de confirmación para eliminar (reemplaza window.confirm).
+  const askRemoveNote = (note) => {
+    if (!note?.id || note.id === "legacy") {
+      // Legacy plana — borrar solo del UI sin pedir confirmación.
       setNotes((arr) => arr.filter((n) => n.id !== "legacy"));
       return;
     }
-    if (!window.confirm(lang === "es" ? "¿Eliminar esta nota?" : "Delete this note?")) return;
+    setDeleteError(null);
+    setPendingDelete({ id: note.id, text: note.text });
+  };
+
+  const confirmRemoveNote = async () => {
+    if (!pendingDelete?.id) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
     try {
-      const res = await transferDetailApi.removeNote(transferId, noteId);
+      const res = await transferDetailApi.removeNote(transferId, pendingDelete.id);
       setNotes(res?.notes_log || []);
-    } catch {
-      setError(lang === "es" ? "No se pudo eliminar." : "Could not delete.");
+      setPendingDelete(null);
+    } catch (e) {
+      setDeleteError(
+        (lang === "es" ? "No se pudo eliminar: " : "Could not delete: ") +
+        (e?.body?.detail || e?.message || "error")
+      );
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -228,7 +246,7 @@ export default function TransferNotesPanel({
                 {!readOnly && (
                   <button
                     type="button"
-                    onClick={() => removeNote(n.id)}
+                    onClick={() => askRemoveNote(n)}
                     title={lang === "es" ? "Eliminar nota" : "Remove note"}
                     className="btn btn-ghost btn-sm"
                     style={{
@@ -243,6 +261,40 @@ export default function TransferNotesPanel({
             ))}
           </AnimatePresence>
         </div>
+      )}
+
+      {/* Modal MWT — reemplaza window.confirm. Renderizado por portal
+          para no quedar atrapado en overflow:hidden de tarjetas. */}
+      {pendingDelete && createPortal(
+        <ConfirmModal
+          eyebrow={lang === "es" ? "ACCIÓN DESTRUCTIVA" : "DESTRUCTIVE ACTION"}
+          title={lang === "es" ? "¿Eliminar esta nota?" : "Delete this note?"}
+          body={
+            <>
+              {lang === "es"
+                ? "La nota se borrará del ledger de la transferencia. Esta acción es permanente."
+                : "This note will be removed from the transfer's ledger. This action cannot be undone."}
+              {pendingDelete.text && (
+                <div style={{
+                  marginTop: 10, padding: "8px 10px", borderRadius: 6,
+                  background: "rgba(11,30,58,0.04)",
+                  fontSize: 12, color: NAVY, fontStyle: "italic",
+                  whiteSpace: "pre-wrap", maxHeight: 120, overflowY: "auto",
+                }}>
+                  "{pendingDelete.text.slice(0, 240)}{pendingDelete.text.length > 240 ? "…" : ""}"
+                </div>
+              )}
+            </>
+          }
+          actionLabel={lang === "es" ? "Sí, eliminar" : "Yes, delete"}
+          actionColor={RED}
+          cancelLabel={lang === "es" ? "Cancelar" : "Cancel"}
+          busy={deleteBusy}
+          error={deleteError}
+          onCancel={() => { if (!deleteBusy) setPendingDelete(null); }}
+          onConfirm={confirmRemoveNote}
+        />,
+        document.body
       )}
     </div>
   );

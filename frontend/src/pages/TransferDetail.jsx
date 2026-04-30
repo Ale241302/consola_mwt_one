@@ -115,6 +115,8 @@ export default function ScreenTransferDetail() {
   const [advanceErr, setAdvanceErr] = useState(null);
   const [printingPayload, setPrintingPayload] = useState(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
+  // Notificación inline para errores transitorios (reemplaza alert()).
+  const [notice, setNotice] = useState(null); // { kind: 'error'|'info', text }
 
   const isUuid = typeof transferId === "string" && UUID_RE.test(transferId);
 
@@ -157,11 +159,17 @@ export default function ScreenTransferDetail() {
       const payload = await transferenciasApi.action("invoice_payload", transferId);
       setPrintingPayload(payload);
     } catch (e) {
-      alert(e?.message || "No se pudo generar el documento.");
+      // Notificación MWT inline (no más browser alert).
+      setNotice({
+        kind: "error",
+        text: (lang === "es"
+          ? "No se pudo generar el documento PDF: "
+          : "Could not generate PDF: ") + (e?.message || e),
+      });
     } finally {
       setLoadingPdf(false);
     }
-  }, [isUuid, transferId]);
+  }, [isUuid, transferId, lang]);
 
   // Resuelve base del dato: backend > mock
   const transferBase = useMemo(() => {
@@ -272,7 +280,11 @@ export default function ScreenTransferDetail() {
       await loadBackend();
     } catch (e) {
       console.error(`transition(${actionName}) falló:`, e);
-      alert(`${lang==='es'?'Error':'Error'}: ${e?.message || e}`);
+      // Notificación MWT inline (no más browser alert).
+      setNotice({
+        kind: "error",
+        text: `${lang === "es" ? "Error al avanzar transferencia: " : "Transition error: "}${e?.message || e}`,
+      });
     } finally {
       setSaving(false);
     }
@@ -339,6 +351,33 @@ export default function ScreenTransferDetail() {
             )}
           </span>
         </div>
+      )}
+      {/* ── Notificación inline (reemplaza alert()) ─────────────── */}
+      {notice && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -6 }}
+          style={{
+            marginBottom: 14,
+            padding: "10px 14px",
+            background: notice.kind === "error" ? "rgba(220,38,38,0.06)" : "rgba(0,178,134,0.06)",
+            border: `1px solid ${notice.kind === "error" ? "rgba(220,38,38,0.20)" : "rgba(0,178,134,0.22)"}`,
+            color: notice.kind === "error" ? "#991B1B" : "#0B1E3A",
+            borderRadius: 10,
+            fontSize: 13.5,
+            display: "flex", alignItems: "center", gap: 12,
+          }}
+        >
+          <IconAlert size={14} style={{ color: notice.kind === "error" ? "#DC2626" : "#00B286" }}/>
+          <span style={{ flex: 1 }}>{notice.text}</span>
+          <button
+            onClick={() => setNotice(null)}
+            className="btn btn-ghost btn-sm"
+            style={{ color: "#64748B", fontSize: 16, padding: "0 8px" }}
+            aria-label={lang === "es" ? "Cerrar" : "Close"}
+          >×</button>
+        </motion.div>
       )}
       {/* ── Header ── */}
       <div className="page-header">

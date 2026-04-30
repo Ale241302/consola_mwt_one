@@ -15,7 +15,12 @@
 // Tokens: Navy #0B1E3A · Mint #00B286 · tabular-nums.
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
+// Renombrado para no chocar con la `ConfirmModal` local de liquidación
+// (que tiene un summary preview específico). Este es el genérico de
+// destrucción que usa la sección de costos para "¿Eliminar este costo?".
+import GenericConfirmModal from "../common/ConfirmModal.jsx";
 import {
   IconCheck, IconX, IconPlus, IconAlert, IconRefresh, IconFileText,
   IconDollar, IconLock, IconClipboard, IconUpload, IconTrash,
@@ -67,6 +72,11 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     CURRENCIES.map((c) => ({ codigo: c, nombre: c, symbol: "" }))
   );
   const fileInputRef = useRef(null);
+
+  // Modal de confirmación para eliminar costo (reemplaza window.confirm).
+  const [pendingDeleteCost, setPendingDeleteCost] = useState(null); // {id, label, kind, amount, currency} | null
+  const [deleteCostBusy,    setDeleteCostBusy]    = useState(false);
+  const [deleteCostError,   setDeleteCostError]   = useState(null);
 
   // Catálogo ISO 4217 (47 monedas) — el SELECT de moneda lo usa.
   useEffect(() => {
@@ -209,16 +219,31 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     finally { setSaving(false); }
   };
 
-  const removeCost = async (id) => {
-    setSaving(true); setError(null);
+  // Abre el modal de confirmación (reemplaza window.confirm).
+  const askRemoveCost = (cost) => {
+    setDeleteCostError(null);
+    setPendingDeleteCost(cost);
+  };
+
+  const confirmRemoveCost = async () => {
+    if (!pendingDeleteCost?.id) return;
+    setDeleteCostBusy(true);
+    setDeleteCostError(null);
     try {
-      await fetch(`/api/transferencias/${transferId}/cost-lines/${id}/`, {
+      await fetch(`/api/transferencias/${transferId}/cost-lines/${pendingDeleteCost.id}/`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${getToken()}` },
       });
-      setCostLines((prev) => prev.filter((c) => c.id !== id));
-    } catch (e) { setError(e?.message || "delete_failed"); }
-    finally { setSaving(false); }
+      setCostLines((prev) => prev.filter((c) => c.id !== pendingDeleteCost.id));
+      setPendingDeleteCost(null);
+    } catch (e) {
+      setDeleteCostError(
+        (lang === "es" ? "No se pudo eliminar: " : "Could not delete: ") +
+        (e?.message || "error")
+      );
+    } finally {
+      setDeleteCostBusy(false);
+    }
   };
 
   // ── Liquidar (persistir landed_cost_usd por línea) ──
@@ -503,7 +528,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       <td>
                         {!isLiquidated && (
                           <button className="btn btn-ghost btn-sm"
-                                  onClick={() => removeCost(c.id)}
+                                  onClick={() => askRemoveCost(c)}
                                   style={{ color: "#D64545" }} disabled={saving}
                                   title={lang === "es" ? "Eliminar costo" : "Remove cost"}>
                             <IconTrash size={12}/>
@@ -660,7 +685,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         )}
       </div>
 
-      {/* ── Modal de confirmación ─────────────────── */}
+      {/* ── Modal de confirmación de liquidación (preview por unidad) ── */}
       {confirming && (
         <ConfirmModal
           lang={lang}
@@ -669,6 +694,51 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
           onConfirm={liquidate}
           busy={liquidating}
         />
+      )}
+
+      {/* ── Modal MWT genérico — eliminar costo (sprint 2026-04-30,
+            reemplaza window.confirm/browser dialog). ────────────────── */}
+      {pendingDeleteCost && createPortal(
+        <GenericConfirmModal
+          eyebrow={lang === "es" ? "ACCIÓN DESTRUCTIVA" : "DESTRUCTIVE ACTION"}
+          title={lang === "es" ? "¿Eliminar este costo?" : "Delete this cost?"}
+          body={
+            <>
+              {lang === "es"
+                ? "El costo se quitará del cálculo de Landed Cost. Esta acción es permanente."
+                : "This cost will be removed from the Landed Cost calculation."}
+              <div style={{
+                marginTop: 10, padding: "10px 12px", borderRadius: 6,
+                background: "rgba(11,30,58,0.04)",
+                fontSize: 12.5, color: "#0B1E3A",
+              }}>
+                <div style={{ fontWeight: 700 }}>
+                  {pendingDeleteCost.label || pendingDeleteCost.kind}
+                </div>
+                <div style={{ color: "#64748B", marginTop: 2,
+                              fontFamily: "var(--font-mono)" }}>
+                  {Number(pendingDeleteCost.amount || 0).toLocaleString()}{" "}
+                  {pendingDeleteCost.currency || "USD"}
+                  {pendingDeleteCost.source === "OCR_DUA" && (
+                    <span style={{
+                      marginLeft: 8, padding: "1px 7px", borderRadius: 999,
+                      background: "rgba(0,178,134,0.12)", color: "#00B286",
+                      fontSize: 10, fontWeight: 700,
+                    }}>IA</span>
+                  )}
+                </div>
+              </div>
+            </>
+          }
+          actionLabel={lang === "es" ? "Sí, eliminar" : "Yes, delete"}
+          actionColor="#DC2626"
+          cancelLabel={lang === "es" ? "Cancelar" : "Cancel"}
+          busy={deleteCostBusy}
+          error={deleteCostError}
+          onCancel={() => { if (!deleteCostBusy) setPendingDeleteCost(null); }}
+          onConfirm={confirmRemoveCost}
+        />,
+        document.body
       )}
     </div>
   );
