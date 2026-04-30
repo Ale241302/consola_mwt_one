@@ -443,8 +443,11 @@ export default function CreateTransferWizard() {
                 legalDocs={legalDocs}       setLegalDoc={setLegalDoc}
                 error={error}
               />
-              {/* Sidebar — Motor OCR IA (Gobernanza) */}
-              <OcrSkillSidebar lang={lang} skillKey="ocr-transfers"/>
+              {/* Sidebar — Motor OCR IA (Gobernanza)
+                  trigger_word canónico: ocr-aduanas (ver SKILL_OCR_ADUANAS
+                  en KB MWT.ONE). El backend acepta también ocr-transfers
+                  como alias por compatibilidad. */}
+              <OcrSkillSidebar lang={lang} skillKey="ocr-aduanas"/>
             </div>
           )}
 
