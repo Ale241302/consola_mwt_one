@@ -182,6 +182,16 @@ class TransferenciaSerializer(serializers.ModelSerializer):
             return {**base, **extras}
         return out
 
+    # Aliases válidos por capacidad — sprint 2026-04-30. Los seeds antiguos
+    # usaban formatos distintos ("dispatch", "despachar", "out", "send").
+    # Aceptamos cualquiera para no romper transferencias en nodos legacy.
+    _CAP_ALIASES = {
+        "DISPATCH": {"dispatch", "despachar", "despacho", "send", "out",
+                     "outbound", "ship", "shipping", "expedicion", "expedición"},
+        "RECEIVE":  {"receive", "recibir", "received", "inbound", "in",
+                     "receive_inbound", "recv", "receive_capability"},
+    }
+
     @staticmethod
     def _assert_node_capability(node_id, required_cap, field, msg):
         if not node_id:
@@ -196,13 +206,44 @@ class TransferenciaSerializer(serializers.ModelSerializer):
                 )
                 row = c.fetchone()
         except Exception:
+            # Si la tabla no existe (test/mock), no bloqueamos.
             return
         if not row:
             return
         capabilities, status, is_active = row
-        caps_upper = {str(x).upper() for x in (capabilities or [])}
-        if required_cap.upper() not in caps_upper:
-            raise serializers.ValidationError({field: msg})
+
+        # Sprint 2026-04-30 — psycopg2 puede devolver JSONB como str (json
+        # crudo) en vez de list ya parseada. Lo normalizamos antes de iterar.
+        raw_caps = capabilities
+        if isinstance(raw_caps, str):
+            try:
+                import json as _json
+                raw_caps = _json.loads(raw_caps)
+            except Exception:
+                raw_caps = []
+        if not isinstance(raw_caps, list):
+            raw_caps = []
+
+        # Sin capabilities pobladas → no bloqueamos (compat con seeds viejos).
+        if not raw_caps:
+            if is_active is False:
+                raise serializers.ValidationError(
+                    {field: "El nodo está inactivo y no puede operar."}
+                )
+            if status and str(status).upper() in ("RETIRED", "INACTIVE"):
+                raise serializers.ValidationError(
+                    {field: f"El nodo está en estado {status} y no puede operar."}
+                )
+            return
+
+        caps_norm = {str(x or "").strip().lower() for x in raw_caps}
+        # Match exacto OR vía aliases.
+        aliases = TransferenciaSerializer._CAP_ALIASES.get(required_cap.upper(), set())
+        accepted = aliases | {required_cap.lower()}
+        if not (caps_norm & accepted):
+            raise serializers.ValidationError(
+                {field: f"{msg} Capabilities actuales: {sorted(caps_norm) or '(vacío)'}"}
+            )
         if is_active is False:
             raise serializers.ValidationError(
                 {field: "El nodo está inactivo y no puede operar."}
