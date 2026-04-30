@@ -481,7 +481,10 @@ export default function ScreenOCDetail() {
         <div className="flex gap-2">
           <button className="btn btn-secondary"><IconDownload size={14}/>{tr(lang,'export')}</button>
           {/* "+ Agregar SAP" → register_sap (CEO-ONLY).
-              ART-04 SAPConfirmation se registra SIEMPRE desde MWT-Factory. */}
+              Cero validaciones de datos comerciales: el botón queda
+              habilitado siempre que haya un expediente elegible (en
+              REGISTRO). NINGÚN campo del expediente es obligatorio
+              para registrar SAP — decisión CEO. */}
           {can('register_sap') && (
             <button
               className="btn btn-primary"

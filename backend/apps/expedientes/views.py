@@ -784,6 +784,12 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 status=409,
             )
 
+        # ⚠ NINGÚN campo comercial es obligatorio (decisión CEO).
+        # El constraint SQL ck_exp_commercial_complete_after_registro fue
+        # dropeado en 98_drop_commercial_constraint.sql. La transición
+        # T2 (REGISTRO→PRODUCCION) procede aunque brand_id/modo/moneda
+        # queden en NULL. Se completarán después si el operador lo decide.
+
         correlation_id = uuid.uuid4()
         artifact_id    = uuid.uuid4()
 
