@@ -26,7 +26,7 @@ import {
 } from "../lib/icons.jsx";
 import {
   nodosApi, proveedoresApi, transferenciasApi, productosApi,
-  inboundApi, tallasApi,
+  inboundApi, tallasApi, currencyCatApi,
 } from "../lib/api.js";
 
 // ─── Tipos de origen del inbound (alineado con SQL source_type_cat) ─
@@ -120,6 +120,11 @@ export default function InboundReceptionWizard() {
   // Cache de tallas asignadas por producto.id (lleno cuando el usuario
   // escoge un SKU). Estructura: { producto_id: [labels...] }
   const [tallasByProducto, setTallasByProducto] = useState({});
+  // Catálogo de monedas (ISO 4217 — pricing.currency_cat seeded en BD).
+  // [{codigo, nombre, symbol}]
+  const [currencies, setCurrencies] = useState([
+    { codigo: "USD", nombre: "US Dollar", symbol: "$" },
+  ]);
 
   // Cargar catálogos
   useEffect(() => {
@@ -152,6 +157,13 @@ export default function InboundReceptionWizard() {
         setSizingMap(m);
       })
       .catch(() => setSizingMap({}));
+    // Catálogo de monedas (ISO 4217)
+    currencyCatApi.list({ is_active: "true" })
+      .then((d) => {
+        const arr = Array.isArray(d) ? d : (d?.results || []);
+        if (arr.length > 0) setCurrencies(arr);
+      })
+      .catch(() => { /* mantén el default USD */ });
   }, []);
 
   // ── Resolver tallas asignadas a un producto (lazy + cached) ──
@@ -230,13 +242,24 @@ export default function InboundReceptionWizard() {
   };
 
   // ── Líneas helpers ────────────────────────────────────────────
+  // Sprint Inbound v3 (2026-04-30):
+  //   · Cada línea es ahora (producto, talla, qty, moneda, costo).
+  //   · Se elimina lote_code (no aplica al inbound; el sistema asigna
+  //     LOT-<YYYYMMDD>-<recepcion_codigo> automáticamente al persistir).
+  //   · Se reemplaza expected_qty/received_qty por una sola `qty` —
+  //     decisión de negocio: el inbound es "lo que llega", no hay
+  //     reconciliación contra orden esperada en este flujo.
+  //   · Currency default USD pero editable por línea.
   const addBlankLine = () => {
     setLines((prev) => [...prev, {
-      _key: `manual-${Date.now()}`,
+      _key: `manual-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
       product_sku: "", product_label: "", producto_id: null,
       talla: "", lote_code: "", expiration_date: "",
+      qty: 0,
+      // Compat: el backend aún lee expected_qty/received_qty.
       expected_qty: 0, received_qty: 0,
-      unit_cost_usd: null, gap_justification: "",
+      currency: "USD",
+      unit_cost: null, unit_cost_usd: null, gap_justification: "",
       source: "MANUAL", ocr_confidence: null,
     }]);
   };
@@ -255,20 +278,33 @@ export default function InboundReceptionWizard() {
   );
   const gapsNeedingJustif = linesWithGap.filter((l) => !((l.gap_justification || "").trim()));
   const step2Valid = lines.length > 0
-                     && lines.every((l) => l.product_sku && Number(l.received_qty) >= 0)
+                     && lines.every((l) =>
+                          l.product_sku
+                          && Number(l.qty || l.received_qty || 0) > 0
+                       )
                      && gapsNeedingJustif.length === 0;
 
   // ── Métricas paso 3 ───────────────────────────────────────────
+  // Sprint Inbound v3: sin "expected" — el inbound es "lo que llegó".
+  // Mantenemos `expected` y `received` por compat con el render legacy
+  // (el resumen ahora muestra agrupación por producto+talla y por
+  // moneda, no el delta esperado vs recibido).
   const totals = useMemo(() => {
-    const expected = lines.reduce((a, l) => a + Number(l.expected_qty || 0), 0);
-    const received = lines.reduce((a, l) => a + Number(l.received_qty || 0), 0);
+    const received = lines.reduce(
+      (a, l) => a + Number(l.qty || l.received_qty || 0), 0
+    );
+    // Valorización USD: suma costo×qty SOLO de las líneas con currency=USD.
+    // Para multi-moneda el resumen tiene un breakdown dedicado en Step3.
     const value = lines.reduce((a, l) => {
-      const cost = Number(l.unit_cost_usd || 0);
-      return a + (cost * Number(l.received_qty || 0));
+      const isUsd = (l.currency || "USD") === "USD";
+      if (!isUsd) return a;
+      const cost = Number(l.unit_cost ?? l.unit_cost_usd ?? 0);
+      return a + (cost * Number(l.qty || l.received_qty || 0));
     }, 0);
     return {
-      expected, received,
-      delta: received - expected,
+      expected: received,            // alias para legacy
+      received,
+      delta: 0,
       value_usd: value,
       gap_count: linesWithGap.length,
     };
@@ -376,6 +412,7 @@ export default function InboundReceptionWizard() {
             <Step2Reconcile
               tallasByProducto={tallasByProducto}
               resolveProductSizes={resolveProductSizes}
+              currencies={currencies}
               lang={lang}
               lines={lines}
               productos={productos}
@@ -652,209 +689,172 @@ function Step1Context({
 // =====================================================================
 // PASO 2 — Reconciliación (Grid editable)
 // =====================================================================
+//
+// Sprint Inbound v3 (2026-04-30):
+// Columnas: PRODUCTO (SKU autocomplete + descripción + talla SELECT) ·
+//           VENCIMIENTO · CANTIDAD · MONEDA · COSTO · trash
+// Eliminadas: LOTE (la asigna el sistema) · ESP (no aplica al inbound;
+//             es "lo que llegó", no "lo que se esperaba").
+// =====================================================================
 function Step2Reconcile({
   lang, lines, productos, onUpdate, onRemove, onAdd,
   tallasByProducto = {}, resolveProductSizes = async () => [],
+  currencies = [{ codigo: "USD", nombre: "US Dollar", symbol: "$" }],
 }) {
-  const findProductoBySku = (sku) => productos.find(
-    (p) => String(p.sku || "").toUpperCase() === String(sku || "").toUpperCase()
-  );
-
   return (
     <Card title={lang === "es" ? "Líneas detectadas" : "Detected lines"}
           subtitle={lang === "es"
-            ? "Edita la cantidad recibida. Si es menor a la esperada, justifica el faltante."
-            : "Edit received quantity. If less than expected, justify the gap."}>
+            ? "Cada línea es un (SKU, talla, cantidad). Si la fábrica recortó, ajusta la cantidad y registra justificación al final."
+            : "Each line is a (SKU, size, qty). If the factory cut, adjust the qty and add a justification at the end."}>
       <div style={{ overflowX: "auto", border: "1px solid var(--border-subtle)", borderRadius: 12 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed" }}>
+          <colgroup>
+            <col/>{/* Producto */}
+            <col style={{ width: 140 }}/>{/* Vencimiento */}
+            <col style={{ width: 110 }}/>{/* Cantidad */}
+            <col style={{ width: 110 }}/>{/* Moneda */}
+            <col style={{ width: 120 }}/>{/* Costo */}
+            <col style={{ width: 50 }}/>{/* Trash */}
+          </colgroup>
           <thead>
             <tr style={{ background: "rgba(11,30,58,0.04)" }}>
-              <th style={th}>{lang === "es" ? "SKU / Producto" : "SKU / Product"}</th>
-              <th style={th}>{lang === "es" ? "Lote" : "Lot"}</th>
-              <th style={th}>{lang === "es" ? "Vencimiento" : "Exp."}</th>
-              <th style={{ ...th, textAlign: "right" }}>{lang === "es" ? "Esp." : "Exp."}</th>
-              <th style={{ ...th, textAlign: "right" }}>{lang === "es" ? "Recibido" : "Received"}</th>
-              <th style={{ ...th, textAlign: "right" }}>{lang === "es" ? "Costo USD" : "Cost USD"}</th>
+              <th style={th}>{lang === "es" ? "Producto" : "Product"}</th>
+              <th style={th}>{lang === "es" ? "Vencimiento" : "Exp. date"}</th>
+              <th style={{ ...th, textAlign: "right" }}>{lang === "es" ? "Cantidad" : "Qty"}</th>
+              <th style={{ ...th, textAlign: "center" }}>{lang === "es" ? "Moneda" : "Currency"}</th>
+              <th style={{ ...th, textAlign: "right" }}>{lang === "es" ? "Costo" : "Cost"}</th>
               <th style={th}/>
             </tr>
           </thead>
           <tbody>
             {lines.length === 0 && (
               <tr>
-                <td colSpan={7} style={{ ...td, textAlign: "center", color: "var(--text-tertiary)", padding: 24 }}>
+                <td colSpan={6} style={{ ...td, textAlign: "center", color: "var(--text-tertiary)", padding: 24 }}>
                   {lang === "es"
-                    ? "No hay líneas. Sube un documento o agrega manualmente."
-                    : "No lines yet. Upload a document or add manually."}
+                    ? "No hay líneas. Agrega manualmente con el botón debajo."
+                    : "No lines yet. Add manually with the button below."}
                 </td>
               </tr>
             )}
             {lines.map((l) => {
-              const exp  = Number(l.expected_qty || 0);
-              const recv = Number(l.received_qty || 0);
-              const isGap = recv < exp;
-              const isOver = recv > exp;
+              const qty = Number(l.qty || l.received_qty || 0);
               return (
-                <React.Fragment key={l._key}>
-                  <tr style={{
-                    borderTop: "1px solid var(--border-subtle)",
-                    background: isGap ? "rgba(239,68,68,0.04)" : (isOver ? "rgba(245,158,11,0.04)" : "white"),
-                  }}>
-                    <td style={td}>
-                      <input
-                        className="input mono-sm"
-                        style={{ marginBottom: 4 }}
-                        value={l.product_sku}
-                        placeholder="SKU"
-                        onChange={async (e) => {
-                          const sku = e.target.value.toUpperCase();
-                          const p = findProductoBySku(sku);
-                          onUpdate(l._key, {
-                            product_sku: sku,
-                            producto_id: p?.id || null,
-                            product_label: p?.nombre || l.product_label,
-                          });
-                          // Lazy: resuelve tallas asignadas al producto
-                          if (p?.id) await resolveProductSizes(p.id);
-                        }}
-                      />
-                      <input
-                        className="input"
-                        style={{ fontSize: 12 }}
-                        value={l.product_label}
-                        placeholder={lang === "es" ? "Descripción" : "Description"}
-                        onChange={(e) => onUpdate(l._key, { product_label: e.target.value })}
-                      />
-                      {/* Talla SELECT con tallas asignadas al producto.
-                          Si aún no se resuelven (producto sin id), o no
-                          tiene tallas, deja un input libre como fallback. */}
-                      {(() => {
-                        const sizes = (l.producto_id && tallasByProducto[l.producto_id]) || null;
-                        if (sizes && sizes.length > 0) {
-                          return (
-                            <select
-                              className="input mono-sm"
-                              style={{ fontSize: 11, marginTop: 4, maxWidth: 110 }}
-                              value={l.talla || ""}
-                              onChange={(e) => onUpdate(l._key, { talla: e.target.value.toUpperCase() })}
-                            >
-                              <option value="">— {lang === "es" ? "Talla" : "Size"} —</option>
-                              {sizes.map((s) => (
-                                <option key={s} value={s}>{s}</option>
-                              ))}
-                            </select>
-                          );
-                        }
+                <tr key={l._key} style={{
+                  borderTop: "1px solid var(--border-subtle)",
+                  background: "white",
+                }}>
+                  <td style={td}>
+                    <ProductAutocomplete
+                      lang={lang}
+                      value={l.product_sku}
+                      label={l.product_label}
+                      productos={productos}
+                      onPick={async (p) => {
+                        onUpdate(l._key, {
+                          product_sku:   p ? (p.sku || "") : "",
+                          producto_id:   p?.id || null,
+                          product_label: p?.nombre || "",
+                          // Reset talla cuando cambia el producto
+                          talla: "",
+                        });
+                        if (p?.id) await resolveProductSizes(p.id);
+                      }}
+                    />
+                    {/* Talla SELECT poblada con las tallas del producto. */}
+                    {(() => {
+                      const sizes = (l.producto_id && tallasByProducto[l.producto_id]) || null;
+                      if (sizes && sizes.length > 0) {
                         return (
-                          <input
+                          <select
                             className="input mono-sm"
-                            style={{ fontSize: 11, marginTop: 4, maxWidth: 110 }}
-                            value={l.talla}
-                            placeholder={lang === "es" ? "Talla" : "Size"}
+                            style={{ fontSize: 11, marginTop: 6, maxWidth: 140 }}
+                            value={l.talla || ""}
                             onChange={(e) => onUpdate(l._key, { talla: e.target.value.toUpperCase() })}
-                          />
+                          >
+                            <option value="">— {lang === "es" ? "Talla" : "Size"} —</option>
+                            {sizes.map((s) => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
                         );
-                      })()}
-                    </td>
-                    <td style={td}>
-                      <input
-                        className="input mono-sm"
-                        value={l.lote_code}
-                        placeholder="LOT-…"
-                        onChange={(e) => onUpdate(l._key, { lote_code: e.target.value })}
-                      />
-                    </td>
-                    <td style={td}>
-                      <input
-                        type="date"
-                        className="input mono-sm"
-                        value={l.expiration_date || ""}
-                        onChange={(e) => onUpdate(l._key, { expiration_date: e.target.value })}
-                      />
-                    </td>
-                    <td style={{ ...td, textAlign: "right" }} className="tabular-nums">
-                      <input
-                        type="number" min={0}
-                        className="input mono-sm"
-                        style={{ width: 80, textAlign: "right",
-                                 background: "rgba(11,30,58,0.04)" }}
-                        value={l.expected_qty}
-                        onChange={(e) => onUpdate(l._key, { expected_qty: Number(e.target.value) })}
-                      />
-                    </td>
-                    <td style={{ ...td, textAlign: "right" }} className="tabular-nums">
-                      <input
-                        type="number" min={0}
-                        className="input mono-sm"
-                        style={{
-                          width: 80, textAlign: "right", fontWeight: 700,
-                          color:    isGap ? "#991B1B" : isOver ? "#92400E" : "#065F46",
-                          background: isGap ? "rgba(239,68,68,0.08)"
-                                    : isOver ? "rgba(245,158,11,0.08)"
-                                    : "rgba(0,178,134,0.06)",
-                          borderColor: isGap ? "#FCA5A5" : isOver ? "#FCD34D" : "#A7F3D0",
-                        }}
-                        value={l.received_qty}
-                        onChange={(e) => onUpdate(l._key, { received_qty: Number(e.target.value) })}
-                      />
-                      {isGap && (
-                        <div style={{ fontSize: 10, color: "#991B1B", fontWeight: 700, marginTop: 2 }}>
-                          Δ {recv - exp}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ ...td, textAlign: "right" }} className="tabular-nums">
-                      <input
-                        type="number" min={0} step="0.01"
-                        className="input mono-sm"
-                        style={{ width: 90, textAlign: "right" }}
-                        value={l.unit_cost_usd ?? ""}
-                        placeholder="—"
-                        onChange={(e) => onUpdate(l._key, {
-                          unit_cost_usd: e.target.value === "" ? null : Number(e.target.value),
-                        })}
-                      />
-                    </td>
-                    <td style={td}>
-                      <button className="btn btn-ghost btn-sm"
-                              onClick={() => onRemove(l._key)}
-                              title={lang === "es" ? "Quitar línea" : "Remove line"}
-                              style={{ color: "#D64545", padding: "6px 8px" }}>
-                        <IconTrash size={13}/>
-                      </button>
-                    </td>
-                  </tr>
-                  {isGap && (
-                    <tr style={{ background: "rgba(239,68,68,0.04)" }}>
-                      <td colSpan={7} style={{ ...td, paddingTop: 0 }}>
-                        <div style={{
-                          display: "flex", alignItems: "center", gap: 10,
-                          padding: "0 8px 12px",
-                        }}>
-                          <span style={{
-                            fontSize: 11, fontWeight: 700, color: "#991B1B",
-                            textTransform: "uppercase", letterSpacing: 0.5,
-                            whiteSpace: "nowrap",
-                          }}>
-                            <IconAlert size={10} style={{ verticalAlign: -1, marginRight: 4 }}/>
-                            {lang === "es" ? "Justificación del faltante *" : "Gap justification *"}
-                          </span>
-                          <input
-                            className="input"
-                            style={{
-                              flex: 1, fontSize: 12,
-                              borderColor: (l.gap_justification || "").trim() ? "#A7F3D0" : "#FCA5A5",
-                            }}
-                            value={l.gap_justification || ""}
-                            placeholder={lang === "es"
-                              ? "Ej.: rotura en tránsito, fábrica recortó, conteo manual…"
-                              : "E.g. damage in transit, factory short, manual count…"}
-                            onChange={(e) => onUpdate(l._key, { gap_justification: e.target.value })}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
+                      }
+                      // Sin producto resuelto → input free como fallback
+                      return (
+                        <input
+                          className="input mono-sm"
+                          style={{ fontSize: 11, marginTop: 6, maxWidth: 140 }}
+                          value={l.talla}
+                          placeholder={lang === "es" ? "Talla" : "Size"}
+                          onChange={(e) => onUpdate(l._key, { talla: e.target.value.toUpperCase() })}
+                          disabled={!l.producto_id}
+                        />
+                      );
+                    })()}
+                  </td>
+                  <td style={td}>
+                    <input
+                      type="date"
+                      className="input mono-sm"
+                      value={l.expiration_date || ""}
+                      onChange={(e) => onUpdate(l._key, { expiration_date: e.target.value })}
+                    />
+                  </td>
+                  <td style={{ ...td, textAlign: "right" }} className="tabular-nums">
+                    <input
+                      type="number" min={0}
+                      className="input mono-sm"
+                      style={{ width: "100%", textAlign: "right", fontWeight: 700 }}
+                      value={qty}
+                      onChange={(e) => {
+                        const v = Number(e.target.value) || 0;
+                        // Mantener compat con backend: setea también
+                        // expected_qty/received_qty al mismo valor.
+                        onUpdate(l._key, { qty: v, expected_qty: v, received_qty: v });
+                      }}
+                    />
+                  </td>
+                  <td style={{ ...td, textAlign: "center" }}>
+                    <select
+                      className="input mono-sm"
+                      style={{ width: "100%", textAlign: "center" }}
+                      value={l.currency || "USD"}
+                      onChange={(e) => onUpdate(l._key, { currency: e.target.value })}
+                    >
+                      {currencies.map((c) => (
+                        <option key={c.codigo} value={c.codigo}>
+                          {c.symbol ? `${c.symbol} ` : ""}{c.codigo}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td style={{ ...td, textAlign: "right" }} className="tabular-nums">
+                    <input
+                      type="number" min={0} step="0.01"
+                      className="input mono-sm"
+                      style={{ width: "100%", textAlign: "right" }}
+                      value={l.unit_cost ?? l.unit_cost_usd ?? ""}
+                      placeholder="0.00"
+                      onChange={(e) => {
+                        const v = e.target.value === "" ? null : Number(e.target.value);
+                        // Mantener compat con backend que aún lee
+                        // unit_cost_usd; si la moneda es USD, lo refleja.
+                        const isUsd = (l.currency || "USD") === "USD";
+                        onUpdate(l._key, {
+                          unit_cost: v,
+                          unit_cost_usd: isUsd ? v : (l.unit_cost_usd ?? null),
+                        });
+                      }}
+                    />
+                  </td>
+                  <td style={td}>
+                    <button className="btn btn-ghost btn-sm"
+                            onClick={() => onRemove(l._key)}
+                            title={lang === "es" ? "Quitar línea" : "Remove line"}
+                            style={{ color: "#D64545", padding: "6px 8px" }}>
+                      <IconTrash size={13}/>
+                    </button>
+                  </td>
+                </tr>
               );
             })}
           </tbody>
@@ -867,11 +867,109 @@ function Step2Reconcile({
         </button>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
           {lang === "es"
-            ? `${lines.length} líneas · ${lines.filter((l) => Number(l.received_qty) < Number(l.expected_qty)).length} con faltante`
-            : `${lines.length} lines · ${lines.filter((l) => Number(l.received_qty) < Number(l.expected_qty)).length} with gap`}
+            ? `${lines.length} líneas`
+            : `${lines.length} lines`}
         </div>
       </div>
     </Card>
+  );
+}
+
+// ─── Autocomplete de producto (SKU o nombre) ───────────────────────
+// Busca en /api/productos/?q=<texto> en cuanto el usuario teclea ≥ 2
+// caracteres. Renderiza un dropdown con SKU + nombre + marca (si hay
+// stock asignado) y sustituye el valor por (sku, nombre, id) al pick.
+function ProductAutocomplete({ lang, value, label, productos, onPick }) {
+  const [search, setSearch]   = useState(value || "");
+  const [open, setOpen]       = useState(false);
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => { setSearch(value || ""); }, [value]);
+
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 2) { setResults([]); return; }
+    setSearching(true);
+    // Hit el endpoint real (busca en sku + nombre + descripcion).
+    productosApi.list({ q, limit: 12 })
+      .then((d) => {
+        const arr = Array.isArray(d) ? d : (d?.results || []);
+        setResults(arr.slice(0, 12));
+      })
+      .catch(() => setResults([]))
+      .finally(() => setSearching(false));
+  }, [search]);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        className="input mono-sm"
+        style={{ marginBottom: 4 }}
+        value={search}
+        placeholder={lang === "es" ? "Buscar SKU o nombre…" : "Search SKU or name…"}
+        onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {label && (
+        <div className="caption" style={{
+          fontSize: 11, color: "var(--text-secondary)",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>{label}</div>
+      )}
+      {open && search.trim().length >= 2 && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
+          background: "white", border: "1px solid var(--border-subtle)",
+          borderRadius: 8, marginTop: 2, maxHeight: 240, overflowY: "auto",
+          boxShadow: "0 8px 24px -8px rgba(15,27,61,0.18)",
+        }}>
+          {searching && (
+            <div className="caption" style={{
+              padding: "8px 12px", color: "var(--text-tertiary)", fontSize: 12,
+            }}>
+              {lang === "es" ? "Buscando…" : "Searching…"}
+            </div>
+          )}
+          {!searching && results.length === 0 && (
+            <div className="caption" style={{
+              padding: "8px 12px", color: "var(--text-tertiary)", fontSize: 12,
+              textAlign: "center",
+            }}>
+              {lang === "es" ? "Sin resultados" : "No results"}
+            </div>
+          )}
+          {results.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onPick(p); setOpen(false); }}
+              style={{
+                width: "100%", textAlign: "left", border: 0,
+                padding: "8px 12px", background: "white",
+                cursor: "pointer", display: "flex",
+                flexDirection: "column", gap: 2,
+                borderBottom: "1px solid var(--border-subtle)",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "rgba(48,131,254,0.05)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "white"}
+            >
+              <span className="mono-sm" style={{ fontWeight: 700, color: "#0B1E3A", fontSize: 12 }}>
+                {p.sku || "—"}
+              </span>
+              <span className="caption" style={{ fontSize: 11, color: "var(--text-tertiary)",
+                                                 overflow: "hidden", textOverflow: "ellipsis",
+                                                 whiteSpace: "nowrap" }}>
+                {p.nombre || ""}
+                {p.marca_nombre ? ` · ${p.marca_nombre}` : ""}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -881,30 +979,63 @@ function Step2Reconcile({
 function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
                        totals, submitting, submitError, onConfirm }) {
   const sType = SOURCE_TYPES.find((s) => s.v === sourceType);
+
+  // ── Agrupación por producto + breakdown por talla y por moneda ──
+  // Sprint Inbound v3: el resumen muestra exactamente qué llega:
+  //   · Cada producto con sus tallas (cantidad por talla)
+  //   · Total por moneda (no asume USD)
+  const byProduct = useMemo(() => {
+    const map = new Map();
+    for (const l of lines) {
+      const key = l.producto_id || l.product_sku || "—";
+      const prev = map.get(key) || {
+        producto_id:   l.producto_id || null,
+        sku:           l.product_sku || "",
+        product_label: l.product_label || "",
+        sizes: {},          // { talla: qty }
+        total_qty: 0,
+      };
+      const qty = Number(l.qty || l.received_qty || 0);
+      const talla = (l.talla || "ÚNICA").toUpperCase();
+      prev.sizes[talla] = (prev.sizes[talla] || 0) + qty;
+      prev.total_qty += qty;
+      map.set(key, prev);
+    }
+    return Array.from(map.values());
+  }, [lines]);
+
+  const byCurrency = useMemo(() => {
+    const map = new Map();
+    for (const l of lines) {
+      const cur = (l.currency || "USD").toUpperCase();
+      const cost = Number(l.unit_cost ?? l.unit_cost_usd ?? 0);
+      const qty  = Number(l.qty || l.received_qty || 0);
+      const prev = map.get(cur) || { currency: cur, total_value: 0, lines: 0 };
+      prev.total_value += cost * qty;
+      prev.lines += 1;
+      map.set(cur, prev);
+    }
+    return Array.from(map.values());
+  }, [lines]);
+
   return (
     <div style={{ display: "grid", gap: 18 }}>
       {/* Resumen tile */}
       <div style={{
         background: "linear-gradient(135deg, #0B1E3A 0%, #1F3A66 100%)",
         color: "white", borderRadius: 16, padding: 24,
-        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 18,
+        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 18,
       }}>
-        <Tile label={lang === "es" ? "Líneas" : "Lines"}
-              value={lines.length}/>
-        <Tile label={lang === "es" ? "Unidades esperadas" : "Expected units"}
-              value={totals.expected.toLocaleString()}/>
-        <Tile label={lang === "es" ? "Unidades recibidas" : "Received units"}
+        <Tile label={lang === "es" ? "Líneas" : "Lines"} value={lines.length}/>
+        <Tile label={lang === "es" ? "Productos" : "Products"} value={byProduct.length}/>
+        <Tile label={lang === "es" ? "Unidades totales" : "Total units"}
               value={totals.received.toLocaleString()}
-              accent={totals.received < totals.expected ? "#FCA5A5" : "#86EFAC"}/>
-        <Tile label={lang === "es" ? "Faltantes (ART-17)" : "Gaps (ART-17)"}
-              value={totals.gap_count}
-              accent={totals.gap_count > 0 ? "#FCA5A5" : "#86EFAC"}/>
-        <Tile label={lang === "es" ? "Valorización USD" : "Value USD"}
-              value={`$${totals.value_usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}/>
+              accent="#86EFAC"/>
+        <Tile label={lang === "es" ? "Monedas" : "Currencies"} value={byCurrency.length}/>
       </div>
 
-      {/* Detalle contexto */}
-      <Card title={lang === "es" ? "Resumen" : "Summary"}>
+      {/* Contexto */}
+      <Card title={lang === "es" ? "Contexto" : "Context"}>
         <Row k={lang === "es" ? "Nodo destino" : "Destination node"}
              v={destinationNode ? `${destinationNode.codigo} · ${destinationNode.nombre}` : "—"}/>
         <Row k={lang === "es" ? "Tipo de origen" : "Source type"}
@@ -912,18 +1043,112 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
         {reference && (
           <Row k={lang === "es" ? "Referencia" : "Reference"} v={reference.label}/>
         )}
-        {totals.gap_count > 0 && (
+      </Card>
+
+      {/* Productos con desglose por talla */}
+      <Card title={lang === "es" ? "Productos por talla" : "Products by size"}
+            subtitle={lang === "es"
+              ? "Cantidad que se sumará al stock del nodo, granularidad (producto, talla)."
+              : "Quantity to be added to node stock, granularity (product, size)."}>
+        <div style={{
+          border: "1px solid var(--border-subtle)", borderRadius: 10, overflow: "hidden",
+        }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "rgba(11,30,58,0.04)" }}>
+                <th style={{ ...th, textAlign: "left" }}>SKU</th>
+                <th style={{ ...th, textAlign: "left" }}>{lang === "es" ? "Producto" : "Product"}</th>
+                <th style={{ ...th, textAlign: "left" }}>{lang === "es" ? "Tallas" : "Sizes"}</th>
+                <th style={{ ...th, textAlign: "right" }}>{lang === "es" ? "Total" : "Total"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {byProduct.map((p) => (
+                <tr key={p.producto_id || p.sku}
+                    style={{ borderTop: "1px solid var(--border-subtle)" }}>
+                  <td style={td}>
+                    <span className="mono-sm" style={{ fontWeight: 700, color: "#0B1E3A" }}>
+                      {p.sku || "—"}
+                    </span>
+                  </td>
+                  <td style={td}>{p.product_label || "—"}</td>
+                  <td style={td}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {Object.entries(p.sizes).map(([t, q]) => (
+                        <span key={t} style={{
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                          padding: "2px 8px", borderRadius: 999,
+                          background: "rgba(72,30,227,0.08)", color: "#481EE3",
+                          fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)",
+                        }}>
+                          {t}
+                          <span style={{
+                            background: "white", color: "#0B1E3A",
+                            padding: "0 5px", borderRadius: 4, fontSize: 10,
+                          }}>{q}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 700 }}
+                      className="tabular-nums">
+                    {p.total_qty.toLocaleString()} u
+                  </td>
+                </tr>
+              ))}
+              {byProduct.length === 0 && (
+                <tr><td colSpan={4} style={{
+                  ...td, textAlign: "center", color: "var(--text-tertiary)", padding: 24,
+                }}>
+                  {lang === "es" ? "Sin productos." : "No products."}
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* Valorización por moneda */}
+      <Card title={lang === "es" ? "Valorización por moneda" : "Value by currency"}
+            subtitle={lang === "es"
+              ? "Suma del costo unitario × cantidad para cada moneda capturada."
+              : "Sum of unit cost × qty for each captured currency."}>
+        {byCurrency.length === 0 ? (
+          <div className="caption" style={{ padding: 12, color: "var(--text-tertiary)" }}>
+            {lang === "es" ? "Sin costos capturados." : "No costs captured."}
+          </div>
+        ) : (
           <div style={{
-            marginTop: 14, padding: "12px 14px", borderRadius: 10,
-            background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.30)",
-            color: "#92400E", fontSize: 13,
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            gap: 10,
           }}>
-            <IconAlert size={11} style={{ verticalAlign: -1, marginRight: 6 }}/>
-            {lang === "es"
-              ? `Se generarán ${totals.gap_count} excepción(es) ART-17 automáticamente para auditoría.`
-              : `${totals.gap_count} ART-17 exception(s) will be auto-generated for audit.`}
+            {byCurrency.map((c) => (
+              <div key={c.currency} style={{
+                padding: "12px 14px", borderRadius: 10,
+                border: "1px solid var(--border-subtle)",
+                background: "white",
+              }}>
+                <div className="micro" style={{
+                  fontSize: 10, fontWeight: 800, letterSpacing: 0.6,
+                  color: "var(--text-tertiary)", textTransform: "uppercase",
+                  marginBottom: 4,
+                }}>{c.currency}</div>
+                <div className="tabular-nums" style={{
+                  fontSize: 18, fontWeight: 800, color: "#0B1E3A",
+                }}>
+                  {c.total_value.toLocaleString(undefined, {
+                    minimumFractionDigits: 2, maximumFractionDigits: 2,
+                  })}
+                </div>
+                <div className="caption" style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
+                  {c.lines} {lang === "es" ? "línea(s)" : "line(s)"}
+                </div>
+              </div>
+            ))}
           </div>
         )}
+
         {submitError && (
           <div style={{
             marginTop: 14, padding: "10px 14px", borderRadius: 8,
