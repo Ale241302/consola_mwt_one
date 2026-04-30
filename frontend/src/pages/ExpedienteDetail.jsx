@@ -117,10 +117,29 @@ export default function ScreenExpedienteDetail() {
     brand:            apiBrand?.nombre || apiBrand?.brand_code || "—",
   } : mockExp;
 
-  const client = apiClient || CLIENTS.find(c => c.id === exp.client_id) || CLIENTS[0];
+  // Mapear cliente API → shape esperado por el UI mock-based.
+  // El UI legacy lee `client.name`, `client.code`, `client.country`, etc.
+  // El API devuelve `razon_social`, `codigo`, `pais_iso2`. Si no hay
+  // apiClient (ruta hero o no resolvió), caemos al mock.
+  const mockClientFallback = CLIENTS.find(c => c.id === exp.client_id) || CLIENTS[0];
+  const client = apiClient ? {
+    ...mockClientFallback,
+    id:        apiClient.id,
+    name:      apiClient.razon_social || apiClient.nombre || apiClient.codigo || "—",
+    code:      apiClient.codigo || apiClient.rut || apiClient.id || "",
+    country:   apiClient.pais_iso2 || mockClientFallback.country || "",
+    rfc:       apiClient.rfc || apiClient.rut || "",
+    city:      apiClient.ciudad || mockClientFallback.city || "",
+    contact:   apiClient.contacto_nombre || apiClient.contacto_email || mockClientFallback.contact || "",
+    email:     apiClient.contacto_email || mockClientFallback.email || "",
+  } : mockClientFallback;
+
   const brand  = apiBrand
-              ? { ...BRANDS[0], id: apiBrand.id, nombre: apiBrand.nombre,
-                  brand_code: apiBrand.brand_code, color: apiBrand.color || BRANDS[0].color }
+              ? { ...BRANDS[0], id: apiBrand.id,
+                  name: apiBrand.nombre || apiBrand.brand_code || "—",
+                  nombre: apiBrand.nombre,
+                  brand_code: apiBrand.brand_code,
+                  color: apiBrand.color || BRANDS[0].color }
               : (BRANDS.find(b => b.id === exp.brand_id) || BRANDS[0]);
 
   // ── Role-aware strip-down ─────────────────────────────────────
@@ -730,7 +749,7 @@ function ClientCard({ client, exp, lang }) {
     <div className="card card-pad-lg">
       <div className="flex ai-center gap-3 mb-4">
         <div className="avatar" style={{ width: 40, height: 40, fontSize: 14, background:'var(--brand-primary)', color:'#fff' }}>
-          {client.name.split(' ').map(s=>s[0]).slice(0,2).join('')}
+          {(client?.name || "?").split(' ').map(s=>s[0]).slice(0,2).join('')}
         </div>
         <div style={{ flex:1, minWidth:0 }}>
           <div className="heading-md truncate">{client.name}</div>
@@ -755,7 +774,12 @@ function ClientCard({ client, exp, lang }) {
 
 function FinancialCard({ exp, lang }) {
   const paidPct = exp.total_invoiced > 0 ? (exp.total_paid / exp.total_invoiced * 100) : 0;
-  const margin = ((exp.total_invoiced - exp.total_cost) / exp.total_invoiced * 100);
+  // Guard NaN: si total_invoiced es 0 (expediente recién creado), margin
+  // queda como (negativo/0) = -Infinity o NaN, y .toFixed() devuelve
+  // "NaN" que se ve feo. En ese caso forzamos 0%.
+  const margin = exp.total_invoiced > 0
+    ? ((exp.total_invoiced - exp.total_cost) / exp.total_invoiced * 100)
+    : 0;
   return (
     <div className="card card-pad-lg">
       <div className="heading-md mb-4">{tr(lang,'cost_summary')}</div>
@@ -972,7 +996,7 @@ function PaymentDrawer({ lang, exp, onClose }) {
           <div className="grid col-2 gap-4">
             <div>
               <label className="field-label">{tr(lang,'amount')}</label>
-              <input className="input" placeholder="0.00" defaultValue={exp.balance.toFixed(2)}/>
+              <input className="input" placeholder="0.00" defaultValue={Number(exp.balance || 0).toFixed(2)}/>
             </div>
             <div>
               <label className="field-label">{lang==='es' ? 'Moneda' : 'Currency'}</label>
