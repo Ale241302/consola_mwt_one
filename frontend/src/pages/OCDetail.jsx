@@ -53,6 +53,14 @@ export default function ScreenOCDetail() {
     else navigate('/expedientes');
   };
 
+  // ── ⚠ ORDEN DE HOOKS ⚠ ──────────────────────────────────────
+  // Todos los useState/useEffect deben estar ANTES de cualquier
+  // early return (loading / not-found). React error #310 ocurre si
+  // el número de hooks invocados varía entre renders. Por eso:
+  //   1. Declarar todos los hooks aquí, en orden estable
+  //   2. Hacer los returns condicionales DESPUÉS de los hooks
+  // ─────────────────────────────────────────────────────────────
+
   // Lookup en mocks primero (HERO scenario). Si no está, fetch al API.
   const ocFromMock = OCS.find(o => o.id === ocId);
   const [apiOc,         setApiOc]         = useState(null);
@@ -62,6 +70,18 @@ export default function ScreenOCDetail() {
   const [apiOcLines,    setApiOcLines]    = useState([]);
   const [ocLoading,     setOcLoading]     = useState(!ocFromMock);
   const [ocNotFound,    setOcNotFound]    = useState(false);
+
+  // Hooks que estaban más abajo (causaban React error #310 al venir
+  // después de early returns). Subidos al tope para garantizar orden
+  // estable en todos los renders.
+  const [lineEdits, setLineEdits]                 = useState({});
+  const [extraLines, setExtraLines]               = useState([]);
+  const [removedLineIds, setRemovedLineIds]       = useState(new Set());
+  const [showOrphansOnly, setShowOrphansOnly]     = useState(false);
+  const [openSap, setOpenSap]                     = useState(null);
+  const [showAddProduct, setShowAddProduct]       = useState(false);
+  const [sapDrawerOpen, setSapDrawerOpen]         = useState(false);
+  const [sapDrawerExp, setSapDrawerExp]           = useState(null);
 
   useEffect(() => {
     if (ocFromMock) return;
@@ -121,51 +141,27 @@ export default function ScreenOCDetail() {
     })),
   } : mockOcFallback);
 
-  // Loading / not-found states
-  if (ocLoading) {
-    return (
-      <div className="page" style={{ maxWidth: 1500, padding: 32 }}>
-        <div className="caption" style={{ color: "var(--text-tertiary)" }}>
-          {lang === "es" ? "Cargando OC…" : "Loading OC…"}
-        </div>
-      </div>
-    );
-  }
-  if (ocNotFound || !oc) {
-    return (
-      <div className="page" style={{ maxWidth: 1500, padding: 32 }}>
-        <button className="btn btn-ghost btn-sm" onClick={() => navigate('/expedientes')}
-                style={{ marginBottom: 14 }}>
-          <IconChevLeft size={14}/> {lang === "es" ? "Volver" : "Back"}
-        </button>
-        <div className="card card-pad-lg" style={{ textAlign: "center", padding: 48 }}>
-          <div style={{ fontWeight: 800, fontSize: 18, color: "#0B1E3A" }}>
-            {lang === "es" ? "OC no encontrada" : "OC not found"}
-          </div>
-          <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 6 }}>
-            {lang === "es"
-              ? `No existe una OC con id ${ocId}.`
-              : `No OC with id ${ocId}.`}
-          </div>
-        </div>
-      </div>
-    );
-  }
-  const client = CLIENTS.find(c => c.id === oc.client_id);
-  const brand  = BRANDS.find(b => b.id === oc.brand_id);
-
-  // Local mutable line state (for deferred qty/price + visibility toggle)
-  const [lineEdits, setLineEdits] = useState({});
-  // Added / removed lines (on top of baseline oc.lines)
-  const [extraLines, setExtraLines] = useState([]);
-  const [removedLineIds, setRemovedLineIds] = useState(new Set());
-  const [showOrphansOnly, setShowOrphansOnly] = useState(false);
-  const [openSap, setOpenSap] = useState(null); // expand/collapse SAP group
-  const [showAddProduct, setShowAddProduct] = useState(false);
-
-  // ── Drawer "+ Agregar SAP" (Comando C5 RegisterSAPConfirmation) ──
-  const [sapDrawerOpen, setSapDrawerOpen] = useState(false);
-  const [sapDrawerExp, setSapDrawerExp]   = useState(null);
+  // NOTA: los early returns de loading/notFound se mueven al FINAL de
+  // la lista de hooks (antes del return principal). React error #310
+  // ocurre si retornas antes de invocar todos los useMemo/useState
+  // declarados después.
+  // Hidratamos cliente/marca: API primero (mock-shape), fallback mocks
+  const mockClientForOc = CLIENTS.find(c => c.id === oc.client_id);
+  const client = apiOcClient ? {
+    ...(mockClientForOc || {}),
+    id:      apiOcClient.id,
+    name:    apiOcClient.razon_social || apiOcClient.nombre || apiOcClient.codigo || "—",
+    code:    apiOcClient.codigo || apiOcClient.rut || "",
+    country: apiOcClient.pais_iso2 || (mockClientForOc?.country || ""),
+    contact: apiOcClient.contacto_nombre || apiOcClient.contacto_email
+            || (mockClientForOc?.contact || ""),
+  } : mockClientForOc;
+  const brand  = apiOcBrand ? {
+    ...(BRANDS.find(b => b.id === oc.brand_id) || BRANDS[0]),
+    id:    apiOcBrand.id,
+    name:  apiOcBrand.nombre || apiOcBrand.brand_code || "—",
+    color: apiOcBrand.color || (BRANDS[0]?.color || "#0B1E3A"),
+  } : BRANDS.find(b => b.id === oc.brand_id);
 
   // Detecta el primer expediente en estado REGISTRO ligado a esta OC.
   // Si no encontramos uno con estado explícito, fallback al primer
@@ -217,9 +213,9 @@ export default function ScreenOCDetail() {
 
   // Effective line list = baseline (minus removed) + extras, all with edits applied
   const allLines = useMemo(() => {
-    const base = oc.lines.filter(l => !removedLineIds.has(l.id));
+    const base = (oc?.lines || []).filter(l => !removedLineIds.has(l.id));
     return [...base, ...extraLines].map(readLine);
-  }, [oc.lines, extraLines, removedLineIds, lineEdits]);
+  }, [oc?.lines, extraLines, removedLineIds, lineEdits]);
 
   const addProduct = (product) => {
     const newLine = {
@@ -283,6 +279,37 @@ export default function ScreenOCDetail() {
   const statusColor = oc.status === 'CERRADO' ? 'var(--text-tertiary)'
                     : oc.status === 'EN_EJECUCION' ? 'var(--success)'
                     : 'var(--warning)';
+
+  // ── Early returns DESPUÉS de todos los hooks (rules-of-hooks)
+  if (ocLoading) {
+    return (
+      <div className="page" style={{ maxWidth: 1500, padding: 32 }}>
+        <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+          {lang === "es" ? "Cargando OC…" : "Loading OC…"}
+        </div>
+      </div>
+    );
+  }
+  if (ocNotFound) {
+    return (
+      <div className="page" style={{ maxWidth: 1500, padding: 32 }}>
+        <button className="btn btn-ghost btn-sm" onClick={() => navigate('/expedientes')}
+                style={{ marginBottom: 14 }}>
+          <IconChevLeft size={14}/> {lang === "es" ? "Volver" : "Back"}
+        </button>
+        <div className="card card-pad-lg" style={{ textAlign: "center", padding: 48 }}>
+          <div style={{ fontWeight: 800, fontSize: 18, color: "#0B1E3A" }}>
+            {lang === "es" ? "OC no encontrada" : "OC not found"}
+          </div>
+          <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 6 }}>
+            {lang === "es"
+              ? `No existe una OC con id ${ocId}.`
+              : `No OC with id ${ocId}.`}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page" data-screen-label="OC Detail">
