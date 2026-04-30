@@ -91,12 +91,26 @@ function mapApiDetailToTransfer(r) {
     notes_log:      Array.isArray(r.notes_log) ? r.notes_log : [],
     lines: lineas.map(l => ({
       _line_id:        l.id,
+      _raw:            l, // mantener row original (TransferLiquidationPanel
+                          //  busca l._raw?.unit_value como fallback)
       sku:             l.sku || '',
       product:         l.product_label || l.product || '',
+      product_label:   l.product_label || '',
       lot:             l.lot || '',
+      // Sprint Inbound v2 — talla. Sprint v3.5 — unit_value/unit_cost
+      // necesarios para que el motor de Landed Cost prorratee bien.
+      // Si esto falta, FOB UNIT en /transferencias/{id} sale en $0.
+      size:            l.size || '',
       qty_transfer:    Number(l.qty_transfer || 0),
       qty_reserve:     Number(l.qty_reserve  || 0),
       qty_received:    l.qty_received != null ? Number(l.qty_received) : null,
+      unit_cost:       l.unit_cost != null ? Number(l.unit_cost)  : null,
+      unit_value:      l.unit_value != null ? Number(l.unit_value) : null,
+      // Sprint v4 — qty_dispatched para reconciliación
+      qty_dispatched:  l.qty_dispatched != null ? Number(l.qty_dispatched) : null,
+      // Landed cost ya persistido (si la transfer fue liquidada)
+      cost_share_usd:  l.cost_share_usd  != null ? Number(l.cost_share_usd)  : null,
+      landed_cost_usd: l.landed_cost_usd != null ? Number(l.landed_cost_usd) : null,
     })),
     eventos: Array.isArray(r?.eventos) ? r.eventos : [],
   };

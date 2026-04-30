@@ -26,7 +26,7 @@ import {
   IconDollar, IconLock, IconClipboard, IconUpload, IconTrash,
 } from "../../lib/icons.jsx";
 import {
-  transferenciasApi, transferDetailApi, currencyCatApi,
+  transferenciasApi, transferDetailApi, currencyCatApi, transferLineasApi,
 } from "../../lib/api.js";
 
 // ── Catálogo fallback de tipos de costo (espejo del backend) ──
@@ -77,6 +77,26 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   const [pendingDeleteCost, setPendingDeleteCost] = useState(null); // {id, label, kind, amount, currency} | null
   const [deleteCostBusy,    setDeleteCostBusy]    = useState(false);
   const [deleteCostError,   setDeleteCostError]   = useState(null);
+
+  // Sprint 2026-04-30 — FOB UNIT editable inline en la sección 3.
+  // Mapa { line_id → valor temporal mientras el operador escribe }.
+  const [editingUnitValue, setEditingUnitValue] = useState({});
+  // Persistir el unit_value de una línea via PATCH a /api/transfer-lineas/{id}/.
+  const persistLineUnitValue = useCallback(async (lineId, val) => {
+    if (!lineId) return;
+    const num = Number(val);
+    if (!Number.isFinite(num) || num < 0) return;
+    try {
+      await transferLineasApi.update(lineId, { unit_value: num });
+      // El re-fetch del padre reflejará el cambio en livePreview.
+      onLiquidated?.(null);
+    } catch (e) {
+      setError(
+        (lang === "es" ? "No se pudo actualizar el valor: " : "Could not update value: ")
+        + (e?.body?.detail || e?.message || "error")
+      );
+    }
+  }, [lang, onLiquidated]);
 
   // Catálogo ISO 4217 (47 monedas) — el SELECT de moneda lo usa.
   useEffect(() => {
@@ -604,7 +624,15 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                 </tr>
               </thead>
               <tbody>
-                {livePreview.lines.map((l) => (
+                {livePreview.lines.map((l) => {
+                  // FOB UNIT editable — sprint 2026-04-30. El operador puede
+                  // corregir el valor declarado para que el motor de Landed
+                  // Cost prorratee bien (BY_VALUE). PATCH al perder foco.
+                  const editingVal = editingUnitValue[l.line_id];
+                  const displayVal = editingVal !== undefined
+                    ? editingVal
+                    : Number(l.unit_fob_usd || 0).toFixed(4);
+                  return (
                   <tr key={l.line_id}>
                     <td className="mono-sm">
                       <div>{l.sku}</div>
@@ -613,7 +641,38 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td>{l.product_label}</td>
                     <td>{l.size || "—"}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>{l.qty}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt4(l.unit_fob_usd)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>
+                      {isLiquidated ? (
+                        <span>${fmt4(l.unit_fob_usd)}</span>
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                          <input className="input tabular-nums"
+                                 type="number" step="0.0001" min="0"
+                                 style={{
+                                   width: 88, textAlign: "right",
+                                   padding: "4px 6px", fontSize: 12.5,
+                                 }}
+                                 value={displayVal}
+                                 onChange={(e) => setEditingUnitValue((m) => ({
+                                   ...m, [l.line_id]: e.target.value,
+                                 }))}
+                                 onBlur={(e) => {
+                                   const v = Number(e.target.value);
+                                   if (Number.isFinite(v) && v !== Number(l.unit_fob_usd || 0)) {
+                                     persistLineUnitValue(l.line_id, v);
+                                   }
+                                   setEditingUnitValue((m) => {
+                                     const { [l.line_id]: _, ...rest } = m;
+                                     return rest;
+                                   });
+                                 }}
+                                 title={lang === "es"
+                                   ? "Valor unitario USD declarado · base FOB"
+                                   : "Declared unit value USD · FOB base"}/>
+                        </span>
+                      )}
+                    </td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(l.fob_total_usd)}</td>
                     <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>
                       {l.weight_pct.toFixed(1)}%
@@ -628,7 +687,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       ${fmt(l.landed_total_usd)}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
                   <td colSpan={3} style={{ color: "#0B1E3A" }}>
                     {lang === "es" ? "TOTALES" : "TOTALS"}
