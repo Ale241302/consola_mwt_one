@@ -392,28 +392,32 @@ class ResolveMatchView(APIView):
 # Aplicadores de acciones — usan raw SQL contra expedientes.linea
 # ─────────────────────────────────────────────────────────────────────
 def _apply_add_line(c, exp, act, author_email):
+    # Schema real (70_expedientes.sql): columnas son `size` (no `talla`)
+    # y NO existe `product_label`. oc_id es NOT NULL — usamos exp.oc_id
+    # o levantamos error si no hay OC vinculada.
     sku   = (act.get("sku") or "").strip()
     talla = (act.get("talla") or "").strip()
     qty   = act.get("qty_doc") or act.get("qty") or 0
     sap   = act.get("sap_doc") or None
-    label = act.get("product_label") or sku
     if not sku:
         raise ValueError("sku vacío en ADD_LINE")
+    oc_id = getattr(exp, "oc_id", None)
+    if not oc_id:
+        raise ValueError("expediente sin oc_id — no puedo insertar línea (oc_id NOT NULL)")
     c.execute("""
         INSERT INTO expedientes.linea (
-            id, expediente_id, oc_id,
-            sku, talla, qty, product_label, sap,
+            id, oc_id, expediente_id,
+            sku, size, qty, sap,
             estado, is_active, created_at, updated_at
         ) VALUES (
             %s, %s, %s,
-            %s, %s, %s, %s, %s,
-            'PENDIENTE', TRUE, NOW(), NOW()
+            %s, %s, %s, %s,
+            'PENDIENTE_SAP', TRUE, NOW(), NOW()
         )
     """, [
-        str(uuid.uuid4()), str(exp.id),
-        str(exp.oc_id) if getattr(exp, "oc_id", None) else None,
+        str(uuid.uuid4()), str(oc_id), str(exp.id),
         sku.upper()[:64], (talla or "").upper()[:16],
-        Decimal(str(qty or 0)), str(label or "")[:255],
+        Decimal(str(qty or 0)),
         (sap or "")[:64] if sap else None,
     ])
 

@@ -518,19 +518,25 @@ def _load_expediente_lines(expediente_id) -> list[dict]:
     """Carga líneas del expediente (sku, talla, qty, sap) — defensivo si la
     estructura varía entre entornos. Usa raw SQL para no acoplarnos al ORM."""
     rows = []
+    # Schema real (70_expedientes.sql):
+    #   columns = id, oc_id, expediente_id, producto_id, sku, size, qty,
+    #             unit_cost, unit_price, total_price, sap, transport_mode,
+    #             production_date, estado, deferred_*, is_active, ...
+    # NO existen `talla`, `cantidad`, `quantity`, `qty_transfer`,
+    # `sap_number`, `product_label` — referenciarlas dispara
+    # "column does not exist" y nada se puede leer.
     try:
         with connection.cursor() as c:
-            # Probamos primero `expedientes.linea` con campos canónicos.
             c.execute("""
                 SELECT
                     l.id::text                        AS line_id,
                     COALESCE(l.sku, '')               AS sku,
-                    COALESCE(l.talla, l.size, '')     AS talla,
-                    COALESCE(l.cantidad, l.quantity,
-                             l.qty, l.qty_transfer, 0) AS qty,
-                    COALESCE(l.sap_number, l.sap, '') AS sap,
-                    COALESCE(l.product_label, '')     AS product_label
+                    COALESCE(l.size, '')              AS talla,
+                    COALESCE(l.qty, 0)                AS qty,
+                    COALESCE(l.sap, '')               AS sap,
+                    COALESCE(p.nombre, l.sku, '')     AS product_label
                 FROM   expedientes.linea l
+                LEFT JOIN productos.producto p ON p.id = l.producto_id
                 WHERE  l.expediente_id = %s
                   AND  COALESCE(l.is_active, TRUE) = TRUE
             """, [str(expediente_id)])

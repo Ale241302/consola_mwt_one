@@ -342,23 +342,31 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         cantidad = 0
                     if cantidad <= 0:
                         continue
+                    # Schema real (70_expedientes.sql) — columnas que SÍ existen:
+                    #   id, oc_id (NOT NULL), expediente_id, producto_id,
+                    #   sku, size (NO 'talla'), qty, unit_cost, unit_price,
+                    #   total_price, sap, transport_mode, production_date,
+                    #   estado, is_active, ...
+                    # `product_label` NO existe — se descarta. La descripción
+                    # del producto se mantiene en `productos.producto.nombre`
+                    # vía producto_id.
                     try:
                         c.execute("""
                             INSERT INTO expedientes.linea (
-                                id, expediente_id, oc_id,
-                                sku, talla, qty, product_label, producto_id,
+                                id, oc_id, expediente_id, producto_id,
+                                sku, size, qty,
                                 estado, is_active, created_at, updated_at
                             ) VALUES (
+                                %s, %s, %s, %s,
                                 %s, %s, %s,
-                                %s, %s, %s, %s, %s,
-                                'PENDIENTE', TRUE, NOW(), NOW()
+                                'PENDIENTE_SAP', TRUE, NOW(), NOW()
                             )
                         """, [
-                            str(uuid.uuid4()), str(new_id),
+                            str(uuid.uuid4()),
                             str(oc_id_val) if oc_id_val else None,
-                            sku, talla, cantidad,
-                            (ln.get("product_label") or "")[:255],
+                            str(new_id),
                             str(ln.get("producto_id")) if ln.get("producto_id") else None,
+                            sku, talla, cantidad,
                         ])
                         line_count += 1
                     except Exception as e:
