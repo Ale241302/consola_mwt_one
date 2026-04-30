@@ -38,7 +38,7 @@ import {
 import AddSAPConfirmationDrawer from "../components/expedientes/AddSAPConfirmationDrawer.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
-         clientAssignmentsApi } from "../lib/api.js";
+         productosApi } from "../lib/api.js";
 
 export default function ScreenOCDetail() {
   const navigate = useNavigate();
@@ -71,9 +71,9 @@ export default function ScreenOCDetail() {
   const [apiOcLines,    setApiOcLines]    = useState([]);
   const [ocLoading,     setOcLoading]     = useState(!ocFromMock);
   const [ocNotFound,    setOcNotFound]    = useState(false);
-  // Mapa { sku → precio_cliente } desde commercial/client-assignments
-  // (CPA = Client-Product-Assignment). Se aplica al render de líneas
-  // para mostrar el precio negociado con ESE cliente, no el lista.
+  // Mapa { producto_id → precio_cliente } leído de
+  // producto.especificaciones.client_prices[oc.client_id]. Si el cliente
+  // no tiene override, fallback a precio_lista del producto.
   const [cpaPriceMap,   setCpaPriceMap]   = useState({});
 
   // Hooks que estaban más abajo (causaban React error #310 al venir
@@ -97,38 +97,46 @@ export default function ScreenOCDetail() {
       .then(async (o) => {
         if (cancel) return;
         setApiOc(o);
-        const [cli, br, exps, lns, cpa] = await Promise.all([
+        const [cli, br, exps, lns] = await Promise.all([
           o.client_id ? clientesApi.get(o.client_id).catch(() => null) : Promise.resolve(null),
           o.brand_id  ? marcasApi.get(o.brand_id).catch(() => null)    : Promise.resolve(null),
           expedientesApi.list({ oc: o.id }).catch(() => ({ results: [] })),
           lineasApi.list({ oc: o.id }).catch(() => ({ results: [] })),
-          // CPA: precios cliente-producto del cliente de la OC.
-          o.client_id
-            ? clientAssignmentsApi.list({ client: o.client_id, limit: 500 }).catch(() => ({ results: [] }))
-            : Promise.resolve({ results: [] }),
         ]);
         if (cancel) return;
         setApiOcClient(cli);
         setApiOcBrand(br);
         setApiOcExpedientes(Array.isArray(exps) ? exps : (exps?.results || []));
-        setApiOcLines(Array.isArray(lns) ? lns : (lns?.results || []));
-        // Construir mapa SKU → precio_cliente. El CPA puede usar
-        // distintos campos según versión: probamos los más comunes.
-        const cpaArr = Array.isArray(cpa) ? cpa : (cpa?.results || []);
-        const map = {};
-        for (const r of cpaArr) {
-          const sku = String(r.brand_sku || r.product_sku || r.sku || "").toUpperCase();
-          if (!sku) continue;
-          const px = Number(
-            r.price_negotiated
-            ?? r.precio_negociado
-            ?? r.precio_cliente
-            ?? r.price
-            ?? 0
-          );
-          if (px > 0) map[sku] = px;
+        const lineasArr = Array.isArray(lns) ? lns : (lns?.results || []);
+        setApiOcLines(lineasArr);
+
+        // ── Resolver precio cliente desde productos ──────────────
+        // El precio override por cliente vive en
+        // producto.especificaciones.client_prices[client_id].
+        // Si no hay override, usamos producto.precio_lista.
+        // Hacemos un fetch por producto_id único y construimos el mapa.
+        if (o.client_id && lineasArr.length > 0) {
+          const uniquePidIds = Array.from(new Set(
+            lineasArr.map(l => l.producto_id).filter(Boolean)
+          ));
+          if (uniquePidIds.length > 0) {
+            try {
+              const prods = await Promise.all(
+                uniquePidIds.map(pid => productosApi.get(pid).catch(() => null))
+              );
+              if (cancel) return;
+              const map = {};
+              for (const p of prods) {
+                if (!p?.id) continue;
+                const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
+                const override = Number(cliMap[o.client_id] || 0);
+                const lista    = Number(p.precio_lista || 0);
+                map[p.id] = override > 0 ? override : lista;
+              }
+              setCpaPriceMap(map);
+            } catch { /* swallow */ }
+          }
         }
-        setCpaPriceMap(map);
       })
       .catch(() => { if (!cancel) setOcNotFound(true); })
       .finally(() => { if (!cancel) setOcLoading(false); });
@@ -171,9 +179,12 @@ export default function ScreenOCDetail() {
     lines:        apiOcLines.map(l => {
       const sku = String(l.sku || "").toUpperCase();
       const qty = Number(l.qty || 0);
-      // Precio del cliente: prioridad CPA > unit_price del API > 0
-      const cpaPx = cpaPriceMap[sku];
-      const unit  = cpaPx != null ? cpaPx : Number(l.unit_price || 0);
+      // Precio del cliente: lookup por producto_id en el mapa CPA.
+      // Si el producto tiene override en `especificaciones.client_prices`
+      // para este cliente → ese precio. Si no → fallback a precio_lista.
+      // Si producto_id es null (línea libre), usamos unit_price del API.
+      const cpaPx = l.producto_id ? cpaPriceMap[l.producto_id] : null;
+      const unit  = cpaPx != null && cpaPx > 0 ? cpaPx : Number(l.unit_price || 0);
       return {
         id:             l.id,
         sku:            l.sku,
@@ -254,9 +265,18 @@ export default function ScreenOCDetail() {
   } : BRANDS.find(b => b.id === oc.brand_id);
 
   // Detecta el primer expediente en estado REGISTRO ligado a esta OC.
-  // Si no encontramos uno con estado explícito, fallback al primer
-  // expediente listado (mock data no siempre trae estado).
+  // Bug previo: sólo buscaba en el array MOCK `EXPEDIENTES`, dejando el
+  // botón "Agregar SAP" disabled para todas las OCs reales del API.
+  // Ahora prioriza apiOcExpedientes (API) y cae al mock como fallback.
   const sapEligibleExp = useMemo(() => {
+    // 1) Buscar en los expedientes del API (con sus campos reales)
+    if (Array.isArray(apiOcExpedientes) && apiOcExpedientes.length > 0) {
+      const inRegistro = apiOcExpedientes.find(e =>
+        ((e.estado || "REGISTRO").toUpperCase()) === "REGISTRO"
+      );
+      return inRegistro || apiOcExpedientes[0] || null;
+    }
+    // 2) Fallback a mocks (HERO scenario)
     const expIds = oc.expedientes || [];
     const expObjs = expIds
       .map(eid => EXPEDIENTES.find(e => e.id === eid))
@@ -265,7 +285,7 @@ export default function ScreenOCDetail() {
       (e.estado || e.status || "REGISTRO").toUpperCase() === "REGISTRO"
     );
     return inRegistro || expObjs[0] || null;
-  }, [oc]);
+  }, [oc, apiOcExpedientes]);
 
   const openSapDrawer = () => {
     setSapDrawerExp(sapEligibleExp);
