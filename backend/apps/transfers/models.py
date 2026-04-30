@@ -18,6 +18,8 @@ BLOQUE 3 añade:
 =====================================================================
 """
 from django.db import models
+from django.db.models import F
+from django.db.models.functions import Round
 
 
 # ── Catálogos ────────────────────────────────────────────────
@@ -106,6 +108,15 @@ class Transferencia(models.Model):
     dua_document_id     = models.UUIDField(null=True, blank=True)         # ⛔ sin FK
     awb_document_id     = models.UUIDField(null=True, blank=True)         # ⛔ sin FK
     liquidation_method  = models.CharField(max_length=16, default="BY_VALUE")
+
+    # Sprint Transfer Engine v2 (91e_transfers_cost_lines.sql) — columnas
+    # que existen en BD pero no estaban declaradas en el modelo Django.
+    # Sin esto, liquidation.py crashea con AttributeError al leerlas y
+    # /api/transferencias/{id}/liquidation_report/ retorna 500.
+    document_artifact_id = models.UUIDField(null=True, blank=True)        # ⛔ sin FK · DUA primario
+    total_cost_usd       = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    # ↑ cache recalculable. Lo refresca trigger SQL al insertar/borrar
+    #   cost_lines; el ORM sí puede escribir en él (no es GENERATED).
 
     # Sprint v4 (91h) — Lifecycle + Gap contable
     approved_at             = models.DateTimeField(null=True, blank=True)
@@ -275,8 +286,17 @@ class CostLine(models.Model):
     amount             = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     currency           = models.CharField(max_length=3, default="USD")
     fx_to_usd          = models.DecimalField(max_digits=14, decimal_places=6, default=1)
-    amount_usd         = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    # ↑ GENERATED en DB; el ORM no debe intentar escribirla.
+    # `amount_usd` es columna GENERATED ALWAYS AS ROUND(amount*fx_to_usd, 2)
+    # STORED en BD (91e_transfers_cost_lines.sql:83). Django 5 soporta
+    # GeneratedField — esto le dice al ORM "no incluir esta columna en
+    # INSERT/UPDATE", solo SELECT. Antes era DecimalField regular y el
+    # INSERT explícito hacía que Postgres rechazara con error de columna
+    # generada → 500 al agregar costo.
+    amount_usd         = models.GeneratedField(
+        expression=Round(F("amount") * F("fx_to_usd"), 2),
+        output_field=models.DecimalField(max_digits=14, decimal_places=2),
+        db_persist=True,
+    )
 
     source             = models.CharField(max_length=16, default="MANUAL")
     document_id        = models.UUIDField(null=True, blank=True)        # ⛔ sin FK
