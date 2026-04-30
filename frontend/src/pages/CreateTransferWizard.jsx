@@ -1386,14 +1386,26 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
 // ═════════════════════════════════════════════════════════════
 function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProductLine, updateProductLine, removeProductLine }) {
   const [search, setSearch] = useState("");
+  // Sprint 2026-04-30 — el catálogo de SKUs en un nodo puede tener miles
+  // de filas. El acordeón está cerrado por defecto y solo se abre cuando
+  // el usuario hace clic. Si escribe algo en el buscador, se abre auto-
+  // máticamente para mostrar las coincidencias.
+  const [open, setOpen] = useState(false);
   const filtered = useMemo(() => {
     const n = search.trim().toLowerCase();
-    if (!n) return stockOrigen.slice(0, 60);
+    if (!n) return stockOrigen.slice(0, 200);
     return stockOrigen.filter((s) => {
       const hay = [s.sku, s.product_label, s.lote, s.size].join(" ").toLowerCase();
       return hay.includes(n);
-    }).slice(0, 60);
+    }).slice(0, 200);
   }, [search, stockOrigen]);
+
+  // Auto-expand cuando el usuario empieza a tipear.
+  const onSearchChange = (e) => {
+    const v = e.target.value;
+    setSearch(v);
+    if (v.trim()) setOpen(true);
+  };
 
   return (
     <div className="card card-pad-lg">
@@ -1406,31 +1418,76 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
         <strong style={{ color: "#0B1E3A" }}>{origenLabel || "—"}</strong>
       </div>
 
-      <input className="input" placeholder={lang === "es" ? "Buscar SKU, producto, lote…" : "Search SKU, product, lot…"}
-             value={search} onChange={(e) => setSearch(e.target.value)}
-             style={{ marginBottom: 12 }}/>
-
+      {/* ── Acordeón: cabecera clickable + cuerpo colapsable ─────────────── */}
       <div style={{
-        maxHeight: 200, overflowY: "auto",
-        border: "1px solid var(--border, #E1E6ED)", borderRadius: 8,
-        marginBottom: 18,
+        border: "1px solid var(--border, #E1E6ED)", borderRadius: 10,
+        marginBottom: 18, overflow: "hidden", background: "#fff",
       }}>
-        {filtered.length === 0 ? (
-          <div className="caption" style={{ padding: 18, textAlign: "center", color: "var(--text-tertiary)" }}>
-            {stockOrigen.length === 0
-              ? (lang === "es" ? "Sin stock en el nodo origen." : "No stock at origin node.")
-              : (lang === "es" ? "Sin coincidencias." : "No matches.")}
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          style={{
+            width: "100%", display: "flex", alignItems: "center",
+            justifyContent: "space-between", gap: 12,
+            padding: "12px 16px", border: "none", cursor: "pointer",
+            background: open ? "rgba(0,178,134,0.04)" : "#fff",
+            transition: "background 120ms ease",
+          }}
+          onMouseEnter={(e) => { if (!open) e.currentTarget.style.background = "#F7F9FC"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = open ? "rgba(0,178,134,0.04)" : "#fff"; }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <IconPackage size={14} style={{ color: "#3083FE" }}/>
+            <span style={{ fontWeight: 700, color: "#0B1E3A", fontSize: 13 }}>
+              {lang === "es" ? "Productos disponibles" : "Available products"}
+            </span>
+            <span style={{
+              padding: "2px 9px", borderRadius: 999,
+              background: "rgba(72,30,227,0.10)", color: "#481EE3",
+              fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)",
+            }}>
+              {stockOrigen.length}
+            </span>
           </div>
-        ) : (
-          filtered.map((s) => (
-            <button key={s._key || s.id} type="button"
-                    onClick={() => addProductLine(s)}
-                    style={{
-                      width: "100%", textAlign: "left", padding: "10px 14px",
-                      border: "none", borderBottom: "1px solid #F3F5F8", background: "#fff",
-                      cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "#F7F9FC"}
+          <span style={{
+            display: "inline-block", color: "#64748B",
+            transition: "transform 180ms ease",
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+          }} aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M3 6l5 5 5-5" stroke="currentColor" strokeWidth="1.6"
+                    strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </span>
+        </button>
+
+        {/* Cuerpo del acordeón */}
+        {open && (
+          <div style={{ borderTop: "1px solid #EEF1F5" }}>
+            <div style={{ padding: "10px 12px 0" }}>
+              <input className="input"
+                     placeholder={lang === "es" ? "Buscar SKU, producto, lote, talla…" : "Search SKU, product, lot, size…"}
+                     value={search} onChange={onSearchChange}
+                     autoFocus
+                     style={{ marginBottom: 10 }}/>
+            </div>
+            <div style={{ maxHeight: 240, overflowY: "auto" }}>
+              {filtered.length === 0 ? (
+                <div className="caption" style={{ padding: 18, textAlign: "center", color: "var(--text-tertiary)" }}>
+                  {stockOrigen.length === 0
+                    ? (lang === "es" ? "Sin stock en el nodo origen." : "No stock at origin node.")
+                    : (lang === "es" ? "Sin coincidencias." : "No matches.")}
+                </div>
+              ) : (
+                filtered.map((s) => (
+                  <button key={s._key || s.id} type="button"
+                          onClick={() => addProductLine(s)}
+                          style={{
+                            width: "100%", textAlign: "left", padding: "10px 14px",
+                            border: "none", borderBottom: "1px solid #F3F5F8", background: "#fff",
+                            cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = "#F7F9FC"}
                     onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
               <IconPackage size={14} style={{ color: "#3083FE", flexShrink: 0 }}/>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -1447,7 +1504,10 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
                 {Number(s.qty_disponible || 0)}u
               </span>
             </button>
-          ))
+                ))
+              )}
+            </div>
+          </div>
         )}
       </div>
 
