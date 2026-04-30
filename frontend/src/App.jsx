@@ -14,7 +14,7 @@ import ScreenPortal from "./pages/Portal.jsx";
 import ScreenPagos from "./pages/Pagos.jsx";
 import ScreenInventario from "./pages/Inventario.jsx";
 import InboundReceptionWizard from "./pages/InboundReceptionWizard.jsx";
-import ScreenWizard from "./pages/Wizard.jsx";
+// import ScreenWizard from "./pages/Wizard.jsx";  // legacy — ahora /wizard redirige al wizard simplificado
 import CreateExpedienteWizard from "./pages/CreateExpedienteWizard.jsx";
 import CreateExpedienteWizardLite from "./pages/CreateExpedienteWizardLite.jsx";
 import ScreenTransfers from "./pages/Transfers.jsx";
@@ -77,7 +77,11 @@ export default function App() {
         <Route path="/inventario" element={<ScreenInventario />} />
         {/* Sprint Inbound Engine v1 (2026-04-29) — wizard full-page */}
         <Route path="/inventario/recepcion" element={<InboundReceptionWizard />} />
-        <Route path="/wizard" element={<ScreenWizard />} />
+        {/* /wizard es alias del wizard simplificado (mismo flujo
+            para ADMIN y CLIENT). Antes apuntaba al ScreenWizard
+            legacy con OCR pesado; el nuevo wizard de 3 pasos vive
+            en /portal/nueva-oc y /expedientes/nuevo. */}
+        <Route path="/wizard" element={<Navigate to="/portal/nueva-oc" replace />} />
         {/* Nuevo wizard multirol (ADMIN 4 pasos / CLIENT 3 pasos) — reemplazo de /wizard */}
         {/* Sprint Wizard Lite (2026-04-29) — wizard simplificado de 3 pasos */}
         <Route path="/expedientes/nuevo" element={<CreateExpedienteWizardLite />} />

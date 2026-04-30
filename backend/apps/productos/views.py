@@ -34,9 +34,18 @@ class ProductoViewSet(viewsets.ViewSet):
             v = request.query_params.get(param)
             if v:
                 qs = qs.filter(**{field: v})
+        # Búsqueda libre — busca en NOMBRE, SKU y descripción.
+        # Bug previo: sólo buscaba en `nombre`, así que si el usuario tipeaba
+        # el SKU (ej. "701805") y el nombre era "50B21-A-GR-DRB", no aparecía.
         q = request.query_params.get("q")
         if q:
-            qs = qs.filter(nombre__icontains=q)
+            from django.db.models import Q
+            qq = q.strip()
+            qs = qs.filter(
+                Q(nombre__icontains=qq) |
+                Q(sku__icontains=qq) |
+                Q(descripcion__icontains=qq)
+            )
         return Response(ProductoListSerializer(qs, many=True).data)
 
     def retrieve(self, request, pk=None):
