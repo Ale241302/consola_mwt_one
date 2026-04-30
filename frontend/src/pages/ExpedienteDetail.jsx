@@ -6,6 +6,8 @@ import {
   Badge, StatusBadge, Progress, StateTimeline, CreditBar, CountryFlag,
 } from "../components/ui/primitives.jsx";
 import { ArtifactsBoard } from "../components/ArtifactsBoard.jsx";
+import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmakerWizard.jsx";
+import CommercialDataHardStop from "../components/expedientes/CommercialDataHardStop.jsx";
 import {
   IconChevLeft, IconMapPin, IconShip, IconPlane, IconPackage, IconClock,
   IconArrow, IconDollar, IconPlus, IconPaperclip, IconMail, IconMore,
@@ -51,6 +53,10 @@ export default function ScreenExpedienteDetail() {
   const [showAdvance, setShowAdvance] = useState(false);
   const [showCostDrawer, setShowCostDrawer] = useState(false);
   const [showPaymentDrawer, setShowPaymentDrawer] = useState(false);
+  // Sprint Document Matchmaker (2026-04-29) — wizard de auditoría IA.
+  // Solo CEO/admin puede cruzar documentos contra la BD; el cliente B2B
+  // solo visualiza los artefactos publicados.
+  const [showMatchmaker, setShowMatchmaker] = useState(false);
 
   // Only use rich HERO data if this is the hero expediente
   const isHero = exp.id === HERO_ID;
@@ -190,9 +196,60 @@ export default function ScreenExpedienteDetail() {
             ))}
           </div>
 
-          {tab === 'overview'  && <OverviewTab exp={exp} lang={lang} lines={lines} activity={activity} isClient={isClient}/>}
+          {tab === 'overview'  && (
+            <>
+              {/* Hard stop de datos comerciales — bloquea T2 si faltan
+                  modo_operacion/brand_id/moneda. Auto-oculta si todo OK. */}
+              {!isClient && <CommercialDataHardStop expediente={exp} lang={lang}
+                                                    onSaved={() => navigate(0)}/>}
+              <OverviewTab exp={exp} lang={lang} lines={lines}
+                           activity={activity} isClient={isClient}/>
+            </>
+          )}
           {tab === 'lines'     && <LinesTab lines={lines} lang={lang}/>}
-          {tab === 'artifacts' && <ArtifactsBoard expedienteId={exp.id} lang={lang} readOnly={isClient}/>}
+          {tab === 'artifacts' && (
+            <div>
+              {/* Toolbar de artifacts: solo visible para CEO/admin.
+                  El botón "Auditar documento con IA" abre el wizard
+                  Document Matchmaker (cruce IA gpt-5-nano vs BD). */}
+              {!isClient && (
+                <div style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  marginBottom: 14, padding: "10px 14px", borderRadius: 10,
+                  background: "linear-gradient(135deg, rgba(72,30,227,0.05), rgba(0,178,134,0.04))",
+                  border: "1px solid rgba(72,30,227,0.18)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <IconSparkle size={14} style={{ color: "#481EE3" }}/>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: "#0B1E3A" }}>
+                        {lang === "es"
+                          ? "Auditoría documental con IA"
+                          : "AI Document Audit"}
+                      </div>
+                      <div className="caption" style={{ color: "var(--text-secondary)", fontSize: 11 }}>
+                        {lang === "es"
+                          ? "Sube OC / Proforma / Confirmación SAP y cruza contra la BD con gpt-5-nano."
+                          : "Upload PO / Proforma / SAP confirmation and cross-check the DB with gpt-5-nano."}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowMatchmaker(true)}
+                    className="btn btn-accent"
+                    style={{
+                      fontWeight: 700, background: "#481EE3", borderColor: "#481EE3",
+                      letterSpacing: 0.3,
+                    }}>
+                    <IconUpload size={12}/>{" "}
+                    {lang === "es" ? "Auditar documento" : "Audit document"}
+                  </button>
+                </div>
+              )}
+              <ArtifactsBoard expedienteId={exp.id} lang={lang} readOnly={isClient}/>
+            </div>
+          )}
           {tab === 'costs'     && !isClient && <CostsTab costs={costs} lang={lang} onAdd={() => setShowCostDrawer(true)}/>}
           {tab === 'payments'  && <PaymentsTab pagos={pagos} lang={lang} exp={exp}
                                                onAdd={isClient ? null : () => setShowPaymentDrawer(true)}
@@ -215,6 +272,19 @@ export default function ScreenExpedienteDetail() {
       {showAdvance     && <AdvanceStateModal exp={exp} lang={lang} onClose={() => setShowAdvance(false)}/>}
       {showCostDrawer  && <CostDrawer lang={lang} exp={exp} onClose={() => setShowCostDrawer(false)}/>}
       {showPaymentDrawer && <PaymentDrawer lang={lang} exp={exp} onClose={() => setShowPaymentDrawer(false)}/>}
+      {showMatchmaker && (
+        <DocumentMatchmakerWizard
+          expedienteId={exp.id}
+          lang={lang}
+          onClose={() => setShowMatchmaker(false)}
+          onApplied={() => {
+            // Después de aplicar resoluciones, refrescar la página para
+            // que las líneas del expediente reflejen los cambios.
+            // navigate(0) hace un soft-reload manteniendo el JWT.
+            setTimeout(() => navigate(0), 800);
+          }}
+        />
+      )}
     </div>
   );
 }
