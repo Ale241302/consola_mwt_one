@@ -1607,16 +1607,80 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
 }
 
 // ═════════════════════════════════════════════════════════════
-// STEP 4 · Validación y totales
+// STEP 4 · Validación y totales — desglose detallado
 // ═════════════════════════════════════════════════════════════
 function Step4Summary({ lang, origen, destino, legalContext, refTracking, productLines, costLines, costKinds, totals }) {
   const legalLabel = LEGAL_CONTEXT.find((c) => c.codigo === legalContext)?.label || legalContext;
+
+  // ── Agrupaciones derivadas ────────────────────────────────
+  // (a) Costos por categoría (kind) — suma USD por tipo, ej. todos los
+  //     "arancel_aduana" en un solo bucket aunque haya 3 líneas DUA.
+  const costsByKind = useMemo(() => {
+    const map = new Map();
+    costLines.forEach((c) => {
+      const usd = Number(c.amount || 0) * Number(c.fx_to_usd || 1);
+      const cur = map.get(c.kind) || { kind: c.kind, total_usd: 0, count: 0, lines: [] };
+      cur.total_usd += usd;
+      cur.count += 1;
+      cur.lines.push({ ...c, usd });
+      map.set(c.kind, cur);
+    });
+    return Array.from(map.values()).sort((a, b) => b.total_usd - a.total_usd);
+  }, [costLines]);
+
+  // (b) Costos por moneda original — útil cuando la DUA viene en COP,
+  //     factura del proveedor en USD, almacenaje en CRC, etc.
+  const costsByCurrency = useMemo(() => {
+    const map = new Map();
+    costLines.forEach((c) => {
+      const code = (c.currency || "USD").toUpperCase();
+      const usd = Number(c.amount || 0) * Number(c.fx_to_usd || 1);
+      const cur = map.get(code) || { code, total_native: 0, total_usd: 0, count: 0 };
+      cur.total_native += Number(c.amount || 0);
+      cur.total_usd    += usd;
+      cur.count += 1;
+      map.set(code, cur);
+    });
+    return Array.from(map.values()).sort((a, b) => b.total_usd - a.total_usd);
+  }, [costLines]);
+
+  // (c) Productos agrupados por SKU para conteo de productos únicos.
+  const skusUnicos = useMemo(() => {
+    const set = new Set(productLines.map(l => l.sku));
+    return set.size;
+  }, [productLines]);
+
+  // (d) Costo prorrateado por unidad (landed cost incremental).
+  const costPerUnit = totals.totalUnits > 0
+    ? totals.totalCostUsd / totals.totalUnits
+    : 0;
+
   return (
     <div className="card card-pad-lg">
       <h2 className="heading-md" style={{ marginBottom: 14 }}>
         {lang === "es" ? "Paso 4 · Validación y totales" : "Step 4 · Validation & totals"}
       </h2>
 
+      {/* ─── Strip de KPIs (5 tiles) ────────────────────────── */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "repeat(5, 1fr)",
+        gap: 10, marginBottom: 18,
+      }}>
+        <KpiTile label={lang === "es" ? "Líneas" : "Lines"}
+                 value={productLines.length}/>
+        <KpiTile label={lang === "es" ? "Productos" : "Products"}
+                 value={skusUnicos}
+                 accent="#481EE3"/>
+        <KpiTile label={lang === "es" ? "Unidades" : "Units"}
+                 value={totals.totalUnits.toLocaleString()}/>
+        <KpiTile label={lang === "es" ? "Costos (líneas)" : "Costs (lines)"}
+                 value={costLines.length}/>
+        <KpiTile label={lang === "es" ? "Monedas" : "Currencies"}
+                 value={costsByCurrency.length}
+                 accent="#3083FE"/>
+      </div>
+
+      {/* ─── Bloque CONTEXTO ────────────────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginBottom: 18 }}>
         <SummaryBox title={lang === "es" ? "CONTEXTO" : "CONTEXT"}>
           <Row k={lang === "es" ? "Origen → Destino" : "Origin → Destination"}
@@ -1624,70 +1688,126 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
           <Row k={lang === "es" ? "Motivo" : "Reason"} v={legalLabel}/>
           <Row k="Tracking" v={refTracking || "—"}/>
         </SummaryBox>
-        <SummaryBox title={lang === "es" ? "MÉTRICAS" : "METRICS"}>
-          <Row k={lang === "es" ? "Líneas" : "Lines"} v={<strong className="tabular-nums">{productLines.length}</strong>}/>
+        <SummaryBox title={lang === "es" ? "STOCK MOVIDO" : "STOCK MOVED"}>
           <Row k={lang === "es" ? "Unidades a mover" : "Units to move"} v={<strong className="tabular-nums">{totals.totalUnits}</strong>}/>
           <Row k={lang === "es" ? "Pre-reservadas" : "Pre-reserved"} v={<span className="tabular-nums">{totals.totalReserve}</span>}/>
           <Row k={lang === "es" ? "Libres al llegar" : "Free at arrival"} v={<span className="tabular-nums" style={{ color: "#00B286", fontWeight: 700 }}>{totals.totalFree}</span>}/>
         </SummaryBox>
       </div>
 
+      {/* ─── Hero: total costo + costo por unidad ──────────── */}
       <div style={{
         background: "linear-gradient(135deg, #0B1E3A 0%, #1A2A5C 100%)",
         color: "#fff", padding: "20px 22px", borderRadius: 14, marginBottom: 18,
+        display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 24,
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-          <span className="micro" style={{ color: "rgba(255,255,255,0.6)", letterSpacing: 1 }}>
-            {lang === "es" ? "COSTO TOTAL INCREMENTAL" : "TOTAL INCREMENTAL COST"}
-          </span>
-          <span className="caption" style={{ color: "rgba(255,255,255,0.7)" }}>
-            {costLines.length} {lang === "es" ? "líneas" : "lines"}
-          </span>
-        </div>
-        <div className="tabular-nums" style={{ fontSize: 36, fontWeight: 700, color: "#1DE394" }}>
-          ${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} <span style={{ fontSize: 18, fontWeight: 400, color: "rgba(255,255,255,0.7)" }}>USD</span>
-        </div>
-        <div className="caption" style={{ color: "rgba(255,255,255,0.6)", marginTop: 4 }}>
-          {lang === "es" ? "Incluye aranceles, IVA, almacenaje, flete y seguros." : "Includes duties, VAT, storage, freight and insurance."}
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 14 }}>
-        <h3 className="heading-sm" style={{ marginBottom: 8 }}>{lang === "es" ? "Desglose de productos" : "Product breakdown"}</h3>
-        <div className="card card-pad-0">
-          <table className="table">
-            <thead>
-              <tr><th>SKU</th><th>{lang === "es" ? "Producto" : "Product"}</th><th>{lang === "es" ? "Lote/Talla" : "Lot/Size"}</th><th style={{ textAlign:"right" }}>{lang === "es" ? "Mover" : "Move"}</th><th style={{ textAlign:"right" }}>Res.</th><th style={{ textAlign:"right" }}>{lang === "es" ? "Libre" : "Free"}</th></tr>
-            </thead>
-            <tbody>
-              {productLines.map((l) => (
-                <tr key={l.tmpId}>
-                  <td className="mono-sm">{l.sku}</td>
-                  <td>{l.product_label}</td>
-                  <td>
-                    {l.lote && <div className="mono-sm">L: {l.lote}</div>}
-                    {l.size && <div className="caption">{l.size}</div>}
-                    {!l.lote && !l.size && "—"}
-                  </td>
-                  <td className="tabular-nums" style={{ textAlign:"right" }}>{l.qty_transfer}</td>
-                  <td className="tabular-nums" style={{ textAlign:"right" }}>{l.qty_reserve}</td>
-                  <td className="tabular-nums" style={{ textAlign:"right", color:"#00B286", fontWeight: 600 }}>
-                    {Math.max(0, Number(l.qty_transfer) - Number(l.qty_reserve))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {costLines.length > 0 && (
         <div>
-          <h3 className="heading-sm" style={{ marginBottom: 8 }}>{lang === "es" ? "Desglose de costos" : "Cost breakdown"}</h3>
+          <div className="micro" style={{ color: "rgba(255,255,255,0.6)", letterSpacing: 1, marginBottom: 6 }}>
+            {lang === "es" ? "COSTO TOTAL INCREMENTAL" : "TOTAL INCREMENTAL COST"}
+          </div>
+          <div className="tabular-nums" style={{ fontSize: 36, fontWeight: 700, color: "#1DE394", lineHeight: 1.05 }}>
+            ${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+            <span style={{ fontSize: 18, fontWeight: 400, color: "rgba(255,255,255,0.7)", marginLeft: 6 }}>USD</span>
+          </div>
+          <div className="caption" style={{ color: "rgba(255,255,255,0.6)", marginTop: 4 }}>
+            {lang === "es"
+              ? `${costLines.length} costo${costLines.length !== 1 ? "s" : ""} · ${costsByCurrency.length} moneda${costsByCurrency.length !== 1 ? "s" : ""}`
+              : `${costLines.length} cost${costLines.length !== 1 ? "s" : ""} · ${costsByCurrency.length} currenc${costsByCurrency.length !== 1 ? "ies" : "y"}`}
+          </div>
+        </div>
+        <div style={{
+          borderLeft: "1px solid rgba(255,255,255,0.10)",
+          paddingLeft: 24, display: "flex", flexDirection: "column", justifyContent: "center",
+        }}>
+          <div className="micro" style={{ color: "rgba(255,255,255,0.6)", letterSpacing: 1, marginBottom: 6 }}>
+            {lang === "es" ? "COSTO POR UNIDAD" : "COST PER UNIT"}
+          </div>
+          <div className="tabular-nums" style={{ fontSize: 22, fontWeight: 700, color: "#fff" }}>
+            ${costPerUnit.toLocaleString("en-US", { maximumFractionDigits: 4 })}
+            <span style={{ fontSize: 13, fontWeight: 400, color: "rgba(255,255,255,0.7)", marginLeft: 4 }}>USD / u</span>
+          </div>
+          <div className="caption" style={{ color: "rgba(255,255,255,0.6)", marginTop: 4 }}>
+            {lang === "es"
+              ? `Prorrateo lineal sobre ${totals.totalUnits} u.`
+              : `Even allocation over ${totals.totalUnits} u.`}
+          </div>
+        </div>
+      </div>
+
+      {/* ─── Desglose por categoría de costo ─────────────────── */}
+      {costsByKind.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <h3 className="heading-sm" style={{ marginBottom: 8 }}>
+            {lang === "es" ? "Desglose por categoría" : "Breakdown by category"}
+          </h3>
           <div className="card card-pad-0">
             <table className="table">
               <thead>
-                <tr><th>{lang === "es" ? "Tipo" : "Kind"}</th><th>{lang === "es" ? "Detalle" : "Label"}</th><th style={{ textAlign:"right" }}>{lang === "es" ? "Monto" : "Amount"}</th><th>{lang === "es" ? "Origen" : "Source"}</th></tr>
+                <tr>
+                  <th>{lang === "es" ? "Categoría" : "Category"}</th>
+                  <th style={{ textAlign: "center", width: 100 }}>{lang === "es" ? "Líneas" : "Lines"}</th>
+                  <th style={{ textAlign: "right", width: 160 }}>USD</th>
+                  <th style={{ textAlign: "right", width: 90 }}>%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {costsByKind.map((g) => {
+                  const k = costKinds.find((x) => x.codigo === g.kind);
+                  const pct = totals.totalCostUsd > 0
+                    ? (g.total_usd / totals.totalCostUsd) * 100 : 0;
+                  return (
+                    <tr key={g.kind}>
+                      <td>
+                        <span style={{
+                          padding: "3px 10px", borderRadius: 999,
+                          fontSize: 11, fontWeight: 700,
+                          background: `${k?.color || "#64748B"}20`, color: k?.color || "#64748B",
+                        }}>{k?.label || g.kind}</span>
+                      </td>
+                      <td className="tabular-nums" style={{ textAlign: "center" }}>
+                        {g.count}
+                      </td>
+                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>
+                        ${g.total_usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>
+                        {pct.toFixed(1)}%
+                      </td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
+                  <td style={{ color: "#0B1E3A" }}>{lang === "es" ? "Total" : "Total"}</td>
+                  <td className="tabular-nums" style={{ textAlign: "center" }}>{costLines.length}</td>
+                  <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 14 }}>
+                    ${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="tabular-nums" style={{ textAlign: "right" }}>100%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Detalle línea por línea de los costos ────────────── */}
+      {costLines.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <h3 className="heading-sm" style={{ marginBottom: 8 }}>
+            {lang === "es" ? "Detalle de costos" : "Cost lines"}
+          </h3>
+          <div className="card card-pad-0">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{lang === "es" ? "Tipo" : "Kind"}</th>
+                  <th>{lang === "es" ? "Detalle" : "Label"}</th>
+                  <th style={{ textAlign: "right", width: 110 }}>{lang === "es" ? "Monto" : "Amount"}</th>
+                  <th style={{ textAlign: "center", width: 70 }}>{lang === "es" ? "Mon." : "Curr."}</th>
+                  <th style={{ textAlign: "right", width: 90 }}>FX→USD</th>
+                  <th style={{ textAlign: "right", width: 130 }}>USD</th>
+                  <th style={{ textAlign: "center", width: 80 }}>{lang === "es" ? "Origen" : "Source"}</th>
+                </tr>
               </thead>
               <tbody>
                 {costLines.map((c) => {
@@ -1702,13 +1822,23 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                         }}>{k?.label || c.kind}</span>
                       </td>
                       <td>{c.label || "—"}</td>
-                      <td className="tabular-nums" style={{ textAlign:"right" }}>
-                        ${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })} {c.currency !== "USD" && <span className="caption">({c.currency} {Number(c.amount).toLocaleString()})</span>}
+                      <td className="tabular-nums" style={{ textAlign: "right" }}>
+                        {Number(c.amount || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}
                       </td>
-                      <td>
-                        <span className="caption" style={{
-                          color: c.source === "OCR_DUA" ? "#00B286" : "#64748B",
-                          fontWeight: 600,
+                      <td className="mono-sm" style={{ textAlign: "center", fontWeight: 600 }}>
+                        {c.currency || "USD"}
+                      </td>
+                      <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>
+                        {Number(c.fx_to_usd || 1).toFixed(4)}
+                      </td>
+                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#00B286" }}>
+                        ${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ textAlign: "center" }}>
+                        <span style={{
+                          padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700,
+                          background: c.source === "OCR_DUA" ? "rgba(0,178,134,0.12)" : "#F3F5F8",
+                          color:      c.source === "OCR_DUA" ? "#00B286" : "#64748B",
                         }}>{c.source === "OCR_DUA" ? "IA" : "MANUAL"}</span>
                       </td>
                     </tr>
@@ -1719,6 +1849,164 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
           </div>
         </div>
       )}
+
+      {/* ─── Valorización por moneda ──────────────────────────── */}
+      {costsByCurrency.length > 1 && (
+        <div style={{ marginBottom: 14 }}>
+          <h3 className="heading-sm" style={{ marginBottom: 8 }}>
+            {lang === "es" ? "Valorización por moneda" : "Valuation by currency"}
+          </h3>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${Math.min(costsByCurrency.length, 4)}, 1fr)`,
+            gap: 10,
+          }}>
+            {costsByCurrency.map((c) => (
+              <div key={c.code} style={{
+                background: "#fff", padding: "12px 14px", borderRadius: 10,
+                border: "1px solid rgba(11,30,58,0.08)",
+              }}>
+                <div className="mono-sm" style={{
+                  fontSize: 11, color: "#64748B", fontWeight: 700, letterSpacing: 0.5,
+                }}>{c.code}</div>
+                <div className="tabular-nums" style={{
+                  fontSize: 17, fontWeight: 700, color: "#0B1E3A", marginTop: 2,
+                }}>
+                  {c.total_native.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                </div>
+                <div className="caption" style={{ color: "#64748B", marginTop: 2 }}>
+                  ≈ ${c.total_usd.toLocaleString("en-US", { maximumFractionDigits: 2 })} USD
+                  · {c.count} {lang === "es" ? (c.count === 1 ? "línea" : "líneas") : (c.count === 1 ? "line" : "lines")}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ─── Desglose de productos detallado ──────────────────── */}
+      <div style={{ marginBottom: 14 }}>
+        <h3 className="heading-sm" style={{ marginBottom: 8 }}>
+          {lang === "es" ? "Desglose de productos" : "Product breakdown"}
+        </h3>
+        <div className="card card-pad-0">
+          <table className="table">
+            <thead>
+              <tr>
+                <th style={{ width: 100 }}>SKU</th>
+                <th>{lang === "es" ? "Producto" : "Product"}</th>
+                <th style={{ textAlign: "center", width: 70 }}>{lang === "es" ? "Talla" : "Size"}</th>
+                <th style={{ textAlign: "center", width: 100 }}>{lang === "es" ? "Lote" : "Lot"}</th>
+                <th style={{ textAlign: "right", width: 80 }}>{lang === "es" ? "Mover" : "Move"}</th>
+                <th style={{ textAlign: "right", width: 80 }}>Res.</th>
+                <th style={{ textAlign: "right", width: 80 }}>{lang === "es" ? "Libre" : "Free"}</th>
+                <th style={{ textAlign: "right", width: 110 }}>{lang === "es" ? "Costo asig." : "Cost alloc."}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {productLines.map((l) => {
+                const lineCost = costPerUnit * Number(l.qty_transfer || 0);
+                return (
+                  <tr key={l.tmpId}>
+                    <td className="mono-sm" style={{ color: "#481EE3", fontWeight: 600 }}>{l.sku}</td>
+                    <td>{l.product_label}</td>
+                    <td style={{ textAlign: "center" }}>
+                      {l.size
+                        ? <span style={{
+                            padding: "2px 10px", borderRadius: 999,
+                            background: "rgba(72,30,227,0.10)", color: "#481EE3",
+                            fontSize: 11, fontWeight: 700,
+                            fontFamily: "var(--font-mono)",
+                          }}>{l.size}</span>
+                        : <span style={{ color: "#64748B" }}>—</span>}
+                    </td>
+                    <td className="mono-sm" style={{ textAlign: "center", color: "#64748B", fontSize: 11.5 }}>
+                      {l.lote || "—"}
+                    </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600 }}>{l.qty_transfer}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#B45309" }}>{l.qty_reserve}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontWeight: 600 }}>
+                      {Math.max(0, Number(l.qty_transfer) - Number(l.qty_reserve))}
+                    </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#0B1E3A", fontWeight: 600 }}>
+                      ${lineCost.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                );
+              })}
+              <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
+                <td colSpan={4} style={{ color: "#0B1E3A" }}>{lang === "es" ? "Total" : "Total"}</td>
+                <td className="tabular-nums" style={{ textAlign: "right" }}>{totals.totalUnits}</td>
+                <td className="tabular-nums" style={{ textAlign: "right" }}>{totals.totalReserve}</td>
+                <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286" }}>{totals.totalFree}</td>
+                <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 14 }}>
+                  ${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ─── Recap narrativo ──────────────────────────────────── */}
+      <div style={{
+        background: "rgba(0,178,134,0.06)", border: "1px solid rgba(0,178,134,0.20)",
+        borderRadius: 10, padding: "12px 16px",
+        fontSize: 13, color: "#0B1E3A", lineHeight: 1.55,
+      }}>
+        <strong style={{ color: "#00B286" }}>✓ {lang === "es" ? "Resumen ejecutivo:" : "Executive summary:"}</strong>{" "}
+        {lang === "es" ? (
+          <>
+            Esta transferencia mueve <strong>{totals.totalUnits}</strong> u. de{" "}
+            <strong>{skusUnicos}</strong> producto{skusUnicos !== 1 ? "s" : ""} desde{" "}
+            <strong>{origen?.codigo || "—"}</strong> hacia{" "}
+            <strong>{destino?.codigo || "—"}</strong> bajo motivo{" "}
+            <strong>{legalLabel}</strong>.{" "}
+            {totals.totalCostUsd > 0 ? (
+              <>El costo total incremental es <strong>${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} USD</strong>{" "}
+                (≈ <strong>${costPerUnit.toLocaleString("en-US", { maximumFractionDigits: 4 })}/u</strong>),
+                distribuido en {costLines.length} línea{costLines.length !== 1 ? "s" : ""}{" "}
+                de costo y {costsByCurrency.length} moneda{costsByCurrency.length !== 1 ? "s" : ""}.</>
+            ) : (
+              <>No se registraron costos operativos incrementales — solo movimiento físico.</>
+            )}
+          </>
+        ) : (
+          <>
+            This transfer moves <strong>{totals.totalUnits}</strong> u. of{" "}
+            <strong>{skusUnicos}</strong> product{skusUnicos !== 1 ? "s" : ""} from{" "}
+            <strong>{origen?.codigo || "—"}</strong> to{" "}
+            <strong>{destino?.codigo || "—"}</strong> under <strong>{legalLabel}</strong>.{" "}
+            {totals.totalCostUsd > 0 ? (
+              <>Total incremental cost: <strong>${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} USD</strong>{" "}
+                (≈ <strong>${costPerUnit.toLocaleString("en-US", { maximumFractionDigits: 4 })}/u</strong>),
+                spread across {costLines.length} cost line{costLines.length !== 1 ? "s" : ""}{" "}
+                in {costsByCurrency.length} currenc{costsByCurrency.length !== 1 ? "ies" : "y"}.</>
+            ) : (
+              <>No incremental operating costs recorded — physical movement only.</>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── KPI tile usado en Step 4 ──
+function KpiTile({ label, value, accent }) {
+  return (
+    <div style={{
+      background: "#fff", padding: "10px 12px", borderRadius: 10,
+      border: "1px solid rgba(11,30,58,0.08)",
+    }}>
+      <div style={{
+        fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase",
+        color: "#64748B", fontWeight: 600, marginBottom: 4,
+      }}>{label}</div>
+      <div className="tabular-nums" style={{
+        fontSize: 18, fontWeight: 700,
+        color: accent || "#0B1E3A",
+      }}>{value}</div>
     </div>
   );
 }
