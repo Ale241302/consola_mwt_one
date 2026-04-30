@@ -17,7 +17,7 @@
 // (lo decide el backend; el front sólo muestra lo que reciba).
 // =====================================================================
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IconArrow, IconCheck, IconX, IconUpload, IconWarehouse, IconAlert,
@@ -27,7 +27,6 @@ import {
   nodosApi, proveedoresApi, transferenciasApi, productosApi,
   inboundApi,
 } from "../lib/api.js";
-import { useLang } from "../context/LangContext.jsx";
 
 // ─── Tipos de origen del inbound (alineado con SQL source_type_cat) ─
 const SOURCE_TYPES = [
@@ -90,7 +89,7 @@ function Stepper({ step, lang }) {
 // ─── Página principal ──────────────────────────────────────────────
 export default function InboundReceptionWizard() {
   const navigate = useNavigate();
-  const { lang } = useLang() || { lang: "es" };
+  const { lang = "es" } = useOutletContext() || {};
   const [step, setStep] = useState(1);
 
   // ── Estado paso 1: contexto ────────────────────────────────────
