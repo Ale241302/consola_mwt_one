@@ -104,10 +104,19 @@ class OcViewSet(viewsets.ViewSet):
         return Response(OcListSerializer(qs, many=True).data)
 
     def retrieve(self, request, pk=None):
+        # Lookup tolerante: UUID o codigo. Mismo patrón que Expediente.
+        o = None
         try:
             o = Oc.objects.get(pk=pk, is_active=True)
         except Oc.DoesNotExist:
-            return Response({"detail": "OC no existe"}, status=404)
+            o = None
+        except Exception:
+            o = None
+        if o is None:
+            try:
+                o = Oc.objects.get(codigo=pk, is_active=True)
+            except Oc.DoesNotExist:
+                return Response({"detail": "OC no existe"}, status=404)
         return Response(OcSerializer(o).data)
 
     def create(self, request):
@@ -261,12 +270,50 @@ class ExpedienteViewSet(viewsets.ViewSet):
         else:
             payload.pop("lines", None)
 
+        # ── Auto-crear OC si no viene oc_id ────────────────────────
+        # El wizard simplificado no pide OC explícitamente, pero la
+        # jerarquía de la UI espera que cada expediente tenga una OC
+        # padre (vista intermedia /expedientes/<oc_id>). Generamos una
+        # OC mínima en estado EMITIDA con codigo OC-YYYY-NNNN si el
+        # payload no la trae. R6 (sin FK) — el vínculo expediente.oc_id
+        # es solo lógico.
+        if not payload.get("oc_id"):
+            year = date.today().year
+            with connection.cursor() as c:
+                c.execute(
+                    "SELECT COUNT(*) FROM expedientes.oc WHERE codigo LIKE %s",
+                    [f"OC-{year}-%"],
+                )
+                n_oc = (c.fetchone() or [0])[0]
+            new_oc_id = uuid.uuid4()
+            new_oc_codigo = f"OC-{year}-{(n_oc + 1):04d}"
+            with connection.cursor() as c:
+                c.execute("""
+                    INSERT INTO expedientes.oc (
+                        id, codigo, client_id, brand_id,
+                        estado, moneda, issued_at, notas,
+                        is_active, created_at, updated_at
+                    ) VALUES (
+                        %s, %s, %s, %s,
+                        'EMITIDA', %s, NOW(), %s,
+                        TRUE, NOW(), NOW()
+                    )
+                """, [
+                    str(new_oc_id), new_oc_codigo,
+                    payload.get("client_id"), payload.get("brand_id"),
+                    payload.get("moneda") or "USD",
+                    f"Auto-creada por wizard simplificado para expediente {payload['codigo']}",
+                ])
+            payload["oc_id"] = str(new_oc_id)
+
         s = ExpedienteSerializer(data=payload)
         s.is_valid(raise_exception=True)
         new_id = uuid.uuid4()
         s.save(id=new_id)
 
         # Crear las líneas (R6: sin FK; usamos raw insert defensivo)
+        oc_id_val = payload.get("oc_id")
+        line_count = 0
         if isinstance(raw_lines, list) and raw_lines:
             with connection.cursor() as c:
                 for ln in raw_lines:
@@ -295,13 +342,28 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                 'PENDIENTE', TRUE, NOW(), NOW()
                             )
                         """, [
-                            str(uuid.uuid4()), str(new_id), None,
+                            str(uuid.uuid4()), str(new_id),
+                            str(oc_id_val) if oc_id_val else None,
                             sku, talla, cantidad,
                             (ln.get("product_label") or "")[:255],
                             str(ln.get("producto_id")) if ln.get("producto_id") else None,
                         ])
+                        line_count += 1
                     except Exception as e:
                         log.warning("[expediente.create] no pude insertar linea sku=%s: %s", sku, e)
+
+            # Actualizar lines_count en la OC para que el resumen sea coherente
+            if oc_id_val and line_count > 0:
+                try:
+                    with connection.cursor() as c:
+                        c.execute("""
+                            UPDATE expedientes.oc
+                               SET lines_count = COALESCE(lines_count, 0) + %s,
+                                   updated_at  = NOW()
+                             WHERE id = %s
+                        """, [line_count, str(oc_id_val)])
+                except Exception as e:
+                    log.warning("[expediente.create] no pude actualizar OC.lines_count: %s", e)
 
         return Response(s.data, status=201)
 

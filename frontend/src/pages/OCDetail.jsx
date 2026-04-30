@@ -24,7 +24,7 @@
 // Fuente de autoridad: RoleContext (can, isAdmin, isClient). La protección
 // real vive en el backend (apps.portal.ClientScopedManager + POL_VISIBILIDAD).
 // =====================================================================
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney } from "../lib/i18n.js";
 import { StatusBadge, CreditDot, CountryFlag } from "../components/ui/primitives.jsx";
@@ -37,6 +37,7 @@ import {
 } from "../data/mockData.js";
 import AddSAPConfirmationDrawer from "../components/expedientes/AddSAPConfirmationDrawer.jsx";
 import { useRole } from "../context/RoleContext.jsx";
+import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi } from "../lib/api.js";
 
 export default function ScreenOCDetail() {
   const navigate = useNavigate();
@@ -52,21 +53,104 @@ export default function ScreenOCDetail() {
     else navigate('/expedientes');
   };
 
-  // Si el ocId no matchea ningún mock, NO cayemos a OCS[0] (eso pintaba
-  // datos quemados de Andes Retail Co. cuando el usuario aterrizaba con
-  // un codigo real como EXP-2026-0001). En su lugar redirigimos al
-  // listado para que el usuario reintente desde ahí. Una alternativa
-  // sería fetch al API de OCs, pero por ahora el listado es suficiente.
+  // Lookup en mocks primero (HERO scenario). Si no está, fetch al API.
   const ocFromMock = OCS.find(o => o.id === ocId);
-  if (!ocFromMock) {
-    // Soft-redirect dentro de un useEffect-like effect: hacemos navigate
-    // y devolvemos null para no renderizar el detalle con datos basura.
-    if (typeof window !== "undefined") {
-      Promise.resolve().then(() => navigate('/expedientes', { replace: true }));
-    }
-    return null;
+  const [apiOc,         setApiOc]         = useState(null);
+  const [apiOcClient,   setApiOcClient]   = useState(null);
+  const [apiOcBrand,    setApiOcBrand]    = useState(null);
+  const [apiOcExpedientes, setApiOcExpedientes] = useState([]);
+  const [apiOcLines,    setApiOcLines]    = useState([]);
+  const [ocLoading,     setOcLoading]     = useState(!ocFromMock);
+  const [ocNotFound,    setOcNotFound]    = useState(false);
+
+  useEffect(() => {
+    if (ocFromMock) return;
+    let cancel = false;
+    setOcLoading(true); setOcNotFound(false);
+    // ocsApi.get tolera UUID o codigo (por compat similar a expedientes)
+    ocsApi.get(ocId)
+      .then(async (o) => {
+        if (cancel) return;
+        setApiOc(o);
+        const [cli, br, exps, lns] = await Promise.all([
+          o.client_id ? clientesApi.get(o.client_id).catch(() => null) : Promise.resolve(null),
+          o.brand_id  ? marcasApi.get(o.brand_id).catch(() => null)    : Promise.resolve(null),
+          expedientesApi.list({ oc: o.id }).catch(() => ({ results: [] })),
+          lineasApi.list({ oc: o.id }).catch(() => ({ results: [] })),
+        ]);
+        if (cancel) return;
+        setApiOcClient(cli);
+        setApiOcBrand(br);
+        setApiOcExpedientes(Array.isArray(exps) ? exps : (exps?.results || []));
+        setApiOcLines(Array.isArray(lns) ? lns : (lns?.results || []));
+      })
+      .catch(() => { if (!cancel) setOcNotFound(true); })
+      .finally(() => { if (!cancel) setOcLoading(false); });
+    return () => { cancel = true; };
+  }, [ocId, ocFromMock]);
+
+  // Mapper API → shape del UI mock-based
+  const mockOcFallback = OCS[0];
+  const oc = ocFromMock || (apiOc ? {
+    ...mockOcFallback,
+    id:           apiOc.id,
+    code:         apiOc.codigo,
+    codigo:       apiOc.codigo,
+    client_id:    apiOc.client_id,
+    brand_id:     apiOc.brand_id,
+    estado:       apiOc.estado,
+    status:       (apiOc.estado || "").toLowerCase() === "emitida" ? "emitida" : "in_progress",
+    moneda:       apiOc.moneda || "USD",
+    issued_at:    apiOc.issued_at || apiOc.created_at || null,
+    total_value:  Number(apiOc.total_value || 0),
+    total_invoiced: Number(apiOc.total_invoiced || 0),
+    total_paid:   Number(apiOc.total_paid || 0),
+    balance:      Number(apiOc.balance || 0),
+    coverage_pct: Number(apiOc.coverage_pct || 0),
+    lines_count:  apiOc.lines_count || 0,
+    lines_with_sap: apiOc.lines_with_sap || 0,
+    air_pct:      Number(apiOc.air_pct || 0),
+    sea_pct:      Number(apiOc.sea_pct || 0),
+    expedientes:  apiOcExpedientes.map(e => e.id),
+    lines:        apiOcLines.map(l => ({
+      id: l.id, sku: l.sku, talla: l.talla || l.size || "",
+      qty: Number(l.qty || 0), product_label: l.product_label || l.sku,
+      unit_price: Number(l.unit_price || 0),
+      total_price: Number(l.total_price || (Number(l.qty||0) * Number(l.unit_price||0))),
+      sap: l.sap || null, expediente_id: l.expediente_id,
+    })),
+  } : mockOcFallback);
+
+  // Loading / not-found states
+  if (ocLoading) {
+    return (
+      <div className="page" style={{ maxWidth: 1500, padding: 32 }}>
+        <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+          {lang === "es" ? "Cargando OC…" : "Loading OC…"}
+        </div>
+      </div>
+    );
   }
-  const oc = ocFromMock;
+  if (ocNotFound || !oc) {
+    return (
+      <div className="page" style={{ maxWidth: 1500, padding: 32 }}>
+        <button className="btn btn-ghost btn-sm" onClick={() => navigate('/expedientes')}
+                style={{ marginBottom: 14 }}>
+          <IconChevLeft size={14}/> {lang === "es" ? "Volver" : "Back"}
+        </button>
+        <div className="card card-pad-lg" style={{ textAlign: "center", padding: 48 }}>
+          <div style={{ fontWeight: 800, fontSize: 18, color: "#0B1E3A" }}>
+            {lang === "es" ? "OC no encontrada" : "OC not found"}
+          </div>
+          <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 6 }}>
+            {lang === "es"
+              ? `No existe una OC con id ${ocId}.`
+              : `No OC with id ${ocId}.`}
+          </div>
+        </div>
+      </div>
+    );
+  }
   const client = CLIENTS.find(c => c.id === oc.client_id);
   const brand  = BRANDS.find(b => b.id === oc.brand_id);
 
