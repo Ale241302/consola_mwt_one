@@ -49,10 +49,15 @@ export default function ScreenOCDetail() {
   const { isAdmin, isClient, can } = useRole();
   const ocId = paramOcId || HERO_OC_ID;
   const onBack = () => navigate('/expedientes');
-  const onOpenExpediente = (id) => {
-    const oc = OCS.find(o => o.expedientes.includes(id));
-    if (oc) navigate(`/expedientes/${oc.id}/exp/${id}`);
-    else navigate('/expedientes');
+  const onOpenExpediente = (expedienteId) => {
+    if (!expedienteId) return;
+    // Estamos dentro de OCDetail, así que el ocId del URL es el padre.
+    // Esto reemplaza el lookup en OCS (mocks) que fallaba para datos
+    // reales del API y caía a /expedientes (back al listado).
+    const ocIdParam = ocId || OCS.find(o => Array.isArray(o.expedientes)
+                              && o.expedientes.includes(expedienteId))?.id
+                          || 'none';
+    navigate(`/expedientes/${ocIdParam}/exp/${expedienteId}`);
   };
 
   // ── ⚠ ORDEN DE HOOKS ⚠ ──────────────────────────────────────
