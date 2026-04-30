@@ -433,11 +433,20 @@ class MovimientoViewSet(viewsets.ViewSet):
             "nodo_destino":    "nodo_destino_id",
             "referencia_id":   "referencia_id",
             "contexto_legal":  "contexto_legal",
+            # Sprint 2026-04-30 — filtro por lote para drawer detalle de lote
+            # en /inventario (StockMovementsDrawer.jsx).
+            "lote":            "lote",
         }
         for param, field in mapping.items():
             v = request.query_params.get(param)
             if v:
                 qs = qs.filter(**{field: v})
+        # Filtro especial: nodo (cualquiera origen O destino). Útil
+        # cuando queremos todos los movimientos que tocaron un nodo.
+        nodo = request.query_params.get("nodo")
+        if nodo:
+            from django.db.models import Q
+            qs = qs.filter(Q(nodo_origen_id=nodo) | Q(nodo_destino_id=nodo))
         limit = int(request.query_params.get("limit") or 200)
         return Response(MovimientoSerializer(qs[:limit], many=True).data)
 

@@ -2,30 +2,27 @@
 // InventoryDashboard — Supply chain visibility
 // Agente responsable: [AG-FRONTEND]
 //
-// KPIs cabecera (5):
+// KPIs cabecera (4):
 //   1. Stock Total          (sub: SKUs y nodos activos)
 //   2. Disponible           (sub: % del total sin reservar)
 //   3. Reservado            (sub: comprometido en expedientes/transfers)
 //   4. En Tránsito          (sub: unidades moviéndose entre nodos)
-//   5. Alertas de Quiebre   (SKUs <21 días de stock — crítico)
 //
 // Red de Nodos (strip horizontal compacto).
 // Tabla Inventario Global con:
-//   SKU · Producto · Nodo · Lote · Stock · Reservado · Disponible · Vendidos · Recibido · Salud
+//   SKU · Producto · Talla · Nodo · Lote · Stock · Reservado · Disponible
+//   · Vendidos · Recibido (clickable → ver movimientos)
 // ─────────────────────────────────────────────────────────────
 import React, { useMemo, useState, useEffect, useCallback } from "react";
 import { useOutletContext, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  IconSwap, IconPlus, IconSearch, IconX, IconWarehouse, IconAlert,
+  IconSwap, IconPlus, IconSearch, IconX, IconWarehouse,
   IconTruck, IconPackage, IconNetwork, IconShip, IconGrid, IconGlobe,
 } from "../lib/icons.jsx";
-import {
-  TRANSFERS_IN_TRANSIT,   // mock provisorio hasta que haya endpoint real
-  getDaysStockTier,
-} from "../data/mockData.js";
-import CreateTransferDrawer from "../components/inventario/CreateTransferDrawer.jsx";
-import ReceiveBatchModal   from "../components/inventario/ReceiveBatchModal.jsx";
+import { TRANSFERS_IN_TRANSIT } from "../data/mockData.js";
+import ReceiveBatchModal      from "../components/inventario/ReceiveBatchModal.jsx";
+import StockMovementsDrawer   from "../components/inventario/StockMovementsDrawer.jsx";
 import { createPortal } from "react-dom";
 import { stockApi, nodosApi } from "../lib/api.js";
 
@@ -35,18 +32,12 @@ import { stockApi, nodosApi } from "../lib/api.js";
 function mapStockFromApi(r) {
   const qty      = Number(r.cantidad_disponible || 0) + Number(r.cantidad_reservada || 0);
   const reserved = Number(r.cantidad_reservada || 0);
-  // dias_stock_minimo: si el backend no provee velocity real (ventas
-  // diarias × stock disponible), no inventamos un 60d falso — devolvemos
-  // null y la UI muestra "—". Solo cuando el backend tiene cálculo real
-  // se renderiza el chip de salud (verde/ámbar/rojo).
-  const diasRaw = r.dias_stock_minimo;
-  const diasNum = (diasRaw === null || diasRaw === undefined || diasRaw === '')
-    ? null
-    : Number(diasRaw);
   return {
     sku:       r.producto_sku    || (r.producto_id ? r.producto_id.slice(0, 8) : '—'),
     product:   r.producto_nombre || r.producto_sku || '—',
     node:      r.nodo_nombre     || r.nodo_codigo  || '—',
+    nodeId:    r.nodo_id || null,
+    productId: r.producto_id || null,
     // Sprint Inbound v2 — talla del lote (granularidad por size)
     size:      r.size || r.talla || '',
     lot:       r.lote || '—',
@@ -54,7 +45,6 @@ function mapStockFromApi(r) {
     reserved,
     vendidos:  0,
     received:  (r.last_movement_at || r.updated_at || '').slice(0, 10),
-    days_stock: diasNum,
     _raw: r,
   };
 }
@@ -67,19 +57,16 @@ const NODE_TYPE_META = {
   marketplace: { label:'Marketplace',icon: IconGlobe,     color:'#B45309' },
 };
 
-const HEALTH_META = {
-  OK:   { color:'#00B286', soft:'rgba(0,178,134,0.12)',  label:'Saludable' },
-  WARN: { color:'#B45309', soft:'rgba(180,83,9,0.12)',   label:'Vigilado' },
-  CRIT: { color:'#DC2626', soft:'rgba(220,38,38,0.12)',  label:'Stockout' },
-};
-
 export default function ScreenInventario() {
   const { lang } = useOutletContext();
   const navigate = useNavigate();
   const [q, setQ] = useState('');
   const [nodeFilter, setNodeFilter] = useState('ALL');
-  const [drawerOpen, setDrawerOpen]   = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
+  // Drawer de movimientos por (nodo, producto, lote) — el usuario clickea
+  // en la celda "Recibido" para ver el detalle del lote (qué movimiento
+  // creó esta fila: RECEPCION, TRANSFER de origen→destino, AJUSTE, etc.).
+  const [movDrawerRow, setMovDrawerRow] = useState(null);
 
   // ── Data desde API (fallback a mock) ────────
   const [apiStock,    setApiStock]    = useState([]);
@@ -128,10 +115,10 @@ export default function ScreenInventario() {
     const reservado  = INVENTORY.reduce((a,i) => a + i.reserved, 0);
     const disponible = stockTotal - reservado;
     const enTransito = TRANSFERS_IN_TRANSIT.reduce((a,t) => a + t.units_total, 0);
-    const alertas    = INVENTORY.filter(i => getDaysStockTier(i.days_stock) === 'CRIT').length;
+    const lotesActivos = INVENTORY.filter(i => i.qty > 0).length;
     const skusUnicos = new Set(INVENTORY.map(i => i.sku)).size;
     const nodosActivos = NODES.filter(n => n.status === 'ACTIVE').length;
-    return { stockTotal, disponible, reservado, enTransito, alertas, skusUnicos, nodosActivos };
+    return { stockTotal, disponible, reservado, enTransito, lotesActivos, skusUnicos, nodosActivos };
   }, [INVENTORY, NODES]);
 
   // ── Stock por nodo (para strip) ────────
@@ -223,16 +210,16 @@ export default function ScreenInventario() {
             {TRANSFERS_IN_TRANSIT.length} {lang==='es'?'transfers activas · moviéndose entre nodos':'active transfers · moving between nodes'}
           </div>
         </motion.div>
-        <motion.div className="kpi-tile kpi-alert" initial={{opacity:0,y:6}} animate={{opacity:1,y:0, transition:{delay:0.16, duration:0.25}}}>
-          <div className="k-label" style={{color:'var(--critical)'}}>
-            {lang==='es'?'Alertas de quiebre':'Stockout alerts'}
+        <motion.div className="kpi-tile" initial={{opacity:0,y:6}} animate={{opacity:1,y:0, transition:{delay:0.16, duration:0.25}}}>
+          <div className="k-label">
+            {lang==='es'?'Lotes activos':'Active lots'}
           </div>
-          <div className="k-value tabular-nums" style={{color:'var(--critical)'}}>
-            {kpis.alertas}
+          <div className="k-value tabular-nums" style={{color:'var(--brand-purple, #481EE3)'}}>
+            {kpis.lotesActivos}
           </div>
           <div className="k-sub">
-            <IconAlert size={10} style={{marginRight:4, verticalAlign:'-1px', color:'var(--critical)'}}/>
-            {lang==='es'?'SKU·nodos con <21 días de stock':'SKU·nodes with <21d stock'}
+            <IconPackage size={10} style={{marginRight:4, verticalAlign:'-1px'}}/>
+            {lang==='es'?'Lotes con stock disponible':'Lots with available stock'}
           </div>
         </motion.div>
       </div>
@@ -311,7 +298,6 @@ export default function ScreenInventario() {
         <table className="inv-table">
           <thead>
             <tr>
-              <th style={{width:32}}></th>
               <th>SKU</th>
               <th>{lang==='es'?'Producto':'Product'}</th>
               {/* Talla — granularidad del stock (sprint Inbound v2) */}
@@ -324,21 +310,15 @@ export default function ScreenInventario() {
               <th className="ta-right">{lang==='es'?'Reservado':'Reserved'}</th>
               <th className="ta-right">{lang==='es'?'Disponible':'Available'}</th>
               <th className="ta-right">{lang==='es'?'Vendidos':'Sold'}</th>
+              {/* Recibido: click → drawer con detalle del movimiento que
+                  generó esta fila (RECEPCION del nodo / TRANSFER origen→destino) */}
               <th>{lang==='es'?'Recibido':'Received'}</th>
-              <th className="ta-right"
-                  title={lang==='es'
-                    ? 'Días de stock estimados según velocity. Solo se calcula si el nodo tiene ventas históricas configuradas.'
-                    : 'Estimated days of stock based on velocity. Only computed if the node has historical sales configured.'}>
-                {lang==='es'?'Días':'Days'}
-              </th>
             </tr>
           </thead>
           <tbody>
             <AnimatePresence mode="popLayout">
               {rows.map((i, idx) => {
                 const available = i.qty - i.reserved;
-                const tier = getDaysStockTier(i.days_stock);
-                const h = HEALTH_META[tier];
                 const key = `${i.sku}-${i.node}-${i.lot}`;
                 return (
                   <motion.tr
@@ -350,11 +330,6 @@ export default function ScreenInventario() {
                     whileHover={{ backgroundColor:'rgba(0,178,134,0.04)' }}
                     className="inv-row"
                   >
-                    <td>
-                      <span className="health-dot"
-                            title={h.label}
-                            style={{'--dot-color': h.color}}/>
-                    </td>
                     <td className="mono-sm" style={{fontWeight:600, color:'var(--brand-purple, #481EE3)'}}>
                       {i.sku}
                     </td>
@@ -390,25 +365,38 @@ export default function ScreenInventario() {
                     <td className="ta-right tabular-nums">
                       <span className="inv-sold-pill">{i.vendidos.toLocaleString()}</span>
                     </td>
-                    <td className="caption mono-sm">{i.received}</td>
-                    <td className="ta-right">
-                      {i.days_stock != null ? (
-                        <span className="health-pill"
-                              title={lang==='es'
-                                ? `${i.days_stock} días estimados según velocity`
-                                : `${i.days_stock} estimated days based on velocity`}
-                              style={{'--h-color': h.color, '--h-soft': h.soft}}>
-                          <span className="dot"/>
-                          <span className="tabular-nums">{i.days_stock}d</span>
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}
-                              title={lang==='es'
-                                ? 'Sin velocity configurada para este nodo/producto. Se calcula a partir de ventas históricas.'
-                                : 'No velocity configured. Computed from historical sales.'}>
-                          —
-                        </span>
-                      )}
+                    {/* Recibido — clickable: abre drawer con movimientos
+                        del lote (RECEPCION del nodo · TRANSFER origen→destino) */}
+                    <td>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setMovDrawerRow(i); }}
+                        title={lang==='es' ? 'Ver detalle del lote' : 'View lot detail'}
+                        style={{
+                          display:'inline-flex', alignItems:'center', gap:6,
+                          background:'transparent', border:'1px solid transparent',
+                          borderRadius: 6, padding:'2px 8px',
+                          fontFamily:'var(--font-mono)', fontSize:11.5,
+                          color:'var(--brand-purple, #481EE3)', fontWeight:600,
+                          cursor:'pointer',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'rgba(72,30,227,0.06)';
+                          e.currentTarget.style.borderColor = 'rgba(72,30,227,0.20)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'transparent';
+                          e.currentTarget.style.borderColor = 'transparent';
+                        }}
+                      >
+                        <span>{i.received || '—'}</span>
+                        <svg width="11" height="11" viewBox="0 0 16 16" fill="none"
+                             style={{ opacity: 0.65 }}>
+                          <path d="M2 8s2.5-4.5 6-4.5S14 8 14 8s-2.5 4.5-6 4.5S2 8 2 8z"
+                                stroke="currentColor" strokeWidth="1.4"/>
+                          <circle cx="8" cy="8" r="1.8" fill="currentColor"/>
+                        </svg>
+                      </button>
                     </td>
                   </motion.tr>
                 );
@@ -435,6 +423,16 @@ export default function ScreenInventario() {
           lang={lang}
           onClose={()=>setReceiveOpen(false)}
           onSaved={()=>{ setReceiveOpen(false); load(); }}
+        />,
+        document.body
+      )}
+
+      {/* Drawer · detalle del lote (movimientos recibidos por el nodo) */}
+      {movDrawerRow && createPortal(
+        <StockMovementsDrawer
+          lang={lang}
+          row={movDrawerRow}
+          onClose={() => setMovDrawerRow(null)}
         />,
         document.body
       )}

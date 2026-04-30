@@ -17,7 +17,10 @@ class StockListSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Stock
         fields = (
-            "id", "nodo_id", "producto_id", "lote", "fecha_vencimiento",
+            "id", "nodo_id", "producto_id", "lote",
+            # Sprint Inbound v2 — talla del lote
+            "size",
+            "fecha_vencimiento",
             "cantidad_disponible", "cantidad_reservada", "cantidad_en_transito",
             "costo_unitario_usd", "costo_actual_usd",
             "cantidad_minima", "cantidad_maxima", "dias_stock_minimo",

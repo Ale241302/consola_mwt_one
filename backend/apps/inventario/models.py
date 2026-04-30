@@ -23,6 +23,10 @@ class Stock(models.Model):
     nodo_id               = models.UUIDField()                        # ⛔ sin FK
     producto_id           = models.UUIDField()                        # ⛔ sin FK
     lote                  = models.CharField(max_length=64, default="")
+    # Sprint Inbound v2 (2026-04-30): granularidad por talla (size).
+    # Columna creada por SQL 63_inventario_stock_by_size.sql + UNIQUE
+    # uq_stock_nodo_producto_lote_size con COALESCE(size, '').
+    size                  = models.CharField(max_length=16, null=True, blank=True)
     fecha_vencimiento     = models.DateField(null=True, blank=True)
 
     cantidad_disponible   = models.DecimalField(max_digits=14, decimal_places=3, default=0)
