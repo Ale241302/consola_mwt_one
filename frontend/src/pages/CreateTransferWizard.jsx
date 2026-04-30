@@ -936,12 +936,12 @@ function OcrSkillSidebar({ lang, skillKey }) {
 
         {/* Body */}
         <div style={{ padding: 16, display: "grid", gap: 10 }}>
-          <Row k={lang === "es" ? "Skill" : "Skill"}
-               v={skill?.codigo || skill?.skill_key || "—"}/>
-          <Row k={lang === "es" ? "Modelo activo" : "Active model"}
-               v={skill?.model_id || "—"} mono/>
-          <Row k={lang === "es" ? "Proveedor" : "Provider"}
-               v={skill?.model_provider_id || "—"}/>
+          <SkillRow k={lang === "es" ? "Skill" : "Skill"}
+                    v={skill?.codigo || skill?.skill_key || "—"}/>
+          <SkillRow k={lang === "es" ? "Modelo activo" : "Active model"}
+                    v={skill?.model_id || "—"} mono/>
+          <SkillRow k={lang === "es" ? "Proveedor" : "Provider"}
+                    v={skill?.model_provider_id || "—"}/>
           {skill?.system_prompt && (
             <div>
               <div className="micro" style={{
@@ -1002,7 +1002,7 @@ function OcrSkillSidebar({ lang, skillKey }) {
   );
 }
 
-function Row({ k, v, mono }) {
+function SkillRow({ k, v, mono }) {
   return (
     <div>
       <div className="micro" style={{
