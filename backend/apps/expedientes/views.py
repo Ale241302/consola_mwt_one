@@ -213,9 +213,81 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # admin. Deben usar /api/expedientes/create-from-oc/.
         denied = _deny_client_mutation(request, action_label="expediente.create")
         if denied is not None: return denied
-        s = ExpedienteSerializer(data=request.data)
+
+        # Sprint Wizard Simplificado (2026-04-29):
+        #   El wizard manda payload mínimo (client_id + estado + lines[])
+        #   sin id ni codigo. Aquí auto-generamos ambos antes de validar
+        #   y separamos las lines para crearlas después del expediente.
+        payload = dict(request.data) if hasattr(request.data, "items") else {}
+        # request.data puede ser QueryDict — pasarlo a dict mutable
+        try:
+            payload = {k: request.data.get(k) for k in request.data.keys()}
+        except Exception:
+            payload = dict(request.data)
+
+        # Auto-generar codigo si no viene
+        if not payload.get("codigo"):
+            year = date.today().year
+            with connection.cursor() as c:
+                c.execute(
+                    "SELECT COUNT(*) FROM expedientes.expediente WHERE codigo LIKE %s",
+                    [f"EXP-{year}-%"],
+                )
+                n = (c.fetchone() or [0])[0]
+            payload["codigo"] = f"EXP-{year}-{(n + 1):04d}"
+
+        # Separar lines del payload del Expediente (no es campo del modelo)
+        # request.data es QueryDict → toma getlist para arrays
+        raw_lines = None
+        if hasattr(request.data, "getlist"):
+            raw_lines = request.data.getlist("lines") or None
+        if raw_lines is None:
+            raw_lines = payload.pop("lines", None)
+        else:
+            payload.pop("lines", None)
+
+        s = ExpedienteSerializer(data=payload)
         s.is_valid(raise_exception=True)
-        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
+        new_id = uuid.uuid4()
+        s.save(id=new_id)
+
+        # Crear las líneas (R6: sin FK; usamos raw insert defensivo)
+        if isinstance(raw_lines, list) and raw_lines:
+            with connection.cursor() as c:
+                for ln in raw_lines:
+                    if not isinstance(ln, dict):
+                        continue
+                    sku   = (ln.get("sku") or "").strip().upper()[:64]
+                    if not sku:
+                        continue
+                    talla = (ln.get("talla") or "").strip().upper()[:16] or None
+                    cantidad = ln.get("cantidad") or ln.get("qty") or 0
+                    try:
+                        cantidad = int(cantidad)
+                    except (TypeError, ValueError):
+                        cantidad = 0
+                    if cantidad <= 0:
+                        continue
+                    try:
+                        c.execute("""
+                            INSERT INTO expedientes.linea (
+                                id, expediente_id, oc_id,
+                                sku, talla, qty, product_label, producto_id,
+                                estado, is_active, created_at, updated_at
+                            ) VALUES (
+                                %s, %s, %s,
+                                %s, %s, %s, %s, %s,
+                                'PENDIENTE', TRUE, NOW(), NOW()
+                            )
+                        """, [
+                            str(uuid.uuid4()), str(new_id), None,
+                            sku, talla, cantidad,
+                            (ln.get("product_label") or "")[:255],
+                            str(ln.get("producto_id")) if ln.get("producto_id") else None,
+                        ])
+                    except Exception as e:
+                        log.warning("[expediente.create] no pude insertar linea sku=%s: %s", sku, e)
+
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):

@@ -49,13 +49,29 @@ class ExpedienteSerializer(serializers.ModelSerializer):
       El expediente nace en estado REGISTRO sin esos datos; el OPERATOR
       los completa en el detalle antes de la transicion T2 (REGISTRO ->
       PRODUCCION). El frontend NO debe pedirlos en el wizard.
+
+      Adicionalmente, `id` y `codigo` se vuelven opcionales en input:
+      el ViewSet inyecta UUID y autogenera codigo (EXP-YYYY-NNNN) si
+      no vienen en el payload. Asi el wizard puede hacer un POST minimo
+      con solo client_id + estado.
     """
+    # id es PK pero el view lo inyecta vía s.save(id=uuid.uuid4()).
+    # Marcarlo read_only impide que DRF lo exija en el body.
+    id              = serializers.UUIDField(read_only=True)
+    codigo          = serializers.CharField(max_length=32, required=False,
+                                            allow_blank=True, allow_null=True)
     brand_id        = serializers.UUIDField(required=False, allow_null=True)
     modo_operacion  = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     moneda          = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     incoterm        = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     freight_mode    = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     dispatch_mode   = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+    # Permitimos que el wizard incluya `lines` en el payload — el ViewSet
+    # las pop()-ea antes de validar y las crea como Linea aparte. Aqui
+    # solo aceptamos el campo para que DRF no falle con "extra fields".
+    lines           = serializers.ListField(child=serializers.DictField(),
+                                            required=False, write_only=True)
 
     class Meta:
         model  = Expediente
