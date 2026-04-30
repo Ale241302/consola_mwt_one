@@ -16,16 +16,17 @@
 // POL_VISIBILIDAD: el costo unitario USD se enmascara para no-CEO
 // (lo decide el backend; el front sólo muestra lo que reciba).
 // =====================================================================
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IconArrow, IconCheck, IconX, IconUpload, IconWarehouse, IconAlert,
   IconSparkle, IconFileText, IconPackage, IconTruck, IconRefresh,
+  IconTrash,
 } from "../lib/icons.jsx";
 import {
   nodosApi, proveedoresApi, transferenciasApi, productosApi,
-  inboundApi,
+  inboundApi, tallasApi,
 } from "../lib/api.js";
 
 // ─── Tipos de origen del inbound (alineado con SQL source_type_cat) ─
@@ -113,6 +114,12 @@ export default function InboundReceptionWizard() {
   const [proveedores, setProveedores] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [productos, setProductos] = useState([]);
+  // Mapa { uuid_talla → label } del Motor de Tallas, para resolver
+  // los IDs guardados en producto.tallas a etiquetas humanas (43, M, …).
+  const [sizingMap, setSizingMap] = useState({});
+  // Cache de tallas asignadas por producto.id (lleno cuando el usuario
+  // escoge un SKU). Estructura: { producto_id: [labels...] }
+  const [tallasByProducto, setTallasByProducto] = useState({});
 
   // Cargar catálogos
   useEffect(() => {
@@ -133,7 +140,45 @@ export default function InboundReceptionWizard() {
     productosApi.list({ is_active: "true", limit: 500 })
       .then((d) => setProductos(Array.isArray(d) ? d : (d?.results || [])))
       .catch(() => setProductos([]));
+    // Catálogo del Motor de Tallas — uuid → label
+    tallasApi.list({ limit: 500 })
+      .then((d) => {
+        const arr = Array.isArray(d) ? d : (d?.results || []);
+        const m = {};
+        for (const sz of arr) {
+          const label = sz.talla_base || sz.eu || sz.us_men || sz.nombre || sz.codigo || "—";
+          m[String(sz.id)] = label;
+        }
+        setSizingMap(m);
+      })
+      .catch(() => setSizingMap({}));
   }, []);
+
+  // ── Resolver tallas asignadas a un producto (lazy + cached) ──
+  const resolveProductSizes = useCallback(async (productoId) => {
+    if (!productoId) return [];
+    if (tallasByProducto[productoId]) return tallasByProducto[productoId];
+    try {
+      const full = await productosApi.get(productoId);
+      const ids  = Array.isArray(full?.tallas) ? full.tallas : [];
+      const labels = [];
+      for (const t of ids) {
+        if (typeof t === "object" && t) {
+          const lbl = t.talla_base || t.eu || t.us_men || t.codigo || t.nombre;
+          if (lbl) labels.push(lbl);
+        } else {
+          const lbl = sizingMap[String(t)];
+          if (lbl) labels.push(lbl);
+        }
+      }
+      const dedup = Array.from(new Set(labels));
+      const out = dedup.length ? dedup : ["ÚNICA"];
+      setTallasByProducto((p) => ({ ...p, [productoId]: out }));
+      return out;
+    } catch {
+      return ["ÚNICA"];
+    }
+  }, [sizingMap, tallasByProducto]);
 
   // Cargar transferencias en tránsito al cambiar a TRANSFER_IN
   useEffect(() => {
@@ -329,6 +374,8 @@ export default function InboundReceptionWizard() {
           <motion.div key="step2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.22 }}>
             <Step2Reconcile
+              tallasByProducto={tallasByProducto}
+              resolveProductSizes={resolveProductSizes}
               lang={lang}
               lines={lines}
               productos={productos}
@@ -605,7 +652,10 @@ function Step1Context({
 // =====================================================================
 // PASO 2 — Reconciliación (Grid editable)
 // =====================================================================
-function Step2Reconcile({ lang, lines, productos, onUpdate, onRemove, onAdd }) {
+function Step2Reconcile({
+  lang, lines, productos, onUpdate, onRemove, onAdd,
+  tallasByProducto = {}, resolveProductSizes = async () => [],
+}) {
   const findProductoBySku = (sku) => productos.find(
     (p) => String(p.sku || "").toUpperCase() === String(sku || "").toUpperCase()
   );
@@ -655,7 +705,7 @@ function Step2Reconcile({ lang, lines, productos, onUpdate, onRemove, onAdd }) {
                         style={{ marginBottom: 4 }}
                         value={l.product_sku}
                         placeholder="SKU"
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           const sku = e.target.value.toUpperCase();
                           const p = findProductoBySku(sku);
                           onUpdate(l._key, {
@@ -663,6 +713,8 @@ function Step2Reconcile({ lang, lines, productos, onUpdate, onRemove, onAdd }) {
                             producto_id: p?.id || null,
                             product_label: p?.nombre || l.product_label,
                           });
+                          // Lazy: resuelve tallas asignadas al producto
+                          if (p?.id) await resolveProductSizes(p.id);
                         }}
                       />
                       <input
@@ -672,13 +724,36 @@ function Step2Reconcile({ lang, lines, productos, onUpdate, onRemove, onAdd }) {
                         placeholder={lang === "es" ? "Descripción" : "Description"}
                         onChange={(e) => onUpdate(l._key, { product_label: e.target.value })}
                       />
-                      <input
-                        className="input mono-sm"
-                        style={{ fontSize: 11, marginTop: 4, maxWidth: 80 }}
-                        value={l.talla}
-                        placeholder={lang === "es" ? "Talla" : "Size"}
-                        onChange={(e) => onUpdate(l._key, { talla: e.target.value.toUpperCase() })}
-                      />
+                      {/* Talla SELECT con tallas asignadas al producto.
+                          Si aún no se resuelven (producto sin id), o no
+                          tiene tallas, deja un input libre como fallback. */}
+                      {(() => {
+                        const sizes = (l.producto_id && tallasByProducto[l.producto_id]) || null;
+                        if (sizes && sizes.length > 0) {
+                          return (
+                            <select
+                              className="input mono-sm"
+                              style={{ fontSize: 11, marginTop: 4, maxWidth: 110 }}
+                              value={l.talla || ""}
+                              onChange={(e) => onUpdate(l._key, { talla: e.target.value.toUpperCase() })}
+                            >
+                              <option value="">— {lang === "es" ? "Talla" : "Size"} —</option>
+                              {sizes.map((s) => (
+                                <option key={s} value={s}>{s}</option>
+                              ))}
+                            </select>
+                          );
+                        }
+                        return (
+                          <input
+                            className="input mono-sm"
+                            style={{ fontSize: 11, marginTop: 4, maxWidth: 110 }}
+                            value={l.talla}
+                            placeholder={lang === "es" ? "Talla" : "Size"}
+                            onChange={(e) => onUpdate(l._key, { talla: e.target.value.toUpperCase() })}
+                          />
+                        );
+                      })()}
                     </td>
                     <td style={td}>
                       <input
@@ -740,8 +815,11 @@ function Step2Reconcile({ lang, lines, productos, onUpdate, onRemove, onAdd }) {
                       />
                     </td>
                     <td style={td}>
-                      <button className="btn" onClick={() => onRemove(l._key)}>
-                        <IconX size={11}/>
+                      <button className="btn btn-ghost btn-sm"
+                              onClick={() => onRemove(l._key)}
+                              title={lang === "es" ? "Quitar línea" : "Remove line"}
+                              style={{ color: "#D64545", padding: "6px 8px" }}>
+                        <IconTrash size={13}/>
                       </button>
                     </td>
                   </tr>

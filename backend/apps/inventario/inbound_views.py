@@ -315,8 +315,11 @@ class InboundReceiveView(APIView):
 
 
 def _apply_to_stock(node_id, lines, *, actor_id=None, actor_name=None):
-    """Suma cada línea al stock del nodo destino. Idempotente para
-    blind receipts: si producto_id es null, omitimos esa línea."""
+    """Suma cada línea al stock del nodo destino, **por talla**.
+    Granularidad: (nodo, producto, lote, talla). Si una fila existe con
+    la misma combinación, sumamos la cantidad recibida. Si no, insert
+    nuevo. Si producto_id es null (blind receipt) → omitimos la fila.
+    """
     with connection.cursor() as c:
         for ln in lines:
             producto_id = ln.get("producto_id")
@@ -326,17 +329,48 @@ def _apply_to_stock(node_id, lines, *, actor_id=None, actor_name=None):
             if recv <= 0:
                 continue
             lote = (ln.get("lote_code") or "")[:64]
+            talla = (ln.get("talla") or "").strip().upper()[:16] or None
             unit_cost = ln.get("unit_cost_usd")
             try:
-                # UPSERT vía ON CONFLICT (producto, nodo, lote).
+                # 1) ¿Ya existe la fila (nodo, producto, lote, talla)?
                 c.execute("""
-                    INSERT INTO inventario.stock
-                        (id, nodo_id, producto_id, lote, cantidad_disponible,
-                         costo_unitario_usd, last_movement_at, is_active, created_at, updated_at)
-                    VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, NOW(), TRUE, NOW(), NOW())
-                """, [str(node_id), str(producto_id), lote, recv, unit_cost])
+                    SELECT id, cantidad_disponible
+                      FROM inventario.stock
+                     WHERE nodo_id = %s::uuid
+                       AND producto_id = %s::uuid
+                       AND lote = %s
+                       AND COALESCE(size, '') = COALESCE(%s, '')
+                       AND is_active = TRUE
+                     LIMIT 1
+                """, [str(node_id), str(producto_id), lote, talla])
+                row = c.fetchone()
+                if row:
+                    # 2) UPDATE — suma la qty recibida
+                    new_qty = float(row[1] or 0) + recv
+                    c.execute("""
+                        UPDATE inventario.stock
+                           SET cantidad_disponible = %s,
+                               costo_unitario_usd  = COALESCE(%s, costo_unitario_usd),
+                               last_movement_at    = NOW(),
+                               updated_at          = NOW()
+                         WHERE id = %s
+                    """, [new_qty, unit_cost, row[0]])
+                else:
+                    # 3) INSERT — fila nueva por talla
+                    c.execute("""
+                        INSERT INTO inventario.stock (
+                            id, nodo_id, producto_id, lote, size,
+                            cantidad_disponible, costo_unitario_usd,
+                            last_movement_at, is_active, created_at, updated_at
+                        )
+                        VALUES (gen_random_uuid(), %s, %s, %s, %s,
+                                %s, %s,
+                                NOW(), TRUE, NOW(), NOW())
+                    """, [str(node_id), str(producto_id), lote, talla,
+                          recv, unit_cost])
             except Exception as e:
-                log.warning("[apply_to_stock] no pude insertar stock: %s", e)
+                log.warning("[apply_to_stock] no pude actualizar stock sku=%s talla=%s: %s",
+                            ln.get("product_sku"), talla, e)
 
 
 def _serialize_recepcion(recepcion_id, *, mask_costs=False):

@@ -20,7 +20,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   IconChevLeft, IconChevRight, IconCheck, IconX, IconAlert, IconPlus,
   IconUpload, IconRefresh, IconTruck, IconArrow, IconFileText,
-  IconPackage, IconDollar, IconSettings, IconSparkle,
+  IconPackage, IconDollar, IconSettings, IconSparkle, IconTrash,
 } from "../lib/icons.jsx";
 import { fmtMoney } from "../lib/i18n.js";
 import {
@@ -131,18 +131,26 @@ export default function CreateTransferWizard() {
       const arr = Array.isArray(d) ? d : (d?.results || []);
       const onNode = arr.filter((r) => !r.nodo_id || String(r.nodo_id) === String(origenId));
 
+      // Buckets por (producto, lote, talla) — sprint Stock-by-size.
+      // Cada talla del mismo SKU tiene su bucket independiente para que
+      // el operador pueda transferir, ej., 5 unidades de talla 43 sin
+      // tocar las 3 unidades de talla 44 del mismo lote.
       const buckets   = new Map();
       const noLoteAdj = new Map();
 
       for (const r of onNode) {
         const a = adaptStockRow(r);
         const productoId = a.producto_id || a.sku || "";
+        const tallaKey   = (a.size || "").toUpperCase();
         if (!a.lote) {
-          const cur = noLoteAdj.get(productoId) || 0;
-          noLoteAdj.set(productoId, cur + a.qty_disponible);
+          // Ajustes sin lote → se aplican al bucket más grande del
+          // mismo producto + talla.
+          const k = `${productoId}|${tallaKey}`;
+          const cur = noLoteAdj.get(k) || 0;
+          noLoteAdj.set(k, cur + a.qty_disponible);
           continue;
         }
-        const key = `${productoId}|${a.lote}`;
+        const key = `${productoId}|${a.lote}|${tallaKey}`;
         const prev = buckets.get(key);
         if (prev) {
           prev.qty_disponible += a.qty_disponible;
@@ -155,11 +163,16 @@ export default function CreateTransferWizard() {
         }
       }
 
-      // Aplicar ajustes sin lote al bucket más grande del mismo producto.
-      for (const [productoId, adj] of noLoteAdj.entries()) {
+      // Aplicar ajustes sin lote al bucket más grande del mismo
+      // (producto, talla).
+      for (const [pidTalla, adj] of noLoteAdj.entries()) {
         if (adj === 0) continue;
+        const [productoId, tallaKey] = pidTalla.split("|");
         const productBuckets = Array.from(buckets.values())
-          .filter((b) => (b.producto_id || b.sku) === productoId)
+          .filter((b) =>
+            (b.producto_id || b.sku) === productoId
+            && String(b.size || "").toUpperCase() === tallaKey
+          )
           .sort((a, b) => b.qty_disponible - a.qty_disponible);
         if (productBuckets.length === 0) continue;
         productBuckets[0].qty_disponible += adj;
@@ -1250,15 +1263,25 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
         </div>
       ) : (
         <div className="card card-pad-0" style={{ overflow: "hidden" }}>
-          <table className="table">
+          <table className="table" style={{ tableLayout: "fixed" }}>
+            <colgroup>
+              <col style={{ width: 170 }}/>
+              <col/>
+              <col style={{ width: 120 }}/>
+              <col style={{ width: 80 }}/>
+              <col style={{ width: 100 }}/>
+              <col style={{ width: 110 }}/>
+              <col style={{ width: 110 }}/>
+              <col style={{ width: 50 }}/>
+            </colgroup>
             <thead>
               <tr>
                 <th>{lang === "es" ? "Tipo" : "Kind"}</th>
                 <th>{lang === "es" ? "Detalle" : "Label"}</th>
-                <th style={{ textAlign: "right" }}>{lang === "es" ? "Monto" : "Amount"}</th>
+                <th style={{ textAlign: "right", paddingRight: 18 }}>{lang === "es" ? "Monto" : "Amount"}</th>
                 <th style={{ textAlign: "center" }}>{lang === "es" ? "Moneda" : "Curr."}</th>
-                <th style={{ textAlign: "right" }}>FX→USD</th>
-                <th style={{ textAlign: "right" }}>USD</th>
+                <th style={{ textAlign: "right", paddingRight: 18 }}>FX→USD</th>
+                <th style={{ textAlign: "right", paddingRight: 18 }}>USD</th>
                 <th style={{ textAlign: "center" }}>{lang === "es" ? "Origen" : "Source"}</th>
                 <th></th>
               </tr>
@@ -1271,7 +1294,7 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
                 return (
                   <tr key={c.tmpId}>
                     <td>
-                      <select className="input" style={{ minWidth: 150 }}
+                      <select className="input" style={{ width: "100%" }}
                               value={c.kind}
                               onChange={(e) => updateCostLine(c.tmpId, { kind: e.target.value })}>
                         {costKinds.map((k) => (
@@ -1280,29 +1303,29 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
                       </select>
                     </td>
                     <td>
-                      <input className="input" value={c.label || ""}
+                      <input className="input" style={{ width: "100%" }} value={c.label || ""}
                              onChange={(e) => updateCostLine(c.tmpId, { label: e.target.value })}
                              placeholder={labelForKind(costKinds, c.kind)}/>
                     </td>
-                    <td>
+                    <td style={{ textAlign: "right", paddingRight: 18 }}>
                       <input className="input tabular-nums" type="number" step="0.01" min="0"
-                             style={{ width: 110, textAlign: "right" }}
+                             style={{ width: "100%", textAlign: "right" }}
                              value={c.amount}
                              onChange={(e) => updateCostLine(c.tmpId, { amount: e.target.value })}/>
                     </td>
                     <td style={{ textAlign: "center" }}>
                       <input className="input mono-sm"
-                             style={{ width: 60, textAlign: "center" }}
+                             style={{ width: "100%", textAlign: "center" }}
                              value={c.currency}
                              onChange={(e) => updateCostLine(c.tmpId, { currency: e.target.value.toUpperCase().slice(0,3) })}/>
                     </td>
-                    <td>
+                    <td style={{ textAlign: "right", paddingRight: 18 }}>
                       <input className="input tabular-nums" type="number" step="0.0001" min="0"
-                             style={{ width: 90, textAlign: "right" }}
+                             style={{ width: "100%", textAlign: "right" }}
                              value={c.fx_to_usd}
                              onChange={(e) => updateCostLine(c.tmpId, { fx_to_usd: e.target.value })}/>
                     </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#0B1E3A" }}>
+                    <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 18, fontWeight: 700, color: "#0B1E3A" }}>
                       ${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
                     </td>
                     <td style={{ textAlign: "center" }}>
@@ -1322,11 +1345,12 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
                         }}>MANUAL</span>
                       )}
                     </td>
-                    <td>
+                    <td style={{ textAlign: "center" }}>
                       <button className="btn btn-ghost btn-sm"
                               onClick={() => removeCostLine(c.tmpId)}
-                              style={{ color: "#D64545" }}>
-                        <IconX size={11}/>
+                              title={lang === "es" ? "Quitar costo" : "Remove cost"}
+                              style={{ color: "#D64545", padding: "4px 6px" }}>
+                        <IconTrash size={13}/>
                       </button>
                     </td>
                   </tr>
@@ -1435,15 +1459,26 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
         </div>
       ) : (
         <div className="card card-pad-0">
-          <table className="table">
+          <table className="table" style={{ tableLayout: "fixed" }}>
+            <colgroup>
+              <col style={{ width: 130 }}/>{/* SKU / Lote */}
+              <col style={{ width: 80 }}/>{/* Talla */}
+              <col/>                        {/* Producto */}
+              <col style={{ width: 100 }}/>{/* Disp. origen */}
+              <col style={{ width: 100 }}/>{/* Transferir */}
+              <col style={{ width: 100 }}/>{/* Reservar */}
+              <col style={{ width: 80 }}/>{/* Libre */}
+              <col style={{ width: 50 }}/>{/* Trash */}
+            </colgroup>
             <thead>
               <tr>
                 <th>SKU / {lang === "es" ? "Lote" : "Lot"}</th>
+                <th style={{ textAlign: "center" }}>{lang === "es" ? "Talla" : "Size"}</th>
                 <th>{lang === "es" ? "Producto" : "Product"}</th>
-                <th style={{ textAlign: "right" }}>{lang === "es" ? "Disp. origen" : "Avail. orig."}</th>
-                <th style={{ textAlign: "right" }}>{lang === "es" ? "Transferir" : "Transfer"}</th>
-                <th style={{ textAlign: "right" }}>{lang === "es" ? "Reservar" : "Reserve"}</th>
-                <th style={{ textAlign: "right" }}>{lang === "es" ? "Libre" : "Free"}</th>
+                <th style={{ textAlign: "right", paddingRight: 14 }}>{lang === "es" ? "Disp. origen" : "Avail. orig."}</th>
+                <th style={{ textAlign: "right", paddingRight: 14 }}>{lang === "es" ? "Transferir" : "Transfer"}</th>
+                <th style={{ textAlign: "right", paddingRight: 14 }}>{lang === "es" ? "Reservar" : "Reserve"}</th>
+                <th style={{ textAlign: "right", paddingRight: 14 }}>{lang === "es" ? "Libre" : "Free"}</th>
                 <th></th>
               </tr>
             </thead>
@@ -1454,32 +1489,42 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
                 return (
                   <tr key={l.tmpId} style={overstock ? { background: "#FEF3C7" } : null}>
                     <td className="mono-sm">
-                      <div>{l.sku}</div>
-                      {l.lote && <div className="caption">L: {l.lote}</div>}
-                      {l.size && <div className="caption">· {l.size}</div>}
+                      <div style={{ fontWeight: 600 }}>{l.sku}</div>
+                      {l.lote && <div className="caption" style={{ marginTop: 2 }}>L: {l.lote}</div>}
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      {l.size
+                        ? <span className="size-chip" style={{
+                            display: "inline-block",
+                            padding: "2px 10px", borderRadius: 999,
+                            background: "rgba(72,30,227,0.10)", color: "#481EE3",
+                            fontSize: 12, fontWeight: 700,
+                          }}>{l.size}</span>
+                        : <span className="caption" style={{ color: "var(--text-tertiary)" }}>—</span>}
                     </td>
                     <td>{l.product_label}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>{l.disponible}</td>
-                    <td>
+                    <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 14 }}>{l.disponible}</td>
+                    <td style={{ textAlign: "right", paddingRight: 14 }}>
                       <input className="input tabular-nums" type="number" min="0" max={l.disponible}
-                             style={{ width: 80, textAlign: "right" }}
+                             style={{ width: "100%", textAlign: "right" }}
                              value={l.qty_transfer}
                              onChange={(e) => updateProductLine(l.tmpId, { qty_transfer: Number(e.target.value) })}/>
                     </td>
-                    <td>
+                    <td style={{ textAlign: "right", paddingRight: 14 }}>
                       <input className="input tabular-nums" type="number" min="0" max={l.qty_transfer}
-                             style={{ width: 80, textAlign: "right" }}
+                             style={{ width: "100%", textAlign: "right" }}
                              value={l.qty_reserve}
                              onChange={(e) => updateProductLine(l.tmpId, { qty_reserve: Math.min(Number(e.target.value), Number(l.qty_transfer || 0)) })}/>
                     </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600, color: "#00B286" }}>
+                    <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 14, fontWeight: 600, color: "#00B286" }}>
                       {free}
                     </td>
-                    <td>
+                    <td style={{ textAlign: "center" }}>
                       <button className="btn btn-ghost btn-sm"
                               onClick={() => removeProductLine(l.tmpId)}
-                              style={{ color: "#D64545" }}>
-                        <IconX size={11}/>
+                              title={lang === "es" ? "Quitar línea" : "Remove line"}
+                              style={{ color: "#D64545", padding: "4px 6px" }}>
+                        <IconTrash size={13}/>
                       </button>
                     </td>
                   </tr>
