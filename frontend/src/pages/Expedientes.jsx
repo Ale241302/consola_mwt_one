@@ -36,7 +36,7 @@ import {
   BRANDS, CLIENTS, STATES, PHASE_BASELINE,
   OCS as MOCK_OCS,
 } from "../data/mockData.js";
-import { expedientesApi, ocsApi } from "../lib/api.js";
+import { expedientesApi, ocsApi, clientesApi } from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
 
 // ── Mapeo backend → UI ────────
@@ -125,7 +125,42 @@ export default function ScreenExpedientes() {
       ]);
       const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
       const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
-      setApiExpedientes(expItems.map(mapExpedienteFromApi));
+      const mapped   = expItems.map(mapExpedienteFromApi);
+
+      // ── Enriquecimiento batch: hidratar nombre de cliente y días
+      // de crédito desde /api/clientes (un fetch por client_id único).
+      // Sin esto el listado mostraba "🌐" (CountryFlag con país vacío)
+      // y "0d" para los días de crédito porque expedientes.expediente
+      // no guarda esos campos — viven en clientes.cliente.
+      const uniqueClientIds = Array.from(new Set(
+        mapped.map(e => e.client_id).filter(Boolean)
+      ));
+      let clientMap = {};
+      if (uniqueClientIds.length > 0) {
+        try {
+          const cliResults = await Promise.all(
+            uniqueClientIds.map(id => clientesApi.get(id).catch(() => null))
+          );
+          clientMap = cliResults.reduce((acc, c) => {
+            if (c?.id) acc[c.id] = c;
+            return acc;
+          }, {});
+        } catch { clientMap = {}; }
+      }
+      const enriched = mapped.map(e => {
+        const cli = clientMap[e.client_id];
+        if (!cli) return e;
+        return {
+          ...e,
+          client:         cli.razon_social || cli.nombre || cli.codigo || e.client,
+          client_country: cli.pais_iso2 || e.client_country,
+          credit_days:    Number(
+            cli.dias_credito ?? cli.credit_days ?? cli.credito_dias ?? e.credit_days ?? 0
+          ),
+        };
+      });
+
+      setApiExpedientes(enriched);
       setApiOcs(ocItems);
     } catch {
       setApiExpedientes([]);
@@ -462,7 +497,9 @@ export default function ScreenExpedientes() {
               <th style={{width:38}}></th>
               <th>{tr(lang,'ref')}</th>
               <th>{tr(lang,'client')}</th>
-              <th>{tr(lang,'brand')}</th>
+              {/* Columna MARCA quitada — el wizard simplificado no asigna
+                  marca en el create, y para el listado el cliente tiene
+                  más prioridad informativa que la marca por expediente. */}
               <th>{tr(lang,'status')}</th>
               {effectiveView === 'ops' && <>
                 <th style={{width:210}}>{lang==='es'?'Timeline · Semáforo':'Timeline · Signal'}</th>
@@ -545,18 +582,18 @@ export default function ScreenExpedientes() {
                     </td>
                     <td>
                       <div className="flex ai-center gap-2">
-                        <CountryFlag country={e.client_country}/>
-                        <span style={{fontWeight: 500}}>{e.client}</span>
+                        {/* CountryFlag quitado: el avión que veías era el
+                            placeholder cuando no había country_iso2 en la
+                            data del expediente. Ahora mostramos solo el
+                            nombre del cliente, que viene hidratado desde
+                            /api/clientes/<id> en el batch enrich. */}
+                        <span style={{fontWeight: 500}}>{e.client || '—'}</span>
                       </div>
-                      <div className="caption" style={{ marginTop: 2 }}>{e.destination}</div>
+                      {e.destination && (
+                        <div className="caption" style={{ marginTop: 2 }}>{e.destination}</div>
+                      )}
                     </td>
-                    <td>
-                      <div className="flex ai-center gap-2">
-                        <span style={{ width:8, height:8, background: brand?.color, borderRadius: 2 }}/>
-                        <span>{e.brand}</span>
-                      </div>
-                      <div className="caption" style={{marginTop:2}}>{e.op_mode === 'COMISION' ? `${tr(lang,'commission')} ${(e.commission_pct*100).toFixed(1)}%` : tr(lang,'full_mode')}</div>
-                    </td>
+                    {/* Columna MARCA eliminada (header y body). */}
                     <td><StatusBadge status={e.status} lang={lang}/></td>
 
                     {effectiveView === 'ops' && <>

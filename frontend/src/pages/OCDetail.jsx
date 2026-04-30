@@ -37,7 +37,8 @@ import {
 } from "../data/mockData.js";
 import AddSAPConfirmationDrawer from "../components/expedientes/AddSAPConfirmationDrawer.jsx";
 import { useRole } from "../context/RoleContext.jsx";
-import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi } from "../lib/api.js";
+import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
+         clientAssignmentsApi } from "../lib/api.js";
 
 export default function ScreenOCDetail() {
   const navigate = useNavigate();
@@ -70,6 +71,10 @@ export default function ScreenOCDetail() {
   const [apiOcLines,    setApiOcLines]    = useState([]);
   const [ocLoading,     setOcLoading]     = useState(!ocFromMock);
   const [ocNotFound,    setOcNotFound]    = useState(false);
+  // Mapa { sku → precio_cliente } desde commercial/client-assignments
+  // (CPA = Client-Product-Assignment). Se aplica al render de líneas
+  // para mostrar el precio negociado con ESE cliente, no el lista.
+  const [cpaPriceMap,   setCpaPriceMap]   = useState({});
 
   // Hooks que estaban más abajo (causaban React error #310 al venir
   // después de early returns). Subidos al tope para garantizar orden
@@ -92,34 +97,59 @@ export default function ScreenOCDetail() {
       .then(async (o) => {
         if (cancel) return;
         setApiOc(o);
-        const [cli, br, exps, lns] = await Promise.all([
+        const [cli, br, exps, lns, cpa] = await Promise.all([
           o.client_id ? clientesApi.get(o.client_id).catch(() => null) : Promise.resolve(null),
           o.brand_id  ? marcasApi.get(o.brand_id).catch(() => null)    : Promise.resolve(null),
           expedientesApi.list({ oc: o.id }).catch(() => ({ results: [] })),
           lineasApi.list({ oc: o.id }).catch(() => ({ results: [] })),
+          // CPA: precios cliente-producto del cliente de la OC.
+          o.client_id
+            ? clientAssignmentsApi.list({ client: o.client_id, limit: 500 }).catch(() => ({ results: [] }))
+            : Promise.resolve({ results: [] }),
         ]);
         if (cancel) return;
         setApiOcClient(cli);
         setApiOcBrand(br);
         setApiOcExpedientes(Array.isArray(exps) ? exps : (exps?.results || []));
         setApiOcLines(Array.isArray(lns) ? lns : (lns?.results || []));
+        // Construir mapa SKU → precio_cliente. El CPA puede usar
+        // distintos campos según versión: probamos los más comunes.
+        const cpaArr = Array.isArray(cpa) ? cpa : (cpa?.results || []);
+        const map = {};
+        for (const r of cpaArr) {
+          const sku = String(r.brand_sku || r.product_sku || r.sku || "").toUpperCase();
+          if (!sku) continue;
+          const px = Number(
+            r.price_negotiated
+            ?? r.precio_negociado
+            ?? r.precio_cliente
+            ?? r.price
+            ?? 0
+          );
+          if (px > 0) map[sku] = px;
+        }
+        setCpaPriceMap(map);
       })
       .catch(() => { if (!cancel) setOcNotFound(true); })
       .finally(() => { if (!cancel) setOcLoading(false); });
     return () => { cancel = true; };
   }, [ocId, ocFromMock]);
 
-  // Mapper API → shape del UI mock-based
-  const mockOcFallback = OCS[0];
+  // Mapper API → shape del UI mock-based.
+  // ⚠ CRITICAL: NO hacer ...mockOcFallback aquí — eso contamina la
+  // vista con datos seed (Andes Retail Co., Goliath, 3 documentos
+  // falsos, 76d crédito, etc.). Construimos el objeto desde cero con
+  // defaults explícitos para cada campo que el render lee.
+  const mockOcFallback = OCS[0];   // se mantiene SOLO para HERO scenario
   const oc = ocFromMock || (apiOc ? {
-    ...mockOcFallback,
     id:           apiOc.id,
     code:         apiOc.codigo,
     codigo:       apiOc.codigo,
     client_id:    apiOc.client_id,
     brand_id:     apiOc.brand_id,
     estado:       apiOc.estado,
-    status:       (apiOc.estado || "").toLowerCase() === "emitida" ? "emitida" : "in_progress",
+    status:       (apiOc.estado || "").toLowerCase() === "emitida"
+                    ? "in_progress" : "in_progress",
     moneda:       apiOc.moneda || "USD",
     issued_at:    apiOc.issued_at || apiOc.created_at || null,
     total_value:  Number(apiOc.total_value || 0),
@@ -132,14 +162,74 @@ export default function ScreenOCDetail() {
     air_pct:      Number(apiOc.air_pct || 0),
     sea_pct:      Number(apiOc.sea_pct || 0),
     expedientes:  apiOcExpedientes.map(e => e.id),
-    lines:        apiOcLines.map(l => ({
-      id: l.id, sku: l.sku, talla: l.talla || l.size || "",
-      qty: Number(l.qty || 0), product_label: l.product_label || l.sku,
-      unit_price: Number(l.unit_price || 0),
-      total_price: Number(l.total_price || (Number(l.qty||0) * Number(l.unit_price||0))),
-      sap: l.sap || null, expediente_id: l.expediente_id,
-    })),
+    // Documentos comerciales: vacío por defecto. Cuando integremos el
+    // tab artifacts/MinIO se popula desde /api/documentos?oc=<id>.
+    // El render lee `oc.docs` (no `documents`), por eso esa key.
+    docs:         [],
+    // Líneas reales del API (con merge de unit_price del CPA en
+    // el render — ver useEffect de cpaPrices más abajo).
+    lines:        apiOcLines.map(l => {
+      const sku = String(l.sku || "").toUpperCase();
+      const qty = Number(l.qty || 0);
+      // Precio del cliente: prioridad CPA > unit_price del API > 0
+      const cpaPx = cpaPriceMap[sku];
+      const unit  = cpaPx != null ? cpaPx : Number(l.unit_price || 0);
+      return {
+        id:             l.id,
+        sku:            l.sku,
+        talla:          l.talla || l.size || "",
+        size:           l.talla || l.size || "",
+        qty:            qty,
+        product_label:  l.product_label || l.sku,
+        product:        l.product_label || l.sku,
+        unit_price:     unit,
+        total_price:    Number(l.total_price || (qty * unit)),
+        sap:            l.sap || null,
+        expediente_id:  l.expediente_id,
+        exp_id:         l.expediente_id,
+        status:         (l.estado || "PENDIENTE_SAP"),
+        deferred_qty:   0,
+        deferred_unit_price: 0,
+        show_deferred_to_client: false,
+        // Marca el origen del precio para futura UX (tooltip "Precio CPA")
+        _price_source:  cpaPx != null ? "CPA" : "LIST",
+      };
+    }),
+    // Campos del header / KPIs que NO aplican a una OC recién creada
+    // por el wizard simplificado (no hay split logístico, ni reloj
+    // de crédito real hasta que se emita factura). Se ponen en cero
+    // o se hidratan desde el cliente más abajo.
+    air_qty: 0, sea_qty: 0,
+    sap_count_total: 0, sap_count_assigned: 0,
+    credit_days_max: null,   // se llena con client.credit_days
+    max_credit_days: 0,      // alias usado por el render del Reloj
+    credit_band: null,
+    is_blocked: false,
+    block_reason: null,
+    // Banderas legacy del UI (datos seed, irrelevantes para el wizard nuevo)
+    brand: "",            // queda vacío → render esconde la pill de marca
+    client: "",           // se hidrata más abajo con apiOcClient
   } : mockOcFallback);
+
+  // Hidratar credit_days desde el cliente del API para el reloj
+  // (el campo viene como `dias_credito` o similar; defensivo).
+  if (apiOcClient && oc) {
+    const cd = Number(
+      apiOcClient.dias_credito
+      ?? apiOcClient.credit_days
+      ?? apiOcClient.credito_dias
+      ?? 0
+    );
+    oc.max_credit_days = cd > 0 ? cd : 0;
+    oc.credit_days_max = oc.max_credit_days;
+  }
+  if (apiOcBrand && oc && !oc.brand) {
+    oc.brand = apiOcBrand.nombre || apiOcBrand.brand_code || "";
+  }
+  if (apiOcClient && oc && !oc.client) {
+    oc.client = apiOcClient.razon_social || apiOcClient.nombre || apiOcClient.codigo || "";
+    oc.client_country = apiOcClient.pais_iso2 || "";
+  }
 
   // NOTA: los early returns de loading/notFound se mueven al FINAL de
   // la lista de hooks (antes del return principal). React error #310
@@ -333,16 +423,27 @@ export default function ScreenOCDetail() {
           </div>
 
           <div className="flex ai-center gap-3 page-subtitle" style={{flexWrap:'wrap'}}>
-            <div className="flex ai-center gap-2">
-              <CountryFlag country={oc.client_country}/>
-              <span style={{fontWeight: 500, color:'var(--text-primary)'}}>{oc.client}</span>
-            </div>
-            <span>·</span>
-            <div className="flex ai-center gap-2">
-              <span style={{ width:8, height:8, background: brand?.color, borderRadius: 2, display:'inline-block' }}/>
-              <span>{oc.brand}</span>
-            </div>
-            <span>·</span>
+            {/* Cliente: solo render si hay nombre real (oculta el placeholder
+                cuando el wizard simplificado no eligió cliente). */}
+            {oc.client && (
+              <div className="flex ai-center gap-2">
+                {oc.client_country && <CountryFlag country={oc.client_country}/>}
+                <span style={{fontWeight: 500, color:'var(--text-primary)'}}>{oc.client}</span>
+              </div>
+            )}
+            {/* Marca: solo render si está asignada. El wizard simplificado
+                NO pide marca (queda en NULL hasta la transición T2 vía
+                CommercialDataHardStop). */}
+            {oc.brand && (
+              <>
+                {oc.client && <span>·</span>}
+                <div className="flex ai-center gap-2">
+                  <span style={{ width:8, height:8, background: brand?.color, borderRadius: 2, display:'inline-block' }}/>
+                  <span>{oc.brand}</span>
+                </div>
+              </>
+            )}
+            {(oc.client || oc.brand) && <span>·</span>}
             <span>{tr(lang,'issued_date')} {oc.issued}</span>
             <span>·</span>
             <span>{oc.lines_count} {tr(lang,'lines_count').toLowerCase()} · {oc.expedientes.length} {tr(lang,'expedientes').toLowerCase()}</span>
@@ -461,8 +562,8 @@ export default function ScreenOCDetail() {
             </div>
             <div className="k-sub">
               {oc.max_credit_days > 0
-                ? <span>{tr(lang,'credit_triggered')} · {tr(lang,'vs_historical')} 45d</span>
-                : <span>{tr(lang,'credit_idle')}</span>}
+                ? <span>{tr(lang,'credit_triggered')}</span>
+                : <span>{lang==='es'?'Sin facturas activas':'No active invoices'}</span>}
             </div>
           </div>
         )}
