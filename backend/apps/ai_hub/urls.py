@@ -50,7 +50,22 @@ try:
 except Exception:  # pragma: no cover — chat_views todavía no está pegado
     chat_urlpatterns = []
 
+# Endpoint de gobernanza por slug — Sprint Transfer Engine v3.5
+# (skill_routing_views.py). GET es read para todo autenticado; PATCH
+# está bloqueado a CEO/admin (HTTP 403 a otros).
+from .skill_routing_views import SkillByKeyView   # noqa: E402
+
+skill_routing_urlpatterns = [
+    path("ai/skills/<slug:skill_key>/",
+         SkillByKeyView.as_view(),
+         name="ai-skill-by-key"),
+]
+
 urlpatterns = [
-    path("", include(router.urls)),
+    # ⚠ skill_routing_urlpatterns DEBE ir antes que el router
+    # porque /api/ai/skills/<slug>/ colisionaría con el detail del
+    # AiSkillViewSet (que matchea cualquier string como pk UUID).
+    *skill_routing_urlpatterns,
     *chat_urlpatterns,
+    path("", include(router.urls)),
 ]

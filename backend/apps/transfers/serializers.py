@@ -81,6 +81,37 @@ class TransferenciaSerializer(serializers.ModelSerializer):
         ctx_data = attrs.get("context_data")
         if ctx_data is not None:
             attrs["context_data"] = self._validate_context_data(legal_ctx, ctx_data)
+
+        # Sprint v3.5 — Documentos legales por motivo. NO bloqueamos
+        # con missing files (decisión: el usuario puede crear la
+        # transferencia y subir docs después). Solo normalizamos los
+        # IDs entrantes (UUID-string en max 36 chars), evitando que
+        # campos no-aplicables al motivo se persistan.
+        ALLOWED_DOCS = {
+            "NATIONALIZATION": {"supplier_invoice_document_id"},
+            "EXPORT":          {"export_invoice_document_id",
+                                "freight_quote_document_id"},
+            "DISTRIBUTION":    {"export_invoice_document_id"},
+            "CONSIGNMENT":     {"remission_guide_document_id"},
+            "INTERNAL":        set(),
+        }
+        all_doc_fields = {
+            "supplier_invoice_document_id",
+            "export_invoice_document_id",
+            "freight_quote_document_id",
+            "remission_guide_document_id",
+        }
+        allowed = ALLOWED_DOCS.get(legal_ctx, set())
+        for k in all_doc_fields:
+            if k in attrs:
+                v = attrs.get(k)
+                if v in (None, ""):
+                    attrs[k] = None
+                else:
+                    attrs[k] = str(v)[:36]
+                # Si el motivo no aplica al campo, lo limpiamos
+                if k not in allowed:
+                    attrs[k] = None
         return attrs
 
     @staticmethod

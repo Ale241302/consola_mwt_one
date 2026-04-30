@@ -20,12 +20,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   IconChevLeft, IconChevRight, IconCheck, IconX, IconAlert, IconPlus,
   IconUpload, IconRefresh, IconTruck, IconArrow, IconFileText,
-  IconPackage, IconDollar,
+  IconPackage, IconDollar, IconSettings, IconSparkle,
 } from "../lib/icons.jsx";
 import { fmtMoney } from "../lib/i18n.js";
 import {
-  transferenciasApi, nodosApi, stockApi,
+  transferenciasApi, nodosApi, stockApi, apiFetch,
 } from "../lib/api.js";
+import { useRole } from "../context/RoleContext.jsx";
 
 // ── Catálogo legal (espejo del backend transfers.legal_context_cat) ──
 const LEGAL_CONTEXT = [
@@ -76,6 +77,19 @@ export default function CreateTransferWizard() {
   const [refTracking,   setRefTracking]   = useState("");
   const [notes,         setNotes]         = useState("");
   const [contextData,   setContextData]   = useState({});
+
+  // Sprint v3.5 — Documentos legales por motivo (UUIDs/strings que el
+  // backend persiste en transferencia.{supplier_invoice_document_id, …}).
+  // Por simplicidad, hoy guardamos el nombre del archivo como
+  // identificador placeholder; cuando integremos el upload-real (MinIO)
+  // estos campos pasarán a UUIDs devueltos por el endpoint de subida.
+  const [legalDocs, setLegalDocs] = useState({
+    supplier_invoice: null,
+    export_invoice:   null,
+    freight_quote:    null,
+    remission_guide:  null,
+  });
+  const setLegalDoc = (k, file) => setLegalDocs(p => ({ ...p, [k]: file }));
   const [costLines,     setCostLines]     = useState([]);  // [{tmpId, kind, label, amount, currency, source, ocr_confidence}]
   const [productLines,  setProductLines]  = useState([]);  // [{tmpId, sku, producto_id, product_label, size, qty_transfer, qty_reserve, disponible}]
   const [docFile,       setDocFile]       = useState(null);
@@ -304,6 +318,14 @@ export default function CreateTransferWizard() {
         estado:        "PLANNED",
         value_usd:     totals.totalValueUsd,
         context_data:  contextData || {},
+        // Sprint v3.5 — Documentos legales por motivo. El nombre del
+        // archivo va como placeholder; cuando se integre upload real
+        // a MinIO, estos serán UUIDs del artifact_instance creado.
+        // El backend filtra los campos que no aplican al motivo.
+        supplier_invoice_document_id: legalDocs.supplier_invoice?.name?.slice(0,36) || null,
+        export_invoice_document_id:   legalDocs.export_invoice?.name?.slice(0,36)   || null,
+        freight_quote_document_id:    legalDocs.freight_quote?.name?.slice(0,36)    || null,
+        remission_guide_document_id:  legalDocs.remission_guide?.name?.slice(0,36)  || null,
         lineas: productLines.map((l) => ({
           producto_id:   l.producto_id || null,
           sku:           l.sku,
@@ -401,19 +423,29 @@ export default function CreateTransferWizard() {
           exit   ={{ opacity: 0, y: -8, transition: { duration: 0.14 } }}>
 
           {step === 1 && (
-            <Step1Context
-              lang={lang}
-              nodosOrigen={nodosOrigen} nodosDestino={nodosDestino}
-              origenId={origenId}     setOrigenId={setOrigenId}
-              destinoId={destinoId}   setDestinoId={setDestinoId}
-              legalContext={legalContext} setLegalContext={setLegalContext}
-              refTracking={refTracking}   setRefTracking={setRefTracking}
-              notes={notes}               setNotes={setNotes}
-              docFile={docFile}           onDocFile={handleDoc}
-              ocrLoading={ocrLoading}     ocrResult={ocrResult}
-              contextData={contextData}   setContextData={setContextData}
-              error={error}
-            />
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(0,1fr) 320px',
+              gap: 18,
+              alignItems: 'start',
+            }}>
+              <Step1Context
+                lang={lang}
+                nodosOrigen={nodosOrigen} nodosDestino={nodosDestino}
+                origenId={origenId}     setOrigenId={setOrigenId}
+                destinoId={destinoId}   setDestinoId={setDestinoId}
+                legalContext={legalContext} setLegalContext={setLegalContext}
+                refTracking={refTracking}   setRefTracking={setRefTracking}
+                notes={notes}               setNotes={setNotes}
+                docFile={docFile}           onDocFile={handleDoc}
+                ocrLoading={ocrLoading}     ocrResult={ocrResult}
+                contextData={contextData}   setContextData={setContextData}
+                legalDocs={legalDocs}       setLegalDoc={setLegalDoc}
+                error={error}
+              />
+              {/* Sidebar — Motor OCR IA (Gobernanza) */}
+              <OcrSkillSidebar lang={lang} skillKey="ocr-transfers"/>
+            </div>
           )}
 
           {step === 2 && (
@@ -515,6 +547,7 @@ function Step1Context({
   legalContext, setLegalContext, refTracking, setRefTracking,
   notes, setNotes, docFile, onDocFile, ocrLoading, ocrResult,
   contextData, setContextData,
+  legalDocs = {}, setLegalDoc = () => {},
 }) {
   const setCtx = (patch) => setContextData((p) => ({ ...(p || {}), ...patch }));
   const dropRef = useRef(null);
@@ -674,7 +707,517 @@ function Step1Context({
           </Field>
         </motion.div>
       )}
+
+      {/* ── Documentos legales por motivo (sprint v3.5) ── */}
+      <LegalDocsByMotive
+        lang={lang}
+        legalContext={legalContext}
+        legalDocs={legalDocs}
+        setLegalDoc={setLegalDoc}
+      />
     </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// LEGAL DOCS por motivo · sprint Transfer Engine v3.5
+// ═════════════════════════════════════════════════════════════
+function LegalDocsByMotive({ lang, legalContext, legalDocs, setLegalDoc }) {
+  // Mapeo motivo → array de slots de documentos.
+  // El backend `transferencia_serializer.validate()` acepta solo los
+  // campos que aplican al motivo y limpia los demás.
+  const SLOTS_BY_MOTIVE = {
+    NATIONALIZATION: [
+      { key: "supplier_invoice", required: true,
+        label_es: "Factura Comercial del Proveedor",
+        label_en: "Supplier Commercial Invoice",
+        hint_es:  "Documento que acompaña al DUA. Obligatorio para nacionalizar.",
+        hint_en:  "Accompanies the DUA. Required to nationalize." },
+    ],
+    EXPORT: [
+      { key: "export_invoice", required: true,
+        label_es: "Factura de Exportación",
+        label_en: "Export Invoice",
+        hint_es:  "Factura emitida hacia el destinatario internacional.",
+        hint_en:  "Invoice issued to the international consignee." },
+      { key: "freight_quote", required: true,
+        label_es: "Cotización de Flete (ART-06)",
+        label_en: "Freight Quote (ART-06)",
+        hint_es:  "Cotización del transporte internacional contratado.",
+        hint_en:  "International freight quote." },
+    ],
+    DISTRIBUTION: [
+      { key: "export_invoice", required: true,
+        label_es: "Factura Comercial MWT (ART-09)",
+        label_en: "MWT Commercial Invoice (ART-09)",
+        hint_es:  "Factura emitida al distribuidor / marketplace.",
+        hint_en:  "Invoice issued to the distributor / marketplace." },
+    ],
+    CONSIGNMENT: [
+      { key: "remission_guide", required: true,
+        label_es: "Guía de Remisión / Traslado",
+        label_en: "Remission / Transfer Guide",
+        hint_es:  "Documento legal de traslado sin transferencia de propiedad.",
+        hint_en:  "Legal transfer document without ownership transfer." },
+    ],
+    INTERNAL: [],
+  };
+  const slots = SLOTS_BY_MOTIVE[legalContext] || [];
+  if (slots.length === 0) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18 }}
+      style={{ marginTop: 22 }}
+    >
+      <div className="micro" style={{
+        fontSize: 11, fontWeight: 800, letterSpacing: 0.6,
+        color: "var(--text-tertiary)", textTransform: "uppercase",
+        marginBottom: 10,
+      }}>
+        {lang === "es" ? "Documentos legales del motivo" : "Legal documents for this reason"}
+      </div>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+        gap: 12,
+      }}>
+        {slots.map((slot) => (
+          <LegalDocSlot key={slot.key}
+            slot={slot}
+            file={legalDocs[slot.key]}
+            onFile={(f) => setLegalDoc(slot.key, f)}
+            onClear={() => setLegalDoc(slot.key, null)}
+            lang={lang}
+          />
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
+function LegalDocSlot({ slot, file, onFile, onClear, lang }) {
+  const fileRef = useRef(null);
+  const [drag, setDrag] = useState(false);
+  return (
+    <div style={{
+      border: file
+        ? "1.5px solid #00B286"
+        : `1.5px dashed ${drag ? "#00B286" : "var(--border, #E1E6ED)"}`,
+      borderRadius: 12,
+      padding: "14px 16px",
+      background: file
+        ? "rgba(0,178,134,0.04)"
+        : (drag ? "rgba(0,178,134,0.04)" : "white"),
+      transition: "all 0.15s",
+    }}
+      onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+      onDragLeave={() => setDrag(false)}
+      onDrop={(e) => {
+        e.preventDefault(); setDrag(false);
+        const f = e.dataTransfer.files?.[0];
+        if (f) onFile(f);
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <div style={{
+          width: 32, height: 32, borderRadius: 8,
+          background: file ? "rgba(0,178,134,0.12)" : "rgba(11,30,58,0.05)",
+          color: file ? "#00B286" : "#0B1E3A",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0,
+        }}>
+          {file ? <IconCheck size={14}/> : <IconFileText size={14}/>}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: "#0B1E3A" }}>
+            {lang === "es" ? slot.label_es : slot.label_en}
+            {slot.required && (
+              <span style={{ color: "#DC2626", marginLeft: 4 }}>*</span>
+            )}
+          </div>
+          <div className="caption" style={{
+            color: "var(--text-tertiary)", fontSize: 11, marginTop: 2,
+            lineHeight: 1.4,
+          }}>
+            {file
+              ? `${file.name} · ${(file.size/1024).toFixed(1)} KB`
+              : (lang === "es" ? slot.hint_es : slot.hint_en)}
+          </div>
+        </div>
+      </div>
+      <div style={{ marginTop: 10, display: "flex", gap: 6 }}>
+        <input ref={fileRef} type="file" hidden
+               accept="application/pdf,image/*,.xlsx,.xls"
+               onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }}/>
+        {file ? (
+          <>
+            <button type="button" className="btn btn-ghost btn-sm"
+                    onClick={() => fileRef.current?.click()}
+                    style={{ fontSize: 11 }}>
+              {lang === "es" ? "Cambiar" : "Change"}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm"
+                    onClick={onClear}
+                    style={{ fontSize: 11, color: "#DC2626" }}>
+              {lang === "es" ? "Quitar" : "Remove"}
+            </button>
+          </>
+        ) : (
+          <button type="button" className="btn btn-secondary btn-sm"
+                  onClick={() => fileRef.current?.click()}
+                  style={{
+                    fontSize: 11, fontWeight: 700,
+                    background: "#0B1E3A", color: "white",
+                    borderColor: "#0B1E3A",
+                  }}>
+            <IconUpload size={11}/>{" "}
+            {lang === "es" ? "Subir archivo" : "Upload file"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// SIDEBAR · Motor OCR IA · Gobernanza de skill (sprint v3.5)
+// ═════════════════════════════════════════════════════════════
+function OcrSkillSidebar({ lang, skillKey }) {
+  const { isAdmin, can } = useRole() || {};
+  const [skill, setSkill]   = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const refresh = () => {
+    setLoading(true);
+    apiFetch(`/ai/skills/${skillKey}/`, { token: getToken() })
+      .then(setSkill)
+      .catch(() => setSkill(null))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { refresh(); }, [skillKey]);
+
+  // Solo CEO/admin puede editar — el backend también lo bloquea (403).
+  const canEdit = !!isAdmin || can?.("edit_ai_skill");
+
+  return (
+    <>
+      <aside style={{
+        position: "sticky", top: 88,
+        background: "white",
+        border: "1px solid var(--border, #E1E6ED)",
+        borderRadius: 14,
+        overflow: "hidden",
+        boxShadow: "0 1px 3px rgba(15,27,61,0.04)",
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: "14px 18px",
+          background: "linear-gradient(135deg, #0B1E3A 0%, #1F3A66 100%)",
+          color: "white",
+        }}>
+          <div className="micro" style={{
+            color: "rgba(255,255,255,0.65)", letterSpacing: 1.2,
+          }}>
+            {lang === "es" ? "MOTOR OCR · IA" : "OCR ENGINE · AI"}
+          </div>
+          <div style={{ fontWeight: 800, fontSize: 14, marginTop: 4,
+                         display: "flex", alignItems: "center", gap: 8 }}>
+            <IconSparkle size={13} style={{ color: "#1DE394" }}/>
+            {loading
+              ? (lang === "es" ? "Cargando…" : "Loading…")
+              : (skill?.display_name || skill?.nombre
+                  || (lang === "es" ? "Skill no configurado" : "Skill not configured"))}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: 16, display: "grid", gap: 10 }}>
+          <Row k={lang === "es" ? "Skill" : "Skill"}
+               v={skill?.codigo || skill?.skill_key || "—"}/>
+          <Row k={lang === "es" ? "Modelo activo" : "Active model"}
+               v={skill?.model_id || "—"} mono/>
+          <Row k={lang === "es" ? "Proveedor" : "Provider"}
+               v={skill?.model_provider_id || "—"}/>
+          {skill?.system_prompt && (
+            <div>
+              <div className="micro" style={{
+                fontSize: 10, fontWeight: 800, letterSpacing: 0.6,
+                color: "var(--text-tertiary)", textTransform: "uppercase",
+                marginBottom: 4,
+              }}>
+                {lang === "es" ? "System Prompt" : "System Prompt"}
+              </div>
+              <div style={{
+                fontSize: 11, color: "var(--text-secondary)",
+                background: "rgba(11,30,58,0.04)",
+                padding: "8px 10px", borderRadius: 6,
+                fontFamily: "var(--font-mono, ui-monospace)",
+                maxHeight: 80, overflow: "hidden", textOverflow: "ellipsis",
+                lineHeight: 1.4,
+              }}>
+                {String(skill.system_prompt).slice(0, 200)}
+                {skill.system_prompt.length > 200 ? "…" : ""}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer · botón editar (CEO-ONLY) */}
+        {canEdit && skill && (
+          <div style={{
+            padding: "10px 16px 14px",
+            borderTop: "1px solid var(--border-subtle, #F1F4F9)",
+          }}>
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              className="btn"
+              style={{
+                width: "100%", fontWeight: 700,
+                background: "rgba(72,30,227,0.08)", color: "#481EE3",
+                border: "1px solid rgba(72,30,227,0.20)",
+                fontSize: 12,
+              }}
+            >
+              <IconSettings size={12}/>{" "}
+              {lang === "es" ? "Editar Skill" : "Edit Skill"}
+            </button>
+          </div>
+        )}
+      </aside>
+
+      {drawerOpen && (
+        <EditSkillDrawer
+          lang={lang}
+          skill={skill}
+          onClose={() => setDrawerOpen(false)}
+          onSaved={(s) => { setSkill(s); setDrawerOpen(false); }}
+        />
+      )}
+    </>
+  );
+}
+
+function Row({ k, v, mono }) {
+  return (
+    <div>
+      <div className="micro" style={{
+        fontSize: 10, fontWeight: 800, letterSpacing: 0.6,
+        color: "var(--text-tertiary)", textTransform: "uppercase",
+        marginBottom: 2,
+      }}>{k}</div>
+      <div style={{
+        fontSize: 13, color: "#0B1E3A", fontWeight: 600,
+        fontFamily: mono ? "var(--font-mono, ui-monospace)" : undefined,
+        wordBreak: "break-word",
+      }}>{v}</div>
+    </div>
+  );
+}
+
+// ─── Drawer de edición del skill (CEO-only en frontend; backend
+// tiene IsCEOOrAdmin como defensa de segunda línea) ─────────────
+function EditSkillDrawer({ lang, skill, onClose, onSaved }) {
+  const [displayName, setDisplayName] = useState(skill?.display_name || skill?.nombre || "");
+  const [modelId,     setModelId]     = useState(skill?.model_id || "");
+  const [systemPrompt, setSystemPrompt] = useState(skill?.system_prompt || "");
+  const [saving, setSaving]   = useState(false);
+  const [error,  setError]    = useState(null);
+  const models = skill?.available_models || [];
+
+  const dirty =
+       displayName  !== (skill?.display_name || skill?.nombre || "")
+    || modelId      !== (skill?.model_id || "")
+    || systemPrompt !== (skill?.system_prompt || "");
+
+  const save = async () => {
+    if (saving) return;
+    setSaving(true); setError(null);
+    try {
+      const out = await apiFetch(`/ai/skills/${skill.skill_key}/`, {
+        method: "PATCH",
+        body:   { display_name: displayName, model_id: modelId,
+                  system_prompt: systemPrompt },
+        token:  getToken(),
+      });
+      onSaved?.(out);
+    } catch (e) {
+      setError(e?.body?.detail || e?.message || "Error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div onClick={() => !saving && onClose?.()}
+         style={{
+           position: "fixed", inset: 0, zIndex: 200,
+           background: "rgba(11,30,58,0.55)",
+           display: "flex", justifyContent: "flex-end",
+         }}>
+      <motion.aside
+        initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
+        transition={{ duration: 0.22 }}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(640px, 96vw)", height: "100vh",
+          background: "white", display: "flex", flexDirection: "column",
+          boxShadow: "-30px 0 60px -20px rgba(15,27,61,0.55)",
+        }}>
+        {/* Header */}
+        <div style={{
+          padding: "16px 22px",
+          background: "linear-gradient(135deg, #0B1E3A 0%, #1F3A66 100%)",
+          color: "white",
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: 10,
+            background: "rgba(72,30,227,0.30)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <IconSettings size={16}/>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div className="micro" style={{
+              color: "rgba(255,255,255,0.65)", letterSpacing: 1.2,
+            }}>
+              {lang === "es" ? "GOBERNANZA IA · CEO-ONLY" : "AI GOVERNANCE · CEO-ONLY"}
+            </div>
+            <div style={{ fontWeight: 800, fontSize: 16, marginTop: 2 }}>
+              {lang === "es" ? "Editar Motor OCR" : "Edit OCR Engine"}
+            </div>
+          </div>
+          <button onClick={onClose} disabled={saving}
+                  className="btn btn-ghost btn-sm"
+                  style={{ color: "white", padding: "6px 10px" }}>
+            <IconX size={12}/>
+          </button>
+        </div>
+
+        {/* Warning rojo */}
+        <div style={{
+          padding: "12px 22px",
+          background: "rgba(220,38,38,0.06)",
+          borderBottom: "1px solid rgba(220,38,38,0.20)",
+          display: "flex", gap: 10, alignItems: "flex-start",
+          color: "#991B1B",
+        }}>
+          <IconAlert size={14} style={{ color: "#DC2626", flexShrink: 0, marginTop: 1 }}/>
+          <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+            <strong>
+              {lang === "es" ? "Cambios críticos a nivel compañía. " : "Company-wide critical changes. "}
+            </strong>
+            {lang === "es"
+              ? "Modificar el system prompt o el modelo afecta el cálculo de costos de TODAS las transferencias futuras (DUAs, facturas, landed cost). Procedé con cuidado y notificá al equipo."
+              : "Editing the system prompt or model affects cost computation across ALL future transfers (DUAs, invoices, landed cost). Proceed carefully and notify the team."}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: "auto", padding: 22, display: "grid", gap: 18 }}>
+          <div>
+            <Label>{lang === "es" ? "Nombre del skill" : "Skill name"}</Label>
+            <input className="input" value={displayName}
+                   onChange={(e) => setDisplayName(e.target.value)}
+                   disabled={saving}/>
+          </div>
+
+          <div>
+            <Label>{lang === "es" ? "Modelo LLM" : "LLM model"}</Label>
+            <select className="input mono-sm" value={modelId}
+                    onChange={(e) => setModelId(e.target.value)}
+                    disabled={saving}>
+              <option value="">— {lang === "es" ? "Seleccionar" : "Select"} —</option>
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label} · {m.provider} · {m.speed}/{m.cost}
+                  {m.vision ? " · vision" : ""}
+                </option>
+              ))}
+            </select>
+            <span className="caption" style={{
+              color: "var(--text-tertiary)", fontSize: 11, marginTop: 4, display: "block",
+            }}>
+              {lang === "es"
+                ? "El proveedor se infiere del modelo seleccionado."
+                : "Provider is inferred from selected model."}
+            </span>
+          </div>
+
+          <div>
+            <Label>
+              {lang === "es" ? "System Prompt / Instrucciones de extracción" : "System Prompt / Extraction instructions"}
+            </Label>
+            <textarea className="input"
+                      value={systemPrompt}
+                      onChange={(e) => setSystemPrompt(e.target.value)}
+                      disabled={saving}
+                      rows={20}
+                      style={{
+                        fontFamily: "var(--font-mono, ui-monospace)",
+                        fontSize: 12, lineHeight: 1.5,
+                        minHeight: 320, resize: "vertical",
+                      }}/>
+            <span className="caption" style={{
+              color: "var(--text-tertiary)", fontSize: 11, marginTop: 4, display: "block",
+            }}>
+              {lang === "es"
+                ? `Caracteres: ${systemPrompt.length.toLocaleString()}`
+                : `Characters: ${systemPrompt.length.toLocaleString()}`}
+            </span>
+          </div>
+
+          {error && (
+            <div style={{
+              padding: "10px 12px", borderRadius: 8,
+              background: "#FEE2E2", color: "#991B1B",
+              border: "1px solid #FCA5A5", fontSize: 13,
+            }}>
+              <IconAlert size={11} style={{ verticalAlign: -1, marginRight: 6 }}/>
+              {error}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: "12px 22px",
+          borderTop: "1px solid var(--border-subtle, #F1F4F9)",
+          background: "rgba(11,30,58,0.02)",
+          display: "flex", justifyContent: "flex-end", gap: 8,
+        }}>
+          <button onClick={onClose} className="btn btn-ghost" disabled={saving}>
+            {lang === "es" ? "Cancelar" : "Cancel"}
+          </button>
+          <button onClick={save}
+                  className="btn btn-accent"
+                  disabled={!dirty || saving}
+                  style={{
+                    minWidth: 180, fontWeight: 700,
+                    background: "#00B286", borderColor: "#00B286",
+                  }}>
+            {saving
+              ? (lang === "es" ? "Guardando…" : "Saving…")
+              : (lang === "es" ? "Guardar cambios" : "Save changes")}
+          </button>
+        </div>
+      </motion.aside>
+    </div>
+  );
+}
+
+function Label({ children }) {
+  return (
+    <div className="micro" style={{
+      fontSize: 11, fontWeight: 800, letterSpacing: 0.5,
+      color: "var(--text-tertiary)", textTransform: "uppercase",
+      marginBottom: 6,
+    }}>{children}</div>
   );
 }
 

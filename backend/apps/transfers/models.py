@@ -114,6 +114,15 @@ class Transferencia(models.Model):
     exception_document_id   = models.UUIDField(null=True, blank=True)
     gap_justification       = models.TextField(null=True, blank=True)
 
+    # Sprint v3.5 (91i) — Documentos legales por motivo.
+    # IDs apuntan a expedientes.artifact_instances u otra tabla de
+    # storage; sin FK física por R6. Definidos como CharField(36) para
+    # alinear con la migración SQL (VARCHAR(36)).
+    supplier_invoice_document_id = models.CharField(max_length=36, null=True, blank=True)  # NATIONALIZATION
+    export_invoice_document_id   = models.CharField(max_length=36, null=True, blank=True)  # EXPORT / DISTRIBUTION
+    freight_quote_document_id    = models.CharField(max_length=36, null=True, blank=True)  # EXPORT
+    remission_guide_document_id  = models.CharField(max_length=36, null=True, blank=True)  # CONSIGNMENT
+
     is_active        = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     updated_at       = models.DateTimeField(auto_now=True)
