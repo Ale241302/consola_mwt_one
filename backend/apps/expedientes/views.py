@@ -897,11 +897,19 @@ class ExpedienteViewSet(viewsets.ViewSet):
                     ])
 
                     # 2. Actualizar líneas confirmadas (split/match)
-                    #    Cada item: {linea_id, qty_confirmada}
+                    #    Cada item: {linea_id, qty_confirmada, unit_price?}
+                    #    `unit_price` (sprint 2026-05-01) — opcional. Si
+                    #    viene > 0 desde el frontend (resuelto del catálogo
+                    #    via client_prices/precio_lista), se persiste en
+                    #    expedientes.linea.unit_price para que el
+                    #    expediente muestre el precio correcto desde el
+                    #    inicio. Si la DB ya tenía precio > 0, se preserva
+                    #    (no sobrescribe con 0).
                     delta_lines = []
                     for item in lineas_confirmadas:
-                        linea_id = item.get("linea_id") or item.get("id")
-                        qty_conf = item.get("qty_confirmada")
+                        linea_id      = item.get("linea_id") or item.get("id")
+                        qty_conf      = item.get("qty_confirmada")
+                        unit_price_in = item.get("unit_price")
                         if not linea_id or qty_conf is None:
                             continue
                         try:
@@ -909,16 +917,32 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         except Exception:
                             continue
 
-                        # Leer qty original para computar delta
                         c.execute("""
-                            SELECT qty FROM expedientes.linea
-                             WHERE id = %s::uuid AND expediente_id = %s::uuid AND is_active = TRUE
+                            SELECT qty, COALESCE(unit_price, 0)
+                              FROM expedientes.linea
+                             WHERE id = %s::uuid
+                               AND expediente_id = %s::uuid
+                               AND is_active = TRUE
                              LIMIT 1
                         """, [linea_id, str(exp.id)])
                         row = c.fetchone()
                         if not row:
                             continue
-                        qty_original = Decimal(str(row[0] or 0))
+                        qty_original  = Decimal(str(row[0] or 0))
+                        unit_price_db = Decimal(str(row[1] or 0))
+
+                        # Resolver unit_price final:
+                        #   1) si frontend manda valor > 0, ese gana.
+                        #   2) si DB tiene > 0, se mantiene (preserva histórico).
+                        #   3) si nada, queda 0.
+                        unit_price_final = unit_price_db
+                        if unit_price_in is not None:
+                            try:
+                                u = Decimal(str(unit_price_in))
+                                if u > 0:
+                                    unit_price_final = u
+                            except Exception:
+                                pass
 
                         if qty_conf_dec != qty_original:
                             delta_lines.append({
@@ -930,13 +954,17 @@ class ExpedienteViewSet(viewsets.ViewSet):
 
                         c.execute("""
                             UPDATE expedientes.linea
-                               SET qty = %s,
-                                   total_price = ROUND(COALESCE(unit_price, 0) * %s, 2),
-                                   sap = %s,
-                                   estado = CASE WHEN %s > 0 THEN 'SAP_CONFIRMADO' ELSE 'CANCELADA' END
+                               SET qty         = %s,
+                                   unit_price  = %s,
+                                   total_price = ROUND(%s * %s, 2),
+                                   sap         = %s,
+                                   estado      = CASE WHEN %s > 0 THEN 'SAP_CONFIRMADO' ELSE 'CANCELADA' END
                              WHERE id = %s::uuid
                         """, [
-                            float(qty_conf_dec), float(qty_conf_dec), sap_id,
+                            float(qty_conf_dec),
+                            float(unit_price_final),
+                            float(unit_price_final), float(qty_conf_dec),
+                            sap_id,
                             float(qty_conf_dec), linea_id,
                         ])
 

@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtMoneyDetail, fmtDate, relativeTime } from "../lib/i18n.js";
-import { expedientesApi, clientesApi, marcasApi, lineasApi } from "../lib/api.js";
+import { expedientesApi, clientesApi, marcasApi, lineasApi, productosApi } from "../lib/api.js";
 import {
   Badge, StatusBadge, Progress, StateTimeline, CreditBar, CountryFlag,
 } from "../components/ui/primitives.jsx";
@@ -46,10 +46,11 @@ export default function ScreenExpedienteDetail() {
   const [apiClient, setApiClient] = useState(null);
   const [apiBrand,  setApiBrand]  = useState(null);
   const [apiLines,  setApiLines]  = useState([]);
-  // Sprint 2026-05-01: lineas del OC para heredar unit_price/total_price
-  // cuando la linea del expediente tiene precio 0 (caso comun: el wizard
-  // crea filas nuevas con unit_price=0 si el price_map no las resuelve).
-  const [apiOcLines, setApiOcLines] = useState([]);
+  // Sprint 2026-05-01: mapa { producto_id -> precio } para fallback de
+  // unit_price cuando la linea del expediente tiene precio 0. La fuente
+  // es el catalogo de productos (especificaciones.client_prices[client]
+  // || precio_lista). Mismo enfoque que OCDetail.jsx.
+  const [cpaPriceMap, setCpaPriceMap] = useState({});
   const [loading,   setLoading]   = useState(!isHeroOrMock);
   const [notFound,  setNotFound]  = useState(false);
 
@@ -65,19 +66,42 @@ export default function ScreenExpedienteDetail() {
         // OJO: para listar las líneas usamos `e.id` (UUID canónico), no el
         // `expedienteId` del URL — éste puede ser el codigo legible
         // (EXP-2026-0001) y el filtro del backend espera UUID.
-        const [cli, br, ln, ocLn] = await Promise.all([
+        const [cli, br, ln] = await Promise.all([
           e.client_id ? clientesApi.get(e.client_id).catch(() => null) : Promise.resolve(null),
           e.brand_id  ? marcasApi.get(e.brand_id).catch(() => null)    : Promise.resolve(null),
           lineasApi.list({ expediente: e.id }).catch(() => ({ results: [] })),
-          // Lineas del OC para fallback de precios (mismo SKU)
-          e.oc_id ? lineasApi.list({ oc: e.oc_id }).catch(() => ({ results: [] }))
-                  : Promise.resolve({ results: [] }),
         ]);
         if (cancel) return;
         setApiClient(cli);
         setApiBrand(br);
-        setApiLines(Array.isArray(ln) ? ln : (ln?.results || []));
-        setApiOcLines(Array.isArray(ocLn) ? ocLn : (ocLn?.results || []));
+        const lineasArr = Array.isArray(ln) ? ln : (ln?.results || []);
+        setApiLines(lineasArr);
+
+        // Sprint 2026-05-01: cuando la linea trae unit_price=0 (caso
+        // comun en wizard simplificado), fetcheamos los productos para
+        // leer el precio del catalogo. Mismo enfoque que OCDetail.jsx.
+        if (e.client_id && lineasArr.length > 0) {
+          const uniquePidIds = Array.from(new Set(
+            lineasArr.map(l => l.producto_id).filter(Boolean)
+          ));
+          if (uniquePidIds.length > 0) {
+            try {
+              const prods = await Promise.all(
+                uniquePidIds.map(pid => productosApi.get(pid).catch(() => null))
+              );
+              if (cancel) return;
+              const map = {};
+              for (const p of prods) {
+                if (!p?.id) continue;
+                const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
+                const override = Number(cliMap[e.client_id] || 0);
+                const lista    = Number(p.precio_lista || 0);
+                map[p.id] = override > 0 ? override : lista;
+              }
+              setCpaPriceMap(map);
+            } catch { /* swallow */ }
+          }
+        }
       })
       .catch(() => { if (!cancel) setNotFound(true); })
       .finally(() => { if (!cancel) setLoading(false); });
@@ -194,27 +218,9 @@ export default function ScreenExpedienteDetail() {
   const activity = isHero ? HERO_ACTIVITY : [];
 
   // Loading / not-found para expedientes reales que aún no llegan del API
-  // Sprint 2026-05-01: mapa de precios del OC indexado por SKU para
-  // heredar precio cuando la linea del expediente tiene unit_price=0.
-  // Indexado por SKU+size (clave compuesta) — fallback solo a SKU si
-  // no hay match exacto con size.
-  const ocPriceBySkuKey = (() => {
-    const m = {};
-    for (const ol of apiOcLines || []) {
-      const sku = (ol.sku || "").toUpperCase().trim();
-      if (!sku) continue;
-      const size = (ol.size || ol.talla || "").toString().toUpperCase().trim();
-      const key = size ? `${sku}|${size}` : sku;
-      const unit = Number(ol.unit_price || 0);
-      const total = Number(ol.total_price || 0);
-      if (unit > 0 || total > 0) {
-        m[key] = { unit_price: unit, total_price: total, sku };
-        // tambien indexar por solo sku como fallback
-        if (!m[sku]) m[sku] = { unit_price: unit, total_price: total, sku };
-      }
-    }
-    return m;
-  })();
+  // Sprint 2026-05-01: cpaPriceMap ya esta indexado por producto_id en el
+  // useEffect arriba. Aqui exponemos un helper que las tablas del expediente
+  // usan para heredar precio cuando la linea trae unit_price=0.
 
   if (loading) {
     return (
@@ -385,11 +391,11 @@ export default function ScreenExpedienteDetail() {
               <OverviewTab exp={exp} lang={lang} lines={lines}
                            activity={activity} isClient={isClient}
                            isHeroOrMock={isHeroOrMock}
-                           ocPriceBySkuKey={ocPriceBySkuKey}
+                           cpaPriceMap={cpaPriceMap}
                            onOpenArtifactsTab={() => setTab('artifacts')}/>
             </>
           )}
-          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} ocPriceBySkuKey={ocPriceBySkuKey}/>}
+          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap}/>}
           {tab === 'artifacts' && (
             <div>
               {/* Toolbar de artifacts: solo visible para CEO/admin.
@@ -488,7 +494,7 @@ export default function ScreenExpedienteDetail() {
   );
 }
 
-function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifactsTab, ocPriceBySkuKey }) {
+function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifactsTab, cpaPriceMap }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
       {/* Sprint 2026-05-01: el card "Detalles" mostraba modo/flete/ETA/
@@ -553,14 +559,12 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifacts
               // string concat y `(margin*100)` es NaN%.
               const qty   = Number(l.qty || 0);
               let unit    = Number(l.unit_price || 0);
-              // Fallback: si la linea del expediente tiene unit_price=0,
-              // hereda del OC por SKU+size (o solo SKU si no hay match).
-              if (unit === 0 && ocPriceBySkuKey) {
-                const sku = (l.sku || "").toUpperCase().trim();
-                const size = (l.size || l.talla || "").toString().toUpperCase().trim();
-                const key = size ? `${sku}|${size}` : sku;
-                const fallback = ocPriceBySkuKey[key] || ocPriceBySkuKey[sku];
-                if (fallback?.unit_price > 0) unit = fallback.unit_price;
+              // Fallback: cuando la linea trae unit_price=0 leemos el
+              // precio del catalogo de productos (cpaPriceMap),
+              // indexado por producto_id. Mismo enfoque que OCDetail.
+              if (unit === 0 && cpaPriceMap && l.producto_id) {
+                const fb = Number(cpaPriceMap[l.producto_id] || 0);
+                if (fb > 0) unit = fb;
               }
               const sub   = Number(l.total_price && Number(l.total_price) > 0
                                     ? l.total_price
@@ -614,16 +618,13 @@ function DetailRow({ label, value }) {
   );
 }
 
-function LinesTab({ lines, lang, ocPriceBySkuKey }) {
-  // Sprint 2026-05-01: total con fallback de precio del OC
+function LinesTab({ lines, lang, cpaPriceMap }) {
+  // Sprint 2026-05-01: total con fallback al catalogo de productos
   const total = lines.reduce((a, l) => {
     let unit = Number(l.unit_price || 0);
-    if (unit === 0 && ocPriceBySkuKey) {
-      const sku = (l.sku || "").toUpperCase().trim();
-      const size = (l.size || l.talla || "").toString().toUpperCase().trim();
-      const key = size ? `${sku}|${size}` : sku;
-      const fb = ocPriceBySkuKey[key] || ocPriceBySkuKey[sku];
-      if (fb?.unit_price > 0) unit = fb.unit_price;
+    if (unit === 0 && cpaPriceMap && l.producto_id) {
+      const fb = Number(cpaPriceMap[l.producto_id] || 0);
+      if (fb > 0) unit = fb;
     }
     return a + Number(l.qty || 0) * unit;
   }, 0);
@@ -646,15 +647,12 @@ function LinesTab({ lines, lang, ocPriceBySkuKey }) {
         </tr></thead>
         <tbody>
           {lines.map(l => {
-            // Fallback de precio del OC si la linea del expediente trae 0
+            // Fallback al catalogo de productos si la linea trae 0
             let _unit = Number(l.unit_price || 0);
             let _total = Number(l.total_price || 0);
-            if (_unit === 0 && ocPriceBySkuKey) {
-              const sku = (l.sku || "").toUpperCase().trim();
-              const size = (l.size || l.talla || "").toString().toUpperCase().trim();
-              const key = size ? `${sku}|${size}` : sku;
-              const fb = ocPriceBySkuKey[key] || ocPriceBySkuKey[sku];
-              if (fb?.unit_price > 0) _unit = fb.unit_price;
+            if (_unit === 0 && cpaPriceMap && l.producto_id) {
+              const fb = Number(cpaPriceMap[l.producto_id] || 0);
+              if (fb > 0) _unit = fb;
             }
             const _qty = Number(l.qty || 0);
             if (_total === 0) _total = _qty * _unit;

@@ -251,9 +251,14 @@ export default function AddSAPConfirmationDrawer({
       // Enviamos SOLO las líneas que el usuario explícitamente agregó
       // a este SAP (no todas las del expediente). Las que no estén en
       // este SAP quedan disponibles para asignar a futuros SAPs.
+      // Sprint 2026-05-01: tambien enviamos `unit_price` resuelto en el
+      // OC (catalogo / client_prices override) para que el backend lo
+      // persista en expedientes.linea.unit_price y el expediente lo
+      // muestre correctamente desde el inicio.
       const lineasConfirmadas = addedLines.map(l => ({
-        linea_id: l.id,
-        qty_confirmada: Number(confirmedQtys[l.id] ?? l.qty ?? 0),
+        linea_id:        l.id,
+        qty_confirmada:  Number(confirmedQtys[l.id] ?? l.qty ?? 0),
+        unit_price:      Number(l.unit_price || 0),
       }));
       const result = await postConfirmSap({
         expedienteId:      expediente.id,
@@ -624,6 +629,14 @@ export default function AddSAPConfirmationDrawer({
                           </div>
                           <div className="sap-line-cell tabular-nums text-right">
                             {fmtNumber(orig)}
+                            {Number(l.unit_price || 0) > 0 && (
+                              <div className="caption" style={{
+                                fontSize: 10, color: 'var(--text-tertiary)',
+                                marginTop: 1, fontVariantNumeric: 'tabular-nums',
+                              }}>
+                                ${Number(l.unit_price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/u
+                              </div>
+                            )}
                           </div>
                           <div className="sap-line-cell text-right">
                             <input

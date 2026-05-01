@@ -312,18 +312,29 @@ export default function ScreenOCDetail() {
     setSapDrawerOpen(true);
   };
 
-  // Líneas que pertenecen al expediente del drawer (para conciliación)
+  // Líneas que pertenecen al expediente del drawer (para conciliación).
+  // Sprint 2026-05-01: se excluyen lineas YA confirmadas con un SAP
+  // (estado='SAP_CONFIRMADO' + sap truthy) para que el usuario no
+  // pueda asignar dos veces la misma cantidad. Estas lineas no
+  // aparecen en el buscador del drawer.
   const sapDrawerLines = useMemo(() => {
     if (!sapDrawerExp) return [];
     const expId = sapDrawerExp.id;
     return (oc.lines || [])
       .filter(l => l.exp_id === expId || l.expediente_id === expId || !l.exp_id)
+      .filter(l => {
+        const estado = String(l.estado || l.status || '').toUpperCase();
+        const hasSap = !!l.sap;
+        if (hasSap && estado === 'SAP_CONFIRMADO') return false;
+        return true;
+      })
       .map(l => ({
         id:           l.id,
         sku:          l.sku,
         size:         l.size,
         qty:          Number(l.qty || 0),
         unit_price:   Number(l.unit_price || 0),
+        producto_id:  l.producto_id || null,
         descripcion:  l.product || l.descripcion || "",
       }));
   }, [oc, sapDrawerExp]);
