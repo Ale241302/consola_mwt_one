@@ -966,19 +966,26 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                 "delta":         float(qty_conf_dec - qty_original),
                             })
 
+                        # Sprint 2026-05-01: tambien propagar production_date
+                        # a la linea (antes solo se guardaba en expediente.
+                        # fecha_produccion_estimada). Esto hace que el chip
+                        # "Fecha de produccion" del OCDetail muestre la fecha
+                        # ingresada en el modal AR-04.
                         c.execute("""
                             UPDATE expedientes.linea
-                               SET qty         = %s,
-                                   unit_price  = %s,
-                                   total_price = ROUND(%s * %s, 2),
-                                   sap         = %s,
-                                   estado      = CASE WHEN %s > 0 THEN 'SAP_CONFIRMADO' ELSE 'CANCELADA' END
+                               SET qty             = %s,
+                                   unit_price      = %s,
+                                   total_price     = ROUND(%s * %s, 2),
+                                   sap             = %s,
+                                   production_date = %s,
+                                   estado          = CASE WHEN %s > 0 THEN 'SAP_CONFIRMADO' ELSE 'CANCELADA' END
                              WHERE id = %s::uuid
                         """, [
                             float(qty_conf_dec),
                             float(unit_price_final),
                             float(unit_price_final), float(qty_conf_dec),
                             sap_id,
+                            fabricacion_dt,
                             float(qty_conf_dec), linea_id,
                         ])
 
