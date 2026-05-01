@@ -8,6 +8,7 @@ import {
 } from "../components/ui/primitives.jsx";
 import { ArtifactsBoard } from "../components/ArtifactsBoard.jsx";
 import BuilderArtifactsBoard from "../components/expedientes/builderArtifacts/BuilderArtifactsBoard.jsx";
+import ArtifactsSummaryCard from "../components/expedientes/builderArtifacts/ArtifactsSummaryCard.jsx";
 import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmakerWizard.jsx";
 import CommercialDataHardStop from "../components/expedientes/CommercialDataHardStop.jsx";
 import {
@@ -352,7 +353,9 @@ export default function ScreenExpedienteDetail() {
               {!isClient && <CommercialDataHardStop expediente={exp} lang={lang}
                                                     onSaved={() => navigate(0)}/>}
               <OverviewTab exp={exp} lang={lang} lines={lines}
-                           activity={activity} isClient={isClient}/>
+                           activity={activity} isClient={isClient}
+                           isHeroOrMock={isHeroOrMock}
+                           onOpenArtifactsTab={() => setTab('artifacts')}/>
             </>
           )}
           {tab === 'lines'     && <LinesTab lines={lines} lang={lang}/>}
@@ -454,29 +457,42 @@ export default function ScreenExpedienteDetail() {
   );
 }
 
-function OverviewTab({ exp, lang, lines, activity }) {
+function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifactsTab }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
-      <div className="card">
-        <div className="card-head">
-          <div className="card-title">{tr(lang,'details')}</div>
-          <button className="btn btn-ghost btn-sm"><IconSettings size={13}/>{tr(lang,'edit')}</button>
+      {/* Sprint 2026-05-01: el card "Detalles" mostraba modo/flete/ETA/
+          contenedores/origen/destino que viven en los artefactos del
+          expediente. Lo reemplazamos por un resumen real del board de
+          artefactos. Mantenemos el legacy SOLO para HERO mock. */}
+      {isHeroOrMock ? (
+        <div className="card">
+          <div className="card-head">
+            <div className="card-title">{tr(lang,'details')}</div>
+            <button className="btn btn-ghost btn-sm"><IconSettings size={13}/>{tr(lang,'edit')}</button>
+          </div>
+          <div className="card-pad-lg grid col-3 gap-6">
+            <DetailRow label={tr(lang,'mode')} value={exp.mode}/>
+            <DetailRow label={tr(lang,'freight')} value={exp.freight_mode}/>
+            <DetailRow label={tr(lang,'dispatch')} value={exp.dispatch_mode}/>
+            <DetailRow label={tr(lang,'shipment_date')} value={fmtDate(exp.shipment_date, lang)}/>
+            <DetailRow label={tr(lang,'eta')} value={fmtDate(exp.eta, lang)}/>
+            <DetailRow label={tr(lang,'containers')} value={`${exp.container_count}`}/>
+            <DetailRow label={tr(lang,'origin')} value={exp.origin}/>
+            <DetailRow label={tr(lang,'destination')} value={exp.destination}/>
+            <DetailRow label={tr(lang,'products')} value={`${exp.product_count} SKUs`}/>
+            <DetailRow label={tr(lang,'created')} value={fmtDate(exp.created_at, lang)}/>
+            <DetailRow label={tr(lang,'updated')} value={relativeTime(exp.last_event_at, lang)}/>
+            <DetailRow label={lang==='es'?'Moneda':'Currency'} value={exp.currency}/>
+          </div>
         </div>
-        <div className="card-pad-lg grid col-3 gap-6">
-          <DetailRow label={tr(lang,'mode')} value={exp.mode}/>
-          <DetailRow label={tr(lang,'freight')} value={exp.freight_mode}/>
-          <DetailRow label={tr(lang,'dispatch')} value={exp.dispatch_mode}/>
-          <DetailRow label={tr(lang,'shipment_date')} value={fmtDate(exp.shipment_date, lang)}/>
-          <DetailRow label={tr(lang,'eta')} value={fmtDate(exp.eta, lang)}/>
-          <DetailRow label={tr(lang,'containers')} value={`${exp.container_count}`}/>
-          <DetailRow label={tr(lang,'origin')} value={exp.origin}/>
-          <DetailRow label={tr(lang,'destination')} value={exp.destination}/>
-          <DetailRow label={tr(lang,'products')} value={`${exp.product_count} SKUs`}/>
-          <DetailRow label={tr(lang,'created')} value={fmtDate(exp.created_at, lang)}/>
-          <DetailRow label={tr(lang,'updated')} value={relativeTime(exp.last_event_at, lang)}/>
-          <DetailRow label={lang==='es'?'Moneda':'Currency'} value={exp.currency}/>
-        </div>
-      </div>
+      ) : (
+        <ArtifactsSummaryCard
+          expedienteId={exp.id}
+          currentStage={(exp.estado || "REGISTRO").toUpperCase()}
+          lang={lang}
+          onOpenTab={onOpenArtifactsTab}
+        />
+      )}
 
       {exp.notes && (
         <div className="card card-pad-lg">
