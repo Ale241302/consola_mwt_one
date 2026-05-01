@@ -29,7 +29,7 @@ import {
 } from "../components/ui/primitives.jsx";
 import {
   IconDownload, IconPlus, IconSearch, IconLock, IconAlert, IconChevDown, IconChevRight,
-  IconCreditCard, IconDollar, IconFolder, IconCheck,
+  IconCreditCard, IconDollar, IconFolder, IconCheck, IconTrash, IconX,
 } from "../lib/icons.jsx";
 import {
   EXPEDIENTES as MOCK_EXPEDIENTES,
@@ -42,8 +42,11 @@ import { useRole } from "../context/RoleContext.jsx";
 // ── Mapeo backend → UI ────────
 function mapExpedienteFromApi(r) {
   return {
-    id:  r.codigo || r.id,
-    ref: r.codigo || '',
+    // id legible para navegacion y React keys (codigo si existe, sino UUID).
+    // uuid es el identificador real para llamadas API DELETE/PATCH.
+    id:   r.codigo || r.id,
+    uuid: r.id || null,
+    ref:  r.codigo || '',
     oc_client: '',                     // se resuelve desde la OC cuando exista
     oc_id: r.oc_id || null,
     sap:  r.sap || null,
@@ -212,6 +215,51 @@ export default function ScreenExpedientes() {
   const effectiveView = isClient ? 'fleet' : view;
   // In-memory edits of deferred price / visibility toggle
   const [deferredEdits, setDeferredEdits] = useState({});
+
+  // ── Bulk delete (sprint 2026-05-01) ────────────────────────
+  // selected: Set de UUIDs (no codigos) para llamar al API DELETE.
+  // deleting: bloquea botones mientras corren las llamadas en serie.
+  const [selected, setSelected] = useState(() => new Set());
+  const [deleting, setDeleting] = useState(false);
+
+  const toggleOne = (uuid) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(uuid)) next.delete(uuid); else next.add(uuid);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelected(new Set());
+  const handleBulkDelete = async (ids) => {
+    if (!ids || ids.length === 0 || deleting) return;
+    const ok = window.confirm(
+      lang === 'es'
+        ? `¿Eliminar ${ids.length} expediente${ids.length > 1 ? 's' : ''}? Esta acción no se puede deshacer.`
+        : `Delete ${ids.length} file${ids.length > 1 ? 's' : ''}? This cannot be undone.`
+    );
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      // Llamadas en serie para no saturar el backend ni perder errores
+      // individuales. Si una falla, las demás continúan; al final reload.
+      const results = await Promise.allSettled(
+        ids.map(id => expedientesApi.remove(id))
+      );
+      const failed = results.filter(r => r.status === 'rejected');
+      if (failed.length > 0) {
+        const msg = failed[0].reason?.message || (lang === 'es' ? 'Error' : 'Error');
+        alert(
+          (lang === 'es'
+            ? `${failed.length} de ${ids.length} no se pudo eliminar. `
+            : `${failed.length} of ${ids.length} could not be deleted. `) + msg
+        );
+      }
+      clearSelection();
+      await load();   // refrescar listado desde API
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // ── Global dataset: all expedientes ─────
   const filtered = useMemo(() => {
@@ -489,11 +537,97 @@ export default function ScreenExpedientes() {
         )}
       </div>
 
+      {/* ── Bulk action bar (CEO-ONLY) ───── */}
+      {isAdmin && selected.size > 0 && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 12,
+            padding: '10px 16px', marginBottom: 10,
+            background: 'var(--brand-primary)',
+            color: '#fff',
+            borderRadius: 10,
+            boxShadow: '0 2px 8px -2px rgba(11,30,58,0.2)',
+          }}
+        >
+          <IconCheck size={14}/>
+          <span style={{ fontWeight: 600, fontSize: 13 }} className="tabular">
+            {lang === 'es'
+              ? `${selected.size} seleccionado${selected.size > 1 ? 's' : ''}`
+              : `${selected.size} selected`}
+          </span>
+          <button
+            type="button"
+            onClick={clearSelection}
+            disabled={deleting}
+            style={{
+              background: 'transparent', border: 0, color: '#fff',
+              opacity: 0.85, fontSize: 12, cursor: 'pointer',
+              textDecoration: 'underline', padding: 0,
+            }}
+          >
+            {lang === 'es' ? 'Limpiar' : 'Clear'}
+          </button>
+          <div style={{ marginLeft: 'auto' }}/>
+          <button
+            type="button"
+            onClick={() => handleBulkDelete(Array.from(selected))}
+            disabled={deleting}
+            className="btn btn-sm"
+            style={{
+              background: 'var(--critical, #DC2626)',
+              color: '#fff', border: 0, fontWeight: 600,
+              padding: '6px 14px', borderRadius: 6,
+              opacity: deleting ? 0.6 : 1,
+              cursor: deleting ? 'not-allowed' : 'pointer',
+            }}
+          >
+            <IconTrash size={12}/>
+            {deleting
+              ? (lang === 'es' ? 'Eliminando…' : 'Deleting…')
+              : (lang === 'es'
+                  ? `Eliminar ${selected.size}`
+                  : `Delete ${selected.size}`)}
+          </button>
+        </div>
+      )}
+
       {/* ── Master table ───── */}
       <div className="table-wrap">
         <table className="table ceo-table">
           <thead>
             <tr>
+              {/* Checkbox de seleccion (CEO-ONLY) */}
+              {isAdmin && (
+                <th style={{width:32, textAlign:'center'}}>
+                  <input
+                    type="checkbox"
+                    checked={
+                      filtered.length > 0 &&
+                      filtered.every(e => e.uuid && selected.has(e.uuid))
+                    }
+                    onChange={(ev) => {
+                      ev.stopPropagation();
+                      const checked = ev.target.checked;
+                      setSelected(prev => {
+                        const next = new Set(prev);
+                        if (checked) {
+                          for (const e of filtered) {
+                            if (e.uuid) next.add(e.uuid);
+                          }
+                        } else {
+                          for (const e of filtered) {
+                            if (e.uuid) next.delete(e.uuid);
+                          }
+                        }
+                        return next;
+                      });
+                    }}
+                    onClick={(ev) => ev.stopPropagation()}
+                    title={lang === 'es' ? 'Seleccionar todos' : 'Select all'}
+                    style={{ accentColor: 'var(--brand-primary)', cursor: 'pointer' }}
+                  />
+                </th>
+              )}
               <th style={{width:38}}></th>
               <th>{tr(lang,'ref')}</th>
               <th>{tr(lang,'client')}</th>
@@ -527,6 +661,7 @@ export default function ScreenExpedientes() {
                   retrasos de fábrica, señales de crédito): CEO-ONLY. */}
               {isAdmin && <th style={{width:110}}>{tr(lang,'alerts_blocks')}</th>}
               <th style={{width:36}}></th>
+              {isAdmin && <th style={{width:36}}></th>}
             </tr>
           </thead>
           <tbody>
@@ -539,7 +674,7 @@ export default function ScreenExpedientes() {
               const showDeferred = deferredEdits[e.id]?.show ?? e.show_deferred_to_client;
               return (
                 <Fragment key={e.id}>
-                  <tr data-selected={isOpen} style={{ cursor:'pointer' }}
+                  <tr data-selected={isOpen || (e.uuid && selected.has(e.uuid))} style={{ cursor:'pointer' }}
                       onClick={() => {
                         // Para CLIENT, el click directo en la fila abre el
                         // detalle de la OC (no hay expandible con data interna).
@@ -554,6 +689,29 @@ export default function ScreenExpedientes() {
                         }
                         setExpandedId(isOpen ? null : e.id);
                       }}>
+                    {isAdmin && (
+                      <td
+                        style={{ textAlign: 'center' }}
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!(e.uuid && selected.has(e.uuid))}
+                          disabled={!e.uuid}
+                          onChange={(ev) => {
+                            ev.stopPropagation();
+                            if (e.uuid) toggleOne(e.uuid);
+                          }}
+                          onClick={(ev) => ev.stopPropagation()}
+                          title={
+                            !e.uuid
+                              ? (lang === 'es' ? 'Sin UUID — no eliminable' : 'No UUID — not deletable')
+                              : (lang === 'es' ? 'Seleccionar' : 'Select')
+                          }
+                          style={{ accentColor: 'var(--brand-primary)', cursor: e.uuid ? 'pointer' : 'not-allowed' }}
+                        />
+                      </td>
+                    )}
                     <td onClick={(ev)=>{
                           ev.stopPropagation();
                           // El chevron tampoco expande en CLIENT; navega al detalle.
@@ -687,13 +845,43 @@ export default function ScreenExpedientes() {
                        title={tr(lang,'oc_detail')}>
                       <IconChevRight size={14} style={{ color:'var(--text-tertiary)'}}/>
                     </td>
+                    {isAdmin && (
+                      <td
+                        style={{ textAlign: 'center' }}
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            if (!e.uuid) {
+                              alert(lang === 'es'
+                                ? 'No se puede eliminar: el expediente no tiene UUID.'
+                                : 'Cannot delete: file has no UUID.');
+                              return;
+                            }
+                            handleBulkDelete([e.uuid]);
+                          }}
+                          disabled={!e.uuid || deleting}
+                          className="icon-btn"
+                          title={lang === 'es' ? 'Eliminar expediente' : 'Delete file'}
+                          style={{
+                            color: 'var(--critical, #DC2626)',
+                            opacity: !e.uuid || deleting ? 0.4 : 1,
+                            cursor: !e.uuid || deleting ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          <IconTrash size={14}/>
+                        </button>
+                      </td>
+                    )}
                   </tr>
 
                   {/* Fila expandida con costos internos + deferred pricing: CEO-ONLY.
                       CLIENT nunca puede expandir (el click ya lo redirigió al detalle). */}
                   {isAdmin && isOpen && (
                     <tr className="expand-row">
-                      <td colSpan={11}>
+                      <td colSpan={13}>
                         <CeoDetailRow e={e} lang={lang}
                           deferredVal={deferredVal}
                           showDeferred={showDeferred}

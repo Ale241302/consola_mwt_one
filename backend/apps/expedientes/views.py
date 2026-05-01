@@ -474,9 +474,23 @@ class ExpedienteViewSet(viewsets.ViewSet):
     partial_update = update
 
     def destroy(self, request, pk=None):
+        # Soft-delete: is_active=False. El listado filtra por is_active=true,
+        # asi que el expediente desaparece de la UI pero queda auditable.
         denied = _deny_client_mutation(request, action_label="expediente.destroy")
         if denied is not None: return denied
-        Expediente.objects.filter(pk=pk).update(is_active=False)
+        # Lookup tolerante: pk puede ser UUID o codigo (mismo patron que retrieve).
+        n = 0
+        try:
+            n = Expediente.objects.filter(pk=pk).update(is_active=False)
+        except Exception:
+            n = 0
+        if n == 0:
+            try:
+                n = Expediente.objects.filter(codigo=pk).update(is_active=False)
+            except Exception:
+                n = 0
+        if n == 0:
+            return Response({"detail": "Expediente no existe"}, status=404)
         return Response(status=204)
 
     # ── Selects ────────────────────────────────────────
