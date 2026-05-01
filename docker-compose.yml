@@ -156,8 +156,13 @@ services:
     restart: unless-stopped
     depends_on:
       - django
+    # Puerto host configurable por env (default 3101, antes 3100).
+    # Cambiamos del 3100 al 3101 porque mwt-builder-nginx ya tomó el
+    # 3100 en el VPS compartido. El routing público de consola.mwt.one
+    # va por mwt-nginx (reverse proxy) — este puerto es sólo para
+    # acceso directo de debug en localhost del VPS.
     ports:
-      - "3100:80"
+      - "${CONSOLA_FRONTEND_PORT:-3101}:80"
     networks:
       - consola-net
     healthcheck:
