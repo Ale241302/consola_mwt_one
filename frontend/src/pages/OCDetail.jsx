@@ -38,6 +38,7 @@ import {
 } from "../data/mockData.js";
 import AddSAPConfirmationDrawer from "../components/expedientes/AddSAPConfirmationDrawer.jsx";
 import UploadDocumentModal from "../components/expedientes/UploadDocumentModal.jsx";
+import AddOCProductModal from "../components/expedientes/AddOCProductModal.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
          productosApi } from "../lib/api.js";
@@ -373,25 +374,46 @@ export default function ScreenOCDetail() {
     return [...base, ...extraLines].map(readLine);
   }, [oc?.lines, extraLines, removedLineIds, lineEdits]);
 
-  const addProduct = (product) => {
-    const newLine = {
-      id: 'L-NEW-' + Math.random().toString(36).slice(2,7),
-      sku: product.sku,
-      product: product.name,
-      size: '—',
-      qty: 1,
-      unit_price: 0,
-      total_price: 0,
-      sap: null,
-      exp_id: null,
-      transport_mode: null,
-      production_date: null,
-      status: 'PENDIENTE_SAP',
-      deferred_qty: 0,
-      deferred_unit_price: 0,
-      show_deferred_to_client: false,
-    };
-    setExtraLines(prev => [...prev, newLine]);
+  // Sprint 2026-05-01: AddOCProductModal devuelve un array de rows con
+  // { sku, talla, cantidad, producto_id, product_label, unit_price } —
+  // una row por talla con qty > 0. addProduct las inserta como extraLines.
+  const addProduct = (rows) => {
+    const arr = Array.isArray(rows)
+      ? rows
+      : [{
+          sku: rows?.sku,
+          talla: null,
+          cantidad: 1,
+          producto_id: rows?.id || null,
+          product_label: rows?.name || rows?.sku,
+          unit_price: 0,
+        }];
+    const newLines = arr.map((r, i) => {
+      const qty = Number(r.cantidad || 0);
+      const unit = Number(r.unit_price || 0);
+      return {
+        id: `L-NEW-${Date.now()}-${i}-${Math.random().toString(36).slice(2,5)}`,
+        sku: r.sku,
+        product: r.product_label || r.sku,
+        product_label: r.product_label || r.sku,
+        producto_id: r.producto_id || null,
+        size: r.talla || '—',
+        talla: r.talla || null,
+        qty,
+        unit_price: unit,
+        total_price: +(qty * unit).toFixed(2),
+        sap: null,
+        exp_id: null,
+        transport_mode: null,
+        production_date: null,
+        estado: 'PENDIENTE_SAP',
+        status: 'PENDIENTE_SAP',
+        deferred_qty: 0,
+        deferred_unit_price: 0,
+        show_deferred_to_client: false,
+      };
+    });
+    setExtraLines(prev => [...prev, ...newLines]);
     setShowAddProduct(false);
   };
 
@@ -1157,51 +1179,20 @@ export default function ScreenOCDetail() {
 
       {/* Modal "Agregar producto" solo se monta si ADMIN puede agregar línea. */}
       {can('add_oc_line') && showAddProduct && (
-        <AddProductModal lang={lang} onPick={addProduct} onClose={()=>setShowAddProduct(false)}/>
+        <AddOCProductModal
+          open={showAddProduct}
+          lang={lang}
+          clientId={oc?.client_id || apiOcClient?.id || null}
+          clientLabel={apiOcClient?.razon_social
+                    || apiOcClient?.nombre
+                    || apiOcClient?.codigo
+                    || oc?.client
+                    || ""}
+          onPick={addProduct}
+          onClose={()=>setShowAddProduct(false)}
+        />
       )}
     </div>
   );
 }
 
-// ── Add product modal: pick from catalog ─────
-function AddProductModal({ lang, onPick, onClose }) {
-  const [q, setQ] = useState('');
-  const filtered = PRODUCTS.filter(p =>
-    !q || (p.sku+' '+p.name+' '+p.brand).toLowerCase().includes(q.toLowerCase())
-  );
-  return (
-    <div className="mdl-backdrop" onClick={(e)=>{ if (e.target.classList.contains('mdl-backdrop')) onClose(); }}>
-      <div className="mdl-panel">
-        <div className="mdl-head">
-          <div>
-            <div className="mdl-title">{lang==='es'?'Agregar producto a la OC':'Add product to PO'}</div>
-            <div className="mdl-subtitle">{PRODUCTS.length} {lang==='es'?'productos en catálogo':'products in catalog'}</div>
-          </div>
-          <button className="icon-btn" onClick={onClose}><IconX size={14}/></button>
-        </div>
-        <div className="mdl-body">
-          <div className="mdl-search">
-            <IconSearch size={13}/>
-            <input autoFocus value={q} onChange={e=>setQ(e.target.value)}
-              placeholder={lang==='es'?'Buscar por SKU, nombre o marca…':'Search by SKU, name or brand…'}/>
-          </div>
-          <div className="mdl-list">
-            {filtered.map(p => (
-              <div key={p.id} className="mdl-row" onClick={()=>onPick(p)}>
-                <div className="mdl-row-icon"><IconPackage size={14}/></div>
-                <div style={{flex:1, minWidth:0}}>
-                  <div className="mdl-row-name">
-                    <span className="mdl-row-code">{p.sku}</span>
-                    <span>{p.name}</span>
-                  </div>
-                  <div className="caption">{p.brand} · {p.category}</div>
-                </div>
-                <button className="btn btn-primary btn-sm"><IconPlus size={11}/>{lang==='es'?'Agregar':'Add'}</button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
