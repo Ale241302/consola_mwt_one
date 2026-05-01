@@ -21,12 +21,13 @@
 // override del Tweaks, el Sidebar re-renderiza automáticamente sin
 // necesidad de refrescar la página.
 // =====================================================================
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { tr } from "../../lib/i18n.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { useRole } from "../../context/RoleContext.jsx";
+import { expedientesApi } from "../../lib/api.js";
 import {
   IconHome, IconFolder, IconKanban, IconBuilding, IconDollar, IconSwap,
   IconNetwork, IconUsers, IconTag, IconBoxes, IconTruck, IconWarehouse,
@@ -121,9 +122,27 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     ? (tr(lang, 'my_orders') || 'Mis Pedidos')
     : tr(lang, 'expedientes');
 
+  // Sprint 2026-05-01: contador real de expedientes (antes era 32 hardcoded).
+  // Se refresca cuando cambia la ruta para reflejar altas/bajas. Para CLIENT
+  // el backend ya filtra por ClientScopedManager; para ADMIN devuelve todos.
+  const [expedientesCount, setExpedientesCount] = useState(null);
+  useEffect(() => {
+    let cancel = false;
+    expedientesApi.list()
+      .then((d) => {
+        if (cancel) return;
+        const arr = Array.isArray(d) ? d : (d?.results || []);
+        setExpedientesCount(arr.length);
+      })
+      .catch(() => { if (!cancel) setExpedientesCount(null); });
+    return () => { cancel = true; };
+    // location.pathname como dependencia: al volver al listado tras crear/
+    // borrar, el contador se actualiza solo. Sin esto quedaba estancado.
+  }, [location.pathname]);
+
   const allItems = [
     { key: 'dashboard',      icon: <IconHome/>,       label: tr(lang,'dashboard'),     group: 'core' },
-    { key: 'expedientes',    icon: <IconFolder/>,     label: expedientesLabel,         group: 'core', counter: isClient ? null : 32 },
+    { key: 'expedientes',    icon: <IconFolder/>,     label: expedientesLabel,         group: 'core', counter: expedientesCount },
     { key: 'pipeline',       icon: <IconKanban/>,     label: tr(lang,'pipeline'),      group: 'core' },
     { key: 'portal',         icon: <IconBuilding/>,   label: tr(lang,'portal'),        group: 'core' },
     { key: 'pagos',          icon: <IconDollar/>,     label: tr(lang,'financiero'),    group: 'financiero' },
