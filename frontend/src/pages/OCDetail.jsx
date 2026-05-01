@@ -206,11 +206,19 @@ export default function ScreenOCDetail() {
         qty:            qty,
         product_label:  l.product_label || l.sku,
         product:        l.product_label || l.sku,
+        producto_id:    l.producto_id || null,
         unit_price:     unit,
         total_price:    Number(l.total_price || (qty * unit)),
         sap:            l.sap || null,
         expediente_id:  l.expediente_id,
         exp_id:         l.expediente_id,
+        // Sprint 2026-05-01: campos que faltaban en el mapper.
+        // production_date alimenta el chip "Fecha de produccion" y
+        // transport_mode alimenta el chip MARITIMO/AEREO/Pendiente.
+        // estado lo necesita el filtro del SAP picker (SAP_CONFIRMADO).
+        production_date: l.production_date || null,
+        transport_mode:  l.transport_mode || null,
+        estado:          l.estado || "PENDIENTE_SAP",
         status:         (l.estado || "PENDIENTE_SAP"),
         deferred_qty:   0,
         deferred_unit_price: 0,
