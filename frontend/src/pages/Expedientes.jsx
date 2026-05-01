@@ -103,12 +103,12 @@ function mapExpedienteFromApi(r) {
     product_count:   r.product_count   || 0,
     container_count: r.container_count || 0,
     notes: r.notas || '',
-    // Sprint 2026-05-01: order_value/payables_est se hidratan en el load()
-    // a partir de las lineas activas + catalogo de productos. Sirven como
-    // fallback de los KPIs cuando total_invoiced/total_cost vienen en 0
-    // (caso comun en expedientes recien creados sin facturacion).
+    // Sprint 2026-05-01: order_value se hidrata en el load() a partir
+    // de las lineas activas + catalogo de productos. Sirve como fallback
+    // de receivables cuando total_invoiced viene en 0 (caso comun en
+    // expedientes recien creados sin facturacion). NO calculamos un
+    // estimado de payables — ese KPI muestra solo costos reales.
     order_value:  0,
-    payables_est: 0,
     _raw:  r,
   };
 }
@@ -140,7 +140,8 @@ export default function ScreenExpedientes() {
       // Fetch de todas las lineas activas + catalogo de productos para
       // computar order_value por expediente. Esto alimenta:
       //   · receivables (Total por cobrar) cuando total_invoiced = 0
-      //   · payables_est (Pagos por salir) cuando total_cost = 0
+      //   · NO calculamos payables_est — Pagos por salir muestra solo
+      //     costos reales del backend (total_cost - pg_verified - pg_released).
       let lineasArr = [];
       try {
         const lnRaw = await lineasApi.list({ is_active: true });
@@ -207,12 +208,7 @@ export default function ScreenExpedientes() {
         }
         const enrichedExp = {
           ...e,
-          order_value:  orderValue,
-          // Estimacion grosera de pagos a fabrica = ~70% del valor del pedido
-          // (resto = margen + logistica). Solo se usa como proxy visual cuando
-          // total_cost del backend = 0. Una vez que el AG-COSTOS empiece a
-          // poblar costos reales este fallback queda dormido.
-          payables_est: orderValue * 0.7,
+          order_value: orderValue,
         };
         if (!cli) return enrichedExp;
         return {
@@ -354,7 +350,7 @@ export default function ScreenExpedientes() {
     // calculado en load() (sum lineas con resolucion del catalogo) cuando
     // los campos persistidos del backend son 0.
     //   receivables = Σ max(balance, order_value − total_paid)
-    //   payables    = Σ max(total_cost − pg_verified − pg_released, payables_est)
+    //   payables    = Σ (total_cost − pg_verified − pg_released)  [solo costos reales]
     const receivables = EXPEDIENTES.reduce((a, e) => {
       const persisted = Number(e.balance || 0);
       if (persisted > 0) return a + persisted;
@@ -362,13 +358,16 @@ export default function ScreenExpedientes() {
       const paid = Number(e.total_paid || 0);
       return a + Math.max(0, ov - paid);
     }, 0);
+    // Pagos por salir: solo costos REALES persistidos en backend.
+    // Si no hay (total_cost = 0), el KPI queda en $0. Antes habia un
+    // estimado del 70% del valor del pedido pero confundia (parecia dato
+    // real). El KPI vuelve a tener significado cuando AG-COSTOS empiece
+    // a poblar expedientes.expediente.total_cost.
     const payables = EXPEDIENTES.reduce((a, e) => {
       const tc = Number(e.total_cost || 0);
       const pgVerif = Number(e.pg_verified || 0);
       const pgRel   = Number(e.pg_released || 0);
-      const persisted = Math.max(0, tc - Math.min(tc, pgVerif + pgRel));
-      if (persisted > 0) return a + persisted;
-      return a + Number(e.payables_est || 0);
+      return a + Math.max(0, tc - Math.min(tc, pgVerif + pgRel));
     }, 0);
 
     // Margenes ponderados — guard contra NaN cuando total_invoiced = 0.
