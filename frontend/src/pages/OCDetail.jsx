@@ -97,6 +97,11 @@ export default function ScreenOCDetail() {
   // depender de window.prompt (que rompe el design system MWT).
   const [editSapModal, setEditSapModal]           = useState({
     open: false, oldSap: '', newSap: '', expId: null, lineIds: [], error: null,
+    // Sprint 2026-05-01: campos extra para que editar SAP se sienta como
+    // crear SAP (fecha de fabricacion + qty editable por linea).
+    fechaFab: '',
+    // lineQtys: { [linea_id]: { qty, originalQty, sku, talla, unit_price } }
+    lineQtys: {},
   });
   const [editSapSaving, setEditSapSaving]         = useState(false);
 
@@ -393,13 +398,36 @@ export default function ScreenOCDetail() {
   // del browser no respeta Navy/Mint, no se ve nada bien). El estado
   // del modal vive en `editSapModal` y el guardado en `editSapSaving`.
   const openEditSapModal = (oldSap, expId, lineIds) => {
+    // Pre-popular qtys e info de lineas + fecha de fabricacion del grupo.
+    const ids = Array.isArray(lineIds) ? lineIds : [];
+    const groupLines = (oc.lines || []).filter(l => ids.includes(l.id));
+    const lineQtys = {};
+    for (const l of groupLines) {
+      lineQtys[l.id] = {
+        qty:          Number(l.qty || 0),
+        originalQty:  Number(l.qty || 0),
+        sku:          l.sku || '',
+        talla:        l.talla || l.size || '',
+        unit_price:   Number(l.unit_price || 0),
+        production_date: l.production_date || null,
+      };
+    }
+    // Fecha de fabricacion: tomamos la primera linea con production_date,
+    // si no, la del expediente, si no, hoy.
+    const expObj = (apiOcExpedientes || []).find(e => e.id === expId)
+                || (oc.expedientes_full || []).find(e => e.id === expId);
+    const firstDate = groupLines.find(l => l.production_date)?.production_date
+                   || expObj?.fecha_produccion_estimada
+                   || '';
     setEditSapModal({
-      open:   true,
-      oldSap: oldSap || '',
-      newSap: oldSap || '',
-      expId:  expId || null,
-      lineIds: Array.isArray(lineIds) ? lineIds : [],
-      error:  null,
+      open:    true,
+      oldSap:  oldSap || '',
+      newSap:  oldSap || '',
+      expId:   expId || null,
+      lineIds: ids,
+      lineQtys,
+      fechaFab: firstDate || new Date().toISOString().slice(0, 10),
+      error:   null,
     });
   };
   const saveEditSap = async () => {
@@ -414,19 +442,44 @@ export default function ScreenOCDetail() {
       }));
       return;
     }
-    if (trimmed === m.oldSap) {
-      setEditSapModal(prev => ({ ...prev, open: false }));
-      return;
-    }
     setEditSapSaving(true);
     try {
-      if (m.expId) {
-        await expedientesApi.update(m.expId, { sap: trimmed, numero_sap: trimmed });
+      const sapChanged   = trimmed !== m.oldSap;
+      const fechaTrimmed = (m.fechaFab || '').trim() || null;
+      // Patch del expediente: SAP + fecha de fabricacion estimada
+      if (m.expId && (sapChanged || fechaTrimmed)) {
+        const expPatch = {};
+        if (sapChanged) {
+          expPatch.sap         = trimmed;
+          expPatch.numero_sap  = trimmed;
+        }
+        if (fechaTrimmed) {
+          expPatch.fecha_produccion_estimada = fechaTrimmed;
+        }
+        await expedientesApi.update(m.expId, expPatch);
       }
-      if (m.lineIds && m.lineIds.length > 0) {
-        await Promise.all(m.lineIds.map(lid =>
-          lineasApi.update(lid, { sap: trimmed }).catch(() => null)
-        ));
+      // Patch de cada linea: SAP nuevo + fecha + qty si cambio
+      const updates = (m.lineIds || []).map(async (lid) => {
+        const info = m.lineQtys?.[lid];
+        const linePatch = {};
+        if (sapChanged) linePatch.sap = trimmed;
+        if (fechaTrimmed) linePatch.production_date = fechaTrimmed;
+        if (info && Number(info.qty) !== Number(info.originalQty)) {
+          const newQty = Number(info.qty || 0);
+          linePatch.qty = newQty;
+          // Recompute total_price con el unit_price actual
+          const u = Number(info.unit_price || 0);
+          if (u > 0) linePatch.total_price = +(u * newQty).toFixed(2);
+          // Si la cantidad pasa a 0, marcamos la linea como CANCELADA
+          if (newQty <= 0) linePatch.estado = 'CANCELADA';
+        }
+        if (Object.keys(linePatch).length === 0) return null;
+        return lineasApi.update(lid, linePatch).catch((err) => err);
+      });
+      const results = await Promise.all(updates);
+      const failed  = results.filter(r => r && r instanceof Error);
+      if (failed.length > 0) {
+        throw failed[0];
       }
       setEditSapModal(prev => ({ ...prev, open: false }));
       navigate(0);
@@ -723,6 +776,119 @@ export default function ScreenOCDetail() {
                   {editSapModal.error}
                 </div>
               )}
+              {/* Sprint 2026-05-01: fecha de fabricacion + qtys editables */}
+              <label style={{ display: 'block' }}>
+                <div className="micro" style={{
+                  fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                  color: 'var(--text-tertiary)', textTransform: 'uppercase',
+                  marginBottom: 6,
+                }}>
+                  {lang === 'es' ? 'Fecha de fabricación' : 'Manufacturing date'}
+                </div>
+                <input
+                  type="date"
+                  className="input tabular-nums"
+                  value={editSapModal.fechaFab || ''}
+                  disabled={editSapSaving}
+                  onChange={(e) => setEditSapModal(p => ({
+                    ...p, fechaFab: e.target.value, error: null,
+                  }))}
+                  style={{
+                    width: '100%', fontSize: 14, padding: '10px 12px',
+                    border: '1px solid var(--border)', borderRadius: 8,
+                  }}
+                />
+                <div className="caption" style={{
+                  fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4,
+                }}>
+                  {lang === 'es'
+                    ? 'Punto de partida del ETA proyectado. Se aplica a todas las líneas del grupo.'
+                    : 'Starting point of projected ETA. Applies to all lines in the group.'}
+                </div>
+              </label>
+
+              {/* Tabla de lineas del grupo con qty editable */}
+              {Array.isArray(editSapModal.lineIds) && editSapModal.lineIds.length > 0 && (
+                <div>
+                  <div className="micro" style={{
+                    fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                    color: 'var(--text-tertiary)', textTransform: 'uppercase',
+                    marginBottom: 6,
+                  }}>
+                    {lang === 'es' ? 'Líneas del grupo' : 'Lines in this group'}
+                  </div>
+                  <div style={{
+                    border: '1px solid var(--border)', borderRadius: 8,
+                    overflow: 'hidden',
+                  }}>
+                    {editSapModal.lineIds.map((lid, idx) => {
+                      const info = editSapModal.lineQtys?.[lid] || {};
+                      const changed = Number(info.qty) !== Number(info.originalQty);
+                      return (
+                        <div key={lid}
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 84px',
+                            gap: 8, alignItems: 'center',
+                            padding: '8px 12px',
+                            background: idx % 2 === 0 ? 'transparent' : 'rgba(11,30,58,0.02)',
+                            borderTop: idx === 0 ? 'none' : '1px solid var(--border-subtle)',
+                          }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div className="mono-sm" style={{
+                              fontWeight: 700, fontSize: 12, color: '#0B1E3A',
+                            }}>{info.sku || '—'}</div>
+                            <div className="caption" style={{
+                              fontSize: 11, color: 'var(--text-tertiary)',
+                            }}>
+                              {info.talla
+                                ? `${lang === 'es' ? 'Talla' : 'Size'} ${info.talla}`
+                                : null}
+                              {info.unit_price > 0 && (
+                                <> · ${Number(info.unit_price).toFixed(2)}/u</>
+                              )}
+                            </div>
+                          </div>
+                          <input
+                            type="number"
+                            min="0"
+                            className="input tabular-nums"
+                            value={info.qty ?? 0}
+                            disabled={editSapSaving}
+                            onChange={(e) => {
+                              const v = Math.max(0, Number(e.target.value || 0));
+                              setEditSapModal(p => ({
+                                ...p,
+                                lineQtys: {
+                                  ...p.lineQtys,
+                                  [lid]: { ...p.lineQtys[lid], qty: v },
+                                },
+                                error: null,
+                              }));
+                            }}
+                            style={{
+                              fontSize: 13, padding: '6px 8px',
+                              border: changed
+                                ? '1.5px solid var(--brand-accent, #00B286)'
+                                : '1px solid var(--border)',
+                              borderRadius: 6, textAlign: 'right',
+                              fontFamily: 'var(--font-mono)',
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="caption" style={{
+                    fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6,
+                  }}>
+                    {lang === 'es'
+                      ? 'Si la cantidad queda en 0, la línea pasa a estado CANCELADA.'
+                      : 'If qty drops to 0, the line moves to CANCELADA.'}
+                  </div>
+                </div>
+              )}
+
               <div className="caption" style={{
                 color: 'var(--text-tertiary)', fontSize: 12, lineHeight: 1.4,
               }}>
@@ -748,8 +914,7 @@ export default function ScreenOCDetail() {
               </button>
               <button
                 type="button"
-                disabled={editSapSaving || !editSapModal.newSap.trim()
-                          || editSapModal.newSap.trim() === editSapModal.oldSap}
+                disabled={editSapSaving || !editSapModal.newSap.trim()}
                 onClick={saveEditSap}
                 className="btn btn-accent"
                 style={{
