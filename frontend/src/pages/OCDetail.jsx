@@ -644,39 +644,82 @@ export default function ScreenOCDetail() {
           porque es métrica interna de cobranza. Dejamos coverage, logistics
           split y financial status — el cliente sí ve su propia factura. */}
       <div className={`grid gap-3 mb-4 ${isClient ? 'col-3' : 'col-4'}`}>
-        {/* Coverage */}
+        {/* Coverage — Sprint 2026-05-01: derivamos cobertura desde las
+            lineas en vivo. oc.coverage_pct/lines_with_sap del backend NO
+            se actualizan automaticamente al confirmar SAP, asi que
+            quedaban en 0%. Usamos max(persistido, calculado_live). */}
         <div className="kpi-tile">
           <div className="k-label">{tr(lang,'oc_coverage')}</div>
-          <div className="k-value" style={{
-            color: oc.coverage_pct === 1 ? 'var(--success)' : oc.coverage_pct >= 0.75 ? 'var(--warning)' : 'var(--critical)'
-          }}>
-            {Math.round(oc.coverage_pct * 100)}%
-          </div>
-          <div className="k-sub">
-            <span style={{color:'var(--text-secondary)'}}>{oc.lines_with_sap}/{oc.lines_count}</span>
-            <span>{tr(lang,'coverage_sub')}</span>
-          </div>
-          <div style={{height: 3, background:'var(--border)', borderRadius: 2, marginTop: 10, overflow:'hidden'}}>
-            <div style={{height:'100%', width: (oc.coverage_pct*100)+'%',
-              background: oc.coverage_pct === 1 ? 'var(--success)' : oc.coverage_pct >= 0.75 ? 'var(--warning)' : 'var(--critical)'
-            }}/>
-          </div>
+          {(() => {
+            const allLs = (oc.lines || []).filter(l => l.is_active !== false);
+            const linesTotal = Math.max(oc.lines_count || 0, allLs.length);
+            const linesWithSapLive = allLs.filter(l => !!l.sap).length;
+            const linesWithSap = Math.max(oc.lines_with_sap || 0, linesWithSapLive);
+            const persistedPct = Number(oc.coverage_pct || 0);
+            const livePct = linesTotal > 0 ? linesWithSap / linesTotal : 0;
+            const pct = persistedPct > 0 ? persistedPct : livePct;
+            const color = pct >= 1 ? 'var(--success)'
+                       : pct >= 0.75 ? 'var(--warning)'
+                       : 'var(--critical)';
+            return (
+              <>
+                <div className="k-value" style={{ color }}>
+                  {Math.round(pct * 100)}%
+                </div>
+                <div className="k-sub">
+                  <span style={{color:'var(--text-secondary)'}}>{linesWithSap}/{linesTotal}</span>
+                  <span>{tr(lang,'coverage_sub')}</span>
+                </div>
+                <div style={{
+                  height: 3, background:'var(--border)', borderRadius: 2,
+                  marginTop: 10, overflow:'hidden',
+                }}>
+                  <div style={{
+                    height:'100%', width: (pct*100)+'%',
+                    background: color,
+                  }}/>
+                </div>
+              </>
+            );
+          })()}
         </div>
 
-        {/* Logistics split */}
+        {/* Logistics split — Sprint 2026-05-01: si los persistidos
+            (oc.sea_pct/oc.air_pct) vienen en 0, derivamos del
+            transport_mode de las lineas en vivo. */}
         <div className="kpi-tile">
           <div className="k-label">{tr(lang,'logistics_split')}</div>
-          <div className="k-value" style={{display:'flex', alignItems:'baseline', gap:6, fontSize: 28}}>
-            <span style={{color:'var(--brand-accent)'}}>{Math.round(oc.sea_pct*100)}%</span>
-            <span className="caption" style={{fontSize:11}}>{tr(lang,'transport_sea')}</span>
-            <span className="caption" style={{color:'var(--text-tertiary)', margin:'0 4px'}}>/</span>
-            <span style={{color:'var(--brand-primary)'}}>{Math.round(oc.air_pct*100)}%</span>
-            <span className="caption" style={{fontSize:11}}>{tr(lang,'transport_air')}</span>
-          </div>
-          <div className="split-bar" style={{marginTop:12}}>
-            <div className="seg sea" style={{width: (oc.sea_pct*100)+'%'}}/>
-            <div className="seg air" style={{width: (oc.air_pct*100)+'%'}}/>
-          </div>
+          {(() => {
+            const lns = (oc.lines || []).filter(l => l.is_active !== false);
+            const totalQty = lns.reduce((a, l) => a + Number(l.qty || 0), 0);
+            const seaQty = lns
+              .filter(l => /^(MARITIMO|SEA)$/i.test(String(l.transport_mode || "")))
+              .reduce((a, l) => a + Number(l.qty || 0), 0);
+            const airQty = lns
+              .filter(l => /^(AEREO|AIR)$/i.test(String(l.transport_mode || "")))
+              .reduce((a, l) => a + Number(l.qty || 0), 0);
+            const liveSea = totalQty > 0 ? seaQty / totalQty : 0;
+            const liveAir = totalQty > 0 ? airQty / totalQty : 0;
+            const persistedSea = Number(oc.sea_pct || 0);
+            const persistedAir = Number(oc.air_pct || 0);
+            const seaPct = persistedSea > 0 ? persistedSea : liveSea;
+            const airPct = persistedAir > 0 ? persistedAir : liveAir;
+            return (
+              <>
+                <div className="k-value" style={{display:'flex', alignItems:'baseline', gap:6, fontSize: 28}}>
+                  <span style={{color:'var(--brand-accent)'}}>{Math.round(seaPct*100)}%</span>
+                  <span className="caption" style={{fontSize:11}}>{tr(lang,'transport_sea')}</span>
+                  <span className="caption" style={{color:'var(--text-tertiary)', margin:'0 4px'}}>/</span>
+                  <span style={{color:'var(--brand-primary)'}}>{Math.round(airPct*100)}%</span>
+                  <span className="caption" style={{fontSize:11}}>{tr(lang,'transport_air')}</span>
+                </div>
+                <div className="split-bar" style={{marginTop:12}}>
+                  <div className="seg sea" style={{width: (seaPct*100)+'%'}}/>
+                  <div className="seg air" style={{width: (airPct*100)+'%'}}/>
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         {/* Financial — Sprint 2026-05-01: si total_invoiced/balance vienen
