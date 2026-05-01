@@ -46,6 +46,10 @@ export default function ScreenExpedienteDetail() {
   const [apiClient, setApiClient] = useState(null);
   const [apiBrand,  setApiBrand]  = useState(null);
   const [apiLines,  setApiLines]  = useState([]);
+  // Sprint 2026-05-01: lineas del OC para heredar unit_price/total_price
+  // cuando la linea del expediente tiene precio 0 (caso comun: el wizard
+  // crea filas nuevas con unit_price=0 si el price_map no las resuelve).
+  const [apiOcLines, setApiOcLines] = useState([]);
   const [loading,   setLoading]   = useState(!isHeroOrMock);
   const [notFound,  setNotFound]  = useState(false);
 
@@ -61,15 +65,19 @@ export default function ScreenExpedienteDetail() {
         // OJO: para listar las líneas usamos `e.id` (UUID canónico), no el
         // `expedienteId` del URL — éste puede ser el codigo legible
         // (EXP-2026-0001) y el filtro del backend espera UUID.
-        const [cli, br, ln] = await Promise.all([
+        const [cli, br, ln, ocLn] = await Promise.all([
           e.client_id ? clientesApi.get(e.client_id).catch(() => null) : Promise.resolve(null),
           e.brand_id  ? marcasApi.get(e.brand_id).catch(() => null)    : Promise.resolve(null),
           lineasApi.list({ expediente: e.id }).catch(() => ({ results: [] })),
+          // Lineas del OC para fallback de precios (mismo SKU)
+          e.oc_id ? lineasApi.list({ oc: e.oc_id }).catch(() => ({ results: [] }))
+                  : Promise.resolve({ results: [] }),
         ]);
         if (cancel) return;
         setApiClient(cli);
         setApiBrand(br);
         setApiLines(Array.isArray(ln) ? ln : (ln?.results || []));
+        setApiOcLines(Array.isArray(ocLn) ? ocLn : (ocLn?.results || []));
       })
       .catch(() => { if (!cancel) setNotFound(true); })
       .finally(() => { if (!cancel) setLoading(false); });
@@ -186,6 +194,28 @@ export default function ScreenExpedienteDetail() {
   const activity = isHero ? HERO_ACTIVITY : [];
 
   // Loading / not-found para expedientes reales que aún no llegan del API
+  // Sprint 2026-05-01: mapa de precios del OC indexado por SKU para
+  // heredar precio cuando la linea del expediente tiene unit_price=0.
+  // Indexado por SKU+size (clave compuesta) — fallback solo a SKU si
+  // no hay match exacto con size.
+  const ocPriceBySkuKey = (() => {
+    const m = {};
+    for (const ol of apiOcLines || []) {
+      const sku = (ol.sku || "").toUpperCase().trim();
+      if (!sku) continue;
+      const size = (ol.size || ol.talla || "").toString().toUpperCase().trim();
+      const key = size ? `${sku}|${size}` : sku;
+      const unit = Number(ol.unit_price || 0);
+      const total = Number(ol.total_price || 0);
+      if (unit > 0 || total > 0) {
+        m[key] = { unit_price: unit, total_price: total, sku };
+        // tambien indexar por solo sku como fallback
+        if (!m[sku]) m[sku] = { unit_price: unit, total_price: total, sku };
+      }
+    }
+    return m;
+  })();
+
   if (loading) {
     return (
       <div className="page" style={{ maxWidth: 1500, padding: 32 }}>
@@ -355,10 +385,11 @@ export default function ScreenExpedienteDetail() {
               <OverviewTab exp={exp} lang={lang} lines={lines}
                            activity={activity} isClient={isClient}
                            isHeroOrMock={isHeroOrMock}
+                           ocPriceBySkuKey={ocPriceBySkuKey}
                            onOpenArtifactsTab={() => setTab('artifacts')}/>
             </>
           )}
-          {tab === 'lines'     && <LinesTab lines={lines} lang={lang}/>}
+          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} ocPriceBySkuKey={ocPriceBySkuKey}/>}
           {tab === 'artifacts' && (
             <div>
               {/* Toolbar de artifacts: solo visible para CEO/admin.
@@ -457,7 +488,7 @@ export default function ScreenExpedienteDetail() {
   );
 }
 
-function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifactsTab }) {
+function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifactsTab, ocPriceBySkuKey }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
       {/* Sprint 2026-05-01: el card "Detalles" mostraba modo/flete/ETA/
@@ -521,8 +552,19 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifacts
               // (Decimal serializado). Sin Number(), `qty * unit_price` hace
               // string concat y `(margin*100)` es NaN%.
               const qty   = Number(l.qty || 0);
-              const unit  = Number(l.unit_price || 0);
-              const sub   = Number(l.total_price ?? (qty * unit));
+              let unit    = Number(l.unit_price || 0);
+              // Fallback: si la linea del expediente tiene unit_price=0,
+              // hereda del OC por SKU+size (o solo SKU si no hay match).
+              if (unit === 0 && ocPriceBySkuKey) {
+                const sku = (l.sku || "").toUpperCase().trim();
+                const size = (l.size || l.talla || "").toString().toUpperCase().trim();
+                const key = size ? `${sku}|${size}` : sku;
+                const fallback = ocPriceBySkuKey[key] || ocPriceBySkuKey[sku];
+                if (fallback?.unit_price > 0) unit = fallback.unit_price;
+              }
+              const sub   = Number(l.total_price && Number(l.total_price) > 0
+                                    ? l.total_price
+                                    : qty * unit);
               const margin = Number(l.margin ?? 0);
               return (
                 <tr key={l.id}>
@@ -572,8 +614,19 @@ function DetailRow({ label, value }) {
   );
 }
 
-function LinesTab({ lines, lang }) {
-  const total = lines.reduce((a,l) => a + l.qty*l.unit_price, 0);
+function LinesTab({ lines, lang, ocPriceBySkuKey }) {
+  // Sprint 2026-05-01: total con fallback de precio del OC
+  const total = lines.reduce((a, l) => {
+    let unit = Number(l.unit_price || 0);
+    if (unit === 0 && ocPriceBySkuKey) {
+      const sku = (l.sku || "").toUpperCase().trim();
+      const size = (l.size || l.talla || "").toString().toUpperCase().trim();
+      const key = size ? `${sku}|${size}` : sku;
+      const fb = ocPriceBySkuKey[key] || ocPriceBySkuKey[sku];
+      if (fb?.unit_price > 0) unit = fb.unit_price;
+    }
+    return a + Number(l.qty || 0) * unit;
+  }, 0);
   return (
     <div className="card">
       <div className="card-head">
@@ -592,18 +645,33 @@ function LinesTab({ lines, lang }) {
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Margen' : 'Margin'}</th>
         </tr></thead>
         <tbody>
-          {lines.map(l => (
+          {lines.map(l => {
+            // Fallback de precio del OC si la linea del expediente trae 0
+            let _unit = Number(l.unit_price || 0);
+            let _total = Number(l.total_price || 0);
+            if (_unit === 0 && ocPriceBySkuKey) {
+              const sku = (l.sku || "").toUpperCase().trim();
+              const size = (l.size || l.talla || "").toString().toUpperCase().trim();
+              const key = size ? `${sku}|${size}` : sku;
+              const fb = ocPriceBySkuKey[key] || ocPriceBySkuKey[sku];
+              if (fb?.unit_price > 0) _unit = fb.unit_price;
+            }
+            const _qty = Number(l.qty || 0);
+            if (_total === 0) _total = _qty * _unit;
+            return (
             <tr key={l.id}>
               <td><span className="mono-sm" style={{ fontWeight: 600, color:'var(--interactive)' }}>{l.sku}</span></td>
               <td>{l.name}</td>
               <td className="mono-sm text-sec">{l.container}</td>
               <td className="td-num tabular">{l.qty}</td>
-              <td className="td-money text-sec">{fmtMoneyDetail(l.unit_cost)}</td>
-              <td className="td-money">{fmtMoneyDetail(l.unit_price)}</td>
-              <td className="td-money">{fmtMoney(l.qty * l.unit_price)}</td>
-              <td className="td-num"><Badge kind="mint">{(l.margin*100).toFixed(1)}%</Badge></td>
+              <td className="td-money text-sec">{fmtMoneyDetail(Number(l.unit_cost || 0))}</td>
+              <td className="td-money">{fmtMoneyDetail(_unit)}</td>
+              <td className="td-money">{fmtMoney(_total)}</td>
+              <td className="td-num">{Number(l.margin || 0) > 0
+                ? <Badge kind="mint">{(Number(l.margin)*100).toFixed(1)}%</Badge>
+                : <span className="caption" style={{color:'var(--text-tertiary)'}}>—</span>}</td>
             </tr>
-          ))}
+          );})}
         </tbody>
         <tfoot>
           <tr>
