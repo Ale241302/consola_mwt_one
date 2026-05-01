@@ -147,21 +147,19 @@ export default function ScreenExpedientes() {
         lineasArr = Array.isArray(lnRaw) ? lnRaw : (lnRaw?.results || []);
       } catch { lineasArr = []; }
 
-      // Productos para resolver precio cuando linea.unit_price = 0
-      const uniquePidsForPrice = Array.from(new Set(
-        lineasArr.map(l => l.producto_id).filter(Boolean)
-      ));
+      // Productos para resolver precio cuando linea.unit_price = 0.
+      // Sprint 2026-05-01: usamos UN SOLO list() en lugar de N gets.
+      // El ProductoListSerializer ya incluye `precio_lista` y
+      // `especificaciones`, asi que no necesitamos los retrieves individuales
+      // (que ademas disparaban 404 ruidosos en producto_ids huerfanos).
       const productMap = {};
-      if (uniquePidsForPrice.length > 0) {
-        try {
-          const prodResults = await Promise.all(
-            uniquePidsForPrice.map(pid => productosApi.get(pid).catch(() => null))
-          );
-          for (const p of prodResults) {
-            if (p?.id) productMap[p.id] = p;
-          }
-        } catch { /* fallthrough */ }
-      }
+      try {
+        const prodList = await productosApi.list();
+        const arr = Array.isArray(prodList) ? prodList : (prodList?.results || []);
+        for (const p of arr) {
+          if (p?.id) productMap[p.id] = p;
+        }
+      } catch { /* fallthrough — order_value queda en 0 */ }
 
       // ── Enriquecimiento batch: hidratar nombre de cliente y días
       // de crédito desde /api/clientes (un fetch por client_id único).
