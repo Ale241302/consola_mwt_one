@@ -26,6 +26,7 @@ import {
   IconRefresh, IconUser, IconPackage, IconPlus, IconSearch, IconLock,
   IconMail, IconTrash,
 } from "../lib/icons.jsx";
+import { useRole } from "../context/RoleContext.jsx";
 import {
   clientesApi, expedientesApi, productosApi, tallasApi, apiFetch, getToken,
 } from "../lib/api.js";
@@ -77,6 +78,76 @@ export default function CreateExpedienteWizardLite() {
   const [reqDialog, setReqDialog]       = useState(null);   // {sku} cuando solicita asignación
   const [saving, setSaving]             = useState(false);
   const [toast, setToast]               = useState(null);
+
+  // ── Sprint 2026-05-01: precios y proyeccion de credito ─────────
+  // Mapa { producto_id -> unit_price } resuelto desde el catalogo de
+  // productos para el cliente actual (especificaciones.client_prices
+  // [client_id] || precio_lista). Lo usa el ADMIN para ver el valor
+  // total del pedido y el impacto en el credito disponible. CLIENT
+  // no ve precios (POL_VISIBILIDAD).
+  const { isAdmin } = useRole();
+  const [priceMap, setPriceMap] = useState({});
+
+  useEffect(() => {
+    // Reset cuando cambia el cliente: el override de precio depende
+    // de client_id, asi que no podemos reusar el map anterior.
+    setPriceMap({});
+  }, [selClient?.id]);
+
+  useEffect(() => {
+    if (!selClient?.id) return;
+    const uniquePidIds = Array.from(new Set(
+      orderLines.map(l => l.producto_id).filter(Boolean)
+    ));
+    // Solo fetch los que aun no tenemos
+    const missing = uniquePidIds.filter(pid => !(pid in priceMap));
+    if (missing.length === 0) return;
+    let cancel = false;
+    Promise.all(
+      missing.map(pid => productosApi.get(pid).catch(() => null))
+    ).then(prods => {
+      if (cancel) return;
+      const next = { ...priceMap };
+      for (const p of prods) {
+        if (!p?.id) continue;
+        const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
+        const override = Number(cliMap[selClient.id] || 0);
+        const lista    = Number(p.precio_lista || 0);
+        next[p.id] = override > 0 ? override : lista;
+      }
+      setPriceMap(next);
+    });
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selClient?.id, orderLines]);
+
+  // Total del pedido segun precios resueltos
+  const orderTotalValue = useMemo(() => {
+    return orderLines.reduce((acc, l) => {
+      const unit = Number(priceMap[l.producto_id] || 0);
+      return acc + Number(l.cantidad || 0) * unit;
+    }, 0);
+  }, [orderLines, priceMap]);
+
+  // Proyeccion de credito post-pedido
+  const creditProjection = useMemo(() => {
+    if (!selClient) return null;
+    const limit = Number(selClient.credito_limit || 0);
+    const used  = Number(selClient.credito_used || 0);
+    const available = Math.max(0, limit - used);
+    const afterUsed = used + orderTotalValue;
+    const afterAvailable = limit - afterUsed;
+    const exceedsLimit = limit > 0 && afterUsed > limit;
+    const utilPctAfter = limit > 0 ? Math.round((afterUsed / limit) * 100) : 0;
+    return {
+      limit, used, available,
+      orderValue:  orderTotalValue,
+      afterUsed,
+      afterAvailable,
+      exceedsLimit,
+      utilPctAfter,
+    };
+  }, [selClient, orderTotalValue]);
 
   // ── Cargar catálogos ──
   useEffect(() => {
@@ -204,6 +275,9 @@ export default function CreateExpedienteWizardLite() {
               manualOpen={manualOpen} setManualOpen={setManualOpen}
               setReqDialog={setReqDialog}
               setToast={setToast}
+              priceMap={priceMap}
+              creditProjection={creditProjection}
+              isAdmin={isAdmin}
             />
           )}
           {step === 3 && (
@@ -212,6 +286,9 @@ export default function CreateExpedienteWizardLite() {
               client={selClient}
               responsable={selResponsable}
               orderLines={orderLines}
+              priceMap={priceMap}
+              creditProjection={creditProjection}
+              isAdmin={isAdmin}
             />
           )}
         </motion.div>
@@ -518,6 +595,7 @@ function Step2Productos({
   parsing, setParsing,
   manualOpen, setManualOpen,
   setReqDialog, setToast,
+  priceMap = {}, creditProjection, isAdmin = false,
 }) {
   const dropRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
@@ -680,6 +758,8 @@ function Step2Productos({
                 <th style={{ textAlign: "right", paddingRight: 24 }}>
                   {lang === "es" ? "Cantidad" : "Qty"}
                 </th>
+                {isAdmin && <th style={{ textAlign: "right" }}>{lang === "es" ? "P. unit." : "Unit price"}</th>}
+                {isAdmin && <th style={{ textAlign: "right" }}>{lang === "es" ? "Subtotal" : "Subtotal"}</th>}
                 <th>{lang === "es" ? "Estado" : "Status"}</th>
                 <th style={{ width: 56, textAlign: "center" }}></th>
               </tr>
@@ -700,6 +780,25 @@ function Step2Productos({
                              style={{ width: 90, textAlign: "right",
                                       display: "inline-block" }}/>
                     </td>
+                    {isAdmin && (
+                      <td className="tabular-nums" style={{ textAlign: "right" }}>
+                        {(() => {
+                          const u = Number(priceMap[l.producto_id] || 0);
+                          if (u > 0) return `$${u.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                          return <span style={{ color: "var(--text-tertiary)" }}>—</span>;
+                        })()}
+                      </td>
+                    )}
+                    {isAdmin && (
+                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600, color: "#0B1E3A" }}>
+                        {(() => {
+                          const u = Number(priceMap[l.producto_id] || 0);
+                          const sub = u * Number(l.cantidad || 0);
+                          if (sub > 0) return `$${sub.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                          return <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}>—</span>;
+                        })()}
+                      </td>
+                    )}
                     <td>
                       {unassigned ? (
                         l.unassigned_request_sent ? (
@@ -743,6 +842,11 @@ function Step2Productos({
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* ── Sprint 2026-05-01: Proyeccion de credito (CEO-only) ── */}
+      {isAdmin && creditProjection && creditProjection.limit > 0 && orderLines.length > 0 && (
+        <CreditProjectionCard cp={creditProjection} lang={lang}/>
       )}
 
       {manualOpen && (
@@ -1141,15 +1245,23 @@ function RequestAssignmentDialog({ lang, sku, clientId, clientEmail, onClose, on
 // ═════════════════════════════════════════════════════════════
 // STEP 3 · RESUMEN (sin financiero)
 // ═════════════════════════════════════════════════════════════
-function Step3Resumen({ lang, client, responsable, orderLines }) {
+function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, creditProjection, isAdmin = false }) {
   const totalUnits = orderLines.reduce((a, l) => a + Number(l.cantidad || 0), 0);
-  // Agrupar por SKU para el resumen
+  // Agrupar por SKU para el resumen + acumular subtotales por SKU
   const bySku = {};
   orderLines.forEach((l) => {
-    if (!bySku[l.sku]) bySku[l.sku] = { sku: l.sku, label: l.product_label, tallas: [] };
+    if (!bySku[l.sku]) {
+      bySku[l.sku] = {
+        sku: l.sku, label: l.product_label, tallas: [],
+        producto_id: l.producto_id, subtotalValue: 0,
+      };
+    }
     bySku[l.sku].tallas.push({ talla: l.talla, cantidad: l.cantidad });
+    const u = Number(priceMap[l.producto_id] || 0);
+    bySku[l.sku].subtotalValue += u * Number(l.cantidad || 0);
   });
   const groups = Object.values(bySku);
+  const totalValue = groups.reduce((a, g) => a + g.subtotalValue, 0);
 
   return (
     <div className="card card-pad-lg">
@@ -1191,7 +1303,8 @@ function Step3Resumen({ lang, client, responsable, orderLines }) {
               <th>SKU</th>
               <th>{lang === "es" ? "Producto" : "Product"}</th>
               <th>{lang === "es" ? "Tallas y cantidades" : "Sizes & quantities"}</th>
-              <th style={{ textAlign: "right" }}>{lang === "es" ? "Total" : "Total"}</th>
+              <th style={{ textAlign: "right" }}>{lang === "es" ? "Total uds." : "Total qty"}</th>
+              {isAdmin && <th style={{ textAlign: "right" }}>{lang === "es" ? "Valor" : "Value"}</th>}
             </tr>
           </thead>
           <tbody>
@@ -1215,12 +1328,41 @@ function Step3Resumen({ lang, client, responsable, orderLines }) {
                   <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#0B1E3A" }}>
                     {totalSku}
                   </td>
+                  {isAdmin && (
+                    <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#0B1E3A" }}>
+                      {g.subtotalValue > 0
+                        ? `$${g.subtotalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}>—</span>}
+                    </td>
+                  )}
                 </tr>
               );
             })}
           </tbody>
+          {isAdmin && totalValue > 0 && (
+            <tfoot>
+              <tr>
+                <td colSpan={4} style={{ textAlign: "right", paddingRight: 16,
+                                          color: "var(--text-tertiary)", fontWeight: 600,
+                                          textTransform: "uppercase", fontSize: 11, letterSpacing: 0.6 }}>
+                  {lang === "es" ? "Valor total del pedido" : "Order total value"}
+                </td>
+                <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 800,
+                                                       color: "#00B286", fontSize: 16 }}>
+                  ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
+
+      {/* ── Sprint 2026-05-01: Impacto en credito (CEO-only) ── */}
+      {isAdmin && creditProjection && creditProjection.limit > 0 && orderLines.length > 0 && (
+        <div style={{ marginTop: 18 }}>
+          <CreditProjectionCard cp={creditProjection} lang={lang}/>
+        </div>
+      )}
 
       {/* Aviso de qué falta */}
       <div style={{
@@ -1277,6 +1419,110 @@ function Field({ label, children }) {
       }}>{label}</span>
       {children}
     </label>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// CREDIT PROJECTION CARD — visualizacion del impacto del pedido en
+// el credito disponible del cliente. Sprint 2026-05-01.
+// ═════════════════════════════════════════════════════════════
+function CreditProjectionCard({ cp, lang }) {
+  const tone = cp.exceedsLimit ? "red"
+             : cp.utilPctAfter >= 85 ? "red"
+             : cp.utilPctAfter >= 70 ? "amber" : "green";
+  const colorMap = {
+    green: { bar: "#00B286", text: "#0B1E3A", bg: "rgba(0,178,134,0.06)", border: "rgba(0,178,134,0.30)" },
+    amber: { bar: "#F59E0B", text: "#92400E", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.40)" },
+    red:   { bar: "#DC2626", text: "#991B1B", bg: "rgba(220,38,38,0.08)", border: "rgba(220,38,38,0.40)" },
+  };
+  const c = colorMap[tone];
+  const fmt = (v) => `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  return (
+    <div style={{
+      marginTop: 14,
+      padding: "14px 16px",
+      borderRadius: 10,
+      background: c.bg,
+      border: `1px solid ${c.border}`,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                     marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
+        <div className="micro" style={{ color: c.text, letterSpacing: 1, fontWeight: 700 }}>
+          {lang === "es" ? "IMPACTO EN CRÉDITO DEL CLIENTE" : "CLIENT CREDIT IMPACT"}
+        </div>
+        {cp.exceedsLimit && (
+          <span style={{
+            padding: "3px 10px", borderRadius: 999,
+            background: "#DC2626", color: "#fff",
+            fontSize: 10, fontWeight: 800, letterSpacing: 0.6,
+          }}>
+            {lang === "es" ? "EXCEDE LÍMITE" : "EXCEEDS LIMIT"}
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14 }}>
+        <Stat label={lang === "es" ? "Límite total" : "Total limit"} value={fmt(cp.limit)}/>
+        <Stat label={lang === "es" ? "Uso actual" : "Current used"} value={fmt(cp.used)}/>
+        <Stat label={lang === "es" ? "Valor del pedido" : "Order value"} value={fmt(cp.orderValue)} accent="#00B286"/>
+        <Stat
+          label={lang === "es" ? "Disponible después" : "After order"}
+          value={fmt(cp.afterAvailable)}
+          accent={cp.afterAvailable < 0 ? "#DC2626" : c.text}
+        />
+      </div>
+
+      <div style={{ marginTop: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between",
+                       fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>
+          <span>
+            {lang === "es" ? "Utilización proyectada" : "Projected utilization"}
+          </span>
+          <span className="tabular-nums" style={{ fontWeight: 700, color: c.text }}>
+            {cp.utilPctAfter}% {cp.exceedsLimit && "(>100%)"}
+          </span>
+        </div>
+        <div style={{ height: 8, background: "#E1E6ED", borderRadius: 4, overflow: "hidden", position: "relative" }}>
+          <div style={{
+            height: "100%",
+            width: `${Math.min(100, cp.utilPctAfter)}%`,
+            background: c.bar,
+            transition: "width 0.18s ease",
+          }}/>
+          {cp.exceedsLimit && (
+            <div style={{
+              position: "absolute", top: 0, right: 0, height: "100%",
+              width: 4, background: "#7F1D1D",
+            }}/>
+          )}
+        </div>
+      </div>
+
+      {cp.exceedsLimit && (
+        <div style={{ marginTop: 10, fontSize: 12, color: "#991B1B", fontWeight: 600 }}>
+          ⚠ {lang === "es"
+              ? "Este pedido excede el límite de crédito del cliente. Revisa con CEO antes de continuar."
+              : "This order exceeds the client credit limit. Review with CEO before continuing."}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, accent }) {
+  return (
+    <div>
+      <div style={{
+        fontSize: 10, fontWeight: 700,
+        color: "var(--text-tertiary)", letterSpacing: 0.6,
+        textTransform: "uppercase", marginBottom: 4,
+      }}>{label}</div>
+      <div className="tabular-nums" style={{
+        fontSize: 15, fontWeight: 700,
+        color: accent || "#0B1E3A",
+      }}>{value}</div>
+    </div>
   );
 }
 
