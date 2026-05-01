@@ -1177,14 +1177,18 @@ class ExpedienteViewSet(viewsets.ViewSet):
         try:
             with transaction.atomic():
                 with connection.cursor() as c:
+                    # Sprint 2026-05-01 (fix): el unique index ai_unique_active_artifact
+                    # garantiza UN solo ART-04 activo por expediente. Buscamos
+                    # sin filtrar por codigo (sap_id) — si existe lo actualizamos
+                    # (renombrando el codigo si el sap cambio). Si no existe,
+                    # insertamos uno nuevo.
                     c.execute("""
                         SELECT id FROM expedientes.artifact_instances
                          WHERE expediente_id = %s::uuid
                            AND artifact_code = 'ART-04'
-                           AND codigo        = %s
                            AND is_active     = TRUE
                          ORDER BY created_at DESC LIMIT 1
-                    """, [str(exp.id), sap_id])
+                    """, [str(exp.id)])
                     row = c.fetchone()
                     artifact_id = row[0] if row else uuid.uuid4()
 
@@ -1196,8 +1200,14 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         "upsert":            True,
                     }
                     if row:
-                        update_fields = ["ocr_payload = %s::jsonb", "fecha = %s"]
-                        update_args   = [json.dumps(ocr_payload), fabricacion_dt]
+                        # Sprint 2026-05-01 (fix): renombrar codigo al nuevo sap_id
+                        # si cambio (caso "editar numero SAP").
+                        update_fields = ["ocr_payload = %s::jsonb",
+                                         "fecha = %s",
+                                         "codigo = %s"]
+                        update_args   = [json.dumps(ocr_payload),
+                                         fabricacion_dt,
+                                         sap_id]
                         if new_storage_url:
                             update_fields += ["storage_url = %s",
                                               "paperless_doc_id = %s",
