@@ -339,6 +339,7 @@ export default function CreateExpedienteWizardLite() {
               users={users}
               selClient={selClient}     setSelClient={setSelClient}
               selResp={selResponsable}  setSelResp={setSelResp}
+              existingClientUsage={existingClientUsage}
             />
           )}
           {step === 2 && (
@@ -497,7 +498,7 @@ function Stepper({ step, onJump, lang }) {
 // ═════════════════════════════════════════════════════════════
 // STEP 1 · CLIENTE
 // ═════════════════════════════════════════════════════════════
-function Step1Cliente({ lang, clients, users, selClient, setSelClient, selResp, setSelResp }) {
+function Step1Cliente({ lang, clients, users, selClient, setSelClient, selResp, setSelResp, existingClientUsage = 0 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
