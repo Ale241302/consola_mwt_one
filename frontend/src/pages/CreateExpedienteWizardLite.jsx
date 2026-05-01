@@ -878,11 +878,14 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
   const [picked, setPicked]     = useState(null);   // {sku, label, tallas:[{talla, qty}]}
   const [loading, setLoading]   = useState(false);
   const [cpaSet, setCpaSet]     = useState(new Set()); // skus asignados al cliente
-  // Catálogo del Motor de Tallas — lo necesitamos para resolver los
-  // UUIDs guardados en p.tallas a labels humanos (43, 44, M, L, …).
-  // El producto las guarda como UUIDs porque las tallas viven en
-  // sizing.talla con sistemas distintos (CALZADO, ROPA, …).
-  const [sizingMap, setSizingMap] = useState({}); // { uuid: {label, sistema} }
+  // Catálogo del Motor de Tallas con TODAS las equivalencias.
+  // Sprint 2026-05-01: antes solo guardaba { label, sistema }; ahora
+  // guarda tambien { equiv: { EU, US_M, US_W, UK_M, BR, CM, ALFA, ... } }
+  // para que el modal pueda mostrar la talla en el sistema que el user
+  // elija via toggle.
+  const [sizingMap, setSizingMap] = useState({});
+  // Sistema de medida elegido para mostrar la talla.
+  const [displaySystem, setDisplaySystem] = useState("BASE");
 
   // Cargar CPA del cliente una vez
   useEffect(() => {
@@ -895,16 +898,35 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
       .catch(() => {});
   }, [clientId]);
 
-  // Cargar catálogo de tallas (Motor de Tallas) una sola vez al montar
+  // Cargar catálogo de tallas (Motor de Tallas) con TODAS las equivalencias
   useEffect(() => {
     tallasApi.list({ limit: 500 })
       .then((d) => {
         const arr = Array.isArray(d) ? d : (d?.results || []);
         const map = {};
         for (const sz of arr) {
-          // Misma prioridad de label que ProductFormView.jsx (sección C)
-          const label = sz.talla_base || sz.eu || sz.us_men || sz.nombre || sz.codigo || "—";
-          map[String(sz.id)] = { label, sistema: sz.sistema || "OTRO" };
+          const base = sz.talla_base || sz.nombre || sz.codigo || "—";
+          map[String(sz.id)] = {
+            base,
+            tipo: sz.tipo_producto || null,
+            equiv: {
+              BASE: base,
+              EU:   sz.eu       || null,
+              US_M: sz.us_men   || null,
+              US_W: sz.us_women || null,
+              US_Y: sz.us_youth || null,
+              UK_M: sz.uk_men   || null,
+              UK_W: sz.uk_women || null,
+              BR:   sz.br       || null,
+              MX:   sz.mx       || null,
+              AR:   sz.ar       || null,
+              JP:   sz.jp       || null,
+              CN:   sz.cn       || null,
+              KR:   sz.kr       || null,
+              CM:   sz.cm       || null,
+              ALFA: sz.alfa     || null,
+            },
+          };
         }
         setSizingMap(map);
       })
@@ -951,27 +973,51 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
       tallaIds = [];
     }
 
-    let tallasList = [];
+    const seen = new Set();
+    const tallas = [];
     for (const t of tallaIds) {
+      let entry = null;
       if (typeof t === "object" && t) {
-        const lbl = t.talla_base || t.eu || t.us_men || t.codigo || t.nombre;
-        if (lbl) tallasList.push(lbl);
+        const base = t.talla_base || t.nombre || t.codigo || null;
+        if (base) {
+          entry = {
+            base,
+            equiv: {
+              BASE: base,
+              EU:   t.eu       || null,
+              US_M: t.us_men   || null,
+              US_W: t.us_women || null,
+              US_Y: t.us_youth || null,
+              UK_M: t.uk_men   || null,
+              UK_W: t.uk_women || null,
+              BR:   t.br       || null,
+              MX:   t.mx       || null,
+              AR:   t.ar       || null,
+              JP:   t.jp       || null,
+              CN:   t.cn       || null,
+              KR:   t.kr       || null,
+              CM:   t.cm       || null,
+              ALFA: t.alfa     || null,
+            },
+          };
+        }
       } else {
         const m = sizingMap[String(t)];
-        if (m?.label) tallasList.push(m.label);
+        if (m?.base) entry = { base: m.base, equiv: m.equiv };
+      }
+      if (entry && !seen.has(entry.base)) {
+        seen.add(entry.base);
+        tallas.push({ ...entry, qty: 0 });
       }
     }
-    // Sin tallas resueltas → TALLA ÚNICA (NO inventar XS-XXL).
-    if (tallasList.length === 0) {
-      tallasList = ["ÚNICA"];
+    if (tallas.length === 0) {
+      tallas.push({ base: "ÚNICA", equiv: { BASE: "ÚNICA" }, qty: 0 });
     }
-    // De-duplicar y ordenar (43 antes que 44; M antes que XL no — orden natural)
-    tallasList = Array.from(new Set(tallasList));
 
     setPicked({
       ...tempPicked,
       loading_sizes: false,
-      tallas: tallasList.map((t) => ({ talla: t, qty: 0 })),
+      tallas,
     });
   };
 
@@ -981,7 +1027,9 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
       .filter((t) => Number(t.qty || 0) > 0)
       .map((t) => ({
         sku:           picked.sku,
-        talla:         t.talla,
+        // Sprint 2026-05-01: persistimos siempre la talla BASE; el
+        // displaySystem es solo de presentacion en el modal.
+        talla:         t.base === "ÚNICA" ? null : t.base,
         cantidad:      Number(t.qty),
         producto_id:   picked.producto_id,
         product_label: picked.product_label,
@@ -1101,7 +1149,7 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
                 }}>
                   {lang === "es" ? "Cargando tallas asignadas…" : "Loading assigned sizes…"}
                 </div>
-              ) : picked.tallas.length === 1 && picked.tallas[0].talla === "ÚNICA" ? (
+              ) : picked.tallas.length === 1 && picked.tallas[0].base === "ÚNICA" ? (
                 <div className="caption" style={{
                   padding: "10px 12px", marginBottom: 14, borderRadius: 8,
                   background: "rgba(245,158,11,0.06)",
@@ -1113,33 +1161,107 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
                        : "This SKU has no sizes assigned in the Sizing Engine. Use SINGLE size or assign sizes in the product detail."}
                 </div>
               ) : null}
+
+              {/* Sprint 2026-05-01: toggle de sistema de medida.
+                  Solo aparecen los sistemas con AL MENOS 1 valor entre las
+                  tallas del producto (BASE siempre presente). */}
+              {!picked.loading_sizes && picked.tallas.length > 1 && (() => {
+                const allSystems = ["BASE","EU","US_M","US_W","UK_M","BR","CM","ALFA"];
+                const systemsWithData = allSystems.filter((s) =>
+                  s === "BASE" || picked.tallas.some((t) => !!(t.equiv && t.equiv[s]))
+                );
+                const labels = {
+                  BASE: lang === "es" ? "Base" : "Base",
+                  EU: "EU", US_M: "US M", US_W: "US W",
+                  UK_M: "UK", BR: "BR", CM: "CM",
+                  ALFA: lang === "es" ? "Letras" : "Letter",
+                };
+                if (systemsWithData.length <= 1) return null;
+                return (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    marginBottom: 10, justifyContent: "flex-end",
+                  }}>
+                    <span className="caption" style={{ fontSize: 11,
+                      color: "var(--text-tertiary)", fontWeight: 600,
+                    }}>
+                      {lang === "es" ? "Mostrar talla en:" : "Show size as:"}
+                    </span>
+                    <div style={{
+                      display: "inline-flex",
+                      background: "rgba(11,30,58,0.04)",
+                      padding: 3, borderRadius: 8, gap: 2,
+                    }}>
+                      {systemsWithData.map((s) => (
+                        <button
+                          key={s} type="button"
+                          onClick={() => setDisplaySystem(s)}
+                          style={{
+                            padding: "4px 10px", borderRadius: 6,
+                            border: 0, cursor: "pointer",
+                            background: displaySystem === s ? "white" : "transparent",
+                            color: displaySystem === s ? "#0B1E3A" : "var(--text-tertiary)",
+                            fontSize: 11, fontWeight: 700,
+                            boxShadow: displaySystem === s
+                              ? "0 1px 2px rgba(11,30,58,0.10)" : "none",
+                          }}
+                        >{labels[s]}</button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))",
+                gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
                 gap: 10, marginBottom: 14,
               }}>
-                {!picked.loading_sizes && picked.tallas.map((t, idx) => (
-                  <div key={t.talla} style={{
-                    border: "1px solid var(--border)", borderRadius: 8,
-                    padding: "10px 12px", background: "#fff",
-                  }}>
-                    <div className="caption" style={{
-                      color: "var(--text-tertiary)", textAlign: "center", marginBottom: 4,
-                      fontWeight: 700, letterSpacing: 0.5,
-                    }}>{t.talla}</div>
-                    <input className="input tabular-nums" type="number" min="0"
-                           value={t.qty}
-                           onChange={(e) => {
-                             const v = Math.max(0, Number(e.target.value) || 0);
-                             setPicked((p) => {
-                               const tallas = p.tallas.slice();
-                               tallas[idx] = { ...tallas[idx], qty: v };
-                               return { ...p, tallas };
-                             });
-                           }}
-                           style={{ textAlign: "center" }}/>
-                  </div>
-                ))}
+                {!picked.loading_sizes && picked.tallas.map((t, idx) => {
+                  const showLabel = (t.equiv && t.equiv[displaySystem]) || t.base || "—";
+                  const isFallback = displaySystem !== "BASE"
+                    && (!t.equiv || !t.equiv[displaySystem])
+                    && !!t.base;
+                  return (
+                    <div key={t.base} style={{
+                      border: "1px solid var(--border)", borderRadius: 8,
+                      padding: "10px 12px", background: "#fff",
+                    }}>
+                      <div style={{
+                        textAlign: "center", marginBottom: 4,
+                        fontWeight: 700, letterSpacing: 0.5,
+                        fontSize: 13,
+                        color: isFallback ? "#92400E" : "var(--text-tertiary)",
+                      }}
+                      title={isFallback
+                        ? (lang === "es"
+                            ? `${displaySystem} no definido — mostrando base`
+                            : `${displaySystem} not set — showing base`)
+                        : undefined}
+                      >{showLabel}</div>
+                      {/* Equivalencia base como subtitulo cuando display != BASE */}
+                      {displaySystem !== "BASE" && t.base !== showLabel && (
+                        <div className="caption" style={{
+                          fontSize: 9, textAlign: "center",
+                          color: "var(--text-tertiary)",
+                          marginBottom: 4,
+                          fontFamily: "var(--font-mono, monospace)",
+                        }}>= {t.base}</div>
+                      )}
+                      <input className="input tabular-nums" type="number" min="0"
+                             value={t.qty}
+                             onChange={(e) => {
+                               const v = Math.max(0, Number(e.target.value) || 0);
+                               setPicked((p) => {
+                                 const tallas = p.tallas.slice();
+                                 tallas[idx] = { ...tallas[idx], qty: v };
+                                 return { ...p, tallas };
+                               });
+                             }}
+                             style={{ textAlign: "center" }}/>
+                    </div>
+                  );
+                })}
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <button className="btn btn-ghost" onClick={() => setPicked(null)}>

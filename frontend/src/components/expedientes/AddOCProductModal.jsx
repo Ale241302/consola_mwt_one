@@ -65,8 +65,13 @@ export default function AddOCProductModal({
   const [picked, setPicked] = useState(null); // { p, tallas:[{label, qty}], unit_price }
   const [loadingPicked, setLoadingPicked] = useState(false);
 
-  // Catalogo de tallas (sizing) para resolver UUIDs -> labels
+  // Catalogo de tallas con TODAS las equivalencias (no solo el label).
+  // Permite mostrar la talla en cualquier sistema (EU/US/UK/CM/...).
   const [sizingMap, setSizingMap] = useState({});
+
+  // Sistema de medida elegido para mostrar la talla.
+  // "BASE" = la columna talla_base (canonica registrada en /tallas).
+  const [displaySystem, setDisplaySystem] = useState("BASE");
 
   // ── Cargar productos al abrir
   useEffect(() => {
@@ -89,7 +94,7 @@ export default function AddOCProductModal({
     return () => { cancel = true; };
   }, [open]); // eslint-disable-line
 
-  // Cargar catalogo de tallas una sola vez
+  // Cargar catalogo de tallas una sola vez con TODAS las equivalencias
   useEffect(() => {
     if (!open) return;
     if (Object.keys(sizingMap).length > 0) return;
@@ -98,8 +103,28 @@ export default function AddOCProductModal({
         const arr = Array.isArray(d) ? d : (d?.results || []);
         const map = {};
         for (const sz of arr) {
-          const label = sz.talla_base || sz.eu || sz.us_men || sz.nombre || sz.codigo || "—";
-          map[String(sz.id)] = { label, sistema: sz.sistema || "OTRO" };
+          const base = sz.talla_base || sz.nombre || sz.codigo || "—";
+          map[String(sz.id)] = {
+            base,
+            tipo: sz.tipo_producto || null,
+            equiv: {
+              BASE: base,
+              EU:   sz.eu       || null,
+              US_M: sz.us_men   || null,
+              US_W: sz.us_women || null,
+              US_Y: sz.us_youth || null,
+              UK_M: sz.uk_men   || null,
+              UK_W: sz.uk_women || null,
+              BR:   sz.br       || null,
+              MX:   sz.mx       || null,
+              AR:   sz.ar       || null,
+              JP:   sz.jp       || null,
+              CN:   sz.cn       || null,
+              KR:   sz.kr       || null,
+              CM:   sz.cm       || null,
+              ALFA: sz.alfa     || null,
+            },
+          };
         }
         setSizingMap(map);
       })
@@ -126,37 +151,59 @@ export default function AddOCProductModal({
     });
   }, [visible, q]);
 
-  // ── Pick: cargar detalle + tallas
+  // ── Pick: cargar detalle + tallas (con todas las equivalencias)
   const pick = async (p) => {
     const unit = resolveUnitPrice(p, clientId);
-    setPicked({
-      p, unit_price: unit, loading_sizes: true, tallas: [],
-    });
+    setPicked({ p, unit_price: unit, loading_sizes: true, tallas: [] });
     setLoadingPicked(true);
     try {
       const full = await productosApi.get(p.id);
       const tallaIds = Array.isArray(full?.tallas) ? full.tallas : [];
-      let tallas = [];
+      const seen = new Set();
+      const tallas = [];
       for (const t of tallaIds) {
+        let entry = null;
         if (typeof t === "object" && t) {
-          const lbl = t.talla_base || t.eu || t.us_men || t.codigo || t.nombre;
-          if (lbl) tallas.push(lbl);
+          const base = t.talla_base || t.nombre || t.codigo || null;
+          if (base) {
+            entry = {
+              base,
+              equiv: {
+                BASE: base,
+                EU:   t.eu       || null,
+                US_M: t.us_men   || null,
+                US_W: t.us_women || null,
+                US_Y: t.us_youth || null,
+                UK_M: t.uk_men   || null,
+                UK_W: t.uk_women || null,
+                BR:   t.br       || null,
+                MX:   t.mx       || null,
+                AR:   t.ar       || null,
+                JP:   t.jp       || null,
+                CN:   t.cn       || null,
+                KR:   t.kr       || null,
+                CM:   t.cm       || null,
+                ALFA: t.alfa     || null,
+              },
+            };
+          }
         } else {
           const m = sizingMap[String(t)];
-          if (m?.label) tallas.push(m.label);
+          if (m?.base) entry = { base: m.base, equiv: m.equiv };
+        }
+        if (entry && !seen.has(entry.base)) {
+          seen.add(entry.base);
+          tallas.push({ ...entry, qty: 0 });
         }
       }
-      // Sin tallas resueltas → TALLA UNICA (no inventar XS-XXL).
-      if (tallas.length === 0) tallas = ["UNICA"];
-      tallas = Array.from(new Set(tallas));
-      setPicked({
-        p, unit_price: unit, loading_sizes: false,
-        tallas: tallas.map((t) => ({ talla: t, qty: 0 })),
-      });
+      if (tallas.length === 0) {
+        tallas.push({ base: "UNICA", equiv: { BASE: "UNICA" }, qty: 0 });
+      }
+      setPicked({ p, unit_price: unit, loading_sizes: false, tallas });
     } catch {
       setPicked({
         p, unit_price: unit, loading_sizes: false,
-        tallas: [{ talla: "UNICA", qty: 0 }],
+        tallas: [{ base: "UNICA", equiv: { BASE: "UNICA" }, qty: 0 }],
       });
     } finally {
       setLoadingPicked(false);
@@ -178,7 +225,9 @@ export default function AddOCProductModal({
       .filter((t) => Number(t.qty || 0) > 0)
       .map((t) => ({
         sku:           picked.p.sku,
-        talla:         t.talla === "UNICA" ? null : t.talla,
+        // Persistimos siempre la talla BASE (canonica). El display
+        // elegido es solo de presentacion.
+        talla:         t.base === "UNICA" ? null : t.base,
         cantidad:      Number(t.qty),
         producto_id:   picked.p.id,
         product_label: picked.p.nombre || picked.p.sku,
@@ -432,61 +481,135 @@ export default function AddOCProductModal({
                 </div>
               ) : (
                 <>
-                  <div className="micro" style={{
-                    fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
-                    color: "var(--text-tertiary)", textTransform: "uppercase",
-                    marginBottom: 8,
+                  <div style={{
+                    display: "flex", alignItems: "center",
+                    justifyContent: "space-between", gap: 10,
+                    marginBottom: 8, flexWrap: "wrap",
                   }}>
-                    {lang === "es"
-                      ? `Tallas disponibles (${picked.tallas.length})`
-                      : `Available sizes (${picked.tallas.length})`}
+                    <div className="micro" style={{
+                      fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                      color: "var(--text-tertiary)", textTransform: "uppercase",
+                    }}>
+                      {lang === "es"
+                        ? `Tallas disponibles (${picked.tallas.length})`
+                        : `Available sizes (${picked.tallas.length})`}
+                    </div>
+                    {(() => {
+                      const allSystems = ["BASE","EU","US_M","US_W","UK_M","BR","CM","ALFA"];
+                      const systemsWithData = allSystems.filter((s) =>
+                        s === "BASE" || picked.tallas.some((t) => !!(t.equiv && t.equiv[s]))
+                      );
+                      const labels = {
+                        BASE: lang === "es" ? "Base" : "Base",
+                        EU: "EU", US_M: "US M", US_W: "US W",
+                        UK_M: "UK", BR: "BR", CM: "CM",
+                        ALFA: lang === "es" ? "Letras" : "Letter",
+                      };
+                      if (systemsWithData.length <= 1) return null;
+                      return (
+                        <div style={{
+                          display: "inline-flex",
+                          background: "rgba(11,30,58,0.04)",
+                          padding: 3, borderRadius: 8, gap: 2,
+                        }}>
+                          {systemsWithData.map((s) => (
+                            <button
+                              key={s} type="button"
+                              onClick={() => setDisplaySystem(s)}
+                              style={{
+                                padding: "4px 10px", borderRadius: 6,
+                                border: 0, cursor: "pointer",
+                                background: displaySystem === s ? "white" : "transparent",
+                                color: displaySystem === s ? NAVY : "var(--text-tertiary)",
+                                fontSize: 11, fontWeight: 700,
+                                boxShadow: displaySystem === s
+                                  ? "0 1px 2px rgba(11,30,58,0.10)" : "none",
+                                transition: "all 0.12s",
+                              }}
+                            >{labels[s]}</button>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div style={{
                     border: "1px solid var(--border-subtle)",
                     borderRadius: 10, overflow: "hidden",
                   }}>
-                    {picked.tallas.map((t, i) => (
-                      <div key={i} style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 100px",
-                        gap: 12, alignItems: "center",
-                        padding: "10px 14px",
-                        borderBottom: i === picked.tallas.length - 1
-                          ? "none"
-                          : "1px solid var(--border-subtle)",
-                        background: i % 2 === 0 ? "transparent" : "rgba(11,30,58,0.02)",
-                      }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <span style={{
-                            padding: "3px 10px", borderRadius: 6,
-                            background: "rgba(11,30,58,0.06)",
-                            fontSize: 12, fontWeight: 700, color: NAVY,
-                            minWidth: 50, textAlign: "center",
-                          }}>{t.talla}</span>
-                          {Number(t.qty || 0) > 0 && (
-                            <span className="caption tabular-nums" style={{
-                              fontSize: 11, color: MINT, fontWeight: 600,
-                            }}>
-                              = {fmtMoney(Number(t.qty) * Number(picked.unit_price))}
-                            </span>
-                          )}
+                    {picked.tallas.map((t, i) => {
+                      const showLabel = (t.equiv && t.equiv[displaySystem]) || t.base || "—";
+                      const isFallback = displaySystem !== "BASE"
+                        && (!t.equiv || !t.equiv[displaySystem])
+                        && !!t.base;
+                      const secondary = t.equiv
+                        ? Object.entries(t.equiv)
+                            .filter(([k, v]) => v && k !== displaySystem && k !== "BASE")
+                            .slice(0, 4)
+                        : [];
+                      return (
+                        <div key={i} style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 100px",
+                          gap: 12, alignItems: "center",
+                          padding: "10px 14px",
+                          borderBottom: i === picked.tallas.length - 1
+                            ? "none"
+                            : "1px solid var(--border-subtle)",
+                          background: i % 2 === 0 ? "transparent" : "rgba(11,30,58,0.02)",
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                            <span style={{
+                              padding: "3px 10px", borderRadius: 6,
+                              background: isFallback
+                                ? "rgba(180,83,9,0.10)"
+                                : "rgba(11,30,58,0.06)",
+                              fontSize: 12, fontWeight: 700,
+                              color: isFallback ? "#92400E" : NAVY,
+                              minWidth: 50, textAlign: "center",
+                              fontFamily: "var(--font-mono)",
+                            }}
+                            title={isFallback
+                              ? (lang === "es"
+                                  ? `${displaySystem} no definido para esta talla — mostrando base`
+                                  : `${displaySystem} not set — showing base`)
+                              : undefined}
+                            >{showLabel}</span>
+                            {secondary.length > 0 && (
+                              <span className="caption" style={{
+                                fontSize: 10, color: "var(--text-tertiary)",
+                                fontFamily: "var(--font-mono)",
+                                whiteSpace: "nowrap", overflow: "hidden",
+                                textOverflow: "ellipsis", minWidth: 0,
+                              }}>
+                                {secondary.map(([k, v]) => `${k}: ${v}`).join(" · ")}
+                              </span>
+                            )}
+                            {Number(t.qty || 0) > 0 && (
+                              <span className="caption tabular-nums" style={{
+                                fontSize: 11, color: MINT, fontWeight: 600,
+                                marginLeft: "auto",
+                              }}>
+                                = {fmtMoney(Number(t.qty) * Number(picked.unit_price))}
+                              </span>
+                            )}
+                          </div>
+                          <input
+                            type="number" min={0}
+                            className="input tabular-nums"
+                            value={t.qty}
+                            onChange={(e) => updateTallaQty(i, Math.max(0, Number(e.target.value || 0)))}
+                            style={{
+                              fontSize: 14, padding: "6px 10px",
+                              border: t.qty > 0
+                                ? "1.5px solid #00B286"
+                                : "1px solid var(--border)",
+                              borderRadius: 6, textAlign: "right",
+                              fontFamily: "var(--font-mono)",
+                            }}
+                          />
                         </div>
-                        <input
-                          type="number" min={0}
-                          className="input tabular-nums"
-                          value={t.qty}
-                          onChange={(e) => updateTallaQty(i, Math.max(0, Number(e.target.value || 0)))}
-                          style={{
-                            fontSize: 14, padding: "6px 10px",
-                            border: t.qty > 0
-                              ? "1.5px solid #00B286"
-                              : "1px solid var(--border)",
-                            borderRadius: 6, textAlign: "right",
-                            fontFamily: "var(--font-mono)",
-                          }}
-                        />
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   {/* Resumen */}
