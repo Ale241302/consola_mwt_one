@@ -93,20 +93,10 @@ export default function ScreenOCDetail() {
   const [showAddProduct, setShowAddProduct]       = useState(false);
   const [sapDrawerOpen, setSapDrawerOpen]         = useState(false);
   const [sapDrawerExp, setSapDrawerExp]           = useState(null);
-  // Modal "Editar número SAP" — todo el state vive acá para no
-  // depender de window.prompt (que rompe el design system MWT).
-  const [editSapModal, setEditSapModal]           = useState({
-    open: false, oldSap: '', newSap: '', expId: null, lineIds: [], error: null,
-    // Sprint 2026-05-01: campos extra para que editar SAP se sienta como
-    // crear SAP (fecha de fabricacion + qty editable por linea).
-    fechaFab: '',
-    // lineQtys: { [linea_id]: { qty, originalQty, sku, talla, unit_price } }
-    lineQtys: {},
-    // Buscador para agregar mas lineas al grupo.
-    pickerQ: '',
-    pickerOpen: false,
-  });
-  const [editSapSaving, setEditSapSaving]         = useState(false);
+  // Sprint 2026-05-01: si se esta editando un SAP existente, este state
+  // contiene los datos pre-poblados para el drawer. Si null, el drawer
+  // entra en modo "agregar" estandar.
+  const [editingSapInfo, setEditingSapInfo]       = useState(null);
 
   useEffect(() => {
     if (ocFromMock) return;
@@ -328,9 +318,15 @@ export default function ScreenOCDetail() {
   const sapDrawerLines = useMemo(() => {
     if (!sapDrawerExp) return [];
     const expId = sapDrawerExp.id;
+    const isEdit = !!editingSapInfo;
     return (oc.lines || [])
       .filter(l => l.exp_id === expId || l.expediente_id === expId || !l.exp_id)
       .filter(l => {
+        // En modo EDIT pasamos TODAS las lineas (las que estan confirmadas
+        // con este SAP llegan pre-seleccionadas; las pendientes pueden
+        // agregarse al SAP). En modo CREATE filtramos las que ya tienen
+        // otro SAP confirmado.
+        if (isEdit) return true;
         const estado = String(l.estado || l.status || '').toUpperCase();
         const hasSap = !!l.sap;
         if (hasSap && estado === 'SAP_CONFIRMADO') return false;
@@ -345,7 +341,7 @@ export default function ScreenOCDetail() {
         producto_id:  l.producto_id || null,
         descripcion:  l.product || l.descripcion || "",
       }));
-  }, [oc, sapDrawerExp]);
+  }, [oc, sapDrawerExp, editingSapInfo]);
 
   const updateLine = (lineId, patch) => {
     setLineEdits(prev => ({ ...prev, [lineId]: { ...(prev[lineId]||{}), ...patch } }));
@@ -397,108 +393,28 @@ export default function ScreenOCDetail() {
   };
 
   // ── Editar el número SAP de un grupo ─────────────────────────
-  // Abre un modal con tokens MWT (no window.prompt — ese diálogo
-  // del browser no respeta Navy/Mint, no se ve nada bien). El estado
-  // del modal vive en `editSapModal` y el guardado en `editSapSaving`.
+  // Sprint 2026-05-01: en lugar de un modal compacto, abrimos el
+  // mismo drawer lateral de "Agregar SAP" pero en modo EDIT con los
+  // datos pre-cargados. Esto unifica el UX: una sola fuente de verdad
+  // para crear y editar SAPs.
   const openEditSapModal = (oldSap, expId, lineIds) => {
-    // Pre-popular qtys e info de lineas + fecha de fabricacion del grupo.
+    if (!expId) return;
     const ids = Array.isArray(lineIds) ? lineIds : [];
     const groupLines = (oc.lines || []).filter(l => ids.includes(l.id));
-    const lineQtys = {};
-    for (const l of groupLines) {
-      lineQtys[l.id] = {
-        qty:          Number(l.qty || 0),
-        originalQty:  Number(l.qty || 0),
-        sku:          l.sku || '',
-        talla:        l.talla || l.size || '',
-        unit_price:   Number(l.unit_price || 0),
-        production_date: l.production_date || null,
-      };
-    }
-    // Fecha de fabricacion: tomamos la primera linea con production_date,
-    // si no, la del expediente, si no, hoy.
     const expObj = (apiOcExpedientes || []).find(e => e.id === expId)
                 || (oc.expedientes_full || []).find(e => e.id === expId);
     const firstDate = groupLines.find(l => l.production_date)?.production_date
                    || expObj?.fecha_produccion_estimada
                    || '';
-    setEditSapModal({
-      open:    true,
-      oldSap:  oldSap || '',
-      newSap:  oldSap || '',
-      expId:   expId || null,
-      lineIds: ids,
-      lineQtys,
-      fechaFab: firstDate || new Date().toISOString().slice(0, 10),
-      error:   null,
+    // Setear el expediente del drawer y los datos del SAP a editar.
+    setSapDrawerExp(expObj || { id: expId, codigo: groupLines[0]?.codigo, estado: 'PRODUCCION' });
+    setEditingSapInfo({
+      sap_id:            oldSap || '',
+      fecha_fabricacion: firstDate || new Date().toISOString().slice(0, 10),
+      line_ids:          ids,
     });
+    setSapDrawerOpen(true);
   };
-  const saveEditSap = async () => {
-    const m = editSapModal;
-    if (!m || !m.open) return;
-    const trimmed = String(m.newSap || '').trim();
-    if (!trimmed) {
-      setEditSapModal(prev => ({ ...prev,
-        error: lang === 'es'
-          ? 'El número SAP no puede estar vacío.'
-          : 'SAP number cannot be empty.',
-      }));
-      return;
-    }
-    setEditSapSaving(true);
-    try {
-      const sapChanged   = trimmed !== m.oldSap;
-      const fechaTrimmed = (m.fechaFab || '').trim() || null;
-      // Patch del expediente: SAP + fecha de fabricacion estimada
-      if (m.expId && (sapChanged || fechaTrimmed)) {
-        const expPatch = {};
-        if (sapChanged) {
-          expPatch.sap         = trimmed;
-          expPatch.numero_sap  = trimmed;
-        }
-        if (fechaTrimmed) {
-          expPatch.fecha_produccion_estimada = fechaTrimmed;
-        }
-        await expedientesApi.update(m.expId, expPatch);
-      }
-      // Patch de cada linea: SAP + fecha + qty.
-      // Sprint 2026-05-01: las lineas que el usuario AGREGO al grupo
-      // (info.isNew=true) reciben sap+production_date+estado=SAP_CONFIRMADO
-      // ademas de los demas campos.
-      const updates = (m.lineIds || []).map(async (lid) => {
-        const info = m.lineQtys?.[lid];
-        const linePatch = {};
-        const isNewInGroup = info && info.isNew === true;
-        if (sapChanged || isNewInGroup) linePatch.sap = trimmed;
-        if (fechaTrimmed) linePatch.production_date = fechaTrimmed;
-        if (isNewInGroup) linePatch.estado = 'SAP_CONFIRMADO';
-        if (info && (Number(info.qty) !== Number(info.originalQty || 0) || isNewInGroup)) {
-          const newQty = Number(info.qty || 0);
-          linePatch.qty = newQty;
-          const u = Number(info.unit_price || 0);
-          if (u > 0) linePatch.total_price = +(u * newQty).toFixed(2);
-          if (newQty <= 0 && !isNewInGroup) linePatch.estado = 'CANCELADA';
-        }
-        if (Object.keys(linePatch).length === 0) return null;
-        return lineasApi.update(lid, linePatch).catch((err) => err);
-      });
-      const results = await Promise.all(updates);
-      const failed  = results.filter(r => r && r instanceof Error);
-      if (failed.length > 0) {
-        throw failed[0];
-      }
-      setEditSapModal(prev => ({ ...prev, open: false }));
-      navigate(0);
-    } catch (e) {
-      setEditSapModal(prev => ({ ...prev,
-        error: (lang === 'es' ? 'No pude actualizar el SAP: ' : 'Could not update SAP: ')
-              + (e?.body?.detail || e?.message || 'error'),
-      }));
-    } finally {
-      setEditSapSaving(false);
-    }
-  };
-
   // Totals computed from edited lines
   const computedTotal = allLines.reduce((a, l) => a + (l.qty * l.unit_price), 0);
   const computedDeferred = allLines.reduce((a, l) => a + ((l.deferred_qty||0) * (l.deferred_unit_price||0)), 0);
@@ -645,7 +561,10 @@ export default function ScreenOCDetail() {
       {can('register_sap') && (
         <AddSAPConfirmationDrawer
           open={sapDrawerOpen}
-          onClose={() => setSapDrawerOpen(false)}
+          onClose={() => {
+            setSapDrawerOpen(false);
+            setEditingSapInfo(null);
+          }}
           lang={lang}
           oc={{ id: oc.id, codigo: oc.code || oc.codigo }}
           expediente={sapDrawerExp && {
@@ -654,466 +573,17 @@ export default function ScreenOCDetail() {
             estado: (sapDrawerExp.estado || sapDrawerExp.status || 'REGISTRO').toUpperCase(),
           }}
           lines={sapDrawerLines}
+          existingSap={editingSapInfo}
           onSuccess={() => {
-            // Cierra el drawer y recarga la página para reflejar el
-            // cambio de estado del expediente y la nueva línea con SAP.
-            // navigate(0) hace soft-reload manteniendo el JWT y la URL.
             setSapDrawerOpen(false);
+            setEditingSapInfo(null);
             setTimeout(() => navigate(0), 200);
           }}
         />
       )}
 
-      {/* ── Modal · Editar número SAP (tokens MWT) ───────────────── */}
-      {editSapModal.open && (
-        <div
-          onClick={() => !editSapSaving && setEditSapModal(p => ({ ...p, open: false }))}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 200,
-            background: 'rgba(11,30,58,0.55)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: 20,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'white', borderRadius: 14,
-              width: 'min(440px, 96vw)',
-              boxShadow: '0 30px 60px -20px rgba(15,27,61,0.55)',
-              overflow: 'hidden',
-              display: 'flex', flexDirection: 'column',
-            }}
-          >
-            {/* Header */}
-            <div style={{
-              padding: '14px 20px', borderBottom: '1px solid var(--border-subtle)',
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              background: 'linear-gradient(135deg, rgba(72,30,227,0.04), rgba(0,178,134,0.03))',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{
-                  width: 32, height: 32, borderRadius: 8,
-                  background: '#481EE3', color: 'white',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <IconPencil size={14}/>
-                </div>
-                <div>
-                  <div className="micro" style={{ color: 'var(--text-tertiary)', letterSpacing: 1 }}>
-                    {lang === 'es' ? 'EDITAR' : 'EDIT'}
-                  </div>
-                  <div style={{ fontWeight: 800, fontSize: 15, color: '#0B1E3A' }}>
-                    {lang === 'es' ? 'Número SAP del grupo' : 'Group SAP number'}
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={editSapSaving}
-                onClick={() => setEditSapModal(p => ({ ...p, open: false }))}
-                className="btn btn-ghost btn-sm"
-                style={{ padding: '6px 8px' }}
-              >
-                <IconX size={11}/>
-              </button>
-            </div>
-
-            {/* Body */}
-            <div style={{ padding: 20, display: 'grid', gap: 12 }}>
-              <div>
-                <div className="micro" style={{
-                  fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
-                  color: 'var(--text-tertiary)', textTransform: 'uppercase',
-                  marginBottom: 6,
-                }}>
-                  {lang === 'es' ? 'SAP actual' : 'Current SAP'}
-                </div>
-                <div className="mono-sm" style={{
-                  padding: '8px 12px', borderRadius: 8,
-                  background: 'rgba(11,30,58,0.04)',
-                  color: '#0B1E3A', fontWeight: 600,
-                  fontFamily: 'var(--font-mono)', fontSize: 13,
-                }}>
-                  {editSapModal.oldSap || '—'}
-                </div>
-              </div>
-              <label style={{ display: 'block' }}>
-                <div className="micro" style={{
-                  fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
-                  color: 'var(--text-tertiary)', textTransform: 'uppercase',
-                  marginBottom: 6,
-                }}>
-                  {lang === 'es' ? 'Nuevo número SAP *' : 'New SAP number *'}
-                </div>
-                <input
-                  type="text"
-                  className="input mono-sm"
-                  autoFocus
-                  value={editSapModal.newSap}
-                  disabled={editSapSaving}
-                  onChange={(e) => setEditSapModal(p => ({
-                    ...p, newSap: e.target.value, error: null,
-                  }))}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') saveEditSap();
-                    if (e.key === 'Escape' && !editSapSaving) {
-                      setEditSapModal(p => ({ ...p, open: false }));
-                    }
-                  }}
-                  placeholder="SAP-2026-NNNNN"
-                  style={{
-                    width: '100%', fontFamily: 'var(--font-mono)',
-                    fontSize: 14, padding: '10px 12px',
-                    border: editSapModal.error
-                      ? '1.5px solid #DC2626'
-                      : '1px solid var(--border)',
-                    borderRadius: 8,
-                  }}
-                />
-              </label>
-              {editSapModal.error && (
-                <div style={{
-                  padding: '8px 12px', borderRadius: 8,
-                  background: '#FEE2E2', color: '#991B1B',
-                  border: '1px solid #FCA5A5', fontSize: 13,
-                }}>
-                  <IconAlert size={11} style={{ verticalAlign: -1, marginRight: 6 }}/>
-                  {editSapModal.error}
-                </div>
-              )}
-              {/* Sprint 2026-05-01: fecha de fabricacion + qtys editables */}
-              <label style={{ display: 'block' }}>
-                <div className="micro" style={{
-                  fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
-                  color: 'var(--text-tertiary)', textTransform: 'uppercase',
-                  marginBottom: 6,
-                }}>
-                  {lang === 'es' ? 'Fecha de fabricación' : 'Manufacturing date'}
-                </div>
-                <input
-                  type="date"
-                  className="input tabular-nums"
-                  value={editSapModal.fechaFab || ''}
-                  disabled={editSapSaving}
-                  onChange={(e) => setEditSapModal(p => ({
-                    ...p, fechaFab: e.target.value, error: null,
-                  }))}
-                  style={{
-                    width: '100%', fontSize: 14, padding: '10px 12px',
-                    border: '1px solid var(--border)', borderRadius: 8,
-                  }}
-                />
-                <div className="caption" style={{
-                  fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4,
-                }}>
-                  {lang === 'es'
-                    ? 'Punto de partida del ETA proyectado. Se aplica a todas las líneas del grupo.'
-                    : 'Starting point of projected ETA. Applies to all lines in the group.'}
-                </div>
-              </label>
-
-              {/* Buscador para agregar mas lineas del expediente */}
-              {(() => {
-                // Lineas del expediente que NO estan ya en este grupo SAP.
-                // Las que estan en otro SAP se permiten reasignar; las que
-                // estan en PENDIENTE_SAP se permiten asignar.
-                const allExpLines = (oc.lines || []).filter(l =>
-                  l.exp_id === editSapModal.expId || l.expediente_id === editSapModal.expId
-                );
-                const alreadyInGroup = new Set(editSapModal.lineIds || []);
-                const candidates = allExpLines.filter(l => !alreadyInGroup.has(l.id));
-                const q = (editSapModal.pickerQ || '').trim().toLowerCase();
-                const filtered = !q ? candidates : candidates.filter(l => {
-                  const sku = String(l.sku || '').toLowerCase();
-                  const sz  = String(l.size || l.talla || '').toLowerCase();
-                  const lbl = String(l.product || l.descripcion || l.product_label || '').toLowerCase();
-                  return sku.includes(q) || sz.includes(q) || lbl.includes(q);
-                }).slice(0, 8);
-                if (candidates.length === 0) return null;
-                return (
-                  <div>
-                    <div className="micro" style={{
-                      fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
-                      color: 'var(--text-tertiary)', textTransform: 'uppercase',
-                      marginBottom: 6,
-                    }}>
-                      {lang === 'es' ? 'Agregar más líneas' : 'Add more lines'}
-                    </div>
-                    <div style={{ position: 'relative' }}>
-                      <div style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '8px 12px', background: 'white',
-                        border: '1px solid var(--border)', borderRadius: 8,
-                      }}>
-                        <IconSearch size={13} style={{ color: 'var(--text-tertiary)' }}/>
-                        <input
-                          type="text"
-                          placeholder={lang === 'es'
-                            ? 'Buscar por SKU, talla o nombre…'
-                            : 'Search by SKU, size or name…'}
-                          value={editSapModal.pickerQ || ''}
-                          disabled={editSapSaving}
-                          onChange={(e) => setEditSapModal(p => ({
-                            ...p, pickerQ: e.target.value, pickerOpen: true,
-                          }))}
-                          onFocus={() => setEditSapModal(p => ({ ...p, pickerOpen: true }))}
-                          style={{
-                            flex: 1, border: 0, outline: 'none',
-                            background: 'transparent', fontSize: 13,
-                          }}
-                        />
-                        <span className="caption tabular-nums" style={{
-                          color: 'var(--text-tertiary)', fontSize: 11,
-                        }}>
-                          {candidates.length} {lang === 'es' ? 'disp.' : 'avail.'}
-                        </span>
-                      </div>
-                      {editSapModal.pickerOpen && q && (
-                        <div style={{
-                          position: 'absolute', top: 'calc(100% + 4px)',
-                          left: 0, right: 0, zIndex: 10,
-                          background: 'white', border: '1px solid var(--border)',
-                          borderRadius: 8, maxHeight: 220, overflowY: 'auto',
-                          boxShadow: '0 8px 24px -8px rgba(15,27,61,0.18)',
-                        }}>
-                          {filtered.length === 0 ? (
-                            <div style={{
-                              padding: '10px 12px', color: 'var(--text-tertiary)',
-                              fontSize: 12, textAlign: 'center',
-                            }}>
-                              {lang === 'es' ? 'Sin coincidencias' : 'No matches'}
-                            </div>
-                          ) : filtered.map(l => (
-                            <button
-                              key={l.id} type="button"
-                              onClick={() => {
-                                setEditSapModal(p => ({
-                                  ...p,
-                                  lineIds: [...p.lineIds, l.id],
-                                  lineQtys: {
-                                    ...p.lineQtys,
-                                    [l.id]: {
-                                      qty: Number(l.qty || 0),
-                                      originalQty: 0,
-                                      sku: l.sku || '',
-                                      talla: l.talla || l.size || '',
-                                      unit_price: Number(l.unit_price || 0),
-                                      isNew: true,
-                                    },
-                                  },
-                                  pickerQ: '',
-                                  pickerOpen: false,
-                                  error: null,
-                                }));
-                              }}
-                              style={{
-                                width: '100%', textAlign: 'left',
-                                padding: '8px 12px', border: 0,
-                                background: 'white', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', gap: 10,
-                                borderBottom: '1px solid var(--border-subtle)',
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(48,131,254,0.05)'}
-                              onMouseLeave={(e) => e.currentTarget.style.background = 'white'}
-                            >
-                              <IconPackage size={12} style={{ color: '#3083FE', flexShrink: 0 }}/>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div className="mono-sm" style={{
-                                  fontWeight: 700, color: '#0B1E3A', fontSize: 12,
-                                }}>
-                                  {l.sku}
-                                  {(l.size || l.talla) && (
-                                    <span style={{
-                                      marginLeft: 6, padding: '1px 6px',
-                                      borderRadius: 3, background: 'rgba(11,30,58,0.06)',
-                                      fontSize: 10, fontWeight: 700,
-                                    }}>{l.size || l.talla}</span>
-                                  )}
-                                </div>
-                                <div className="caption" style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-                                  {Number(l.qty || 0)} u
-                                  {l.sap && l.sap !== editSapModal.oldSap && (
-                                    <> · <span style={{ color: '#B45309' }}>SAP: {l.sap}</span></>
-                                  )}
-                                  {!l.sap && (
-                                    <> · <span style={{ color: '#B45309' }}>{lang === 'es' ? 'pendiente' : 'pending'}</span></>
-                                  )}
-                                </div>
-                              </div>
-                              <IconPlus size={12} style={{ color: '#00B286' }}/>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* PDF de confirmacion: aviso (gestion completa via Agregar SAP) */}
-              <div style={{
-                padding: '10px 12px', borderRadius: 8,
-                background: 'rgba(48,131,254,0.06)',
-                border: '1px solid rgba(48,131,254,0.20)',
-                fontSize: 12, lineHeight: 1.4, color: '#0B1E3A',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                  <IconAlert size={11} style={{ color: '#3083FE', flexShrink: 0, marginTop: 2 }}/>
-                  <div>
-                    {lang === 'es'
-                      ? 'Para reemplazar o eliminar el PDF de Confirmación SAP (ART-04), usá el flujo "Agregar SAP" — sube el documento nuevo y se versiona el artefacto. Esta vista actualiza solo los datos de la linea (numero SAP, fecha, cantidades).'
-                      : 'To replace or remove the SAP Confirmation PDF (ART-04), use the "Add SAP" flow — uploading a new document versions the artifact. This view only updates line data (SAP number, date, quantities).'}
-                  </div>
-                </div>
-              </div>
-
-              {/* Tabla de lineas del grupo con qty editable */}
-              {Array.isArray(editSapModal.lineIds) && editSapModal.lineIds.length > 0 && (
-                <div>
-                  <div className="micro" style={{
-                    fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
-                    color: 'var(--text-tertiary)', textTransform: 'uppercase',
-                    marginBottom: 6,
-                  }}>
-                    {lang === 'es' ? 'Líneas del grupo' : 'Lines in this group'}
-                  </div>
-                  <div style={{
-                    border: '1px solid var(--border)', borderRadius: 8,
-                    overflow: 'hidden',
-                  }}>
-                    {editSapModal.lineIds.map((lid, idx) => {
-                      const info = editSapModal.lineQtys?.[lid] || {};
-                      const changed = Number(info.qty) !== Number(info.originalQty);
-                      return (
-                        <div key={lid}
-                          style={{
-                            display: 'grid',
-                            gridTemplateColumns: '1fr 84px',
-                            gap: 8, alignItems: 'center',
-                            padding: '8px 12px',
-                            background: idx % 2 === 0 ? 'transparent' : 'rgba(11,30,58,0.02)',
-                            borderTop: idx === 0 ? 'none' : '1px solid var(--border-subtle)',
-                          }}>
-                          <div style={{ minWidth: 0 }}>
-                            <div className="mono-sm" style={{
-                              fontWeight: 700, fontSize: 12, color: '#0B1E3A',
-                            }}>{info.sku || '—'}</div>
-                            <div className="caption" style={{
-                              fontSize: 11, color: 'var(--text-tertiary)',
-                            }}>
-                              {info.talla
-                                ? `${lang === 'es' ? 'Talla' : 'Size'} ${info.talla}`
-                                : null}
-                              {info.unit_price > 0 && (
-                                <> · ${Number(info.unit_price).toFixed(2)}/u</>
-                              )}
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <input
-                              type="number"
-                              min="0"
-                              className="input tabular-nums"
-                              value={info.qty ?? 0}
-                              disabled={editSapSaving}
-                              onChange={(e) => {
-                                const v = Math.max(0, Number(e.target.value || 0));
-                                setEditSapModal(p => ({
-                                  ...p,
-                                  lineQtys: {
-                                    ...p.lineQtys,
-                                    [lid]: { ...p.lineQtys[lid], qty: v },
-                                  },
-                                  error: null,
-                                }));
-                              }}
-                              style={{
-                                flex: 1,
-                                fontSize: 13, padding: '6px 8px',
-                                border: (changed || info.isNew)
-                                  ? '1.5px solid var(--brand-accent, #00B286)'
-                                  : '1px solid var(--border)',
-                                borderRadius: 6, textAlign: 'right',
-                                fontFamily: 'var(--font-mono)',
-                              }}
-                            />
-                            {info.isNew && (
-                              <button
-                                type="button"
-                                disabled={editSapSaving}
-                                onClick={() => setEditSapModal(p => {
-                                  const newIds = p.lineIds.filter(x => x !== lid);
-                                  const newQtys = { ...p.lineQtys };
-                                  delete newQtys[lid];
-                                  return { ...p, lineIds: newIds, lineQtys: newQtys };
-                                })}
-                                title={lang === 'es' ? 'Quitar' : 'Remove'}
-                                style={{
-                                  background: 'transparent', border: 0,
-                                  color: '#D64545', cursor: 'pointer',
-                                  padding: '4px 6px',
-                                }}
-                              >
-                                <IconX size={11}/>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="caption" style={{
-                    fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6,
-                  }}>
-                    {lang === 'es'
-                      ? 'Si la cantidad queda en 0, la línea pasa a estado CANCELADA.'
-                      : 'If qty drops to 0, the line moves to CANCELADA.'}
-                  </div>
-                </div>
-              )}
-
-              <div className="caption" style={{
-                color: 'var(--text-tertiary)', fontSize: 12, lineHeight: 1.4,
-              }}>
-                {lang === 'es'
-                  ? `Se actualizará el SAP del expediente y de las ${editSapModal.lineIds.length} línea(s) del grupo.`
-                  : `Will update the expediente SAP and the ${editSapModal.lineIds.length} line(s) in this group.`}
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div style={{
-              padding: '12px 20px', borderTop: '1px solid var(--border-subtle)',
-              background: 'rgba(11,30,58,0.02)',
-              display: 'flex', justifyContent: 'flex-end', gap: 8,
-            }}>
-              <button
-                type="button"
-                disabled={editSapSaving}
-                onClick={() => setEditSapModal(p => ({ ...p, open: false }))}
-                className="btn btn-ghost"
-              >
-                {lang === 'es' ? 'Cancelar' : 'Cancel'}
-              </button>
-              <button
-                type="button"
-                disabled={editSapSaving || !editSapModal.newSap.trim()}
-                onClick={saveEditSap}
-                className="btn btn-accent"
-                style={{
-                  fontWeight: 700, minWidth: 140,
-                  background: '#00B286', borderColor: '#00B286',
-                }}
-              >
-                {editSapSaving
-                  ? (lang === 'es' ? 'Guardando…' : 'Saving…')
-                  : (lang === 'es' ? 'Guardar' : 'Save')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Modal compacto Editar SAP eliminado (sprint 2026-05-01).
+          Editar SAP ahora abre el AddSAPConfirmationDrawer en modo edit. */}
 
       {/* ── KPI row ─────
           Para CLIENT ocultamos el "Credit clock" (días de crédito gastados)

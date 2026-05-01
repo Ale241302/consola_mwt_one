@@ -57,6 +57,36 @@ function prettyBytes(n) {
   return `${(n / Math.pow(k, i)).toFixed(1)} ${units[i]}`;
 }
 
+// ───── Multipart POST a /expedientes/{id}/upsert-sap/ ────────
+// Sprint 2026-05-01: edita SAP existente o agrega SAP adicional sin
+// transicionar el estado del expediente. Acepta los mismos campos que
+// confirm-sap, mas `remove_documento` (bool) para eliminar el PDF.
+async function postUpsertSap({ expedienteId, sapId, fechaFabricacion,
+                                lineasConfirmadas, file, removeFile }) {
+  const fd = new FormData();
+  fd.append("sap_id", sapId);
+  if (fechaFabricacion) fd.append("fecha_fabricacion", fechaFabricacion);
+  fd.append("lineas_confirmadas", JSON.stringify(lineasConfirmadas));
+  if (file) fd.append("documento_sap", file, file.name);
+  if (removeFile) fd.append("remove_documento", "true");
+
+  const token = getToken();
+  const resp = await fetch(`${API_BASE}/expedientes/${expedienteId}/upsert-sap/`, {
+    method: "POST",
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: fd,
+  });
+  const text = await resp.text();
+  let data = null;
+  if (text) { try { data = JSON.parse(text); } catch { data = { raw: text }; } }
+  if (!resp.ok) {
+    const err = new Error(data?.detail || data?.error || `HTTP ${resp.status}`);
+    err.status = resp.status; err.body = data;
+    throw err;
+  }
+  return data;
+}
+
 // ───── Multipart POST a /expedientes/{id}/confirm-sap/ ────────
 async function postConfirmSap({ expedienteId, sapId, fechaFabricacion,
                                 lineasConfirmadas, file }) {
@@ -99,7 +129,13 @@ export default function AddSAPConfirmationDrawer({
   expediente,         // { id, codigo, estado, ... }
   lines = [],         // [{ id, sku, size, qty, unit_price, ... }]
   onSuccess,          // (payload) => void  — padre refresca la vista
+  // Sprint 2026-05-01: si viene existingSap, el drawer entra en modo
+  // EDIT. Pre-popula sapId/fechaFab/addedLineIds, omite el check de
+  // estado (permite editar en PRODUCCION) y llama upsert-sap en vez
+  // de confirm-sap.
+  existingSap = null, // { sap_id, fecha_fabricacion, line_ids, has_file }
 }) {
+  const isEditMode = !!existingSap;
   // ───── state ─────
   const [sapId, setSapId]                 = useState("");
   const [fechaFab, setFechaFab]           = useState(todayISO());
@@ -119,12 +155,30 @@ export default function AddSAPConfirmationDrawer({
   // Reset al re-abrir
   useEffect(() => {
     if (!open) return;
-    setAddedLineIds(new Set());
-    setConfirmedQtys({});
+    if (isEditMode && existingSap) {
+      // Pre-popular con datos del SAP existente
+      setSapId(existingSap.sap_id || "");
+      setFechaFab(existingSap.fecha_fabricacion || todayISO());
+      const ids = new Set(existingSap.line_ids || []);
+      setAddedLineIds(ids);
+      const qtys = {};
+      for (const l of lines) {
+        if (ids.has(l.id)) qtys[l.id] = Number(l.qty || 0);
+      }
+      setConfirmedQtys(qtys);
+    } else {
+      setSapId("");
+      setFechaFab(todayISO());
+      setAddedLineIds(new Set());
+      setConfirmedQtys({});
+    }
     setSearchQ("");
     setPickerOpen(false);
     setApiError(null);
-  }, [open, lines]);
+    setFile(null);
+    setFileError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, lines, isEditMode, existingSap?.sap_id]);
 
   const fileInputRef = useRef(null);
 
@@ -172,7 +226,8 @@ export default function AddSAPConfirmationDrawer({
     return anyQty;
   }, [sapId, fechaFab, expediente, confirmedQtys, addedLines]);
 
-  const wrongState = expediente && expediente.estado && expediente.estado !== "REGISTRO";
+  // En edit mode permitimos cualquier estado (PRODUCCION, etc.)
+  const wrongState = !isEditMode && expediente && expediente.estado && expediente.estado !== "REGISTRO";
 
   // ───── handlers ─────
   const updateQty = (lineId, raw) => {
@@ -260,7 +315,7 @@ export default function AddSAPConfirmationDrawer({
         qty_confirmada:  Number(confirmedQtys[l.id] ?? l.qty ?? 0),
         unit_price:      Number(l.unit_price || 0),
       }));
-      const result = await postConfirmSap({
+      const result = await (isEditMode ? postUpsertSap : postConfirmSap)({
         expedienteId:      expediente.id,
         sapId:             sapId.trim(),
         fechaFabricacion:  fechaFab,
@@ -315,14 +370,18 @@ export default function AddSAPConfirmationDrawer({
             <div className="sap-drawer-title-row">
               <div>
                 <div className="heading-md" style={{ color: NAVY, fontWeight: 800 }}>
-                  {lang === "es"
-                    ? "Agregar Confirmación SAP"
-                    : "Add SAP Confirmation"}
+                  {isEditMode
+                    ? (lang === "es" ? "Editar Confirmación SAP" : "Edit SAP Confirmation")
+                    : (lang === "es" ? "Agregar Confirmación SAP" : "Add SAP Confirmation")}
                 </div>
                 <div className="caption">
-                  {lang === "es"
-                    ? "Comando C5 · genera el artefacto ART-04 y mueve el expediente a PRODUCCIÓN."
-                    : "Command C5 · generates the ART-04 artifact and moves the expediente to PRODUCTION."}
+                  {isEditMode
+                    ? (lang === "es"
+                        ? "Editá número, fecha, líneas o reemplazá el PDF. No cambia el estado del expediente."
+                        : "Edit number, date, lines or replace PDF. Doesn't change expediente state.")
+                    : (lang === "es"
+                        ? "Comando C5 · genera el artefacto ART-04 y mueve el expediente a PRODUCCIÓN."
+                        : "Command C5 · generates the ART-04 artifact and moves the expediente to PRODUCTION.")}
                 </div>
               </div>
               <div className="sap-state-transition">

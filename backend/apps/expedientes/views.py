@@ -1095,6 +1095,235 @@ class ExpedienteViewSet(viewsets.ViewSet):
             "storage_url":     storage_url,
         }, status=200)
 
+    # ══════════════════════════════════════════════════════
+    # UPSERT SAP — editar SAP existente o agregar SAP adicional
+    #
+    # Diferencias con confirm_sap:
+    #   · NO requiere REGISTRO; acepta PRODUCCION/DESPACHO/etc.
+    #   · NO transiciona el estado del expediente.
+    #   · Si ya existe ART-04 con ese sap_id, lo actualiza
+    #     (reemplaza el PDF si llega uno nuevo). Si no existe,
+    #     crea uno nuevo (caso "agregar SAP adicional").
+    # ══════════════════════════════════════════════════════
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upsert-sap",
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+    )
+    def upsert_sap(self, request, pk=None):
+        denied = _deny_client_mutation(request, action_label="expediente.upsert_sap")
+        if denied is not None:
+            return denied
+
+        sap_id             = (request.data.get("sap_id") or "").strip()
+        fecha_fabricacion  = (request.data.get("fecha_fabricacion") or "").strip()
+        lineas_confirmadas = request.data.get("lineas_confirmadas") or "[]"
+        documento_file     = request.FILES.get("documento_sap")
+        remove_documento   = (str(request.data.get("remove_documento") or "")
+                              .lower() in ("true", "1", "yes"))
+
+        if isinstance(lineas_confirmadas, str):
+            try:
+                lineas_confirmadas = json.loads(lineas_confirmadas)
+            except json.JSONDecodeError:
+                return Response({"detail": "lineas_confirmadas no es JSON valido"}, status=400)
+        if not isinstance(lineas_confirmadas, list):
+            return Response({"detail": "lineas_confirmadas debe ser lista"}, status=400)
+        if not sap_id:
+            return Response({"detail": "sap_id requerido"}, status=400)
+
+        fabricacion_dt = None
+        if fecha_fabricacion:
+            try:
+                fabricacion_dt = datetime.fromisoformat(fecha_fabricacion).date()
+            except ValueError:
+                return Response({"detail": "fecha_fabricacion debe ser YYYY-MM-DD"}, status=400)
+
+        try:
+            exp = Expediente.objects.get(pk=pk, is_active=True)
+        except Expediente.DoesNotExist:
+            return Response({"detail": "Expediente no existe"}, status=404)
+
+        # Subir / reemplazar PDF (best-effort)
+        new_storage_url = None
+        new_paperless_id = None
+        new_file_size = 0
+        new_file_ext = None
+        if documento_file:
+            file_bytes = b"".join(chunk for chunk in documento_file.chunks())
+            new_file_size = len(file_bytes)
+            fname = documento_file.name or ""
+            new_file_ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else None
+            try:
+                from apps.storage.services import paperless_ingest, generate_signed_url
+                p = paperless_ingest(
+                    file_bytes=file_bytes,
+                    filename=fname or f"ART-04_{exp.codigo}.pdf",
+                    title=f"ART-04 - Confirmacion SAP - {exp.codigo} - {sap_id}",
+                    document_type="Confirmacion SAP",
+                    tags=["ART-04", "SAP", "C5", "upsert"],
+                )
+                new_paperless_id = p.get("task_id")
+            except Exception as e:
+                log.warning("paperless_ingest (upsert_sap) fallo: %s", e)
+            try:
+                key = f"expedientes/{exp.id}/art-04-{sap_id}.{new_file_ext or 'pdf'}"
+                signed = generate_signed_url(key=key, kind="get", ttl=3600)
+                new_storage_url = signed.get("url")
+            except Exception:
+                pass
+
+        try:
+            with transaction.atomic():
+                with connection.cursor() as c:
+                    c.execute("""
+                        SELECT id FROM expedientes.artifact_instances
+                         WHERE expediente_id = %s::uuid
+                           AND artifact_code = 'ART-04'
+                           AND codigo        = %s
+                           AND is_active     = TRUE
+                         ORDER BY created_at DESC LIMIT 1
+                    """, [str(exp.id), sap_id])
+                    row = c.fetchone()
+                    artifact_id = row[0] if row else uuid.uuid4()
+
+                    ocr_payload = {
+                        "sap_id":            sap_id,
+                        "fecha_fabricacion": fecha_fabricacion or None,
+                        "expediente_code":   exp.codigo,
+                        "lineas_confirmadas_count": len(lineas_confirmadas),
+                        "upsert":            True,
+                    }
+                    if row:
+                        update_fields = ["ocr_payload = %s::jsonb", "fecha = %s"]
+                        update_args   = [json.dumps(ocr_payload), fabricacion_dt]
+                        if new_storage_url:
+                            update_fields += ["storage_url = %s",
+                                              "paperless_doc_id = %s",
+                                              "file_size_bytes = %s",
+                                              "file_ext = %s"]
+                            update_args   += [new_storage_url, new_paperless_id,
+                                              new_file_size, new_file_ext]
+                        elif remove_documento:
+                            update_fields += ["storage_url = NULL",
+                                              "paperless_doc_id = NULL",
+                                              "file_size_bytes = 0",
+                                              "file_ext = NULL"]
+                        update_args.append(str(artifact_id))
+                        c.execute(
+                            "UPDATE expedientes.artifact_instances SET "
+                            + ", ".join(update_fields)
+                            + " WHERE id = %s::uuid",
+                            update_args,
+                        )
+                    else:
+                        c.execute("""
+                            INSERT INTO expedientes.artifact_instances (
+                                id, expediente_id, oc_id,
+                                artifact_code, kind, codigo,
+                                file_ext, file_size_bytes, storage_url, paperless_doc_id,
+                                ocr_status, ocr_engine, ocr_confidence, ocr_payload,
+                                action_source, correlation_id,
+                                author, fecha, visibility_tier, is_active
+                            ) VALUES (
+                                %s, %s, %s,
+                                'ART-04', 'Confirmacion SAP', %s,
+                                %s, %s, %s, %s,
+                                'DONE', 'manual-upload', 1.0, %s::jsonb,
+                                'C5', %s,
+                                %s, %s, 'INTERNAL', TRUE
+                            )
+                        """, [
+                            str(artifact_id), str(exp.id),
+                            str(exp.oc_id) if exp.oc_id else None,
+                            sap_id,
+                            new_file_ext, new_file_size, new_storage_url, new_paperless_id,
+                            json.dumps(ocr_payload),
+                            str(uuid.uuid4()),
+                            (getattr(request.user, "email", None) or "system"),
+                            fabricacion_dt,
+                        ])
+
+                    # Actualizar lineas
+                    for item in lineas_confirmadas:
+                        linea_id      = item.get("linea_id") or item.get("id")
+                        qty_conf      = item.get("qty_confirmada")
+                        unit_price_in = item.get("unit_price")
+                        if not linea_id or qty_conf is None:
+                            continue
+                        try:
+                            qty_dec = Decimal(str(qty_conf))
+                        except Exception:
+                            continue
+
+                        c.execute("""
+                            SELECT COALESCE(unit_price, 0)
+                              FROM expedientes.linea
+                             WHERE id = %s::uuid AND expediente_id = %s::uuid
+                               AND is_active = TRUE LIMIT 1
+                        """, [linea_id, str(exp.id)])
+                        r = c.fetchone()
+                        if not r:
+                            continue
+                        unit_db = Decimal(str(r[0] or 0))
+                        unit_final = unit_db
+                        if unit_price_in is not None:
+                            try:
+                                u = Decimal(str(unit_price_in))
+                                if u > 0:
+                                    unit_final = u
+                            except Exception:
+                                pass
+
+                        c.execute("""
+                            UPDATE expedientes.linea
+                               SET qty             = %s,
+                                   unit_price      = %s,
+                                   total_price     = ROUND(%s * %s, 2),
+                                   sap             = %s,
+                                   production_date = COALESCE(%s, production_date),
+                                   estado          = CASE WHEN %s > 0
+                                                          THEN 'SAP_CONFIRMADO'
+                                                          ELSE 'CANCELADA' END
+                             WHERE id = %s::uuid
+                        """, [
+                            float(qty_dec),
+                            float(unit_final),
+                            float(unit_final), float(qty_dec),
+                            sap_id,
+                            fabricacion_dt,
+                            float(qty_dec), linea_id,
+                        ])
+
+                    if fabricacion_dt:
+                        c.execute("""
+                            UPDATE expedientes.expediente
+                               SET fecha_produccion_estimada = %s,
+                                   last_event_at             = now()
+                             WHERE id = %s::uuid
+                        """, [fabricacion_dt, str(exp.id)])
+                    c.execute("""
+                        UPDATE expedientes.expediente
+                           SET sap           = COALESCE(NULLIF(sap, ''), %s),
+                               numero_sap    = COALESCE(NULLIF(numero_sap, ''), %s),
+                               last_event_at = now()
+                         WHERE id = %s::uuid
+                    """, [sap_id, sap_id, str(exp.id)])
+        except Exception as e:
+            log.exception("upsert_sap atomic tx fallo: %s", e)
+            return Response({"detail": "transaction_failed", "error": str(e)[:200]}, status=500)
+
+        exp.refresh_from_db()
+        return Response({
+            "ok":           True,
+            "expediente":   ExpedienteSerializer(exp).data,
+            "artifact_id":  str(artifact_id),
+            "sap_id":       sap_id,
+            "command":      "C5-upsert",
+            "storage_url":  new_storage_url,
+        }, status=200)
+
 
 # ════════════════════════════════════════════════════════════
 # Línea (se expone para edición en bloque)
