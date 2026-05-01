@@ -36,7 +36,7 @@ import {
   BRANDS, CLIENTS, STATES, PHASE_BASELINE,
   OCS as MOCK_OCS,
 } from "../data/mockData.js";
-import { expedientesApi, ocsApi, clientesApi } from "../lib/api.js";
+import { expedientesApi, ocsApi, clientesApi, lineasApi, productosApi } from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
 
 // ── Mapeo backend → UI ────────
@@ -103,6 +103,12 @@ function mapExpedienteFromApi(r) {
     product_count:   r.product_count   || 0,
     container_count: r.container_count || 0,
     notes: r.notas || '',
+    // Sprint 2026-05-01: order_value/payables_est se hidratan en el load()
+    // a partir de las lineas activas + catalogo de productos. Sirven como
+    // fallback de los KPIs cuando total_invoiced/total_cost vienen en 0
+    // (caso comun en expedientes recien creados sin facturacion).
+    order_value:  0,
+    payables_est: 0,
     _raw:  r,
   };
 }
@@ -130,6 +136,33 @@ export default function ScreenExpedientes() {
       const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
       const mapped   = expItems.map(mapExpedienteFromApi);
 
+      // ── Sprint 2026-05-01: KPIs reales cuando no hay facturacion ─────
+      // Fetch de todas las lineas activas + catalogo de productos para
+      // computar order_value por expediente. Esto alimenta:
+      //   · receivables (Total por cobrar) cuando total_invoiced = 0
+      //   · payables_est (Pagos por salir) cuando total_cost = 0
+      let lineasArr = [];
+      try {
+        const lnRaw = await lineasApi.list({ is_active: true });
+        lineasArr = Array.isArray(lnRaw) ? lnRaw : (lnRaw?.results || []);
+      } catch { lineasArr = []; }
+
+      // Productos para resolver precio cuando linea.unit_price = 0
+      const uniquePidsForPrice = Array.from(new Set(
+        lineasArr.map(l => l.producto_id).filter(Boolean)
+      ));
+      const productMap = {};
+      if (uniquePidsForPrice.length > 0) {
+        try {
+          const prodResults = await Promise.all(
+            uniquePidsForPrice.map(pid => productosApi.get(pid).catch(() => null))
+          );
+          for (const p of prodResults) {
+            if (p?.id) productMap[p.id] = p;
+          }
+        } catch { /* fallthrough */ }
+      }
+
       // ── Enriquecimiento batch: hidratar nombre de cliente y días
       // de crédito desde /api/clientes (un fetch por client_id único).
       // Sin esto el listado mostraba "🌐" (CountryFlag con país vacío)
@@ -152,9 +185,40 @@ export default function ScreenExpedientes() {
       }
       const enriched = mapped.map(e => {
         const cli = clientMap[e.client_id];
-        if (!cli) return e;
-        return {
+        // ── Calcular order_value sumando lineas de este expediente.
+        //    Para cada linea: usar unit_price si > 0, sino caer al
+        //    catalogo via especificaciones.client_prices[client_id]
+        //    o precio_lista. Mismo enfoque que OCDetail.
+        const expLines = lineasArr.filter(
+          l => l.expediente_id === e._raw.id
+        );
+        let orderValue = 0;
+        for (const ln of expLines) {
+          const qty = Number(ln.qty || 0);
+          let unit  = Number(ln.unit_price || 0);
+          if (unit === 0 && ln.producto_id) {
+            const p = productMap[ln.producto_id];
+            if (p) {
+              const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
+              const override = Number(cliMap[e.client_id] || 0);
+              const lista    = Number(p.precio_lista || 0);
+              unit = override > 0 ? override : lista;
+            }
+          }
+          orderValue += qty * unit;
+        }
+        const enrichedExp = {
           ...e,
+          order_value:  orderValue,
+          // Estimacion grosera de pagos a fabrica = ~70% del valor del pedido
+          // (resto = margen + logistica). Solo se usa como proxy visual cuando
+          // total_cost del backend = 0. Una vez que el AG-COSTOS empiece a
+          // poblar costos reales este fallback queda dormido.
+          payables_est: orderValue * 0.7,
+        };
+        if (!cli) return enrichedExp;
+        return {
+          ...enrichedExp,
           client:         cli.razon_social || cli.nombre || cli.codigo || e.client,
           client_country: cli.pais_iso2 || e.client_country,
           credit_days:    Number(
@@ -283,22 +347,53 @@ export default function ScreenExpedientes() {
 
   // ── CEO KPIs (live) ─────
   const kpi = useMemo(() => {
-    const total_invoiced = EXPEDIENTES.reduce((a,e)=>a+e.total_invoiced,0);
-    const total_cost     = EXPEDIENTES.reduce((a,e)=>a+e.total_cost,0);
-    const total_paid     = EXPEDIENTES.reduce((a,e)=>a+e.total_paid,0);
-    const receivables    = EXPEDIENTES.reduce((a,e)=>a+e.balance,0);
-    const payables       = EXPEDIENTES.reduce((a,e)=>a+(e.total_cost - Math.min(e.total_cost, e.pg_verified + e.pg_released)),0);
-    const weighted_real_margin = EXPEDIENTES.reduce((a,e)=>a+e.real_margin*e.total_invoiced,0) / total_invoiced;
-    const weighted_proj_margin = EXPEDIENTES.reduce((a,e)=>a+e.projected_margin*e.total_invoiced,0) / total_invoiced;
+    const N = EXPEDIENTES.length || 1; // evitar div/0 en porcentajes
+    const total_invoiced = EXPEDIENTES.reduce((a,e)=>a+(e.total_invoiced||0),0);
+    const total_cost     = EXPEDIENTES.reduce((a,e)=>a+(e.total_cost||0),0);
+    const total_paid     = EXPEDIENTES.reduce((a,e)=>a+(e.total_paid||0),0);
+
+    // Sprint 2026-05-01: receivables/payables con fallback a order_value
+    // calculado en load() (sum lineas con resolucion del catalogo) cuando
+    // los campos persistidos del backend son 0.
+    //   receivables = Σ max(balance, order_value − total_paid)
+    //   payables    = Σ max(total_cost − pg_verified − pg_released, payables_est)
+    const receivables = EXPEDIENTES.reduce((a, e) => {
+      const persisted = Number(e.balance || 0);
+      if (persisted > 0) return a + persisted;
+      const ov = Number(e.order_value || 0);
+      const paid = Number(e.total_paid || 0);
+      return a + Math.max(0, ov - paid);
+    }, 0);
+    const payables = EXPEDIENTES.reduce((a, e) => {
+      const tc = Number(e.total_cost || 0);
+      const pgVerif = Number(e.pg_verified || 0);
+      const pgRel   = Number(e.pg_released || 0);
+      const persisted = Math.max(0, tc - Math.min(tc, pgVerif + pgRel));
+      if (persisted > 0) return a + persisted;
+      return a + Number(e.payables_est || 0);
+    }, 0);
+
+    // Margenes ponderados — guard contra NaN cuando total_invoiced = 0.
+    const weighted_real_margin = total_invoiced > 0
+      ? EXPEDIENTES.reduce((a,e)=>a + (e.real_margin||0) * (e.total_invoiced||0), 0) / total_invoiced
+      : 0;
+    const weighted_proj_margin = total_invoiced > 0
+      ? EXPEDIENTES.reduce((a,e)=>a + (e.projected_margin||0) * (e.total_invoiced||0), 0) / total_invoiced
+      : 0;
     const drift = weighted_real_margin - weighted_proj_margin;
-    const credit_60 = EXPEDIENTES.filter(e => e.credit_days > 60 && e.credit_days <= 75).length;
-    const credit_75 = EXPEDIENTES.filter(e => e.credit_days > 75).length;
+
+    // Reloj de credito — solo cuenta expedientes con credit_days > 60.
+    // Si todos estan en 0 (recien creados), ambos counters quedan en 0
+    // pero ya no son NaN.
+    const credit_60 = EXPEDIENTES.filter(e => Number(e.credit_days||0) > 60 && Number(e.credit_days||0) <= 75).length;
+    const credit_75 = EXPEDIENTES.filter(e => Number(e.credit_days||0) > 75).length;
+
     const docs_missing = EXPEDIENTES.filter(e => e.block_cause === 'docs').length;
     const factory_delayed = EXPEDIENTES.filter(e => e.factory_delay).length;
     const corrected = EXPEDIENTES.filter(e => e.cost_corrections).length;
     const pf_reviewed = EXPEDIENTES.filter(e => e.proforma_reviewed).length;
-    const clean_pct = 1 - pf_reviewed / EXPEDIENTES.length;
-    const corrected_pct = corrected / EXPEDIENTES.length;
+    const clean_pct = 1 - pf_reviewed / N;
+    const corrected_pct = corrected / N;
     // Avg time per phase vs baseline
     const phase_stats = {};
     for (const s of STATES.slice(0, 6)) {
