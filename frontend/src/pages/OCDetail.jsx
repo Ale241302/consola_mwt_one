@@ -37,6 +37,7 @@ import {
   OCS, CLIENTS, BRANDS, EXPEDIENTES, PRODUCTS, HERO_OC_ID,
 } from "../data/mockData.js";
 import AddSAPConfirmationDrawer from "../components/expedientes/AddSAPConfirmationDrawer.jsx";
+import UploadDocumentModal from "../components/expedientes/UploadDocumentModal.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
          productosApi } from "../lib/api.js";
@@ -97,6 +98,8 @@ export default function ScreenOCDetail() {
   // contiene los datos pre-poblados para el drawer. Si null, el drawer
   // entra en modo "agregar" estandar.
   const [editingSapInfo, setEditingSapInfo]       = useState(null);
+  // Sprint 2026-05-01: modal subir documento comercial (OC, Proforma, etc.)
+  const [uploadDocOpen, setUploadDocOpen]         = useState(false);
 
   useEffect(() => {
     if (ocFromMock) return;
@@ -559,7 +562,13 @@ export default function ScreenOCDetail() {
           {/* "+ Agregar Documento" → upload_document (CEO-ONLY).
               El cliente solo descarga documentos publicados via signed URL. */}
           {can('upload_document') && (
-            <button className="btn btn-ghost"><IconPlus size={14}/>{tr(lang,'add_document')}</button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setUploadDocOpen(true)}
+            >
+              <IconPlus size={14}/>{tr(lang,'add_document')}
+            </button>
           )}
         </div>
       </div>
@@ -592,6 +601,21 @@ export default function ScreenOCDetail() {
 
       {/* Modal compacto Editar SAP eliminado (sprint 2026-05-01).
           Editar SAP ahora abre el AddSAPConfirmationDrawer en modo edit. */}
+
+      {/* Modal subir documento comercial (OC, Proforma, etc.) */}
+      {uploadDocOpen && can('upload_document') && (
+        <UploadDocumentModal
+          open={uploadDocOpen}
+          onClose={() => setUploadDocOpen(false)}
+          lang={lang}
+          ocId={oc?.id}
+          contextLabel={oc?.code || oc?.codigo}
+          onUploaded={() => {
+            setUploadDocOpen(false);
+            setTimeout(() => navigate(0), 200);
+          }}
+        />
+      )}
 
       {/* ── KPI row ─────
           Para CLIENT ocultamos el "Credit clock" (días de crédito gastados)

@@ -1388,6 +1388,9 @@ class LineaViewSet(viewsets.ViewSet):
 # Documento
 # ════════════════════════════════════════════════════════════
 class DocumentoViewSet(viewsets.ViewSet):
+    # Sprint 2026-05-01: accept multipart para subir el archivo en el create.
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
     def list(self, request):
         qs = Documento.objects.filter(is_active=True).order_by("-fecha", "-created_at")
         for p, f in (("oc", "oc_id"), ("expediente", "expediente_id"), ("kind", "kind")):
@@ -1405,10 +1408,78 @@ class DocumentoViewSet(viewsets.ViewSet):
 
     def create(self, request):
         denied = _deny_client_mutation(request, action_label="documento.create")
-        if denied is not None: return denied
+        if denied is not None:
+            return denied
+
+        documento_file = request.FILES.get("file") or request.FILES.get("documento_file")
+        if documento_file:
+            kind   = (request.data.get("kind") or "OTRO").strip().upper()
+            codigo = (request.data.get("codigo") or "").strip() or documento_file.name
+            oc_id  = request.data.get("oc_id") or None
+            exp_id = request.data.get("expediente_id") or None
+            try:
+                doc_uuid   = uuid.uuid4()
+                file_bytes = b"".join(chunk for chunk in documento_file.chunks())
+                file_size  = len(file_bytes)
+                fname      = documento_file.name or ""
+                file_ext   = fname.rsplit(".", 1)[-1].lower() if "." in fname else None
+
+                storage_url      = None
+                paperless_doc_id = None
+                try:
+                    from apps.storage.services import paperless_ingest, generate_signed_url
+                    p = paperless_ingest(
+                        file_bytes=file_bytes,
+                        filename=fname or f"documento_{doc_uuid}.{file_ext or 'bin'}",
+                        title=f"{kind} - {codigo}",
+                        document_type=kind,
+                        tags=["documento", kind],
+                    )
+                    paperless_doc_id = p.get("task_id")
+                except Exception as e:
+                    log.warning("paperless_ingest (documento.create) fallo: %s", e)
+                try:
+                    key = f"documentos/{doc_uuid}.{file_ext or 'bin'}"
+                    signed = generate_signed_url(key=key, kind="get", ttl=3600)
+                    storage_url = signed.get("url")
+                except Exception:
+                    pass
+
+                with connection.cursor() as c:
+                    c.execute("""
+                        INSERT INTO expedientes.documento (
+                            id, oc_id, expediente_id,
+                            kind, codigo,
+                            file_ext, file_size_bytes, storage_url,
+                            author, fecha,
+                            is_active, created_at, updated_at
+                        ) VALUES (
+                            %s, %s, %s,
+                            %s, %s,
+                            %s, %s, %s,
+                            %s, CURRENT_DATE,
+                            TRUE, now(), now()
+                        )
+                    """, [
+                        str(doc_uuid),
+                        oc_id  if oc_id  else None,
+                        exp_id if exp_id else None,
+                        kind, codigo,
+                        file_ext, file_size, storage_url,
+                        (getattr(request.user, "email", None)
+                         or getattr(request.user, "username", None)
+                         or "system"),
+                    ])
+                d = Documento.objects.get(pk=doc_uuid)
+                return Response(DocumentoSerializer(d).data, status=201)
+            except Exception as e:
+                log.exception("documento.create multipart fallo: %s", e)
+                return Response({"detail": "upload_failed", "error": str(e)[:200]},
+                                status=500)
+
         s = DocumentoSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
+        s.save(id=uuid.uuid4())
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
