@@ -28,7 +28,7 @@ import {
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import {
-  clientesApi, expedientesApi, productosApi, tallasApi, apiFetch, getToken,
+  clientesApi, expedientesApi, lineasApi, productosApi, tallasApi, apiFetch, getToken,
 } from "../lib/api.js";
 
 const STEPS = [
@@ -87,11 +87,81 @@ export default function CreateExpedienteWizardLite() {
   // no ve precios (POL_VISIBILIDAD).
   const { isAdmin } = useRole();
   const [priceMap, setPriceMap] = useState({});
+  // Sprint 2026-05-01: credito usado REAL del cliente, calculado a partir
+  // de sus expedientes existentes (activos) + valor de cada linea
+  // resuelto via catalogo de productos. Asi la barra de credito
+  // refleja la situacion real, no solo el campo persistido (que suele
+  // estar en 0 hasta que se emiten facturas).
+  const [existingClientUsage, setExistingClientUsage] = useState(0);
 
   useEffect(() => {
     // Reset cuando cambia el cliente: el override de precio depende
     // de client_id, asi que no podemos reusar el map anterior.
     setPriceMap({});
+    setExistingClientUsage(0);
+  }, [selClient?.id]);
+
+  // Sprint 2026-05-01: calcular credito usado proyectado desde
+  // expedientes existentes del cliente.
+  useEffect(() => {
+    if (!selClient?.id) return;
+    let cancel = false;
+    (async () => {
+      try {
+        // 1. Expedientes activos del cliente
+        const expRaw = await expedientesApi.list({ client: selClient.id });
+        const exps = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
+        if (cancel) return;
+        if (exps.length === 0) {
+          setExistingClientUsage(0);
+          return;
+        }
+        // 2. Todas las lineas activas del cliente (un solo call con filtro por
+        //    is_active; despues filtramos en memoria por expediente_id).
+        const lnRaw = await lineasApi.list({ is_active: true });
+        const lns = Array.isArray(lnRaw) ? lnRaw : (lnRaw?.results || []);
+        if (cancel) return;
+        const expIds = new Set(exps.map(e => e.id));
+        const clientLines = lns.filter(l => expIds.has(l.expediente_id));
+
+        // 3. Resolver precios via catalogo (igual que en otras vistas).
+        //    Solo fetch productos que aparecen en estas lineas.
+        const uniquePids = Array.from(new Set(
+          clientLines.map(l => l.producto_id).filter(Boolean)
+        ));
+        const productMap = {};
+        if (uniquePids.length > 0) {
+          try {
+            const prods = await productosApi.list();
+            const arr = Array.isArray(prods) ? prods : (prods?.results || []);
+            for (const p of arr) if (p?.id) productMap[p.id] = p;
+          } catch { /* fallthrough */ }
+        }
+        if (cancel) return;
+
+        // 4. Sumar qty * unit_price (con fallback al catalogo)
+        let total = 0;
+        for (const l of clientLines) {
+          const qty = Number(l.qty || 0);
+          let unit = Number(l.unit_price || 0);
+          if (unit === 0 && l.producto_id) {
+            const p = productMap[l.producto_id];
+            if (p) {
+              const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
+              const override = Number(cliMap[selClient.id] || 0);
+              const lista    = Number(p.precio_lista || 0);
+              unit = override > 0 ? override : lista;
+            }
+          }
+          total += qty * unit;
+        }
+        if (!cancel) setExistingClientUsage(total);
+      } catch {
+        if (!cancel) setExistingClientUsage(0);
+      }
+    })();
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selClient?.id]);
 
   useEffect(() => {
@@ -129,11 +199,15 @@ export default function CreateExpedienteWizardLite() {
     }, 0);
   }, [orderLines, priceMap]);
 
-  // Proyeccion de credito post-pedido
+  // Proyeccion de credito post-pedido.
+  // Sprint 2026-05-01: el `used` toma el MAX entre el campo persistido
+  // (credito_usado del backend, suele ser 0 hasta que hay facturas) y
+  // el calculo proyectado desde los expedientes existentes del cliente.
   const creditProjection = useMemo(() => {
     if (!selClient) return null;
     const limit = Number(selClient.credito_limit || 0);
-    const used  = Number(selClient.credito_used || 0);
+    const persistedUsed = Number(selClient.credito_used || 0);
+    const used  = Math.max(persistedUsed, Number(existingClientUsage || 0));
     const available = Math.max(0, limit - used);
     const afterUsed = used + orderTotalValue;
     const afterAvailable = limit - afterUsed;
@@ -146,8 +220,10 @@ export default function CreateExpedienteWizardLite() {
       afterAvailable,
       exceedsLimit,
       utilPctAfter,
+      persistedUsed,
+      projectedUsed: existingClientUsage,
     };
-  }, [selClient, orderTotalValue]);
+  }, [selClient, orderTotalValue, existingClientUsage]);
 
   // ── Cargar catálogos ──
   useEffect(() => {
@@ -450,7 +526,7 @@ function Step1Cliente({ lang, clients, users, selClient, setSelClient, selResp, 
       {/* Selector de cliente */}
       <Field label={lang === "es" ? "Cliente / Subsidiaria *" : "Client / Subsidiary *"}>
         {selClient ? (
-          <SelectedClientCard client={selClient} onClear={() => setSelClient(null)} lang={lang}/>
+          <SelectedClientCard client={selClient} onClear={() => setSelClient(null)} lang={lang} existingUsage={existingClientUsage}/>
         ) : (
           <div ref={ref} style={{ position: "relative" }}>
             <input
@@ -532,10 +608,14 @@ function Step1Cliente({ lang, clients, users, selClient, setSelClient, selResp, 
   );
 }
 
-function SelectedClientCard({ client, onClear, lang }) {
-  const utilPct = client.credito_limit > 0
-    ? Math.round((client.credito_used / client.credito_limit) * 100) : 0;
-  const disponible = Math.max(0, client.credito_limit - client.credito_used);
+function SelectedClientCard({ client, onClear, lang, existingUsage = 0 }) {
+  // Sprint 2026-05-01: el "usado" toma el max entre el campo persistido
+  // y el proyectado desde expedientes existentes del cliente.
+  const persistedUsed = Number(client.credito_used || 0);
+  const used = Math.max(persistedUsed, Number(existingUsage || 0));
+  const limit = Number(client.credito_limit || 0);
+  const utilPct = limit > 0 ? Math.round((used / limit) * 100) : 0;
+  const disponible = Math.max(0, limit - used);
   return (
     <div style={{
       padding: "16px 18px",
@@ -558,13 +638,22 @@ function SelectedClientCard({ client, onClear, lang }) {
               <> · <span style={{ color: "#00B286" }}>hija de {client.parent_label}</span></>
             )}
           </div>
-          {client.credito_limit > 0 && (
+          {limit > 0 && (
             <div style={{ marginTop: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between",
                             fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>
-                <span>{lang === "es" ? "Crédito disponible (pool)" : "Available credit (pool)"}</span>
+                <span>
+                  {lang === "es" ? "Crédito disponible (pool)" : "Available credit (pool)"}
+                  {Number(existingUsage || 0) > persistedUsed && (
+                    <span style={{ color: "#92400E", fontWeight: 700, marginLeft: 6 }}>
+                      · {lang === "es" ? "proyectado" : "projected"}
+                    </span>
+                  )}
+                </span>
                 <span className="tabular-nums" style={{ fontWeight: 700, color: "#0B1E3A" }}>
-                  ${disponible.toLocaleString()} / ${client.credito_limit.toLocaleString()}
+                  ${disponible.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                  {" / "}
+                  ${limit.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                 </span>
               </div>
               <div style={{ height: 6, background: "#E1E6ED", borderRadius: 3, overflow: "hidden" }}>
