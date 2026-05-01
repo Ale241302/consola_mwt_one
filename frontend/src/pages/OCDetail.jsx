@@ -928,10 +928,50 @@ export default function ScreenOCDetail() {
                           )}
                           <span className="caption" style={{color:'var(--text-tertiary)'}}>→</span>
                           <span className="caption">{exp?.ref}</span>
-                          <span className={'transport-chip ' + (g.transport_mode === 'AEREO' ? 'air' : 'sea')}>
-                            {g.transport_mode === 'AEREO' ? <IconPlane size={11}/> : <IconShip size={11}/>}
-                            {g.transport_mode === 'AEREO' ? tr(lang,'transport_air') : tr(lang,'transport_sea')}
-                          </span>
+                          {/* Sprint 2026-05-01: transport_mode = null no implica
+                              MARITIMO (era el default antes). Si la linea aun
+                              no tiene modo definido (ningun artefacto AR-04 lo
+                              seteo), mostramos "Modo pendiente" con borde
+                              dashed en lugar de asumir transporte por defecto. */}
+                          {(() => {
+                            const tm = (g.transport_mode || '').toUpperCase();
+                            if (tm === 'AEREO' || tm === 'AIR') {
+                              return (
+                                <span className="transport-chip air">
+                                  <IconPlane size={11}/>
+                                  {tr(lang,'transport_air')}
+                                </span>
+                              );
+                            }
+                            if (tm === 'MARITIMO' || tm === 'SEA') {
+                              return (
+                                <span className="transport-chip sea">
+                                  <IconShip size={11}/>
+                                  {tr(lang,'transport_sea')}
+                                </span>
+                              );
+                            }
+                            return (
+                              <span
+                                className="caption"
+                                style={{
+                                  color: 'var(--text-tertiary)',
+                                  padding: '2px 8px',
+                                  borderRadius: 4,
+                                  border: '1px dashed var(--border)',
+                                  fontSize: 10,
+                                  fontWeight: 600,
+                                  textTransform: 'uppercase',
+                                  letterSpacing: 0.4,
+                                }}
+                                title={lang === 'es'
+                                  ? 'Definir modo en el artefacto AR-04 (Confirmacion SAP)'
+                                  : 'Set mode in AR-04 artifact (SAP Confirmation)'}
+                              >
+                                {lang === 'es' ? 'Modo pendiente' : 'Mode pending'}
+                              </span>
+                            );
+                          })()}
                           <span className="caption" style={{color:'var(--text-tertiary)'}}>
                             {tr(lang,'prod_date')}: <span className="tabular">{g.production_date}</span>
                           </span>
