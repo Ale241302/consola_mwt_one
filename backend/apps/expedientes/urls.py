@@ -11,6 +11,10 @@ from .views_simplified_wizard import (
 from .views_matchmaker import (
     UploadMatchView, ResolveMatchView, MatchHistoryView,
 )
+from .views_builder_artifacts import (
+    BuilderArtifactsListCreateView, BuilderArtifactDetailView,
+    builder_templates_list, builder_template_detail,
+)
 
 router = DefaultRouter()
 router.register(r"ocs",             OcViewSet,           basename="ocs")
@@ -42,4 +46,25 @@ urlpatterns = router.urls + [
          ResolveMatchView.as_view(), name="expedientes-resolve-match"),
     path("expedientes/<uuid:expediente_id>/match-history/",
          MatchHistoryView.as_view(), name="expedientes-match-history"),
+
+    # ── Builder Artifacts (sprint 2026-05-01) ──────────────────
+    # Instancias de artefactos cuyas plantillas vienen del Builder
+    # externo (https://builder.muito.work). Permite agregar/editar/
+    # eliminar instancias por etapa del flujo del expediente.
+    #
+    # Reglas server-side (no confiar sólo en frontend):
+    #   · CLIENT_* → 403 (mismo guard que el resto del CRUD admin)
+    #   · stage_index(target) ≤ stage_index(expediente.estado)
+    path("expedientes/<uuid:expediente_id>/artifacts/",
+         BuilderArtifactsListCreateView.as_view(),
+         name="expedientes-builder-artifacts"),
+    path("expedientes/<uuid:expediente_id>/artifacts/<uuid:artifact_id>/",
+         BuilderArtifactDetailView.as_view(),
+         name="expedientes-builder-artifact-detail"),
+
+    # Proxy hacia Builder API (login server-side, token cacheado).
+    path("builder/templates/",      builder_templates_list,
+         name="builder-templates-list"),
+    path("builder/templates/<int:template_id>/", builder_template_detail,
+         name="builder-template-detail"),
 ]

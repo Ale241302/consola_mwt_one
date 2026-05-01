@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import (
     Oc, Expediente, Linea, Documento,
     TransicionCat, EventLog, OcrParsingLog,
+    BuilderArtifactInstance,
 )
 
 
@@ -106,3 +107,60 @@ class OcrParsingLogSerializer(serializers.ModelSerializer):
     class Meta:
         model  = OcrParsingLog
         fields = "__all__"
+
+
+# ════════════════════════════════════════════════════════════
+# Builder Artifacts (instancias de artefactos llenadas por el
+# usuario, anclados al expediente y a una etapa del flujo).
+# ════════════════════════════════════════════════════════════
+class BuilderArtifactInstanceSerializer(serializers.ModelSerializer):
+    """Serializer principal del builder_artifact_instance.
+
+    `id` es PK auto-generada; el ViewSet la inyecta vía save(id=uuid4).
+    """
+    id              = serializers.UUIDField(read_only=True)
+    expediente_id   = serializers.UUIDField(read_only=True)
+    template_id     = serializers.IntegerField(required=True)
+    template_title  = serializers.CharField(max_length=2048, required=True,
+                                            allow_blank=False)
+    stage           = serializers.ChoiceField(
+        choices=[c[0] for c in BuilderArtifactInstance.STAGE_CHOICES],
+        required=True,
+    )
+    data               = serializers.JSONField(required=False)
+    structure_snapshot = serializers.JSONField(required=True)
+
+    created_by_id      = serializers.UUIDField(read_only=True)
+    created_by_name    = serializers.CharField(read_only=True)
+    updated_by_id      = serializers.UUIDField(read_only=True)
+    updated_by_name    = serializers.CharField(read_only=True)
+    created_at         = serializers.DateTimeField(read_only=True)
+    updated_at         = serializers.DateTimeField(read_only=True)
+
+    class Meta:
+        model  = BuilderArtifactInstance
+        fields = (
+            "id", "expediente_id", "stage",
+            "template_id", "template_title",
+            "data", "structure_snapshot",
+            "created_by_id", "created_by_name",
+            "updated_by_id", "updated_by_name",
+            "is_active", "created_at", "updated_at",
+        )
+
+
+class BuilderArtifactInstanceUpdateSerializer(serializers.ModelSerializer):
+    """Serializer reducido para PATCH: sólo permite mutar `data` y `stage`.
+
+    `template_id`, `template_title` y `structure_snapshot` son inmutables
+    una vez creados (snapshot principle).
+    """
+    data  = serializers.JSONField(required=False)
+    stage = serializers.ChoiceField(
+        choices=[c[0] for c in BuilderArtifactInstance.STAGE_CHOICES],
+        required=False,
+    )
+
+    class Meta:
+        model  = BuilderArtifactInstance
+        fields = ("data", "stage")

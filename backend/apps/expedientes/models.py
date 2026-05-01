@@ -299,3 +299,52 @@ class OcrParsingLog(models.Model):
         managed = False
         db_table = 'expedientes"."ocr_parsing_log'
         ordering = ("-created_at",)
+
+
+# ══════════════════════════════════════════════════════════════
+# BUILDER ARTIFACTS · schema "expedientes"
+#   Tabla creada por sql/B0_builder_artifacts.sql
+#   Instancias de artefactos llenadas por el usuario, alimentadas
+#   con templates dinámicos del Builder externo
+#   (https://builder.muito.work).
+#
+#   Modelo simple:
+#     · expediente_id  → vínculo con el expediente
+#     · stage          → REGISTRO / PRODUCCION / … / CERRADO
+#     · template_id    → ID del template en el Builder
+#     · template_title → snapshot del título
+#     · data           → JSONB con valores ingresados (key=field.id)
+#     · structure_snapshot → snapshot de structure_json al crear
+# ══════════════════════════════════════════════════════════════
+class BuilderArtifactInstance(models.Model):
+    STAGE_CHOICES = (
+        ("REGISTRO",     "Registro"),
+        ("PRODUCCION",   "Producción"),
+        ("PREPARACION",  "Preparación"),
+        ("DESPACHO",     "Despacho"),
+        ("TRANSITO",     "Tránsito"),
+        ("EN_DESTINO",   "En destino"),
+        ("CERRADO",      "Cerrado"),
+    )
+
+    id                  = models.UUIDField(primary_key=True)
+    expediente_id       = models.UUIDField()
+    stage               = models.CharField(max_length=32, choices=STAGE_CHOICES)
+    template_id         = models.IntegerField()
+    template_title      = models.TextField()
+    data                = models.JSONField(default=dict)
+    structure_snapshot  = models.JSONField(default=dict)
+
+    created_by_id       = models.UUIDField(null=True, blank=True)
+    created_by_name     = models.CharField(max_length=128, null=True, blank=True)
+    updated_by_id       = models.UUIDField(null=True, blank=True)
+    updated_by_name     = models.CharField(max_length=128, null=True, blank=True)
+
+    is_active           = models.BooleanField(default=True)
+    created_at          = models.DateTimeField(auto_now_add=True)
+    updated_at          = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'expedientes"."builder_artifact_instance'
+        ordering = ("-created_at",)

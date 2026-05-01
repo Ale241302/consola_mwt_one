@@ -361,6 +361,43 @@ export const documentMatchmakerApi = {
     apiFetch(`/expedientes/${expedienteId}/match-history/`, { token: getToken() }),
 };
 
+// ---------------------------------------------------------------------
+// Builder Artifacts (sprint 2026-05-01)
+//
+// Instancias de artefactos cuyas plantillas vienen del Builder externo
+// (https://builder.muito.work). El backend hace login server-side y
+// cachea el JWT — el frontend NUNCA ve credenciales del Builder.
+//
+// Rutas:
+//   GET    /api/expedientes/{id}/artifacts/
+//   POST   /api/expedientes/{id}/artifacts/
+//   PATCH  /api/expedientes/{id}/artifacts/{artifact_id}/
+//   DELETE /api/expedientes/{id}/artifacts/{artifact_id}/
+//   GET    /api/builder/templates/
+//   GET    /api/builder/templates/{id}/
+// ---------------------------------------------------------------------
+export const builderArtifactsApi = {
+  list: (expedienteId, params) =>
+    apiFetch(`/expedientes/${expedienteId}/artifacts/${params ? `?${new URLSearchParams(params)}` : ""}`,
+             { token: getToken() }),
+  create: (expedienteId, payload) =>
+    apiFetch(`/expedientes/${expedienteId}/artifacts/`,
+             { method: "POST", body: payload, token: getToken() }),
+  update: (expedienteId, artifactId, payload) =>
+    apiFetch(`/expedientes/${expedienteId}/artifacts/${artifactId}/`,
+             { method: "PATCH", body: payload, token: getToken() }),
+  remove: (expedienteId, artifactId) =>
+    apiFetch(`/expedientes/${expedienteId}/artifacts/${artifactId}/`,
+             { method: "DELETE", token: getToken() }),
+};
+
+export const builderTemplatesApi = {
+  list: () =>
+    apiFetch(`/builder/templates/`, { token: getToken() }),
+  get: (templateId) =>
+    apiFetch(`/builder/templates/${templateId}/`, { token: getToken() }),
+};
+
 export const pagosApi          = resource("pagos");
 export const conciliacionesApi = resource("conciliaciones");
 export const transferenciasApi    = resource("transferencias");

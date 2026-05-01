@@ -44,6 +44,14 @@ x-backend-env: &backend-env
   REDIS_URL:   redis://redis:6379/0
   SQL_DIR:     /sql
   TZ:          America/Mexico_City
+  # ── Builder externo (Sprint 2026-05-01) ─────────────────────
+  # Login server-side al Builder; el access token se cachea en
+  # memoria por 4 min. Si no se setea BUILDER_PASSWORD, los
+  # endpoints /api/builder/templates/* devolverán 502.
+  BUILDER_API_BASE: ${BUILDER_API_BASE:-https://builder.muito.work/api}
+  BUILDER_USERNAME: ${BUILDER_USERNAME:-Admin}
+  BUILDER_PASSWORD: ${BUILDER_PASSWORD:-}
+  BUILDER_TOKEN_TTL_S: ${BUILDER_TOKEN_TTL_S:-240}
   # NOTA EMAIL_*: NO se declaran aquí porque sus valores contienen `$`
   # (ej. EMAIL_DOC_PASSWORD=…$Nd5n) y compose haría doble expansion.
   # Se inyectan vía `env_file: .env` en el servicio django.

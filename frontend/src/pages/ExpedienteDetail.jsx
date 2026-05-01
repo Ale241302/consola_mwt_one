@@ -7,6 +7,7 @@ import {
   Badge, StatusBadge, Progress, StateTimeline, CreditBar, CountryFlag,
 } from "../components/ui/primitives.jsx";
 import { ArtifactsBoard } from "../components/ArtifactsBoard.jsx";
+import BuilderArtifactsBoard from "../components/expedientes/builderArtifacts/BuilderArtifactsBoard.jsx";
 import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmakerWizard.jsx";
 import CommercialDataHardStop from "../components/expedientes/CommercialDataHardStop.jsx";
 import {
@@ -395,7 +396,23 @@ export default function ScreenExpedienteDetail() {
                   </button>
                 </div>
               )}
-              <ArtifactsBoard expedienteId={exp.id} lang={lang} readOnly={isClient}/>
+              {/* Sprint 2026-05-01: el board legacy mock-only se reemplaza
+                  por el nuevo board dinámico que consume:
+                    · Builder externo (templates) vía /api/builder/templates/
+                    · Backend Consola (instancias) vía
+                      /api/expedientes/{id}/artifacts/
+                  Se mantiene el legacy <ArtifactsBoard> SÓLO para el HERO
+                  demo (mock data) mientras VITE_USE_MOCKS=1. */}
+              {isHeroOrMock ? (
+                <ArtifactsBoard expedienteId={exp.id} lang={lang} readOnly={isClient}/>
+              ) : (
+                <BuilderArtifactsBoard
+                  expedienteId={exp.id}
+                  currentStage={(exp.estado || "REGISTRO").toUpperCase()}
+                  lang={lang}
+                  readOnly={isClient}
+                />
+              )}
             </div>
           )}
           {tab === 'costs'     && !isClient && <CostsTab costs={costs} lang={lang} onAdd={() => setShowCostDrawer(true)}/>}
