@@ -806,16 +806,39 @@ export default function ScreenOCDetail() {
           </div>
         </div>
 
-        {/* Financial */}
+        {/* Financial — Sprint 2026-05-01: si total_invoiced/balance vienen
+            en 0 (OC recien creada, sin factura emitida), mostramos el valor
+            real del pedido derivado de las lineas (sum unit_price * qty) y
+            calculamos pendiente = orderValue - total_paid. Si ya hay
+            facturacion, priorizamos los campos persistidos del backend. */}
         <div className="kpi-tile">
           <div className="k-label">{tr(lang,'financial_status')}</div>
-          <div className="k-value" style={{fontSize: 24, whiteSpace:'nowrap'}}>
-            {fmtMoney(oc.total_invoiced)}
-          </div>
-          <div className="k-sub" style={{display:'flex', flexDirection:'column', alignItems:'flex-start', gap:2}}>
-            <span><span style={{color:'var(--success)'}}>{fmtMoney(oc.total_paid)}</span> {tr(lang,'paid_lbl').toLowerCase()}</span>
-            <span><span style={{color:'var(--brand-primary)'}}>{fmtMoney(oc.balance)}</span> {tr(lang,'pending').toLowerCase()}</span>
-          </div>
+          {(() => {
+            const invoiced     = Number(oc.total_invoiced || 0);
+            const paid         = Number(oc.total_paid || 0);
+            const persistedBal = Number(oc.balance || 0);
+            const linesValue = (oc.lines || []).reduce((acc, l) => {
+              const tp = Number(l.total_price || 0);
+              if (tp > 0) return acc + tp;
+              return acc + Number(l.qty || 0) * Number(l.unit_price || 0);
+            }, 0);
+            // Headline: prioriza facturado real > valor del pedido.
+            const headline = invoiced > 0 ? invoiced : linesValue;
+            // Pendiente: si hay balance persistido > 0, ese gana.
+            // Si no, derivamos como headline - paid.
+            const pendiente = persistedBal > 0 ? persistedBal : Math.max(0, headline - paid);
+            return (
+              <>
+                <div className="k-value" style={{fontSize: 24, whiteSpace:'nowrap'}}>
+                  {fmtMoney(headline)}
+                </div>
+                <div className="k-sub" style={{display:'flex', flexDirection:'column', alignItems:'flex-start', gap:2}}>
+                  <span><span style={{color:'var(--success)'}}>{fmtMoney(paid)}</span> {tr(lang,'paid_lbl').toLowerCase()}</span>
+                  <span><span style={{color:'var(--brand-primary)'}}>{fmtMoney(pendiente)}</span> {tr(lang,'pending').toLowerCase()}</span>
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         {/* Credit clock — métrica interna de cobranza: CEO-ONLY. */}
