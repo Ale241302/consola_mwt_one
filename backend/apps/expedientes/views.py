@@ -16,6 +16,7 @@ Acciones avanzadas (state machine):
        → genera ART-04, transiciona REGISTRO → PRODUCCION
 =====================================================================
 """
+import io
 import json
 import logging
 import uuid
@@ -839,6 +840,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
         artifact_id    = uuid.uuid4()
 
         # ── Subir PDF a storage (best-effort) ────────────
+        # Sprint 2026-05-01: subida REAL a MinIO via put_object_stream
+        # (antes solo generaba signed URL sin upload).
         storage_url = None
         paperless_task_id = None
         file_size_bytes = 0
@@ -846,29 +849,40 @@ class ExpedienteViewSet(viewsets.ViewSet):
         if documento_file:
             file_bytes = b"".join(chunk for chunk in documento_file.chunks())
             file_size_bytes = len(file_bytes)
-            file_ext = (documento_file.name or "").rsplit(".", 1)[-1].lower() if "." in (documento_file.name or "") else None
+            fname = documento_file.name or f"ART-04_{exp.codigo}.pdf"
+            file_ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else None
+            content_type = documento_file.content_type or "application/pdf"
 
-            # Paperless-ngx ingest (OCR + archivo inmutable)
             try:
-                from apps.storage.services import paperless_ingest, generate_signed_url
+                from apps.storage.services import put_object_stream, paperless_ingest
+                safe_name = fname.replace("/", "_").replace("\\", "_")
+                key = f"expediente/{exp.id}/art-04-{artifact_id}-{safe_name}"
+                up = put_object_stream(
+                    key=key,
+                    file_stream=io.BytesIO(file_bytes),
+                    content_type=content_type,
+                    length=file_size_bytes,
+                )
+                if up.get("ok"):
+                    storage_url = key
+                else:
+                    log.warning("confirm_sap MinIO upload fallo: %s", up.get("error"))
+            except Exception as e:
+                log.warning("confirm_sap MinIO upload fallo: %s", e)
+
+            # Paperless-ngx ingest (OCR + archivo inmutable, best-effort)
+            try:
+                from apps.storage.services import paperless_ingest
                 p = paperless_ingest(
                     file_bytes=file_bytes,
-                    filename=documento_file.name or f"ART-04_{exp.codigo}.pdf",
-                    title=f"ART-04 · Confirmación SAP · {exp.codigo}",
+                    filename=fname,
+                    title=f"ART-04 - Confirmacion SAP - {exp.codigo}",
                     document_type="Confirmación SAP",
                     tags=["ART-04", "SAP", "C5"],
                 )
                 paperless_task_id = p.get("task_id")
             except Exception as e:
-                log.warning("paperless_ingest (ART-04) falló: %s", e)
-
-            # Signed URL para ver el doc (MinIO)
-            try:
-                key = f"expedientes/{exp.id}/art-04-{artifact_id}.{file_ext or 'pdf'}"
-                signed = generate_signed_url(key=key, kind="get", ttl=3600)
-                storage_url = signed.get("url")
-            except Exception:
-                pass
+                log.warning("paperless_ingest (ART-04) fallo: %s", e)
 
         # ── Transacción atómica ──────────────────────────
         try:
@@ -1145,7 +1159,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
         except Expediente.DoesNotExist:
             return Response({"detail": "Expediente no existe"}, status=404)
 
-        # Subir / reemplazar PDF (best-effort)
+        # Subir / reemplazar PDF (best-effort) — MinIO real
         new_storage_url = None
         new_paperless_id = None
         new_file_size = 0
@@ -1153,13 +1167,32 @@ class ExpedienteViewSet(viewsets.ViewSet):
         if documento_file:
             file_bytes = b"".join(chunk for chunk in documento_file.chunks())
             new_file_size = len(file_bytes)
-            fname = documento_file.name or ""
+            fname = documento_file.name or f"ART-04_{exp.codigo}.pdf"
             new_file_ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else None
+            content_type = documento_file.content_type or "application/pdf"
+
             try:
-                from apps.storage.services import paperless_ingest, generate_signed_url
+                from apps.storage.services import put_object_stream
+                safe_name = fname.replace("/", "_").replace("\\", "_")
+                key = f"expediente/{exp.id}/art-04-{sap_id}-{safe_name}"
+                up = put_object_stream(
+                    key=key,
+                    file_stream=io.BytesIO(file_bytes),
+                    content_type=content_type,
+                    length=new_file_size,
+                )
+                if up.get("ok"):
+                    new_storage_url = key
+                else:
+                    log.warning("upsert_sap MinIO upload fallo: %s", up.get("error"))
+            except Exception as e:
+                log.warning("upsert_sap MinIO upload fallo: %s", e)
+
+            try:
+                from apps.storage.services import paperless_ingest
                 p = paperless_ingest(
                     file_bytes=file_bytes,
-                    filename=fname or f"ART-04_{exp.codigo}.pdf",
+                    filename=fname,
                     title=f"ART-04 - Confirmacion SAP - {exp.codigo} - {sap_id}",
                     document_type="Confirmacion SAP",
                     tags=["ART-04", "SAP", "C5", "upsert"],
@@ -1167,12 +1200,6 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 new_paperless_id = p.get("task_id")
             except Exception as e:
                 log.warning("paperless_ingest (upsert_sap) fallo: %s", e)
-            try:
-                key = f"expedientes/{exp.id}/art-04-{sap_id}.{new_file_ext or 'pdf'}"
-                signed = generate_signed_url(key=key, kind="get", ttl=3600)
-                new_storage_url = signed.get("url")
-            except Exception:
-                pass
 
         try:
             with transaction.atomic():
@@ -1419,18 +1446,50 @@ class DocumentoViewSet(viewsets.ViewSet):
             exp_id = request.data.get("expediente_id") or None
             try:
                 doc_uuid   = uuid.uuid4()
-                file_bytes = b"".join(chunk for chunk in documento_file.chunks())
-                file_size  = len(file_bytes)
-                fname      = documento_file.name or ""
+                fname      = documento_file.name or f"documento_{doc_uuid}.bin"
+                file_size  = documento_file.size or 0
                 file_ext   = fname.rsplit(".", 1)[-1].lower() if "." in fname else None
+                content_type = (documento_file.content_type or "application/octet-stream")
 
-                storage_url      = None
+                # Sprint 2026-05-01: subida REAL a MinIO via put_object_stream.
+                # Patron de keys analogo a productos:
+                #   documento/<uuid>/<filename>
+                # Anclamos por uuid del documento (evita colisiones de nombre).
+                from apps.storage.services import put_object_stream, generate_signed_url
+                safe_name = fname.replace("/", "_").replace("\\", "_")
+                key = f"documento/{doc_uuid}/{safe_name}"
+                # documento_file es UploadedFile -> compatible con file_stream.
+                # Si es ImageField/InMemoryUpload, .file es el stream interno;
+                # con put_object_stream con length=size todo eso es manejado.
+                documento_file.seek(0)
+                up = put_object_stream(
+                    key=key,
+                    file_stream=documento_file,
+                    content_type=content_type,
+                    length=file_size or -1,
+                )
+                if not up.get("ok"):
+                    log.error("documento.create: put_object_stream fallo: %s",
+                              up.get("error"))
+                    return Response({
+                        "detail": "minio_upload_failed",
+                        "error":  up.get("error") or "unknown",
+                    }, status=502)
+
+                # Persistimos el `key` directo en storage_url. El frontend
+                # arma la URL de descarga con /api/storage/download/?key=<key>
+                # (mismo patron que productos).
+                storage_url = key
+
+                # Paperless ingest opcional (best-effort, no bloquea)
                 paperless_doc_id = None
                 try:
-                    from apps.storage.services import paperless_ingest, generate_signed_url
+                    from apps.storage.services import paperless_ingest
+                    documento_file.seek(0)
+                    pap_bytes = documento_file.read()
                     p = paperless_ingest(
-                        file_bytes=file_bytes,
-                        filename=fname or f"documento_{doc_uuid}.{file_ext or 'bin'}",
+                        file_bytes=pap_bytes,
+                        filename=fname,
                         title=f"{kind} - {codigo}",
                         document_type=kind,
                         tags=["documento", kind],
@@ -1438,12 +1497,6 @@ class DocumentoViewSet(viewsets.ViewSet):
                     paperless_doc_id = p.get("task_id")
                 except Exception as e:
                     log.warning("paperless_ingest (documento.create) fallo: %s", e)
-                try:
-                    key = f"documentos/{doc_uuid}.{file_ext or 'bin'}"
-                    signed = generate_signed_url(key=key, kind="get", ttl=3600)
-                    storage_url = signed.get("url")
-                except Exception:
-                    pass
 
                 with connection.cursor() as c:
                     c.execute("""
