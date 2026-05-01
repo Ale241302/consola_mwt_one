@@ -1165,7 +1165,11 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
               {/* Sprint 2026-05-01: toggle de sistema de medida.
                   Solo aparecen los sistemas con AL MENOS 1 valor entre las
                   tallas del producto (BASE siempre presente). */}
-              {!picked.loading_sizes && picked.tallas.length > 1 && (() => {
+              {/* Sprint 2026-05-01: el toggle aparece si hay AL MENOS 1 talla.
+                  Antes pedia >= 2 y ocultaba el toggle cuando el producto
+                  tenia una sola talla con equivalencias (EU/US/UK/...).
+                  La IIFE interna filtra si no hay sistemas alternativos. */}
+              {!picked.loading_sizes && picked.tallas.length >= 1 && (() => {
                 const allSystems = ["BASE","EU","US_M","US_W","UK_M","BR","CM","ALFA"];
                 const systemsWithData = allSystems.filter((s) =>
                   s === "BASE" || picked.tallas.some((t) => !!(t.equiv && t.equiv[s]))
