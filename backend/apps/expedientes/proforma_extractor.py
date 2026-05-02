@@ -59,42 +59,68 @@ Recibes la(s) IMAGEN(es) de las páginas de una proforma. Devuelves
 un JSON ESTRICTO con la lista de productos y la distribución por talla.
 
 ═══════════════════════════════════════════════════════════════════════
-LO ÚNICO QUE TIENES QUE HACER (SIMPLE)
+                          REGLA #1 — LA MÁS IMPORTANTE
 ═══════════════════════════════════════════════════════════════════════
 
-Para cada PRODUCTO en la proforma (slots con campo "Código" poblado):
+LA TALLA QUE DEVOLVÉS DEBE SER EL VALOR DE LA FILA "Referencia BRA".
 
-  1. Identificá el SKU (campo "Código", ej. "701935").
-  2. Identificá la "Referencia" del proveedor (ej. "60B19M-CPAP-MIN-CP").
-  3. Leé la MATRIZ DE TALLAS — usá la FILA "Referencia BRA" (la PRIMERA
-     fila de la matriz) como la talla, NO la EU.
-  4. Por cada columna donde la fila de Cantidad tiene un número > 0:
-       · emitir UNA línea con (sku, talla=valor de Ref BRA, qty=valor
-         de Cantidad).
-  5. Si una columna no tiene cantidad visible, no la devuelvas.
+NO USAR la fila "Referencia EU".
+NO USAR la fila "Referencia USA".
+NO USAR la fila "Referencia USA Women".
+SOLAMENTE LA FILA "Referencia BRA".
+
+Los valores válidos de talla son: 33, 34, 35, 36, 37, 38, 39, 40, 41,
+42, 43, 44, 45, 46, 47.
+
+NUNCA devuelvas talla = 49 ni 48 ni 4.5 ni 5.5 — esos son de las
+filas EU/USA y están PROHIBIDOS.
 
 ═══════════════════════════════════════════════════════════════════════
-EJEMPLO DE LA MATRIZ
+
+CÓMO LEER LA MATRIZ — PASO A PASO:
+
+  La matriz tiene 4 filas verticalmente alineadas en 15 columnas:
+
+    Fila 1 — "Referencia BRA":  33  34  35  36  37  38  39  40  41  42  43  44  45  46  47
+    Fila 2 — "Referencia EU":   35  36  37  38  39  40  41  42  43  44  45  46  47  48  49
+    Fila 3 — "Referencia USA":          4.5 5.5 6.5  7   8   8.5 9.5 10  11  12  13  14  15
+    Fila 4 — qty:                              10  10  10  10  30  30  10
+
+  PROCEDIMIENTO:
+  1. Identificá la columna donde la Fila 4 (qty) tiene un número > 0.
+  2. Mirá VERTICALMENTE arriba en esa columna hasta la Fila 1 (BRA).
+  3. Esa es la talla.
+
+  EJEMPLO con la matriz de arriba:
+    · Columna 5 → Qty=10. BRA[5]=37. → emitir {talla:"37", qty:10}
+    · Columna 6 → Qty=10. BRA[6]=38. → emitir {talla:"38", qty:10}
+    · Columna 7 → Qty=10. BRA[7]=39. → emitir {talla:"39", qty:10}
+    · Columna 8 → Qty=10. BRA[8]=40. → emitir {talla:"40", qty:10}
+    · Columna 9 → Qty=30. BRA[9]=41. → emitir {talla:"41", qty:30}
+    · Columna 10 → Qty=30. BRA[10]=42. → emitir {talla:"42", qty:30}
+    · Columna 11 → Qty=10. BRA[11]=43. → emitir {talla:"43", qty:10}
+
+  RESULTADO ESPERADO: 7 líneas con tallas 37, 38, 39, 40, 41, 42, 43.
+  Suma de qty = 10+10+10+10+30+30+10 = 110.
+
+  ❌ ERROR COMÚN A EVITAR: NO devolver tallas 39, 40, 41, 42, 43, 44, 45.
+     Esos son los valores EU. La talla SIEMPRE viene de la fila BRA.
+
 ═══════════════════════════════════════════════════════════════════════
 
-    Referencia BRA: 33   34   35   36   37   38   39   40   41   42   43
-    Referencia EU:  35   36   37   38   39   40   41   42   43   44   45
-    Referencia USA:           4.5  5.5  6.5  7    8    8.5  9.5  10   11
-    Cantidad:                          10   10   10   10   30   30   10
+OTROS CAMPOS DEL SLOT:
+  · sku           = valor del campo "Código" (ej. "701935")
+  · supplier_ref  = valor de "Referencia" SIN sufijo de talla (ej. "60B19M-CPAP-MIN-CP")
+  · product_label = "Descripción"
+  · unit_price    = "Precio $" (USD, decimal)
 
-USANDO BRA (primera fila), las líneas a devolver son:
+VALIDACIÓN DE SUMA:
+  Suma todas las qty del slot. Debe coincidir con el campo "Cantidad
+  total" o "Total de Pares" del slot. Si no coincide, releé.
 
-    talla=37 qty=10
-    talla=38 qty=10
-    talla=39 qty=10
-    talla=40 qty=10
-    talla=41 qty=30
-    talla=42 qty=30
-    talla=43 qty=10
-
-Suma 10+10+10+10+30+30+10 = 110. Validá que la suma coincida con la
-"Cantidad total" del slot (típicamente arriba en la cabecera del slot).
-Si no coincide, releé contando las columnas con cuidado.
+SLOTS VACÍOS:
+  La proforma tiene 11 slots, la mayoría vacíos (sin Código). IGNORÁ
+  los slots sin Código — no los devuelvas.
 
 ═══════════════════════════════════════════════════════════════════════
 
@@ -112,9 +138,9 @@ ESQUEMA OBLIGATORIO DEL JSON:
       "lines": [
         {
           "sku":           "<código MWT canónico, ej. 701935>",
-          "supplier_ref":  "<REF proveedor SIN sufijo de talla, ej. 60B19M-CPAP-MIN-CP>",
-          "product_label": "<descripción del producto>",
-          "talla":         "<valor de la FILA Referencia BRA, ej. 37, 38, 39, 40, 41, 42, 43>",
+          "supplier_ref":  "<REF proveedor sin sufijo de talla, ej. 60B19M-CPAP-MIN-CP>",
+          "product_label": "<descripción>",
+          "talla":         "<valor BRA: 33-47 ÚNICAMENTE>",
           "qty":           <entero>,
           "unit_price":    <decimal o null>,
           "confidence":    0..100
@@ -126,9 +152,9 @@ ESQUEMA OBLIGATORIO DEL JSON:
 }
 
 REGLAS DURAS:
-  1. CERO INVENTOS. Si un campo no aparece en la imagen, omitirlo.
-  2. UNA línea por columna con qty>0.
-  3. talla = FILA "Referencia BRA" (la PRIMERA), NO EU, NO USA.
+  1. talla SIEMPRE viene de la fila "Referencia BRA". JAMÁS de EU o USA.
+  2. CERO INVENTOS. Si un campo no aparece en la imagen, omitirlo.
+  3. UNA línea por columna con qty>0.
   4. Suma de qtys del slot = "Cantidad total" del slot.
   5. SKU / supplier_ref / talla en MAYÚSCULAS sin espacios.
   6. Slots vacíos (sin Código) → ignorar.

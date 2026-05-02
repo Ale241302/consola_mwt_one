@@ -789,6 +789,62 @@ def _find_db_with_talla_equiv(sku, doc_talla, db_index, equiv_map):
     return None, None
 
 
+def _find_best_db_match_proforma(sku, doc_talla, doc_qty, db_index, equiv_map):
+    """Sprint 2026-05-02 (AG-03): match SMART para PROFORMA.
+
+    Problema que resuelve: el AI suele extraer la proforma en EU canónica
+    (39, 40, 41, ...) mientras que la BD del expediente tiene BR (37, 38,
+    39, ...). El número '41' existe como EU 41 (= BR 39 físicamente) y
+    también como BR 41 (= EU 43 físicamente). Match literal cruza '41'
+    con '41' aunque sean tallas físicas distintas → reporta QTY_DIFF
+    espurio (doc qty 10 vs BD qty 30).
+
+    Estrategia: para cada doc line, recolectar TODOS los candidatos de
+    BD (literal + equivalentes via ops.tallas) y elegir el que mejor
+    matchea por CANTIDAD. Si una equivalencia coincide en qty y la
+    literal no, la equivalencia gana — eso significa que el AI extrajo
+    en otra convención que la BD pero ambas refieren a la misma talla
+    física con la misma cantidad.
+
+    Devuelve (matched_key, db_row, qty_matches_bool) o (None, None, False).
+    """
+    if not sku:
+        return None, None, False
+
+    # 1) Recolectar TODOS los candidatos (literal + equivalentes)
+    candidate_keys = [(sku, doc_talla)]
+    for alt_talla in equiv_map.get(doc_talla, set()):
+        if alt_talla != doc_talla:
+            candidate_keys.append((sku, alt_talla))
+
+    candidates = [
+        (k, db_index[k]) for k in candidate_keys if k in db_index
+    ]
+    if not candidates:
+        return None, None, False
+
+    # 2) Si solo hay 1 candidato, devolverlo (con flag de si qty matchea)
+    if len(candidates) == 1:
+        k, db = candidates[0]
+        return k, db, int(db.get("qty", 0)) == int(doc_qty)
+
+    # 3) Múltiples candidatos: preferir el que MATCHEA en qty.
+    #    Esto desambigua "41 EU" vs "41 BR" cuando ambos están en BD.
+    qty_doc = int(doc_qty or 0)
+    for k, db in candidates:
+        if int(db.get("qty", 0)) == qty_doc:
+            return k, db, True
+
+    # 4) Ningún candidato matchea en qty → devolver el LITERAL como
+    #    fallback (mantiene comportamiento original — reporta QTY_DIFF)
+    for k, db in candidates:
+        if k[1] == doc_talla:
+            return k, db, False
+    # Si ni el literal está, devolver el primer candidato disponible
+    k, db = candidates[0]
+    return k, db, False
+
+
 def _fuzzy_lookup_nombre(base_code: str) -> Optional[dict]:
     """Busca por ILIKE %base_code% en productos.producto.nombre.
     Devuelve el match con mejor score (longitud del match relativa)."""
@@ -971,12 +1027,11 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                     g_disc.append(item); discrepancies.append(item)
                     continue
 
-                # Sprint 2026-05-02 (AG-03): match LITERAL para PROFORMA.
-                # El AI extrae en BR (primera fila de la matriz) y la BD
-                # también está en BR (suffix del codigo del proveedor).
-                # Match directo, sin equivalencia que confundía cuando un
-                # mismo número (ej. '41') existe como BR Y EU en filas
-                # distintas de ops.tallas.
+                # Sprint 2026-05-02 (AG-03): MATCH LITERAL para PROFORMA.
+                # Sin equivalencias. Si doc dice (sku=701935, talla=41) y BD
+                # tiene esa key → match. Si no → discrepancia.
+                # La responsabilidad de extraer la talla en el formato correcto
+                # recae 100% en el prompt del AI (que debe leer fila BR).
                 key = (sku_norm, talla_norm)
                 db = db_index.get(key)
                 matched_key = key
