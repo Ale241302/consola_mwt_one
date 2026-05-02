@@ -42,7 +42,7 @@ import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmak
 import AddOCProductModal from "../components/expedientes/AddOCProductModal.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
-         productosApi } from "../lib/api.js";
+         productosApi, documentosApi } from "../lib/api.js";
 
 export default function ScreenOCDetail() {
   const navigate = useNavigate();
@@ -78,6 +78,10 @@ export default function ScreenOCDetail() {
   const [apiOcBrand,    setApiOcBrand]    = useState(null);
   const [apiOcExpedientes, setApiOcExpedientes] = useState([]);
   const [apiOcLines,    setApiOcLines]    = useState([]);
+  // Sprint 2026-05-02 (AG-03): documentos comerciales reales del backend.
+  // Antes el adapter ponía `docs: []` hardcodeado y la sección
+  // "Documentos comerciales" siempre mostraba "0 archivos".
+  const [apiOcDocs,     setApiOcDocs]     = useState([]);
   const [ocLoading,     setOcLoading]     = useState(!ocFromMock);
   const [ocNotFound,    setOcNotFound]    = useState(false);
   // Mapa { producto_id → precio_cliente } leído de
@@ -116,11 +120,14 @@ export default function ScreenOCDetail() {
       .then(async (o) => {
         if (cancel) return;
         setApiOc(o);
-        const [cli, br, exps, lns] = await Promise.all([
+        const [cli, br, exps, lns, docs] = await Promise.all([
           o.client_id ? clientesApi.get(o.client_id).catch(() => null) : Promise.resolve(null),
           o.brand_id  ? marcasApi.get(o.brand_id).catch(() => null)    : Promise.resolve(null),
           expedientesApi.list({ oc: o.id }).catch(() => ({ results: [] })),
           lineasApi.list({ oc: o.id }).catch(() => ({ results: [] })),
+          // Sprint 2026-05-02 (AG-03): documentos comerciales reales del API.
+          // Endpoint canónico: GET /api/documentos/?oc=<oc_id>.
+          documentosApi.list({ oc: o.id }).catch(() => ({ results: [] })),
         ]);
         if (cancel) return;
         setApiOcClient(cli);
@@ -128,6 +135,7 @@ export default function ScreenOCDetail() {
         setApiOcExpedientes(Array.isArray(exps) ? exps : (exps?.results || []));
         const lineasArr = Array.isArray(lns) ? lns : (lns?.results || []);
         setApiOcLines(lineasArr);
+        setApiOcDocs(Array.isArray(docs) ? docs : (docs?.results || []));
 
         // ── Resolver precio cliente desde productos ──────────────
         // El precio override por cliente vive en
@@ -189,10 +197,20 @@ export default function ScreenOCDetail() {
     air_pct:      Number(apiOc.air_pct || 0),
     sea_pct:      Number(apiOc.sea_pct || 0),
     expedientes:  apiOcExpedientes.map(e => e.id),
-    // Documentos comerciales: vacío por defecto. Cuando integremos el
-    // tab artifacts/MinIO se popula desde /api/documentos?oc=<id>.
-    // El render lee `oc.docs` (no `documents`), por eso esa key.
-    docs:         [],
+    // Sprint 2026-05-02 (AG-03): documentos comerciales reales,
+    // poblados desde GET /api/documentos/?oc=<id>. El render lee
+    // `oc.docs` (no `documents`), por eso esa key. Cada item viene del
+    // DocumentoSerializer del backend con kind/codigo/fecha/storage_url.
+    docs:         apiOcDocs.map(d => ({
+      id:        d.id,
+      kind:      d.kind,
+      codigo:    d.codigo || d.filename || "",
+      filename:  d.filename || d.codigo || "",
+      fecha:     d.fecha || d.created_at || null,
+      file_size: d.file_size_bytes || d.file_size || 0,
+      file_ext:  d.file_ext || null,
+      url:       d.storage_url || null,
+    })),
     // Líneas reales del API (con merge de unit_price del CPA en
     // el render — ver useEffect de cpaPrices más abajo).
     lines:        apiOcLines.map(l => {
@@ -647,16 +665,33 @@ export default function ScreenOCDetail() {
           }
           contextLabel={oc?.code || oc?.codigo}
           onUploaded={(doc) => {
-            // Si NO hubo análisis IA, hacemos el reload clásico.
-            // Si lo hubo, el padre espera onAiAnalysisReady y NO recargamos
-            // hasta que el usuario aplique las resoluciones.
+            // BUG FIX 2026-05-02 (AG-03): hidratamos el listado de
+            // documentos en caliente (sin recargar la página). El doc que
+            // viene del backend ya trae id/kind/codigo/storage_url.
+            if (doc?.id) {
+              setApiOcDocs(prev => [doc, ...prev]);
+            }
+            setUploadDocOpen(false);
+            // Sólo recargamos si NO hay flujo IA pendiente (la IA dispara
+            // su propia ruta vía onAiAnalysisReady → wizard → onApplied).
             if (!aiReview) {
-              setUploadDocOpen(false);
-              setTimeout(() => navigate(0), 200);
+              // refetch ligero de líneas — por si el backend creó algo
+              // (en general al subir doc no, pero defensivo).
+              if (apiOc?.id) {
+                lineasApi.list({ oc: apiOc.id })
+                  .then(r => setApiOcLines(Array.isArray(r) ? r : (r?.results || [])))
+                  .catch(() => {});
+              }
             }
           }}
-          onAiAnalysisReady={(result, file, documentType) => {
+          onAiAnalysisReady={(result, file, documentType, docData) => {
             // El modal ya cerró por su cuenta; abrimos el wizard.
+            // Sprint 2026-05-02: agregamos el doc subido al listado en
+            // caliente para que aparezca en "Documentos comerciales"
+            // mientras el wizard está abierto.
+            if (docData?.id) {
+              setApiOcDocs(prev => [docData, ...prev]);
+            }
             setUploadDocOpen(false);
             setAiReview({ result, file, documentType });
           }}

@@ -122,7 +122,13 @@ export default function UploadDocumentModal({
       if (!resp.ok) {
         throw new Error(data?.detail || data?.error || `HTTP ${resp.status}`);
       }
-      onUploaded?.(data);
+
+      // BUG FIX 2026-05-02 (AG-03): NO disparamos `onUploaded(data)` antes
+      // de la IA. El padre típicamente reacciona haciendo `navigate(0)` con
+      // un setTimeout(200ms), lo que aborta la promesa IA en vuelo y nunca
+      // se abre el wizard de revisión. Cuando hay IA, el padre va a
+      // refrescar al cerrar el wizard (vía onApplied). Cuando NO hay IA,
+      // sí disparamos onUploaded al final para refrescar el listado.
 
       // 2) Si aplica, encadenar extracción IA + matchmaker.
       if (aiEligible) {
@@ -131,25 +137,31 @@ export default function UploadDocumentModal({
           const ai = await documentMatchmakerApi.upload(
             expedienteId, file, kindObj.aiPipeline,
           );
-          // Delegamos al padre para abrir el wizard de revisión.
-          onAiAnalysisReady?.(ai, file, kindObj.aiPipeline);
+          // Pasamos `data` al padre para que pueda hidratar el listado de
+          // documentos sin esperar la recarga (mejor UX).
+          onAiAnalysisReady?.(ai, file, kindObj.aiPipeline, data);
+          reset();
+          onClose?.();
+          return;
         } catch (aiErr) {
           // Falla en IA NO debe bloquear el flujo: el doc ya se guardó.
-          // Mostramos warning pero cerramos sin re-lanzar.
+          // Avisamos al padre del upload exitoso y mostramos el aviso.
           // eslint-disable-next-line no-console
           console.warn("[UploadDocumentModal] IA matchmaker falló:", aiErr);
+          onUploaded?.(data);
           setError(
             lang === "es"
               ? "Documento subido, pero el análisis IA falló. Podés reprocesarlo desde Documentos comerciales."
               : "Document uploaded, but AI analysis failed. You can reprocess it from Commercial documents."
           );
-          // Mantenemos el modal abierto para que el usuario vea el aviso.
           setUploading(false);
           setAiPhase(null);
           return;
         }
       }
 
+      // Sin IA → fire onUploaded para que el padre refresque el listado.
+      onUploaded?.(data);
       reset();
       onClose?.();
     } catch (e) {
