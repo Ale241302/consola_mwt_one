@@ -39,7 +39,16 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-OCR_MODEL = os.environ.get("OPENAI_OCR_MODEL", "gpt-4o-mini")
+# Modelo dedicado para proforma. Default gpt-4o-mini (más barato), pero
+# podés override a gpt-4o (más caro pero MUCHO mejor leyendo tablas
+# visuales como la matriz horizontal de tallas) seteando en el .env:
+#   OPENAI_PROFORMA_MODEL=gpt-4o
+# La OC sigue usando OPENAI_OCR_MODEL (no se ve afectada).
+OCR_MODEL = (
+    os.environ.get("OPENAI_PROFORMA_MODEL")
+    or os.environ.get("OPENAI_OCR_MODEL")
+    or "gpt-4o-mini"
+)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -49,42 +58,75 @@ PROFORMA_VISION_PROMPT = """Eres un extractor de Proformas comerciales MWT.
 Recibes la(s) IMAGEN(es) de las páginas de una proforma. Devuelves
 un JSON ESTRICTO con la lista de productos y la distribución por talla.
 
-ESTRUCTURA DE LA PROFORMA:
-  · Header con datos del documento (Proforma N°, Fecha, Cliente, Total).
-  · 11 slots de producto en formato tabla, la mayoría VACÍOS.
-  · Cada slot poblado tiene:
-       Código:       701935 (SKU MWT — número entero)
-       Referencia:   60B19M-CPAP-MIN-CP (REF del proveedor)
-       Descripción:  texto largo
-       Color:        ej. NEGRO
-       Precio R$ / Precio $: USD unitario
-       Cantidad:     TOTAL del slot (ej. 110)
-       Total:        línea total ($)
-  · Y la MATRIZ DE TALLAS — 4 filas alineadas en columnas:
-       Referencia BRA: 33  34  35  36  37  38  39  40  41  42  43  44  45  46  47
-       Referencia EU:  35  36  37  38  39  40  41  42  43  44  45  46  47  48  49
-       Referencia USA: ___ ___ 4.5 5.5 6.5 7   8   8.5 9.5 10  11  12  13  14  15
-       (fila numerada): 0  0   0   0   10  10  10  10  30  30  10  0   0   0   0
+═══════════════════════════════════════════════════════════════════════
+ALGORITMO PASO A PASO — SEGUIR AL PIE DE LA LETRA
+═══════════════════════════════════════════════════════════════════════
 
-LO QUE DEBES HACER:
+PASO 1 — DETECTAR SLOTS POBLADOS:
+  La proforma tiene 11 slots. La mayoría VACÍOS. Un slot está poblado
+  cuando su campo "Código" contiene un número (ej. 701935).
+  Slots vacíos → IGNORAR. No los devuelvas.
 
-  1. Identifica SLOTS POBLADOS (campo Código tiene número, no vacío).
-     Slots vacíos → ignorar completamente.
+PASO 2 — POR CADA SLOT POBLADO, EXTRAER METADATA:
+  · sku           = valor del campo "Código" (ej. "701935")
+  · supplier_ref  = valor de "Referencia" (ej. "60B19M-CPAP-MIN-CP")
+  · product_label = "Descripción" del producto
+  · unit_price    = "Precio $" (USD)
+  · cantidad_total = valor del campo "Cantidad" o "Total de Pares"
 
-  2. Para cada slot poblado, lee la matriz VISUALMENTE — alineá las
-     columnas usando posición espacial. La fila de cantidades aparece
-     debajo de USA y SOLO contiene un número en las columnas con stock;
-     las demás columnas están en blanco o con "0".
+PASO 3 — LEER LA MATRIZ DE TALLAS DEL SLOT (LA PARTE CRÍTICA):
 
-  3. EXPANDE: por cada columna donde la cantidad es > 0, emite UNA
-     línea con:
-       talla = valor de la fila EU para esa columna (canónica)
-       qty   = la cantidad de esa columna
-       sku, supplier_ref, etc. = del slot
+  La matriz tiene 4 filas alineadas EN COLUMNAS verticales:
 
-  4. Verifica: la SUMA de qtys que devuelvas debe igualar la
-     "Cantidad" total del slot. Si no coincide, releé la matriz —
-     contaste mal alguna columna.
+    ┌────────────────────────────────────────────────────────────────┐
+    │ Ref BRA: 33   34   35   36   37   38   39   40   41   42   43  │
+    │ Ref EU:  35   36   37   38   39   40   41   42   43   44   45  │
+    │ Ref USA:           4.5  5.5  6.5  7    8    8.5  9.5  10   11  │
+    │ Cant.:                       10   10   10   10   30   30   10  │
+    └────────────────────────────────────────────────────────────────┘
+       col 1 col 2 col 3 col 4 col 5 col 6 col 7 col 8 col 9 col 10 col 11
+
+  REGLA CRÍTICA: las cantidades aparecen ALINEADAS VERTICALMENTE bajo
+  la columna correspondiente. NO contás de izquierda a derecha desde
+  donde encontrás el primer número — usás POSICIÓN VISUAL.
+
+  En el ejemplo:
+    · La cantidad "10" más a la izquierda está debajo de BR=37, EU=39.
+    · La cantidad "30" más a la izquierda está debajo de BR=41, EU=43.
+    · La última cantidad "10" está debajo de BR=43, EU=45.
+
+  Si una columna NO tiene cantidad visible, esa talla tiene qty=0 →
+  no la devolvés.
+
+PASO 4 — EXPANDIR A LÍNEAS:
+  Por cada columna donde la fila Cantidad muestra un número > 0:
+    · talla = valor de la fila "Ref EU" en esa MISMA columna
+    · qty   = el número de la fila Cantidad en esa columna
+    · sku, supplier_ref, product_label, unit_price = del slot
+  Emite UNA línea por columna poblada.
+
+PASO 5 — VALIDAR LA SUMA:
+  Suma todas las qtys que extrajiste para el slot. Esa suma DEBE ser
+  igual a "cantidad_total" del slot (ej. 110).
+  Si no coincide:
+    · Te perdiste columnas con qty>0 → mirá de nuevo la matriz.
+    · Asignaste mal qty a una talla → recontá las columnas.
+  En el ejemplo: 10+10+10+10+30+30+10 = 110 ✓
+
+═══════════════════════════════════════════════════════════════════════
+
+EJEMPLO COMPLETO de output esperado para la matriz del PASO 3:
+
+  "lines": [
+    {"sku":"701935", "talla":"39", "qty":10, ...},
+    {"sku":"701935", "talla":"40", "qty":10, ...},
+    {"sku":"701935", "talla":"41", "qty":10, ...},
+    {"sku":"701935", "talla":"42", "qty":10, ...},
+    {"sku":"701935", "talla":"43", "qty":30, ...},
+    {"sku":"701935", "talla":"44", "qty":30, ...},
+    {"sku":"701935", "talla":"45", "qty":10, ...}
+  ]
+  → 7 líneas, suma qty = 110 ✓
 
 ESQUEMA OBLIGATORIO DEL JSON:
 {
@@ -115,9 +157,9 @@ ESQUEMA OBLIGATORIO DEL JSON:
 
 REGLAS DURAS:
   1. CERO INVENTOS. Si un campo no aparece en la imagen, omitirlo.
-  2. EXPANDIR: una línea por talla con qty>0.
+  2. EXPANDIR: UNA línea por talla con qty>0.
   3. Talla canónica = EU (segunda fila de la matriz).
-  4. Suma de qtys = Cantidad total del slot. Si difiere, releer.
+  4. Suma de qtys DEBE igualar Cantidad total. Si difiere, releé.
   5. SKU/supplier_ref/talla en MAYÚSCULAS sin espacios.
   6. Devolver SOLO el JSON, sin markdown, sin texto extra.
 """
@@ -137,11 +179,15 @@ def _empty_result(error=None):
     }
 
 
-def _pdf_to_png_data_urls(file_bytes: bytes, max_pages: int = 3,
-                           dpi_scale: float = 2.0) -> list[str]:
+def _pdf_to_png_data_urls(file_bytes: bytes, max_pages: int = 2,
+                           dpi_scale: float = 3.0) -> list[str]:
     """Renderiza páginas del PDF a PNG (base64 data URLs) usando PyMuPDF.
 
-    DPI x2 da resolución suficiente para vision sin inflar el payload.
+    Sprint 2026-05-02 (AG-03): DPI 3.0 (antes 2.0) para que el texto
+    fino de la matriz horizontal de tallas sea legible. max_pages=2
+    porque típicamente la página 1 tiene la matriz y la página 3 el
+    summary — la página 2 son solo slots vacíos que confunden al modelo.
+
     Retorna [] si pymupdf no está disponible o el render falla — en
     ese caso el caller devuelve error y el matchmaker reporta la falla
     sin afectar otros tipos de documento.
@@ -157,6 +203,8 @@ def _pdf_to_png_data_urls(file_bytes: bytes, max_pages: int = 3,
                 png_bytes = pix.tobytes("png")
                 b64 = base64.b64encode(png_bytes).decode("ascii")
                 urls.append(f"data:image/png;base64,{b64}")
+        log.info("[proforma_extractor] renderizadas %d páginas a %.1fx DPI",
+                 len(urls), dpi_scale)
         return urls
     except ImportError:
         log.warning("[proforma_extractor] pymupdf no instalado")
@@ -242,7 +290,11 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str) -> dic
         )
 
     # 1) Renderizar PDF a imágenes
-    image_urls = _pdf_to_png_data_urls(file_bytes, max_pages=3)
+    # max_pages=2: la página 1 trae header + slots 1-4 (con la matriz),
+    # la página 2 son slots 5-11 (típicamente vacíos pero por si hay
+    # más productos), la página 3 es summary final que confunde al
+    # modelo (otra tabla con qty pero sin matriz). Quitamos pág 3.
+    image_urls = _pdf_to_png_data_urls(file_bytes, max_pages=2)
     if not image_urls:
         return _empty_result(
             "No pude renderizar el PDF. Verificá que pymupdf esté instalado "

@@ -138,6 +138,12 @@ export default function ScreenOCDetail() {
   // producto.especificaciones.client_prices[oc.client_id]. Si el cliente
   // no tiene override, fallback a precio_lista del producto.
   const [cpaPriceMap,   setCpaPriceMap]   = useState({});
+  // Sprint 2026-05-02 (AG-03): mapa producto_id → nombre real.
+  // El campo product_label de expedientes.linea suele venir igual al
+  // SKU (porque al crear la línea no se persiste el nombre completo).
+  // Para mostrar el nombre canónico en la columna "Nombre" hacemos un
+  // lookup vía productosApi.get cuando cargamos la OC.
+  const [productNameMap, setProductNameMap] = useState({});
 
   // Hooks que estaban más abajo (causaban React error #310 al venir
   // después de early returns). Subidos al tope para garantizar orden
@@ -215,14 +221,19 @@ export default function ScreenOCDetail() {
               );
               if (cancel) return;
               const map = {};
+              const nameMap = {};
               for (const p of prods) {
                 if (!p?.id) continue;
                 const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
                 const override = Number(cliMap[o.client_id] || 0);
                 const lista    = Number(p.precio_lista || 0);
                 map[p.id] = override > 0 ? override : lista;
+                // Sprint 2026-05-02 (AG-03): cacheamos el nombre real
+                // para mostrar en la columna "Nombre" de la tabla.
+                if (p.nombre) nameMap[p.id] = p.nombre;
               }
               setCpaPriceMap(map);
+              setProductNameMap(nameMap);
             } catch { /* swallow */ }
           }
         }
@@ -291,14 +302,21 @@ export default function ScreenOCDetail() {
       const persistedPrice = Number(l.unit_price || 0);
       const livePrice      = l.producto_id ? Number(cpaPriceMap[l.producto_id] || 0) : 0;
       const unit = persistedPrice > 0 ? persistedPrice : livePrice;
+      // Sprint 2026-05-02 (AG-03): para el campo "Nombre" priorizamos
+      // el nombre real de productos.producto (vía lookup en
+      // productNameMap), porque el l.product_label del API suele venir
+      // igual al SKU. Sólo si nada matchea, caemos al SKU como fallback.
+      const realName = (l.producto_id && productNameMap[l.producto_id])
+                       || l.product_label
+                       || l.sku;
       return {
         id:             l.id,
         sku:            l.sku,
         talla:          l.talla || l.size || "",
         size:           l.talla || l.size || "",
         qty:            qty,
-        product_label:  l.product_label || l.sku,
-        product:        l.product_label || l.sku,
+        product_label:  realName,
+        product:        realName,
         producto_id:    l.producto_id || null,
         unit_price:     unit,
         total_price:    Number(l.total_price || (qty * unit)),
