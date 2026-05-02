@@ -133,25 +133,235 @@ def _read_template_rows(file_bytes: bytes, filename: str) -> list[dict]:
 
 
 def _row_to_dict(row, header):
-    """Map flexible: nombre conocido O posición."""
+    """Map flexible: nombre conocido O posición.
+
+    Sprint 2026-05-02 (AG-03): la primera columna acepta SKU **o nombre
+    del producto** **o ref proveedor**. El resolver `_resolve_input_to_sku`
+    en la vista lo mapea a SKU canónico.
+    """
     if not row:
         return None
-    if header and any(h in ("sku", "talla", "cantidad", "size", "qty", "quantity") for h in header):
-        idx_sku   = next((i for i, h in enumerate(header) if h in ("sku", "codigo", "código", "code")), 0)
+    if header and any(h in ("sku", "talla", "cantidad", "size", "qty", "quantity",
+                            "nombre", "name", "producto", "product", "ref")
+                     for h in header):
+        idx_sku   = next(
+            (i for i, h in enumerate(header)
+                if h in ("sku", "codigo", "código", "code",
+                         "nombre", "name", "producto", "product",
+                         "ref", "ref_proveedor", "ref proveedor", "supplier ref")),
+            0,
+        )
         idx_size  = next((i for i, h in enumerate(header) if h in ("talla", "size", "tamaño")), 1)
         idx_qty   = next((i for i, h in enumerate(header) if h in ("cantidad", "qty", "quantity", "unidades", "units")), 2)
     else:
         idx_sku, idx_size, idx_qty = 0, 1, 2
 
     try:
-        sku  = _norm_sku(row[idx_sku])
+        # IMPORTANTE: NO normalizamos a UPPER aquí porque podemos perder
+        # información del nombre del producto (ej. "Bota Plena Flor" se
+        # vuelve "BOTA PLENA FLOR" lo cual sigue matcheando, pero el resolver
+        # más adelante decide cuándo es nombre vs SKU). Solo trim().
+        raw_input = (row[idx_sku] or "").strip() if isinstance(row[idx_sku], str) else str(row[idx_sku] or "").strip()
         size = _norm_size(row[idx_size])
         qty  = _safe_int(row[idx_qty], 0)
     except IndexError:
         return None
-    if not sku or qty <= 0:
+    if not raw_input or qty <= 0:
         return None
-    return {"sku": sku, "talla": size, "cantidad": qty}
+    return {"raw_input": raw_input, "talla": size, "cantidad": qty}
+
+
+# =====================================================================
+# Sprint 2026-05-02 (AG-03) · Resolvers para parse-template
+# =====================================================================
+# El usuario CEO pidió que la plantilla del expediente acepte:
+#   1. Primera columna  → SKU **o** Nombre del producto **o** Ref Proveedor
+#   2. Columna talla    → cualquier sistema (BRA, US, UK, EU, CM) con o sin
+#                          prefijo explícito. La salida siempre es la talla
+#                          base canónica MWT (EU).
+#
+# Sin estos resolvers, el matchmaker fallaba para PDFs/CSV de clientes que
+# nunca usan nuestro SKU interno.
+# =====================================================================
+def _build_product_index() -> dict:
+    """Indexa productos.producto activos por SKU, Nombre y Ref Proveedor.
+    Todos en MAYÚSCULAS para lookup case-insensitive."""
+    by_sku = {}
+    by_nombre = {}
+    by_ref = {}
+    try:
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT
+                    id::text,
+                    UPPER(COALESCE(sku, ''))                                AS sku,
+                    UPPER(COALESCE(nombre, ''))                             AS nombre,
+                    UPPER(COALESCE(especificaciones->>'ref_proveedor','')) AS ref_proveedor
+                  FROM productos.producto
+                 WHERE COALESCE(is_active, TRUE) = TRUE
+            """)
+            for pid, sku, nombre, ref in c.fetchall():
+                row = {"id": pid, "sku": sku, "nombre": nombre, "ref": ref}
+                if sku:    by_sku[sku] = row
+                if nombre: by_nombre[nombre] = row
+                if ref:    by_ref[ref] = row
+    except Exception as e:
+        log.warning("[parse_template] product index build failed: %s", e)
+    return {"by_sku": by_sku, "by_nombre": by_nombre, "by_ref": by_ref}
+
+
+def _resolve_input_to_sku(raw_input: str, idx: dict):
+    """Resuelve un string libre (puede ser SKU, Nombre o Ref Proveedor) al
+    SKU canónico de productos.producto. Devuelve (sku, nombre, strategy)
+    o (None, None, 'UNRESOLVED')."""
+    s = (raw_input or "").strip().upper()
+    if not s:
+        return None, None, "EMPTY"
+    if s in idx["by_sku"]:
+        p = idx["by_sku"][s]
+        return p["sku"], p["nombre"], "SKU_EXACT"
+    if s in idx["by_ref"]:
+        p = idx["by_ref"][s]
+        return p["sku"], p["nombre"], "REF_PROVEEDOR_EXACT"
+    if s in idx["by_nombre"]:
+        p = idx["by_nombre"][s]
+        return p["sku"], p["nombre"], "NOMBRE_EXACT"
+    # Fuzzy nombre — solo si el input es razonablemente largo (evita falsos
+    # positivos sobre tokens cortos como "37")
+    if len(s) >= 4:
+        for nombre, p in idx["by_nombre"].items():
+            if s in nombre or nombre in s:
+                return p["sku"], p["nombre"], "NOMBRE_FUZZY"
+    return None, None, "UNRESOLVED"
+
+
+# Sistemas de medida soportados explícitamente en el resolver de tallas.
+# Mapea prefijo (escrito por el usuario) → columna en ops.tallas.
+_TALLA_SYSTEM_MAP = {
+    'BR':    'br',  'BRA':  'br',  'BRASIL': 'br',
+    'EU':    'eu',  'EUR':  'eu',  'EUROPA': 'eu',
+    'US':    'us_men', 'USA':  'us_men', 'USM':  'us_men', 'USMEN': 'us_men',
+    'USW':   'us_women', 'USWOMEN': 'us_women',
+    'UK':    'uk_men', 'UKM':  'uk_men', 'UKMEN': 'uk_men',
+    'UKW':   'uk_women', 'UKWOMEN': 'uk_women',
+    'CM':    'cm',
+    'TALLA': None,  # genérico, sin sistema → asume EU
+    'SIZE':  None,
+    'T':     None,
+}
+_RE_TALLA_PREFIX = re.compile(
+    r'^(BR|BRA|BRASIL|EU|EUR|EUROPA|US|USA|USM|USMEN|USW|USWOMEN|'
+    r'UK|UKM|UKMEN|UKW|UKWOMEN|CM|TALLA|SIZE|T)\s*[\.\-:]?\s*(.+)$',
+    re.IGNORECASE,
+)
+
+
+def _build_talla_index() -> dict:
+    """Catálogo de tallas con dos índices:
+
+      · by_system[col][value] = talla_base
+            Para lookup explícito cuando el usuario escribió un prefijo
+            (ej. "BRA 37" → buscar en by_system['br']['37']).
+
+      · by_value[value] = talla_base
+            Lookup permisivo SIN prefijo. EU tiene prioridad — si "35"
+            existe como EU y como BR (de talla_base 37), gana el EU.
+    """
+    by_value = {}
+    by_system = {
+        'eu': {}, 'us_men': {}, 'us_women': {},
+        'uk_men': {}, 'uk_women': {}, 'br': {}, 'cm': {},
+    }
+    canonical_set = set()
+    rows = []
+    try:
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT talla_base, eu, us_men, us_women, uk_men, uk_women, br, cm
+                  FROM ops.tallas
+                 WHERE COALESCE(is_active, TRUE) = TRUE
+                   AND tipo_producto = 'calzado'
+            """)
+            rows = c.fetchall()
+    except Exception as e:
+        log.warning("[parse_template] talla index build failed: %s", e)
+        return {"by_value": by_value, "by_system": by_system, "canonical": canonical_set}
+
+    # Pass 1 — canonical (talla_base + EU). EU = talla_base por convención
+    # del seed B2_seed_tallas_calzado, así que estos dos valores ganan
+    # cualquier colisión futura con BR/US/UK.
+    for talla_base, eu, us_men, us_women, uk_men, uk_women, br, cm in rows:
+        base = (talla_base or "").upper().strip()
+        if not base:
+            continue
+        canonical_set.add(base)
+        by_value[base] = base
+        if eu:       by_system['eu'][eu.upper().strip()] = base
+        if us_men:   by_system['us_men'][us_men.upper().strip()] = base
+        if us_women: by_system['us_women'][us_women.upper().strip()] = base
+        if uk_men:   by_system['uk_men'][uk_men.upper().strip()] = base
+        if uk_women: by_system['uk_women'][uk_women.upper().strip()] = base
+        if br:       by_system['br'][br.upper().strip()] = base
+        if cm:       by_system['cm'][cm.upper().strip()] = base
+
+    # Pass 2 — by_value para sistemas no-EU (sólo si la clave aún está libre)
+    for talla_base, eu, us_men, us_women, uk_men, uk_women, br, cm in rows:
+        base = (talla_base or "").upper().strip()
+        if not base:
+            continue
+        for v in (us_men, us_women, uk_men, uk_women, br, cm):
+            if v:
+                k = v.upper().strip()
+                if k not in by_value:
+                    by_value[k] = base
+
+    return {
+        "by_value":  by_value,
+        "by_system": by_system,
+        "canonical": canonical_set,
+    }
+
+
+def _resolve_talla(raw: str, idx: dict):
+    """Mapea una talla libre al canonical EU. Devuelve (talla_base, strategy).
+
+    Casos:
+      · "37"        → ("37", "DIRECT_EU")        — sin prefijo, asume EU
+      · "BRA 37"    → ("39", "BR")               — BR 37 = EU 39 (vía matriz)
+      · "US 9.5"    → ("43", "US_MEN")           — US 9.5 = EU 43
+      · "UK 9"      → ("43", "UK_MEN")           — UK 9 = EU 43
+      · "EU 43"     → ("43", "EU")               — EU explícito
+      · "TALLA 42"  → ("42", "DIRECT_EU")        — prefijo genérico, asume EU
+      · "M"         → ("M",  "PASSTHROUGH")      — talla alfa, no-numeric
+      · "UNICA"     → ("UNICA", "PASSTHROUGH")   — caso especial
+    """
+    if not raw:
+        return None, "EMPTY"
+    s = raw.strip().upper()
+
+    # Caso 1: prefijo de sistema explícito
+    m = _RE_TALLA_PREFIX.match(s)
+    if m:
+        sys_raw = m.group(1).upper()
+        value = m.group(2).strip()
+        col = _TALLA_SYSTEM_MAP.get(sys_raw)
+        if col is None:
+            # Prefijo genérico tipo "TALLA 42" → asume canónica
+            resolved = idx["by_value"].get(value, value)
+            return resolved, "DIRECT_EU"
+        # Lookup en el sistema específico
+        target = idx["by_system"].get(col, {}).get(value)
+        if target:
+            return target, col.upper()
+        # Sistema reconocido pero valor no en matriz → passthrough con valor crudo
+        return value, f"{col.upper()}_PASSTHROUGH"
+
+    # Caso 2: sin prefijo → lookup permisivo (EU prioritario)
+    if s in idx["by_value"]:
+        return idx["by_value"][s], "DIRECT_EU"
+
+    # Caso 3: passthrough (M, L, UNICA, etc.)
+    return s, "PASSTHROUGH"
 
 
 def _resolve_account_manager_email(client_id):
@@ -270,7 +480,28 @@ class ParseTemplateView(APIView):
         except Exception:
             pass
 
-        # SKUs únicos para el lookup CPA
+        # ── Sprint 2026-05-02: resolución IA-light ──
+        # 1. Catálogo de productos por SKU/Nombre/Ref Proveedor
+        # 2. Catálogo de tallas con sistemas explícitos (BR/US/UK/EU/CM)
+        product_idx = _build_product_index()
+        talla_idx   = _build_talla_index()
+
+        # Resolvemos cada fila: input crudo → SKU canónico, talla cruda → talla base
+        for r in rows:
+            sku, label, sku_strategy = _resolve_input_to_sku(r["raw_input"], product_idx)
+            r["original_input"]   = r["raw_input"]
+            r["sku"]              = sku or r["raw_input"].upper()  # fallback al input crudo si no resuelve
+            r["product_label"]    = label
+            r["sku_strategy"]     = sku_strategy
+            r["sku_resolved"]     = bool(sku)
+
+            base, talla_strategy  = _resolve_talla(r["talla"], talla_idx)
+            r["original_talla"]   = r["talla"]
+            r["talla"]            = base or r["talla"]
+            r["talla_strategy"]   = talla_strategy
+            r["talla_resolved"]   = (talla_strategy not in ("PASSTHROUGH", "EMPTY"))
+
+        # SKUs únicos (ya canónicos) para el lookup CPA
         unique_skus = list({r["sku"] for r in rows if r.get("sku")})
         assignment_skus = set()
         product_meta = {}
@@ -313,14 +544,29 @@ class ParseTemplateView(APIView):
                 unassigned.append(r["sku"])
             meta = product_meta.get(r["sku"]) or {}
             out_lines.append({
-                "row":           i + 2,           # +2 = header + 1-based
-                "sku":           r["sku"],
-                "talla":         r["talla"],
-                "cantidad":      r["cantidad"],
-                "is_assigned":   is_assigned,
-                "producto_id":   meta.get("producto_id"),
-                "product_label": meta.get("product_label"),
+                "row":             i + 2,           # +2 = header + 1-based
+                "sku":             r["sku"],
+                "talla":           r["talla"],
+                "cantidad":        r["cantidad"],
+                "is_assigned":     is_assigned,
+                "producto_id":     meta.get("producto_id"),
+                "product_label":   meta.get("product_label") or r.get("product_label"),
+                # Trazabilidad de la resolución (para que el frontend pueda
+                # mostrar badges / warnings sobre qué se resolvió y cómo).
+                "original_input":  r["original_input"],
+                "original_talla":  r["original_talla"],
+                "sku_resolved":    r["sku_resolved"],
+                "sku_strategy":    r["sku_strategy"],
+                "talla_resolved":  r["talla_resolved"],
+                "talla_strategy":  r["talla_strategy"],
             })
+
+        # Resumen de resolución (extra de las métricas CPA)
+        resolution_summary = {
+            "sku_resolved":   len([l for l in out_lines if l["sku_resolved"]]),
+            "sku_unresolved": len([l for l in out_lines if not l["sku_resolved"]]),
+            "talla_resolved": len([l for l in out_lines if l["talla_resolved"]]),
+        }
 
         return Response({
             "lines":           out_lines,
@@ -331,6 +577,7 @@ class ParseTemplateView(APIView):
                 "unassigned_rows": len([l for l in out_lines if not l["is_assigned"]]),
                 "client_id":       client_id,
                 "client_label":    client_label,
+                "resolution":      resolution_summary,
             },
             "unassigned_skus": unassigned,
             "errors":          [],

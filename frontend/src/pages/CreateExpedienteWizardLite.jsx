@@ -51,13 +51,21 @@ const STEPS = [
 //
 // El parser del backend ya hace csv.Sniffer() sobre los delimitadores
 // `,;|\t` y acepta ambos transparentemente.
+//
+// Sprint 2026-05-02 (AG-03): la primera columna acepta SKU **o** Nombre
+// del producto **o** Ref Proveedor — el backend resuelve al SKU canónico
+// vía productos.producto. La columna Talla acepta cualquier sistema con
+// prefijo explícito (BRA/EU/US/UK/CM); sin prefijo asume EU. Sin esto
+// los CSV de clientes que codifican distinto al SKU MWT fallaban en
+// el matchmaker.
 const TEMPLATE_CSV =
   "﻿" +
   "sep=;\n" +
-  "SKU;Talla;Cantidad\n" +
-  "ABC-123;M;10\n" +
-  "ABC-123;L;5\n" +
-  "XYZ-999;UNICA;20\n";
+  "SKU o Nombre;Talla (BR/US/UK/EU);Cantidad\n" +
+  "ABC-123;42;10\n" +
+  "ABC-123;BRA 40;5\n" +
+  "Bota Plena Flor Negra;US 9.5;20\n" +
+  "XYZ-999;UNICA;15\n";
 
 // ─────────────────────────────────────────────────────────────
 export default function CreateExpedienteWizardLite() {
@@ -800,9 +808,15 @@ function Step2Productos({
                      style={{ display: "none" }}
                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}/>
             </label>
-            <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 8 }}>
+            <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 8, lineHeight: 1.5 }}>
               {lang === "es" ? "Columnas: " : "Columns: "}
-              <code>SKU · Talla · Cantidad</code>
+              <code>SKU/Nombre · Talla · Cantidad</code>
+              <br/>
+              <span style={{ fontSize: 11 }}>
+                {lang === "es"
+                  ? "La IA reconoce SKU, Nombre o Ref Proveedor. Talla acepta «42», «BRA 40», «US 9.5», «UK 9», «EU 43» o alfa («M», «UNICA»)."
+                  : "AI accepts SKU, name or supplier ref. Size accepts «42», «BRA 40», «US 9.5», «UK 9», «EU 43» or alpha («M», «UNICA»)."}
+              </span>
             </div>
           </div>
         )}
