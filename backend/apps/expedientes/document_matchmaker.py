@@ -971,10 +971,15 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                     g_disc.append(item); discrepancies.append(item)
                     continue
 
-                # Sprint 2026-05-02: exact match O equivalencia talla.
-                matched_key, db = _find_db_with_talla_equiv(
-                    sku_norm, talla_norm, db_index, talla_equiv
-                )
+                # Sprint 2026-05-02 (AG-03): match LITERAL para PROFORMA.
+                # El AI extrae en BR (primera fila de la matriz) y la BD
+                # también está en BR (suffix del codigo del proveedor).
+                # Match directo, sin equivalencia que confundía cuando un
+                # mismo número (ej. '41') existe como BR Y EU en filas
+                # distintas de ops.tallas.
+                key = (sku_norm, talla_norm)
+                db = db_index.get(key)
+                matched_key = key
                 if not db:
                     item = {
                         "kind":             "MISSING_IN_EXPEDIENTE",
