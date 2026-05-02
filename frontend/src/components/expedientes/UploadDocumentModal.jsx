@@ -1,28 +1,33 @@
+// frontend/src/components/expedientes/UploadDocumentModal.jsx
 // =====================================================================
 // MWT.ONE · UploadDocumentModal
-// Modal para subir documentos comerciales a la OC (OC original / Proforma /
-// otros). Soporta drag-and-drop y persistencia via /api/documentos/.
+// Modal para subir documentos comerciales a la OC.
 //
-// Sprint 2026-05-01: este modal lo invoca el boton "+ Agregar documento"
-// del OCDetail y del ExpedienteDetail.
+// Sprint 2026-05-02 (AG-03): cuando kind === "OC" y existe expedienteId,
+// tras subir a /api/documentos/ encadena automáticamente la extracción
+// IA + matchmaker contra el catálogo de productos. El padre recibe el
+// resultado vía `onAiAnalysisReady(payload, file)` y puede abrir el
+// wizard de revisión para que el usuario confirme las líneas a insertar
+// en "Productos OC".
 // =====================================================================
 import React, { useState, useRef } from "react";
 import {
-  IconUpload, IconX, IconFileText, IconCheck, IconAlert,
+  IconUpload, IconX, IconFileText, IconCheck, IconAlert, IconSparkle,
 } from "../../lib/icons.jsx";
-import { documentosApi, getToken } from "../../lib/api.js";
+import { documentosApi, getToken, documentMatchmakerApi } from "../../lib/api.js";
 
 const API_BASE = (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || "/api";
 
-// Tipos de documento soportados (se envia en la columna `kind` del backend).
-// Para cada uno: codigo interno + label visible + sugerencia (helper).
+// Tipos canónicos (codigo interno + label).
 const DOCUMENT_KINDS = [
   { id: "OC",        es: "OC del Cliente",        en: "Client PO",
     hint_es: "Orden de Compra original recibida del cliente.",
-    hint_en: "Original purchase order received from the client." },
+    hint_en: "Original purchase order received from the client.",
+    aiPipeline: "ART-01_OC" },
   { id: "PROFORMA",  es: "Proforma",              en: "Proforma",
     hint_es: "Proforma emitida por MWT al cliente.",
-    hint_en: "Proforma issued by MWT to the client." },
+    hint_en: "Proforma issued by MWT to the client.",
+    aiPipeline: "ART-02_PROFORMA" },
   { id: "FACTURA",   es: "Factura comercial",     en: "Commercial invoice",
     hint_es: "Factura emitida al cliente o de un proveedor.",
     hint_en: "Invoice issued to client or from a supplier." },
@@ -45,25 +50,30 @@ function prettyBytes(n) {
 export default function UploadDocumentModal({
   open,
   onClose,
-  onUploaded,        // (newDoc) => void
+  onUploaded,           // (newDoc) => void
+  onAiAnalysisReady,    // (mismatchPayload, file, documentType) => void  ← NUEVO
   lang = "es",
-  ocId,              // UUID de la OC (opcional)
-  expedienteId,      // UUID del expediente (opcional)
-  contextLabel,      // "PO-2026-04107" para mostrar de referencia
+  ocId,
+  expedienteId,
+  contextLabel,
 }) {
   const [kind,    setKind]    = useState("OC");
   const [codigo,  setCodigo]  = useState("");
   const [file,    setFile]    = useState(null);
   const [error,   setError]   = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [aiPhase, setAiPhase] = useState(null); // null | 'uploading' | 'analyzing'
   const [dragOver,  setDragOver]  = useState(false);
   const inputRef = useRef(null);
 
   if (!open) return null;
 
+  const kindObj = DOCUMENT_KINDS.find(k => k.id === kind) || DOCUMENT_KINDS[0];
+  const aiEligible = !!(kindObj.aiPipeline && expedienteId && onAiAnalysisReady);
+
   const reset = () => {
     setKind("OC"); setCodigo(""); setFile(null);
-    setError(null); setUploading(false);
+    setError(null); setUploading(false); setAiPhase(null);
   };
 
   const validate = (f) => {
@@ -90,12 +100,9 @@ export default function UploadDocumentModal({
   const onSubmit = async () => {
     if (!file) { setError(lang === "es" ? "Sube un archivo" : "Upload a file"); return; }
     if (!kind) { setError(lang === "es" ? "Elige el tipo" : "Pick a type"); return; }
-    setUploading(true); setError(null);
+    setUploading(true); setError(null); setAiPhase("uploading");
     try {
-      // Estrategia: subir como multipart al endpoint canonico de documentos.
-      // El backend (apps.expedientes.documento) acepta:
-      //   POST /api/documentos/  multipart con campos:
-      //     kind, codigo, file, oc_id, expediente_id
+      // 1) Persistir el documento en /api/documentos/ (siempre).
       const fd = new FormData();
       fd.append("kind", kind);
       fd.append("codigo", (codigo || "").trim() || file.name);
@@ -116,10 +123,38 @@ export default function UploadDocumentModal({
         throw new Error(data?.detail || data?.error || `HTTP ${resp.status}`);
       }
       onUploaded?.(data);
+
+      // 2) Si aplica, encadenar extracción IA + matchmaker.
+      if (aiEligible) {
+        setAiPhase("analyzing");
+        try {
+          const ai = await documentMatchmakerApi.upload(
+            expedienteId, file, kindObj.aiPipeline,
+          );
+          // Delegamos al padre para abrir el wizard de revisión.
+          onAiAnalysisReady?.(ai, file, kindObj.aiPipeline);
+        } catch (aiErr) {
+          // Falla en IA NO debe bloquear el flujo: el doc ya se guardó.
+          // Mostramos warning pero cerramos sin re-lanzar.
+          // eslint-disable-next-line no-console
+          console.warn("[UploadDocumentModal] IA matchmaker falló:", aiErr);
+          setError(
+            lang === "es"
+              ? "Documento subido, pero el análisis IA falló. Podés reprocesarlo desde Documentos comerciales."
+              : "Document uploaded, but AI analysis failed. You can reprocess it from Commercial documents."
+          );
+          // Mantenemos el modal abierto para que el usuario vea el aviso.
+          setUploading(false);
+          setAiPhase(null);
+          return;
+        }
+      }
+
       reset();
       onClose?.();
     } catch (e) {
       setError(e.message || (lang === "es" ? "Error al subir" : "Upload error"));
+      setAiPhase(null);
     } finally {
       setUploading(false);
     }
@@ -132,7 +167,18 @@ export default function UploadDocumentModal({
     if (f) onPickFile(f);
   };
 
-  const kindObj = DOCUMENT_KINDS.find(k => k.id === kind) || DOCUMENT_KINDS[0];
+  const cta = (() => {
+    if (aiPhase === "analyzing") {
+      return lang === "es" ? "Analizando con IA…" : "Analyzing with AI…";
+    }
+    if (uploading) {
+      return lang === "es" ? "Subiendo…" : "Uploading…";
+    }
+    if (aiEligible) {
+      return lang === "es" ? "Subir y analizar con IA" : "Upload & analyze with AI";
+    }
+    return lang === "es" ? "Subir documento" : "Upload document";
+  })();
 
   return (
     <div
@@ -163,7 +209,7 @@ export default function UploadDocumentModal({
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{
               width: 32, height: 32, borderRadius: 8,
-              background: "#3083FE", color: "white",
+              background: "var(--brand-info, #3083FE)", color: "white",
               display: "flex", alignItems: "center", justifyContent: "center",
             }}>
               <IconUpload size={14}/>
@@ -174,7 +220,7 @@ export default function UploadDocumentModal({
               }}>
                 {lang === "es" ? "DOCUMENTO COMERCIAL" : "COMMERCIAL DOCUMENT"}
               </div>
-              <div style={{ fontWeight: 800, fontSize: 15, color: "#0B1E3A" }}>
+              <div style={{ fontWeight: 800, fontSize: 15, color: "var(--text-primary)" }}>
                 {lang === "es" ? "Agregar documento" : "Add document"}
                 {contextLabel && (
                   <span className="caption mono-sm" style={{
@@ -207,46 +253,74 @@ export default function UploadDocumentModal({
               marginBottom: 6,
             }}>
               {lang === "es" ? "Tipo de documento" : "Document type"}{" "}
-              <span style={{ color: "#DC2626" }}>*</span>
+              <span style={{ color: "var(--danger, #DC2626)" }}>*</span>
             </div>
             <div style={{
               display: "grid", gridTemplateColumns: "repeat(2, 1fr)",
               gap: 8,
             }}>
-              {DOCUMENT_KINDS.map((k) => (
-                <button
-                  key={k.id} type="button"
-                  onClick={() => setKind(k.id)}
-                  disabled={uploading}
-                  style={{
-                    padding: "8px 10px",
-                    border: kind === k.id
-                      ? "1.5px solid #00B286"
-                      : "1px solid var(--border)",
-                    borderRadius: 8,
-                    background: kind === k.id
-                      ? "rgba(0,178,134,0.06)" : "white",
-                    cursor: uploading ? "not-allowed" : "pointer",
-                    textAlign: "left",
-                    fontSize: 13, fontWeight: 600, color: "#0B1E3A",
-                    display: "flex", alignItems: "center", gap: 6,
-                  }}
-                >
-                  {kind === k.id && (
-                    <IconCheck size={12} style={{ color: "#00B286", flexShrink: 0 }}/>
-                  )}
-                  {!kind || kind !== k.id
-                    ? <IconFileText size={12} style={{ color: "var(--text-tertiary)", flexShrink: 0 }}/>
-                    : null}
-                  <span>{lang === "es" ? k.es : k.en}</span>
-                </button>
-              ))}
+              {DOCUMENT_KINDS.map((k) => {
+                const active = kind === k.id;
+                const hasAi = !!k.aiPipeline && !!expedienteId && !!onAiAnalysisReady;
+                return (
+                  <button
+                    key={k.id} type="button"
+                    onClick={() => setKind(k.id)}
+                    disabled={uploading}
+                    style={{
+                      padding: "8px 10px",
+                      border: active
+                        ? "1.5px solid var(--success, #00B286)"
+                        : "1px solid var(--border)",
+                      borderRadius: 8,
+                      background: active
+                        ? "color-mix(in oklab, var(--success, #00B286) 6%, transparent)"
+                        : "white",
+                      cursor: uploading ? "not-allowed" : "pointer",
+                      textAlign: "left",
+                      fontSize: 13, fontWeight: 600, color: "var(--text-primary)",
+                      display: "flex", alignItems: "center", gap: 6,
+                      position: "relative",
+                    }}
+                  >
+                    {active
+                      ? <IconCheck size={12} style={{ color: "var(--success, #00B286)", flexShrink: 0 }}/>
+                      : <IconFileText size={12} style={{ color: "var(--text-tertiary)", flexShrink: 0 }}/>}
+                    <span style={{ flex: 1 }}>{lang === "es" ? k.es : k.en}</span>
+                    {hasAi && (
+                      <span
+                        title={lang === "es" ? "Análisis con IA disponible" : "AI analysis available"}
+                        style={{
+                          fontSize: 10, fontWeight: 700, padding: "2px 6px",
+                          borderRadius: 999,
+                          background: "color-mix(in oklab, var(--brand-accent, #481EE3) 12%, transparent)",
+                          color: "var(--brand-accent, #481EE3)",
+                          letterSpacing: 0.4,
+                          display: "inline-flex", alignItems: "center", gap: 3,
+                        }}
+                      >
+                        <IconSparkle size={9}/> IA
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
             <div className="caption" style={{
               marginTop: 6, fontSize: 11,
               color: "var(--text-tertiary)", lineHeight: 1.4,
             }}>
               {lang === "es" ? kindObj.hint_es : kindObj.hint_en}
+              {aiEligible && (
+                <>
+                  {" "}
+                  <span style={{ color: "var(--brand-accent, #481EE3)", fontWeight: 600 }}>
+                    {lang === "es"
+                      ? "· La IA leerá el documento y mapeará los productos contra el catálogo."
+                      : "· AI will OCR the doc and match products against the catalog."}
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
@@ -286,7 +360,7 @@ export default function UploadDocumentModal({
               marginBottom: 6,
             }}>
               {lang === "es" ? "Archivo" : "File"}{" "}
-              <span style={{ color: "#DC2626" }}>*</span>
+              <span style={{ color: "var(--danger, #DC2626)" }}>*</span>
             </div>
             <div
               onClick={() => !uploading && inputRef.current?.click()}
@@ -296,14 +370,14 @@ export default function UploadDocumentModal({
               role="button" tabIndex={0}
               style={{
                 border: dragOver
-                  ? "2px dashed #00B286"
+                  ? "2px dashed var(--success, #00B286)"
                   : file
-                    ? "1.5px solid #00B286"
+                    ? "1.5px solid var(--success, #00B286)"
                     : "2px dashed var(--border)",
                 borderRadius: 12,
                 background: dragOver
-                  ? "rgba(0,178,134,0.06)"
-                  : file ? "rgba(0,178,134,0.04)" : "white",
+                  ? "color-mix(in oklab, var(--success, #00B286) 6%, transparent)"
+                  : file ? "color-mix(in oklab, var(--success, #00B286) 4%, transparent)" : "white",
                 padding: file ? "14px 16px" : "32px 20px",
                 textAlign: "center",
                 cursor: uploading ? "not-allowed" : "pointer",
@@ -326,15 +400,15 @@ export default function UploadDocumentModal({
                 }}>
                   <div style={{
                     width: 36, height: 36, borderRadius: 8,
-                    background: "rgba(0,178,134,0.10)",
+                    background: "color-mix(in oklab, var(--success, #00B286) 10%, transparent)",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    color: "#00B286", flexShrink: 0,
+                    color: "var(--success, #00B286)", flexShrink: 0,
                   }}>
                     <IconFileText size={16}/>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
-                      fontSize: 13, fontWeight: 700, color: "#0B1E3A",
+                      fontSize: 13, fontWeight: 700, color: "var(--text-primary)",
                       whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                     }}>{file.name}</div>
                     <div className="caption tabular-nums" style={{
@@ -348,7 +422,7 @@ export default function UploadDocumentModal({
                     onClick={(e) => { e.stopPropagation(); setFile(null); }}
                     style={{
                       background: "transparent", border: 0,
-                      color: "#D64545", cursor: "pointer", padding: 6,
+                      color: "var(--danger, #D64545)", cursor: "pointer", padding: 6,
                     }}
                   >
                     <IconX size={12}/>
@@ -357,11 +431,11 @@ export default function UploadDocumentModal({
               ) : (
                 <>
                   <IconUpload size={28} style={{
-                    color: dragOver ? "#00B286" : "var(--text-tertiary)",
+                    color: dragOver ? "var(--success, #00B286)" : "var(--text-tertiary)",
                     marginBottom: 8,
                   }}/>
                   <div style={{
-                    fontSize: 14, fontWeight: 600, color: "#0B1E3A",
+                    fontSize: 14, fontWeight: 600, color: "var(--text-primary)",
                     marginBottom: 4,
                   }}>
                     {lang === "es"
@@ -380,11 +454,38 @@ export default function UploadDocumentModal({
             </div>
           </div>
 
+          {/* Estado IA en curso */}
+          {aiPhase === "analyzing" && (
+            <div style={{
+              padding: "10px 14px", borderRadius: 8,
+              background: "color-mix(in oklab, var(--brand-accent, #481EE3) 8%, transparent)",
+              border: "1px solid color-mix(in oklab, var(--brand-accent, #481EE3) 30%, transparent)",
+              color: "var(--brand-accent, #481EE3)", fontSize: 13,
+              display: "flex", alignItems: "center", gap: 10,
+            }}>
+              <IconSparkle size={12}/>
+              <div>
+                <div style={{ fontWeight: 700 }}>
+                  {lang === "es"
+                    ? "La IA está leyendo el documento…"
+                    : "AI is reading the document…"}
+                </div>
+                <div className="caption" style={{ fontSize: 11, marginTop: 2 }}>
+                  {lang === "es"
+                    ? "Extrayendo productos, tallas y cantidades. Tarda 5–15 s."
+                    : "Extracting products, sizes and qtys. Takes 5–15 s."}
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div style={{
               padding: "8px 12px", borderRadius: 8,
-              background: "#FEE2E2", color: "#991B1B",
-              border: "1px solid #FCA5A5", fontSize: 13,
+              background: "color-mix(in oklab, var(--danger, #DC2626) 14%, transparent)",
+              color: "var(--danger, #991B1B)",
+              border: "1px solid color-mix(in oklab, var(--danger, #DC2626) 35%, transparent)",
+              fontSize: 13,
               display: "flex", alignItems: "flex-start", gap: 6,
             }}>
               <IconAlert size={11} style={{ flexShrink: 0, marginTop: 3 }}/>
@@ -397,7 +498,7 @@ export default function UploadDocumentModal({
         <div style={{
           padding: "12px 20px",
           borderTop: "1px solid var(--border-subtle)",
-          background: "rgba(11,30,58,0.02)",
+          background: "color-mix(in oklab, var(--text-primary) 2%, transparent)",
           display: "flex", justifyContent: "flex-end", gap: 8,
         }}>
           <button
@@ -413,21 +514,13 @@ export default function UploadDocumentModal({
             onClick={onSubmit}
             className="btn btn-accent"
             style={{
-              fontWeight: 700, minWidth: 140,
-              background: "#00B286", borderColor: "#00B286",
+              fontWeight: 700, minWidth: 180,
+              background: aiEligible ? "var(--brand-accent, #481EE3)" : "var(--success, #00B286)",
+              borderColor: aiEligible ? "var(--brand-accent, #481EE3)" : "var(--success, #00B286)",
             }}
           >
-            {uploading ? (
-              <>
-                <IconUpload size={12}/>
-                {lang === "es" ? "Subiendo..." : "Uploading..."}
-              </>
-            ) : (
-              <>
-                <IconCheck size={12}/>
-                {lang === "es" ? "Subir documento" : "Upload document"}
-              </>
-            )}
+            {aiEligible ? <IconSparkle size={12}/> : <IconCheck size={12}/>}
+            <span style={{ marginLeft: 6 }}>{cta}</span>
           </button>
         </div>
       </div>

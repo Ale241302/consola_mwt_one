@@ -38,6 +38,7 @@ import {
 } from "../data/mockData.js";
 import AddSAPConfirmationDrawer from "../components/expedientes/AddSAPConfirmationDrawer.jsx";
 import UploadDocumentModal from "../components/expedientes/UploadDocumentModal.jsx";
+import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmakerWizard.jsx";
 import AddOCProductModal from "../components/expedientes/AddOCProductModal.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
@@ -101,6 +102,10 @@ export default function ScreenOCDetail() {
   const [editingSapInfo, setEditingSapInfo]       = useState(null);
   // Sprint 2026-05-01: modal subir documento comercial (OC, Proforma, etc.)
   const [uploadDocOpen, setUploadDocOpen]         = useState(false);
+  // Sprint 2026-05-02 (AG-03): cuando el upload modal completa el OCR IA,
+  // guardamos el resultado aquí y abrimos el wizard de revisión.
+  // Shape: { result, file, documentType }
+  const [aiReview, setAiReview]                   = useState(null);
 
   useEffect(() => {
     if (ocFromMock) return;
@@ -624,16 +629,56 @@ export default function ScreenOCDetail() {
       {/* Modal compacto Editar SAP eliminado (sprint 2026-05-01).
           Editar SAP ahora abre el AddSAPConfirmationDrawer en modo edit. */}
 
-      {/* Modal subir documento comercial (OC, Proforma, etc.) */}
+      {/* Modal subir documento comercial (OC, Proforma, etc.)
+          Sprint 2026-05-02: si kind=OC y hay expediente vinculado, el modal
+          encadena la extracción IA y nos devuelve el mismatch_payload via
+          onAiAnalysisReady → abrimos el wizard de revisión. */}
       {uploadDocOpen && can('upload_document') && (
         <UploadDocumentModal
           open={uploadDocOpen}
           onClose={() => setUploadDocOpen(false)}
           lang={lang}
           ocId={oc?.id}
+          expedienteId={
+            // Preferimos los expedientes del API; fallback al primer ID del mock.
+            (Array.isArray(apiOcExpedientes) && apiOcExpedientes[0]?.id)
+            || (Array.isArray(oc?.expedientes) && oc.expedientes[0])
+            || null
+          }
           contextLabel={oc?.code || oc?.codigo}
-          onUploaded={() => {
+          onUploaded={(doc) => {
+            // Si NO hubo análisis IA, hacemos el reload clásico.
+            // Si lo hubo, el padre espera onAiAnalysisReady y NO recargamos
+            // hasta que el usuario aplique las resoluciones.
+            if (!aiReview) {
+              setUploadDocOpen(false);
+              setTimeout(() => navigate(0), 200);
+            }
+          }}
+          onAiAnalysisReady={(result, file, documentType) => {
+            // El modal ya cerró por su cuenta; abrimos el wizard.
             setUploadDocOpen(false);
+            setAiReview({ result, file, documentType });
+          }}
+        />
+      )}
+
+      {/* Wizard de revisión post-OCR — sólo cuando hay resultado IA pendiente. */}
+      {aiReview && can('upload_document') && (
+        <DocumentMatchmakerWizard
+          expedienteId={
+            (Array.isArray(apiOcExpedientes) && apiOcExpedientes[0]?.id)
+            || (Array.isArray(oc?.expedientes) && oc.expedientes[0])
+            || null
+          }
+          lang={lang}
+          initialFile={aiReview.file}
+          initialDocumentType={aiReview.documentType}
+          initialResult={aiReview.result}
+          onClose={() => setAiReview(null)}
+          onApplied={() => {
+            setAiReview(null);
+            // Re-fetch para que aparezcan las nuevas líneas en Productos OC.
             setTimeout(() => navigate(0), 200);
           }}
         />

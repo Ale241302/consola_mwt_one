@@ -1,23 +1,24 @@
+# backend/apps/expedientes/document_matchmaker.py
 """
 =====================================================================
 MWT.ONE · apps.expedientes.document_matchmaker
 Agente responsable: [AG-BACKEND]
 
 Sprint Document Matchmaker · 2026-04-29.
+Update 2026-05-02 (AG-03): el extractor OC ahora captura múltiples
+señales de identidad del producto (client_part_number, supplier_ref,
+product_label) y cae a un resolver que mapea contra productos.producto
+por SKU / Nombre / Ref Proveedor — porque los clientes NUNCA codifican
+con nuestro SKU interno.
 
-Servicio que toma un documento (OC del cliente, Proforma MWT,
-Confirmación SAP) y lo cruza contra las líneas del expediente en BD.
+Patrón A (SonDel)   → sólo "Part Nº" tipo 75BPR29-CLIMM-CPAP-37
+                      → base 75BPR29-CLIMM-CPAP matchea productos.nombre.
+Patrón B (Sonepar)  → "ARTICULO" + "REF. PROVEEDOR" tipo 60B19M-CPAP-MIN-CP-38
+                      → base 60B19M-CPAP-MIN-CP matchea
+                        productos.especificaciones->>'ref_proveedor'.
 
 Salida estructurada GARANTIZADA: si la IA falla o devuelve algo raro,
-caemos a un payload determinístico vacío con `error` poblado para que
-el frontend nunca colapse.
-
-Document types canónicos:
-  · ART-01_OC        → Orden de Compra del cliente
-  · ART-02_PROFORMA  → Proforma MWT
-  · ART-04_SAP       → Confirmación SAP del proveedor
-
-Modelo: gpt-5-nano vía OpenAI Responses API (con fallback a chat).
+caemos a un payload determinístico vacío con `error` poblado.
 =====================================================================
 """
 from __future__ import annotations
@@ -26,6 +27,7 @@ import base64
 import json
 import logging
 import os
+import re
 from typing import Optional
 
 from django.db import connection
@@ -34,12 +36,20 @@ log = logging.getLogger(__name__)
 
 OCR_MODEL = os.environ.get("OPENAI_OCR_MODEL", "gpt-5-nano")
 
+# Sufijo de talla típico: -37, -38, -XL, _M, etc. al final del código.
+_RE_TALLA_SUFFIX = re.compile(r"[-_]([0-9]{2,3}|[A-Z]{1,3})$", re.IGNORECASE)
+
 
 # ─────────────────────────────────────────────────────────────────────
-# System prompts — uno por tipo de documento, todos exigen JSON estricto.
+# System prompts
 # ─────────────────────────────────────────────────────────────────────
 SYSTEM_PROMPT_OC = """Eres un extractor de Órdenes de Compra (OC) del cliente.
 Lees el documento y devuelves un JSON ESTRICTO con la lista de líneas.
+
+CONTEXTO CRÍTICO: el cliente NUNCA codifica con el SKU interno del proveedor.
+Cada cliente usa su propia convención. Tu trabajo es extraer TODAS las
+señales de identidad presentes para que el resolver del backend pueda
+mapearlas contra el catálogo.
 
 Esquema obligatorio:
 {
@@ -50,22 +60,26 @@ Esquema obligatorio:
   "currency":         "USD",
   "lines": [
     {
-      "sku":           "<código del producto>",
-      "product_label": "<descripción si aparece>",
-      "talla":         "<talla / size si aparece>",
-      "qty":           <entero>,
-      "unit_price":    <decimal o null>,
-      "confidence":    0..100
+      "client_part_number": "<código que aparece en la columna 'Part Nº' / 'Articulo' / 'Code' del cliente — string completo tal cual aparece>",
+      "supplier_ref":       "<si existe una columna 'REF Proveedor' / 'Supplier Ref' / 'REF.' aparte, ponlo aquí; si no, null>",
+      "base_code":          "<el code SIN el sufijo de talla — ej. de '75BPR29-CLIMM-CPAP-37' devolver '75BPR29-CLIMM-CPAP'>",
+      "talla":              "<talla numérica o letra extraída del sufijo o de columna 'Size' — ej. '37','38','XL'>",
+      "product_label":      "<descripción si aparece>",
+      "qty":                <entero>,
+      "unit_price":         <decimal o null>,
+      "confidence":         0..100
     }, ...
   ],
   "raw_text": "<transcripción literal, max 2000 chars>"
 }
 
 Reglas duras:
-  1. CERO INVENTOS. Si un campo no aparece en el documento, omitirlo.
+  1. CERO INVENTOS. Si un campo no aparece, omitirlo (NO lo pongas en null si no aparece — omítelo).
   2. Si NO hay tabla de productos, devolver lines=[].
-  3. SKU / talla en MAYÚSCULAS sin espacios.
-  4. Devolver SOLO el JSON, sin texto adicional, sin markdown.
+  3. client_part_number / supplier_ref / base_code / talla en MAYÚSCULAS sin espacios.
+  4. base_code: si no puedes inferirlo con seguridad (>90%), devuelve null.
+  5. talla: si no puedes inferirla, devuelve null. Convierte "T-38" / "Talla 38" a "38".
+  6. Devolver SOLO el JSON, sin texto adicional, sin markdown.
 """
 
 
@@ -146,7 +160,7 @@ PROMPT_BY_TYPE = {
 # Llamada IA
 # ─────────────────────────────────────────────────────────────────────
 def _empty_result(document_kind, error=None):
-    out = {
+    return {
         "document_kind": document_kind,
         "lines":         [],
         "groups":        [],
@@ -154,7 +168,6 @@ def _empty_result(document_kind, error=None):
         "error":         error,
         "model":         OCR_MODEL,
     }
-    return out
 
 
 def extract_document(file_bytes: bytes, filename: str, content_type: str,
@@ -179,7 +192,6 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
     if not (is_pdf or is_image or is_excel or is_csv):
         return _empty_result(document_kind, f"Tipo de archivo no soportado: {content_type}")
 
-    # Excel/CSV → convertimos a texto plano antes de mandar a la IA
     text_payload = None
     if is_excel:
         try:
@@ -214,7 +226,6 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
     raw_text = None
     try:
         if text_payload is not None:
-            # Excel/CSV → mandamos texto plano (chat.completions)
             chat = client.chat.completions.create(
                 model = OCR_MODEL,
                 messages = [
@@ -227,7 +238,6 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
             )
             raw_text = chat.choices[0].message.content
         else:
-            # PDF/Imagen → multimodal
             b64 = base64.b64encode(file_bytes).decode("ascii")
             data_url = f"data:{content_type};base64,{b64}"
             user_prompt = "Analiza el siguiente documento y devuelve solo JSON."
@@ -266,24 +276,21 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
     except json.JSONDecodeError as e:
         return _empty_result(document_kind, f"JSON inválido del modelo: {e}")
 
-    # Normalización defensiva
     out = {
         "document_kind": data.get("document_kind") or document_kind,
         "raw_text":      (data.get("raw_text") or "")[:2000] if isinstance(data.get("raw_text"), str) else "",
         "model":         OCR_MODEL,
         "error":         None,
     }
-    # Pasar también campos top-level extra
     for k in ("client_po_number", "client_name", "issued_date", "currency",
               "proforma_number", "supplier_name"):
         if data.get(k) is not None:
             out[k] = data.get(k)
 
     if document_kind == "OC":
-        out["lines"]  = _normalize_lines(data.get("lines"))
+        out["lines"]  = _normalize_oc_lines(data.get("lines"))
         out["groups"] = []
     else:
-        # Proforma/SAP → groups
         groups = []
         for g in (data.get("groups") or []):
             sap = g.get("sap_number") or None
@@ -294,7 +301,6 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
                 "delivery_date": g.get("delivery_date") or None,
                 "lines":         lines,
             })
-        # Si la IA olvidó groups pero puso lines top-level, reagrupar
         if not groups and data.get("lines"):
             groups = [{
                 "sap_number":    None,
@@ -307,8 +313,78 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
     return out
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Normalización
+# ─────────────────────────────────────────────────────────────────────
+def _split_base_and_talla(code: str) -> tuple[Optional[str], Optional[str]]:
+    """Parte 'AAA-BBB-37' en ('AAA-BBB','37'). Defensivo."""
+    if not code:
+        return (None, None)
+    code = code.strip().upper().replace(" ", "")
+    m = _RE_TALLA_SUFFIX.search(code)
+    if not m:
+        return (code, None)
+    base = code[:m.start()]
+    talla = m.group(1)
+    return (base or None, talla or None)
+
+
+def _normalize_oc_lines(rows):
+    """Normalización específica del OC: capturamos múltiples señales de identidad
+    y derivamos base_code / talla cuando la IA no lo hizo."""
+    out = []
+    for ln in (rows or []):
+        if not isinstance(ln, dict):
+            continue
+
+        client_part = str(ln.get("client_part_number") or ln.get("sku") or "").strip().upper()[:64]
+        supplier_ref = str(ln.get("supplier_ref") or "").strip().upper()[:64]
+        base_code = str(ln.get("base_code") or "").strip().upper()[:64]
+        talla = str(ln.get("talla") or "").strip().upper()[:16]
+
+        # Fallback: si la IA no separó base/talla, lo intentamos sobre supplier_ref
+        # primero (Patrón B) y luego sobre client_part_number (Patrón A).
+        if not base_code or not talla:
+            for candidate in (supplier_ref, client_part):
+                if not candidate:
+                    continue
+                b, t = _split_base_and_talla(candidate)
+                if not base_code and b: base_code = b
+                if not talla    and t: talla    = t
+                if base_code and talla: break
+
+        if not (client_part or supplier_ref or base_code):
+            continue  # sin nada con qué matchear
+
+        try:
+            qty = int(ln.get("qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+
+        out.append({
+            "client_part_number": client_part or None,
+            "supplier_ref":       supplier_ref or None,
+            "base_code":          base_code or None,
+            "talla":              talla or None,
+            # `sku` se llena después por el resolver (mantenemos la clave para
+            # compatibilidad con cross_match y ResolveMatchView._apply_add_line).
+            "sku":                "",
+            "product_label":      str(ln.get("product_label") or "")[:255],
+            "qty":                qty,
+            "qty_confirmed":      None,
+            "qty_open":           None,
+            "unit_price":         _safe_float(ln.get("unit_price")),
+            "confidence":         round(max(0.0, min(100.0, float(ln.get("confidence") or 80))), 2),
+            # Trazabilidad del match (lo poblará el resolver):
+            "match_strategy":     None,
+            "match_score":        0,
+            "matched_producto_id": None,
+        })
+    return out
+
+
 def _normalize_lines(rows, is_sap=False):
-    """Aplica defensa contra shapes raros en las líneas."""
+    """Normalización legacy para Proforma/SAP — mantienen el contrato anterior."""
     out = []
     for ln in (rows or []):
         if not isinstance(ln, dict):
@@ -343,18 +419,170 @@ def _safe_float(v):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Resolver: IA → SKU canónico vía productos.producto
+# ─────────────────────────────────────────────────────────────────────
+def _resolve_oc_lines_to_canonical(lines: list[dict]) -> list[dict]:
+    """Para cada línea OC extraída por la IA, resuelve el SKU canónico
+    consultando productos.producto. Estrategias en cascada (la primera
+    que matchea gana):
+
+      1. SKU directo  — client_part_number == producto.sku
+      2. REF proveedor — supplier_ref base == especificaciones->>'ref_proveedor'
+      3. Nombre        — base_code == producto.nombre
+      4. Fuzzy nombre  — ILIKE %base_code% sobre nombre (score 60)
+
+    Cada línea recibe `sku`, `match_strategy`, `match_score`,
+    `matched_producto_id` poblados. Si nada matchea, `sku` queda vacío
+    y la UI lo marcará como "no encontrado" para resolución manual.
+    """
+    if not lines:
+        return lines
+
+    # Indexamos productos en memoria una sola vez para esta corrida.
+    catalog = _load_catalog_index()
+
+    for ln in lines:
+        client_part = (ln.get("client_part_number") or "").upper()
+        supplier_ref = (ln.get("supplier_ref") or "").upper()
+        base_code = (ln.get("base_code") or "").upper()
+
+        # 1. SKU directo
+        if client_part and client_part in catalog["by_sku"]:
+            p = catalog["by_sku"][client_part]
+            ln["sku"] = p["sku"]
+            ln["matched_producto_id"] = p["id"]
+            ln["match_strategy"] = "SKU_EXACT"
+            ln["match_score"] = 100
+            if not ln.get("product_label"):
+                ln["product_label"] = p.get("nombre") or ""
+            continue
+
+        # Construimos la lista de "claves base" a probar, en orden de prioridad:
+        #   supplier_ref base (si lo hay) → base_code → client_part base
+        candidates = []
+        if supplier_ref:
+            b, _ = _split_base_and_talla(supplier_ref)
+            if b: candidates.append(("REF_PROVEEDOR", b))
+        if base_code and (not candidates or candidates[0][1] != base_code):
+            candidates.append(("BASE_CODE", base_code))
+        if client_part:
+            b, _ = _split_base_and_talla(client_part)
+            if b and all(b != c[1] for c in candidates):
+                candidates.append(("CLIENT_PART_BASE", b))
+
+        matched = False
+        for source, key in candidates:
+            # 2. Ref proveedor
+            if key in catalog["by_ref_proveedor"]:
+                p = catalog["by_ref_proveedor"][key]
+                ln["sku"] = p["sku"]
+                ln["matched_producto_id"] = p["id"]
+                ln["match_strategy"] = f"REF_PROVEEDOR/{source}"
+                ln["match_score"] = 95
+                if not ln.get("product_label"):
+                    ln["product_label"] = p.get("nombre") or ""
+                matched = True
+                break
+            # 3. Nombre exacto
+            if key in catalog["by_nombre"]:
+                p = catalog["by_nombre"][key]
+                ln["sku"] = p["sku"]
+                ln["matched_producto_id"] = p["id"]
+                ln["match_strategy"] = f"NOMBRE_EXACT/{source}"
+                ln["match_score"] = 90
+                if not ln.get("product_label"):
+                    ln["product_label"] = p.get("nombre") or ""
+                matched = True
+                break
+
+        if matched:
+            continue
+
+        # 4. Fuzzy nombre — solo si tenemos algún base_code
+        if base_code:
+            fuzzy = _fuzzy_lookup_nombre(base_code)
+            if fuzzy:
+                ln["sku"] = fuzzy["sku"]
+                ln["matched_producto_id"] = fuzzy["id"]
+                ln["match_strategy"] = "NOMBRE_FUZZY"
+                ln["match_score"] = 60
+                if not ln.get("product_label"):
+                    ln["product_label"] = fuzzy.get("nombre") or ""
+                continue
+
+        # No match: marcamos para resolución manual.
+        ln["match_strategy"] = "UNRESOLVED"
+        ln["match_score"] = 0
+
+    return lines
+
+
+def _load_catalog_index() -> dict:
+    """Carga índices en memoria de productos.producto activos."""
+    by_sku = {}
+    by_nombre = {}
+    by_ref_proveedor = {}
+    try:
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT
+                    id::text,
+                    UPPER(COALESCE(sku, ''))                                   AS sku,
+                    UPPER(COALESCE(nombre, ''))                                AS nombre,
+                    UPPER(COALESCE(especificaciones->>'ref_proveedor', ''))    AS ref_proveedor
+                  FROM productos.producto
+                 WHERE COALESCE(is_active, TRUE) = TRUE
+            """)
+            for pid, sku, nombre, ref in c.fetchall():
+                row = {"id": pid, "sku": sku, "nombre": nombre, "ref_proveedor": ref}
+                if sku:    by_sku[sku] = row
+                if nombre: by_nombre[nombre] = row
+                if ref:    by_ref_proveedor[ref] = row
+    except Exception as e:
+        log.warning("[matchmaker] no pude cargar catálogo de productos: %s", e)
+    return {
+        "by_sku":            by_sku,
+        "by_nombre":         by_nombre,
+        "by_ref_proveedor":  by_ref_proveedor,
+    }
+
+
+def _fuzzy_lookup_nombre(base_code: str) -> Optional[dict]:
+    """Busca por ILIKE %base_code% en productos.producto.nombre.
+    Devuelve el match con mejor score (longitud del match relativa)."""
+    if not base_code or len(base_code) < 4:
+        return None
+    try:
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT id::text, sku, nombre
+                  FROM productos.producto
+                 WHERE COALESCE(is_active, TRUE) = TRUE
+                   AND UPPER(COALESCE(nombre, '')) LIKE %s
+                 ORDER BY LENGTH(nombre) ASC
+                 LIMIT 1
+            """, [f"%{base_code}%"])
+            row = c.fetchone()
+            if row:
+                return {"id": row[0], "sku": row[1], "nombre": row[2]}
+    except Exception as e:
+        log.warning("[matchmaker] fuzzy lookup falló: %s", e)
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Matchmaker — cruce IA vs líneas del expediente
 # ─────────────────────────────────────────────────────────────────────
 def cross_match(ai_payload: dict, expediente_id) -> dict:
-    """Cruza el payload de la IA contra expedientes.linea del expediente.
-
-    Devuelve mismatch_payload con shape canónico.
-    """
+    """Cruza el payload de la IA contra expedientes.linea del expediente."""
     kind = (ai_payload.get("document_kind") or "OC").upper()
 
-    # Cargar líneas del expediente desde BD
+    # ── Resolver IA→SKU canónico (SOLO para OC) ─────────────
+    if kind == "OC":
+        ai_payload["lines"] = _resolve_oc_lines_to_canonical(ai_payload.get("lines") or [])
+
     db_lines = _load_expediente_lines(expediente_id)
-    db_index = {}  # (sku,talla) -> {qty, sap, line_id}
+    db_index = {}
     for l in db_lines:
         key = (l["sku"].upper(), (l["talla"] or "").upper())
         if key in db_index:
@@ -365,42 +593,74 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
     discrepancies = []
     matched_keys = set()
 
-    # ── OC ──────────────────────────────────────
     if kind == "OC":
         for ln in (ai_payload.get("lines") or []):
-            key = (ln["sku"].upper(), (ln["talla"] or "").upper())
+            sku = (ln.get("sku") or "").upper()
+            talla = (ln.get("talla") or "").upper()
+
+            # Línea no resuelta — UNRESOLVED, requiere intervención manual.
+            if not sku:
+                discrepancies.append({
+                    "kind":             "UNRESOLVED_PRODUCT",
+                    "sku":              None,
+                    "talla":            talla or None,
+                    "qty_doc":          ln.get("qty") or 0,
+                    "qty_exp":          0,
+                    "sap_doc":          None,
+                    "sap_exp":          None,
+                    "severity":         "ERROR",
+                    "suggested_action": "MANUAL",
+                    "product_label":    ln.get("product_label"),
+                    "client_part_number": ln.get("client_part_number"),
+                    "supplier_ref":     ln.get("supplier_ref"),
+                    "base_code":        ln.get("base_code"),
+                    "match_strategy":   ln.get("match_strategy"),
+                    "match_score":      ln.get("match_score"),
+                    "confidence":       ln.get("confidence"),
+                    "unit_price":       ln.get("unit_price"),
+                })
+                continue
+
+            key = (sku, talla)
             db = db_index.get(key)
             if not db:
                 discrepancies.append({
                     "kind":             "MISSING_IN_EXPEDIENTE",
-                    "sku":              ln["sku"],
-                    "talla":            ln["talla"] or None,
-                    "qty_doc":          ln["qty"],
+                    "sku":              sku,
+                    "talla":            talla or None,
+                    "qty_doc":          ln.get("qty") or 0,
                     "qty_exp":          0,
                     "sap_doc":          None,
                     "sap_exp":          None,
                     "severity":         "WARN",
                     "suggested_action": "ADD_LINE",
                     "product_label":    ln.get("product_label"),
+                    "client_part_number": ln.get("client_part_number"),
+                    "supplier_ref":     ln.get("supplier_ref"),
+                    "base_code":        ln.get("base_code"),
+                    "match_strategy":   ln.get("match_strategy"),
+                    "match_score":      ln.get("match_score"),
                     "confidence":       ln.get("confidence"),
+                    "unit_price":       ln.get("unit_price"),
                 })
             else:
                 matched_keys.add(key)
-                if int(db["qty"]) != int(ln["qty"]):
+                if int(db["qty"]) != int(ln.get("qty") or 0):
                     discrepancies.append({
                         "kind":             "QTY_DIFF",
-                        "sku":              ln["sku"],
-                        "talla":            ln["talla"] or None,
-                        "qty_doc":          ln["qty"],
+                        "sku":              sku,
+                        "talla":            talla or None,
+                        "qty_doc":          ln.get("qty") or 0,
                         "qty_exp":          int(db["qty"]),
                         "sap_doc":          None,
                         "sap_exp":          db.get("sap"),
                         "severity":         "WARN",
                         "suggested_action": "UPDATE_QTY",
                         "product_label":    ln.get("product_label") or db.get("product_label"),
+                        "match_strategy":   ln.get("match_strategy"),
+                        "match_score":      ln.get("match_score"),
                         "line_id":          db.get("line_id"),
                     })
-        # Líneas en expediente que NO están en el doc
         for key, db in db_index.items():
             if key in matched_keys:
                 continue
@@ -417,8 +677,8 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
             })
         groups_out = []
 
-    # ── Proforma / SAP ──────────────────────────
     else:
+        # ── Proforma / SAP (sin cambios) ────────────────────
         groups_out = []
         for g in (ai_payload.get("groups") or []):
             sap = g.get("sap_number")
@@ -468,7 +728,6 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                 "lines_count":    len(g.get("lines") or []),
                 "discrepancies":  g_disc,
             })
-        # Líneas en BD que NO están en el documento
         for key, db in db_index.items():
             if key in matched_keys:
                 continue
@@ -486,7 +745,6 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                 "line_id":          db.get("line_id"),
             })
 
-    # Métricas
     lines_in_doc = (
         len(ai_payload.get("lines") or [])
         if kind == "OC"
@@ -500,6 +758,19 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
     )
     perfect = (discrepancies_count == 0 and lines_in_doc > 0)
 
+    # Métricas extras de resolución (sólo OC)
+    resolution_summary = None
+    if kind == "OC":
+        total = len(ai_payload.get("lines") or [])
+        resolved = sum(1 for l in (ai_payload.get("lines") or []) if l.get("sku"))
+        unresolved = total - resolved
+        resolution_summary = {
+            "lines_total":      total,
+            "lines_resolved":   resolved,
+            "lines_unresolved": unresolved,
+            "resolution_pct":   round((resolved / total) * 100, 2) if total else 100.0,
+        }
+
     return {
         "summary": {
             "perfect_match":       perfect,
@@ -508,6 +779,7 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
             "lines_in_expediente": lines_in_exp,
             "lines_matched":       matched,
             "discrepancies_count": discrepancies_count,
+            "resolution":          resolution_summary,
         },
         "discrepancies": discrepancies,
         "groups":        groups_out,
@@ -515,16 +787,8 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
 
 
 def _load_expediente_lines(expediente_id) -> list[dict]:
-    """Carga líneas del expediente (sku, talla, qty, sap) — defensivo si la
-    estructura varía entre entornos. Usa raw SQL para no acoplarnos al ORM."""
+    """Carga líneas del expediente (sku, talla, qty, sap)."""
     rows = []
-    # Schema real (70_expedientes.sql):
-    #   columns = id, oc_id, expediente_id, producto_id, sku, size, qty,
-    #             unit_cost, unit_price, total_price, sap, transport_mode,
-    #             production_date, estado, deferred_*, is_active, ...
-    # NO existen `talla`, `cantidad`, `quantity`, `qty_transfer`,
-    # `sap_number`, `product_label` — referenciarlas dispara
-    # "column does not exist" y nada se puede leer.
     try:
         with connection.cursor() as c:
             c.execute("""

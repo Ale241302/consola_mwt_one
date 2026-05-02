@@ -50,14 +50,34 @@ const DOC_TYPES = [
 // ═════════════════════════════════════════════════════════════
 export default function DocumentMatchmakerWizard({
   expedienteId, lang = "es", onClose, onApplied,
+  // Sprint 2026-05-02 (AG-03): permite saltar el Paso 1 cuando el wizard
+  // se invoca tras un upload ya hecho desde UploadDocumentModal.
+  //   · initialFile         → archivo elegido por el usuario
+  //   · initialDocumentType → ART-01_OC | ART-02_PROFORMA | ART-04_SAP
+  //   · initialResult       → mismatch_payload + log_id ya retornado por
+  //                            el backend (salta directo al Paso 3).
+  initialFile = null,
+  initialDocumentType = null,
+  initialResult = null,
 }) {
-  const [step, setStep]               = useState(1);
-  const [documentType, setDocumentType] = useState("ART-01_OC");
-  const [file, setFile]               = useState(null);
+  const [step, setStep] = useState(
+    initialResult ? 3 : (initialFile ? 2 : 1)
+  );
+  const [documentType, setDocumentType] = useState(initialDocumentType || "ART-01_OC");
+  const [file, setFile]               = useState(initialFile);
   const [uploading, setUploading]     = useState(false);
   const [error, setError]             = useState(null);
-  const [result, setResult]           = useState(null);     // { log_id, mismatch_payload, ... }
-  const [selected, setSelected]       = useState(new Set()); // discrepancia indices marcadas
+  const [result, setResult]           = useState(initialResult);     // { log_id, mismatch_payload, ... }
+  const [selected, setSelected]       = useState(() => {
+    // Pre-marcar todas las discrepancias auto-aplicables si ya viene resultado.
+    const auto = new Set();
+    if (initialResult) {
+      (initialResult.mismatch_payload?.discrepancies || []).forEach((d, i) => {
+        if (d.severity !== "INFO" && d.suggested_action !== "MANUAL") auto.add(i);
+      });
+    }
+    return auto;
+  });
   const [resolving, setResolving]     = useState(false);
   const [resolveError, setResolveError] = useState(null);
   const [resolvedSummary, setResolvedSummary] = useState(null);
@@ -125,6 +145,15 @@ export default function DocumentMatchmakerWizard({
       setResolving(false);
     }
   };
+
+  // Sprint 2026-05-02: si llega initialFile sin initialResult, dispara el
+  // upload automáticamente para evitar un click extra del usuario.
+  React.useEffect(() => {
+    if (initialFile && !initialResult && step === 2 && !uploading && !result) {
+      submit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div style={overlay} onClick={onClose}>
