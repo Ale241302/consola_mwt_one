@@ -216,6 +216,48 @@ def _safe_float(v) -> Optional[float]:
     except (TypeError, ValueError): return None
 
 
+def _convert_talla_to_br(talla: str) -> str:
+    """Sprint 2026-05-02 (AG-03): conversión determinística talla → BR.
+
+    El AI insiste en extraer las tallas en EU canónica aunque el prompt
+    pida BR. En lugar de pelear con el modelo, post-procesamos: tomamos
+    la talla que el AI devolvió y la convertimos a BR usando ops.tallas.
+
+    Estrategia (silenciosa, no requiere equivalencia en cross_match):
+      1. Si `talla` aparece en la columna `eu` de ops.tallas → devolver
+         el `br` correspondiente. El AI extrajo en EU, lo convertimos.
+      2. Si `talla` NO aparece como EU → devolver tal cual (ya está en
+         BR, o es alfa tipo "M"/"L"/"UNICA", o no está en el catálogo).
+
+    Esto permite que cross_match haga match LITERAL contra BD que está
+    en convención BR (típico para expedientes de Sonepar OC porque el
+    código MARLUVAS-37/-38/-43 usa BR).
+    """
+    if not talla:
+        return talla
+    s = str(talla).upper().strip()
+    try:
+        from django.db import connection
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT br
+                  FROM ops.tallas
+                 WHERE UPPER(eu) = %s
+                   AND tipo_producto = 'calzado'
+                   AND COALESCE(is_active, TRUE) = TRUE
+                 LIMIT 1
+            """, [s])
+            row = c.fetchone()
+            if row and row[0]:
+                br_val = str(row[0]).upper().strip()
+                if br_val and br_val != s:
+                    log.info("[proforma_extractor] talla EU %s → BR %s", s, br_val)
+                return br_val
+    except Exception as e:
+        log.warning("[proforma_extractor] convert talla a BR falló: %s", e)
+    return s
+
+
 def _normalize_groups(raw_groups) -> list[dict]:
     """Aplica defensa contra shapes raros que pueda devolver el AI."""
     groups: list[dict] = []
@@ -228,7 +270,12 @@ def _normalize_groups(raw_groups) -> list[dict]:
                 continue
             sku          = str(ln.get("sku") or "").strip().upper()[:64]
             supplier_ref = str(ln.get("supplier_ref") or "").strip().upper()[:64]
-            talla        = str(ln.get("talla") or "").strip().upper()[:16]
+            talla_raw    = str(ln.get("talla") or "").strip().upper()[:16]
+            # Sprint 2026-05-02 (AG-03): convertir EU→BR si aplica.
+            # El AI suele extraer en EU canónica pero la BD está en BR.
+            # Este post-process le da al cross_match una talla que matchea
+            # LITERAL contra la BD, sin equivalencias mágicas.
+            talla = _convert_talla_to_br(talla_raw)
             try:
                 qty = int(ln.get("qty") or 0)
             except (TypeError, ValueError):
