@@ -285,31 +285,18 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
         # PDFs con `Invalid MIME type. Only image types are supported`.
         # Si pypdf no logra extraer texto (PDF escaneado, OCR-only), caemos
         # al path de vision como fallback.
-        #
-        # Update 2026-05-02: usamos extraction_mode="layout" para preservar
-        # la posición ESPACIAL de las celdas. Crítico para Proformas con
-        # matriz de tallas (15 columnas BR/EU/US/CM). El modo default
-        # concatenaba el texto en orden de stream, mezclando filas de
-        # slots vacíos del template y haciendo que el AI inventara valores.
-        # Con layout, cada celda mantiene su columna y el AI ve la matriz
-        # alineada verticalmente.
         try:
             from pypdf import PdfReader
             import io as _io
             reader = PdfReader(_io.BytesIO(file_bytes))
             pages = []
             for page in reader.pages:
-                # Intentar primero con layout (preserva posición espacial).
-                # Si falla por algún motivo, caer al modo default.
-                try:
-                    t = (page.extract_text(extraction_mode="layout") or "").strip()
-                except Exception:
-                    t = (page.extract_text() or "").strip()
+                t = (page.extract_text() or "").strip()
                 if t:
                     pages.append(t)
             if pages:
                 text_payload = "\n\n--- PAGE BREAK ---\n\n".join(pages)[:18000]
-                log.info("[matchmaker] pypdf(layout) extrajo %d páginas (%d chars) de %s",
+                log.info("[matchmaker] pypdf extrajo %d páginas (%d chars) de %s",
                          len(pages), len(text_payload), filename)
         except Exception as e:
             log.warning("[matchmaker] pypdf extracción falló (%s); fallback a vision", e)
@@ -879,9 +866,8 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                 })
                 continue
 
-            # Sprint 2026-05-02 (AG-03): exact match O equivalencia de talla
-            # cross-convención (BR↔EU↔US↔UK↔CM via ops.tallas).
-            matched_key, db = _find_db_with_talla_equiv(sku, talla, db_index, talla_equiv)
+            key = (sku, talla)
+            db = db_index.get(key)
             if not db:
                 discrepancies.append({
                     "kind":             "MISSING_IN_EXPEDIENTE",
@@ -903,12 +889,12 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                     "unit_price":       ln.get("unit_price"),
                 })
             else:
-                matched_keys.add(matched_key)
+                matched_keys.add(key)
                 if int(db["qty"]) != int(ln.get("qty") or 0):
                     discrepancies.append({
                         "kind":             "QTY_DIFF",
                         "sku":              sku,
-                        "talla":            db["talla"] or talla or None,
+                        "talla":            talla or None,
                         "qty_doc":          ln.get("qty") or 0,
                         "qty_exp":          int(db["qty"]),
                         "sap_doc":          None,
