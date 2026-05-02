@@ -295,17 +295,28 @@ def _parse_proforma_deterministic(file_bytes: bytes) -> Optional[dict]:
     """Sprint 2026-05-02 (AG-03): parser DETERMINÍSTICO de proforma MWT
     usando coordenadas reales (X, Y) de PyMuPDF.
 
-    El AI (gpt-4o-mini, gpt-4o) alucina las cantidades de la matriz
-    horizontal. Este parser NO usa AI — extrae la matriz leyendo las
-    posiciones espaciales del PDF directamente:
+    Sprint 2026-05-02 (AG-03) v2: la matriz de tallas de la proforma es
+    VERTICAL, no horizontal. Cada fila tiene 4 columnas alineadas por X:
 
-      1. Lee las palabras con sus bounding boxes (x0,y0,x1,y1)
-      2. Encuentra cada slot poblado (campo "Código" con número)
-      3. Para cada slot, identifica las filas BRA / EU / USA / Cantidad
-         por el Y-coordinate de sus labels
-      4. Toma cada qty del slot por su X-coordinate
-      5. Encuentra el BRA value en el mismo X (columna alineada)
-      6. Emite (sku, talla=BRA, qty)
+         BRA    EU    USA   QTY
+        ─────  ─────  ─────  ─────
+         43     45    11     10
+         42     44    10     30
+         41     43    9.5    30
+         40     42    8.5    10
+         39     41    8      10
+         38     40    7      10
+         37     39    6.5    10
+
+    Algoritmo:
+      1. Para cada SKU del documento (números de 5-7 dígitos):
+         · La columna BRA del slot está en X ≈ SKU.X (offset ~2pt).
+         · La columna QTY del slot está en X ≈ SKU.X + 48.
+      2. Para cada SKU, junta los valores BRA (numéricos 30-50 en su
+         X-bucket) y los valores QTY (numéricos > 0 en su X-bucket,
+         dentro del rango Y de los BRA).
+      3. Por cada QTY, encuentra el BRA en el mismo Y (tolerancia 3pt).
+      4. Emite (sku, talla=BRA, qty). Valida suma vs Total de Pares.
 
     Returns: dict con shape igual a extract_proforma() o None si el
     parsing falla (en ese caso el caller cae al path de AI).
@@ -317,213 +328,155 @@ def _parse_proforma_deterministic(file_bytes: bytes) -> Optional[dict]:
         return None
 
     try:
-        with fitz.open(stream=file_bytes, filetype="pdf") as doc:
-            if not len(doc):
-                return None
-            page = doc.load_page(0)
-            words = page.get_text("words")  # [(x0, y0, x1, y1, word, b_no, l_no, w_no), ...]
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
     except Exception as e:
-        log.warning("[proforma_det] fitz error: %s", e)
+        log.warning("[proforma_det] fitz open error: %s", e)
         return None
 
-    if not words:
-        return None
+    re_sku    = _re.compile(r"^\d{5,7}$")
+    re_int    = _re.compile(r"^\d{1,4}$")
+    re_supref = _re.compile(r"^\d{2,3}[A-Z]\d{2,3}[A-Z]?-[A-Z]{2,5}-[A-Z]{2,5}-?[A-Z]*$")
 
-    # Agrupar palabras por Y-coordinate (tolerancia 3pt para misma línea)
-    rows: list[list] = []
-    y_tolerance = 3.0
-    for w in sorted(words, key=lambda x: (x[1], x[0])):
-        x0, y0, x1, y1, text = w[0], w[1], w[2], w[3], w[4]
-        placed = False
-        for row in rows:
-            if abs(row[0]["y_center"] - (y0 + y1) / 2) < y_tolerance:
-                row.append({"x0": x0, "y0": y0, "x1": x1, "y1": y1,
-                            "x_center": (x0 + x1) / 2,
-                            "y_center": (y0 + y1) / 2,
-                            "text": text})
-                placed = True
-                break
-        if not placed:
-            rows.append([{"x0": x0, "y0": y0, "x1": x1, "y1": y1,
-                          "x_center": (x0 + x1) / 2,
-                          "y_center": (y0 + y1) / 2,
-                          "text": text}])
-
-    # Re-ordenar palabras dentro de cada row por X
-    for row in rows:
-        row.sort(key=lambda r: r["x0"])
-
-    # Buscar header del documento: proforma_number, total
     proforma_number = None
-    total_pares = None
-    sku_global = None
-    supplier_ref_global = None
-    re_proforma_num = _re.compile(r"^\d{3,5}-20\d{2}$")
-    re_int = _re.compile(r"^\d{1,4}$")
-
-    flat_text = " ".join(w[4] for w in words)
-    m = _re.search(r"Proforma:\s*(\S+)", flat_text)
-    if m:
-        proforma_number = m.group(1)
-    m = _re.search(r"Total de Pares:\s*(\d+)", flat_text)
-    if m:
-        total_pares = int(m.group(1))
-
-    # Buscar slots poblados — un slot está poblado cuando hay un valor
-    # numérico (5-7 dígitos) cerca de un label "Código:".
-    re_sku = _re.compile(r"^\d{5,7}$")
-    slots = []
-    for r_idx, row in enumerate(rows):
-        # Buscar texto "Código" en la fila
-        for w in row:
-            if w["text"].strip().lower().startswith("código") or w["text"].strip().lower().startswith("codigo"):
-                # El SKU está en la misma fila o adyacente, a la derecha del label
-                sku = None
-                # Buscar primer número 5-7 dígitos a la derecha
-                for w2 in row:
-                    if w2["x0"] > w["x1"] and re_sku.match(w2["text"]):
-                        sku = w2["text"]
-                        break
-                if not sku:
-                    # Probar fila siguiente
-                    if r_idx + 1 < len(rows):
-                        for w2 in rows[r_idx + 1]:
-                            if re_sku.match(w2["text"]):
-                                sku = w2["text"]
-                                break
-                if sku:
-                    slots.append({"sku": sku, "row_idx": r_idx, "y_label": w["y_center"]})
-                break
-
-    if not slots:
-        log.warning("[proforma_det] no encontré slots con Código populado")
-        return None
-
-    # Para cada slot poblado, encontrar las filas BRA/EU/USA/Cantidad
-    # debajo del label "Código" hasta el siguiente slot
+    total_pares     = None
+    supplier_ref    = None
+    flat_text_all   = ""
     slot_lines: list[dict] = []
-    for s_idx, slot in enumerate(slots):
-        next_y = slots[s_idx + 1]["y_label"] if s_idx + 1 < len(slots) else 9e9
-        # Filas dentro del slot: y > slot.y_label y y < next_y
-        slot_rows = [r for r in rows if slot["y_label"] < r[0]["y_center"] < next_y]
+    seen_sku_x: set[tuple[int, int]] = set()  # (page_idx, round(sku_x, 0))
 
-        # Identificar fila BRA por su label
-        bra_row = None
-        eu_row = None
-        cant_row = None
-        for row in slot_rows:
-            row_text = " ".join(w["text"] for w in row).lower()
-            if "referencia bra" in row_text or "ref bra" in row_text:
-                # Los valores numéricos están en esta fila después del label
-                bra_row = row
-            elif "referencia eu" in row_text or "ref eu" in row_text:
-                eu_row = row
-
-        if not bra_row:
-            log.warning("[proforma_det] slot SKU=%s sin fila BRA", slot["sku"])
-            continue
-
-        # Extraer los valores numéricos de la fila BRA (filtrar el label)
-        bra_values = [
-            w for w in bra_row
-            if re_int.match(w["text"]) and 30 <= int(w["text"]) <= 50
-        ]
-        if not bra_values:
-            log.warning("[proforma_det] BRA values vacíos para SKU=%s", slot["sku"])
-            continue
-
-        # La fila Cantidad: debe estar DEBAJO de USA, sin label de texto.
-        # CRÍTICO: filtrar para que NO confunda con BRA/EU/USA (que también
-        # son filas numéricas). Las filas de talla tienen valores en el
-        # rango 30-50 (BR 33-47, EU 35-49). La fila qty tiene valores
-        # arbitrarios (10, 30, 50, 100...) — saltamos cualquier fila
-        # donde la mayoría de valores caen en el rango de talla.
-        bra_y = bra_row[0]["y_center"]
-        candidate_qty_rows = [
-            r for r in slot_rows
-            if r[0]["y_center"] > bra_y + 5  # debajo de BRA
-        ]
-        # Set de valores que parecen tallas (para filtrar)
-        TALLA_RANGE = set(range(30, 51))
-        qty_row = None
-        for row in candidate_qty_rows:
-            tokens = [w for w in row if re_int.match(w["text"])]
-            if not tokens:
+    try:
+        for page_idx, page in enumerate(doc):
+            words = page.get_text("words")
+            if not words:
                 continue
-            int_vals = [int(t["text"]) for t in tokens]
-            # Si la mayoría de valores están en el rango de talla,
-            # esta es probablemente la fila EU/BRA/USA, NO la fila qty.
-            in_talla_range = sum(1 for v in int_vals if v in TALLA_RANGE)
-            if in_talla_range / len(int_vals) > 0.6:
-                continue  # skip — es talla, no qty
-            # Esta debe ser la fila qty real
-            qty_row = tokens
-            break
 
-        if not qty_row:
-            log.warning("[proforma_det] qty row vacía para SKU=%s", slot["sku"])
-            continue
+            page_text = " ".join(w[4] for w in words)
+            flat_text_all += page_text + "\n"
 
-        # Mapear cada qty al BRA value más cercano por X
-        for q in qty_row:
-            qx = q["x_center"]
-            qty_int = int(q["text"])
-            if qty_int <= 0:
-                continue
-            # Encontrar BRA value con X-center más cercano
-            closest = min(bra_values, key=lambda b: abs(b["x_center"] - qx))
-            x_dist = abs(closest["x_center"] - qx)
-            if x_dist > 25:  # demasiado lejos, descartar
-                continue
-            slot_lines.append({
-                "sku":           slot["sku"],
-                "supplier_ref":  None,
-                "talla":         closest["text"],
-                "qty":           qty_int,
-                "product_label": "",
-                "unit_price":    None,
-                "confidence":    99.0,
-                "match_strategy": "DETERMINISTIC",
-                "match_score":    99,
-                "matched_producto_id": None,
-                "client_part_number": None,
-                "base_code":     None,
-                "qty_confirmed": None,
-                "qty_open":      None,
-            })
+            # Extraer header solo de la primera página
+            if page_idx == 0:
+                m = _re.search(r"Proforma:\s*(\S+)", page_text)
+                if m: proforma_number = m.group(1)
+                m = _re.search(r"Total de Pares:\s*(\d+)", page_text)
+                if m: total_pares = int(m.group(1))
+                # supplier_ref puede estar en cualquier lugar de p.1
+                for w in words:
+                    if re_supref.match(w[4]):
+                        supplier_ref = w[4]
+                        break
+
+            # ── Detectar slots poblados (SKUs en columnas de tallas) ──
+            for sku_w in words:
+                sku = sku_w[4]
+                if not re_sku.match(sku):
+                    continue
+                sku_x = sku_w[0]
+                sku_y = sku_w[1]
+
+                # Dedup: si ya procesamos un slot con el mismo (página, X)
+                # lo saltamos. Esto evita procesar el SKU del summary final
+                # como si fuera un slot.
+                key = (page_idx, round(sku_x, 0))
+                if key in seen_sku_x:
+                    continue
+
+                # Los SKUs de slots están ARRIBA del centro de la página
+                # (la matriz vertical va de Y≈40 a Y≈275 y el SKU label
+                # del slot está a Y≈445 ó cerca del cuadrante). Excluimos
+                # SKUs muy abajo (summary final tipo Y>600).
+                # Pero el SKU del slot 1 de la página 1 está en Y≈649
+                # también (es el ÚNICO SKU = 701935). Así que NO podemos
+                # filtrar por Y. Usamos otra señal: que existan suficientes
+                # BRA values en su X-bucket.
+
+                # BRA values en el bucket X del SKU (±8pt)
+                bra_words = [
+                    w for w in words
+                    if abs(w[0] - sku_x) < 8.0
+                    and re_int.match(w[4])
+                    and 30 <= int(w[4]) <= 50
+                ]
+                if len(bra_words) < 5:
+                    # No es un slot de matriz: el summary tiene 1-3
+                    # números en su X, no la columna completa BRA 33-47.
+                    continue
+
+                bra_y_min = min(w[1] for w in bra_words)
+                bra_y_max = max(w[1] for w in bra_words)
+
+                # QTY values: bucket X+48 (±6pt), Y dentro del rango BRA
+                qty_x_target = sku_x + 48.0
+                qty_words = [
+                    w for w in words
+                    if abs(w[0] - qty_x_target) < 6.0
+                    and re_int.match(w[4])
+                    and int(w[4]) > 0
+                    and int(w[4]) < 1000  # excluir totales gigantes
+                    and (bra_y_min - 3) <= w[1] <= (bra_y_max + 3)
+                ]
+                if not qty_words:
+                    # Slot vacío (sin distribución de qty) — no emitir nada
+                    seen_sku_x.add(key)
+                    continue
+
+                # Por cada QTY, encontrar BRA al mismo Y (tolerancia 3pt)
+                emitted = 0
+                for q in qty_words:
+                    qty_int = int(q[4])
+                    closest_bra = min(bra_words, key=lambda b: abs(b[1] - q[1]))
+                    y_dist = abs(closest_bra[1] - q[1])
+                    if y_dist >= 3.0:
+                        continue
+                    slot_lines.append({
+                        "sku":            sku,
+                        "supplier_ref":   None,  # se llena después
+                        "talla":          closest_bra[4],
+                        "qty":            qty_int,
+                        "product_label":  "",
+                        "unit_price":     None,
+                        "confidence":     99.0,
+                        "match_strategy": "DETERMINISTIC",
+                        "match_score":    99,
+                        "matched_producto_id": None,
+                        "client_part_number":  None,
+                        "base_code":      None,
+                        "qty_confirmed":  None,
+                        "qty_open":       None,
+                    })
+                    emitted += 1
+                if emitted:
+                    seen_sku_x.add(key)
+    finally:
+        doc.close()
 
     if not slot_lines:
         log.warning("[proforma_det] no extraje líneas — fallback a AI")
         return None
 
-    # Validar suma vs total declarado — si no matchea, abortar y caer al AI.
-    # (mejor extracción incierta que extracción confiadamente errónea)
+    # Enriquecer supplier_ref si lo encontramos
+    if supplier_ref:
+        for ln in slot_lines:
+            ln["supplier_ref"] = supplier_ref
+
+    # Validar suma vs total declarado — si no matchea, abortar y caer al AI
     total_extraido = sum(l["qty"] for l in slot_lines)
     if total_pares and total_extraido != total_pares:
         log.warning(
             "[proforma_det] suma extraída=%d != total declarado=%d → fallback a AI",
             total_extraido, total_pares,
         )
-        return None  # fallback al AI — mejor que dar datos malos
+        return None
 
-    log.info("[proforma_det] extraje %d líneas, suma=%d (declarado=%s) ✓",
-             len(slot_lines), total_extraido, total_pares)
-
-    # Buscar supplier_ref y descripción para enriquecer
-    re_supref = _re.compile(r"^\d{2,3}[A-Z]\d{2,3}[A-Z]?-[A-Z]{2,5}-[A-Z]{2,5}-?[A-Z]*$")
-    for w in words:
-        if re_supref.match(w[4]):
-            supplier_ref_global = w[4]
-            break
-    if supplier_ref_global:
-        for ln in slot_lines:
-            ln["supplier_ref"] = supplier_ref_global
+    log.info(
+        "[proforma_det] extraje %d líneas (vertical-matrix), suma=%d (declarado=%s) ✓",
+        len(slot_lines), total_extraido, total_pares,
+    )
 
     return {
         "document_kind":   "PROFORMA",
         "proforma_number": proforma_number,
-        "raw_text":        flat_text[:2000],
-        "model":           "deterministic-pymupdf",
+        "raw_text":        flat_text_all[:2000],
+        "model":           "deterministic-pymupdf-v2",
         "error":           None,
         "groups": [{
             "sap_number":    None,
