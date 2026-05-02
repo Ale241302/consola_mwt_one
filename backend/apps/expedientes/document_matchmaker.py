@@ -285,18 +285,31 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
         # PDFs con `Invalid MIME type. Only image types are supported`.
         # Si pypdf no logra extraer texto (PDF escaneado, OCR-only), caemos
         # al path de vision como fallback.
+        #
+        # Update 2026-05-02: usamos extraction_mode="layout" para preservar
+        # la posición ESPACIAL de las celdas. Crítico para Proformas con
+        # matriz de tallas (15 columnas BR/EU/US/CM). El modo default
+        # concatenaba el texto en orden de stream, mezclando filas de
+        # slots vacíos del template y haciendo que el AI inventara valores.
+        # Con layout, cada celda mantiene su columna y el AI ve la matriz
+        # alineada verticalmente.
         try:
             from pypdf import PdfReader
             import io as _io
             reader = PdfReader(_io.BytesIO(file_bytes))
             pages = []
             for page in reader.pages:
-                t = (page.extract_text() or "").strip()
+                # Intentar primero con layout (preserva posición espacial).
+                # Si falla por algún motivo, caer al modo default.
+                try:
+                    t = (page.extract_text(extraction_mode="layout") or "").strip()
+                except Exception:
+                    t = (page.extract_text() or "").strip()
                 if t:
                     pages.append(t)
             if pages:
                 text_payload = "\n\n--- PAGE BREAK ---\n\n".join(pages)[:18000]
-                log.info("[matchmaker] pypdf extrajo %d páginas (%d chars) de %s",
+                log.info("[matchmaker] pypdf(layout) extrajo %d páginas (%d chars) de %s",
                          len(pages), len(text_payload), filename)
         except Exception as e:
             log.warning("[matchmaker] pypdf extracción falló (%s); fallback a vision", e)
