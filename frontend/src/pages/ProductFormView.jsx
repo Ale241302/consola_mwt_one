@@ -194,7 +194,18 @@ export default function ScreenProductFormView() {
     return existing.ficha_url ? [existing.ficha_url] : [];
   });
 
-  // Atributos (Sección B)
+  // Helper: normaliza un valor que puede venir del backend como string
+  // (legacy single-select) o como array (nuevo multi-select). Devuelve
+  // siempre un array. Útil para los 4 campos multi-select del producto.
+  const asMultiArray = (v) => {
+    if (Array.isArray(v)) return v.filter(Boolean);
+    if (v == null || v === '' || v === 'No') return [];
+    return [String(v)];
+  };
+
+  // Atributos (Sección B) — single-select. disipativo_energia, normativa
+  // y segmento se promovieron a multi-select y viven en estados aparte
+  // (paralelos a `riesgos`) más abajo.
   const [attrs, setAttrs] = useState({
     tipo_calzado:         existing?.tipo_calzado         || BRAND_ATTRIBUTES.tipo_calzado[0],
     cubrepuntera:         existing?.cubrepuntera         || 'No',
@@ -202,21 +213,21 @@ export default function ScreenProductFormView() {
     antiperforante:       existing?.antiperforante       || 'No',
     protector_metatarsal: existing?.protector_metatarsal || 'No',
     capellada:            existing?.capellada            || BRAND_ATTRIBUTES.capellada[0],
-    disipativo_energia:   existing?.disipativo_energia   || 'No',
     suela:                existing?.suela                || BRAND_ATTRIBUTES.suela[0],
-    normativa:            existing?.normativa            || 'No',
     cierre:               existing?.cierre               || BRAND_ATTRIBUTES.cierre[0],
     color:                existing?.color                || BRAND_ATTRIBUTES.color[0],
-    segmento:             existing?.segmento             || BRAND_ATTRIBUTES.segmento[0],
     materiales_circulares:existing?.materiales_circulares|| 'No',
     plantilla_interna:    existing?.plantilla_interna    || 'No',
     ncm:                  existing?.ncm                  || '',
   });
-  // Riesgo — MULTI-CHECKBOX (no single-select)
-  const [riesgos, setRiesgos] = useState(
-    Array.isArray(existing?.riesgo) ? existing.riesgo
-      : (existing?.riesgo ? [existing.riesgo] : [])
-  );
+  // ── Multi-select states ───────────────────────────────────────────
+  // Sprint 2026-05-02: disipativo_energia, normativa y segmento pasaron
+  // de single-select a multi-checkbox por solicitud CEO. Backward compat:
+  // si el backend devuelve string (legacy) lo wrappeamos en array.
+  const [riesgos,     setRiesgos]     = useState(asMultiArray(existing?.riesgo));
+  const [disipativos, setDisipativos] = useState(asMultiArray(existing?.disipativo_energia));
+  const [normativas,  setNormativas]  = useState(asMultiArray(existing?.normativa));
+  const [segmentos,   setSegmentos]   = useState(asMultiArray(existing?.segmento));
 
   // ── Repuebla TODOS los campos cuando llega `existing` del fetch async ──
   // Los useState() iniciales corrieron con existing=null; ahora que tenemos
@@ -240,17 +251,17 @@ export default function ScreenProductFormView() {
       antiperforante:       existing.antiperforante       || 'No',
       protector_metatarsal: existing.protector_metatarsal || 'No',
       capellada:            existing.capellada            || BRAND_ATTRIBUTES.capellada[0],
-      disipativo_energia:   existing.disipativo_energia   || 'No',
       suela:                existing.suela                || BRAND_ATTRIBUTES.suela[0],
-      normativa:            existing.normativa            || 'No',
       cierre:               existing.cierre               || BRAND_ATTRIBUTES.cierre[0],
       color:                existing.color                || BRAND_ATTRIBUTES.color[0],
-      segmento:             existing.segmento             || BRAND_ATTRIBUTES.segmento[0],
       materiales_circulares: existing.materiales_circulares|| 'No',
       plantilla_interna:    existing.plantilla_interna    || 'No',
       ncm:                  existing.ncm                  || '',
     });
-    setRiesgos(Array.isArray(existing.riesgo) ? existing.riesgo : []);
+    setRiesgos(asMultiArray(existing.riesgo));
+    setDisipativos(asMultiArray(existing.disipativo_energia));
+    setNormativas(asMultiArray(existing.normativa));
+    setSegmentos(asMultiArray(existing.segmento));
     // Tallas: el backend las guarda en p.tallas (array de UUIDs o codes).
     setSelectedSizes(Array.isArray(existing.tallas)
       ? existing.tallas
@@ -350,9 +361,18 @@ export default function ScreenProductFormView() {
     Promise.resolve().then(() => setActiveTab('detalles'));
   }
 
-  // Toggle helper
+  // Toggle helpers — patrón consistente para todos los multi-select.
   const toggleRiesgo = (r) => {
     setRiesgos(prev => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]);
+  };
+  const toggleDisipativo = (v) => {
+    setDisipativos(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]);
+  };
+  const toggleNormativa = (v) => {
+    setNormativas(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]);
+  };
+  const toggleSegmento = (v) => {
+    setSegmentos(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]);
   };
   const toggleSize = (sid) => {
     setSelectedSizes(prev => prev.includes(sid) ? prev.filter(x => x !== sid) : [...prev, sid]);
@@ -491,7 +511,13 @@ export default function ScreenProductFormView() {
     // visibility tampoco tienen columna dedicada → mismo destino JSON.
     const especificaciones = {
       ...attrs,
-      riesgo:           riesgos,
+      // Multi-select fields (sprint 2026-05-02): se persisten como arrays.
+      // Los consumidores (BrandDetail, PricingManagerTable) leen ambas
+      // formas — string legacy o array — para compat hacia atrás.
+      riesgo:             riesgos,
+      disipativo_energia: disipativos,
+      normativa:          normativas,
+      segmento:           segmentos,
       sizes:            selectedSizes,
       nodes:            selectedNodes,
       visibility: {
@@ -689,18 +715,12 @@ export default function ScreenProductFormView() {
                     value={attrs.protector_metatarsal} onChange={v=>setAttrs({...attrs, protector_metatarsal: v})}/>
         <AttrSelect label={lang==='es'?'Capellada':'Upper'} opts={BRAND_ATTRIBUTES.capellada}
                     value={attrs.capellada} onChange={v=>setAttrs({...attrs, capellada: v})}/>
-        <AttrSelect label={lang==='es'?'Disipativo de energía':'Energy dissipation'} opts={BRAND_ATTRIBUTES.disipativo_energia}
-                    value={attrs.disipativo_energia} onChange={v=>setAttrs({...attrs, disipativo_energia: v})}/>
         <AttrSelect label="Suela" opts={BRAND_ATTRIBUTES.suela}
                     value={attrs.suela} onChange={v=>setAttrs({...attrs, suela: v})}/>
-        <AttrSelect label="Normativa" opts={BRAND_ATTRIBUTES.normativa}
-                    value={attrs.normativa} onChange={v=>setAttrs({...attrs, normativa: v})}/>
         <AttrSelect label={lang==='es'?'Cierre':'Closure'} opts={BRAND_ATTRIBUTES.cierre}
                     value={attrs.cierre} onChange={v=>setAttrs({...attrs, cierre: v})}/>
         <AttrSelect label="Color" opts={BRAND_ATTRIBUTES.color}
                     value={attrs.color} onChange={v=>setAttrs({...attrs, color: v})}/>
-        <AttrSelect label="Segmento" opts={BRAND_ATTRIBUTES.segmento}
-                    value={attrs.segmento} onChange={v=>setAttrs({...attrs, segmento: v})}/>
         <AttrSelect label={lang==='es'?'Materiales circulares':'Circular materials'} opts={BRAND_ATTRIBUTES.materiales_circulares}
                     value={attrs.materiales_circulares} onChange={v=>setAttrs({...attrs, materiales_circulares: v})}/>
         <AttrSelect label={lang==='es'?'Plantilla interna':'Insole'} opts={BRAND_ATTRIBUTES.plantilla_interna}
@@ -712,7 +732,76 @@ export default function ScreenProductFormView() {
         </label>
       </div>
 
-      {/* Riesgo — MULTI-CHECKBOX */}
+      {/* ── Disipativo de energía — MULTI-CHECKBOX ───────────────── */}
+      <div className="form-field" style={{marginTop:18}}>
+        <span style={{display:'flex', alignItems:'center', gap:8}}>
+          {lang==='es'?'Disipativo de energía (multi-selección)':'Energy dissipation (multi-select)'}
+          <span className="badge badge-neutral" style={{fontSize:10}}>
+            {disipativos.length} {lang==='es'?'marcados':'selected'}
+          </span>
+        </span>
+        <div className="riesgo-grid">
+          {BRAND_ATTRIBUTES.disipativo_energia.map(v => {
+            const on = disipativos.includes(v);
+            return (
+              <button type="button" key={v}
+                      className={`riesgo-chip ${on ? 'riesgo-chip-on' : ''}`}
+                      onClick={()=>toggleDisipativo(v)}>
+                <span className="riesgo-box">{on && <IconCheck size={10}/>}</span>
+                <span>{v}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Normativa — MULTI-CHECKBOX ───────────────────────────── */}
+      <div className="form-field" style={{marginTop:18}}>
+        <span style={{display:'flex', alignItems:'center', gap:8}}>
+          {lang==='es'?'Normativa (multi-selección)':'Norm (multi-select)'}
+          <span className="badge badge-neutral" style={{fontSize:10}}>
+            {normativas.length} {lang==='es'?'marcados':'selected'}
+          </span>
+        </span>
+        <div className="riesgo-grid">
+          {BRAND_ATTRIBUTES.normativa.map(v => {
+            const on = normativas.includes(v);
+            return (
+              <button type="button" key={v}
+                      className={`riesgo-chip ${on ? 'riesgo-chip-on' : ''}`}
+                      onClick={()=>toggleNormativa(v)}>
+                <span className="riesgo-box">{on && <IconCheck size={10}/>}</span>
+                <span>{v}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Segmento — MULTI-CHECKBOX ────────────────────────────── */}
+      <div className="form-field" style={{marginTop:18}}>
+        <span style={{display:'flex', alignItems:'center', gap:8}}>
+          {lang==='es'?'Segmento (multi-selección)':'Segment (multi-select)'}
+          <span className="badge badge-neutral" style={{fontSize:10}}>
+            {segmentos.length} {lang==='es'?'marcados':'selected'}
+          </span>
+        </span>
+        <div className="riesgo-grid">
+          {BRAND_ATTRIBUTES.segmento.map(v => {
+            const on = segmentos.includes(v);
+            return (
+              <button type="button" key={v}
+                      className={`riesgo-chip ${on ? 'riesgo-chip-on' : ''}`}
+                      onClick={()=>toggleSegmento(v)}>
+                <span className="riesgo-box">{on && <IconCheck size={10}/>}</span>
+                <span>{v}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Riesgo — MULTI-CHECKBOX ──────────────────────────────── */}
       <div className="form-field" style={{marginTop:18}}>
         <span style={{display:'flex', alignItems:'center', gap:8}}>
           {lang==='es'?'Riesgo (multi-selección)':'Risk (multi-select)'}

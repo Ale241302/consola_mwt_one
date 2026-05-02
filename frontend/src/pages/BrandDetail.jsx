@@ -48,12 +48,24 @@ function adaptProductoFromApi(r) {
     tipo_puntera:    e.tipo_puntera    || '',
     capellada:       e.capellada       || '',
     suela:           e.suela           || '',
-    normativa:       e.normativa       || '',
+    // Sprint 2026-05-02: disipativo_energia / normativa / segmento se
+    // promovieron a multi-select. Los seguimos exponiendo como string en
+    // el shape adaptado para que las cards / búsqueda / tablas legacy
+    // sigan funcionando — joinAttr() acepta string o array indistinto.
+    disipativo_energia: joinAttr(e.disipativo_energia),
+    normativa:       joinAttr(e.normativa),
     color:           e.color           || '',
-    segmento:        e.segmento        || '',
+    segmento:        joinAttr(e.segmento),
     cierre:          e.cierre          || '',
     antiperforante:  e.antiperforante  || '',
   };
+}
+
+// Sprint 2026-05-02: helper para colapsar valores multi-select (array)
+// a un display-string. Mantiene compat con datos legacy (string plano).
+function joinAttr(v) {
+  if (Array.isArray(v)) return v.filter(Boolean).join(', ');
+  return v || '';
 }
 import CreateBrandDrawer from "../components/brands/CreateBrandDrawer.jsx";
 import ProductMassiveUpload from "../components/brands/ProductMassiveUpload.jsx";

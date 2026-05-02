@@ -162,7 +162,7 @@ export const BRAND_ATTRIBUTES = {
     'ISO 20345 14.000V','ASTM 2413 18.000V','ABNT NBR 16603-2017 500V',
     'ISO 20345 14.000V ANT','Conductivo','No',
   ],
-  suela:      ['Bidensidad PU','Caucho','Monodensidad Caucho'],
+  suela:      ['Bidensidad PU','Bidensidad PU Caucho','Caucho','Monodensidad Caucho'],
   normativa:  ['ASTM F2413','ISO 20345','No','ISO 20347','ABNT NBR 16.603:2017 500V - SECO'],
   cierre:     ['Sin Cordones','Con Cordones','De meter','Zipper','Cierre Velcro'],
   color: [

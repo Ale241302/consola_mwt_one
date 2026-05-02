@@ -56,12 +56,16 @@ export default function PricingManagerTable({
   );
   const [showInternal, setShowInternal] = useState(isCeo);
 
+  // Sprint 2026-05-02: `normativa` puede venir como array (nuevo
+  // multi-select) o como string (legacy). Normalizamos para el join.
+  const asText = (v) => Array.isArray(v) ? v.filter(Boolean).join(' ') : (v || '');
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return rows;
     return rows.filter(r => {
       const p = productsIx[r.sku];
-      const hay = [r.sku, p?.nombre, p?.capellada, p?.normativa]
+      const hay = [r.sku, p?.nombre, p?.capellada, asText(p?.normativa)]
         .filter(Boolean).join(' ').toLowerCase();
       return hay.includes(needle);
     });
@@ -277,7 +281,7 @@ export default function PricingManagerTable({
                     <div style={{ fontWeight: 500 }}>{product?.nombre || '—'}</div>
                     {product && (
                       <div className="caption" style={{ color: 'var(--text-tertiary)' }}>
-                        {product.tipo_calzado} · {product.color} · {product.normativa}
+                        {product.tipo_calzado} · {product.color} · {asText(product.normativa)}
                       </div>
                     )}
                   </td>
