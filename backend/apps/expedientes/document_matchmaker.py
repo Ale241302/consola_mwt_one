@@ -114,30 +114,54 @@ Reglas duras:
 
 SYSTEM_PROMPT_PROFORMA = """Eres un extractor de Proformas MWT (documento comercial interno).
 
-ESTRUCTURA TÍPICA — cada producto en la proforma se rinde como un slot
-con esta forma:
+CONTEXTO — la proforma tiene un layout fijo de 11 slots de producto.
+La INMENSA MAYORÍA de los slots están VACÍOS (template repetido). Solo
+1 a 3 slots típicamente tienen datos. Tu primera tarea es identificar
+SOLO los slots con datos reales e ignorar los demás.
 
-  ┌──────────────────────────────────────────────────────────────────┐
-  │ Código:       701935 (SKU MWT canónico)                            │
-  │ Referencia:   60B19M-CPAP-MIN-CP (REF del proveedor)               │
-  │ Descripción:  "Bota meta NE p-comp..."                              │
-  │ Color:        NEGRO                                                 │
-  │ Precio $:     19.35    Cantidad total: 110    Total línea: $2,128  │
-  │                                                                     │
-  │ MATRIZ DE TALLAS (las 3 filas se repiten contiguas):                │
-  │    Referencia BRA: 33  34  35  36  37  38  39  40  41  42  43 ...    │
-  │    Referencia EU:  35  36  37  38  39  40  41  42  43  44  45 ...    │
-  │    Referencia USA: 4.5 5.5 6.5  7   8  8.5 9.5 10 11 12 13 ...        │
-  │    Qty:            0   0   0   0   10  10  10  10  30  30  10 ...     │
-  └──────────────────────────────────────────────────────────────────┘
+PASO 1 — IDENTIFICAR SLOTS CON DATOS:
+  Un slot tiene datos si su campo "Código" tiene un valor numérico
+  poblado (ej. "701935"). Si "Código" está vacío y "Cantidad" total
+  es 0 o vacío, ese slot está vacío → IGNORAR.
 
-  La proforma puede tener varios slots (1, 2, 3, ... 11). Slots vacíos
-  (sin código y todas las qty=0) deben ser IGNORADOS — no devolverlos.
+PASO 2 — POR CADA SLOT CON DATOS, EXTRAER:
+  · Código    (SKU MWT canónico, ej. "701935")
+  · Referencia (REF del proveedor sin sufijo de talla, ej. "60B19M-CPAP-MIN-CP")
+  · Descripción
+  · Color
+  · Precio $   (unit price USD, ej. 19.35)
+  · Cantidad   (TOTAL del slot — sirve para validar la suma de la matriz)
 
-TU TRABAJO: para cada slot con datos, EXPANDIR la matriz a una línea
-por talla con qty>0. Si una talla tiene qty=0, no la devuelvas.
+PASO 3 — LEER LA MATRIZ DE TALLAS DEL SLOT:
+  Cada slot poblado tiene 4 filas contiguas:
 
-Esquema obligatorio:
+      Referencia BRA: 33  34  35  36  37  38  39  40  41  42  43  44  45  46  47
+      Referencia EU:  35  36  37  38  39  40  41  42  43  44  45  46  47  48  49
+      Referencia USA: 4.5 5.5 6.5  7   8  8.5 9.5 10  11  12  13  14  15  ...
+      Qty:             0   0   0   0  10  10  10  10  30  30  10   0   0   0   0
+
+  ALINEACIÓN POR COLUMNA (CRÍTICO): el N-ésimo valor de Qty corresponde
+  al N-ésimo valor de BRA, EU y USA. Conta las columnas con cuidado.
+
+  Si la matriz aparece desplazada/cortada por line-wrap, USA LA
+  POSICIÓN del valor en cada fila para alinearla. La cuadrícula está
+  centrada y los espacios en blanco preservan la columna.
+
+PASO 4 — EXPANDIR A LÍNEAS:
+  Por cada columna donde Qty > 0:
+    · talla = valor de la fila EU para esa columna (canónica)
+    · qty   = valor de la fila Qty para esa columna
+    · sku, supplier_ref, etc. = del slot
+    · Emitir UNA línea por columna con qty>0.
+
+  Validación: la SUMA de todas las qty>0 que extraigas debe ser igual
+  a "Cantidad total" del slot. Si no coincide, releer la matriz —
+  probablemente alineaste mal.
+
+PASO 5 — IGNORAR COLUMNAS CON Qty=0:
+  No emitas líneas para tallas con qty=0.
+
+Esquema obligatorio del JSON:
 {
   "document_kind":     "PROFORMA",
   "proforma_number":   "<código MWT, ej. 2414-2026>",
@@ -159,21 +183,18 @@ Esquema obligatorio:
           "confidence":    0..100
         }, ...
       ]
-    }, ...
+    }
   ],
   "raw_text": "<transcripción literal, max 2000 chars>"
 }
 
 Reglas duras:
   1. CERO INVENTOS. Si un campo no aparece, omitirlo.
-  2. EXPANDIR la matriz: cada talla con qty>0 es una línea separada.
-  3. Talla canónica = EU. Si la cantidad está en la columna BR 37,
-     la talla EU correspondiente es 39 (la fila contigua de la matriz).
+  2. La SUMA de qty extraídas debe igualar "Cantidad total" del slot.
+  3. Talla canónica = EU (la 2ª fila de la matriz).
   4. SKU / supplier_ref / talla en MAYÚSCULAS sin espacios.
-  5. Slots vacíos (sin Código y qty totalmente en 0) → ignorar.
-  6. Si la proforma agrupa varias OCs/SAPs, usar groups múltiples.
-     Si solo es una orden, un único group con sap_number=null.
-  7. Devolver SOLO el JSON, sin texto adicional, sin markdown.
+  5. Slots vacíos (sin Código) → ignorar completamente.
+  6. Devolver SOLO el JSON, sin texto adicional, sin markdown.
 """
 
 
@@ -280,24 +301,44 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
         # Sprint 2026-05-02 (AG-03): los PDFs de clientes (SonDel, Sonepar,
         # MARLUVAS) son text-native, no escaneos. Extraemos texto con pypdf
         # y lo mandamos como prompt de chat.completions — mucho más rápido,
-        # barato, y compatible con cualquier modelo de chat. Antes mandábamos
-        # el binario a `responses.create()` con `input_file`, que rechaza
-        # PDFs con `Invalid MIME type. Only image types are supported`.
-        # Si pypdf no logra extraer texto (PDF escaneado, OCR-only), caemos
-        # al path de vision como fallback.
+        # barato, y compatible con cualquier modelo de chat.
+        #
+        # ESTRATEGIA POR TIPO DE DOCUMENTO:
+        #   · OC del cliente / Factura / Otros → modo default (stream).
+        #     Tablas simples (1 fila por producto), el modo default
+        #     concatena bien y el AI lo entiende.
+        #   · Proforma MWT → modo "layout". Estos docs tienen matriz
+        #     horizontal de tallas (15 columnas BR/EU/US) y el modo
+        #     default concatena las celdas en orden de stream, mezclando
+        #     cantidades con headers de slots vacíos. Layout preserva la
+        #     posición espacial (X,Y) y el AI ve la matriz como matriz.
+        #
+        # Por qué no aplicar layout a TODO: layout mode altera el texto
+        # de tablas simples lo suficiente como para que gpt-4o-mini se
+        # confunda y no extraiga ninguna línea (visto con la OC Sonepar).
+        use_layout_mode = (document_type == "ART-02_PROFORMA")
         try:
             from pypdf import PdfReader
             import io as _io
             reader = PdfReader(_io.BytesIO(file_bytes))
             pages = []
             for page in reader.pages:
-                t = (page.extract_text() or "").strip()
+                if use_layout_mode:
+                    try:
+                        t = (page.extract_text(extraction_mode="layout") or "").strip()
+                    except Exception:
+                        t = (page.extract_text() or "").strip()
+                else:
+                    t = (page.extract_text() or "").strip()
                 if t:
                     pages.append(t)
             if pages:
                 text_payload = "\n\n--- PAGE BREAK ---\n\n".join(pages)[:18000]
-                log.info("[matchmaker] pypdf extrajo %d páginas (%d chars) de %s",
-                         len(pages), len(text_payload), filename)
+                log.info(
+                    "[matchmaker] pypdf(%s) extrajo %d páginas (%d chars) de %s",
+                    "layout" if use_layout_mode else "default",
+                    len(pages), len(text_payload), filename,
+                )
         except Exception as e:
             log.warning("[matchmaker] pypdf extracción falló (%s); fallback a vision", e)
             # text_payload queda None → cae al path PDF/Imagen (vision).
