@@ -44,6 +44,56 @@ import { useRole } from "../context/RoleContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
          productosApi, documentosApi } from "../lib/api.js";
 
+// ─────────────────────────────────────────────────────────────────────
+// Sprint 2026-05-02 (AG-03): helpers para adaptar el shape de
+// /api/documentos/ al render legacy de la card "Documentos comerciales".
+// El render espera {ext, kind, code, date, size, author} y el backend
+// expone {file_ext, kind, codigo, fecha, file_size_bytes, ...}.
+// ─────────────────────────────────────────────────────────────────────
+function _extractExt(filename) {
+  if (!filename || typeof filename !== 'string') return '';
+  const i = filename.lastIndexOf('.');
+  return i >= 0 ? filename.slice(i + 1) : '';
+}
+
+const _DOC_KIND_LABEL_ES = {
+  OC: 'OC del Cliente',
+  PROFORMA: 'Proforma',
+  FACTURA: 'Factura comercial',
+  CONTRATO: 'Contrato',
+  OTRO: 'Otro documento',
+};
+const _DOC_KIND_LABEL_EN = {
+  OC: 'Client PO',
+  PROFORMA: 'Proforma',
+  FACTURA: 'Commercial invoice',
+  CONTRATO: 'Contract',
+  OTRO: 'Other document',
+};
+function _docKindLabel(kind, lang) {
+  const k = String(kind || 'OTRO').toUpperCase();
+  const map = lang === 'en' ? _DOC_KIND_LABEL_EN : _DOC_KIND_LABEL_ES;
+  return map[k] || (lang === 'en' ? 'Document' : 'Documento');
+}
+
+function _formatDocDate(d) {
+  if (!d) return '—';
+  try {
+    const dt = new Date(d);
+    if (Number.isNaN(dt.getTime())) return String(d).slice(0, 10);
+    return dt.toISOString().slice(0, 10);
+  } catch { return String(d).slice(0, 10); }
+}
+
+function _formatBytes(n) {
+  const v = Number(n) || 0;
+  if (v <= 0) return '—';
+  const k = 1024;
+  const i = Math.floor(Math.log(v) / Math.log(k));
+  const u = ['B', 'KB', 'MB', 'GB'];
+  return `${(v / Math.pow(k, i)).toFixed(i === 0 ? 0 : 1)} ${u[Math.min(i, u.length - 1)]}`;
+}
+
 export default function ScreenOCDetail() {
   const navigate = useNavigate();
   const { ocId: paramOcId } = useParams();
@@ -198,18 +248,22 @@ export default function ScreenOCDetail() {
     sea_pct:      Number(apiOc.sea_pct || 0),
     expedientes:  apiOcExpedientes.map(e => e.id),
     // Sprint 2026-05-02 (AG-03): documentos comerciales reales,
-    // poblados desde GET /api/documentos/?oc=<id>. El render lee
-    // `oc.docs` (no `documents`), por eso esa key. Cada item viene del
-    // DocumentoSerializer del backend con kind/codigo/fecha/storage_url.
+    // poblados desde GET /api/documentos/?oc=<id>. El render de la card
+    // (línea ~1075) lee el shape legacy {id, ext, kind, code, date,
+    // size, author}, así que adaptamos el DocumentoSerializer del
+    // backend a esa forma. Defensivo: cualquier campo faltante cae a
+    // '' para no romper `.toUpperCase()` ni concatenaciones.
     docs:         apiOcDocs.map(d => ({
-      id:        d.id,
-      kind:      d.kind,
-      codigo:    d.codigo || d.filename || "",
-      filename:  d.filename || d.codigo || "",
-      fecha:     d.fecha || d.created_at || null,
-      file_size: d.file_size_bytes || d.file_size || 0,
-      file_ext:  d.file_ext || null,
-      url:       d.storage_url || null,
+      id:     d.id,
+      ext:    String(d.file_ext || _extractExt(d.codigo || d.filename) || 'file').toLowerCase(),
+      kind:   _docKindLabel(d.kind, lang),
+      code:   d.codigo || d.filename || '—',
+      date:   _formatDocDate(d.fecha || d.created_at),
+      size:   _formatBytes(d.file_size_bytes ?? d.file_size ?? 0),
+      author: d.author || d.created_by_name || d.uploaded_by || '—',
+      url:    d.storage_url || null,
+      // Conservamos el shape backend por si otro consumidor lo necesita
+      _raw:   d,
     })),
     // Líneas reales del API (con merge de unit_price del CPA en
     // el render — ver useEffect de cpaPrices más abajo).
@@ -1072,23 +1126,32 @@ export default function ScreenOCDetail() {
             </div>
           </div>
           <div style={{padding:'8px 0'}}>
-            {oc.docs.map(d => (
-              <div key={d.id} className="doc-item">
-                <div className={'doc-icon ext-' + d.ext}>
-                  {d.ext.toUpperCase()}
-                </div>
-                <div style={{flex: 1, minWidth: 0}}>
-                  <div className="body-sm" style={{fontWeight: 500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{d.kind}</div>
-                  <div className="caption" style={{marginTop: 2, fontFamily:'var(--font-mono)'}}>{d.code}</div>
-                  <div className="caption" style={{color:'var(--text-tertiary)', marginTop: 3}}>
-                    {d.date} · {d.size} · {d.author}
+            {oc.docs.map(d => {
+              // Defensivo: cualquier campo faltante cae a un valor seguro
+              // para no romper la UI con docs legacy o shape inesperado.
+              const ext = String(d.ext || 'file').toLowerCase();
+              return (
+                <div key={d.id} className="doc-item">
+                  <div className={'doc-icon ext-' + ext}>
+                    {ext.toUpperCase()}
                   </div>
+                  <div style={{flex: 1, minWidth: 0}}>
+                    <div className="body-sm" style={{fontWeight: 500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+                      {d.kind || '—'}
+                    </div>
+                    <div className="caption" style={{marginTop: 2, fontFamily:'var(--font-mono)'}}>
+                      {d.code || '—'}
+                    </div>
+                    <div className="caption" style={{color:'var(--text-tertiary)', marginTop: 3}}>
+                      {d.date || '—'} · {d.size || '—'} · {d.author || '—'}
+                    </div>
+                  </div>
+                  <button className="icon-btn" title={tr(lang,'download')}>
+                    <IconDownload size={13}/>
+                  </button>
                 </div>
-                <button className="icon-btn" title={tr(lang,'download')}>
-                  <IconDownload size={13}/>
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Expedientes pill list */}
