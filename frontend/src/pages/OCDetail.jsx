@@ -550,7 +550,9 @@ export default function ScreenOCDetail() {
     setDeletingDoc(true);
     setDocError(null);
     try {
-      await documentosApi.delete(confirmDeleteDoc.id);
+      // El factory resource() expone `.remove()` (no `.delete()` — `delete`
+      // es palabra reservada en JS y se evita en la API pública).
+      await documentosApi.remove(confirmDeleteDoc.id);
       // Quitamos del listado en caliente sin recargar la página.
       setApiOcDocs(prev => prev.filter(x => x.id !== confirmDeleteDoc.id));
       setConfirmDeleteDoc(null);

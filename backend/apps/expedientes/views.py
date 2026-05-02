@@ -1574,14 +1574,31 @@ class DocumentoViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get"])
     def signed_url(self, request, pk=None):
         """Devuelve una URL firmada (TTL 15min por defecto) para el objeto
-        asociado al documento. Usa `bucket_key` si existe, o deriva uno
-        determinista a partir de expediente_id+id si falta."""
+        asociado al documento.
+
+        BUG FIX 2026-05-02 (AG-03): antes leía `bucket_key` (atributo
+        inexistente en el modelo Documento) y caía a un fallback
+        `expedientes/{exp_id}/{id}` que NUNCA es donde se guarda en
+        realidad. Resultado: NoSuchKey en MinIO al pedir signed URL.
+
+        El upload (create()) persiste la key real como
+        `documento/<doc_uuid>/<safe_filename>` y la guarda en
+        `Documento.storage_url`. Eso es lo único que tiene que leer
+        este endpoint. Mantenemos el fallback legacy sólo para docs
+        muy antiguos que pudieran existir sin storage_url poblado.
+        """
         try:
             d = Documento.objects.get(pk=pk, is_active=True)
         except Documento.DoesNotExist:
             return Response({"detail": "Documento no existe"}, status=404)
 
-        key = getattr(d, "bucket_key", None) or f"expedientes/{d.expediente_id}/{d.id}"
+        # Prioridad: storage_url persistido en el upload (forma canónica
+        # vigente), luego bucket_key (compat futura), luego fallback legacy.
+        key = (
+            getattr(d, "storage_url", None)
+            or getattr(d, "bucket_key", None)
+            or f"expedientes/{d.expediente_id}/{d.id}"
+        )
         ttl = int(request.query_params.get("ttl") or 900)
 
         try:
@@ -1592,6 +1609,7 @@ class DocumentoViewSet(viewsets.ViewSet):
 
         data["documento_id"]  = str(d.id)
         data["expediente_id"] = str(d.expediente_id) if d.expediente_id else None
+        data["key"]           = key  # útil para debugging
         return Response(data)
 
 
