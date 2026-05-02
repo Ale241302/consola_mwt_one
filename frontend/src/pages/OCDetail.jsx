@@ -31,7 +31,7 @@ import { StatusBadge, CreditDot, CountryFlag } from "../components/ui/primitives
 import {
   IconChevLeft, IconChevDown, IconChevRight, IconDownload, IconPlus,
   IconFolder, IconPlane, IconShip, IconAlert, IconX, IconSearch, IconPackage,
-  IconPencil,
+  IconPencil, IconTrash, IconEye,
 } from "../lib/icons.jsx";
 import {
   OCS, CLIENTS, BRANDS, EXPEDIENTES, PRODUCTS, HERO_OC_ID,
@@ -42,7 +42,7 @@ import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmak
 import AddOCProductModal from "../components/expedientes/AddOCProductModal.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
-         productosApi, documentosApi } from "../lib/api.js";
+         productosApi, documentosApi, storageApi } from "../lib/api.js";
 
 // ─────────────────────────────────────────────────────────────────────
 // Sprint 2026-05-02 (AG-03): helpers para adaptar el shape de
@@ -160,6 +160,13 @@ export default function ScreenOCDetail() {
   // guardamos el resultado aquí y abrimos el wizard de revisión.
   // Shape: { result, file, documentType }
   const [aiReview, setAiReview]                   = useState(null);
+  // Sprint 2026-05-02: gestión de docs comerciales — view + delete.
+  // confirmDeleteDoc: doc pendiente de confirmación de borrado.
+  // viewingDocId: id del doc cuya signed URL estamos pidiendo (loading state).
+  const [confirmDeleteDoc, setConfirmDeleteDoc]   = useState(null);
+  const [viewingDocId, setViewingDocId]           = useState(null);
+  const [deletingDoc, setDeletingDoc]             = useState(false);
+  const [docError, setDocError]                   = useState(null);
 
   useEffect(() => {
     if (ocFromMock) return;
@@ -502,6 +509,64 @@ export default function ScreenOCDetail() {
     }
   };
 
+  // ── Sprint 2026-05-02: ver / eliminar documentos comerciales ─────
+  // handleViewDoc: pide signed URL al backend (TTL 15 min) y abre en
+  //   nueva pestaña. La URL ya viene firmada de MinIO, así que el
+  //   browser puede renderear el PDF inline sin más auth.
+  const handleViewDoc = async (doc) => {
+    if (!doc?.id || viewingDocId === doc.id) return;
+    setViewingDocId(doc.id);
+    setDocError(null);
+    try {
+      const resp = await storageApi.documentSignedUrl(doc.id, 900);
+      const url = resp?.url;
+      if (!url) {
+        throw new Error(resp?.error || 'URL no disponible');
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[OCDetail] view doc falló:', e);
+      setDocError(
+        lang === 'es'
+          ? `No se pudo abrir el documento: ${e.message || 'error'}`
+          : `Couldn't open document: ${e.message || 'error'}`
+      );
+    } finally {
+      setViewingDocId(null);
+    }
+  };
+
+  // handleDeleteDoc: dispara el modal de confirmación. La eliminación
+  //   real se ejecuta en confirmDeleteDocAction al pulsar "Eliminar".
+  const handleDeleteDoc = (doc) => {
+    if (!doc?.id || deletingDoc) return;
+    setDocError(null);
+    setConfirmDeleteDoc(doc);
+  };
+
+  const confirmDeleteDocAction = async () => {
+    if (!confirmDeleteDoc?.id || deletingDoc) return;
+    setDeletingDoc(true);
+    setDocError(null);
+    try {
+      await documentosApi.delete(confirmDeleteDoc.id);
+      // Quitamos del listado en caliente sin recargar la página.
+      setApiOcDocs(prev => prev.filter(x => x.id !== confirmDeleteDoc.id));
+      setConfirmDeleteDoc(null);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[OCDetail] delete doc falló:', e);
+      setDocError(
+        lang === 'es'
+          ? `No se pudo eliminar el documento: ${e.message || 'error'}`
+          : `Couldn't delete document: ${e.message || 'error'}`
+      );
+    } finally {
+      setDeletingDoc(false);
+    }
+  };
+
   // ── Editar el número SAP de un grupo ─────────────────────────
   // Sprint 2026-05-01: en lugar de un modal compacto, abrimos el
   // mismo drawer lateral de "Agregar SAP" pero en modo EDIT con los
@@ -771,6 +836,129 @@ export default function ScreenOCDetail() {
             setTimeout(() => navigate(0), 200);
           }}
         />
+      )}
+
+      {/* Sprint 2026-05-02: modal de confirmación para eliminar documento */}
+      {confirmDeleteDoc && (
+        <div
+          onClick={() => !deletingDoc && setConfirmDeleteDoc(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 220,
+            background: 'rgba(11,30,58,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white', borderRadius: 14,
+              width: 'min(440px, 96vw)',
+              boxShadow: '0 30px 60px -20px rgba(15,27,61,0.55)',
+              display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              padding: '14px 20px',
+              borderBottom: '1px solid var(--border-subtle)',
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: 8,
+                background: 'color-mix(in oklab, var(--danger, #DC2626) 14%, transparent)',
+                color: 'var(--danger, #DC2626)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <IconTrash size={14}/>
+              </div>
+              <div>
+                <div className="micro" style={{
+                  color: 'var(--text-tertiary)', letterSpacing: 1,
+                }}>
+                  {lang === 'es' ? 'CONFIRMAR ELIMINACIÓN' : 'CONFIRM DELETION'}
+                </div>
+                <div style={{fontWeight: 800, fontSize: 15, color: 'var(--text-primary, #0B1E3A)'}}>
+                  {lang === 'es' ? 'Eliminar documento' : 'Delete document'}
+                </div>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div style={{padding: 20, display: 'flex', flexDirection: 'column', gap: 12}}>
+              <div style={{fontSize: 13, lineHeight: 1.5, color: 'var(--text-secondary, #475569)'}}>
+                {lang === 'es'
+                  ? '¿Querés eliminar este documento? Se va a borrar de la lista y del almacenamiento. Esta acción no se puede deshacer.'
+                  : 'Delete this document? It will be removed from the list and the storage bucket. This action cannot be undone.'}
+              </div>
+              <div style={{
+                padding: '10px 12px', borderRadius: 8,
+                background: 'color-mix(in oklab, var(--text-primary, #0B1E3A) 4%, transparent)',
+                border: '1px solid var(--border-subtle)',
+                display: 'flex', alignItems: 'center', gap: 10,
+              }}>
+                <div className={'doc-icon ext-' + (confirmDeleteDoc.ext || 'file')}
+                     style={{flexShrink: 0}}>
+                  {String(confirmDeleteDoc.ext || 'file').toUpperCase()}
+                </div>
+                <div style={{flex: 1, minWidth: 0}}>
+                  <div className="body-sm" style={{fontWeight: 600, color: 'var(--text-primary, #0B1E3A)'}}>
+                    {confirmDeleteDoc.kind || '—'}
+                  </div>
+                  <div className="caption mono-sm" style={{color: 'var(--text-tertiary)', marginTop: 2}}>
+                    {confirmDeleteDoc.code || '—'} · {confirmDeleteDoc.size || '—'}
+                  </div>
+                </div>
+              </div>
+              {docError && (
+                <div style={{
+                  padding: '8px 12px', borderRadius: 8,
+                  background: 'color-mix(in oklab, var(--danger, #DC2626) 14%, transparent)',
+                  color: 'var(--danger, #991B1B)',
+                  border: '1px solid color-mix(in oklab, var(--danger, #DC2626) 30%, transparent)',
+                  fontSize: 12,
+                  display: 'flex', alignItems: 'flex-start', gap: 6,
+                }}>
+                  <IconAlert size={11} style={{flexShrink: 0, marginTop: 2}}/>
+                  <div>{docError}</div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{
+              padding: '12px 20px',
+              borderTop: '1px solid var(--border-subtle)',
+              background: 'color-mix(in oklab, var(--text-primary, #0B1E3A) 2%, transparent)',
+              display: 'flex', justifyContent: 'flex-end', gap: 8,
+            }}>
+              <button
+                type="button"
+                disabled={deletingDoc}
+                onClick={() => setConfirmDeleteDoc(null)}
+                className="btn btn-ghost"
+              >
+                {lang === 'es' ? 'Cancelar' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                disabled={deletingDoc}
+                onClick={confirmDeleteDocAction}
+                className="btn"
+                style={{
+                  fontWeight: 700, minWidth: 120,
+                  background: 'var(--danger, #DC2626)',
+                  borderColor: 'var(--danger, #DC2626)',
+                  color: 'white',
+                }}
+              >
+                {deletingDoc
+                  ? (lang === 'es' ? 'Eliminando…' : 'Deleting…')
+                  : (lang === 'es' ? 'Eliminar' : 'Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── KPI row ─────
@@ -1126,12 +1314,63 @@ export default function ScreenOCDetail() {
             </div>
           </div>
           <div style={{padding:'8px 0'}}>
+            {docError && (
+              <div style={{
+                margin: '0 22px 10px',
+                padding: '8px 12px',
+                borderRadius: 8,
+                background: 'color-mix(in oklab, var(--danger, #DC2626) 12%, transparent)',
+                color: 'var(--danger, #991B1B)',
+                border: '1px solid color-mix(in oklab, var(--danger, #DC2626) 30%, transparent)',
+                fontSize: 12,
+                display: 'flex', alignItems: 'flex-start', gap: 6,
+              }}>
+                <IconAlert size={11} style={{flexShrink: 0, marginTop: 2}}/>
+                <div style={{flex: 1}}>{docError}</div>
+                <button
+                  type="button"
+                  onClick={() => setDocError(null)}
+                  style={{background:'transparent', border:0, cursor:'pointer', color:'inherit'}}
+                >
+                  <IconX size={10}/>
+                </button>
+              </div>
+            )}
+            {oc.docs.length === 0 && (
+              <div className="caption" style={{
+                padding: '12px 22px',
+                color: 'var(--text-tertiary)',
+                textAlign: 'center',
+              }}>
+                {lang === 'es' ? 'Aún no hay documentos.' : 'No documents yet.'}
+              </div>
+            )}
             {oc.docs.map(d => {
               // Defensivo: cualquier campo faltante cae a un valor seguro
               // para no romper la UI con docs legacy o shape inesperado.
               const ext = String(d.ext || 'file').toLowerCase();
+              const isViewing = viewingDocId === d.id;
+              const canMutate = !isClient && can('upload_document');
               return (
-                <div key={d.id} className="doc-item">
+                <div
+                  key={d.id}
+                  className="doc-item"
+                  onClick={() => handleViewDoc(d)}
+                  style={{
+                    cursor: 'pointer',
+                    opacity: isViewing ? 0.7 : 1,
+                    transition: 'opacity 0.15s',
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleViewDoc(d);
+                    }
+                  }}
+                  title={lang === 'es' ? 'Click para abrir el documento' : 'Click to open document'}
+                >
                   <div className={'doc-icon ext-' + ext}>
                     {ext.toUpperCase()}
                   </div>
@@ -1146,9 +1385,28 @@ export default function ScreenOCDetail() {
                       {d.date || '—'} · {d.size || '—'} · {d.author || '—'}
                     </div>
                   </div>
-                  <button className="icon-btn" title={tr(lang,'download')}>
-                    <IconDownload size={13}/>
-                  </button>
+                  <div style={{display:'flex', gap: 4, alignItems:'center'}}>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      title={lang === 'es' ? 'Abrir documento' : 'Open document'}
+                      disabled={isViewing}
+                      onClick={(e) => { e.stopPropagation(); handleViewDoc(d); }}
+                    >
+                      <IconEye size={13}/>
+                    </button>
+                    {canMutate && (
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title={lang === 'es' ? 'Eliminar documento' : 'Delete document'}
+                        onClick={(e) => { e.stopPropagation(); handleDeleteDoc(d); }}
+                        style={{color: 'var(--danger, #DC2626)'}}
+                      >
+                        <IconTrash size={13}/>
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
