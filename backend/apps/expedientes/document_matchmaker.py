@@ -51,6 +51,35 @@ Cada cliente usa su propia convención. Tu trabajo es extraer TODAS las
 señales de identidad presentes para que el resolver del backend pueda
 mapearlas contra el catálogo.
 
+DETECCIÓN DEL SHAPE DE COLUMNAS (PRIORIDAD ALTA — leer con atención):
+
+  · CASO A — UNA columna de código (típico SonDel, SAP Business One):
+    Headers tipo "Part Nº" o "Articulo" o "Code".
+       client_part_number = ese código
+       supplier_ref       = null
+
+  · CASO B — DOS columnas de código consecutivas (típico Sonepar, sistemas
+    con cross-referencing). Headers tipo:
+
+        ARTICULO              REF. PROVEEDOR       DESCRIPCION
+        27BM60B19M-CPAP-...   60B19M-CPAP-MIN-CP   BOTA META NE...
+
+    EL HEADER PUEDE VENIR CORTADO POR LINE-WRAP, ej:
+        "POS. CANTIDAD UND. ARTICULO REF. DESCRIPCION PRECIO IMPORTE"
+        "                                PROVEEDOR  UNITARIO"
+    Ahí "REF." (línea 1) + "PROVEEDOR" (línea 2) forman UN solo header
+    "REF. PROVEEDOR" que indica COLUMNA SEPARADA del proveedor.
+
+    HEURÍSTICA DEFINITIVA: si en cada fila ves DOS códigos alfanuméricos
+    similares lado a lado antes de la descripción, eso es CASO B.
+    Casi siempre el segundo está CONTENIDO dentro del primero como
+    sufijo (ej. "27BM60B19M-CPAP-MIN-CP-38" CONTIENE
+    "60B19M-CPAP-MIN-CP-38" — el cliente prefijó "27BM").
+
+    En CASO B DEBES extraer:
+       client_part_number = PRIMER código de la fila
+       supplier_ref       = SEGUNDO código de la fila
+
 Esquema obligatorio:
 {
   "document_kind": "OC",
@@ -602,6 +631,55 @@ def _resolve_oc_lines_to_canonical(lines: list[dict]) -> list[dict]:
                 if not ln.get("product_label"):
                     ln["product_label"] = fuzzy.get("nombre") or ""
                 continue
+
+        # 5. SUBSTRING fallback (Sprint 2026-05-02 / AG-03):
+        # La red de seguridad cuando la IA se equivoca al separar las
+        # columnas ARTICULO vs REF.PROVEEDOR. Si el client_part_number o
+        # base_code CONTIENE alguna ref_proveedor o nombre del catálogo
+        # como substring, lo aceptamos. Esto cubre el caso típico:
+        #   AI extrae base_code = "27BM60B19M-CPAP-MIN-CP" (con prefijo
+        #   "27BM" del cliente) cuando el catálogo tiene
+        #   ref_proveedor = "60B19M-CPAP-MIN-CP". Substring match wins.
+        substr_haystacks = []
+        if base_code:
+            substr_haystacks.append((base_code, "BASE_CODE"))
+        cp = (ln.get("client_part_number") or "").upper()
+        if cp:
+            substr_haystacks.append((cp, "CLIENT_PART"))
+
+        substring_matched = False
+        for haystack, source in substr_haystacks:
+            if len(haystack) < 6:
+                continue
+            # Probamos primero por ref_proveedor (más confiable para OC)
+            for ref_key, p in catalog["by_ref_proveedor"].items():
+                if ref_key and len(ref_key) >= 6 and ref_key in haystack:
+                    ln["sku"] = p["sku"]
+                    ln["matched_producto_id"] = p["id"]
+                    ln["match_strategy"] = f"REF_SUBSTRING/{source}"
+                    ln["match_score"] = 75
+                    if not ln.get("product_label"):
+                        ln["product_label"] = p.get("nombre") or ""
+                    substring_matched = True
+                    break
+            if substring_matched:
+                break
+            # Después por nombre
+            for nombre_key, p in catalog["by_nombre"].items():
+                if nombre_key and len(nombre_key) >= 6 and nombre_key in haystack:
+                    ln["sku"] = p["sku"]
+                    ln["matched_producto_id"] = p["id"]
+                    ln["match_strategy"] = f"NOMBRE_SUBSTRING/{source}"
+                    ln["match_score"] = 70
+                    if not ln.get("product_label"):
+                        ln["product_label"] = p.get("nombre") or ""
+                    substring_matched = True
+                    break
+            if substring_matched:
+                break
+
+        if substring_matched:
+            continue
 
         # No match: marcamos para resolución manual.
         ln["match_strategy"] = "UNRESOLVED"

@@ -128,6 +128,10 @@ export default function DocumentMatchmakerWizard({
           qty_exp:        d.qty_exp,
           sap_doc:        d.sap_doc,
           product_label:  d.product_label,
+          // Sprint 2026-05-02 (AG-03): pasamos el precio extraído por la IA
+          // para que ADD_LINE pueda persistirlo. Si viene null/0, el
+          // backend cae al CPA del cliente o al precio_lista.
+          unit_price:     d.unit_price,
         });
       }
     });

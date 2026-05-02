@@ -391,33 +391,92 @@ class ResolveMatchView(APIView):
 # ─────────────────────────────────────────────────────────────────────
 # Aplicadores de acciones — usan raw SQL contra expedientes.linea
 # ─────────────────────────────────────────────────────────────────────
+def _resolve_add_line_pricing(c, exp, sku_upper, doc_unit_price):
+    """Sprint 2026-05-02 (AG-03): resuelve unit_price y producto_id
+    para una nueva línea ADD_LINE.
+
+    Prioridad de precio:
+      1. doc_unit_price si viene del documento y > 0
+      2. producto.especificaciones.client_prices[exp.client_id]  (CPA del cliente)
+      3. producto.precio_lista
+      4. 0 (último fallback)
+
+    Devuelve (unit_price, total_price, producto_id).
+    """
+    # 1) Buscar el producto y sus precios
+    producto_id = None
+    cpa_price = 0.0
+    lista_price = 0.0
+    client_id = getattr(exp, "client_id", None)
+    try:
+        c.execute("""
+            SELECT id::text,
+                   COALESCE((especificaciones->'client_prices'->>%s)::numeric, 0) AS cpa,
+                   COALESCE(precio_lista, 0) AS lista
+              FROM productos.producto
+             WHERE sku = %s AND COALESCE(is_active, TRUE) = TRUE
+             LIMIT 1
+        """, [str(client_id) if client_id else "", sku_upper])
+        row = c.fetchone()
+        if row:
+            producto_id = row[0]
+            cpa_price = float(row[1] or 0)
+            lista_price = float(row[2] or 0)
+    except Exception as e:
+        log.warning("[matchmaker] price lookup failed: %s", e)
+
+    # 2) Aplicar prioridad
+    doc_price = float(doc_unit_price) if doc_unit_price not in (None, "") else 0.0
+    if doc_price > 0:
+        unit_price = doc_price
+    elif cpa_price > 0:
+        unit_price = cpa_price
+    elif lista_price > 0:
+        unit_price = lista_price
+    else:
+        unit_price = 0.0
+    return unit_price, producto_id
+
+
 def _apply_add_line(c, exp, act, author_email):
     # Schema real (70_expedientes.sql): columnas son `size` (no `talla`)
     # y NO existe `product_label`. oc_id es NOT NULL — usamos exp.oc_id
     # o levantamos error si no hay OC vinculada.
     sku   = (act.get("sku") or "").strip()
     talla = (act.get("talla") or "").strip()
-    qty   = act.get("qty_doc") or act.get("qty") or 0
+    qty   = int(act.get("qty_doc") or act.get("qty") or 0)
     sap   = act.get("sap_doc") or None
     if not sku:
         raise ValueError("sku vacío en ADD_LINE")
     oc_id = getattr(exp, "oc_id", None)
     if not oc_id:
         raise ValueError("expediente sin oc_id — no puedo insertar línea (oc_id NOT NULL)")
+
+    # Sprint 2026-05-02 (AG-03): resolver unit_price desde doc → CPA del
+    # cliente → precio_lista. Antes la línea se insertaba con unit_price=NULL
+    # y el render mostraba $0.
+    sku_upper = sku.upper()[:64]
+    unit_price, producto_id = _resolve_add_line_pricing(
+        c, exp, sku_upper, act.get("unit_price"),
+    )
+    total_price = round(unit_price * qty, 2)
+
     c.execute("""
         INSERT INTO expedientes.linea (
-            id, oc_id, expediente_id,
-            sku, size, qty, sap,
+            id, oc_id, expediente_id, producto_id,
+            sku, size, qty, unit_price, total_price, sap,
             estado, is_active, created_at, updated_at
         ) VALUES (
-            %s, %s, %s,
             %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s,
             'PENDIENTE_SAP', TRUE, NOW(), NOW()
         )
     """, [
-        str(uuid.uuid4()), str(oc_id), str(exp.id),
-        sku.upper()[:64], (talla or "").upper()[:16],
+        str(uuid.uuid4()), str(oc_id), str(exp.id), producto_id,
+        sku_upper, (talla or "").upper()[:16],
         Decimal(str(qty or 0)),
+        Decimal(str(unit_price)),
+        Decimal(str(total_price)),
         (sap or "")[:64] if sap else None,
     ])
 
