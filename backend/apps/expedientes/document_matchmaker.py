@@ -718,6 +718,65 @@ def _load_catalog_index() -> dict:
     }
 
 
+def _build_talla_equivalence_map() -> dict:
+    """Sprint 2026-05-02 (AG-03): construye un mapa de equivalencia de tallas
+    cross-convención (BR/EU/US/UK/CM) basado en ops.tallas.
+
+    Cada fila de ops.tallas representa una talla física con valores en
+    múltiples sistemas. Por ejemplo: (talla_base=39, eu=39, br=37, us_men=6-6.5,
+    uk_men=5.5-6, cm=25.30). Todos esos valores son LA MISMA talla, sólo
+    expresada distinto.
+
+    Devuelve: {value → set de equivalentes (incluyendo a sí mismo)}.
+    Cuando un valor aparece en MÚLTIPLES filas (ej. "37" como EU 37 y como
+    BR 37 en filas distintas), los equivalentes se agregan de TODAS esas
+    filas — el matcher acepta cualquier match.
+
+    Caso real que esto resuelve: BD viene con BR (`37`-`43`, sufijos de
+    códigos MARLUVAS) y la proforma extrae en EU canónica (`39`-`45`).
+    Sin equivalencia, no matchean. Con equivalencia, la fila EU 39 incluye
+    BR 37 → match.
+    """
+    equiv = {}
+    try:
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT talla_base, eu, us_men, us_women, uk_men, uk_women, br, cm
+                  FROM ops.tallas
+                 WHERE COALESCE(is_active, TRUE) = TRUE
+                   AND tipo_producto = 'calzado'
+            """)
+            for row in c.fetchall():
+                vals = {str(v).strip().upper() for v in row if v and str(v).strip()}
+                for v in vals:
+                    equiv.setdefault(v, set()).update(vals)
+    except Exception as e:
+        log.warning("[matchmaker] talla equivalence map build failed: %s", e)
+    return equiv
+
+
+def _find_db_with_talla_equiv(sku, doc_talla, db_index, equiv_map):
+    """Busca (sku, doc_talla) en db_index; si falla, prueba con tallas
+    equivalentes según ops.tallas. Devuelve (key_que_matched, db_row) o
+    (None, None) si nada matchea.
+
+    El exact match siempre tiene prioridad — la equivalencia es fallback.
+    """
+    if not sku:
+        return None, None
+    key = (sku, doc_talla)
+    if key in db_index:
+        return key, db_index[key]
+    # Fallback por equivalencia de talla
+    for alt_talla in equiv_map.get(doc_talla, set()):
+        if alt_talla == doc_talla:
+            continue
+        alt_key = (sku, alt_talla)
+        if alt_key in db_index:
+            return alt_key, db_index[alt_key]
+    return None, None
+
+
 def _fuzzy_lookup_nombre(base_code: str) -> Optional[dict]:
     """Busca por ILIKE %base_code% en productos.producto.nombre.
     Devuelve el match con mejor score (longitud del match relativa)."""
@@ -770,6 +829,12 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
         else:
             db_index[key] = dict(l)
 
+    # Sprint 2026-05-02 (AG-03): mapa de equivalencia de tallas. Usado como
+    # fallback cuando (sku, doc_talla) no matchea exactamente — permite que
+    # un doc con talla EU (ej. 39) matchee con BD que tiene BR (ej. 37) si
+    # ambas son la misma fila de ops.tallas.
+    talla_equiv = _build_talla_equivalence_map()
+
     discrepancies = []
     matched_keys = set()
 
@@ -801,8 +866,9 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                 })
                 continue
 
-            key = (sku, talla)
-            db = db_index.get(key)
+            # Sprint 2026-05-02 (AG-03): exact match O equivalencia de talla
+            # cross-convención (BR↔EU↔US↔UK↔CM via ops.tallas).
+            matched_key, db = _find_db_with_talla_equiv(sku, talla, db_index, talla_equiv)
             if not db:
                 discrepancies.append({
                     "kind":             "MISSING_IN_EXPEDIENTE",
@@ -824,12 +890,12 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                     "unit_price":       ln.get("unit_price"),
                 })
             else:
-                matched_keys.add(key)
+                matched_keys.add(matched_key)
                 if int(db["qty"]) != int(ln.get("qty") or 0):
                     discrepancies.append({
                         "kind":             "QTY_DIFF",
                         "sku":              sku,
-                        "talla":            talla or None,
+                        "talla":            db["talla"] or talla or None,
                         "qty_doc":          ln.get("qty") or 0,
                         "qty_exp":          int(db["qty"]),
                         "sap_doc":          None,
@@ -894,8 +960,10 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                     g_disc.append(item); discrepancies.append(item)
                     continue
 
-                key = (sku_norm, talla_norm)
-                db = db_index.get(key)
+                # Sprint 2026-05-02: exact match O equivalencia talla.
+                matched_key, db = _find_db_with_talla_equiv(
+                    sku_norm, talla_norm, db_index, talla_equiv
+                )
                 if not db:
                     item = {
                         "kind":             "MISSING_IN_EXPEDIENTE",
@@ -911,17 +979,21 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                         "match_strategy":   ln.get("match_strategy"),
                         "match_score":      ln.get("match_score"),
                         "confidence":       ln.get("confidence"),
+                        "unit_price":       ln.get("unit_price"),
                     }
                     g_disc.append(item); discrepancies.append(item)
                 else:
-                    matched_keys.add(key)
+                    matched_keys.add(matched_key)
                     delta_qty = int(db["qty"]) != qty_doc
                     sap_diff  = db.get("sap") and sap and (str(db["sap"]).strip() != str(sap).strip())
                     if delta_qty or sap_diff:
+                        # Si el match fue por equivalencia, mostramos la talla
+                        # canónica del BD (la real que vamos a actualizar) en
+                        # lugar de la del doc — evita confundir al usuario.
                         item = {
                             "kind":             "SAP_MISMATCH" if sap_diff else "QTY_DIFF",
                             "sku":              sku_norm,
-                            "talla":            talla_norm or None,
+                            "talla":            db.get("talla") or talla_norm or None,
                             "qty_doc":          qty_doc,
                             "qty_exp":          int(db["qty"]),
                             "sap_doc":          sap,
