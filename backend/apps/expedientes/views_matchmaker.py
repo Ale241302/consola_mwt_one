@@ -135,11 +135,16 @@ class UploadMatchView(APIView):
             log.warning("[matchmaker] storage.services no disponible — sigo sin MinIO")
 
         # ── 3. Llamada IA ───────────────────────────────────
+        # Sprint 2026-05-02 (AG-03): pasamos `expediente_id` para que el
+        # extractor de PROFORMA pueda cargar las líneas BD del expediente
+        # como contexto de anclaje del modelo vision. La OC ignora este
+        # parámetro (path intacto, riesgo cero).
         ai_payload = extract_document(
-            file_bytes   = file_bytes,
-            filename     = filename,
-            content_type = content_type,
-            document_type= document_type,
+            file_bytes    = file_bytes,
+            filename      = filename,
+            content_type  = content_type,
+            document_type = document_type,
+            expediente_id = str(exp.id),
         )
 
         # ── 4. Cruce IA vs BD ───────────────────────────────

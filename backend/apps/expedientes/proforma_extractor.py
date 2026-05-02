@@ -17,16 +17,29 @@ Por qué un módulo aparte:
   · Mezclarlos en un solo path causaba que un fix de proforma tuviera
     efectos colaterales en la OC. Aislamiento físico = no más sustos.
 
-Estrategia técnica:
-  · Renderizar el PDF a PNG con PyMuPDF (`fitz`) — pure Python, sin
-    dependencias del sistema.
-  · Mandar las imágenes a `gpt-4o-mini` con `chat.completions` y
-    `detail='high'`. El modelo VE la cuadrícula visualmente y alinea
-    qty con las tallas correctas por proximidad espacial.
+Estrategia técnica (cascada de 3 niveles):
 
-Output shape: idéntico al que devolvía `extract_document` para
-PROFORMA antes (groups[].lines[]) → consumido por `cross_match`
-sin cambios.
+  1) PARSER DETERMINÍSTICO (PyMuPDF + coordenadas X,Y reales)
+     · Lee la matriz por posiciones espaciales — sin AI, sin alucinación.
+     · Si la suma de qty extraída == "Total de Pares" declarado → OK.
+     · Si no matchea → fallback al nivel 2.
+
+  2) AI CON CONTEXTO DEL EXPEDIENTE (gpt-4o vision + BD priming)
+     · Sprint 2026-05-02 (AG-03): NUEVO. Si recibimos `expediente_id`,
+       le pasamos al AI tanto la imagen de la proforma COMO la lista
+       de productos del expediente (sku, talla, qty). El modelo lee
+       la matriz visualmente PERO sabe qué tallas/qtys debería ver,
+       lo que reduce la alucinación de columnas drásticamente.
+     · El AI debe devolver la distribución TAL CUAL aparece en la
+       proforma (no la del expediente) — la BD es solo "anclaje
+       semántico" para que reconozca el patrón correcto.
+
+  3) AI SIN CONTEXTO (gpt-4o vision puro — fallback final)
+     · Cuando no tenemos expediente (caso raro) o la query falla.
+
+Output shape: idéntico al original (groups[].lines[]) → consumido por
+`cross_match` sin cambios. cross_match hace el diff final
+(MISSING_IN_EXPEDIENTE, QTY_DIFF, etc.).
 =====================================================================
 """
 from __future__ import annotations
@@ -214,6 +227,72 @@ def _pdf_to_png_data_urls(file_bytes: bytes, max_pages: int = 2,
 def _safe_float(v) -> Optional[float]:
     try: return float(v) if v not in (None, "") else None
     except (TypeError, ValueError): return None
+
+
+def _load_expediente_context(expediente_id) -> list[dict]:
+    """Sprint 2026-05-02 (AG-03): carga las líneas del expediente para
+    pasárselas al AI como contexto de anclaje semántico.
+
+    Devuelve una lista de dicts con sku, talla, qty, nombre del producto.
+    Si la query falla devuelve [] (silenciosamente — el caller cae al
+    path de AI sin contexto, no rompemos por esto).
+    """
+    if not expediente_id:
+        return []
+    try:
+        from django.db import connection
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT
+                    COALESCE(l.sku, '')               AS sku,
+                    COALESCE(l.size, '')              AS talla,
+                    COALESCE(l.qty, 0)::int           AS qty,
+                    COALESCE(p.nombre, l.sku, '')     AS nombre
+                  FROM expedientes.linea l
+                  LEFT JOIN productos.producto p ON p.id = l.producto_id
+                 WHERE l.expediente_id = %s::uuid
+                   AND COALESCE(l.is_active, TRUE) = TRUE
+                 ORDER BY l.sku, l.size
+            """, [str(expediente_id)])
+            cols = [d[0] for d in c.description]
+            rows = [dict(zip(cols, r)) for r in c.fetchall()]
+            log.info("[proforma_extractor] contexto BD: %d líneas del expediente",
+                     len(rows))
+            return rows
+    except Exception as e:
+        log.warning("[proforma_extractor] no pude cargar contexto BD: %s", e)
+        return []
+
+
+def _format_bd_context_for_prompt(bd_lines: list[dict]) -> str:
+    """Formatea las líneas del expediente como bloque de texto para el
+    prompt del AI. Agrupa por SKU para que sea legible.
+    """
+    if not bd_lines:
+        return ""
+    # Agrupar por SKU
+    by_sku: dict[str, dict] = {}
+    for ln in bd_lines:
+        sku = (ln.get("sku") or "").upper().strip()
+        if not sku:
+            continue
+        if sku not in by_sku:
+            by_sku[sku] = {"nombre": ln.get("nombre") or sku, "tallas": []}
+        by_sku[sku]["tallas"].append({
+            "talla": (ln.get("talla") or "").upper().strip(),
+            "qty":   int(ln.get("qty") or 0),
+        })
+    # Formatear como texto
+    blocks = []
+    for sku, info in by_sku.items():
+        tallas_str = ", ".join(
+            f"talla {t['talla']}={t['qty']}" for t in info["tallas"]
+        )
+        total = sum(t["qty"] for t in info["tallas"])
+        blocks.append(
+            f"  · SKU {sku} ({info['nombre']}): {tallas_str}  [Total BD: {total}]"
+        )
+    return "\n".join(blocks)
 
 
 def _parse_proforma_deterministic(file_bytes: bytes) -> Optional[dict]:
@@ -557,8 +636,19 @@ def _normalize_groups(raw_groups) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────
 # Punto de entrada
 # ─────────────────────────────────────────────────────────────────────
-def extract_proforma(file_bytes: bytes, filename: str, content_type: str) -> dict:
+def extract_proforma(file_bytes: bytes, filename: str, content_type: str,
+                     expediente_id=None) -> dict:
     """Extrae datos de una Proforma MWT vía vision API.
+
+    Args:
+      file_bytes: bytes del PDF subido.
+      filename: nombre del archivo (para validar extensión).
+      content_type: MIME type del archivo.
+      expediente_id: UUID del expediente al que pertenece la proforma.
+        Si se proporciona, las líneas de BD del expediente se pasan al
+        AI como contexto para anclar la lectura — reduce drásticamente
+        la alucinación de columnas/qtys de la matriz horizontal de
+        tallas. Sprint 2026-05-02 (AG-03).
 
     Devuelve el mismo shape que el path PROFORMA original
     (groups[].lines[]) → consumido por cross_match sin cambios.
@@ -597,6 +687,14 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str) -> dic
 
     log.info("[proforma_extractor] parser det. no encontró líneas, fallback a vision AI")
 
+    # ── PATH SECUNDARIO: AI con contexto del expediente ──────────────
+    # Sprint 2026-05-02 (AG-03): si tenemos expediente_id, cargamos las
+    # líneas de BD y se las pasamos al modelo COMO CONTEXTO. El AI lee
+    # la matriz visualmente PERO sabe qué tallas/qtys debería ver, lo
+    # que hace que sea mucho menos probable que "shifteé" columnas.
+    bd_lines = _load_expediente_context(expediente_id)
+    bd_context_text = _format_bd_context_for_prompt(bd_lines)
+
     # 1) Renderizar PDF a imágenes
     # max_pages=2: la página 1 trae header + slots 1-4 (con la matriz),
     # la página 2 son slots 5-11 (típicamente vacíos pero por si hay
@@ -616,12 +714,45 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str) -> dic
         return _empty_result("Paquete `openai` no instalado en el backend.")
 
     client = OpenAI(api_key=api_key, timeout=90.0, max_retries=1)
+
+    # ── Construir el mensaje user con contexto BD (si lo hay) ─────────
+    user_text_parts = [
+        "Analizá la(s) imagen(es) de esta proforma y devolvé el JSON "
+        "estricto con todos los productos y su distribución por talla.",
+        "Atención a la matriz horizontal — alineá las cantidades con la "
+        "fila 'Referencia BRA' (NO con EU ni USA).",
+    ]
+    if bd_context_text:
+        user_text_parts.append(
+            "\n═══════════════════════════════════════════════════════════\n"
+            "ANCLAJE DEL EXPEDIENTE (lo que la BD ya tiene registrado):\n"
+            "═══════════════════════════════════════════════════════════\n"
+            f"{bd_context_text}\n"
+            "═══════════════════════════════════════════════════════════\n"
+            "INSTRUCCIONES CON ESTE ANCLAJE:\n"
+            "  · Devolvé la distribución TAL CUAL aparece en la PROFORMA "
+            "(no la del expediente). El expediente es solo referencia.\n"
+            "  · Si la proforma trae EXACTAMENTE las mismas tallas/qtys "
+            "que la BD → devolvé esas mismas tallas/qtys.\n"
+            "  · Si la proforma trae UNA TALLA EXTRA (ej. talla 43 qty 10 "
+            "que la BD no tiene) → devolvé las tallas comunes con sus qtys "
+            "EXACTAS de la BD + la nueva talla extra leída de la proforma.\n"
+            "  · Si la proforma trae UNA QTY DIFERENTE (ej. talla 41 BD=30 "
+            "pero proforma muestra 40) → devolvé la qty que LITERALMENTE "
+            "ves en la proforma. NO inventes.\n"
+            "  · Antes de devolver, verificá: la suma de qtys por SKU debe "
+            "coincidir con el campo 'Total de Pares' del slot. Si no "
+            "coincide, releé la matriz hasta que coincida.\n"
+            "  · El SKU canónico de la BD es la columna 'Código' del slot "
+            "de la proforma. Match exacto.\n"
+        )
+    else:
+        user_text_parts.append(
+            "(Sin contexto del expediente — extrae fielmente lo que ves.)"
+        )
+
     user_content = [
-        {"type": "text",
-         "text": "Analizá la(s) imagen(es) de esta proforma y devolvé "
-                 "el JSON estricto con todos los productos y su distribución "
-                 "por talla. Atención a la matriz horizontal — alineá las "
-                 "cantidades con las tallas EU correctas."},
+        {"type": "text", "text": "\n".join(user_text_parts)},
     ]
     for url in image_urls:
         user_content.append({
@@ -657,8 +788,9 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str) -> dic
         "document_kind": "PROFORMA",
         "raw_text": (data.get("raw_text") or "")[:2000]
                      if isinstance(data.get("raw_text"), str) else "",
-        "model": OCR_MODEL,
+        "model": (OCR_MODEL + ("+bd-context" if bd_context_text else "")),
         "error": None,
+        "bd_context_lines": len(bd_lines) if bd_lines else 0,
     }
     for k in ("proforma_number", "client_po_number", "client_name",
               "issued_date", "currency"):
@@ -669,8 +801,8 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str) -> dic
     out["lines"]  = []  # PROFORMA usa groups, no lines top-level
 
     log.info(
-        "[proforma_extractor] OK — model=%s pages=%d groups=%d total_lines=%d",
-        OCR_MODEL, len(image_urls), len(out["groups"]),
+        "[proforma_extractor] OK — model=%s bd_ctx=%d pages=%d groups=%d total_lines=%d",
+        OCR_MODEL, len(bd_lines), len(image_urls), len(out["groups"]),
         sum(len(g.get("lines") or []) for g in out["groups"]),
     )
     return out
