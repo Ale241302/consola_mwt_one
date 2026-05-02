@@ -26,6 +26,10 @@ openai==1.54.0
 # Cuando subamos a openai>=1.55.3 (que ya parchó el bug) podemos quitar
 # este pin. Ver https://github.com/openai/openai-python/pull/1839
 httpx<0.28
+# 2026-05-02 (AG-03): pymupdf usado SOLO por apps.expedientes.proforma_extractor
+# para renderizar PDFs a PNG y mandar a vision API. Aislado de la OC: si
+# pymupdf falla o no está, el módulo proforma devuelve error sin afectar OC.
+pymupdf==1.24.10
 pypdf==5.1.0
 pillow==10.4.0
 # Motor de Precios COMEX — parseo Excel (Tabela de preços v6+)

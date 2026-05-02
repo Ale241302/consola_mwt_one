@@ -234,7 +234,19 @@ def _empty_result(document_kind, error=None):
 
 def extract_document(file_bytes: bytes, filename: str, content_type: str,
                      document_type: str) -> dict:
-    """Punto de entrada del extractor."""
+    """Punto de entrada del extractor.
+
+    Sprint 2026-05-02 (AG-03): para PROFORMA delegamos a un MÓDULO
+    SEPARADO (proforma_extractor.py) que usa vision API. Esto aísla
+    completamente el path de proforma del path de OC/Factura/Otros —
+    cualquier cambio en el extractor de proforma NO PUEDE afectar la OC.
+    """
+    # ── PROFORMA → módulo dedicado, aislado ────────────────────────
+    if document_type == "ART-02_PROFORMA":
+        from .proforma_extractor import extract_proforma
+        return extract_proforma(file_bytes, filename, content_type)
+
+    # ── Resto (OC, SAP, Otros) → path original ─────────────────────
     api_key = os.environ.get("OPENAI_API_KEY")
     kind_map = {
         "ART-01_OC": "OC", "ART-02_PROFORMA": "PROFORMA", "ART-04_SAP": "SAP",
