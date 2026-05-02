@@ -84,34 +84,67 @@ Reglas duras:
 
 
 SYSTEM_PROMPT_PROFORMA = """Eres un extractor de Proformas MWT (documento comercial interno).
-Lees el documento y devuelves un JSON ESTRICTO.
 
-Particularidad: una Proforma puede contener MÚLTIPLES órdenes SAP del proveedor
-agrupadas. Detectalas y agrupalas con sap_number distintos.
+ESTRUCTURA TÍPICA — cada producto en la proforma se rinde como un slot
+con esta forma:
+
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ Código:       701935 (SKU MWT canónico)                            │
+  │ Referencia:   60B19M-CPAP-MIN-CP (REF del proveedor)               │
+  │ Descripción:  "Bota meta NE p-comp..."                              │
+  │ Color:        NEGRO                                                 │
+  │ Precio $:     19.35    Cantidad total: 110    Total línea: $2,128  │
+  │                                                                     │
+  │ MATRIZ DE TALLAS (las 3 filas se repiten contiguas):                │
+  │    Referencia BRA: 33  34  35  36  37  38  39  40  41  42  43 ...    │
+  │    Referencia EU:  35  36  37  38  39  40  41  42  43  44  45 ...    │
+  │    Referencia USA: 4.5 5.5 6.5  7   8  8.5 9.5 10 11 12 13 ...        │
+  │    Qty:            0   0   0   0   10  10  10  10  30  30  10 ...     │
+  └──────────────────────────────────────────────────────────────────┘
+
+  La proforma puede tener varios slots (1, 2, 3, ... 11). Slots vacíos
+  (sin código y todas las qty=0) deben ser IGNORADOS — no devolverlos.
+
+TU TRABAJO: para cada slot con datos, EXPANDIR la matriz a una línea
+por talla con qty>0. Si una talla tiene qty=0, no la devuelvas.
 
 Esquema obligatorio:
 {
-  "document_kind": "PROFORMA",
-  "proforma_number":  "<código MWT>",
-  "issued_date":      "YYYY-MM-DD",
-  "currency":         "USD",
+  "document_kind":     "PROFORMA",
+  "proforma_number":   "<código MWT, ej. 2414-2026>",
+  "client_po_number":  "<si aparece, ej. 110022220>",
+  "client_name":       "<si aparece, ej. Sonepar Colombia>",
+  "issued_date":       "YYYY-MM-DD",
+  "currency":          "USD",
   "groups": [
     {
-      "sap_number":   "<número SAP del proveedor>",
+      "sap_number":  null,
       "lines": [
-        {"sku":"...", "product_label":"...", "talla":"...", "qty":N,
-         "unit_price":<decimal o null>, "confidence":0..100}, ...
+        {
+          "sku":           "<código MWT canónico, ej. 701935>",
+          "supplier_ref":  "<referencia proveedor sin talla, ej. 60B19M-CPAP-MIN-CP>",
+          "product_label": "<descripción>",
+          "talla":         "<EU canónica, ej. 39, 40, 41>",
+          "qty":           <entero>,
+          "unit_price":    <decimal o null>,
+          "confidence":    0..100
+        }, ...
       ]
     }, ...
   ],
   "raw_text": "<transcripción literal, max 2000 chars>"
 }
 
-Reglas:
-  1. CERO INVENTOS. Si no hay SAPs, usar un solo grupo con sap_number = null.
-  2. Cada línea pertenece a un solo grupo (no duplicar).
-  3. SKU / talla en MAYÚSCULAS sin espacios.
-  4. Devolver SOLO el JSON.
+Reglas duras:
+  1. CERO INVENTOS. Si un campo no aparece, omitirlo.
+  2. EXPANDIR la matriz: cada talla con qty>0 es una línea separada.
+  3. Talla canónica = EU. Si la cantidad está en la columna BR 37,
+     la talla EU correspondiente es 39 (la fila contigua de la matriz).
+  4. SKU / supplier_ref / talla en MAYÚSCULAS sin espacios.
+  5. Slots vacíos (sin Código y qty totalmente en 0) → ignorar.
+  6. Si la proforma agrupa varias OCs/SAPs, usar groups múltiples.
+     Si solo es una orden, un único group con sap_number=null.
+  7. Devolver SOLO el JSON, sin texto adicional, sin markdown.
 """
 
 
@@ -245,7 +278,11 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
     except ImportError:
         return _empty_result(document_kind, "Paquete `openai` no instalado en el backend.")
 
-    client = OpenAI(api_key=api_key, timeout=60.0)
+    # Sprint 2026-05-02 (AG-03): timeout=45s + max_retries=1 para que la
+    # llamada falle limpio antes de los 120s del worker de gunicorn. Con
+    # los defaults (timeout=60, max_retries=2), una API lenta podía estirar
+    # la request a 60×3=180s y matar el worker con SIGKILL → 500 mudo.
+    client = OpenAI(api_key=api_key, timeout=45.0, max_retries=1)
     system_prompt = PROMPT_BY_TYPE.get(document_type, SYSTEM_PROMPT_OC)
 
     raw_text = None
@@ -409,13 +446,23 @@ def _normalize_oc_lines(rows):
 
 
 def _normalize_lines(rows, is_sap=False):
-    """Normalización legacy para Proforma/SAP — mantienen el contrato anterior."""
+    """Normalización para Proforma/SAP. Sprint 2026-05-02 (AG-03):
+    capturamos `supplier_ref`, `client_part_number`, `base_code` además
+    del `sku` para que el resolver pueda mapear cuando el AI devuelve
+    ref proveedor en lugar del SKU MWT canónico (caso típico de
+    proformas que importan códigos del proveedor)."""
     out = []
     for ln in (rows or []):
         if not isinstance(ln, dict):
             continue
-        sku = str(ln.get("sku") or "").strip().upper()[:64]
-        if not sku:
+        sku          = str(ln.get("sku") or "").strip().upper()[:64]
+        client_part  = str(ln.get("client_part_number") or "").strip().upper()[:64]
+        supplier_ref = str(ln.get("supplier_ref") or "").strip().upper()[:64]
+        base_code    = str(ln.get("base_code") or "").strip().upper()[:64]
+
+        # Aceptamos la línea si tiene CUALQUIER identificador. El resolver
+        # decidirá después cómo mapearla. Sin ningún identificador → skip.
+        if not (sku or client_part or supplier_ref or base_code):
             continue
         try:
             qty_field = "qty_confirmed" if is_sap else "qty"
@@ -423,7 +470,10 @@ def _normalize_lines(rows, is_sap=False):
         except (TypeError, ValueError):
             qty = 0
         out.append({
-            "sku":            sku,
+            "sku":                sku,
+            "client_part_number": client_part or None,
+            "supplier_ref":       supplier_ref or None,
+            "base_code":          base_code or None,
             "product_label":  str(ln.get("product_label") or "")[:255],
             "talla":          str(ln.get("talla") or "").strip().upper()[:16],
             "qty":            qty,
@@ -431,6 +481,9 @@ def _normalize_lines(rows, is_sap=False):
             "qty_open":       _safe_int(ln.get("qty_open")) if is_sap else None,
             "unit_price":     _safe_float(ln.get("unit_price")),
             "confidence":     round(max(0.0, min(100.0, float(ln.get("confidence") or 80))), 2),
+            "match_strategy":     None,
+            "match_score":        0,
+            "matched_producto_id": None,
         })
     return out
 
@@ -467,11 +520,26 @@ def _resolve_oc_lines_to_canonical(lines: list[dict]) -> list[dict]:
     catalog = _load_catalog_index()
 
     for ln in lines:
+        # Sprint 2026-05-02 (AG-03): el AI puede devolver el SKU MWT canónico
+        # directamente en `sku` (caso PROFORMA — el documento es interno y
+        # tiene el código MWT). Si está poblado y matchea, ganamos.
+        existing_sku = (ln.get("sku") or "").upper()
+        if existing_sku and existing_sku in catalog["by_sku"]:
+            p = catalog["by_sku"][existing_sku]
+            ln["sku"] = p["sku"]
+            ln["matched_producto_id"] = p["id"]
+            ln["match_strategy"] = "SKU_DIRECT"
+            ln["match_score"] = 100
+            if not ln.get("product_label"):
+                ln["product_label"] = p.get("nombre") or ""
+            continue
+
         client_part = (ln.get("client_part_number") or "").upper()
         supplier_ref = (ln.get("supplier_ref") or "").upper()
         base_code = (ln.get("base_code") or "").upper()
 
-        # 1. SKU directo
+        # 1. SKU vía client_part_number (caso OC del cliente — el primer
+        #    código de la fila puede coincidir con un SKU MWT)
         if client_part and client_part in catalog["by_sku"]:
             p = catalog["by_sku"][client_part]
             ln["sku"] = p["sku"]
@@ -602,9 +670,18 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
     """Cruza el payload de la IA contra expedientes.linea del expediente."""
     kind = (ai_payload.get("document_kind") or "OC").upper()
 
-    # ── Resolver IA→SKU canónico (SOLO para OC) ─────────────
+    # ── Resolver IA→SKU canónico ─────────────
+    # Sprint 2026-05-02 (AG-03): aplicamos el resolver a OC, PROFORMA y SAP.
+    #   · OC del Cliente:  los códigos vienen del cliente, no son SKU MWT.
+    #   · PROFORMA MWT:    suele traer SKU canónico, pero defendemos
+    #                       por si solo viene supplier_ref.
+    #   · SAP del proveedor: las confirmaciones traen ref del proveedor,
+    #                       no el SKU MWT.
     if kind == "OC":
         ai_payload["lines"] = _resolve_oc_lines_to_canonical(ai_payload.get("lines") or [])
+    elif kind in ("PROFORMA", "SAP"):
+        for g in (ai_payload.get("groups") or []):
+            g["lines"] = _resolve_oc_lines_to_canonical(g.get("lines") or [])
 
     db_lines = _load_expediente_lines(expediente_id)
     db_index = {}
@@ -709,14 +786,43 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
             sap = g.get("sap_number")
             g_disc = []
             for ln in g.get("lines") or []:
-                key = (ln["sku"].upper(), (ln["talla"] or "").upper())
-                db = db_index.get(key)
+                sku_norm = (ln.get("sku") or "").upper()
+                talla_norm = (ln.get("talla") or "").upper()
                 qty_doc = int(ln.get("qty_confirmed") or ln.get("qty") or 0)
+
+                # Sprint 2026-05-02 (AG-03): si el resolver no logró mapear
+                # la línea a un SKU canónico, emitimos UNRESOLVED_PRODUCT
+                # en vez de matchear contra (sku="", talla) — eso confundía
+                # con MISSING_IN_EXPEDIENTE genuinos.
+                if not sku_norm:
+                    item = {
+                        "kind":               "UNRESOLVED_PRODUCT",
+                        "sku":                None,
+                        "talla":              talla_norm or None,
+                        "qty_doc":            qty_doc,
+                        "qty_exp":            0,
+                        "sap_doc":            sap,
+                        "sap_exp":            None,
+                        "severity":           "ERROR",
+                        "suggested_action":   "MANUAL",
+                        "product_label":      ln.get("product_label"),
+                        "client_part_number": ln.get("client_part_number"),
+                        "supplier_ref":       ln.get("supplier_ref"),
+                        "base_code":          ln.get("base_code"),
+                        "match_strategy":     ln.get("match_strategy"),
+                        "match_score":        ln.get("match_score"),
+                        "confidence":         ln.get("confidence"),
+                    }
+                    g_disc.append(item); discrepancies.append(item)
+                    continue
+
+                key = (sku_norm, talla_norm)
+                db = db_index.get(key)
                 if not db:
                     item = {
                         "kind":             "MISSING_IN_EXPEDIENTE",
-                        "sku":              ln["sku"],
-                        "talla":            ln["talla"] or None,
+                        "sku":              sku_norm,
+                        "talla":            talla_norm or None,
                         "qty_doc":          qty_doc,
                         "qty_exp":          0,
                         "sap_doc":          sap,
@@ -724,6 +830,8 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                         "severity":         "WARN",
                         "suggested_action": "ADD_LINE",
                         "product_label":    ln.get("product_label"),
+                        "match_strategy":   ln.get("match_strategy"),
+                        "match_score":      ln.get("match_score"),
                         "confidence":       ln.get("confidence"),
                     }
                     g_disc.append(item); discrepancies.append(item)
@@ -734,8 +842,8 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                     if delta_qty or sap_diff:
                         item = {
                             "kind":             "SAP_MISMATCH" if sap_diff else "QTY_DIFF",
-                            "sku":              ln["sku"],
-                            "talla":            ln["talla"] or None,
+                            "sku":              sku_norm,
+                            "talla":            talla_norm or None,
                             "qty_doc":          qty_doc,
                             "qty_exp":          int(db["qty"]),
                             "sap_doc":          sap,
@@ -743,6 +851,8 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
                             "severity":         "ERROR" if sap_diff else "WARN",
                             "suggested_action": "ATTACH_SAP" if sap_diff else "UPDATE_QTY",
                             "product_label":    ln.get("product_label") or db.get("product_label"),
+                            "match_strategy":   ln.get("match_strategy"),
+                            "match_score":      ln.get("match_score"),
                             "line_id":          db.get("line_id"),
                         }
                         g_disc.append(item); discrepancies.append(item)
@@ -783,11 +893,21 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
     )
     perfect = (discrepancies_count == 0 and lines_in_doc > 0)
 
-    # Métricas extras de resolución (sólo OC)
-    resolution_summary = None
+    # Métricas extras de resolución (OC, PROFORMA, SAP)
+    # Sprint 2026-05-02 (AG-03): aplicamos al universo correcto de líneas.
     if kind == "OC":
-        total = len(ai_payload.get("lines") or [])
-        resolved = sum(1 for l in (ai_payload.get("lines") or []) if l.get("sku"))
+        all_lines = ai_payload.get("lines") or []
+    elif kind in ("PROFORMA", "SAP"):
+        all_lines = []
+        for g in (ai_payload.get("groups") or []):
+            all_lines.extend(g.get("lines") or [])
+    else:
+        all_lines = []
+
+    resolution_summary = None
+    if all_lines:
+        total = len(all_lines)
+        resolved = sum(1 for l in all_lines if l.get("sku"))
         unresolved = total - resolved
         resolution_summary = {
             "lines_total":      total,

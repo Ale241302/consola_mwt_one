@@ -167,6 +167,11 @@ export default function ScreenOCDetail() {
   const [viewingDocId, setViewingDocId]           = useState(null);
   const [deletingDoc, setDeletingDoc]             = useState(false);
   const [docError, setDocError]                   = useState(null);
+  // Sprint 2026-05-02: eliminación de líneas de OC con confirmación.
+  // confirmDeleteLine: línea persistida pendiente de DELETE al API.
+  const [confirmDeleteLine, setConfirmDeleteLine] = useState(null);
+  const [deletingLine, setDeletingLine]           = useState(false);
+  const [lineError, setLineError]                 = useState(null);
 
   useEffect(() => {
     if (ocFromMock) return;
@@ -502,10 +507,54 @@ export default function ScreenOCDetail() {
   };
 
   const removeLine = (lineId) => {
+    // Líneas locales (agregadas vía "Agregar producto" y aún no persistidas):
+    // se quitan del state directo, sin API call.
     if (extraLines.some(l => l.id === lineId)) {
       setExtraLines(prev => prev.filter(l => l.id !== lineId));
-    } else {
-      setRemovedLineIds(prev => { const n = new Set(prev); n.add(lineId); return n; });
+      return;
+    }
+    // Líneas persistidas: abrimos modal de confirmación. La llamada al API
+    // se ejecuta en confirmDeleteLineAction. Sprint 2026-05-02 (AG-03):
+    // antes solo se ocultaba la fila vía removedLineIds, así que al
+    // recargar la página la línea reaparecía.
+    const lineFromApi = apiOcLines.find(l => l.id === lineId);
+    const lineFromOc  = (oc.lines || []).find(l => l.id === lineId);
+    const lineSnapshot = lineFromApi || lineFromOc || { id: lineId };
+    setLineError(null);
+    setConfirmDeleteLine(lineSnapshot);
+  };
+
+  const confirmDeleteLineAction = async () => {
+    if (!confirmDeleteLine?.id || deletingLine) return;
+    setDeletingLine(true);
+    setLineError(null);
+    try {
+      await lineasApi.remove(confirmDeleteLine.id);
+      // Quitamos del state en caliente para que la UI refleje el cambio
+      // sin recargar la página.
+      setApiOcLines(prev => prev.filter(l => l.id !== confirmDeleteLine.id));
+      // También quitamos cualquier edit pendiente para esa línea.
+      setLineEdits(prev => {
+        const next = { ...prev };
+        delete next[confirmDeleteLine.id];
+        return next;
+      });
+      setRemovedLineIds(prev => {
+        const n = new Set(prev);
+        n.delete(confirmDeleteLine.id);
+        return n;
+      });
+      setConfirmDeleteLine(null);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[OCDetail] delete linea falló:', e);
+      setLineError(
+        lang === 'es'
+          ? `No se pudo eliminar la línea: ${e?.message || 'error'}`
+          : `Couldn't delete line: ${e?.message || 'error'}`
+      );
+    } finally {
+      setDeletingLine(false);
     }
   };
 
@@ -955,6 +1004,132 @@ export default function ScreenOCDetail() {
                 }}
               >
                 {deletingDoc
+                  ? (lang === 'es' ? 'Eliminando…' : 'Deleting…')
+                  : (lang === 'es' ? 'Eliminar' : 'Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sprint 2026-05-02: modal de confirmación para eliminar línea OC */}
+      {confirmDeleteLine && (
+        <div
+          onClick={() => !deletingLine && setConfirmDeleteLine(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 220,
+            background: 'rgba(11,30,58,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white', borderRadius: 14,
+              width: 'min(440px, 96vw)',
+              boxShadow: '0 30px 60px -20px rgba(15,27,61,0.55)',
+              display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            }}
+          >
+            <div style={{
+              padding: '14px 20px',
+              borderBottom: '1px solid var(--border-subtle)',
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: 8,
+                background: 'color-mix(in oklab, var(--danger, #DC2626) 14%, transparent)',
+                color: 'var(--danger, #DC2626)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <IconTrash size={14}/>
+              </div>
+              <div>
+                <div className="micro" style={{
+                  color: 'var(--text-tertiary)', letterSpacing: 1,
+                }}>
+                  {lang === 'es' ? 'CONFIRMAR ELIMINACIÓN' : 'CONFIRM DELETION'}
+                </div>
+                <div style={{fontWeight: 800, fontSize: 15, color: 'var(--text-primary, #0B1E3A)'}}>
+                  {lang === 'es' ? 'Eliminar línea de la OC' : 'Delete OC line'}
+                </div>
+              </div>
+            </div>
+
+            <div style={{padding: 20, display: 'flex', flexDirection: 'column', gap: 12}}>
+              <div style={{fontSize: 13, lineHeight: 1.5, color: 'var(--text-secondary, #475569)'}}>
+                {lang === 'es'
+                  ? '¿Querés eliminar esta línea? Se va a soft-deletear (is_active=false) en BD. Para revertir, contactá a sistemas.'
+                  : 'Delete this line? It will be soft-deleted (is_active=false) in DB. To revert, contact ops.'}
+              </div>
+              <div style={{
+                padding: '10px 12px', borderRadius: 8,
+                background: 'color-mix(in oklab, var(--text-primary, #0B1E3A) 4%, transparent)',
+                border: '1px solid var(--border-subtle)',
+                display: 'flex', alignItems: 'center', gap: 14,
+                fontFamily: 'var(--font-mono)',
+              }}>
+                <div className="mono-sm" style={{fontSize: 13, fontWeight: 700, color: 'var(--text-primary, #0B1E3A)'}}>
+                  {confirmDeleteLine.sku || confirmDeleteLine.product_label || '—'}
+                </div>
+                <span style={{color: 'var(--text-tertiary)'}}>·</span>
+                <div className="caption">
+                  {lang === 'es' ? 'Talla' : 'Size'}{' '}
+                  <strong style={{color: 'var(--text-primary, #0B1E3A)'}}>
+                    {confirmDeleteLine.talla || confirmDeleteLine.size || '—'}
+                  </strong>
+                </div>
+                <span style={{color: 'var(--text-tertiary)'}}>·</span>
+                <div className="caption tabular-nums">
+                  {lang === 'es' ? 'Cant.' : 'Qty'}{' '}
+                  <strong style={{color: 'var(--text-primary, #0B1E3A)'}}>
+                    {confirmDeleteLine.qty || 0}
+                  </strong>
+                </div>
+              </div>
+              {lineError && (
+                <div style={{
+                  padding: '8px 12px', borderRadius: 8,
+                  background: 'color-mix(in oklab, var(--danger, #DC2626) 14%, transparent)',
+                  color: 'var(--danger, #991B1B)',
+                  border: '1px solid color-mix(in oklab, var(--danger, #DC2626) 30%, transparent)',
+                  fontSize: 12,
+                  display: 'flex', alignItems: 'flex-start', gap: 6,
+                }}>
+                  <IconAlert size={11} style={{flexShrink: 0, marginTop: 2}}/>
+                  <div>{lineError}</div>
+                </div>
+              )}
+            </div>
+
+            <div style={{
+              padding: '12px 20px',
+              borderTop: '1px solid var(--border-subtle)',
+              background: 'color-mix(in oklab, var(--text-primary, #0B1E3A) 2%, transparent)',
+              display: 'flex', justifyContent: 'flex-end', gap: 8,
+            }}>
+              <button
+                type="button"
+                disabled={deletingLine}
+                onClick={() => setConfirmDeleteLine(null)}
+                className="btn btn-ghost"
+              >
+                {lang === 'es' ? 'Cancelar' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                disabled={deletingLine}
+                onClick={confirmDeleteLineAction}
+                className="btn"
+                style={{
+                  fontWeight: 700, minWidth: 120,
+                  background: 'var(--danger, #DC2626)',
+                  borderColor: 'var(--danger, #DC2626)',
+                  color: 'white',
+                }}
+              >
+                {deletingLine
                   ? (lang === 'es' ? 'Eliminando…' : 'Deleting…')
                   : (lang === 'es' ? 'Eliminar' : 'Delete')}
               </button>

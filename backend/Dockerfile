@@ -38,4 +38,8 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8000
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "60"]
+# Sprint 2026-05-02 (AG-03): timeout=120s. Antes 60s — insuficiente para
+# el matchmaker IA con PDFs de 10+ líneas (OpenAI tarda 15-30s, más SDK
+# retries internos). Con timeout=120s damos margen al request más lento
+# del sistema (extract_document → cross_match → persist).
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "120"]
