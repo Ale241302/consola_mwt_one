@@ -214,6 +214,31 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
                 continue
         if text_payload is None:
             return _empty_result(document_kind, "No pude decodificar el CSV.")
+    elif is_pdf:
+        # Sprint 2026-05-02 (AG-03): los PDFs de clientes (SonDel, Sonepar,
+        # MARLUVAS) son text-native, no escaneos. Extraemos texto con pypdf
+        # y lo mandamos como prompt de chat.completions — mucho más rápido,
+        # barato, y compatible con cualquier modelo de chat. Antes mandábamos
+        # el binario a `responses.create()` con `input_file`, que rechaza
+        # PDFs con `Invalid MIME type. Only image types are supported`.
+        # Si pypdf no logra extraer texto (PDF escaneado, OCR-only), caemos
+        # al path de vision como fallback.
+        try:
+            from pypdf import PdfReader
+            import io as _io
+            reader = PdfReader(_io.BytesIO(file_bytes))
+            pages = []
+            for page in reader.pages:
+                t = (page.extract_text() or "").strip()
+                if t:
+                    pages.append(t)
+            if pages:
+                text_payload = "\n\n--- PAGE BREAK ---\n\n".join(pages)[:18000]
+                log.info("[matchmaker] pypdf extrajo %d páginas (%d chars) de %s",
+                         len(pages), len(text_payload), filename)
+        except Exception as e:
+            log.warning("[matchmaker] pypdf extracción falló (%s); fallback a vision", e)
+            # text_payload queda None → cae al path PDF/Imagen (vision).
 
     try:
         from openai import OpenAI
