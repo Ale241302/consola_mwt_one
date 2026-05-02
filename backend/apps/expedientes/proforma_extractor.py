@@ -216,6 +216,240 @@ def _safe_float(v) -> Optional[float]:
     except (TypeError, ValueError): return None
 
 
+def _parse_proforma_deterministic(file_bytes: bytes) -> Optional[dict]:
+    """Sprint 2026-05-02 (AG-03): parser DETERMINÍSTICO de proforma MWT
+    usando coordenadas reales (X, Y) de PyMuPDF.
+
+    El AI (gpt-4o-mini, gpt-4o) alucina las cantidades de la matriz
+    horizontal. Este parser NO usa AI — extrae la matriz leyendo las
+    posiciones espaciales del PDF directamente:
+
+      1. Lee las palabras con sus bounding boxes (x0,y0,x1,y1)
+      2. Encuentra cada slot poblado (campo "Código" con número)
+      3. Para cada slot, identifica las filas BRA / EU / USA / Cantidad
+         por el Y-coordinate de sus labels
+      4. Toma cada qty del slot por su X-coordinate
+      5. Encuentra el BRA value en el mismo X (columna alineada)
+      6. Emite (sku, talla=BRA, qty)
+
+    Returns: dict con shape igual a extract_proforma() o None si el
+    parsing falla (en ese caso el caller cae al path de AI).
+    """
+    try:
+        import fitz
+        import re as _re
+    except ImportError:
+        return None
+
+    try:
+        with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+            if not len(doc):
+                return None
+            page = doc.load_page(0)
+            words = page.get_text("words")  # [(x0, y0, x1, y1, word, b_no, l_no, w_no), ...]
+    except Exception as e:
+        log.warning("[proforma_det] fitz error: %s", e)
+        return None
+
+    if not words:
+        return None
+
+    # Agrupar palabras por Y-coordinate (tolerancia 3pt para misma línea)
+    rows: list[list] = []
+    y_tolerance = 3.0
+    for w in sorted(words, key=lambda x: (x[1], x[0])):
+        x0, y0, x1, y1, text = w[0], w[1], w[2], w[3], w[4]
+        placed = False
+        for row in rows:
+            if abs(row[0]["y_center"] - (y0 + y1) / 2) < y_tolerance:
+                row.append({"x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                            "x_center": (x0 + x1) / 2,
+                            "y_center": (y0 + y1) / 2,
+                            "text": text})
+                placed = True
+                break
+        if not placed:
+            rows.append([{"x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                          "x_center": (x0 + x1) / 2,
+                          "y_center": (y0 + y1) / 2,
+                          "text": text}])
+
+    # Re-ordenar palabras dentro de cada row por X
+    for row in rows:
+        row.sort(key=lambda r: r["x0"])
+
+    # Buscar header del documento: proforma_number, total
+    proforma_number = None
+    total_pares = None
+    sku_global = None
+    supplier_ref_global = None
+    re_proforma_num = _re.compile(r"^\d{3,5}-20\d{2}$")
+    re_int = _re.compile(r"^\d{1,4}$")
+
+    flat_text = " ".join(w[4] for w in words)
+    m = _re.search(r"Proforma:\s*(\S+)", flat_text)
+    if m:
+        proforma_number = m.group(1)
+    m = _re.search(r"Total de Pares:\s*(\d+)", flat_text)
+    if m:
+        total_pares = int(m.group(1))
+
+    # Buscar slots poblados — un slot está poblado cuando hay un valor
+    # numérico (5-7 dígitos) cerca de un label "Código:".
+    re_sku = _re.compile(r"^\d{5,7}$")
+    slots = []
+    for r_idx, row in enumerate(rows):
+        # Buscar texto "Código" en la fila
+        for w in row:
+            if w["text"].strip().lower().startswith("código") or w["text"].strip().lower().startswith("codigo"):
+                # El SKU está en la misma fila o adyacente, a la derecha del label
+                sku = None
+                # Buscar primer número 5-7 dígitos a la derecha
+                for w2 in row:
+                    if w2["x0"] > w["x1"] and re_sku.match(w2["text"]):
+                        sku = w2["text"]
+                        break
+                if not sku:
+                    # Probar fila siguiente
+                    if r_idx + 1 < len(rows):
+                        for w2 in rows[r_idx + 1]:
+                            if re_sku.match(w2["text"]):
+                                sku = w2["text"]
+                                break
+                if sku:
+                    slots.append({"sku": sku, "row_idx": r_idx, "y_label": w["y_center"]})
+                break
+
+    if not slots:
+        log.warning("[proforma_det] no encontré slots con Código populado")
+        return None
+
+    # Para cada slot poblado, encontrar las filas BRA/EU/USA/Cantidad
+    # debajo del label "Código" hasta el siguiente slot
+    slot_lines: list[dict] = []
+    for s_idx, slot in enumerate(slots):
+        next_y = slots[s_idx + 1]["y_label"] if s_idx + 1 < len(slots) else 9e9
+        # Filas dentro del slot: y > slot.y_label y y < next_y
+        slot_rows = [r for r in rows if slot["y_label"] < r[0]["y_center"] < next_y]
+
+        # Identificar fila BRA por su label
+        bra_row = None
+        eu_row = None
+        cant_row = None
+        for row in slot_rows:
+            row_text = " ".join(w["text"] for w in row).lower()
+            if "referencia bra" in row_text or "ref bra" in row_text:
+                # Los valores numéricos están en esta fila después del label
+                bra_row = row
+            elif "referencia eu" in row_text or "ref eu" in row_text:
+                eu_row = row
+
+        if not bra_row:
+            log.warning("[proforma_det] slot SKU=%s sin fila BRA", slot["sku"])
+            continue
+
+        # Extraer los valores numéricos de la fila BRA (filtrar el label)
+        bra_values = [
+            w for w in bra_row
+            if re_int.match(w["text"]) and 30 <= int(w["text"]) <= 50
+        ]
+        if not bra_values:
+            log.warning("[proforma_det] BRA values vacíos para SKU=%s", slot["sku"])
+            continue
+
+        # La fila Cantidad: debe estar DEBAJO de USA, sin label de texto.
+        # Heurística: buscar la última fila numérica del slot que tenga
+        # menos valores que BRA (porque solo tiene qtys de columnas pobladas).
+        bra_y = bra_row[0]["y_center"]
+        candidate_qty_rows = [
+            r for r in slot_rows
+            if r[0]["y_center"] > bra_y + 5  # debajo de BRA
+        ]
+        # Filtrar filas donde TODOS los tokens son enteros pequeños
+        qty_row = None
+        for row in candidate_qty_rows:
+            tokens = [w for w in row if re_int.match(w["text"])]
+            if not tokens:
+                continue
+            # Es candidato si todos los tokens son enteros y hay >= 1
+            if len(tokens) == len(row) or len(tokens) >= 1:
+                # Preferir filas con menos tokens (qty solo no-cero) que BRA
+                if len(tokens) <= len(bra_values):
+                    qty_row = tokens
+                    break
+
+        if not qty_row:
+            log.warning("[proforma_det] qty row vacía para SKU=%s", slot["sku"])
+            continue
+
+        # Mapear cada qty al BRA value más cercano por X
+        for q in qty_row:
+            qx = q["x_center"]
+            qty_int = int(q["text"])
+            if qty_int <= 0:
+                continue
+            # Encontrar BRA value con X-center más cercano
+            closest = min(bra_values, key=lambda b: abs(b["x_center"] - qx))
+            x_dist = abs(closest["x_center"] - qx)
+            if x_dist > 25:  # demasiado lejos, descartar
+                continue
+            slot_lines.append({
+                "sku":           slot["sku"],
+                "supplier_ref":  None,
+                "talla":         closest["text"],
+                "qty":           qty_int,
+                "product_label": "",
+                "unit_price":    None,
+                "confidence":    99.0,
+                "match_strategy": "DETERMINISTIC",
+                "match_score":    99,
+                "matched_producto_id": None,
+                "client_part_number": None,
+                "base_code":     None,
+                "qty_confirmed": None,
+                "qty_open":      None,
+            })
+
+    if not slot_lines:
+        log.warning("[proforma_det] no extraje líneas — fallback a AI")
+        return None
+
+    # Validar suma vs total declarado
+    total_extraido = sum(l["qty"] for l in slot_lines)
+    if total_pares and total_extraido != total_pares:
+        log.warning("[proforma_det] suma extraída=%d != total declarado=%d",
+                    total_extraido, total_pares)
+        # No aborto — devuelvo lo que tengo, el cross_match decidirá
+
+    log.info("[proforma_det] extraje %d líneas, suma=%d (declarado=%s)",
+             len(slot_lines), total_extraido, total_pares)
+
+    # Buscar supplier_ref y descripción para enriquecer
+    re_supref = _re.compile(r"^\d{2,3}[A-Z]\d{2,3}[A-Z]?-[A-Z]{2,5}-[A-Z]{2,5}-?[A-Z]*$")
+    for w in words:
+        if re_supref.match(w[4]):
+            supplier_ref_global = w[4]
+            break
+    if supplier_ref_global:
+        for ln in slot_lines:
+            ln["supplier_ref"] = supplier_ref_global
+
+    return {
+        "document_kind":   "PROFORMA",
+        "proforma_number": proforma_number,
+        "raw_text":        flat_text[:2000],
+        "model":           "deterministic-pymupdf",
+        "error":           None,
+        "groups": [{
+            "sap_number":    None,
+            "po_reference":  None,
+            "delivery_date": None,
+            "lines":         slot_lines,
+        }],
+        "lines": [],
+    }
+
+
 def _convert_talla_to_br(talla: str) -> str:
     """Sprint 2026-05-02 (AG-03): conversión determinística talla → BR.
 
@@ -332,6 +566,26 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str) -> dic
             f"Proforma sólo soporta PDF (recibí: {content_type}). "
             "Si tu proforma es imagen o Excel, usá 'Otro documento'."
         )
+
+    # ── PATH PRIMARIO: parser DETERMINÍSTICO (PyMuPDF + coordenadas) ──
+    # Sprint 2026-05-02 (AG-03): el AI alucina qtys de la matriz horizontal.
+    # Probamos primero un parser determinístico que lee posiciones (X,Y)
+    # reales del PDF — sin AI, sin alucinación. Si funciona (devuelve
+    # líneas), saltamos toda la llamada a OpenAI.
+    det_result = _parse_proforma_deterministic(file_bytes)
+    if det_result and det_result.get("groups") and any(
+        g.get("lines") for g in det_result["groups"]
+    ):
+        log.info("[proforma_extractor] parser determinístico OK — saltando AI")
+        # Aplicar conversión EU→BR como red de seguridad (debería ser no-op
+        # porque el parser ya extrae de la fila BRA del PDF)
+        for g in det_result["groups"]:
+            for ln in g["lines"]:
+                if ln.get("talla"):
+                    ln["talla"] = _convert_talla_to_br(ln["talla"])
+        return det_result
+
+    log.info("[proforma_extractor] parser det. no encontró líneas, fallback a vision AI")
 
     # 1) Renderizar PDF a imágenes
     # max_pages=2: la página 1 trae header + slots 1-4 (con la matriz),
