@@ -358,25 +358,32 @@ def _parse_proforma_deterministic(file_bytes: bytes) -> Optional[dict]:
             continue
 
         # La fila Cantidad: debe estar DEBAJO de USA, sin label de texto.
-        # Heurística: buscar la última fila numérica del slot que tenga
-        # menos valores que BRA (porque solo tiene qtys de columnas pobladas).
+        # CRÍTICO: filtrar para que NO confunda con BRA/EU/USA (que también
+        # son filas numéricas). Las filas de talla tienen valores en el
+        # rango 30-50 (BR 33-47, EU 35-49). La fila qty tiene valores
+        # arbitrarios (10, 30, 50, 100...) — saltamos cualquier fila
+        # donde la mayoría de valores caen en el rango de talla.
         bra_y = bra_row[0]["y_center"]
         candidate_qty_rows = [
             r for r in slot_rows
             if r[0]["y_center"] > bra_y + 5  # debajo de BRA
         ]
-        # Filtrar filas donde TODOS los tokens son enteros pequeños
+        # Set de valores que parecen tallas (para filtrar)
+        TALLA_RANGE = set(range(30, 51))
         qty_row = None
         for row in candidate_qty_rows:
             tokens = [w for w in row if re_int.match(w["text"])]
             if not tokens:
                 continue
-            # Es candidato si todos los tokens son enteros y hay >= 1
-            if len(tokens) == len(row) or len(tokens) >= 1:
-                # Preferir filas con menos tokens (qty solo no-cero) que BRA
-                if len(tokens) <= len(bra_values):
-                    qty_row = tokens
-                    break
+            int_vals = [int(t["text"]) for t in tokens]
+            # Si la mayoría de valores están en el rango de talla,
+            # esta es probablemente la fila EU/BRA/USA, NO la fila qty.
+            in_talla_range = sum(1 for v in int_vals if v in TALLA_RANGE)
+            if in_talla_range / len(int_vals) > 0.6:
+                continue  # skip — es talla, no qty
+            # Esta debe ser la fila qty real
+            qty_row = tokens
+            break
 
         if not qty_row:
             log.warning("[proforma_det] qty row vacía para SKU=%s", slot["sku"])
@@ -414,14 +421,17 @@ def _parse_proforma_deterministic(file_bytes: bytes) -> Optional[dict]:
         log.warning("[proforma_det] no extraje líneas — fallback a AI")
         return None
 
-    # Validar suma vs total declarado
+    # Validar suma vs total declarado — si no matchea, abortar y caer al AI.
+    # (mejor extracción incierta que extracción confiadamente errónea)
     total_extraido = sum(l["qty"] for l in slot_lines)
     if total_pares and total_extraido != total_pares:
-        log.warning("[proforma_det] suma extraída=%d != total declarado=%d",
-                    total_extraido, total_pares)
-        # No aborto — devuelvo lo que tengo, el cross_match decidirá
+        log.warning(
+            "[proforma_det] suma extraída=%d != total declarado=%d → fallback a AI",
+            total_extraido, total_pares,
+        )
+        return None  # fallback al AI — mejor que dar datos malos
 
-    log.info("[proforma_det] extraje %d líneas, suma=%d (declarado=%s)",
+    log.info("[proforma_det] extraje %d líneas, suma=%d (declarado=%s) ✓",
              len(slot_lines), total_extraido, total_pares)
 
     # Buscar supplier_ref y descripción para enriquecer
