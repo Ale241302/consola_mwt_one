@@ -18,6 +18,14 @@ gunicorn==23.0.0
 anthropic==0.39.0
 # OCR Aduanal del Motor de Transferencias (apps.transfers.ocr_customs · gpt-5-nano)
 openai==1.54.0
+# 2026-05-02 (AG-03): pin httpx<0.28 — openai 1.54 le pasa `proxies=None`
+# al constructor de httpx.Client(), pero httpx 0.28 removió ese kwarg.
+# Sin este pin, pip resuelve la última versión de httpx y rompe la
+# inicialización de OpenAI() con
+#   TypeError: Client.__init__() got an unexpected keyword argument 'proxies'
+# Cuando subamos a openai>=1.55.3 (que ya parchó el bug) podemos quitar
+# este pin. Ver https://github.com/openai/openai-python/pull/1839
+httpx<0.28
 pypdf==5.1.0
 pillow==10.4.0
 # Motor de Precios COMEX — parseo Excel (Tabela de preços v6+)
