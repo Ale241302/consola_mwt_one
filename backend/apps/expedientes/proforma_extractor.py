@@ -17,25 +17,25 @@ Por qué un módulo aparte:
   · Mezclarlos en un solo path causaba que un fix de proforma tuviera
     efectos colaterales en la OC. Aislamiento físico = no más sustos.
 
-Estrategia técnica (cascada de 3 niveles):
+Estrategia técnica (cascada de 2 niveles):
 
   1) PARSER DETERMINÍSTICO (PyMuPDF + coordenadas X,Y reales)
      · Lee la matriz por posiciones espaciales — sin AI, sin alucinación.
      · Si la suma de qty extraída == "Total de Pares" declarado → OK.
      · Si no matchea → fallback al nivel 2.
 
-  2) AI CON CONTEXTO DEL EXPEDIENTE (gpt-4o vision + BD priming)
-     · Sprint 2026-05-02 (AG-03): NUEVO. Si recibimos `expediente_id`,
-       le pasamos al AI tanto la imagen de la proforma COMO la lista
-       de productos del expediente (sku, talla, qty). El modelo lee
-       la matriz visualmente PERO sabe qué tallas/qtys debería ver,
-       lo que reduce la alucinación de columnas drásticamente.
-     · El AI debe devolver la distribución TAL CUAL aparece en la
-       proforma (no la del expediente) — la BD es solo "anclaje
-       semántico" para que reconozca el patrón correcto.
-
-  3) AI SIN CONTEXTO (gpt-4o vision puro — fallback final)
-     · Cuando no tenemos expediente (caso raro) o la query falla.
+  2) AI CON PDF NATIVO + CONTEXTO DEL EXPEDIENTE (gpt-4o)
+     · Sprint 2026-05-02 (AG-03): mandamos el PDF TAL CUAL al modelo
+       (content type "file", base64) — NO renderizamos a PNG porque
+       eso degrada la calidad de la matriz horizontal de tallas.
+       gpt-4o soporta PDF nativo desde el SDK 1.54+.
+     · Si recibimos `expediente_id`, también le pasamos la lista de
+       productos del expediente (sku, talla, qty) como anclaje
+       semántico — el modelo lee el PDF en alta fidelidad pero sabe
+       qué tallas/qtys debería ver, lo que reduce drásticamente la
+       alucinación de columnas/qtys.
+     · El AI debe devolver la distribución TAL CUAL aparece en el
+       PDF (no la del expediente) — la BD es solo anclaje.
 
 Output shape: idéntico al original (groups[].lines[]) → consumido por
 `cross_match` sin cambios. cross_match hace el diff final
@@ -189,39 +189,35 @@ def _empty_result(error=None):
     }
 
 
-def _pdf_to_png_data_urls(file_bytes: bytes, max_pages: int = 2,
-                           dpi_scale: float = 3.0) -> list[str]:
-    """Renderiza páginas del PDF a PNG (base64 data URLs) usando PyMuPDF.
+def _pdf_to_data_url(file_bytes: bytes) -> str:
+    """Sprint 2026-05-02 (AG-03): prepara el PDF como data URL base64
+    para mandarlo TAL CUAL a OpenAI (content type "file"). NO renderiza
+    a PNG — gpt-4o soporta PDF nativo desde el SDK 1.54+ y preserva la
+    calidad/organización de la matriz de tallas que el render PNG perdía.
+    """
+    b64 = base64.b64encode(file_bytes).decode("ascii")
+    return f"data:application/pdf;base64,{b64}"
 
-    Sprint 2026-05-02 (AG-03): DPI 3.0 (antes 2.0) para que el texto
-    fino de la matriz horizontal de tallas sea legible. max_pages=2
-    porque típicamente la página 1 tiene la matriz y la página 3 el
-    summary — la página 2 son solo slots vacíos que confunden al modelo.
 
-    Retorna [] si pymupdf no está disponible o el render falla — en
-    ese caso el caller devuelve error y el matchmaker reporta la falla
-    sin afectar otros tipos de documento.
+def _extract_pdf_text(file_bytes: bytes, max_chars: int = 20000) -> str:
+    """Sprint 2026-05-02 (AG-03): extrae el texto del PDF con pypdf como
+    PAYLOAD ADICIONAL para el modelo. No reemplaza el PDF nativo — lo
+    complementa: el PDF preserva la posición espacial, el texto extraído
+    le da al modelo una segunda fuente para verificar SKU/REF/cantidades.
     """
     try:
-        import fitz  # pymupdf
-        urls: list[str] = []
-        with fitz.open(stream=file_bytes, filetype="pdf") as doc:
-            n_pages = min(len(doc), max_pages)
-            for i in range(n_pages):
-                page = doc.load_page(i)
-                pix = page.get_pixmap(matrix=fitz.Matrix(dpi_scale, dpi_scale))
-                png_bytes = pix.tobytes("png")
-                b64 = base64.b64encode(png_bytes).decode("ascii")
-                urls.append(f"data:image/png;base64,{b64}")
-        log.info("[proforma_extractor] renderizadas %d páginas a %.1fx DPI",
-                 len(urls), dpi_scale)
-        return urls
-    except ImportError:
-        log.warning("[proforma_extractor] pymupdf no instalado")
-        return []
+        from pypdf import PdfReader
+        import io as _io
+        reader = PdfReader(_io.BytesIO(file_bytes))
+        pages = []
+        for page in reader.pages:
+            t = (page.extract_text() or "").strip()
+            if t:
+                pages.append(t)
+        return "\n\n--- PAGE BREAK ---\n\n".join(pages)[:max_chars]
     except Exception as e:
-        log.warning("[proforma_extractor] PDF→PNG render falló: %s", e)
-        return []
+        log.warning("[proforma_extractor] pypdf falló: %s", e)
+        return ""
 
 
 def _safe_float(v) -> Optional[float]:
@@ -687,27 +683,18 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str,
 
     log.info("[proforma_extractor] parser det. no encontró líneas, fallback a vision AI")
 
-    # ── PATH SECUNDARIO: AI con contexto del expediente ──────────────
-    # Sprint 2026-05-02 (AG-03): si tenemos expediente_id, cargamos las
-    # líneas de BD y se las pasamos al modelo COMO CONTEXTO. El AI lee
-    # la matriz visualmente PERO sabe qué tallas/qtys debería ver, lo
-    # que hace que sea mucho menos probable que "shifteé" columnas.
+    # ── PATH SECUNDARIO: AI con PDF NATIVO + contexto del expediente ─
+    # Sprint 2026-05-02 (AG-03): mandamos el PDF SIN MODIFICAR al modelo
+    # (content type "file", base64 nativo). NO se renderiza a PNG porque
+    # eso degrada la calidad de la matriz horizontal y el modelo terminaba
+    # alucinando columnas. gpt-4o soporta PDF nativo desde SDK 1.54+ y
+    # preserva la organización espacial original del documento.
     bd_lines = _load_expediente_context(expediente_id)
     bd_context_text = _format_bd_context_for_prompt(bd_lines)
 
-    # 1) Renderizar PDF a imágenes
-    # max_pages=2: la página 1 trae header + slots 1-4 (con la matriz),
-    # la página 2 son slots 5-11 (típicamente vacíos pero por si hay
-    # más productos), la página 3 es summary final que confunde al
-    # modelo (otra tabla con qty pero sin matriz). Quitamos pág 3.
-    image_urls = _pdf_to_png_data_urls(file_bytes, max_pages=2)
-    if not image_urls:
-        return _empty_result(
-            "No pude renderizar el PDF. Verificá que pymupdf esté instalado "
-            "(pip install pymupdf) o el PDF no esté corrupto."
-        )
+    pdf_data_url = _pdf_to_data_url(file_bytes)
+    pdf_text     = _extract_pdf_text(file_bytes)
 
-    # 2) Llamar a vision API
     try:
         from openai import OpenAI
     except ImportError:
@@ -717,7 +704,8 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str,
 
     # ── Construir el mensaje user con contexto BD (si lo hay) ─────────
     user_text_parts = [
-        "Analizá la(s) imagen(es) de esta proforma y devolvé el JSON "
+        "Te adjunto el PDF de una proforma comercial MWT (sin convertir a "
+        "imagen — es el archivo original). Analizalo y devolvé el JSON "
         "estricto con todos los productos y su distribución por talla.",
         "Atención a la matriz horizontal — alineá las cantidades con la "
         "fila 'Referencia BRA' (NO con EU ni USA).",
@@ -751,14 +739,26 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str,
             "(Sin contexto del expediente — extrae fielmente lo que ves.)"
         )
 
-    user_content = [
+    if pdf_text:
+        user_text_parts.append(
+            "\nTexto extraído del PDF (referencia adicional, sin posición "
+            "espacial — usá el PDF adjunto para alinear la matriz):\n"
+            "─────────────────────────────────────────────────────\n"
+            f"{pdf_text}\n"
+            "─────────────────────────────────────────────────────"
+        )
+
+    user_content: list[dict] = [
         {"type": "text", "text": "\n".join(user_text_parts)},
+        # PDF NATIVO — sin render, sin pérdida de calidad.
+        {
+            "type": "file",
+            "file": {
+                "filename":  filename or "proforma.pdf",
+                "file_data": pdf_data_url,
+            },
+        },
     ]
-    for url in image_urls:
-        user_content.append({
-            "type": "image_url",
-            "image_url": {"url": url, "detail": "high"},
-        })
 
     raw_text = None
     try:
@@ -772,7 +772,7 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str,
         )
         raw_text = chat.choices[0].message.content
     except Exception as e:
-        log.exception("[proforma_extractor] OpenAI vision call failed")
+        log.exception("[proforma_extractor] OpenAI native-PDF call failed")
         return _empty_result(f"OpenAI API error: {type(e).__name__}: {e}")
 
     # 3) Parsear el JSON
@@ -788,7 +788,9 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str,
         "document_kind": "PROFORMA",
         "raw_text": (data.get("raw_text") or "")[:2000]
                      if isinstance(data.get("raw_text"), str) else "",
-        "model": (OCR_MODEL + ("+bd-context" if bd_context_text else "")),
+        "model": (OCR_MODEL
+                  + "+native-pdf"
+                  + ("+bd-context" if bd_context_text else "")),
         "error": None,
         "bd_context_lines": len(bd_lines) if bd_lines else 0,
     }
@@ -801,8 +803,11 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str,
     out["lines"]  = []  # PROFORMA usa groups, no lines top-level
 
     log.info(
-        "[proforma_extractor] OK — model=%s bd_ctx=%d pages=%d groups=%d total_lines=%d",
-        OCR_MODEL, len(bd_lines), len(image_urls), len(out["groups"]),
+        "[proforma_extractor] OK model=%s bd_ctx=%d pdf_text_chars=%d groups=%d lines=%d",
+        OCR_MODEL,
+        len(bd_lines),
+        len(pdf_text),
+        len(out["groups"]),
         sum(len(g.get("lines") or []) for g in out["groups"]),
     )
     return out
