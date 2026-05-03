@@ -522,45 +522,63 @@ class ParseTemplateView(APIView):
             except Exception:
                 log.exception("[parse_template] CPA legacy lookup falló")
 
-            # Producto: pick is_active=TRUE para no devolver IDs viejos
-            # (el frontend hace GET /api/productos/<id>/ y un id inactivo
-            # daba 404). Ordenamos por updated_at DESC para tomar la fila
-            # vigente cuando hay duplicados con el mismo SKU.
+            # Producto: pick is_active=TRUE para no devolver IDs viejos.
+            # Sprint 2026-05-03 v3.8.1 · simplificado: como sku es UNIQUE en
+            # el schema, no hay DISTINCT ON necesario. Aislamos la lectura
+            # de especificaciones para evitar 500 si el JSONB viene como
+            # string (psycopg pre-2.9) o tipo inesperado.
+            import json as _json
             try:
                 with connection.cursor() as c:
                     c.execute("""
-                        SELECT DISTINCT ON (sku)
-                               id, sku, nombre, especificaciones
+                        SELECT id, sku, nombre, especificaciones
                           FROM productos.producto
                          WHERE sku = ANY(%s)
                            AND COALESCE(is_active, TRUE) = TRUE
-                         ORDER BY sku, updated_at DESC NULLS LAST
                     """, [unique_skus])
                     for row in c.fetchall():
                         prod_id, sku, nombre, espec = row
+                        # Normalizar especificaciones: psycopg suele dar dict
+                        # nativo; si llega string, parsear; si es None o malo,
+                        # caer a {}.
+                        if isinstance(espec, str):
+                            try:
+                                espec = _json.loads(espec)
+                            except Exception:
+                                espec = {}
+                        if not isinstance(espec, dict):
+                            espec = {}
                         product_meta[sku] = {
                             "producto_id":   str(prod_id),
                             "product_label": nombre or "",
-                            "especificaciones": espec or {},
+                            "especificaciones": espec,
                         }
             except Exception:
                 log.exception("[parse_template] productos lookup falló")
 
             # Sprint 2026-05-03 v3.8 · evaluar visibility nueva por cada SKU.
             # Si visible_to_all=true o client_overrides[client_id]=true → asignado.
-            for sku, meta in product_meta.items():
-                vis = (meta.get("especificaciones") or {}).get("visibility") or {}
-                if vis.get("visible_to_all") is True:
-                    assignment_skus.add(sku)
-                    continue
-                ov = vis.get("client_overrides") or {}
-                if ov.get(str(client_id)) is True:
-                    assignment_skus.add(sku)
-                    continue
-                # Fallback adicional (legacy doble): client_visibility map
-                legacy = (meta.get("especificaciones") or {}).get("client_visibility")
-                if isinstance(legacy, dict) and legacy.get(str(client_id)) is True:
-                    assignment_skus.add(sku)
+            # Wrappeado en try para que cualquier shape raro no rompa la request.
+            try:
+                cid_str = str(client_id) if client_id is not None else ""
+                for sku, meta in list(product_meta.items()):
+                    espec = meta.get("especificaciones") or {}
+                    if not isinstance(espec, dict):
+                        continue
+                    vis = espec.get("visibility")
+                    vis = vis if isinstance(vis, dict) else {}
+                    if vis.get("visible_to_all") is True:
+                        assignment_skus.add(sku)
+                        continue
+                    ov = vis.get("client_overrides")
+                    if isinstance(ov, dict) and ov.get(cid_str) is True:
+                        assignment_skus.add(sku)
+                        continue
+                    legacy = espec.get("client_visibility")
+                    if isinstance(legacy, dict) and legacy.get(cid_str) is True:
+                        assignment_skus.add(sku)
+            except Exception:
+                log.exception("[parse_template] visibility eval falló")
 
         out_lines = []
         unassigned = []
