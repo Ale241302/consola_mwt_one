@@ -17,7 +17,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   IconX, IconSearch, IconPackage, IconPlus, IconCheck, IconAlert,
 } from "../../lib/icons.jsx";
-import { productosApi, tallasApi } from "../../lib/api.js";
+import { productosApi, tallasApi, getToken } from "../../lib/api.js";
 
 const NAVY = "#0B1E3A";
 const MINT = "#00B286";
@@ -29,15 +29,23 @@ function fmtMoney(v) {
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function isVisibleForClient(p, clientId) {
-  // Sin clientId no podemos filtrar; mostramos todos activos.
-  if (!clientId) return true;
+// Sprint 2026-05-03 v3 · helper unificado de asignación.
+//   1. visibility.visible_to_all === true → asignado para todos.
+//   2. visibility.client_overrides[clientId] === true → asignado.
+//   3. (legacy) client_visibility[clientId] === true → asignado.
+//   4. else → NO asignado, requiere "Solicitar Asignación".
+function isAssignedForClient(p, clientId) {
+  if (!p) return false;
   const esp = p.especificaciones || {};
-  const cv  = esp.client_visibility || null;
-  // Si NO existe el mapa client_visibility, asumimos visible a todos.
-  if (!cv || typeof cv !== "object") return true;
-  // Si existe, requerimos entrada explicita true.
-  return cv[clientId] === true;
+  const vis = esp.visibility || {};
+  if (vis.visible_to_all === true) return true;
+  if (clientId) {
+    const ov = vis.client_overrides || {};
+    if (ov[clientId] === true) return true;
+    const legacy = esp.client_visibility || null;
+    if (legacy && typeof legacy === "object" && legacy[clientId] === true) return true;
+  }
+  return false;
 }
 
 function resolveUnitPrice(p, clientId) {
@@ -60,6 +68,10 @@ export default function AddOCProductModal({
   const [products, setProducts] = useState([]);
   const [loadingList, setLoadingList] = useState(false);
   const [error, setError] = useState(null);
+  // Sprint 2026-05-03 v3 · estados del botón "Solicitar Asignación"
+  const [requestPending, setRequestPending] = useState(new Set());
+  const [requestSent,    setRequestSent]    = useState(new Set());
+  const [requestErr,     setRequestErr]     = useState({});
 
   // Step 2: producto seleccionado + matriz de tallas
   const [picked, setPicked] = useState(null); // { p, tallas:[{label, qty}], unit_price }
@@ -73,17 +85,37 @@ export default function AddOCProductModal({
   // "BASE" = la columna talla_base (canonica registrada en /tallas).
   const [displaySystem, setDisplaySystem] = useState("BASE");
 
-  // ── Cargar productos al abrir
+  // ── Reset de estado cuando el modal se abre/cierra
   useEffect(() => {
     if (!open) return;
+    setQ("");
+    setProducts([]);
+    setError(null);
+    setRequestPending(new Set());
+    setRequestSent(new Set());
+    setRequestErr({});
+  }, [open]);
+
+  // ── Sprint 2026-05-03 v3 · búsqueda activa (no pre-carga).
+  // El usuario tiene que tipear al menos 2 caracteres antes de ver
+  // resultados; antes preloadeábamos /api/productos/ entero al abrir.
+  useEffect(() => {
+    if (!open) return;
+    const needle = q.trim();
+    if (needle.length < 2) {
+      setProducts([]);
+      setLoadingList(false);
+      setError(null);
+      return;
+    }
     let cancel = false;
     setLoadingList(true);
     setError(null);
-    productosApi.list()
+    productosApi.list({ q: needle })
       .then((d) => {
         if (cancel) return;
         const arr = Array.isArray(d) ? d : (d?.results || []);
-        setProducts(arr);
+        setProducts(arr.slice(0, 50));
         setLoadingList(false);
       })
       .catch((e) => {
@@ -92,7 +124,7 @@ export default function AddOCProductModal({
         setLoadingList(false);
       });
     return () => { cancel = true; };
-  }, [open]); // eslint-disable-line
+  }, [open, q]); // eslint-disable-line
 
   // Cargar catalogo de tallas una sola vez con TODAS las equivalencias
   useEffect(() => {
@@ -131,25 +163,44 @@ export default function AddOCProductModal({
       .catch(() => {});
   }, [open]); // eslint-disable-line
 
-  // ── Productos visibles para el cliente
-  const visible = useMemo(() => {
-    return (products || [])
-      .filter((p) => p.is_active !== false)
-      .filter((p) => isVisibleForClient(p, clientId));
-  }, [products, clientId]);
-
-  // ── Filtrado por busqueda
+  // Sprint 2026-05-03 v3 · ahora mostramos TODOS los productos activos
+  // que matchean la búsqueda; el "asignado" se marca por fila para
+  // poder ofrecer "Solicitar Asignación" en los no asignados. La lista
+  // ya viene filtrada por el backend (productosApi.list({ q })), así
+  // que no aplicamos un segundo filtro aquí.
   const filtered = useMemo(() => {
-    const k = q.trim().toLowerCase();
-    if (!k) return visible;
-    return visible.filter((p) => {
-      const sku    = String(p.sku || "").toLowerCase();
-      const name   = String(p.nombre || "").toLowerCase();
-      const marca  = String(p.marca_nombre || "").toLowerCase();
-      const cat    = String(p.categoria || "").toLowerCase();
-      return sku.includes(k) || name.includes(k) || marca.includes(k) || cat.includes(k);
-    });
-  }, [visible, q]);
+    return (products || []).filter((p) => p.is_active !== false);
+  }, [products]);
+  const visible = filtered;  // compat con el render existente
+
+  // Sprint 2026-05-03 v3 · envío one-click de Solicitud de Asignación.
+  // Usa el mismo endpoint que el wizard del portal. El email va a
+  // info@mwt.one con cliente, SKU, producto y botón "Ver Producto".
+  const requestAssignment = async (p) => {
+    const sku = (p.sku || "").toUpperCase();
+    if (!sku || !clientId) return;
+    if (requestPending.has(sku) || requestSent.has(sku)) return;
+    setRequestPending(prev => new Set(prev).add(sku));
+    setRequestErr(prev => { const n = { ...prev }; delete n[sku]; return n; });
+    try {
+      const res = await fetch("/api/catalog/request-assignment/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ client_id: clientId, sku }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      setRequestSent(prev => new Set(prev).add(sku));
+    } catch (e) {
+      setRequestErr(prev => ({ ...prev, [sku]: e?.message || "fallo" }));
+    } finally {
+      setRequestPending(prev => {
+        const n = new Set(prev); n.delete(sku); return n;
+      });
+    }
+  };
 
   // ── Pick: cargar detalle + tallas (con todas las equivalencias)
   const pick = async (p) => {
@@ -353,7 +404,28 @@ export default function AddOCProductModal({
                 </div>
               )}
 
-              {!loadingList && filtered.length === 0 && (
+              {!loadingList && q.trim().length < 2 && (
+                <div style={{
+                  padding: 32, textAlign: "center",
+                  color: "var(--text-tertiary)", fontSize: 13,
+                }}>
+                  <IconSearch size={24} style={{
+                    opacity: 0.3, marginBottom: 10,
+                  }}/>
+                  <div style={{ fontWeight: 600, color: NAVY, marginBottom: 4 }}>
+                    {lang === "es"
+                      ? "Buscar producto"
+                      : "Search product"}
+                  </div>
+                  <div>
+                    {lang === "es"
+                      ? "Tipeá al menos 2 caracteres por SKU, nombre o marca."
+                      : "Type at least 2 characters by SKU, name or brand."}
+                  </div>
+                </div>
+              )}
+
+              {!loadingList && q.trim().length >= 2 && filtered.length === 0 && (
                 <div style={{
                   padding: 24, textAlign: "center",
                   color: "var(--text-tertiary)", fontSize: 13,
@@ -363,12 +435,8 @@ export default function AddOCProductModal({
                   }}/>
                   <div>
                     {lang === "es"
-                      ? clientId
-                          ? "No hay productos visibles para este cliente con esos criterios."
-                          : "Sin coincidencias."
-                      : clientId
-                          ? "No products visible to this client matching."
-                          : "No matches."}
+                      ? "Sin coincidencias."
+                      : "No matches."}
                   </div>
                 </div>
               )}
@@ -380,29 +448,64 @@ export default function AddOCProductModal({
                   maxHeight: 420, overflowY: "auto",
                 }}>
                   {filtered.map((p) => {
+                    const sku = (p.sku || "").toUpperCase();
+                    const isAssigned = isAssignedForClient(p, clientId);
                     const unit = resolveUnitPrice(p, clientId);
                     const hasOverride = clientId
                       && Number((p.especificaciones?.client_prices || {})[clientId] || 0) > 0;
+                    const pending = requestPending.has(sku);
+                    const sent    = requestSent.has(sku);
+                    const err     = requestErr[sku];
                     return (
-                      <button
-                        key={p.id || p.sku} type="button"
-                        onClick={() => pick(p)}
+                      <div
+                        key={p.id || p.sku}
                         style={{
-                          width: "100%", textAlign: "left",
-                          padding: "10px 14px", border: 0,
-                          background: "white", cursor: "pointer",
+                          width: "100%",
+                          padding: "10px 14px",
+                          background: "white",
                           display: "flex", alignItems: "center", gap: 12,
                           borderBottom: "1px solid var(--border-subtle)",
                         }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(48,131,254,0.05)"}
-                        onMouseLeave={(e) => e.currentTarget.style.background = "white"}
                       >
                         <IconPackage size={16} style={{ color: BLUE, flexShrink: 0 }}/>
-                        <div style={{ flex: 1, minWidth: 0 }}>
+                        <button
+                          type="button"
+                          onClick={() => isAssigned && pick(p)}
+                          disabled={!isAssigned}
+                          style={{
+                            flex: 1, minWidth: 0, textAlign: "left",
+                            background: "transparent", border: 0, padding: 0,
+                            cursor: isAssigned ? "pointer" : "default",
+                            opacity: isAssigned ? 1 : 0.78,
+                          }}
+                          title={isAssigned
+                            ? ""
+                            : (lang === "es"
+                                ? "Producto no asignado al cliente. Solicitá la asignación al equipo MWT."
+                                : "Product not assigned. Request assignment to the MWT team.")}
+                        >
                           <div className="mono-sm" style={{
                             fontWeight: 700, color: NAVY, fontSize: 13,
+                            display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
                           }}>
-                            {p.sku}
+                            <span>{p.sku}</span>
+                            {isAssigned ? (
+                              <span style={{
+                                padding: "2px 8px", borderRadius: 999,
+                                background: "rgba(0,178,134,0.12)", color: "#00875A",
+                                fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+                              }}>
+                                ✓ {lang === "es" ? "ASIGNADO" : "ASSIGNED"}
+                              </span>
+                            ) : (
+                              <span style={{
+                                padding: "2px 8px", borderRadius: 999,
+                                background: "rgba(180,83,9,0.10)", color: "#B45309",
+                                fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+                              }}>
+                                ⚠ {lang === "es" ? "NO ASIGNADO" : "NOT ASSIGNED"}
+                              </span>
+                            )}
                           </div>
                           <div style={{
                             fontSize: 13, color: NAVY, fontWeight: 500,
@@ -413,25 +516,63 @@ export default function AddOCProductModal({
                             {p.marca_nombre || "—"}{" "}
                             {p.categoria ? `· ${p.categoria}` : ""}
                           </div>
-                        </div>
-                        <div style={{ textAlign: "right", marginRight: 10 }}>
-                          <div className="tabular-nums" style={{
-                            fontSize: 14, fontWeight: 700,
-                            color: hasOverride ? MINT : NAVY,
-                          }}>
-                            {fmtMoney(unit)}
-                          </div>
-                          {hasOverride && (
-                            <div className="caption" style={{
-                              fontSize: 9, color: MINT, fontWeight: 700,
-                              textTransform: "uppercase", letterSpacing: 0.4,
-                            }}>
-                              {lang === "es" ? "PRECIO CLIENTE" : "CLIENT PRICE"}
+                        </button>
+                        {isAssigned ? (
+                          <>
+                            <div style={{ textAlign: "right", marginRight: 10 }}>
+                              <div className="tabular-nums" style={{
+                                fontSize: 14, fontWeight: 700,
+                                color: hasOverride ? MINT : NAVY,
+                              }}>
+                                {fmtMoney(unit)}
+                              </div>
+                              {hasOverride && (
+                                <div className="caption" style={{
+                                  fontSize: 9, color: MINT, fontWeight: 700,
+                                  textTransform: "uppercase", letterSpacing: 0.4,
+                                }}>
+                                  {lang === "es" ? "PRECIO CLIENTE" : "CLIENT PRICE"}
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                        <IconPlus size={14} style={{ color: MINT }}/>
-                      </button>
+                            <button
+                              type="button"
+                              onClick={() => pick(p)}
+                              style={{
+                                flexShrink: 0, padding: 6, border: 0,
+                                background: "transparent", cursor: "pointer",
+                              }}
+                              title={lang === "es" ? "Agregar" : "Add"}
+                            >
+                              <IconPlus size={14} style={{ color: MINT }}/>
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => requestAssignment(p)}
+                            disabled={pending || sent}
+                            style={{
+                              flexShrink: 0,
+                              padding: "8px 12px",
+                              borderRadius: 8,
+                              border: "1px solid " + (sent ? "rgba(0,135,90,0.25)" : "rgba(0,178,134,0.35)"),
+                              background: sent ? "rgba(0,135,90,0.10)" : "#fff",
+                              color: sent ? "#00875A" : "#00B286",
+                              fontWeight: 700, fontSize: 12,
+                              cursor: (pending || sent) ? "default" : "pointer",
+                              whiteSpace: "nowrap",
+                            }}
+                            title={err || ""}
+                          >
+                            {pending
+                              ? (lang === "es" ? "Enviando…" : "Sending…")
+                              : sent
+                                ? (lang === "es" ? "✓ Solicitado" : "✓ Requested")
+                                : (lang === "es" ? "Solicitar Asignación" : "Request Assignment")}
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
