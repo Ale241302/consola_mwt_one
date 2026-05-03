@@ -22,7 +22,6 @@
 // Este componente solo oculta UI para dar la experiencia correcta.
 // =====================================================================
 import React, { useState, useMemo, useEffect, useCallback, Fragment } from "react";
-import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney } from "../lib/i18n.js";
@@ -41,7 +40,7 @@ import {
 import { expedientesApi, ocsApi, clientesApi, lineasApi, productosApi } from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
 
-// ── Mapeo backend → UI ────────
+// ── Mapeo backend → UI ──────── (Sprint 2026-05-03 v4)
 function mapExpedienteFromApi(r) {
   return {
     // id legible para navegacion y React keys (codigo si existe, sino UUID).
@@ -1009,140 +1008,136 @@ export default function ScreenExpedientes() {
         </div>
       )}
 
-      {/* Sprint 2026-05-03 v3 · Modal de confirmación de bulk delete */}
+      {/* Sprint 2026-05-03 v4 · Modal de confirmación de bulk delete.
+          Replica el patrón exacto de Productos.jsx:
+            · motion.div es hijo DIRECTO de AnimatePresence (sin portal,
+              sin componente intermedio).
+            · Sin createPortal: AnimatePresence + Portal rompe el mount
+              en framer-motion 11.x (el modal nunca se monta cuando el
+              estado de control pasa de null → array). */}
       <AnimatePresence>
-        {pendingDelete && createPortal(
-          <ConfirmBulkDeleteModal
-            count={pendingDelete.length}
-            busy={deleting}
-            error={deleteErr}
-            lang={lang}
-            onCancel={() => { if (!deleting) { setPendingDelete(null); setDeleteErr(null); } }}
-            onConfirm={confirmBulkDelete}
-          />,
-          document.body
-        )}
+        {pendingDelete && (() => {
+          const count  = pendingDelete.length;
+          const plural = count > 1;
+          const busy   = deleting;
+          const error  = deleteErr;
+          const onCancel  = () => { if (!deleting) { setPendingDelete(null); setDeleteErr(null); } };
+          const onConfirm = confirmBulkDelete;
+          return (
+            <motion.div
+              key="exp-bulk-delete"
+              className="modal-backdrop"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => !busy && onCancel()}
+              style={{
+                position: 'fixed', inset: 0, zIndex: 1000,
+                background: 'rgba(11,30,58,0.45)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                padding: 16,
+              }}
+            >
+              <motion.div
+                className="modal-panel"
+                role="dialog" aria-modal="true"
+                initial={{ y: 20, opacity: 0, scale: 0.98 }}
+                animate={{ y: 0,  opacity: 1, scale: 1 }}
+                exit   ={{ y: 10, opacity: 0, scale: 0.98 }}
+                transition={{ type: 'spring', stiffness: 280, damping: 28 }}
+                onClick={(ev) => ev.stopPropagation()}
+                style={{
+                  background: '#fff',
+                  borderRadius: 12,
+                  width: '100%', maxWidth: 460,
+                  boxShadow: '0 12px 48px rgba(11,30,58,0.18)',
+                  overflow: 'hidden',
+                }}
+              >
+                <div style={{
+                  padding: '20px 22px 8px 22px',
+                  display: 'flex', alignItems: 'flex-start', gap: 14,
+                }}>
+                  <div style={{
+                    flexShrink: 0, width: 40, height: 40, borderRadius: '50%',
+                    background: 'rgba(239,68,68,0.1)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: 'var(--critical, #EF4444)',
+                  }}>
+                    <IconTrash size={18}/>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="heading-md" style={{ marginBottom: 4 }}>
+                      {lang === 'es'
+                        ? (plural ? `Eliminar ${count} expedientes` : 'Eliminar expediente')
+                        : (plural ? `Delete ${count} files`         : 'Delete file')}
+                    </div>
+                    <div className="caption" style={{ color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                      {lang === 'es'
+                        ? (plural
+                            ? <>¿Seguro que quieres eliminar <strong>{count} expedientes</strong>? Esta acción <strong>no se puede deshacer</strong> desde la UI; las OCs y cobros asociados no se borran.</>
+                            : <>¿Seguro que quieres eliminar <strong>este expediente</strong>? Esta acción <strong>no se puede deshacer</strong> desde la UI; las OCs y cobros asociados no se borran.</>)
+                        : (plural
+                            ? <>Delete <strong>{count} files</strong>? This action <strong>cannot be undone</strong> from the UI; linked POs and payments are not removed.</>
+                            : <>Delete <strong>this file</strong>? This action <strong>cannot be undone</strong> from the UI; linked POs and payments are not removed.</>)}
+                    </div>
+                    <div style={{
+                      marginTop: 10, padding: '8px 12px', borderRadius: 8,
+                      background: 'rgba(72,30,227,0.06)',
+                      border: '1px solid rgba(72,30,227,0.20)',
+                      fontSize: 12, lineHeight: 1.45, color: 'var(--text-secondary)',
+                    }}>
+                      <strong style={{ color: '#481EE3' }}>
+                        {lang === 'es' ? 'Liberación de crédito · ' : 'Credit release · '}
+                      </strong>
+                      {lang === 'es'
+                        ? <>las líneas <strong>sin SAP</strong> liberan crédito al cliente. Las líneas <strong>con SAP</strong> mantienen el crédito reservado (compromiso con fábrica).</>
+                        : <>lines <strong>without SAP</strong> release credit. Lines <strong>with SAP</strong> keep credit reserved (factory commitment).</>}
+                    </div>
+                    {error && (
+                      <div className="caption" style={{
+                        color: 'var(--critical, #EF4444)', marginTop: 10,
+                        background: 'rgba(239,68,68,0.08)', padding: '8px 10px',
+                        borderRadius: 6, lineHeight: 1.4,
+                      }}>
+                        {error}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div style={{
+                  padding: '14px 22px 18px 22px',
+                  display: 'flex', gap: 8, justifyContent: 'flex-end',
+                }}>
+                  <button
+                    type="button" className="btn"
+                    onClick={onCancel}
+                    disabled={busy}
+                  >
+                    {lang === 'es' ? 'Cancelar' : 'Cancel'}
+                  </button>
+                  <button
+                    type="button" className="btn"
+                    onClick={onConfirm}
+                    disabled={busy}
+                    style={{
+                      background: 'var(--critical, #EF4444)',
+                      color: '#fff', borderColor: 'var(--critical, #EF4444)',
+                      opacity: busy ? 0.7 : 1,
+                      cursor: busy ? 'wait' : 'pointer',
+                    }}
+                  >
+                    {busy
+                      ? (lang === 'es' ? 'Eliminando…' : 'Deleting…')
+                      : (plural
+                          ? (lang === 'es' ? `Eliminar ${count}` : `Delete ${count}`)
+                          : (lang === 'es' ? 'Eliminar'         : 'Delete'))}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
       </AnimatePresence>
     </div>
-  );
-}
-
-// ─── Modal de confirmación de bulk delete (Sprint 2026-05-03 v3) ───
-// Mismo lenguaje visual que ConfirmDeleteModal de ClienteDetail:
-// fondo oscurecido, card centrada, badge "Acción destructiva",
-// error inline, botones Cancelar / Sí, eliminar.
-function ConfirmBulkDeleteModal({ count, busy, error, lang, onCancel, onConfirm }) {
-  const plural = count > 1;
-  return (
-    <motion.div
-      className="modal-backdrop"
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={() => !busy && onCancel?.()}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 1000,
-        background: 'rgba(11,30,58,0.45)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 16,
-      }}
-    >
-      <motion.div
-        className="modal-panel"
-        role="dialog" aria-modal="true"
-        initial={{ y: 20, opacity: 0, scale: 0.98 }}
-        animate={{ y: 0,  opacity: 1, scale: 1 }}
-        exit   ={{ y: 10, opacity: 0, scale: 0.98 }}
-        transition={{ type: 'spring', stiffness: 280, damping: 28 }}
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#fff',
-          borderRadius: 12,
-          width: '100%', maxWidth: 460,
-          boxShadow: '0 12px 48px rgba(11,30,58,0.18)',
-          overflow: 'hidden',
-        }}
-      >
-        <div style={{
-          padding: '20px 22px 8px 22px',
-          display: 'flex', alignItems: 'flex-start', gap: 14,
-        }}>
-          <div style={{
-            flexShrink: 0, width: 40, height: 40, borderRadius: '50%',
-            background: 'rgba(239,68,68,0.1)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: 'var(--critical, #EF4444)',
-          }}>
-            <IconTrash size={18}/>
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="heading-md" style={{ marginBottom: 4 }}>
-              {lang === 'es'
-                ? (plural ? `Eliminar ${count} expedientes` : 'Eliminar expediente')
-                : (plural ? `Delete ${count} files`         : 'Delete file')}
-            </div>
-            <div className="caption" style={{ color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-              {lang === 'es'
-                ? (plural
-                    ? <>¿Seguro que quieres eliminar <strong>{count} expedientes</strong>? Esta acción <strong>no se puede deshacer</strong> desde la UI; las OCs y cobros asociados no se borran.</>
-                    : <>¿Seguro que quieres eliminar <strong>este expediente</strong>? Esta acción <strong>no se puede deshacer</strong> desde la UI; las OCs y cobros asociados no se borran.</>)
-                : (plural
-                    ? <>Delete <strong>{count} files</strong>? This action <strong>cannot be undone</strong> from the UI; linked POs and payments are not removed.</>
-                    : <>Delete <strong>this file</strong>? This action <strong>cannot be undone</strong> from the UI; linked POs and payments are not removed.</>)}
-            </div>
-            <div style={{
-              marginTop: 10, padding: '8px 12px', borderRadius: 8,
-              background: 'rgba(72,30,227,0.06)',
-              border: '1px solid rgba(72,30,227,0.20)',
-              fontSize: 12, lineHeight: 1.45, color: 'var(--text-secondary)',
-            }}>
-              <strong style={{ color: '#481EE3' }}>
-                {lang === 'es' ? 'Liberación de crédito · ' : 'Credit release · '}
-              </strong>
-              {lang === 'es'
-                ? <>las líneas <strong>sin SAP</strong> liberan crédito al cliente. Las líneas <strong>con SAP</strong> mantienen el crédito reservado (compromiso con fábrica).</>
-                : <>lines <strong>without SAP</strong> release credit. Lines <strong>with SAP</strong> keep credit reserved (factory commitment).</>}
-            </div>
-            {error && (
-              <div className="caption" style={{
-                color: 'var(--critical, #EF4444)', marginTop: 10,
-                background: 'rgba(239,68,68,0.08)', padding: '8px 10px',
-                borderRadius: 6, lineHeight: 1.4,
-              }}>
-                {error}
-              </div>
-            )}
-          </div>
-        </div>
-        <div style={{
-          padding: '14px 22px 18px 22px',
-          display: 'flex', gap: 8, justifyContent: 'flex-end',
-        }}>
-          <button
-            type="button" className="btn"
-            onClick={onCancel}
-            disabled={busy}
-          >
-            {lang === 'es' ? 'Cancelar' : 'Cancel'}
-          </button>
-          <button
-            type="button" className="btn"
-            onClick={onConfirm}
-            disabled={busy}
-            style={{
-              background: 'var(--critical, #EF4444)',
-              color: '#fff', borderColor: 'var(--critical, #EF4444)',
-              opacity: busy ? 0.7 : 1,
-              cursor: busy ? 'wait' : 'pointer',
-            }}
-          >
-            {busy
-              ? (lang === 'es' ? 'Eliminando…' : 'Deleting…')
-              : (plural
-                  ? (lang === 'es' ? `Eliminar ${count}` : `Delete ${count}`)
-                  : (lang === 'es' ? 'Eliminar'         : 'Delete'))}
-          </button>
-        </div>
-      </motion.div>
-    </motion.div>
   );
 }
 
