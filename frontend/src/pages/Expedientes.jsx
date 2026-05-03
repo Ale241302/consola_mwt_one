@@ -1052,7 +1052,7 @@ function ConfirmBulkDeleteModal({ count, busy, error, lang, onCancel, onConfirm 
         animate={{ y: 0,  opacity: 1, scale: 1 }}
         exit   ={{ y: 10, opacity: 0, scale: 0.98 }}
         transition={{ type: 'spring', stiffness: 280, damping: 28 }}
-        onClick={e => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
         style={{
           background: '#fff',
           borderRadius: 12,
@@ -1081,8 +1081,12 @@ function ConfirmBulkDeleteModal({ count, busy, error, lang, onCancel, onConfirm 
             </div>
             <div className="caption" style={{ color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
               {lang === 'es'
-                ? <>¿Seguro que quieres eliminar {plural ? <strong>{count} expedientes</strong> : <strong>este expediente</strong>}? Esta acción <strong>no se puede deshacer</strong> desde la UI; las OCs y cobros asociados no se borran.</>
-                : <>Delete {plural ? <strong>{count} files</strong> : <strong>this file</strong>}? This action <strong>cannot be undone</strong> from the UI; linked POs and payments are not removed.</>}
+                ? (plural
+                    ? <>¿Seguro que quieres eliminar <strong>{count} expedientes</strong>? Esta acción <strong>no se puede deshacer</strong> desde la UI; las OCs y cobros asociados no se borran.</>
+                    : <>¿Seguro que quieres eliminar <strong>este expediente</strong>? Esta acción <strong>no se puede deshacer</strong> desde la UI; las OCs y cobros asociados no se borran.</>)
+                : (plural
+                    ? <>Delete <strong>{count} files</strong>? This action <strong>cannot be undone</strong> from the UI; linked POs and payments are not removed.</>
+                    : <>Delete <strong>this file</strong>? This action <strong>cannot be undone</strong> from the UI; linked POs and payments are not removed.</>)}
             </div>
             <div style={{
               marginTop: 10, padding: '8px 12px', borderRadius: 8,
@@ -1094,8 +1098,8 @@ function ConfirmBulkDeleteModal({ count, busy, error, lang, onCancel, onConfirm 
                 {lang === 'es' ? 'Liberación de crédito · ' : 'Credit release · '}
               </strong>
               {lang === 'es'
-                ? <>las líneas <strong>sin SAP</strong> liberan su crédito al cliente. Las líneas <strong>con SAP</strong> mantienen el crédito reservado (compromiso con fábrica).</>
-                : <>lines <strong>without SAP</strong> release their credit. Lines <strong>with SAP</strong> keep the credit reserved (factory commitment).</>}
+                ? <>las líneas <strong>sin SAP</strong> liberan crédito al cliente. Las líneas <strong>con SAP</strong> mantienen el crédito reservado (compromiso con fábrica).</>
+                : <>lines <strong>without SAP</strong> release credit. Lines <strong>with SAP</strong> keep credit reserved (factory commitment).</>}
             </div>
             {error && (
               <div className="caption" style={{
@@ -1139,96 +1143,6 @@ function ConfirmBulkDeleteModal({ count, busy, error, lang, onCancel, onConfirm 
         </div>
       </motion.div>
     </motion.div>
-  );
-}) {
-  const plural = count > 1;
-  return (
-    <>
-      <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        onClick={busy ? undefined : onCancel}
-        style={{
-          position: 'fixed', inset: 0, zIndex: 90,
-          background: 'rgba(15,27,61,0.45)', backdropFilter: 'blur(2px)',
-        }}
-      />
-      <motion.div
-        initial={{ opacity: 0, y: -12, x: '-50%' }}
-        animate={{ opacity: 1, y: 0,   x: '-50%', transition: { duration: 0.18 } }}
-        exit   ={{ opacity: 0, y: -12, x: '-50%', transition: { duration: 0.12 } }}
-        role="dialog" aria-modal="true"
-        style={{
-          position: 'fixed', top: '14vh', left: '50%',
-          width: 'min(440px, 92vw)', zIndex: 91,
-          background: '#FFFFFF', borderRadius: 14,
-          boxShadow: '0 30px 60px -20px rgba(15,27,61,0.45)',
-          fontFamily: 'inherit',
-        }}
-      >
-        <div style={{ padding: '22px 22px 12px' }}>
-          <div style={{
-            font: '600 11px/1 inherit', color: '#DC2626',
-            letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8,
-          }}>
-            {lang === 'es' ? 'Acción destructiva' : 'Destructive action'}
-          </div>
-          <div style={{ font: '700 17px/1.3 inherit', color: '#0F1B3D', marginBottom: 8 }}>
-            {lang === 'es'
-              ? (plural ? `¿Eliminar ${count} expedientes?` : '¿Eliminar este expediente?')
-              : (plural ? `Delete ${count} files?`         : 'Delete this file?')}
-          </div>
-          <div style={{ font: '500 13.5px/1.5 inherit', color: '#3D4A6B' }}>
-            {lang === 'es'
-              ? <>Es soft-delete: los expedientes quedan inactivos en BD pero se conserva el historial. Esta acción <strong>no se puede deshacer</strong> desde la UI; cualquier OC o cobro asociado no se borra.</>
-              : <>This is a soft-delete: files become inactive in DB but history is preserved. This action <strong>cannot be undone</strong> from the UI; any linked PO or collection is not removed.</>}
-          </div>
-          <div style={{
-            marginTop: 12, padding: '10px 12px', borderRadius: 8,
-            background: 'rgba(72,30,227,0.06)', border: '1px solid rgba(72,30,227,0.20)',
-            font: '500 12.5px/1.4 inherit', color: '#3D4A6B',
-          }}>
-            <strong style={{ color: '#481EE3' }}>
-              {lang === 'es' ? 'Liberación de crédito · ' : 'Credit release · '}
-            </strong>
-            {lang === 'es'
-              ? <>las líneas <strong>sin SAP</strong> liberan su crédito al cliente. Las líneas <strong>con SAP</strong> mantienen el crédito reservado (compromiso con fábrica). Si todas las líneas tienen SAP, no se libera nada.</>
-              : <>lines <strong>without SAP</strong> release their credit. Lines <strong>with SAP</strong> keep the credit reserved (factory commitment). If all lines have SAP, nothing is released.</>}
-          </div>
-          {error && (
-            <div style={{
-              marginTop: 14, padding: '10px 12px', borderRadius: 8,
-              background: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B',
-              font: '500 12.5px/1.4 inherit',
-            }}>
-              {error}
-            </div>
-          )}
-        </div>
-        <div style={{
-          padding: '14px 22px 18px',
-          display: 'flex', gap: 10, justifyContent: 'flex-end',
-        }}>
-          <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={busy}>
-            {lang === 'es' ? 'Cancelar' : 'Cancel'}
-          </button>
-          <button type="button" onClick={onConfirm} disabled={busy}
-                  style={{
-                    padding: '10px 16px', borderRadius: 9,
-                    background: busy ? '#FCA5A5' : '#DC2626',
-                    color: '#FFFFFF', border: 'none',
-                    cursor: busy ? 'not-allowed' : 'pointer',
-                    font: '700 13.5px/1 inherit',
-                    boxShadow: busy ? 'none' : '0 4px 10px rgba(220,38,38,0.25)',
-                  }}>
-            {busy
-              ? (lang === 'es' ? 'Eliminando…' : 'Deleting…')
-              : (lang === 'es'
-                  ? (plural ? 'Sí, eliminar todos' : 'Sí, eliminar')
-                  : (plural ? 'Yes, delete all'    : 'Yes, delete'))}
-          </button>
-        </div>
-      </motion.div>
-    </>
   );
 }
 
