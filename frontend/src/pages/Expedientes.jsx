@@ -22,6 +22,8 @@
 // Este componente solo oculta UI para dar la experiencia correcta.
 // =====================================================================
 import React, { useState, useMemo, useEffect, useCallback, Fragment } from "react";
+import { createPortal } from "react-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney } from "../lib/i18n.js";
 import {
