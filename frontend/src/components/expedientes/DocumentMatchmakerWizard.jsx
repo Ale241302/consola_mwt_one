@@ -311,6 +311,11 @@ export default function DocumentMatchmakerWizard({
                   }}
                   resolvedSummary={resolvedSummary}
                   resolveError={resolveError}
+                  assignmentMap={assignmentMap}
+                  requestPending={requestPending}
+                  requestSent={requestSent}
+                  requestErr={requestErr}
+                  onRequestAssignment={requestAssignment}
                 />
               </motion.div>
             )}
@@ -603,6 +608,8 @@ function Dot({ delay }) {
 function Step3Dashboard({
   lang, result, documentType, selected, onToggle, onSelectAll,
   resolvedSummary, resolveError,
+  assignmentMap = {}, requestPending, requestSent, requestErr,
+  onRequestAssignment,
 }) {
   const summary = result.mismatch_payload?.summary || {};
   const discrepancies = result.mismatch_payload?.discrepancies || [];
@@ -716,9 +723,19 @@ function Step3Dashboard({
       <div style={{ maxHeight: 380, overflowY: "auto", paddingRight: 4 }}>
         {(isProforma || isSAP) && groups.length > 0
           ? <GroupedView groups={groups} discrepancies={discrepancies}
-                         selected={selected} onToggle={onToggle} lang={lang}/>
+                         selected={selected} onToggle={onToggle} lang={lang}
+                         assignmentMap={assignmentMap}
+                         requestPending={requestPending}
+                         requestSent={requestSent}
+                         requestErr={requestErr}
+                         onRequestAssignment={onRequestAssignment}/>
           : <FlatView discrepancies={discrepancies}
-                      selected={selected} onToggle={onToggle} lang={lang}/>}
+                      selected={selected} onToggle={onToggle} lang={lang}
+                      assignmentMap={assignmentMap}
+                      requestPending={requestPending}
+                      requestSent={requestSent}
+                      requestErr={requestErr}
+                      onRequestAssignment={onRequestAssignment}/>}
       </div>
 
       {resolveError && (
@@ -734,7 +751,9 @@ function Step3Dashboard({
 }
 
 // ─── Vista plana (OC) ─────────────────────────────────────
-function FlatView({ discrepancies, selected, onToggle, lang }) {
+function FlatView({ discrepancies, selected, onToggle, lang,
+                    assignmentMap, requestPending, requestSent, requestErr,
+                    onRequestAssignment }) {
   if (discrepancies.length === 0) {
     return (
       <div className="caption" style={{
@@ -749,14 +768,21 @@ function FlatView({ discrepancies, selected, onToggle, lang }) {
       {discrepancies.map((d, i) => (
         <DiscrepancyCard key={i} idx={i} d={d}
                          checked={selected.has(i)}
-                         onToggle={() => onToggle(i)} lang={lang}/>
+                         onToggle={() => onToggle(i)} lang={lang}
+                         assignmentMap={assignmentMap}
+                         requestPending={requestPending}
+                         requestSent={requestSent}
+                         requestErr={requestErr}
+                         onRequestAssignment={onRequestAssignment}/>
       ))}
     </div>
   );
 }
 
 // ─── Vista agrupada (Proforma / SAP) ──────────────────────
-function GroupedView({ groups, discrepancies, selected, onToggle, lang }) {
+function GroupedView({ groups, discrepancies, selected, onToggle, lang,
+                       assignmentMap, requestPending, requestSent, requestErr,
+                       onRequestAssignment }) {
   // Indexamos discrepancias por SAP para poder enlazar con los grupos
   const discIndexBySAP = useMemo(() => {
     const m = {};
@@ -772,7 +798,12 @@ function GroupedView({ groups, discrepancies, selected, onToggle, lang }) {
     <div style={{ display: "grid", gap: 12 }}>
       {Object.entries(discIndexBySAP).map(([sapKey, group]) => (
         <GroupAccordion key={sapKey} sapKey={sapKey} group={group}
-                        selected={selected} onToggle={onToggle} lang={lang}/>
+                        selected={selected} onToggle={onToggle} lang={lang}
+                        assignmentMap={assignmentMap}
+                        requestPending={requestPending}
+                        requestSent={requestSent}
+                        requestErr={requestErr}
+                        onRequestAssignment={onRequestAssignment}/>
       ))}
     </div>
   );
