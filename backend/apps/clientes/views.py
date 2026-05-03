@@ -339,7 +339,15 @@ class ClienteViewSet(viewsets.ViewSet):
     # ══════════════════════════════════════════════════════════════
     @action(detail=True, methods=["get"], url_path="expedientes")
     def expedientes(self, request, pk=None):
-        """Expedientes activos del cliente (o pool si es padre)."""
+        """Expedientes activos del cliente (o pool si es padre).
+
+        Sprint 2026-05-03 v2 · Reescrito sin subqueries correlados.
+        Antes la subquery `(SELECT SUM(...) WHERE l.expediente_id = e.id)`
+        a veces tronaba silenciosamente y devolvía []. Ahora separamos:
+          1. Header de expedientes (un SELECT plano).
+          2. Aggregate de líneas por expediente (GROUP BY).
+          3. Merge en Python.
+        """
         try:
             cli = Cliente.objects.get(pk=pk, is_active=True)
         except Cliente.DoesNotExist:
@@ -355,44 +363,25 @@ class ClienteViewSet(viewsets.ViewSet):
         include_closed = (request.query_params.get("include_closed") or "").lower() == "true"
         client_ids = cli.pool_ids() if (consolidate and cli.is_parent) else [str(pk)]
 
+        if not client_ids:
+            return Response([])
+
         out = []
         try:
             with connection.cursor() as c:
                 placeholders = ",".join(["%s"] * len(client_ids))
-                estado_filter = "" if include_closed else "AND e.estado NOT IN ('CERRADO','CANCELADO')"
+                estado_filter = "" if include_closed else "AND e.estado NOT IN (\'CERRADO\',\'CANCELADO\')"
+
+                # 1. Headers de expedientes
                 c.execute(
                     f"""
                     SELECT
-                        e.id, e.codigo, e.estado, e.client_id::text,
-                        COALESCE(e.total_invoiced, 0),
-                        COALESCE(e.total_paid, 0),
-                        COALESCE(e.balance, 0),
-                        COALESCE(e.credit_days, 0),
-                        e.last_event_at, e.created_at,
-                        COALESCE((
-                            SELECT SUM(
-                                l.qty * COALESCE(
-                                    NULLIF(l.unit_price, 0),
-                                    CASE
-                                        WHEN p.especificaciones IS NOT NULL
-                                         AND jsonb_typeof(p.especificaciones->'client_prices') = 'object'
-                                         AND jsonb_typeof(p.especificaciones->'client_prices'->(e.client_id::text)) = 'number'
-                                        THEN (p.especificaciones->'client_prices'->>(e.client_id::text))::numeric
-                                        ELSE NULL
-                                    END,
-                                    NULLIF(p.precio_lista, 0),
-                                    0
-                                )
-                            )
-                            FROM expedientes.linea l
-                            LEFT JOIN productos.producto p ON p.id = l.producto_id
-                            WHERE l.expediente_id = e.id AND l.is_active = TRUE
-                        ), 0) AS order_value,
-                        (SELECT COUNT(*) FROM expedientes.linea l
-                          WHERE l.expediente_id = e.id AND l.is_active = TRUE) AS lines_count,
-                        (SELECT COUNT(*) FROM expedientes.linea l
-                          WHERE l.expediente_id = e.id AND l.is_active = TRUE
-                            AND l.sap IS NOT NULL AND l.sap <> '') AS lines_with_sap
+                        e.id::text, e.codigo, e.estado, e.client_id::text,
+                        COALESCE(e.total_invoiced, 0)::float,
+                        COALESCE(e.total_paid,     0)::float,
+                        COALESCE(e.balance,        0)::float,
+                        COALESCE(e.credit_days,    0)::int,
+                        e.last_event_at, e.created_at
                     FROM expedientes.expediente e
                     WHERE e.client_id::text IN ({placeholders})
                       AND e.is_active = TRUE
@@ -401,9 +390,57 @@ class ClienteViewSet(viewsets.ViewSet):
                     """,
                     client_ids,
                 )
+                rows = c.fetchall()
+                exp_ids = [r[0] for r in rows]
+                if not exp_ids:
+                    return Response([])
+
+                # 2. Aggregate de líneas por expediente (qty, valor, lines, lines_with_sap)
+                ph2 = ",".join(["%s"] * len(exp_ids))
+                c.execute(
+                    f"""
+                    SELECT
+                        l.expediente_id::text AS exp_id,
+                        COUNT(*) FILTER (WHERE l.is_active = TRUE) AS lines_count,
+                        COUNT(*) FILTER (WHERE l.is_active = TRUE
+                                           AND l.sap IS NOT NULL
+                                           AND l.sap <> \'\') AS lines_with_sap,
+                        COALESCE(SUM(
+                            CASE WHEN l.is_active = TRUE THEN
+                                l.qty * COALESCE(
+                                    NULLIF(l.unit_price, 0),
+                                    CASE
+                                        WHEN p.especificaciones IS NOT NULL
+                                         AND jsonb_typeof(p.especificaciones->\'client_prices\') = \'object\'
+                                         AND jsonb_typeof(p.especificaciones->\'client_prices\'->(e.client_id::text)) = \'number\'
+                                        THEN (p.especificaciones->\'client_prices\'->>(e.client_id::text))::numeric
+                                        ELSE NULL
+                                    END,
+                                    NULLIF(p.precio_lista, 0),
+                                    0
+                                )
+                            ELSE 0 END
+                        ), 0)::float AS order_value
+                    FROM expedientes.linea l
+                    INNER JOIN expedientes.expediente e ON e.id = l.expediente_id
+                    LEFT JOIN productos.producto p ON p.id = l.producto_id
+                    WHERE l.expediente_id::text IN ({ph2})
+                    GROUP BY l.expediente_id
+                    """,
+                    exp_ids,
+                )
+                agg = {}
                 for r in c.fetchall():
+                    agg[r[0]] = {
+                        "lines_count":    int(r[1] or 0),
+                        "lines_with_sap": int(r[2] or 0),
+                        "order_value":    float(r[3] or 0),
+                    }
+
+                for r in rows:
+                    a = agg.get(r[0]) or {"lines_count": 0, "lines_with_sap": 0, "order_value": 0.0}
                     out.append({
-                        "id":             str(r[0]),
+                        "id":             r[0],
                         "codigo":         r[1],
                         "estado":         r[2],
                         "client_id":      r[3],
@@ -413,17 +450,26 @@ class ClienteViewSet(viewsets.ViewSet):
                         "credit_days":    int(r[7] or 0),
                         "last_event_at":  r[8].isoformat() if r[8] else None,
                         "created_at":     r[9].isoformat() if r[9] else None,
-                        "order_value":    float(r[10] or 0),
-                        "lines_count":    int(r[11] or 0),
-                        "lines_with_sap": int(r[12] or 0),
+                        "order_value":    a["order_value"],
+                        "lines_count":    a["lines_count"],
+                        "lines_with_sap": a["lines_with_sap"],
                     })
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception(
+                "[clientes.expedientes] query failed for pk=%s: %s", pk, e
+            )
             out = []
         return Response(out)
 
     @action(detail=True, methods=["get"], url_path="productos_comprados")
     def productos_comprados(self, request, pk=None):
-        """Productos comprados (agregado por SKU) en expedientes activos."""
+        """Productos comprados en expedientes activos del cliente.
+
+        Sprint 2026-05-03 v2 · Devuelve UNA FILA POR LÍNEA del expediente
+        (no agregado por SKU). Permite que la UI muestre la tabla
+        completa con talla, cantidad, expediente clickeable, etc.
+        """
         try:
             cli = Cliente.objects.get(pk=pk, is_active=True)
         except Cliente.DoesNotExist:
@@ -438,6 +484,9 @@ class ClienteViewSet(viewsets.ViewSet):
             consolidate = cli.is_parent
         client_ids = cli.pool_ids() if (consolidate and cli.is_parent) else [str(pk)]
 
+        if not client_ids:
+            return Response([])
+
         out = []
         try:
             with connection.cursor() as c:
@@ -445,54 +494,72 @@ class ClienteViewSet(viewsets.ViewSet):
                 c.execute(
                     f"""
                     SELECT
-                        l.producto_id::text AS pid,
-                        COALESCE(l.sku, p.sku, '—') AS sku,
-                        COALESCE(p.nombre, l.sku, '—') AS nombre,
-                        SUM(l.qty) AS qty_total,
-                        SUM(
-                            l.qty * COALESCE(
-                                NULLIF(l.unit_price, 0),
-                                CASE
-                                    WHEN p.especificaciones IS NOT NULL
-                                     AND jsonb_typeof(p.especificaciones->'client_prices') = 'object'
-                                     AND jsonb_typeof(p.especificaciones->'client_prices'->(e.client_id::text)) = 'number'
-                                    THEN (p.especificaciones->'client_prices'->>(e.client_id::text))::numeric
-                                    ELSE NULL
-                                END,
-                                NULLIF(p.precio_lista, 0),
-                                0
-                            )
-                        ) AS valor_total,
-                        COUNT(DISTINCT e.id) AS expedientes_count,
-                        MAX(COALESCE(e.last_event_at, e.created_at)) AS last_seen_at
+                        l.id::text                            AS line_id,
+                        l.expediente_id::text                 AS expediente_id,
+                        e.codigo                              AS expediente_codigo,
+                        e.estado                              AS expediente_estado,
+                        e.client_id::text                     AS client_id,
+                        COALESCE(l.producto_id::text, \'\')   AS producto_id,
+                        COALESCE(l.sku, p.sku, \'—\')         AS sku,
+                        COALESCE(p.nombre, l.sku, \'—\')      AS nombre,
+                        COALESCE(l.size, \'\')                AS talla,
+                        COALESCE(l.qty, 0)::float             AS qty,
+                        COALESCE(l.sap, \'\')                 AS sap,
+                        COALESCE(NULLIF(l.unit_price, 0),
+                                 NULLIF(p.precio_lista, 0),
+                                 0)::float                    AS unit_price,
+                        COALESCE(l.qty * COALESCE(
+                            NULLIF(l.unit_price, 0),
+                            CASE
+                                WHEN p.especificaciones IS NOT NULL
+                                 AND jsonb_typeof(p.especificaciones->\'client_prices\') = \'object\'
+                                 AND jsonb_typeof(p.especificaciones->\'client_prices\'->(e.client_id::text)) = \'number\'
+                                THEN (p.especificaciones->\'client_prices\'->>(e.client_id::text))::numeric
+                                ELSE NULL
+                            END,
+                            NULLIF(p.precio_lista, 0),
+                            0
+                        ), 0)::float                          AS line_total,
+                        COALESCE(e.last_event_at, e.created_at) AS last_seen_at
                     FROM expedientes.linea l
                     INNER JOIN expedientes.expediente e
                             ON e.id = l.expediente_id
                            AND e.is_active = TRUE
-                           AND e.estado NOT IN ('CERRADO','CANCELADO')
+                           AND e.estado NOT IN (\'CERRADO\',\'CANCELADO\')
                     LEFT JOIN productos.producto p ON p.id = l.producto_id
                     WHERE l.is_active = TRUE
                       AND e.client_id::text IN ({placeholders})
-                    GROUP BY l.producto_id, l.sku, p.sku, p.nombre
-                    ORDER BY valor_total DESC NULLS LAST, qty_total DESC
+                    ORDER BY COALESCE(e.last_event_at, e.created_at) DESC,
+                             l.sku, l.size
                     """,
                     client_ids,
                 )
                 for r in c.fetchall():
                     out.append({
-                        "producto_id":       r[0],
-                        "sku":               r[1],
-                        "nombre":            r[2],
-                        "qty_total":         float(r[3] or 0),
-                        "valor_total":       float(r[4] or 0),
-                        "expedientes_count": int(r[5] or 0),
-                        "last_seen_at":      r[6].isoformat() if r[6] else None,
+                        "line_id":           r[0],
+                        "expediente_id":     r[1],
+                        "expediente_codigo": r[2],
+                        "expediente_estado": r[3],
+                        "client_id":         r[4],
+                        "producto_id":       r[5] or None,
+                        "sku":               r[6],
+                        "nombre":            r[7],
+                        "talla":             r[8],
+                        "qty":               float(r[9] or 0),
+                        "sap":               r[10] or None,
+                        "unit_price":        float(r[11] or 0),
+                        "line_total":        float(r[12] or 0),
+                        "last_seen_at":      r[13].isoformat() if r[13] else None,
                     })
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception(
+                "[clientes.productos_comprados] query failed for pk=%s: %s", pk, e
+            )
             out = []
         return Response(out)
 
-    # ── Semáforo de crédito (BE = fuente única) ───────
+        # ── Semáforo de crédito (BE = fuente única) ───────
     @action(detail=True, methods=["get"])
     def credit_history(self, request, pk=None):
         """Últimos N snapshots (default 30) ordenados desc."""

@@ -489,21 +489,29 @@ def _parse_proforma_deterministic(file_bytes: bytes) -> Optional[dict]:
 
 
 def _convert_talla_to_br(talla: str) -> str:
-    """Sprint 2026-05-02 (AG-03): conversión determinística talla → BR.
+    """Sprint 2026-05-03 · conversión segura talla → BR.
 
-    El AI insiste en extraer las tallas en EU canónica aunque el prompt
-    pida BR. En lugar de pelear con el modelo, post-procesamos: tomamos
-    la talla que el AI devolvió y la convertimos a BR usando ops.tallas.
+    PROBLEMA arreglado en este sprint:
+      La versión anterior (Sprint 2026-05-02) buscaba por `eu = <input>`
+      sin verificar primero si el input ya era un BR válido. Para tallas
+      donde el VALOR coincide en ambas convenciones pero refiere a
+      tallas distintas (ej. BR 37 ≠ EU 37: BR 37 = EU 39, EU 37 = BR 35),
+      la función "convertía" un BR ya correcto a un BR equivocado:
+        BR "37" (input)
+          → busca eu='37' → encuentra fila (br=35, eu=37, …)
+          → devuelve "35"  ❌ rompe el match contra la BD.
 
-    Estrategia (silenciosa, no requiere equivalencia en cross_match):
-      1. Si `talla` aparece en la columna `eu` de ops.tallas → devolver
-         el `br` correspondiente. El AI extrajo en EU, lo convertimos.
-      2. Si `talla` NO aparece como EU → devolver tal cual (ya está en
-         BR, o es alfa tipo "M"/"L"/"UNICA", o no está en el catálogo).
+      El parser determinístico de proforma extrae directamente de la
+      fila "Referencia BRA" del PDF, por lo que el input siempre es
+      BR válido y NO debe convertirse.
 
-    Esto permite que cross_match haga match LITERAL contra BD que está
-    en convención BR (típico para expedientes de Sonepar OC porque el
-    código MARLUVAS-37/-38/-43 usa BR).
+    NUEVA estrategia:
+      1. Si el input matchea la columna `br` de ops.tallas → ya es BR
+         válido, devolver tal cual.
+      2. Si NO matchea como BR pero SÍ como EU → convertir a BR (caso
+         del AI vision que ocasionalmente devuelve EU).
+      3. Caso ambigüo (no matchea en ninguna): devolver tal cual (alfa,
+         o no está en el catálogo).
     """
     if not talla:
         return talla
@@ -511,6 +519,18 @@ def _convert_talla_to_br(talla: str) -> str:
     try:
         from django.db import connection
         with connection.cursor() as c:
+            # 1. ¿Ya es un BR válido? Devolver tal cual.
+            c.execute("""
+                SELECT 1
+                  FROM ops.tallas
+                 WHERE UPPER(br) = %s
+                   AND tipo_producto = 'calzado'
+                   AND COALESCE(is_active, TRUE) = TRUE
+                 LIMIT 1
+            """, [s])
+            if c.fetchone():
+                return s
+            # 2. No es BR; si es EU válido, convertimos a BR.
             c.execute("""
                 SELECT br
                   FROM ops.tallas
@@ -582,6 +602,235 @@ def _normalize_groups(raw_groups) -> list[dict]:
     return groups
 
 
+def _parse_proforma_horizontal(file_bytes: bytes) -> Optional[dict]:
+    """Sprint 2026-05-03 · Parser DETERMINÍSTICO para proformas con
+    matriz HORIZONTAL (formato Marluvas exportado desde Excel).
+
+    Layout esperado (orientación HORIZONTAL):
+
+        Referencia BRA  | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 45 | 46 | 47 |
+        Referencia EU   | 35 | 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 45 | 46 | 47 | 48 | 49 |
+        Referencia USA  |    |    | 4.5| 5.5| 6.5| 7  | 8  | 8.5| 9.5| 10 | 11 | 12 | 13 | 14 | 15 |
+        Qty             |    |    |    |    | 10 | 10 | 10 | 10 | 30 | 30 | 10 |    |    |    |    |
+
+    Algoritmo:
+      1. Localizar la cadena "Referencia BRA" en el documento (page words).
+      2. Recolectar TODOS los enteros 30..50 que aparezcan en la MISMA
+         fila Y (±2pt) y a la DERECHA del label → fila BRA del slot.
+      3. Encontrar el slot del SKU asociado: el SKU 5-7 dígitos cuya
+         coordenada Y está cerca (≤ ~25pt arriba) de la fila BRA y X
+         a su izquierda (es la celda "Código:" del slot).
+      4. La fila QTY está 2-3 líneas debajo de la BRA en el mismo
+         rango horizontal: enteros >0 cuya Y - bra_y ∈ (5, 50).
+      5. Para cada qty, asociarlo con la columna BRA cuyo X esté más
+         cerca (tolerancia ~6pt).
+      6. Validar suma vs "Total de Pares" del header.
+
+    Returns: dict con shape de extract_proforma() o None si falla.
+    """
+    try:
+        import fitz
+        import re as _re
+    except ImportError:
+        return None
+
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+    except Exception as e:
+        log.warning("[proforma_horiz] fitz open error: %s", e)
+        return None
+
+    re_sku       = _re.compile(r"^\d{5,7}$")
+    re_int_small = _re.compile(r"^\d{1,3}$")
+    re_supref    = _re.compile(r"^\d{2,3}[A-Z]\d{2,3}[A-Z]?-[A-Z]{2,5}-[A-Z]{2,5}-?[A-Z]*$")
+
+    proforma_number = None
+    total_pares     = None
+    supplier_ref    = None
+    flat_text_all   = ""
+    slot_lines: list[dict] = []
+    seen_slot: set[tuple[int, int]] = set()
+
+    try:
+        for page_idx, page in enumerate(doc):
+            words = page.get_text("words")  # list of (x0,y0,x1,y1,text,blk,line,word)
+            if not words:
+                continue
+
+            page_text = " ".join(w[4] for w in words)
+            flat_text_all += page_text + "\n"
+
+            if page_idx == 0:
+                m = _re.search(r"Proforma:\s*(\S+)", page_text)
+                if m: proforma_number = m.group(1)
+                m = _re.search(r"Total de Pares:\s*(\d+)", page_text)
+                if m: total_pares = int(m.group(1))
+                for w in words:
+                    if re_supref.match(w[4]):
+                        supplier_ref = w[4]
+                        break
+
+            # ── Buscar todas las apariciones del label "BRA" o "Referencia BRA"
+            # En PDFs exportados desde Excel cada palabra es un word separado:
+            # "Referencia" y "BRA" salen como 2 tokens; nos basta con localizar
+            # los "BRA" alineados en filas separadas (uno por slot poblado).
+            bra_labels = [w for w in words if w[4].upper() == "BRA"]
+            for bra_w in bra_labels:
+                bra_y = (bra_w[1] + bra_w[3]) / 2.0  # centro vertical
+                bra_x_end = bra_w[2]                  # fin del label
+
+                # Numeros 30..50 en misma fila Y (±2.5pt) a la derecha del label.
+                row_bra = []
+                for w in words:
+                    txt = w[4]
+                    if not re_int_small.match(txt):
+                        continue
+                    if not (30 <= int(txt) <= 50):
+                        continue
+                    wy = (w[1] + w[3]) / 2.0
+                    if abs(wy - bra_y) > 2.5:
+                        continue
+                    if w[0] < bra_x_end:
+                        continue
+                    row_bra.append(w)
+                if len(row_bra) < 5:
+                    continue  # no es una fila BRA real (ej. label suelto)
+                row_bra.sort(key=lambda w: w[0])
+
+                # SKU del slot: 5-7 dígitos arriba a la izquierda del label BRA.
+                # Tomamos el más cercano por distancia euclídea con preferencia
+                # arriba (Y menor) y a la izquierda.
+                slot_sku = None
+                slot_sku_w = None
+                best_d = 1e9
+                for sku_w in words:
+                    if not re_sku.match(sku_w[4]):
+                        continue
+                    sx = sku_w[0]
+                    sy = (sku_w[1] + sku_w[3]) / 2.0
+                    # Debe estar arriba o a la izquierda en el mismo cuadrante
+                    if sy > bra_y + 4 or sx > bra_x_end + 60:
+                        continue
+                    dy = bra_y - sy
+                    if dy < 0 or dy > 80:
+                        continue
+                    dx = abs(sx - bra_w[0])
+                    d = dy * 1.0 + dx * 0.4
+                    if d < best_d:
+                        best_d = d
+                        slot_sku   = sku_w[4]
+                        slot_sku_w = sku_w
+                if not slot_sku:
+                    continue
+
+                slot_key = (page_idx, round((slot_sku_w[1] + slot_sku_w[3]) / 2.0))
+                if slot_key in seen_slot:
+                    continue
+
+                # Fila QTY: enteros >0 cuya Y − bra_y ∈ (5, 50) y X dentro del
+                # rango de la fila BRA.
+                row_x_min = row_bra[0][0] - 4
+                row_x_max = row_bra[-1][2] + 4
+                qty_words = []
+                for w in words:
+                    txt = w[4]
+                    if not re_int_small.match(txt):
+                        continue
+                    qv = int(txt)
+                    if qv <= 0 or qv >= 1000:
+                        continue
+                    wy = (w[1] + w[3]) / 2.0
+                    dy = wy - bra_y
+                    if dy < 5 or dy > 50:
+                        continue
+                    if w[0] < row_x_min or w[2] > row_x_max:
+                        continue
+                    # Excluir la fila EU (35..49) y USA (4.5..15) que están
+                    # entre BRA y QTY: filtramos por "qty_y" más abajo.
+                    qty_words.append(w)
+                if not qty_words:
+                    continue
+
+                # Si hay múltiples filas con candidatos (EU, USA, QTY), elegimos
+                # la fila más profunda (Y mayor) como QTY — filtramos las otras.
+                if qty_words:
+                    qty_y_max = max((w[1] + w[3]) / 2.0 for w in qty_words)
+                    qty_words = [
+                        w for w in qty_words
+                        if abs(((w[1] + w[3]) / 2.0) - qty_y_max) < 3.0
+                    ]
+
+                emitted = 0
+                for q in qty_words:
+                    qty_int = int(q[4])
+                    qx = (q[0] + q[2]) / 2.0
+                    closest_bra = min(
+                        row_bra,
+                        key=lambda b: abs(((b[0] + b[2]) / 2.0) - qx),
+                    )
+                    cx = (closest_bra[0] + closest_bra[2]) / 2.0
+                    if abs(cx - qx) > 8.0:
+                        continue
+                    slot_lines.append({
+                        "sku":            slot_sku,
+                        "supplier_ref":   None,
+                        "talla":          closest_bra[4],
+                        "qty":            qty_int,
+                        "product_label":  "",
+                        "unit_price":     None,
+                        "confidence":     99.0,
+                        "match_strategy": "DETERMINISTIC_HORIZONTAL",
+                        "match_score":    99,
+                        "matched_producto_id": None,
+                        "client_part_number":  None,
+                        "base_code":      None,
+                        "qty_confirmed":  None,
+                        "qty_open":       None,
+                    })
+                    emitted += 1
+                if emitted:
+                    seen_slot.add(slot_key)
+    finally:
+        doc.close()
+
+    if not slot_lines:
+        log.info("[proforma_horiz] no extraje líneas (layout no es horizontal)")
+        return None
+
+    # Enriquecer supplier_ref si lo encontramos
+    if supplier_ref:
+        for ln in slot_lines:
+            ln["supplier_ref"] = supplier_ref
+
+    total_extraido = sum(l["qty"] for l in slot_lines)
+    if total_pares and total_extraido != total_pares:
+        log.warning(
+            "[proforma_horiz] suma extraída=%d != total declarado=%d → fallback",
+            total_extraido, total_pares,
+        )
+        return None
+
+    log.info(
+        "[proforma_horiz] extraje %d líneas (horizontal-matrix), suma=%d (declarado=%s) ✓",
+        len(slot_lines), total_extraido, total_pares,
+    )
+
+    return {
+        "document_kind":   "PROFORMA",
+        "proforma_number": proforma_number,
+        "raw_text":        flat_text_all[:2000],
+        "model":           "deterministic-pymupdf-horizontal-v1",
+        "error":           None,
+        "groups": [{
+            "sap_number":    None,
+            "po_reference":  None,
+            "delivery_date": None,
+            "lines":         slot_lines,
+        }],
+        "lines": [],
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Punto de entrada
 # ─────────────────────────────────────────────────────────────────────
@@ -616,7 +865,23 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str,
             "Si tu proforma es imagen o Excel, usá 'Otro documento'."
         )
 
-    # ── PATH PRIMARIO: parser DETERMINÍSTICO (PyMuPDF + coordenadas) ──
+    # ── PATH PRIMARIO-A: parser HORIZONTAL (Marluvas / Excel-export) ──
+    # Sprint 2026-05-03: la matriz típica de Marluvas es HORIZONTAL
+    # (BRA en una fila, EU debajo, USA debajo, QTY debajo). Si este
+    # parser extrae líneas y la suma cuadra con "Total de Pares", lo
+    # usamos directo. Cero llamadas a OpenAI.
+    det_result = _parse_proforma_horizontal(file_bytes)
+    if det_result and det_result.get("groups") and any(
+        g.get("lines") for g in det_result["groups"]
+    ):
+        log.info("[proforma_extractor] parser horizontal OK — saltando AI")
+        for g in det_result["groups"]:
+            for ln in g["lines"]:
+                if ln.get("talla"):
+                    ln["talla"] = _convert_talla_to_br(ln["talla"])
+        return det_result
+
+    # ── PATH PRIMARIO-B: parser DETERMINÍSTICO VERTICAL (legacy) ──
     # Sprint 2026-05-02 (AG-03): el AI alucina qtys de la matriz horizontal.
     # Probamos primero un parser determinístico que lee posiciones (X,Y)
     # reales del PDF — sin AI, sin alucinación. Si funciona (devuelve

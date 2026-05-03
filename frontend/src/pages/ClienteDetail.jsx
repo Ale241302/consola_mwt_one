@@ -109,14 +109,23 @@ function adaptExpedienteFromApi(r) {
 }
 
 function adaptProductoFromApi(r) {
+  // Sprint 2026-05-03 v2: el backend ahora devuelve UNA FILA POR LÍNEA
+  // del expediente — no agregado. Pasamos los campos al shape que la
+  // ProductosTab nueva consume directamente.
   if (!r) return null;
   return {
-    sku:         r.sku || r.producto_id || '—',
-    product:     r.nombre || r.sku || '—',
-    units_12m:   Number(r.qty_total || 0),
-    revenue_12m: Number(r.valor_total || 0),
-    frequency:   `${r.expedientes_count || 0} OC`,
-    last_order:  r.last_seen_at || null,
+    line_id:           r.line_id || r.id || null,
+    sku:               r.sku || r.producto_id || '—',
+    product:           r.nombre || r.sku || '—',
+    talla:             r.talla || '—',
+    qty:               Number(r.qty || 0),
+    sap:               r.sap || null,
+    unit_price:        Number(r.unit_price || 0),
+    line_total:        Number(r.line_total || 0),
+    expediente_id:     r.expediente_id || null,
+    expediente_codigo: r.expediente_codigo || '—',
+    expediente_estado: r.expediente_estado || null,
+    last_seen_at:      r.last_seen_at || null,
   };
 }
 
@@ -649,7 +658,19 @@ export default function ScreenClienteDetail() {
           {tab === 'productos' && (
             <motion.div key="prod" initial={{opacity:0, y:6}} animate={{opacity:1, y:0}} exit={{opacity:0}} transition={{duration:0.18}}>
               <ProductosTab lang={lang} productos={productosCliente}
-                            consolidate={consolidate} isParent={client.is_parent}/>
+                            consolidate={consolidate} isParent={client.is_parent}
+                            onOpenExpediente={(p) => {
+                              // Sprint 2026-05-03 v2: el row click navega al
+                              // detalle del expediente (mismo patrón que la
+                              // tab Expedientes). Si no hay oc en mock,
+                              // usamos la ruta tolerante /expedientes/none.
+                              const oc = OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(p.expediente_id));
+                              if (oc) {
+                                navigate(`/expedientes/${oc.id}/exp/${p.expediente_id}`);
+                              } else {
+                                navigate(`/expedientes/none/exp/${p.expediente_id}`);
+                              }
+                            }}/>
             </motion.div>
           )}
           {tab === 'alertas' && (
@@ -836,60 +857,100 @@ function PagosTab({ lang, pagos, consolidate, isParent }) {
 }
 
 /* ────────────────────────────────────────────────────
-   TAB · Productos comprados — inteligencia
+   TAB · Productos comprados — una fila por línea de expediente
+   Sprint 2026-05-03 v2: muestra talla, cantidad y expediente
+   clickeable. El total al pie suma todas las líneas.
    ──────────────────────────────────────────────────── */
-function ProductosTab({ lang, productos, consolidate, isParent }) {
+function ProductosTab({ lang, productos, consolidate, isParent, onOpenExpediente }) {
   if (!productos.length) {
     return (
       <>
         <ConsolidatedBanner lang={lang} isParent={isParent} consolidate={consolidate}/>
         <div className="card card-pad-lg empty">
           <IconBoxes size={22} style={{color:'var(--text-tertiary)'}}/>
-          <div className="heading-md">{lang==='es'?'Sin historial de compras':'No purchase history'}</div>
+          <div className="heading-md">{lang==='es'?'Sin productos comprados':'No products purchased'}</div>
+          <div className="caption" style={{color:'var(--text-tertiary)'}}>
+            {lang==='es'
+              ? 'Cuando este cliente tenga expedientes con líneas activas, aparecerán aquí agrupados por expediente.'
+              : 'Lines from active files for this client will appear grouped by file.'}
+          </div>
         </div>
       </>
     );
   }
-  const totalRevenue = productos.reduce((a, p) => a + p.revenue_12m, 0);
+  // KPIs de pie de tabla
+  const totalQty   = productos.reduce((a, p) => a + Number(p.qty || 0), 0);
+  const totalValor = productos.reduce((a, p) => a + Number(p.line_total || 0), 0);
+  const expedientesUnicos = new Set(productos.map(p => p.expediente_id).filter(Boolean)).size;
   return (
     <>
       <ConsolidatedBanner lang={lang} isParent={isParent} consolidate={consolidate}/>
-    <div className="card card-pad-0">
-      <table className="table">
-        <thead>
-          <tr>
-            <th>SKU</th>
-            <th>{lang==='es'?'Producto':'Product'}</th>
-            <th style={{textAlign:'right'}}>{lang==='es'?'Unidades 12m':'Units 12m'}</th>
-            <th style={{textAlign:'right'}}>{lang==='es'?'Revenue 12m':'Revenue 12m'}</th>
-            <th>{lang==='es'?'Frecuencia':'Frequency'}</th>
-            <th>{lang==='es'?'Último pedido':'Last order'}</th>
-            <th>{lang==='es'?'Mix':'Mix'}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {productos.map(p => {
-            const mix = totalRevenue ? (p.revenue_12m / totalRevenue) : 0;
-            return (
-              <tr key={p.sku}>
+      {/* Mini-summary */}
+      <div className="status-machine-strip" style={{marginBottom: 10}}>
+        <div className="sm-box">
+          <div className="sm-label">{lang==='es'?'Líneas':'Lines'}</div>
+          <div className="sm-val tabular-nums">{productos.length}</div>
+        </div>
+        <div className="sm-box">
+          <div className="sm-label">{lang==='es'?'Expedientes':'Files'}</div>
+          <div className="sm-val tabular-nums">{expedientesUnicos}</div>
+        </div>
+        <div className="sm-box">
+          <div className="sm-label">{lang==='es'?'Unidades':'Units'}</div>
+          <div className="sm-val tabular-nums">{totalQty.toLocaleString()}</div>
+        </div>
+        <div className="sm-box sm-total">
+          <div className="sm-label">{lang==='es'?'Total':'Total'}</div>
+          <div className="sm-val tabular-nums">{fmtMoney(totalValor)}</div>
+        </div>
+      </div>
+
+      <div className="card card-pad-0">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>{lang==='es'?'Producto':'Product'}</th>
+              <th style={{textAlign:'center'}}>{lang==='es'?'Talla':'Size'}</th>
+              <th style={{textAlign:'right'}}>{lang==='es'?'Cantidad':'Qty'}</th>
+              <th style={{textAlign:'right'}}>{lang==='es'?'Precio':'Price'}</th>
+              <th style={{textAlign:'right'}}>{lang==='es'?'Total':'Total'}</th>
+              <th>{lang==='es'?'Expediente':'File'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {productos.map(p => (
+              <tr key={p.line_id || `${p.expediente_id}-${p.sku}-${p.talla}`}
+                  onClick={() => p.expediente_id && onOpenExpediente && onOpenExpediente(p)}
+                  style={{ cursor: p.expediente_id ? 'pointer' : 'default' }}
+                  title={lang==='es' ? 'Abrir expediente' : 'Open file'}>
                 <td className="mono-sm">{p.sku}</td>
                 <td>{p.product}</td>
-                <td style={{textAlign:'right'}}>{p.units_12m.toLocaleString()}</td>
-                <td style={{textAlign:'right'}}>{fmtMoney(p.revenue_12m)}</td>
-                <td><span className="pill-soft">{p.frequency}</span></td>
-                <td>{fmtShortDate(p.last_order, lang)}</td>
-                <td style={{width: 160}}>
-                  <div className="credit-bar band-ok" style={{background:'color-mix(in oklab, var(--text-tertiary), white 80%)'}}>
-                    <span style={{width:`${(mix*100).toFixed(0)}%`, background: 'var(--channel-color, #481EE3)'}}/>
-                  </div>
-                  <div className="caption" style={{textAlign:'right', marginTop:2}}>{(mix*100).toFixed(0)}%</div>
+                <td style={{textAlign:'center'}} className="tabular-nums">{p.talla || '—'}</td>
+                <td style={{textAlign:'right'}} className="tabular-nums">{Number(p.qty || 0).toLocaleString()}</td>
+                <td style={{textAlign:'right'}} className="tabular-nums">{fmtMoney(p.unit_price)}</td>
+                <td style={{textAlign:'right'}} className="tabular-nums">{fmtMoney(p.line_total)}</td>
+                <td>
+                  <span className="mono-sm" style={{
+                    color: 'var(--brand-accent, #00B286)',
+                    textDecoration: 'underline',
+                    textUnderlineOffset: 2,
+                  }}>
+                    {p.expediente_codigo || '—'}
+                  </span>
+                  {p.sap && (
+                    <span className="caption mono-sm" style={{
+                      marginLeft: 8, color: 'var(--text-tertiary)',
+                    }}>
+                      · SAP {p.sap}
+                    </span>
+                  )}
                 </td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }
