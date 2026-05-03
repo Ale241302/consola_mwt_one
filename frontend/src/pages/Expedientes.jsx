@@ -281,6 +281,10 @@ export default function ScreenExpedientes() {
   // deleting: bloquea botones mientras corren las llamadas en serie.
   const [selected, setSelected] = useState(() => new Set());
   const [deleting, setDeleting] = useState(false);
+  // Sprint 2026-05-03 v3 · modal de confirmación (reemplaza window.confirm).
+  // pendingDelete: array de uuids a borrar cuando el user confirme; null = oculto.
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleteErr, setDeleteErr] = useState(null);
 
   const toggleOne = (uuid) => {
     setSelected(prev => {
@@ -290,15 +294,19 @@ export default function ScreenExpedientes() {
     });
   };
   const clearSelection = () => setSelected(new Set());
-  const handleBulkDelete = async (ids) => {
+  // Sprint 2026-05-03 v3 · `handleBulkDelete` ahora SOLO abre el modal.
+  // El borrado real corre en `confirmBulkDelete` cuando el user pulsa OK.
+  const handleBulkDelete = (ids) => {
     if (!ids || ids.length === 0 || deleting) return;
-    const ok = window.confirm(
-      lang === 'es'
-        ? `¿Eliminar ${ids.length} expediente${ids.length > 1 ? 's' : ''}? Esta acción no se puede deshacer.`
-        : `Delete ${ids.length} file${ids.length > 1 ? 's' : ''}? This cannot be undone.`
-    );
-    if (!ok) return;
+    setDeleteErr(null);
+    setPendingDelete(Array.from(ids));
+  };
+
+  const confirmBulkDelete = async () => {
+    const ids = pendingDelete || [];
+    if (ids.length === 0 || deleting) return;
     setDeleting(true);
+    setDeleteErr(null);
     try {
       // Llamadas en serie para no saturar el backend ni perder errores
       // individuales. Si una falla, las demás continúan; al final reload.
@@ -308,13 +316,15 @@ export default function ScreenExpedientes() {
       const failed = results.filter(r => r.status === 'rejected');
       if (failed.length > 0) {
         const msg = failed[0].reason?.message || (lang === 'es' ? 'Error' : 'Error');
-        alert(
+        setDeleteErr(
           (lang === 'es'
             ? `${failed.length} de ${ids.length} no se pudo eliminar. `
             : `${failed.length} of ${ids.length} could not be deleted. `) + msg
         );
+        return;  // dejamos el modal abierto para que el user vea el error
       }
       clearSelection();
+      setPendingDelete(null);
       await load();   // refrescar listado desde API
     } finally {
       setDeleting(false);
