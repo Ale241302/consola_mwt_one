@@ -96,7 +96,12 @@ class ClienteSerializer(serializers.ModelSerializer):
     ciudad       = serializers.CharField(max_length=96,  required=False, allow_blank=True, allow_null=True)
     direccion    = serializers.CharField(                 required=False, allow_blank=True, allow_null=True)
 
-    # Campos derivados.
+    # Sprint 2026-05-03 · CONSUMO DINÁMICO:
+    # `credito_usado` ya no se lee del campo persistido (se queda obsoleto
+    # cuando se borra/edita un expediente o sus líneas). Se calcula en VIVO
+    # sumando líneas activas de expedientes activos del cliente — misma
+    # fórmula que el wizard del portal en /portal/nueva-oc.
+    credito_usado      = serializers.SerializerMethodField()
     credito_disponible = serializers.SerializerMethodField()
     tasa_utilizacion   = serializers.SerializerMethodField()
 
@@ -247,13 +252,31 @@ class ClienteSerializer(serializers.ModelSerializer):
                     attrs.pop(f, None)
         return attrs
 
-    # ── Derivados ──────────────────────────────────────────────
+    # ── Derivados (sprint 2026-05-03 · consumo dinámico) ────────
+    def _consumo_pool(self, o):
+        """Cachea el cómputo dinámico por instancia de serializer.
+
+        Para listings (many=True), DRF reutiliza el child serializer
+        a través de las filas → cache acumulado evita 3 queries por fila.
+        """
+        cache = getattr(self, "_cached_consumo", None) or {}
+        key = str(o.id)
+        if key in cache:
+            return cache[key]
+        valor = float(o.calcular_consumo_credito_pool())
+        cache[key] = valor
+        self._cached_consumo = cache
+        return valor
+
+    def get_credito_usado(self, o):
+        return self._consumo_pool(o)
+
     def get_credito_disponible(self, o):
-        return float(o.credito_aprobado or 0) - float(o.credito_usado or 0)
+        return max(0.0, float(o.credito_aprobado or 0) - self._consumo_pool(o))
 
     def get_tasa_utilizacion(self, o):
         aprobado = float(o.credito_aprobado or 0)
-        usado    = float(o.credito_usado    or 0)
+        usado    = self._consumo_pool(o)
         return round((usado / aprobado) * 100, 2) if aprobado > 0 else 0.0
 
     # ── Parent-Child resolvers (sprint Parent-Child) ───────────
@@ -316,6 +339,8 @@ class ClienteListSerializer(serializers.ModelSerializer):
     Incluye `parent_id` y `subsidiarias_count` para que el dashboard y
     el grid de subsidiarias compartan el mismo serializer.
     """
+    # Sprint 2026-05-03 · CONSUMO DINÁMICO (mismo enfoque que ClienteSerializer)
+    credito_usado      = serializers.SerializerMethodField()
     credito_disponible = serializers.SerializerMethodField()
     tasa_utilizacion   = serializers.SerializerMethodField()
     credito_limit_usd  = serializers.DecimalField(
@@ -351,12 +376,25 @@ class ClienteListSerializer(serializers.ModelSerializer):
             "is_active", "updated_at",
         )
 
+    def _consumo_pool(self, o):
+        cache = getattr(self, "_cached_consumo", None) or {}
+        key = str(o.id)
+        if key in cache:
+            return cache[key]
+        valor = float(o.calcular_consumo_credito_pool())
+        cache[key] = valor
+        self._cached_consumo = cache
+        return valor
+
+    def get_credito_usado(self, o):
+        return self._consumo_pool(o)
+
     def get_credito_disponible(self, o):
-        return float(o.credito_aprobado or 0) - float(o.credito_usado or 0)
+        return max(0.0, float(o.credito_aprobado or 0) - self._consumo_pool(o))
 
     def get_tasa_utilizacion(self, o):
         aprobado = float(o.credito_aprobado or 0)
-        usado    = float(o.credito_usado    or 0)
+        usado    = self._consumo_pool(o)
         return round((usado / aprobado) * 100, 2) if aprobado > 0 else 0.0
 
     def get_subsidiarias_count(self, o):
@@ -366,7 +404,11 @@ class ClienteListSerializer(serializers.ModelSerializer):
         """Cuenta de expedientes abiertos del cliente (raw SQL — sin FK).
 
         En padre cuenta padre + subsidiarias (pool consolidado).
-        Si la tabla expedientes.expediente aún no existe, devuelve 0.
+
+        Sprint 2026-05-03 · BUGFIX: la columna real en expedientes.expediente
+        es ``client_id`` (antes filtrábamos por ``cliente_id`` que nunca
+        existió → la query rompía y siempre devolvía 0). Añadido también
+        el filtro ``is_active = TRUE`` para no contar expedientes borrados.
         """
         from django.db import connection
         ids = o.pool_ids() if o.is_parent else [str(o.id)]
@@ -377,7 +419,8 @@ class ClienteListSerializer(serializers.ModelSerializer):
                 placeholders = ",".join(["%s"] * len(ids))
                 c.execute(
                     f"SELECT COUNT(*) FROM expedientes.expediente "
-                    f"WHERE cliente_id::text IN ({placeholders}) "
+                    f"WHERE client_id::text IN ({placeholders}) "
+                    f"AND is_active = TRUE "
                     f"AND estado NOT IN ('CERRADO','CANCELADO')",
                     ids,
                 )

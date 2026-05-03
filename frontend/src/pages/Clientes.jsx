@@ -57,11 +57,19 @@ function mapClienteFromApi(r) {
     contacto_nombre:  r.contacto_nombre || "—",
     email:            r.contacto_email  || "—",
     credito_limit:    Number(r.credito_aprobado) || 0,
+    // Sprint 2026-05-03: el backend ahora calcula credito_usado en VIVO
+    // sumando líneas activas de expedientes activos del cliente (misma
+    // fórmula que el wizard del portal). Soft-delete de expediente o de
+    // líneas se refleja automáticamente.
     credito_used:     Number(r.credito_usado)    || 0,
     credito_dias:     Number(r.dias_credito)     || 0,
     incoterm:         r.incoterm || "EXW",
     // Parent-Child (sprint 2026-04-29) — badge en card
     subsidiarias_count: Number(r.subsidiarias_count || 0),
+    // Sprint 2026-05-03: contador real de expedientes activos (antes
+    // íbamos por mockData.EXPEDIENTES y siempre mostraba 0 para clientes
+    // del backend).
+    expedientes_activos: Number(r.expedientes_activos || 0),
     _raw:             r,
   };
 }
@@ -238,7 +246,11 @@ export default function ScreenClientes() {
             const util    = c.credito_limit ? (c.credito_used / c.credito_limit) : 0;
             const utilPct = Math.round(util * 100);
             const creditBand = utilPct >= 100 ? 'critical' : utilPct >= 85 ? 'warning' : 'ok';
-            const activeExps = EXPEDIENTES.filter(e => e.client_id === c.id && e.status !== 'CERRADO').length;
+            // Sprint 2026-05-03: count viene del backend (campo expedientes_activos).
+            // Para clientes mock conservamos el filtrado contra MOCK_EXPEDIENTES.
+            const activeExps = c._raw
+              ? (c.expedientes_activos || 0)
+              : EXPEDIENTES.filter(e => e.client_id === c.id && e.status !== 'CERRADO').length;
 
             return (
               <motion.div

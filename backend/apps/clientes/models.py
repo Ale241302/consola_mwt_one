@@ -92,15 +92,110 @@ class Cliente(models.Model):
             ids.extend(str(s.id) for s in self.get_subsidiaries())
         return ids
 
+    # ─────────────────────────────────────────────────────────────────
+    # Sprint 2026-05-03 · CONSUMO DINÁMICO DE CRÉDITO
+    # El campo persistido `credito_usado` queda obsoleto cuando se borra
+    # o edita un expediente/sus líneas. Las funciones de abajo calculan
+    # el consumo en VIVO sumando líneas activas de expedientes activos
+    # del pool — misma fórmula que el wizard del portal en /portal/nueva-oc.
+    #
+    #   consumido = Σ qty * COALESCE(
+    #       linea.unit_price,
+    #       producto.especificaciones.client_prices[client_id],
+    #       producto.precio_lista,
+    #       0
+    #   )
+    #
+    # Resultado:
+    #   · Eliminar expediente → todas sus líneas dejan de sumar (con/sin SAP).
+    #   · Eliminar/agregar producto → suma o resta automáticamente.
+    #   · Cambios en proforma o discrepancias OC → recálculo inmediato.
+    #   · Padre con subsidiarias → suma todo el pool.
+    # ─────────────────────────────────────────────────────────────────
     def calcular_consumo_credito_pool(self) -> Decimal:
-        """Suma de credito_usado del pool (padre + subsidiarias activas)."""
-        if self.is_parent:
-            agg = Cliente.objects.filter(
-                models.Q(id=self.id) |
-                models.Q(parent_id=str(self.id), is_active=True)
-            ).aggregate(t=models.Sum("credito_usado"))
-            return Decimal(agg["t"] or 0)
-        return Decimal(self.credito_usado or 0)
+        """Crédito consumido en VIVO por el pool (padre + subsidiarias)."""
+        from django.db import connection
+        ids = self.pool_ids() if self.is_parent else [str(self.id)]
+        if not ids:
+            return Decimal(0)
+        try:
+            with connection.cursor() as c:
+                placeholders = ",".join(["%s"] * len(ids))
+                c.execute(
+                    f"""
+                    SELECT COALESCE(SUM(
+                        l.qty * COALESCE(
+                            NULLIF(l.unit_price, 0),
+                            CASE
+                                WHEN p.especificaciones IS NOT NULL
+                                 AND jsonb_typeof(p.especificaciones->'client_prices') = 'object'
+                                 AND jsonb_typeof(p.especificaciones->'client_prices'->(e.client_id::text)) = 'number'
+                                THEN (p.especificaciones->'client_prices'->>(e.client_id::text))::numeric
+                                ELSE NULL
+                            END,
+                            NULLIF(p.precio_lista, 0),
+                            0
+                        )
+                    ), 0)
+                    FROM expedientes.linea l
+                    INNER JOIN expedientes.expediente e
+                            ON e.id = l.expediente_id
+                           AND e.is_active = TRUE
+                           AND e.estado NOT IN ('CERRADO','CANCELADO')
+                    LEFT JOIN productos.producto p ON p.id = l.producto_id
+                    WHERE l.is_active = TRUE
+                      AND e.client_id::text IN ({placeholders})
+                    """,
+                    ids,
+                )
+                row = c.fetchone()
+                return Decimal(row[0] or 0)
+        except Exception:
+            # Fallback al campo persistido si la BD aún no está migrada.
+            if self.is_parent:
+                agg = Cliente.objects.filter(
+                    models.Q(id=self.id) |
+                    models.Q(parent_id=str(self.id), is_active=True)
+                ).aggregate(t=models.Sum("credito_usado"))
+                return Decimal(agg["t"] or 0)
+            return Decimal(self.credito_usado or 0)
+
+    def calcular_credito_consumido(self) -> Decimal:
+        """Crédito consumido SOLO por este cliente (sin pool consolidado)."""
+        from django.db import connection
+        try:
+            with connection.cursor() as c:
+                c.execute(
+                    """
+                    SELECT COALESCE(SUM(
+                        l.qty * COALESCE(
+                            NULLIF(l.unit_price, 0),
+                            CASE
+                                WHEN p.especificaciones IS NOT NULL
+                                 AND jsonb_typeof(p.especificaciones->'client_prices') = 'object'
+                                 AND jsonb_typeof(p.especificaciones->'client_prices'->(e.client_id::text)) = 'number'
+                                THEN (p.especificaciones->'client_prices'->>(e.client_id::text))::numeric
+                                ELSE NULL
+                            END,
+                            NULLIF(p.precio_lista, 0),
+                            0
+                        )
+                    ), 0)
+                    FROM expedientes.linea l
+                    INNER JOIN expedientes.expediente e
+                            ON e.id = l.expediente_id
+                           AND e.is_active = TRUE
+                           AND e.estado NOT IN ('CERRADO','CANCELADO')
+                    LEFT JOIN productos.producto p ON p.id = l.producto_id
+                    WHERE l.is_active = TRUE
+                      AND e.client_id::text = %s
+                    """,
+                    [str(self.id)],
+                )
+                row = c.fetchone()
+                return Decimal(row[0] or 0)
+        except Exception:
+            return Decimal(self.credito_usado or 0)
 
     def calcular_kpis_consolidados(self) -> dict:
         """KPIs financieros del cliente.
@@ -118,12 +213,13 @@ class Cliente(models.Model):
         if self.is_parent:
             limite = Decimal(self.credito_aprobado or 0)
             usado_pool = self.calcular_consumo_credito_pool()
-            usado_self = Decimal(self.credito_usado or 0)
+            usado_self = self.calcular_credito_consumido()
         else:
             parent = self.get_parent()
             limite = Decimal(parent.credito_aprobado or 0) if parent else Decimal(0)
-            usado_pool = Decimal(self.credito_usado or 0)
-            usado_self = usado_pool
+            # Subsidiaria: el cap operativo lo aplica el padre (consumo del pool).
+            usado_pool = parent.calcular_consumo_credito_pool() if parent else self.calcular_credito_consumido()
+            usado_self = self.calcular_credito_consumido()
 
         disponible = max(Decimal(0), limite - usado_pool)
         tasa = float((usado_pool / limite) * 100) if limite > 0 else 0.0

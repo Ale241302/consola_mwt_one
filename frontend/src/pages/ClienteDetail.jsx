@@ -20,7 +20,7 @@ import {
   IconRefresh, IconUsers,
 } from "../lib/icons.jsx";
 import { fmtMoney, fmtShortDate } from "../lib/i18n.js";
-import { clientesApi } from "../lib/api.js";
+import { clientesApi, apiFetch, getToken } from "../lib/api.js";
 import {
   CLIENTS, EXPEDIENTES, CLIENT_PAYMENTS, CLIENT_PRODUCTS_BOUGHT, OCS,
 } from "../data/mockData.js";
@@ -73,6 +73,52 @@ function adaptBackendClient(raw) {
 // full-page pages/ClienteFormView.jsx. El botón "Editar" de aquí navega
 // ahora a /clientes/:id/editar.
 // import ClientFormDrawer from "../components/clientes/ClientFormDrawer.jsx";
+
+// ─── Adapters API → shape histórico (sprint 2026-05-03) ───────────────
+// El endpoint /clientes/{id}/expedientes/ entrega: id, codigo, estado,
+// total_invoiced, total_paid, balance, credit_days, last_event_at,
+// order_value, lines_count, lines_with_sap. Mapeamos al shape que ya
+// esperan ExpedientesTab/KPIs y dejamos `total_invoiced` con fallback al
+// order_value (suma de líneas resueltas con catálogo) para que la
+// columna "Facturado" no quede en $0 cuando todavía no hay facturación.
+function adaptExpedienteFromApi(r) {
+  if (!r || !r.id) return null;
+  const inv  = Number(r.total_invoiced || 0);
+  const ov   = Number(r.order_value || 0);
+  const paid = Number(r.total_paid || 0);
+  const facturado = inv > 0 ? inv : ov;
+  const balance   = Number(r.balance || 0) > 0
+    ? Number(r.balance)
+    : Math.max(0, facturado - paid);
+  return {
+    id:             r.id,
+    ref:            r.codigo || r.id,
+    oc_client:      r.codigo || '—',
+    client_id:      r.client_id || null,
+    status:         r.estado || 'REGISTRO',
+    brand:          r.brand || '—',
+    total_invoiced: facturado,
+    total_paid:     paid,
+    balance,
+    credit_days:    Number(r.credit_days || 0),
+    last_event_at:  r.last_event_at || r.created_at || null,
+    lines_count:    Number(r.lines_count || 0),
+    lines_with_sap: Number(r.lines_with_sap || 0),
+    order_value:    ov,
+  };
+}
+
+function adaptProductoFromApi(r) {
+  if (!r) return null;
+  return {
+    sku:         r.sku || r.producto_id || '—',
+    product:     r.nombre || r.sku || '—',
+    units_12m:   Number(r.qty_total || 0),
+    revenue_12m: Number(r.valor_total || 0),
+    frequency:   `${r.expedientes_count || 0} OC`,
+    last_order:  r.last_seen_at || null,
+  };
+}
 
 /* ── Payment Status Machine ──────────────────────────── */
 const PAYMENT_STATUS = {
@@ -142,6 +188,14 @@ export default function ScreenClienteDetail() {
   const [loading, setLoading]     = useState(true);
   const [loadErr, setLoadErr]     = useState(null);
 
+  // Sprint 2026-05-03 · Expedientes y productos del cliente vienen ahora
+  // del backend (endpoints `/clientes/{id}/expedientes/` y
+  // `/clientes/{id}/productos_comprados/`). Reemplaza el filtrado in-memory
+  // contra MOCK_EXPEDIENTES y MOCK_CLIENT_PRODUCTS_BOUGHT que mostraba
+  // siempre "Sin expedientes" para clientes del backend.
+  const [apiExpedientes, setApiExpedientes] = useState(null);
+  const [apiProductos,   setApiProductos]   = useState(null);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -162,6 +216,29 @@ export default function ScreenClienteDetail() {
     return () => { cancelled = true; };
   }, [clienteId]);
 
+  // Refrescar expedientes + productos cuando consolidate o el id cambian.
+  // Si el cliente es mock saltamos el fetch — los datos vendrán del mock.
+  useEffect(() => {
+    if (!clienteId || rawClient?.__isMockShape) {
+      setApiExpedientes(null);
+      setApiProductos(null);
+      return;
+    }
+    let cancelled = false;
+    const cQ = consolidate ? 'true' : 'false';
+    const tk = getToken();
+    Promise.all([
+      apiFetch(`/clientes/${clienteId}/expedientes/?consolidate=${cQ}`,        { token: tk }).catch(() => []),
+      apiFetch(`/clientes/${clienteId}/productos_comprados/?consolidate=${cQ}`, { token: tk }).catch(() => []),
+    ]).then(([exps, prods]) => {
+      if (cancelled) return;
+      setApiExpedientes(Array.isArray(exps) ? exps : (exps?.results || []));
+      setApiProductos(Array.isArray(prods) ? prods : (prods?.results || []));
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clienteId, consolidate, rawClient?.__isMockShape]);
+
   const client = useMemo(() => {
     if (!rawClient) return null;
     if (rawClient.__isMockShape) return rawClient;
@@ -174,29 +251,42 @@ export default function ScreenClienteDetail() {
   //     para que no fallen cuando `client` aún no resolvió. ───
   const cid = client?.id;
 
-  /* ── Data slices ────────────────── */
-  const expedientesCliente = useMemo(
-    () => cid ? EXPEDIENTES.filter(e => e.client_id === cid) : [],
-    [cid]
-  );
+  /* ── Data slices (sprint 2026-05-03) ───────────────────────
+     Si tenemos data del API la usamos; si no (cliente mock o aún
+     cargando), caemos al mock data. El adapter mapea el shape del
+     backend al shape histórico que esperan los <ExpedientesTab/> y
+     <ProductosTab/>. */
+  const expedientesCliente = useMemo(() => {
+    if (Array.isArray(apiExpedientes)) {
+      return apiExpedientes.map(adaptExpedienteFromApi).filter(Boolean);
+    }
+    return cid ? EXPEDIENTES.filter(e => e.client_id === cid) : [];
+  }, [apiExpedientes, cid]);
   const expedientesActivos = useMemo(
-    () => expedientesCliente.filter(e => e.status !== 'CERRADO'),
+    () => expedientesCliente.filter(
+      e => e.status !== 'CERRADO' && e.status !== 'CANCELADO'
+    ),
     [expedientesCliente]
   );
-  const pagosCliente = useMemo(
-    () => cid
-      ? CLIENT_PAYMENTS.filter(p => p.client_id === cid)
-          .sort((a,b) => (a.date < b.date ? 1 : -1))
-      : [],
-    [cid]
-  );
-  const productosCliente = useMemo(
-    () => cid
+  // Pagos: aún no hay endpoint dedicado. Usamos mock cuando es cliente
+  // mock; para clientes reales devolvemos lista vacía hasta que cobros
+  // exponga /clientes/{id}/pagos/.
+  const pagosCliente = useMemo(() => {
+    if (rawClient?.__isMockShape && cid) {
+      return CLIENT_PAYMENTS.filter(p => p.client_id === cid)
+        .sort((a,b) => (a.date < b.date ? 1 : -1));
+    }
+    return [];
+  }, [cid, rawClient?.__isMockShape]);
+  const productosCliente = useMemo(() => {
+    if (Array.isArray(apiProductos)) {
+      return apiProductos.map(adaptProductoFromApi).filter(Boolean);
+    }
+    return cid
       ? CLIENT_PRODUCTS_BOUGHT.filter(p => p.client_id === cid)
           .sort((a,b) => b.revenue_12m - a.revenue_12m)
-      : [],
-    [cid]
-  );
+      : [];
+  }, [apiProductos, cid]);
 
   /* ── KPIs ───────────────────────── */
   const kpis = useMemo(() => {
@@ -537,8 +627,16 @@ export default function ScreenClienteDetail() {
                               consolidate={consolidate}
                               isParent={client.is_parent}
                               onOpen={(exp)=>{
-                const oc = OCS.find(o => o.expedientes.includes(exp.id));
-                if (oc) navigate(`/expedientes/${oc.id}/exp/${exp.id}`);
+                // Sprint 2026-05-03: con expedientes del backend ya no
+                // tenemos un mock OCS para resolver oc_id. Usamos la ruta
+                // tolerante /expedientes/none/exp/<id> que ya soporta
+                // ExpedienteDetail (mismo patrón que Expedientes.jsx).
+                const oc = OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(exp.id));
+                if (oc) {
+                  navigate(`/expedientes/${oc.id}/exp/${exp.id}`);
+                } else {
+                  navigate(`/expedientes/none/exp/${exp.id}`);
+                }
               }}/>
             </motion.div>
           )}
