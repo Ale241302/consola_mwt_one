@@ -506,9 +506,10 @@ class ParseTemplateView(APIView):
         assignment_skus = set()
         product_meta = {}
         if unique_skus:
+            # Sprint 2026-05-03 v3.8 · CPA legacy queda como fallback —
+            # la fuente principal es producto.especificaciones.visibility.
             try:
                 with connection.cursor() as c:
-                    # CPA → solo SKUs activos asignados al cliente
                     c.execute("""
                         SELECT brand_sku
                           FROM pricing.client_assignment
@@ -519,22 +520,47 @@ class ParseTemplateView(APIView):
                     """, [client_id, unique_skus])
                     assignment_skus = {row[0] for row in c.fetchall()}
             except Exception:
-                log.exception("[parse_template] CPA lookup falló")
+                log.exception("[parse_template] CPA legacy lookup falló")
 
+            # Producto: pick is_active=TRUE para no devolver IDs viejos
+            # (el frontend hace GET /api/productos/<id>/ y un id inactivo
+            # daba 404). Ordenamos por updated_at DESC para tomar la fila
+            # vigente cuando hay duplicados con el mismo SKU.
             try:
                 with connection.cursor() as c:
                     c.execute("""
-                        SELECT id, sku, nombre
+                        SELECT DISTINCT ON (sku)
+                               id, sku, nombre, especificaciones
                           FROM productos.producto
                          WHERE sku = ANY(%s)
+                           AND COALESCE(is_active, TRUE) = TRUE
+                         ORDER BY sku, updated_at DESC NULLS LAST
                     """, [unique_skus])
                     for row in c.fetchall():
-                        product_meta[row[1]] = {
-                            "producto_id":   str(row[0]),
-                            "product_label": row[2] or "",
+                        prod_id, sku, nombre, espec = row
+                        product_meta[sku] = {
+                            "producto_id":   str(prod_id),
+                            "product_label": nombre or "",
+                            "especificaciones": espec or {},
                         }
             except Exception:
-                pass
+                log.exception("[parse_template] productos lookup falló")
+
+            # Sprint 2026-05-03 v3.8 · evaluar visibility nueva por cada SKU.
+            # Si visible_to_all=true o client_overrides[client_id]=true → asignado.
+            for sku, meta in product_meta.items():
+                vis = (meta.get("especificaciones") or {}).get("visibility") or {}
+                if vis.get("visible_to_all") is True:
+                    assignment_skus.add(sku)
+                    continue
+                ov = vis.get("client_overrides") or {}
+                if ov.get(str(client_id)) is True:
+                    assignment_skus.add(sku)
+                    continue
+                # Fallback adicional (legacy doble): client_visibility map
+                legacy = (meta.get("especificaciones") or {}).get("client_visibility")
+                if isinstance(legacy, dict) and legacy.get(str(client_id)) is True:
+                    assignment_skus.add(sku)
 
         out_lines = []
         unassigned = []

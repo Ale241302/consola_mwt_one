@@ -862,8 +862,7 @@ function Step2Productos({
                 <th style={{ textAlign: "right", paddingRight: 24 }}>
                   {lang === "es" ? "Cantidad" : "Qty"}
                 </th>
-                {isAdmin && <th style={{ textAlign: "right" }}>{lang === "es" ? "P. unit." : "Unit price"}</th>}
-                {isAdmin && <th style={{ textAlign: "right" }}>{lang === "es" ? "Subtotal" : "Subtotal"}</th>}
+                {/* Sprint 2026-05-03 v3.8 · P. unit y Subtotal ocultas a pedido del CEO. */}
                 <th>{lang === "es" ? "Estado" : "Status"}</th>
                 <th style={{ width: 56, textAlign: "center" }}></th>
               </tr>
@@ -884,25 +883,7 @@ function Step2Productos({
                              style={{ width: 90, textAlign: "right",
                                       display: "inline-block" }}/>
                     </td>
-                    {isAdmin && (
-                      <td className="tabular-nums" style={{ textAlign: "right" }}>
-                        {(() => {
-                          const u = Number(priceMap[l.producto_id] || 0);
-                          if (u > 0) return `$${u.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                          return <span style={{ color: "var(--text-tertiary)" }}>—</span>;
-                        })()}
-                      </td>
-                    )}
-                    {isAdmin && (
-                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600, color: "#0B1E3A" }}>
-                        {(() => {
-                          const u = Number(priceMap[l.producto_id] || 0);
-                          const sub = u * Number(l.cantidad || 0);
-                          if (sub > 0) return `$${sub.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                          return <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}>—</span>;
-                        })()}
-                      </td>
-                    )}
+                    {/* Sprint 2026-05-03 v3.8 · TDs P. unit y Subtotal eliminados. */}
                     <td>
                       {unassigned ? (
                         l.unassigned_request_sent ? (
