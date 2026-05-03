@@ -845,7 +845,7 @@ function GroupAccordion({ sapKey, group, selected, onToggle, lang,
                              requestPending={requestPending}
                              requestSent={requestSent}
                              requestErr={requestErr}
-                             onRequestAssignment={requestAssignment}/>
+                             onRequestAssignment={onRequestAssignment}/>
           ))}
         </div>
       )}
