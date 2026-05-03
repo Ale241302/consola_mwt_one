@@ -1654,23 +1654,37 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
               );
             })}
           </tbody>
-          {isAdmin && totalValue > 0 && (
-            <tfoot>
-              <tr>
-                <td colSpan={4} style={{ textAlign: "right", paddingRight: 16,
-                                          color: "var(--text-tertiary)", fontWeight: 600,
-                                          textTransform: "uppercase", fontSize: 11, letterSpacing: 0.6 }}>
-                  {lang === "es" ? "Valor total del pedido" : "Order total value"}
-                </td>
-                <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 800,
-                                                       color: "#00B286", fontSize: 16 }}>
-                  ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </td>
-              </tr>
-            </tfoot>
-          )}
         </table>
       </div>
+
+      {/* Sprint 2026-05-03 v3.9 · Total separado en barra propia.
+          Antes vivía como <tfoot>, pero al tener colSpan + columnas con
+          chips de talla se veía descolgado del eje vertical de la columna
+          'Valor'. Lo sacamos a un bloque hermano con grid 2-col que se
+          alinea limpio al borde derecho del card. */}
+      {isAdmin && totalValue > 0 && (
+        <div style={{
+          marginTop: 10,
+          padding: "12px 16px",
+          background: "rgba(0,178,134,0.06)",
+          border: "1px solid rgba(0,178,134,0.18)",
+          borderRadius: 10,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 12,
+        }}>
+          <span style={{
+            color: "var(--text-tertiary)", fontWeight: 600,
+            textTransform: "uppercase", fontSize: 11, letterSpacing: 0.6,
+          }}>
+            {lang === "es" ? "Valor total del pedido" : "Order total value"}
+          </span>
+          <span className="tabular-nums" style={{
+            fontWeight: 800, color: "#00B286", fontSize: 18,
+          }}>
+            ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        </div>
+      )}
 
       {/* ── Sprint 2026-05-01: Impacto en credito (CEO-only) ── */}
       {isAdmin && creditProjection && creditProjection.limit > 0 && orderLines.length > 0 && (
