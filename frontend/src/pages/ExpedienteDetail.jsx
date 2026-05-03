@@ -480,6 +480,7 @@ export default function ScreenExpedienteDetail() {
       {showMatchmaker && (
         <DocumentMatchmakerWizard
           expedienteId={exp.id}
+          clientId={exp.client_id}
           lang={lang}
           onClose={() => setShowMatchmaker(false)}
           onApplied={() => {

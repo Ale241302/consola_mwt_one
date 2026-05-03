@@ -1,5 +1,8 @@
 // =====================================================================
 // DocumentMatchmakerWizard.jsx — Auditoría documental con IA
+// Sprint 2026-05-03 v3 — chequea visibility del SKU contra el cliente y
+// ofrece "Solicitar Asignación" cuando ADD_LINE apunta a un producto NO
+// asignado, en lugar del checkbox de resolución habitual.
 // Sprint Document Matchmaker · 2026-04-29
 // Agente responsable: [AG-FRONTEND]
 //
@@ -24,7 +27,7 @@ import {
   IconUpload, IconCheck, IconX, IconAlert, IconSparkle,
   IconFileText, IconRefresh, IconArrow, IconShield,
 } from "../../lib/icons.jsx";
-import { documentMatchmakerApi } from "../../lib/api.js";
+import {  documentMatchmakerApi, productosApi, getToken } from "../../lib/api.js";
 
 // ─── Catálogo de tipos de documento ───────────────────────────
 const DOC_TYPES = [
@@ -59,6 +62,7 @@ export default function DocumentMatchmakerWizard({
   initialFile = null,
   initialDocumentType = null,
   initialResult = null,
+  clientId = null,
 }) {
   const [step, setStep] = useState(
     initialResult ? 3 : (initialFile ? 2 : 1)
@@ -82,6 +86,76 @@ export default function DocumentMatchmakerWizard({
   const [resolveError, setResolveError] = useState(null);
   const [resolvedSummary, setResolvedSummary] = useState(null);
 
+  // Sprint 2026-05-03 v3 · mapa SKU→isAssigned para gates de "Solicitar Asignación".
+  // Sólo se evalúa para discrepancias con ADD_LINE que apuntan a un SKU.
+  const [assignmentMap, setAssignmentMap] = useState({});  // { SKU: true|false }
+  const [requestPending, setRequestPending] = useState(new Set());
+  const [requestSent,    setRequestSent]    = useState(new Set());
+  const [requestErr,     setRequestErr]     = useState({});
+
+  // Cargar visibility para los SKUs con ADD_LINE — single batch al productosApi
+  React.useEffect(() => {
+    if (!clientId || !result) return;
+    const discs = result?.mismatch_payload?.discrepancies || [];
+    const skus = Array.from(new Set(
+      discs
+        .filter(d => d.suggested_action === "ADD_LINE" && d.sku)
+        .map(d => String(d.sku).toUpperCase())
+    ));
+    if (skus.length === 0) return;
+    let cancel = false;
+    Promise.all(skus.map(sku =>
+      productosApi.list({ q: sku }).then(d => {
+        const arr = Array.isArray(d) ? d : (d?.results || []);
+        return arr.find(p => String(p.sku || "").toUpperCase() === sku) || null;
+      }).catch(() => null)
+    )).then(prods => {
+      if (cancel) return;
+      const map = {};
+      for (let i = 0; i < skus.length; i++) {
+        const p = prods[i];
+        if (!p) { map[skus[i]] = true; continue; }  // sin info, no bloqueamos
+        const vis = p?.especificaciones?.visibility || {};
+        const ov  = vis.client_overrides || {};
+        const legacy = p?.especificaciones?.client_visibility || null;
+        const assigned =
+          vis.visible_to_all === true ||
+          ov[clientId] === true ||
+          (legacy && typeof legacy === "object" && legacy[clientId] === true);
+        map[skus[i]] = !!assigned;
+      }
+      setAssignmentMap(prev => ({ ...prev, ...map }));
+    });
+    return () => { cancel = true; };
+  }, [clientId, result]);
+
+  // One-click envío de Solicitud de Asignación
+  const requestAssignment = async (sku) => {
+    const SKU = (sku || "").toUpperCase();
+    if (!SKU || !clientId) return;
+    if (requestPending.has(SKU) || requestSent.has(SKU)) return;
+    setRequestPending(prev => new Set(prev).add(SKU));
+    setRequestErr(prev => { const n = { ...prev }; delete n[SKU]; return n; });
+    try {
+      const res = await fetch("/api/catalog/request-assignment/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ client_id: clientId, sku: SKU }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      setRequestSent(prev => new Set(prev).add(SKU));
+    } catch (e) {
+      setRequestErr(prev => ({ ...prev, [SKU]: e?.message || "fallo" }));
+    } finally {
+      setRequestPending(prev => {
+        const n = new Set(prev); n.delete(SKU); return n;
+      });
+    }
+  };
+
   const submit = async () => {
     if (!file || uploading) return;
     setUploading(true); setError(null);
@@ -89,7 +163,9 @@ export default function DocumentMatchmakerWizard({
     try {
       const r = await documentMatchmakerApi.upload(expedienteId, file, documentType);
       setResult(r);
-      // Pre-marcar todas las discrepancias auto-aplicables (severity != INFO)
+      // Pre-marcar todas las discrepancias auto-aplicables (severity != INFO).
+      // Sprint 2026-05-03 v3 · NO pre-marcamos las ADD_LINE de un SKU sin
+      // asignar (la chequea el effect de visibility después de fetch).
       const auto = new Set();
       (r.mismatch_payload?.discrepancies || []).forEach((d, i) => {
         if (d.severity !== "INFO" && d.suggested_action !== "MANUAL") auto.add(i);
@@ -702,7 +778,9 @@ function GroupedView({ groups, discrepancies, selected, onToggle, lang }) {
   );
 }
 
-function GroupAccordion({ sapKey, group, selected, onToggle, lang }) {
+function GroupAccordion({ sapKey, group, selected, onToggle, lang,
+                          assignmentMap, requestPending, requestSent, requestErr,
+                          onRequestAssignment }) {
   const [open, setOpen] = useState(true);
   const errs  = group.filter((d) => d.severity === "ERROR").length;
   const warns = group.filter((d) => d.severity === "WARN").length;
@@ -731,7 +809,12 @@ function GroupAccordion({ sapKey, group, selected, onToggle, lang }) {
           {group.map((d) => (
             <DiscrepancyCard key={d._idx} idx={d._idx} d={d}
                              checked={selected.has(d._idx)}
-                             onToggle={() => onToggle(d._idx)} lang={lang}/>
+                             onToggle={() => onToggle(d._idx)} lang={lang}
+                             assignmentMap={assignmentMap}
+                             requestPending={requestPending}
+                             requestSent={requestSent}
+                             requestErr={requestErr}
+                             onRequestAssignment={requestAssignment}/>
           ))}
         </div>
       )}
@@ -740,8 +823,24 @@ function GroupAccordion({ sapKey, group, selected, onToggle, lang }) {
 }
 
 // ─── Tarjeta de discrepancia ───────────────────────────────
-function DiscrepancyCard({ idx, d, checked, onToggle, lang }) {
+function DiscrepancyCard({
+  idx, d, checked, onToggle, lang,
+  assignmentMap = {}, requestPending = new Set(),
+  requestSent = new Set(), requestErr = {},
+  onRequestAssignment,
+}) {
   const sev = d.severity || "WARN";
+  // Sprint 2026-05-03 v3 · si la discrepancia es ADD_LINE y el SKU NO está
+  // asignado al cliente, deshabilitamos el checkbox y mostramos el botón
+  // "Solicitar Asignación". Por defecto (sin info) tratamos como asignado.
+  const skuKey = (d.sku || "").toUpperCase();
+  const isAddLine = d.suggested_action === "ADD_LINE";
+  const isAssigned = isAddLine
+    ? (skuKey in assignmentMap ? assignmentMap[skuKey] : true)
+    : true;
+  const reqPending = isAddLine && requestPending.has(skuKey);
+  const reqSent    = isAddLine && requestSent.has(skuKey);
+  const reqErrMsg  = isAddLine ? requestErr[skuKey] : null;
   const palette = sev === "ERROR"
     ? { bg: "rgba(239,68,68,0.05)", border: "rgba(239,68,68,0.30)", title: "#991B1B", pillBg: "#FEE2E2", pillFg: "#991B1B" }
     : sev === "WARN"
@@ -769,13 +868,16 @@ function DiscrepancyCard({ idx, d, checked, onToggle, lang }) {
     <label style={{
       display: "flex", gap: 12, alignItems: "flex-start",
       padding: "10px 12px", borderRadius: 8,
-      background: palette.bg, border: `1px solid ${palette.border}`,
-      cursor: "pointer",
+      background: isAddLine && !isAssigned ? "rgba(180,83,9,0.05)" : palette.bg,
+      border: `1px solid ${isAddLine && !isAssigned ? "rgba(180,83,9,0.30)" : palette.border}`,
+      cursor: (isAddLine && !isAssigned) ? "default" : "pointer",
     }}>
       <input
-        type="checkbox" checked={checked}
-        onChange={onToggle}
-        style={{ marginTop: 4, accentColor: "#00B286", flexShrink: 0 }}/>
+        type="checkbox" checked={checked && (!isAddLine || isAssigned)}
+        disabled={isAddLine && !isAssigned}
+        onChange={(isAddLine && !isAssigned) ? undefined : onToggle}
+        style={{ marginTop: 4, accentColor: "#00B286", flexShrink: 0,
+                 opacity: (isAddLine && !isAssigned) ? 0.4 : 1 }}/>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 4 }}>
           <Pill text={kindLabel} bg={palette.pillBg} color={palette.pillFg}/>
@@ -827,12 +929,52 @@ function DiscrepancyCard({ idx, d, checked, onToggle, lang }) {
             </span>
           )}
         </div>
-        {actionLabel && (
+        {actionLabel && !(isAddLine && !isAssigned) && (
           <div style={{
             marginTop: 6, fontSize: 11, color: "#00B286", fontWeight: 700,
             letterSpacing: 0.4, textTransform: "uppercase",
           }}>
             → {actionLabel}
+          </div>
+        )}
+        {isAddLine && !isAssigned && (
+          <div style={{
+            marginTop: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          }}>
+            <span style={{
+              padding: "2px 8px", borderRadius: 999,
+              background: "rgba(180,83,9,0.10)", color: "#B45309",
+              fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+              textTransform: "uppercase",
+            }}>
+              ⚠ {lang === "es" ? "PRODUCTO NO ASIGNADO" : "PRODUCT NOT ASSIGNED"}
+            </span>
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation();
+                                onRequestAssignment && onRequestAssignment(d.sku); }}
+              disabled={reqPending || reqSent}
+              style={{
+                padding: "6px 12px", borderRadius: 8,
+                border: "1px solid " + (reqSent ? "rgba(0,135,90,0.25)" : "rgba(0,178,134,0.40)"),
+                background: reqSent ? "rgba(0,135,90,0.10)" : "#fff",
+                color: reqSent ? "#00875A" : "#00B286",
+                fontWeight: 700, fontSize: 11,
+                cursor: (reqPending || reqSent) ? "default" : "pointer",
+                whiteSpace: "nowrap", letterSpacing: 0.3,
+              }}
+              title={reqErrMsg || ""}>
+              {reqPending
+                ? (lang === "es" ? "Enviando…" : "Sending…")
+                : reqSent
+                  ? (lang === "es" ? "✓ Solicitado" : "✓ Requested")
+                  : (lang === "es" ? "Solicitar Asignación" : "Request Assignment")}
+            </button>
+            <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+              {lang === "es"
+                ? "El equipo MWT recibirá un correo y al asignarlo podrás aplicar la resolución."
+                : "MWT team will receive an email; once assigned you'll be able to apply the resolution."}
+            </span>
           </div>
         )}
       </div>
