@@ -613,13 +613,17 @@ class CatalogRequestAssignmentView(APIView):
         if not client_id or not sku:
             return Response({"detail": "client_id y sku requeridos."}, status=400)
 
-        # Resolver destinatario
-        am_email, am_name = _resolve_account_manager_email(client_id)
-        fallback_used = False
-        if not am_email or not self.EMAIL_RE.match(am_email):
-            am_email = FALLBACK_TO
-            am_name  = "Equipo MWT"
-            fallback_used = True
+        # Sprint 2026-05-03 v3 · destinatario fijo: info@mwt.one
+        # (el user pidió que SIEMPRE vaya a info@mwt.one). El account
+        # manager queda en el cuerpo del mail como Reply-To si lo
+        # tenemos, así el equipo puede contestar al AM si quiere.
+        am_email_resolved, am_name_resolved = _resolve_account_manager_email(client_id)
+        am_email = FALLBACK_TO
+        am_name  = "Equipo MWT"
+        fallback_used = True
+        reply_to_email = am_email_resolved if (
+            am_email_resolved and self.EMAIL_RE.match(am_email_resolved)
+        ) else None
 
         # Cliente metadata
         client_label = ""
@@ -654,16 +658,18 @@ class CatalogRequestAssignmentView(APIView):
         except Exception:
             pass
 
-        link_admin = (
-            f"{ADMIN_BASE_URL}/marcas/{brand_id}/clientes/{client_id}/precios"
-            if brand_id else
-            f"{ADMIN_BASE_URL}/clientes/{client_id}"
-        )
+        # Sprint 2026-05-03 v3 · link directo al detalle del producto
+        # (antes mandábamos a marcas/precios; el user quiere "Ver Producto").
+        if producto_id:
+            link_producto = f"{ADMIN_BASE_URL}/productos/{producto_id}"
+        else:
+            link_producto = f"{ADMIN_BASE_URL}/productos"
+        link_admin = link_producto  # compat: el response sigue exponiendo link_admin
 
         # Componer email
         subject = f"[MWT.ONE] Solicitud de asignación de SKU {sku} — {client_label}"
         text_body = (
-            f"Hola {am_name or ''},\n\n"
+            f"Hola Equipo MWT,\n\n"
             f"El cliente {client_label}"
             + (f" ({client_email})" if client_email else "")
             + " ha solicitado acceso al siguiente producto:\n\n"
@@ -671,8 +677,8 @@ class CatalogRequestAssignmentView(APIView):
             f"  · Producto: {product_label or '—'}\n"
             f"  · Talla:    {talla or '—'}\n"
             f"  · Cantidad: {cantidad or '—'}\n\n"
-            f"Para autorizar y asignar el SKU al cliente, abrí la siguiente vista:\n"
-            f"  {link_admin}\n\n"
+            f"Para revisar y autorizar la asignación, abrí el detalle del producto:\n"
+            f"  {link_producto}\n\n"
             f"— MWT.ONE · Catálogo Comercial"
         )
         html_body = f"""
@@ -687,8 +693,8 @@ class CatalogRequestAssignmentView(APIView):
             <div style="font-size:18px;font-weight:700;margin-top:4px">{client_label}</div>
           </div>
 
-          <p>Hola <strong>{am_name or ''}</strong>,</p>
-          <p>Tu cliente <strong>{client_label}</strong>
+          <p>Hola <strong>Equipo MWT</strong>,</p>
+          <p>El cliente <strong>{client_label}</strong>
              {f"(<a href='mailto:{client_email}'>{client_email}</a>)" if client_email else ""}
              solicita acceso al siguiente producto:</p>
 
@@ -707,10 +713,10 @@ class CatalogRequestAssignmentView(APIView):
                 <td style="padding:8px;font-weight:600">{cantidad or '—'}</td></tr>
           </table>
 
-          <a href="{link_admin}"
+          <a href="{link_producto}"
              style="display:inline-block;background:#00B286;color:#fff;text-decoration:none;
                     padding:12px 22px;border-radius:8px;font-weight:700;letter-spacing:0.3px">
-            Autorizar / Asignar SKU →
+            Ver Producto →
           </a>
 
           <p style="margin-top:24px;color:#64748B;font-size:12px">
@@ -720,12 +726,19 @@ class CatalogRequestAssignmentView(APIView):
         """
 
         try:
+            # Sprint 2026-05-03 v3 · reply_to: AM del cliente (si existe),
+            # luego el correo del cliente, luego nada.
+            reply_to_list = []
+            if reply_to_email:
+                reply_to_list.append(reply_to_email)
+            if client_email and client_email not in reply_to_list:
+                reply_to_list.append(client_email)
             msg = EmailMultiAlternatives(
                 subject = subject,
                 body    = text_body,
                 from_email = DEFAULT_FROM,
                 to      = [am_email],
-                reply_to = [client_email] if client_email else None,
+                reply_to = reply_to_list or None,
             )
             msg.attach_alternative(html_body, "text/html")
             msg.send(fail_silently=False)
@@ -744,4 +757,6 @@ class CatalogRequestAssignmentView(APIView):
             "subject":       subject,
             "fallback_used": fallback_used,
             "link_admin":    link_admin,
+            "link_producto": link_producto,
+            "producto_id":   producto_id,
         })

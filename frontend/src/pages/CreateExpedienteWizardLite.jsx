@@ -976,12 +976,19 @@ function Step2Productos({
 // ═════════════════════════════════════════════════════════════
 // MANUAL LINE PANEL — buscar SKU + matriz tallas
 // ═════════════════════════════════════════════════════════════
-function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
+function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd }) {
   const [search, setSearch]     = useState("");
   const [results, setResults]   = useState([]);
   const [picked, setPicked]     = useState(null);   // {sku, label, tallas:[{talla, qty}]}
   const [loading, setLoading]   = useState(false);
-  const [cpaSet, setCpaSet]     = useState(new Set()); // skus asignados al cliente
+  const [cpaSet, setCpaSet]     = useState(new Set()); // legacy — skus asignados via /commercial
+  // Sprint 2026-05-03 v3 · estados de "Solicitar Asignación":
+  //   requestPending: SKUs que están enviando el email ahora
+  //   requestSent:    SKUs cuya solicitud ya se envió (mostrar "Solicitado")
+  //   requestErr:     SKUs que fallaron el envío (mostrar reintento)
+  const [requestPending, setRequestPending] = useState(new Set());
+  const [requestSent,    setRequestSent]    = useState(new Set());
+  const [requestErr,     setRequestErr]     = useState({});
   // Catálogo del Motor de Tallas con TODAS las equivalencias.
   // Sprint 2026-05-01: antes solo guardaba { label, sistema }; ahora
   // guarda tambien { equiv: { EU, US_M, US_W, UK_M, BR, CM, ALFA, ... } }
@@ -991,7 +998,11 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
   // Sistema de medida elegido para mostrar la talla.
   const [displaySystem, setDisplaySystem] = useState("BASE");
 
-  // Cargar CPA del cliente una vez
+  // Cargar CPA del cliente (legacy /commercial/client-assignments)
+  // Sprint 2026-05-03 v3: este endpoint es opcional. La fuente principal de
+  // "asignado" ahora es especificaciones.visibility del propio producto.
+  // Mantenemos el fetch como compat: si el cliente está en el CPA, queda
+  // asignado aunque visibility.client_overrides no lo diga.
   useEffect(() => {
     if (!clientId) return;
     apiFetch(`/commercial/client-assignments/?client=${clientId}`, { token: getToken() })
@@ -1001,6 +1012,51 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
       })
       .catch(() => {});
   }, [clientId]);
+
+  // Sprint 2026-05-03 v3 · helper canónico de visibilidad:
+  //   1. visibility.visible_to_all === true → asignado para todos.
+  //   2. visibility.client_overrides[clientId] === true → asignado.
+  //   3. (legacy) sku ∈ cpaSet → asignado.
+  //   4. else → NO asignado, requiere "Solicitar Asignación".
+  const isProductAssigned = useCallback((p) => {
+    if (!p) return false;
+    const sku = (p.sku || "").toUpperCase();
+    const vis = p?.especificaciones?.visibility || {};
+    if (vis.visible_to_all === true) return true;
+    const ov = vis.client_overrides || {};
+    if (clientId && ov[clientId] === true) return true;
+    if (cpaSet.size > 0 && cpaSet.has(sku)) return true;
+    return false;
+  }, [clientId, cpaSet]);
+
+  // Sprint 2026-05-03 v3 · envío one-click de Solicitud de Asignación.
+  // El endpoint recibe client_id + sku; talla/cantidad son opcionales.
+  // El correo va a info@mwt.one con botón "Ver Producto".
+  const requestAssignment = useCallback(async (p) => {
+    const sku = (p.sku || "").toUpperCase();
+    if (!sku || !clientId) return;
+    if (requestPending.has(sku) || requestSent.has(sku)) return;
+    setRequestPending(prev => new Set(prev).add(sku));
+    setRequestErr(prev => { const n = { ...prev }; delete n[sku]; return n; });
+    try {
+      const res = await fetch("/api/catalog/request-assignment/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ client_id: clientId, sku }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      setRequestSent(prev => new Set(prev).add(sku));
+    } catch (e) {
+      setRequestErr(prev => ({ ...prev, [sku]: e?.message || "fallo" }));
+    } finally {
+      setRequestPending(prev => {
+        const n = new Set(prev); n.delete(sku); return n;
+      });
+    }
+  }, [clientId, requestPending, requestSent]);
 
   // Cargar catálogo de tallas (Motor de Tallas) con TODAS las equivalencias
   useEffect(() => {
@@ -1053,7 +1109,8 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
 
   const pick = async (p) => {
     const sku = (p.sku || "").toUpperCase();
-    const isAssigned = cpaSet.size === 0 || cpaSet.has(sku);
+    // Sprint 2026-05-03 v3 · usamos el helper unificado.
+    const isAssigned = isProductAssigned(p);
 
     // El list serializer (ProductoListSerializer) NO incluye `tallas`,
     // así que necesitamos un retrieve para conseguir el array de UUIDs
@@ -1195,36 +1252,83 @@ function ManualLinePanel({ lang, clientId, onClose, onAdd }) {
               <div style={{ maxHeight: 420, overflowY: "auto" }}>
                 {results.map((p) => {
                   const sku = (p.sku || "").toUpperCase();
-                  const isAssigned = cpaSet.size === 0 || cpaSet.has(sku);
+                  const isAssigned = isProductAssigned(p);
+                  const pending = requestPending.has(sku);
+                  const sent    = requestSent.has(sku);
+                  const err     = requestErr[sku];
                   return (
-                    <button key={p.id || sku} type="button"
-                            onClick={() => pick(p)}
-                            style={{
-                              width: "100%", textAlign: "left",
-                              padding: "10px 14px", border: "1px solid var(--border)",
-                              borderRadius: 8, marginBottom: 6,
-                              background: "#fff", cursor: "pointer",
-                              display: "flex", alignItems: "center", gap: 12,
-                            }}>
+                    <div key={p.id || sku}
+                         style={{
+                           width: "100%",
+                           padding: "10px 14px",
+                           border: "1px solid var(--border)",
+                           borderRadius: 8, marginBottom: 6,
+                           background: "#fff",
+                           display: "flex", alignItems: "center", gap: 12,
+                         }}>
                       <IconPackage size={14} style={{ color: "#3083FE", flexShrink: 0 }}/>
-                      <div style={{ flex: 1, minWidth: 0 }}>
+                      <button type="button"
+                              onClick={() => isAssigned ? pick(p) : null}
+                              disabled={!isAssigned}
+                              style={{
+                                flex: 1, minWidth: 0, textAlign: "left",
+                                background: "transparent", border: 0,
+                                padding: 0, cursor: isAssigned ? "pointer" : "default",
+                                opacity: isAssigned ? 1 : 0.78,
+                              }}
+                              title={isAssigned
+                                ? ""
+                                : (lang === "es"
+                                    ? "Producto no asignado al cliente. Solicitá la asignación al equipo MWT."
+                                    : "Product not assigned. Request assignment to the MWT team.")}>
                         <div style={{ fontWeight: 600, color: "#0B1E3A" }}>
                           <span className="mono-sm">{sku}</span>
-                          {!isAssigned && (
+                          {isAssigned ? (
+                            <span style={{
+                              marginLeft: 8, padding: "2px 8px", borderRadius: 999,
+                              background: "rgba(0,178,134,0.12)", color: "#00875A",
+                              fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+                            }}>
+                              ✓ {lang === "es" ? "ASIGNADO" : "ASSIGNED"}
+                            </span>
+                          ) : (
                             <span style={{
                               marginLeft: 8, padding: "2px 8px", borderRadius: 999,
                               background: "rgba(180,83,9,0.10)", color: "#B45309",
-                              fontSize: 10, fontWeight: 700,
+                              fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
                             }}>
                               ⚠ {lang === "es" ? "NO ASIGNADO" : "NOT ASSIGNED"}
                             </span>
                           )}
                         </div>
-                        <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+                        <div className="caption tabular-nums" style={{ color: "var(--text-tertiary)" }}>
                           {p.nombre || p.product_label || ""}
                         </div>
-                      </div>
-                    </button>
+                      </button>
+                      {!isAssigned && (
+                        <button type="button"
+                                onClick={(e) => { e.stopPropagation(); requestAssignment(p); }}
+                                disabled={pending || sent}
+                                style={{
+                                  flexShrink: 0,
+                                  padding: "8px 12px",
+                                  borderRadius: 8,
+                                  border: "1px solid " + (sent ? "rgba(0,135,90,0.25)" : "rgba(0,178,134,0.35)"),
+                                  background: sent ? "rgba(0,135,90,0.10)" : "#fff",
+                                  color: sent ? "#00875A" : "#00B286",
+                                  fontWeight: 700, fontSize: 12,
+                                  cursor: (pending || sent) ? "default" : "pointer",
+                                  whiteSpace: "nowrap",
+                                }}
+                                title={err || ""}>
+                          {pending
+                            ? (lang === "es" ? "Enviando…" : "Sending…")
+                            : sent
+                              ? (lang === "es" ? "✓ Solicitado" : "✓ Requested")
+                              : (lang === "es" ? "Solicitar Asignación" : "Request Assignment")}
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
               </div>
