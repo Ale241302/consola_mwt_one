@@ -25,7 +25,14 @@ router.register(r"pipeline-transiciones", TransicionCatViewSet, basename="pipeli
 router.register(r"pipeline-events",      EventLogViewSet,       basename="pipeline-events")
 router.register(r"ocr-parsing-log",      OcrParsingLogViewSet,  basename="ocr-parsing-log")
 
-urlpatterns = router.urls + [
+# Sprint 2026-05-03 · ORDEN IMPORTANTE
+# Los paths custom van ANTES de router.urls.
+# Razón: `expedientes/parse-template/` matchea el pattern
+# `expedientes/<pk>/` que el DefaultRouter genera para retrieve(),
+# tratando "parse-template" como un pk. Eso provocaba 405 en POSTs.
+# Listándolos primero garantizamos que Django los resuelva antes de
+# delegar al router.
+urlpatterns = [
     # Orchestrator atómico del Wizard de Creación de Expedientes
     # Reglas B2B (ver apps/expedientes/views_wizard.py): si role=CLIENT,
     # client_id se fuerza al del JWT (ignora payload), y mode/freight/transport
@@ -67,4 +74,4 @@ urlpatterns = router.urls + [
          name="builder-templates-list"),
     path("builder/templates/<int:template_id>/", builder_template_detail,
          name="builder-template-detail"),
-]
+] + router.urls
