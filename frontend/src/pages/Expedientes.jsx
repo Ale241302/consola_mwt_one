@@ -1034,6 +1034,115 @@ export default function ScreenExpedientes() {
 function ConfirmBulkDeleteModal({ count, busy, error, lang, onCancel, onConfirm }) {
   const plural = count > 1;
   return (
+    <motion.div
+      className="modal-backdrop"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      onClick={() => !busy && onCancel?.()}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(11,30,58,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 16,
+      }}
+    >
+      <motion.div
+        className="modal-panel"
+        role="dialog" aria-modal="true"
+        initial={{ y: 20, opacity: 0, scale: 0.98 }}
+        animate={{ y: 0,  opacity: 1, scale: 1 }}
+        exit   ={{ y: 10, opacity: 0, scale: 0.98 }}
+        transition={{ type: 'spring', stiffness: 280, damping: 28 }}
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderRadius: 12,
+          width: '100%', maxWidth: 460,
+          boxShadow: '0 12px 48px rgba(11,30,58,0.18)',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          padding: '20px 22px 8px 22px',
+          display: 'flex', alignItems: 'flex-start', gap: 14,
+        }}>
+          <div style={{
+            flexShrink: 0, width: 40, height: 40, borderRadius: '50%',
+            background: 'rgba(239,68,68,0.1)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'var(--critical, #EF4444)',
+          }}>
+            <IconTrash size={18}/>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="heading-md" style={{ marginBottom: 4 }}>
+              {lang === 'es'
+                ? (plural ? `Eliminar ${count} expedientes` : 'Eliminar expediente')
+                : (plural ? `Delete ${count} files`         : 'Delete file')}
+            </div>
+            <div className="caption" style={{ color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+              {lang === 'es'
+                ? <>¿Seguro que quieres eliminar {plural ? <strong>{count} expedientes</strong> : <strong>este expediente</strong>}? Esta acción <strong>no se puede deshacer</strong> desde la UI; las OCs y cobros asociados no se borran.</>
+                : <>Delete {plural ? <strong>{count} files</strong> : <strong>this file</strong>}? This action <strong>cannot be undone</strong> from the UI; linked POs and payments are not removed.</>}
+            </div>
+            <div style={{
+              marginTop: 10, padding: '8px 12px', borderRadius: 8,
+              background: 'rgba(72,30,227,0.06)',
+              border: '1px solid rgba(72,30,227,0.20)',
+              fontSize: 12, lineHeight: 1.45, color: 'var(--text-secondary)',
+            }}>
+              <strong style={{ color: '#481EE3' }}>
+                {lang === 'es' ? 'Liberación de crédito · ' : 'Credit release · '}
+              </strong>
+              {lang === 'es'
+                ? <>las líneas <strong>sin SAP</strong> liberan su crédito al cliente. Las líneas <strong>con SAP</strong> mantienen el crédito reservado (compromiso con fábrica).</>
+                : <>lines <strong>without SAP</strong> release their credit. Lines <strong>with SAP</strong> keep the credit reserved (factory commitment).</>}
+            </div>
+            {error && (
+              <div className="caption" style={{
+                color: 'var(--critical, #EF4444)', marginTop: 10,
+                background: 'rgba(239,68,68,0.08)', padding: '8px 10px',
+                borderRadius: 6, lineHeight: 1.4,
+              }}>
+                {error}
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{
+          padding: '14px 22px 18px 22px',
+          display: 'flex', gap: 8, justifyContent: 'flex-end',
+        }}>
+          <button
+            type="button" className="btn"
+            onClick={onCancel}
+            disabled={busy}
+          >
+            {lang === 'es' ? 'Cancelar' : 'Cancel'}
+          </button>
+          <button
+            type="button" className="btn"
+            onClick={onConfirm}
+            disabled={busy}
+            style={{
+              background: 'var(--critical, #EF4444)',
+              color: '#fff', borderColor: 'var(--critical, #EF4444)',
+              opacity: busy ? 0.7 : 1,
+              cursor: busy ? 'wait' : 'pointer',
+            }}
+          >
+            {busy
+              ? (lang === 'es' ? 'Eliminando…' : 'Deleting…')
+              : (plural
+                  ? (lang === 'es' ? `Eliminar ${count}` : `Delete ${count}`)
+                  : (lang === 'es' ? 'Eliminar'         : 'Delete'))}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}) {
+  const plural = count > 1;
+  return (
     <>
       <motion.div
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
