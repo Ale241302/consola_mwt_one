@@ -1073,6 +1073,18 @@ function ConfirmBulkDeleteModal({ count, busy, error, lang, onCancel, onConfirm 
               ? <>Es soft-delete: los expedientes quedan inactivos en BD pero se conserva el historial. Esta acción <strong>no se puede deshacer</strong> desde la UI; cualquier OC o cobro asociado no se borra.</>
               : <>This is a soft-delete: files become inactive in DB but history is preserved. This action <strong>cannot be undone</strong> from the UI; any linked PO or collection is not removed.</>}
           </div>
+          <div style={{
+            marginTop: 12, padding: '10px 12px', borderRadius: 8,
+            background: 'rgba(72,30,227,0.06)', border: '1px solid rgba(72,30,227,0.20)',
+            font: '500 12.5px/1.4 inherit', color: '#3D4A6B',
+          }}>
+            <strong style={{ color: '#481EE3' }}>
+              {lang === 'es' ? 'Liberación de crédito · ' : 'Credit release · '}
+            </strong>
+            {lang === 'es'
+              ? <>las líneas <strong>sin SAP</strong> liberan su crédito al cliente. Las líneas <strong>con SAP</strong> mantienen el crédito reservado (compromiso con fábrica). Si todas las líneas tienen SAP, no se libera nada.</>
+              : <>lines <strong>without SAP</strong> release their credit. Lines <strong>with SAP</strong> keep the credit reserved (factory commitment). If all lines have SAP, nothing is released.</>}
+          </div>
           {error && (
             <div style={{
               marginTop: 14, padding: '10px 12px', borderRadius: 8,

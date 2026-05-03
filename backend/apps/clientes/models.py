@@ -140,8 +140,14 @@ class Cliente(models.Model):
                     FROM expedientes.linea l
                     INNER JOIN expedientes.expediente e
                             ON e.id = l.expediente_id
-                           AND e.is_active = TRUE
-                           AND e.estado NOT IN ('CERRADO','CANCELADO')
+                           AND (
+                             -- (a) Expediente vivo y operativo: todas sus líneas activas cuentan.
+                             (e.is_active = TRUE AND e.estado NOT IN ('CERRADO','CANCELADO'))
+                             OR
+                             -- (b) Expediente soft-deleted: SOLO las líneas con SAP siguen
+                             -- consumiendo crédito (compromiso con fábrica). Sin SAP → libera.
+                             (e.is_active = FALSE AND l.sap IS NOT NULL AND l.sap <> '')
+                           )
                     LEFT JOIN productos.producto p ON p.id = l.producto_id
                     WHERE l.is_active = TRUE
                       AND e.client_id::text IN ({placeholders})
@@ -184,8 +190,14 @@ class Cliente(models.Model):
                     FROM expedientes.linea l
                     INNER JOIN expedientes.expediente e
                             ON e.id = l.expediente_id
-                           AND e.is_active = TRUE
-                           AND e.estado NOT IN ('CERRADO','CANCELADO')
+                           AND (
+                             -- (a) Expediente vivo y operativo: todas sus líneas activas cuentan.
+                             (e.is_active = TRUE AND e.estado NOT IN ('CERRADO','CANCELADO'))
+                             OR
+                             -- (b) Expediente soft-deleted: SOLO las líneas con SAP siguen
+                             -- consumiendo crédito (compromiso con fábrica). Sin SAP → libera.
+                             (e.is_active = FALSE AND l.sap IS NOT NULL AND l.sap <> '')
+                           )
                     LEFT JOIN productos.producto p ON p.id = l.producto_id
                     WHERE l.is_active = TRUE
                       AND e.client_id::text = %s
