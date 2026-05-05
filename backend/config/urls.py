@@ -24,4 +24,5 @@ urlpatterns = [
     path("api/",           include("apps.sizing.urls")),           # /api/sizing/tallas/ + /api/sizing/options/ + catálogos
     path("api/",           include("apps.users.urls")),            # /api/users/ + /api/user-addresses/ + /api/activity-feed/ [M3 CORE · identidad]
     path("api/",           include("apps.roles.urls")),            # /api/roles/ + /api/permissions/*  [M3 CORE · RBAC]
+    path("api/",           include("apps.tickets.urls")),          # /api/tickets/ + chat + adjuntos + dashboard [LOTE_SM_TICKETS]
 ]

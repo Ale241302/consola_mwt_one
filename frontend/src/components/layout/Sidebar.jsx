@@ -32,12 +32,13 @@ import {
   IconHome, IconFolder, IconKanban, IconBuilding, IconDollar, IconSwap,
   IconNetwork, IconUsers, IconTag, IconBoxes, IconTruck, IconWarehouse,
   IconMail, IconHistory, IconCreditCard, IconChevLeft, IconChevRight,
-  IconBot, IconLock,
+  IconBot, IconLock, IconClipboard,
 } from "../../lib/icons.jsx";
 
 // key -> route path mapping. Keys mirror the original screen identifiers so that
 // the sidebar items and CommandPalette navigate() calls stay in sync.
 const KEY_TO_PATH = {
+  tickets:     '/tickets',
   dashboard:   '/dashboard',
   expedientes: '/expedientes',
   pipeline:    '/pipeline',
@@ -66,6 +67,7 @@ const KEY_TO_PATH = {
 
 // derive currentScreen key from the URL pathname
 function screenFromPath(pathname) {
+  if (pathname.startsWith('/tickets')) return 'tickets';
   if (pathname.startsWith('/dashboard')) return 'dashboard';
   if (pathname.startsWith('/expedientes/') && pathname.match(/\/expedientes\/[^/]+\/exp\//)) return 'expediente-detail';
   if (pathname.startsWith('/expedientes/')) return 'oc-detail';
@@ -156,6 +158,7 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'templates',      icon: <IconMail/>,       label: tr(lang,'templates'),     group: 'notifications' },
     { key: 'history',        icon: <IconHistory/>,    label: tr(lang,'history'),       group: 'notifications' },
     { key: 'collections',    icon: <IconCreditCard/>, label: tr(lang,'collections'),   group: 'notifications' },
+    { key: 'tickets',       icon: <IconClipboard/>,       label: tr(lang,'tickets')  || 'Gestor de Tickets', group: 'support' },
     { key: 'ai-hub',         icon: <IconBot/>,        label: tr(lang,'ai_hub') || 'AI Hub', group: 'ai' },
     // M3 CORE — gestión de acceso del ERP. Sólo visibles para admin
     // (el whitelist de CLIENT_ALLOWED_MODULES NO los incluye).
@@ -180,6 +183,7 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'structure',     label: labelOr('structure',     lang === 'en' ? 'Structure'      : 'Estructura'),     defaultOpen: false },
     { key: 'notifications', label: labelOr('notifications', lang === 'en' ? 'Notifications'  : 'Notificaciones'), defaultOpen: false },
     { key: 'ai',            label: labelOr('ai_hub',        'AI Hub'),                                              defaultOpen: false },
+    { key: 'support',       label: lang === 'en' ? 'Support'         : 'Soporte',                              defaultOpen: false },
     { key: 'core_admin',    label: lang === 'en' ? 'Administration' : 'Administración',                             defaultOpen: false },
   ];
 

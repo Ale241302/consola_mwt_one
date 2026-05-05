@@ -44,6 +44,8 @@ import ScreenUsers from "./pages/Users.jsx";
 import ScreenUserFormView from "./pages/UserFormView.jsx";
 import ScreenRolesPermissions from "./pages/RolesPermissions.jsx";
 import ScreenProfilePage from "./pages/ProfilePage.jsx";
+import ScreenTickets from "./pages/Tickets.jsx";
+import ScreenTicketDetail from "./pages/TicketDetail.jsx";
 import { useRole } from "./context/RoleContext.jsx";
 
 // ── Route guard: CEO-ONLY páginas bloqueadas para CLIENT B2B.
@@ -121,6 +123,8 @@ export default function App() {
         <Route path="/ai" element={<ScreenAIHub />} />
         <Route path="/ai/governance" element={<AdminOnlyRoute><ScreenAIGovernance /></AdminOnlyRoute>} />
         {/* M3 CORE — Usuarios y Roles (ADMIN-only, guard vía AdminOnlyRoute) */}
+        <Route path="/tickets" element={<ScreenTickets />} />
+        <Route path="/tickets/:ticketId" element={<ScreenTicketDetail />} />
         <Route path="/usuarios"          element={<AdminOnlyRoute><ScreenUsers /></AdminOnlyRoute>} />
         <Route path="/usuarios/nuevo"    element={<AdminOnlyRoute><ScreenUserFormView /></AdminOnlyRoute>} />
         <Route path="/usuarios/:userId"  element={<AdminOnlyRoute><ScreenUserFormView /></AdminOnlyRoute>} />

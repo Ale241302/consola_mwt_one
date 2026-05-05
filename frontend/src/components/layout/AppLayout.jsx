@@ -5,6 +5,7 @@ import { Sidebar, screenFromPath } from "./Sidebar.jsx";
 import { TopBar } from "./TopBar.jsx";
 import { CommandPalette } from "../CommandPalette.jsx";
 import { TweaksPanel } from "../TweaksPanel.jsx";
+import TicketWidget from "../tickets/TicketWidget.jsx";
 import { tr } from "../../lib/i18n.js";
 import { OCS, EXPEDIENTES } from "../../data/mockData.js";
 
@@ -141,6 +142,7 @@ export default function AppLayout() {
       </div>
       {showCmd && <CommandPalette lang={lang} onClose={()=>setShowCmd(false)} />}
       {showTweaks && <TweaksPanel values={tweaks} onChange={updateTweaks} onClose={()=>setShowTweaks(false)} />}
+      <TicketWidget lang={lang} />
     </div>
   );
 }

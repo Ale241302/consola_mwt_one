@@ -305,6 +305,24 @@ export const nodosApi          = resource("nodos");
 export const marcasApi         = resource("marcas");
 export const clientesApi       = resource("clientes");
 export const productosApi      = resource("productos");
+
+// Aliases comerciales por cliente (CEO/ADMIN-only, R3 · POL_VISIBILIDAD).
+//   GET    /api/productos/<productoId>/aliases/
+//   POST   /api/productos/<productoId>/aliases/   {cliente_id, alias, cliente_sku?, notas?}
+//   DELETE /api/productos/<productoId>/aliases/?cliente_id=<uuid>
+export const productoAliasesApi = {
+  list: (productoId) =>
+    apiFetch(`/productos/${encodeURIComponent(productoId)}/aliases/`,
+             { token: getToken() }),
+  upsert: (productoId, body) =>
+    apiFetch(`/productos/${encodeURIComponent(productoId)}/aliases/`,
+             { method: "POST", body, token: getToken() }),
+  remove: (productoId, clienteId) =>
+    apiFetch(
+      `/productos/${encodeURIComponent(productoId)}/aliases/?cliente_id=${encodeURIComponent(clienteId)}`,
+      { method: "DELETE", token: getToken() },
+    ),
+};
 export const proveedoresApi    = resource("proveedores");
 export const stockApi          = resource("stock");
 export const movimientosApi    = resource("movimientos");
@@ -730,3 +748,67 @@ export async function postMultipart(path, formData, { token } = {}) {
   }
   return data;
 }
+
+// ---------------------------------------------------------------------
+// Tickets / Soporte interno (LOTE_SM_TICKETS).
+//   GET    /api/tickets/                       -> lista (filtrado por rol)
+//   POST   /api/tickets/                       -> crear ticket
+//   GET    /api/tickets/<id>/                  -> detalle + hilo + adjuntos
+//   PATCH  /api/tickets/<id>/                  -> editar (no si finalizado)
+//   DELETE /api/tickets/<id>/                  -> soft-delete
+//   GET    /api/tickets/<id>/messages/         -> lista mensajes
+//   POST   /api/tickets/<id>/messages/         -> agrega mensaje
+//   POST   /api/tickets/<id>/attachments/      -> sube adjunto (multipart)
+//   GET    /api/tickets/<id>/attachments/<a>/download/ -> signed URL
+//   POST   /api/tickets/<id>/transition/       -> { status }
+//   GET    /api/tickets/dashboard/             -> KPIs admin
+//   GET    /api/tickets/reasons/               -> catalogo motivos
+//   GET    /api/tickets/statuses/              -> catalogo estados
+// ---------------------------------------------------------------------
+const ticketsBase = "/tickets/";
+
+async function postMultipartHere(path, formData) {
+  // Reutilizamos el wrapper postMultipart si existe; sino fetch directo.
+  if (typeof postMultipart === "function") {
+    return postMultipart(path, formData, { token: getToken() });
+  }
+  const headers = {};
+  const tk = getToken();
+  if (tk) headers.Authorization = `Bearer ${tk}`;
+  const res = await fetch(`${API_BASE}${path}`, { method: "POST", body: formData, headers });
+  const text = await res.text();
+  let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  if (!res.ok) throw new ApiError(typeof data === "string" ? data : JSON.stringify(data), res.status, data);
+  return data;
+}
+
+export const ticketsApi = {
+  list:    (params)  => apiFetch(`${ticketsBase}${params ? "?" + new URLSearchParams(params).toString() : ""}`,
+                                 { token: getToken() }),
+  get:     (id)      => apiFetch(`${ticketsBase}${id}/`,                       { token: getToken() }),
+  create:  (body)    => apiFetch(ticketsBase,                                  { method: "POST",   body, token: getToken() }),
+  update:  (id, body)=> apiFetch(`${ticketsBase}${id}/`,                       { method: "PATCH",  body, token: getToken() }),
+  remove:  (id)      => apiFetch(`${ticketsBase}${id}/`,                       { method: "DELETE",       token: getToken() }),
+
+  messages: (id)               => apiFetch(`${ticketsBase}${id}/messages/`,    { token: getToken() }),
+  postMessage: (id, content)   => apiFetch(`${ticketsBase}${id}/messages/`,
+                                           { method: "POST", body: { content }, token: getToken() }),
+
+  uploadAttachment: (id, file, { messageId } = {}) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (messageId) fd.append("message_id", messageId);
+    return postMultipartHere(`${ticketsBase}${id}/attachments/`, fd);
+  },
+
+  attachmentDownloadUrl: (ticketId, attId) =>
+    apiFetch(`${ticketsBase}${ticketId}/attachments/${attId}/download/`, { token: getToken() }),
+
+  transition: (id, status) =>
+    apiFetch(`${ticketsBase}${id}/transition/`, { method: "POST", body: { status }, token: getToken() }),
+
+  dashboard: () => apiFetch(`${ticketsBase}dashboard/`,                        { token: getToken() }),
+  reasons:   () => apiFetch(`${ticketsBase}reasons/`,                          { token: getToken() }),
+  statuses:  () => apiFetch(`${ticketsBase}statuses/`,                         { token: getToken() }),
+};
+

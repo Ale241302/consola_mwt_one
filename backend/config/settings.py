@@ -82,6 +82,7 @@ LOCAL_APPS = [
     "apps.sizing",          # Sizing Engine — catálogo de tallas calzado/plantilla [Sprint Sizing v1]
     "apps.users",           # M3 CORE · identidad — usuarios + addresses + activity feed + password reset tokens
     "apps.roles",           # M3 CORE · RBAC — role_cat + module_cat + role_permission + user_role_bridge
+    "apps.tickets",         # Modulo de tickets / soporte interno (LOTE_SM_TICKETS)
     # Los siguientes módulos se irán activando cuando cada app tenga su
     # apps.py + views.py correspondiente. Dejarlos comentados evita que
     # Django falle al arrancar por ImportError durante INSTALLED_APPS.
@@ -362,3 +363,9 @@ EMAIL_TIMEOUT      = int(os.environ.get("EMAIL_TIMEOUT",   "20"))
 EMAIL_DOC_USER     = os.environ.get("EMAIL_DOC_USER",     "mw_doc@mwt.one")
 EMAIL_DOC_PASSWORD = os.environ.get("EMAIL_DOC_PASSWORD", "")
 DEFAULT_REPLY_TO   = os.environ.get("DEFAULT_REPLY_TO",   "trade@mwt.one")
+
+# --------------------------------------------------------------------
+# Tickets / soporte interno (LOTE_SM_TICKETS)
+# --------------------------------------------------------------------
+TICKETS_ADMIN_INBOX = os.environ.get("TICKETS_ADMIN_INBOX", "info@mwt.one")
+CONSOLA_PUBLIC_URL  = os.environ.get("CONSOLA_PUBLIC_URL",  "https://consola.mwt.one")
