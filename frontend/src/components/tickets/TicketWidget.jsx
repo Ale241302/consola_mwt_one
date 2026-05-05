@@ -39,16 +39,17 @@ const TICKETS_PATH_RX = /^\/tickets(?:[/?]|$)/;
 
 export default function TicketWidget({ lang = "es" }) {
   const location = useLocation();
-  const { user, token } = useAuth();
+  // accessToken (no "token") es la propiedad real expuesta por AuthContext.
+  const { user, accessToken, isAuthenticated } = useAuth();
 
   // Si el usuario no esta logueado o ya esta en el modulo de tickets,
   // no mostramos el flotante (no tiene sentido superponerlo a la vista
   // del listado/detalle).
   const visible = useMemo(() => {
-    if (!user || !token) return false;
+    if (!isAuthenticated && !user) return false;
     if (TICKETS_PATH_RX.test(location.pathname)) return false;
     return true;
-  }, [user, token, location.pathname]);
+  }, [isAuthenticated, user, location.pathname]);
 
   const [open, setOpen]         = useState(false);
   const [reasons, setReasons]   = useState(FALLBACK_REASONS);
