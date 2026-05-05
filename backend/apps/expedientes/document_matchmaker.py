@@ -577,8 +577,10 @@ def _resolve_oc_lines_to_canonical(lines: list[dict], cliente_id=None) -> list[d
             ln["matched_producto_id"] = p["id"]
             ln["match_strategy"] = "SKU_DIRECT"
             ln["match_score"] = 100
-            if not ln.get("product_label"):
-                ln["product_label"] = p.get("nombre") or ""
+            # Forzamos nombre del catalogo (sobreescribe la descripcion literal
+            # del documento). Sprint 2026-05-05.
+            if p.get("nombre"):
+                ln["product_label"] = p["nombre"]
             continue
 
         client_part = (ln.get("client_part_number") or "").upper()
@@ -616,8 +618,8 @@ def _resolve_oc_lines_to_canonical(lines: list[dict], cliente_id=None) -> list[d
                 ln["matched_producto_id"] = p["id"]
                 ln["match_strategy"] = f"ALIAS_EXACT/{source}"
                 ln["match_score"] = 92
-                if not ln.get("product_label"):
-                    ln["product_label"] = p.get("nombre") or ""
+                if p.get("nombre"):
+                    ln["product_label"] = p["nombre"]
                 continue
 
         # 1. SKU vía client_part_number (caso OC del cliente — el primer
@@ -628,8 +630,10 @@ def _resolve_oc_lines_to_canonical(lines: list[dict], cliente_id=None) -> list[d
             ln["matched_producto_id"] = p["id"]
             ln["match_strategy"] = "SKU_EXACT"
             ln["match_score"] = 100
-            if not ln.get("product_label"):
-                ln["product_label"] = p.get("nombre") or ""
+            # Forzamos nombre del catalogo (sobreescribe la descripcion literal
+            # del documento). Sprint 2026-05-05.
+            if p.get("nombre"):
+                ln["product_label"] = p["nombre"]
             continue
 
         # Construimos la lista de "claves base" a probar, en orden de prioridad:
@@ -654,8 +658,8 @@ def _resolve_oc_lines_to_canonical(lines: list[dict], cliente_id=None) -> list[d
                 ln["matched_producto_id"] = p["id"]
                 ln["match_strategy"] = f"REF_PROVEEDOR/{source}"
                 ln["match_score"] = 95
-                if not ln.get("product_label"):
-                    ln["product_label"] = p.get("nombre") or ""
+                if p.get("nombre"):
+                    ln["product_label"] = p["nombre"]
                 matched = True
                 break
             # 3. Nombre exacto
@@ -665,8 +669,8 @@ def _resolve_oc_lines_to_canonical(lines: list[dict], cliente_id=None) -> list[d
                 ln["matched_producto_id"] = p["id"]
                 ln["match_strategy"] = f"NOMBRE_EXACT/{source}"
                 ln["match_score"] = 90
-                if not ln.get("product_label"):
-                    ln["product_label"] = p.get("nombre") or ""
+                if p.get("nombre"):
+                    ln["product_label"] = p["nombre"]
                 matched = True
                 break
 
@@ -681,8 +685,9 @@ def _resolve_oc_lines_to_canonical(lines: list[dict], cliente_id=None) -> list[d
                 ln["matched_producto_id"] = fuzzy["id"]
                 ln["match_strategy"] = "NOMBRE_FUZZY"
                 ln["match_score"] = 60
-                if not ln.get("product_label"):
-                    ln["product_label"] = fuzzy.get("nombre") or ""
+                if fuzzy.get("nombre"):
+
+                    ln["product_label"] = fuzzy["nombre"]
                 continue
 
         # 5. SUBSTRING fallback (Sprint 2026-05-02 / AG-03):
@@ -715,8 +720,9 @@ def _resolve_oc_lines_to_canonical(lines: list[dict], cliente_id=None) -> list[d
                     ln["matched_producto_id"] = p["id"]
                     ln["match_strategy"] = f"ALIAS_SUBSTRING/{source}"
                     ln["match_score"] = 78
-                    if not ln.get("product_label"):
-                        ln["product_label"] = p.get("nombre") or ""
+                    if p.get("nombre"):
+
+                        ln["product_label"] = p["nombre"]
                     substring_matched = True
                     break
             if substring_matched:
@@ -728,8 +734,9 @@ def _resolve_oc_lines_to_canonical(lines: list[dict], cliente_id=None) -> list[d
                     ln["matched_producto_id"] = p["id"]
                     ln["match_strategy"] = f"REF_SUBSTRING/{source}"
                     ln["match_score"] = 75
-                    if not ln.get("product_label"):
-                        ln["product_label"] = p.get("nombre") or ""
+                    if p.get("nombre"):
+
+                        ln["product_label"] = p["nombre"]
                     substring_matched = True
                     break
             if substring_matched:
@@ -741,8 +748,9 @@ def _resolve_oc_lines_to_canonical(lines: list[dict], cliente_id=None) -> list[d
                     ln["matched_producto_id"] = p["id"]
                     ln["match_strategy"] = f"NOMBRE_SUBSTRING/{source}"
                     ln["match_score"] = 70
-                    if not ln.get("product_label"):
-                        ln["product_label"] = p.get("nombre") or ""
+                    if p.get("nombre"):
+
+                        ln["product_label"] = p["nombre"]
                     substring_matched = True
                     break
             if substring_matched:
