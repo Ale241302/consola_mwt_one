@@ -60,8 +60,6 @@ export const CLIENT_ALLOWED_MODULES = new Set([
   "pipeline",
   "portal",
   "pagos",
-  "ai",       // legacy alias
-  "ai-hub",   // clave real usada por Sidebar.jsx (key='ai-hub')
   "tickets",  // Modulo de soporte interno (LOTE_SM_TICKETS) — visible para todos
 ]);
 

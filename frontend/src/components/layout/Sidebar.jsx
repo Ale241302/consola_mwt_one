@@ -159,7 +159,6 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'history',        icon: <IconHistory/>,    label: tr(lang,'history'),       group: 'notifications' },
     { key: 'collections',    icon: <IconCreditCard/>, label: tr(lang,'collections'),   group: 'notifications' },
     { key: 'tickets',       icon: <IconClipboard/>,       label: tr(lang,'tickets')  || 'Gestor de Tickets', group: 'support' },
-    { key: 'ai-hub',         icon: <IconBot/>,        label: tr(lang,'ai_hub') || 'AI Hub', group: 'ai' },
     // M3 CORE — gestión de acceso del ERP. Sólo visibles para admin
     // (el whitelist de CLIENT_ALLOWED_MODULES NO los incluye).
     { key: 'usuarios',       icon: <IconUsers/>,      label: tr(lang,'users')    || 'Usuarios',         group: 'core_admin' },
@@ -182,7 +181,6 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'financiero',    label: labelOr('financiero',    lang === 'en' ? 'Financials'     : 'Financiero'),     defaultOpen: false },
     { key: 'structure',     label: labelOr('structure',     lang === 'en' ? 'Structure'      : 'Estructura'),     defaultOpen: false },
     { key: 'notifications', label: labelOr('notifications', lang === 'en' ? 'Notifications'  : 'Notificaciones'), defaultOpen: false },
-    { key: 'ai',            label: labelOr('ai_hub',        'AI Hub'),                                              defaultOpen: false },
     { key: 'support',       label: lang === 'en' ? 'Support'         : 'Soporte',                              defaultOpen: false },
     { key: 'core_admin',    label: lang === 'en' ? 'Administration' : 'Administración',                             defaultOpen: false },
   ];
