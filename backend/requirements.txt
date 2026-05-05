@@ -11,6 +11,8 @@ psycopg[binary]==3.2.1
 celery==5.4.0
 redis==5.0.8
 minio==7.2.8
+# Render de plantillas de email (apps.email_templates · apps.tickets)
+Jinja2==3.1.4
 requests==2.32.3
 python-dotenv==1.0.1
 gunicorn==23.0.0
