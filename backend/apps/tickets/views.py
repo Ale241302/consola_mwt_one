@@ -54,7 +54,11 @@ from .serializers import (
     TicketMessageSerializer, TicketAttachmentSerializer,
     ReasonCatSerializer, StatusCatSerializer,
 )
-from .tasks import enqueue_new_ticket_emails
+from .tasks import (
+    enqueue_new_ticket_emails,
+    enqueue_message_email,
+    enqueue_status_change_email,
+)
 
 log = logging.getLogger(__name__)
 
@@ -299,6 +303,19 @@ class TicketViewSet(viewsets.ViewSet):
             if updates:
                 t.save(update_fields=updates + ["updated_at"])
 
+        # Side-effect: notificar al admin Y al usuario que hay un mensaje
+        # nuevo en el hilo. Si el rol cambio a EN_REVISION en este request,
+        # tambien dispara el correo de cambio de estado (transparente).
+        try:
+            enqueue_message_email(str(t.id), str(m.id))
+        except Exception as e:
+            log.warning("enqueue_message_email fallo: %s", e)
+        if "status" in updates:
+            try:
+                enqueue_status_change_email(str(t.id), "ABIERTO", t.status)
+            except Exception as e:
+                log.warning("enqueue_status_change_email (auto) fallo: %s", e)
+
         return Response(TicketMessageSerializer(m).data, status=201)
 
     # ── Adjuntos: subida directa a MinIO ───────────────────
@@ -433,6 +450,8 @@ class TicketViewSet(viewsets.ViewSet):
                 status=403,
             )
 
+        previous_status = t.status
+
         updates = {"status": target}
         if target == "FINALIZADO":
             updates["finalized_at"]    = timezone.now()
@@ -441,6 +460,14 @@ class TicketViewSet(viewsets.ViewSet):
         for k, v in updates.items():
             setattr(t, k, v)
         t.save(update_fields=list(updates.keys()) + ["updated_at"])
+
+        # Notificar a admin + usuario del cambio de estado.
+        if previous_status != target:
+            try:
+                enqueue_status_change_email(str(t.id), previous_status, target)
+            except Exception as e:
+                log.warning("enqueue_status_change_email fallo: %s", e)
+
         return Response(TicketSerializer(t).data)
 
     # ── Dashboard admin ────────────────────────────────────
