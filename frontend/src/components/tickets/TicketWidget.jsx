@@ -176,17 +176,145 @@ export default function TicketWidget({ lang = "es" }) {
     }
   };
 
+  // ── Drag & drop persistido (sprint 2026-05-05) ─────────────────
+  // El FAB es arrastrable con mouse/touch. La posicion se persiste en
+  // localStorage por usuario; si despues del resize cae fuera del
+  // viewport, lo clampeamos al re-mount.
+  const FAB_POS_KEY = "mwt-ticket-fab-pos";
+  const fabRef = useRef(null);
+  const dragRef = useRef({ active: false, startX: 0, startY: 0,
+                            origX: 0, origY: 0, moved: false });
+  const [fabPos, setFabPos] = useState(() => {
+    try {
+      const raw = typeof localStorage !== "undefined"
+        ? localStorage.getItem(FAB_POS_KEY) : null;
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.left === "number"
+                   && typeof parsed.top === "number") {
+          return parsed;
+        }
+      }
+    } catch (_) {}
+    return null;   // null = usar el default del CSS (esquina inferior derecha)
+  });
+  const [dragging, setDragging] = useState(false);
+
+  // Clamp al viewport en mount + resize (por si guardamos una posicion
+  // que ahora queda fuera de pantalla — laptops con monitores externos).
+  useEffect(() => {
+    const clamp = () => {
+      if (!fabPos || !fabRef.current) return;
+      const w = fabRef.current.offsetWidth || 120;
+      const h = fabRef.current.offsetHeight || 44;
+      const maxLeft = window.innerWidth  - w - 8;
+      const maxTop  = window.innerHeight - h - 8;
+      const next = {
+        left: Math.max(8, Math.min(maxLeft, fabPos.left)),
+        top:  Math.max(8, Math.min(maxTop,  fabPos.top)),
+      };
+      if (next.left !== fabPos.left || next.top !== fabPos.top) {
+        setFabPos(next);
+      }
+    };
+    clamp();
+    window.addEventListener("resize", clamp);
+    return () => window.removeEventListener("resize", clamp);
+  }, [fabPos]);
+
+  const _pointer = (e) => (e.touches && e.touches[0]) ? e.touches[0] : e;
+
+  const onFabPointerDown = (e) => {
+    if (!fabRef.current) return;
+    const pt = _pointer(e);
+    const rect = fabRef.current.getBoundingClientRect();
+    dragRef.current = {
+      active: true,
+      startX: pt.clientX, startY: pt.clientY,
+      origX:  rect.left,  origY:  rect.top,
+      moved:  false,
+    };
+    setDragging(true);
+  };
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!dragRef.current.active) return;
+      const pt = _pointer(e);
+      const dx = pt.clientX - dragRef.current.startX;
+      const dy = pt.clientY - dragRef.current.startY;
+      if (Math.hypot(dx, dy) > 4) dragRef.current.moved = true;
+      const w = fabRef.current?.offsetWidth  || 120;
+      const h = fabRef.current?.offsetHeight || 44;
+      const maxLeft = window.innerWidth  - w - 8;
+      const maxTop  = window.innerHeight - h - 8;
+      const left = Math.max(8, Math.min(maxLeft, dragRef.current.origX + dx));
+      const top  = Math.max(8, Math.min(maxTop,  dragRef.current.origY + dy));
+      setFabPos({ left, top });
+      if (e.cancelable) e.preventDefault();
+    };
+    const onUp = () => {
+      if (!dragRef.current.active) return;
+      dragRef.current.active = false;
+      setDragging(false);
+      // Persistimos solo si efectivamente hubo movimiento; un click
+      // simple no debe sobreescribir la posicion previa.
+      if (dragRef.current.moved && fabRef.current) {
+        try {
+          const rect = fabRef.current.getBoundingClientRect();
+          localStorage.setItem(FAB_POS_KEY, JSON.stringify({
+            left: rect.left, top: rect.top,
+          }));
+        } catch (_) {}
+      }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onUp);
+    };
+  }, []);
+
+  const onFabClick = (e) => {
+    // Si el usuario lo arrastró, NO abrimos el modal. Reseteamos el flag
+    // y consumimos el click.
+    if (dragRef.current.moved) {
+      dragRef.current.moved = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    setOpen(true);
+  };
+
   if (!visible) return null;
 
   return (
     <>
-      {/* FAB */}
+      {/* FAB — arrastrable con mouse/touch (drag persistido en localStorage) */}
       <button
+        ref={fabRef}
         type="button"
         className="ticket-fab"
+        data-dragging={dragging || undefined}
         aria-label={lang === "es" ? "Abrir soporte" : "Open support"}
-        onClick={() => setOpen(true)}
-        title={lang === "es" ? "Soporte / tickets" : "Support / tickets"}
+        title={lang === "es"
+          ? "Soporte / tickets · arrastra para mover"
+          : "Support / tickets · drag to move"}
+        style={fabPos ? {
+          left: fabPos.left,
+          top:  fabPos.top,
+          right: "auto",
+          bottom: "auto",
+        } : undefined}
+        onMouseDown={onFabPointerDown}
+        onTouchStart={onFabPointerDown}
+        onClick={onFabClick}
       >
         <span className="ticket-fab-icon" aria-hidden="true">?</span>
         <span className="ticket-fab-label">

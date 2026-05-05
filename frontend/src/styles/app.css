@@ -7833,6 +7833,22 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   outline: 2px solid var(--brand-accent, #00B286);
   outline-offset: 2px;
 }
+
+/* Drag & drop del FAB (sprint 2026-05-05): cursor distintivo, sin
+   transicion mientras se arrastra (el motion debe seguir al puntero
+   sin lag), y un sombreado mas pronunciado para indicar "flotando".
+   La posicion final se persiste en localStorage. */
+.ticket-fab { cursor: grab; touch-action: none; user-select: none; }
+.ticket-fab:active { cursor: grabbing; }
+.ticket-fab[data-dragging="true"] {
+  cursor: grabbing;
+  transition: none;
+  box-shadow: 0 16px 36px rgba(11,30,58,0.42);
+  transform: scale(1.03);
+}
+.ticket-fab[data-dragging="true"]:hover {
+  transform: scale(1.03);
+}
 .ticket-fab-icon {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px;
