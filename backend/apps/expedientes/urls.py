@@ -11,6 +11,7 @@ from .views_simplified_wizard import (
 from .views_matchmaker import (
     UploadMatchView, ResolveMatchView, MatchHistoryView,
 )
+from .views_sap_analyze import AnalyzeSapConfirmationView
 from .views_builder_artifacts import (
     BuilderArtifactsListCreateView, BuilderArtifactDetailView,
     builder_templates_list, builder_template_detail,
@@ -53,6 +54,14 @@ urlpatterns = [
          ResolveMatchView.as_view(), name="expedientes-resolve-match"),
     path("expedientes/<uuid:expediente_id>/match-history/",
          MatchHistoryView.as_view(), name="expedientes-match-history"),
+
+    # Sprint 2026-05-04 (AG-03) · Análisis IA + parser determinístico
+    # de Confirmación SAP. Stateless: el drawer "Agregar SAP" lo llama
+    # ANTES de confirm-sap/upsert-sap para autocompletar sap_id, pre-
+    # seleccionar líneas matched y mostrar discrepancias.
+    path("expedientes/<uuid:expediente_id>/analyze-sap-confirmation/",
+         AnalyzeSapConfirmationView.as_view(),
+         name="expedientes-analyze-sap-confirmation"),
 
     # ── Builder Artifacts (sprint 2026-05-01) ──────────────────
     # Instancias de artefactos cuyas plantillas vienen del Builder

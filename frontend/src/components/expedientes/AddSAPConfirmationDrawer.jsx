@@ -31,6 +31,14 @@ import {
 } from "../../lib/icons.jsx";
 import { getToken } from "../../lib/api.js";
 
+// Sprint 2026-05-04 (AG-03): tipos de archivo aceptados para
+// la Confirmación SAP. xlsx/xls = export real de Marluvas (parser
+// determinístico); csv = export tabular alternativo; pdf = legacy
+// (cae al extractor IA). Todo se valida primero contra
+// /analyze-sap-confirmation/ antes del confirm/upsert.
+const ACCEPTED_EXT_RE = /\.(pdf|xlsx?|xlsm|csv)$/i;
+const ACCEPTED_INPUT  = ".pdf,.xlsx,.xlsm,.xls,.csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv";
+
 const NAVY  = "#0B1E3A";
 const MINT  = "#00B286";
 const BLUE  = "#3083FE";
@@ -76,6 +84,33 @@ async function postUpsertSap({ expedienteId, sapId, fechaFabricacion,
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: fd,
   });
+  const text = await resp.text();
+  let data = null;
+  if (text) { try { data = JSON.parse(text); } catch { data = { raw: text }; } }
+  if (!resp.ok) {
+    const err = new Error(data?.detail || data?.error || `HTTP ${resp.status}`);
+    err.status = resp.status; err.body = data;
+    throw err;
+  }
+  return data;
+}
+
+// ───── Multipart POST a /expedientes/{id}/analyze-sap-confirmation/ ──
+// Sprint 2026-05-04 (AG-03): análisis IA + parser determinístico ANTES
+// del confirm/upsert. Devuelve sap_id detectado, lineas con match y
+// discrepancias (qty/sku/talla/nombre).
+async function postAnalyzeSap({ expedienteId, file }) {
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  const token = getToken();
+  const resp = await fetch(
+    `${API_BASE}/expedientes/${expedienteId}/analyze-sap-confirmation/`,
+    {
+      method: "POST",
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: fd,
+    },
+  );
   const text = await resp.text();
   let data = null;
   if (text) { try { data = JSON.parse(text); } catch { data = { raw: text }; } }
@@ -152,6 +187,14 @@ export default function AddSAPConfirmationDrawer({
   const [submitting, setSubmitting]       = useState(false);
   const [apiError, setApiError]           = useState(null);
 
+  // Sprint 2026-05-04 (AG-03): estado del análisis IA del documento.
+  // Se popula tras subir el archivo y llamar /analyze-sap-confirmation/.
+  // Trae sap_id detectado, líneas extraídas con match contra el
+  // expediente, y discrepancias por SKU/talla/qty/nombre.
+  const [analyzing, setAnalyzing]         = useState(false);
+  const [analysis, setAnalysis]           = useState(null);
+  const [analysisError, setAnalysisError] = useState(null);
+
   // Reset al re-abrir
   useEffect(() => {
     if (!open) return;
@@ -177,6 +220,9 @@ export default function AddSAPConfirmationDrawer({
     setApiError(null);
     setFile(null);
     setFileError(null);
+    setAnalyzing(false);
+    setAnalysis(null);
+    setAnalysisError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lines, isEditMode, existingSap?.sap_id]);
 
@@ -275,11 +321,64 @@ export default function AddSAPConfirmationDrawer({
     setConfirmedQtys(newQtys);
   };
   const pickFile = () => fileInputRef.current?.click();
+
+  // Sprint 2026-05-04 (AG-03): tras seleccionar archivo, dispara
+  // /analyze-sap-confirmation/ → autocompleta sap_id, agrega líneas
+  // matched y registra discrepancias en `analysis`.
+  const runAnalysis = async (f) => {
+    if (!expediente?.id || !f) return;
+    setAnalyzing(true);
+    setAnalysisError(null);
+    setAnalysis(null);
+    try {
+      const res = await postAnalyzeSap({
+        expedienteId: expediente.id,
+        file: f,
+      });
+      setAnalysis(res);
+
+      // Auto-fill sap_id si el documento lo trae y el campo está vacío
+      // (en edit mode no sobreescribimos el sap existente).
+      if (!isEditMode && res?.sap_id && !sapId.trim()) {
+        setSapId(String(res.sap_id));
+      }
+
+      // Auto-add líneas matched por (sku,talla) — el usuario podrá
+      // remover manualmente las que no quiera incluir en este SAP.
+      const docSapId = String(res?.sap_id || "").trim();
+      const userSapId = String(sapId || "").trim();
+      const targetSap = docSapId || userSapId;
+
+      const newAdded = new Set(addedLineIds);
+      const newQtys  = { ...confirmedQtys };
+      for (const docLine of (res?.lineas || [])) {
+        const m = docLine.match;
+        if (!m?.matched || !m.line_id) continue;
+        // Si la línea trae sap_doc y no coincide con el SAP que estamos
+        // registrando, NO la agregamos (puede pertenecer a otro SAP).
+        if (targetSap && docLine.sap_doc &&
+            String(docLine.sap_doc).trim() !== targetSap) {
+          continue;
+        }
+        newAdded.add(m.line_id);
+        newQtys[m.line_id] = Number(docLine.qty || 0);
+      }
+      setAddedLineIds(newAdded);
+      setConfirmedQtys(newQtys);
+    } catch (e) {
+      setAnalysisError(e.message || "Error analizando el documento");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
   const onFileSelected = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (!/\.pdf$/i.test(f.name)) {
-      setFileError(lang === "es" ? "Solo se admite PDF" : "Only PDF is allowed");
+    if (!ACCEPTED_EXT_RE.test(f.name)) {
+      setFileError(lang === "es"
+        ? "Formato no soportado. Use PDF, XLSX, XLS o CSV."
+        : "Unsupported format. Use PDF, XLSX, XLS or CSV.");
       return;
     }
     if (f.size > 10 * 1024 * 1024) {
@@ -288,6 +387,8 @@ export default function AddSAPConfirmationDrawer({
     }
     setFileError(null);
     setFile(f);
+    // Disparar análisis IA en background
+    runAnalysis(f);
   };
   const onDrop = (e) => {
     e.preventDefault();
@@ -296,6 +397,13 @@ export default function AddSAPConfirmationDrawer({
       const dt = { target: { files: [f] } };
       onFileSelected(dt);
     }
+  };
+
+  const clearFile = () => {
+    setFile(null);
+    setAnalysis(null);
+    setAnalysisError(null);
+    setAnalyzing(false);
   };
 
   const submit = async () => {
@@ -475,7 +583,7 @@ export default function AddSAPConfirmationDrawer({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="application/pdf"
+                  accept={ACCEPTED_INPUT}
                   style={{ display: "none" }}
                   onChange={onFileSelected}
                 />
@@ -486,31 +594,43 @@ export default function AddSAPConfirmationDrawer({
                     </div>
                     <div className="heading-sm" style={{ marginBottom: 2 }}>
                       {lang === "es"
-                        ? "Subir PDF de Confirmación SAP (ART-04)"
-                        : "Upload SAP Confirmation PDF (ART-04)"}
+                        ? "Subir Confirmación SAP (ART-04) · IA analizará el contenido"
+                        : "Upload SAP Confirmation (ART-04) · AI will analyze contents"}
                     </div>
                     <div className="caption">
                       {lang === "es"
-                        ? "Arrastrá o hacé click · máx. 10MB · solo PDF"
-                        : "Drag or click · max 10MB · PDF only"}
+                        ? "PDF · XLSX · XLS · CSV · máx. 10MB · arrastrá o hacé click"
+                        : "PDF · XLSX · XLS · CSV · max 10MB · drag or click"}
                     </div>
                   </>
                 ) : (
                   <div className="sap-file-preview">
-                    <div className="sap-file-icon" style={{ background: MINT }}>
-                      <IconFileText size={16}/>
+                    <div className="sap-file-icon" style={{
+                      background: analyzing ? BLUE : (analysisError ? AMBER : MINT),
+                    }}>
+                      {analyzing ? <span className="sap-spinner"/> : <IconFileText size={16}/>}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div className="heading-sm" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {file.name}
                       </div>
                       <div className="caption tabular-nums">
-                        {prettyBytes(file.size)} · PDF
+                        {prettyBytes(file.size)}
+                        {file.name.match(ACCEPTED_EXT_RE)
+                          ? ` · ${file.name.split('.').pop().toUpperCase()}`
+                          : ""}
+                        {analyzing && (lang === "es"
+                          ? " · analizando…"
+                          : " · analyzing…")}
+                        {!analyzing && analysis?.ok && (lang === "es"
+                          ? ` · ${analysis.summary?.lines_in_doc || 0} líneas detectadas`
+                          : ` · ${analysis.summary?.lines_in_doc || 0} lines detected`)}
                       </div>
                     </div>
                     <button
                       className="btn btn-ghost btn-sm"
-                      onClick={(e) => { e.stopPropagation(); setFile(null); }}
+                      onClick={(e) => { e.stopPropagation(); clearFile(); }}
+                      disabled={analyzing}
                     >
                       <IconX size={12}/>
                     </button>
@@ -520,6 +640,225 @@ export default function AddSAPConfirmationDrawer({
               {fileError && (
                 <div className="sap-inline-error">
                   <IconAlert size={12}/> {fileError}
+                </div>
+              )}
+
+              {/* ── Panel de resultado IA ─────────────────────
+                  Sprint 2026-05-04 (AG-03): muestra el resumen del
+                  análisis: SAP detectado, líneas matched, discrepancias.
+                  Tokens MWT: usa CSS vars + colores semánticos por tono. */}
+              {analysisError && (
+                <div className="sap-inline-error" style={{ marginTop: 8 }}>
+                  <IconAlert size={12}/>
+                  <span>
+                    {lang === "es"
+                      ? `No pude analizar el documento: ${analysisError}`
+                      : `Could not analyze document: ${analysisError}`}
+                  </span>
+                </div>
+              )}
+
+              {analysis?.ok && (
+                <div className="sap-ai-panel" style={{
+                  marginTop: 12,
+                  border: "1px solid var(--border-subtle, rgba(11,30,58,0.1))",
+                  borderRadius: 10,
+                  background: "var(--surface-alt, rgba(48,131,254,0.03))",
+                  padding: 12,
+                  fontSize: 13,
+                }}>
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    marginBottom: 8,
+                  }}>
+                    <IconSparkle size={13} style={{ color: BLUE }}/>
+                    <span className="heading-sm" style={{ color: NAVY, fontWeight: 700 }}>
+                      {lang === "es"
+                        ? "Análisis IA del documento"
+                        : "AI Document Analysis"}
+                    </span>
+                    <span className="micro" style={{
+                      marginLeft: "auto",
+                      padding: "2px 8px", borderRadius: 4,
+                      background: "rgba(48,131,254,0.08)",
+                      color: BLUE, fontWeight: 700, fontSize: 10,
+                      letterSpacing: "0.04em",
+                    }}>
+                      {analysis.kind === "xlsx_marluvas" ? "MARLUVAS · XLSX"
+                        : analysis.kind === "csv_marluvas" ? "CSV"
+                        : analysis.kind === "pdf_ai" ? "IA · PDF"
+                        : (analysis.kind || "").toUpperCase()}
+                    </span>
+                  </div>
+
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(4, 1fr)",
+                    gap: 8, marginBottom: 8,
+                  }}>
+                    <div className="sap-ai-stat">
+                      <div className="micro text-sec">SAP {analysis.sap_count > 1 ? lang === "es" ? "(detectados)" : "(detected)" : ""}</div>
+                      <div className="heading-sm mono tabular-nums" style={{ color: NAVY, fontWeight: 800 }}>
+                        {analysis.sap_id || "—"}
+                      </div>
+                      {analysis.sap_count > 1 && (
+                        <div className="micro" style={{ color: AMBER }}>
+                          +{analysis.sap_count - 1} {lang === "es" ? "más" : "more"}
+                        </div>
+                      )}
+                    </div>
+                    <div className="sap-ai-stat">
+                      <div className="micro text-sec">{lang === "es" ? "Líneas en doc." : "Lines in doc"}</div>
+                      <div className="heading-sm tabular-nums" style={{ color: NAVY, fontWeight: 800 }}>
+                        {fmtNumber(analysis.summary?.lines_in_doc || 0)}
+                      </div>
+                    </div>
+                    <div className="sap-ai-stat">
+                      <div className="micro text-sec">{lang === "es" ? "Matched" : "Matched"}</div>
+                      <div className="heading-sm tabular-nums" style={{ color: MINT, fontWeight: 800 }}>
+                        {fmtNumber(analysis.summary?.lines_matched || 0)}
+                      </div>
+                    </div>
+                    <div className="sap-ai-stat">
+                      <div className="micro text-sec">{lang === "es" ? "Discrepancias" : "Discrepancies"}</div>
+                      <div
+                        className="heading-sm tabular-nums"
+                        style={{
+                          fontWeight: 800,
+                          color: (analysis.summary?.discrepancies_count || 0) === 0 ? MINT : AMBER,
+                        }}>
+                        {fmtNumber(analysis.summary?.discrepancies_count || 0)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {analysis.summary?.perfect_match ? (
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      color: MINT, fontWeight: 700, fontSize: 12,
+                    }}>
+                      <IconCheck size={12}/>
+                      <span>
+                        {lang === "es"
+                          ? "Match perfecto · todas las líneas del documento existen en el expediente con la cantidad correcta."
+                          : "Perfect match · every doc line exists in the expediente with the right quantity."}
+                      </span>
+                    </div>
+                  ) : (
+                    (analysis.discrepancies || []).length > 0 && (
+                      <details open style={{ marginTop: 4 }}>
+                        <summary style={{
+                          cursor: "pointer", color: NAVY,
+                          fontWeight: 700, fontSize: 12,
+                          display: "flex", alignItems: "center", gap: 6,
+                        }}>
+                          <IconAlert size={12} style={{ color: AMBER }}/>
+                          {lang === "es"
+                            ? `${analysis.discrepancies.length} discrepancia(s) encontradas`
+                            : `${analysis.discrepancies.length} discrepancy(ies) found`}
+                        </summary>
+                        <div style={{
+                          marginTop: 8, maxHeight: 220, overflowY: "auto",
+                          border: "1px solid var(--border-subtle, rgba(11,30,58,0.08))",
+                          borderRadius: 8, background: "white",
+                        }}>
+                          {analysis.discrepancies.map((d, i) => {
+                            const tone = d.severity === "ERROR" ? RED
+                                       : d.severity === "WARN"  ? AMBER
+                                       : BLUE;
+                            const labelByKind = {
+                              MISSING_IN_EXPEDIENTE: lang === "es"
+                                ? "No está en el expediente" : "Not in expediente",
+                              QTY_DIFF: lang === "es"
+                                ? "Cantidad difiere" : "Qty differs",
+                              NAME_DIFF: lang === "es"
+                                ? "Nombre difiere" : "Name differs",
+                              INCOMPLETE_KEY: lang === "es"
+                                ? "Falta SKU o talla" : "Missing SKU or size",
+                            };
+                            return (
+                              <div
+                                key={i}
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns: "auto 1fr auto",
+                                  gap: 8, padding: "8px 10px",
+                                  borderBottom: "1px solid var(--border-subtle, rgba(11,30,58,0.06))",
+                                  fontSize: 12,
+                                }}>
+                                <span style={{
+                                  alignSelf: "start",
+                                  padding: "2px 6px", borderRadius: 4,
+                                  background: `${tone}15`, color: tone,
+                                  fontWeight: 700, fontSize: 10,
+                                  letterSpacing: "0.04em",
+                                }}>
+                                  {labelByKind[d.kind] || d.kind}
+                                </span>
+                                <div style={{ minWidth: 0 }}>
+                                  <div className="mono" style={{ color: NAVY, fontWeight: 700 }}>
+                                    {d.sku || "—"}
+                                    {d.talla && (
+                                      <span style={{
+                                        marginLeft: 6, padding: "0 6px", borderRadius: 3,
+                                        background: "rgba(11,30,58,0.06)", fontSize: 10,
+                                      }}>{d.talla}</span>
+                                    )}
+                                  </div>
+                                  {(d.descripcion || d.descripcion_doc || d.nombre_exp) && (
+                                    <div className="caption text-sec" style={{
+                                      fontSize: 11, marginTop: 2,
+                                      overflow: "hidden", textOverflow: "ellipsis",
+                                      whiteSpace: "nowrap",
+                                    }}>
+                                      {d.kind === "NAME_DIFF"
+                                        ? `doc: "${d.descripcion_doc || ''}" · exp: "${d.nombre_exp || ''}"`
+                                        : (d.descripcion || d.nombre_exp || "")}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="tabular-nums" style={{
+                                  textAlign: "right", whiteSpace: "nowrap",
+                                  alignSelf: "center", color: NAVY,
+                                }}>
+                                  {(d.kind === "QTY_DIFF" || d.kind === "MISSING_IN_EXPEDIENTE") && (
+                                    <>
+                                      <span style={{ color: BLUE, fontWeight: 700 }}>
+                                        {fmtNumber(d.qty_doc)}
+                                      </span>
+                                      <span style={{ color: "var(--text-tertiary)" }}> doc</span>
+                                      {d.kind === "QTY_DIFF" && (
+                                        <>
+                                          <span style={{ margin: "0 4px", color: "var(--text-tertiary)" }}>vs</span>
+                                          <span style={{ color: NAVY, fontWeight: 700 }}>
+                                            {fmtNumber(d.qty_exp)}
+                                          </span>
+                                          <span style={{ color: "var(--text-tertiary)" }}> exp</span>
+                                        </>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </details>
+                    )
+                  )}
+
+                  {analysis.sap_count > 1 && (
+                    <div style={{
+                      marginTop: 8, padding: 8,
+                      borderRadius: 6, background: "rgba(180,83,9,0.06)",
+                      color: AMBER, fontSize: 11, lineHeight: 1.4,
+                    }}>
+                      <IconAlert size={11} style={{ marginRight: 4, verticalAlign: "middle" }}/>
+                      {lang === "es"
+                        ? `El documento contiene varios SAPs (${(analysis.all_saps || []).join(", ")}). Sólo se pre-seleccionaron las líneas del SAP "${analysis.sap_id}". Cargá los demás SAPs por separado.`
+                        : `Document has multiple SAPs (${(analysis.all_saps || []).join(", ")}). Only "${analysis.sap_id}" lines were pre-selected. Upload remaining SAPs separately.`}
+                    </div>
+                  )}
                 </div>
               )}
             </section>
