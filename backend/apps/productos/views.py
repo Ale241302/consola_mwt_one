@@ -13,10 +13,31 @@ from rest_framework.response import Response
 
 from apps.storage.services import delete_object as _storage_delete
 
-from .models import Producto, CategoriaCat, SubcategoriaCat, UnidadCat, EstadoCat
-from .serializers import ProductoSerializer, ProductoListSerializer
+from .models import (
+    Producto, CategoriaCat, SubcategoriaCat, UnidadCat, EstadoCat,
+    ProductClientAlias,
+)
+from .serializers import (
+    ProductoSerializer, ProductoListSerializer, ProductClientAliasSerializer,
+)
 
 log = logging.getLogger(__name__)
+
+
+# Roles que pueden leer/escribir aliases comerciales por cliente.
+# Los CLIENT_* (rol "cliente") jamas tocan este endpoint - el portal B2B
+# sirve sus propias vistas de producto sin alias gestionables (R3).
+_CEO_LIKE_ROLES = {"admin", "superadmin", "ceo", "manager"}
+
+
+def _is_staff_role(request) -> bool:
+    """True si el JWT trae un role staff/CEO-like (no cliente)."""
+    role = ""
+    if getattr(request, "auth", None):
+        role = (request.auth.get("role") or "").lower()
+    if not role and getattr(request, "user", None):
+        role = (getattr(request.user, "role", "") or "").lower()
+    return role in _CEO_LIKE_ROLES
 
 
 class ProductoViewSet(viewsets.ViewSet):
@@ -159,6 +180,115 @@ class ProductoViewSet(viewsets.ViewSet):
                 WHERE is_active = TRUE ORDER BY orden, label
             """)
             return Response([{"codigo": r[0], "label": r[1]} for r in c.fetchall()])
+
+    # -- Aliases comerciales por cliente -----------------
+    # Tabla productos.product_client_alias (sql/B3_*).
+    # Permite al CEO fijar un "nombre que usa el cliente" para este SKU,
+    # util en proformas, OCs y catalogos B2B. CEO/ADMIN-only - los
+    # CLIENT_* nunca alcanzan este endpoint (R3 - POL_VISIBILIDAD).
+    #
+    # GET    /api/productos/<id>/aliases/                -> listar activos
+    # POST   /api/productos/<id>/aliases/                -> upsert (body:
+    #         {cliente_id, alias, cliente_sku?, notas?})
+    # DELETE /api/productos/<id>/aliases/?cliente_id=... -> soft-delete
+    @action(detail=True, methods=["get", "post", "delete"], url_path="aliases")
+    def aliases(self, request, pk=None):
+        # Validar producto existente (evita huerfanos)
+        try:
+            producto = Producto.objects.get(pk=pk)
+        except Producto.DoesNotExist:
+            return Response({"detail": "Producto no existe"}, status=404)
+
+        # Bloqueo CEO-ONLY (R3): rol "cliente" no puede leer ni escribir.
+        if not _is_staff_role(request):
+            return Response({"detail": "Solo staff/CEO puede gestionar aliases."},
+                            status=403)
+
+        if request.method == "GET":
+            qs = ProductClientAlias.objects.filter(
+                producto_id=producto.id,
+                is_active=True,
+            ).order_by("alias")
+            return Response(ProductClientAliasSerializer(qs, many=True).data)
+
+        if request.method == "POST":
+            data = request.data or {}
+            cliente_id = data.get("cliente_id")
+            if not cliente_id:
+                return Response({"detail": "cliente_id requerido"}, status=400)
+            try:
+                cliente_uuid = uuid.UUID(str(cliente_id))
+            except (ValueError, TypeError):
+                return Response({"detail": "cliente_id invalido (UUID)"}, status=400)
+
+            ser = ProductClientAliasSerializer(data=data)
+            ser.is_valid(raise_exception=True)
+            payload = ser.validated_data
+
+            user_id = getattr(getattr(request, "user", None), "id", None)
+            with transaction.atomic():
+                # Politica upsert: la fila activa por (producto, cliente)
+                # se actualiza in-place. Si no existe, se crea con id nuevo.
+                # El unique parcial de la BD garantiza que NUNCA hay 2
+                # filas activas para el mismo par.
+                existing = (
+                    ProductClientAlias.objects
+                    .filter(
+                        producto_id=producto.id,
+                        cliente_id=str(cliente_uuid),
+                        is_active=True,
+                    )
+                    .first()
+                )
+                if existing:
+                    existing.alias       = payload["alias"]
+                    existing.cliente_sku = payload.get("cliente_sku")
+                    existing.notas       = payload.get("notas")
+                    existing.updated_by_id = user_id
+                    existing.save(update_fields=[
+                        "alias", "cliente_sku", "notas",
+                        "updated_by_id", "updated_at",
+                    ])
+                    return Response(
+                        ProductClientAliasSerializer(existing).data,
+                        status=200,
+                    )
+
+                # Insert nuevo
+                row = ProductClientAlias.objects.create(
+                    id            = uuid.uuid4(),
+                    producto_id   = producto.id,
+                    cliente_id    = str(cliente_uuid),
+                    alias         = payload["alias"],
+                    cliente_sku   = payload.get("cliente_sku"),
+                    notas         = payload.get("notas"),
+                    is_active     = True,
+                    created_by_id = user_id,
+                    updated_by_id = user_id,
+                )
+                return Response(
+                    ProductClientAliasSerializer(row).data,
+                    status=201,
+                )
+
+        # DELETE: soft-delete por cliente_id (idempotente).
+        cliente_id = (
+            request.query_params.get("cliente_id")
+            or (request.data or {}).get("cliente_id")
+        )
+        if not cliente_id:
+            return Response({"detail": "cliente_id requerido"}, status=400)
+        try:
+            cliente_uuid = uuid.UUID(str(cliente_id))
+        except (ValueError, TypeError):
+            return Response({"detail": "cliente_id invalido (UUID)"}, status=400)
+
+        ProductClientAlias.objects.filter(
+            producto_id=producto.id,
+            cliente_id=str(cliente_uuid),
+            is_active=True,
+        ).update(is_active=False)
+        return Response(status=204)
 
     # ── KPIs por SKU ──────────────────────────────────
     @action(detail=True, methods=["get"])

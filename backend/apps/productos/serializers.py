@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Producto
+from .models import Producto, ProductClientAlias
 
 
 # ── Cache simple en memoria para evitar N+1 al resolver marca_id → nombre.
@@ -64,3 +64,26 @@ class ProductoSerializer(serializers.ModelSerializer):
         # el ViewSet lo inyecta vía s.save(id=uuid.uuid4()) (mismo patrón
         # que nodos/clientes/marcas). created_at/updated_at son auto.
         read_only_fields = ("id", "created_at", "updated_at", "marca_nombre")
+
+class ProductClientAliasSerializer(serializers.ModelSerializer):
+    """
+    Alias por cliente para un producto. Endpoint expuesto en
+    /api/productos/<producto_id>/aliases/. CEO/ADMIN-only para escritura.
+    """
+    class Meta:
+        model  = ProductClientAlias
+        fields = (
+            "id", "producto_id", "cliente_id",
+            "alias", "cliente_sku", "notas",
+            "is_active",
+            "created_at", "updated_at",
+        )
+        read_only_fields = ("id", "producto_id", "is_active",
+                            "created_at", "updated_at")
+
+    def validate_alias(self, v):
+        v = (v or "").strip()
+        if not v:
+            raise serializers.ValidationError("El alias no puede estar vacio.")
+        return v
+

@@ -32,27 +32,45 @@ import {
   BRANDS,
   OCS as MOCK_OCS,
 } from "../data/mockData.js";
-import { expedientesApi, ocsApi } from "../lib/api.js";
+import {
+  expedientesApi, ocsApi,
+  clientesApi, lineasApi, productosApi, marcasApi,
+} from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
 
-// ── Mapeo backend → UI (simplificado para Pipeline) ────────
+// ── Mapeo backend → UI (Pipeline) ──────────────────────────
+// Sprint 2026-05-05: alineado con Expedientes.jsx para que las cards
+// muestren cliente, días de crédito, time_in_phase / baseline_days y
+// monto facturado en lugar de placeholders vacíos. Los campos vienen
+// crudos del backend; la enrichment (cliente nombre/país, marca nombre,
+// order_value como fallback de total_invoiced) ocurre en load().
 function mapExpedienteForPipeline(r) {
   return {
-    id: r.codigo || r.id,
-    ref: r.codigo || '',
+    id:    r.codigo || r.id,
+    uuid:  r.id || null,
+    ref:   r.codigo || '',
     oc_id: r.oc_id || null,
-    client: '', brand: '', brand_id: r.brand_id || null,
+    // client_id / brand_id se hidratan en load() con nombre + país.
+    client: '', client_country: '', client_id: r.client_id || null,
+    brand:  '', brand_id:  r.brand_id  || null,
     status: r.estado || 'REGISTRO',
-    credit_days:  Number(r.credit_days) || 0,
-    is_blocked:   !!r.is_blocked,
-    block_reason: r.block_reason || null,
+    credit_days:   Number(r.credit_days) || 0,
+    is_blocked:    !!r.is_blocked,
+    block_reason:  r.block_reason || null,
     factory_delay: !!r.factory_delay,
-    op_mode: r.modo_operacion === 'COMISION' ? 'B' : 'C',
+    op_mode:       r.modo_operacion === 'COMISION' ? 'B' : 'C',
     artifacts_done:  r.artifacts_done || 0,
     artifacts_total: r.artifacts_total || 6,
-    phase_ratio:  Number(r.phase_ratio) || 0,
-    phase_signal: r.phase_signal || 'green',
+    // SLA / fase: el card usa time_in_phase + baseline_days para el chip.
+    time_in_phase: Number(r.time_in_phase) || 0,
+    baseline_days: Number(r.baseline_days) || 10,
+    phase_ratio:   Number(r.phase_ratio)   || 0,
+    phase_signal:  r.phase_signal || 'green',
+    // Monto: total_invoiced es la fuente de verdad; order_value se calcula
+    // en load() como fallback cuando aún no hay facturación.
     total_invoiced: Number(r.total_invoiced) || 0,
+    order_value:    0,
+    incoterm:       r.incoterm || '—',
     _raw: r,
   };
 }
@@ -76,7 +94,95 @@ export default function ScreenPipeline() {
       ]);
       const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
       const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
-      setApiExpedientes(expItems.map(mapExpedienteForPipeline));
+      const mapped   = expItems.map(mapExpedienteForPipeline);
+
+      // ── Enrichment (mismo patrón que Expedientes.jsx) ──────────────
+      // 1) Líneas activas + catálogo productos → order_value como
+      //    fallback de total_invoiced cuando todavía no hay factura.
+      // 2) Clientes → razón social, país y días de crédito.
+      // 3) Marcas → nombre legible (BRANDS mock no siempre matchea
+      //    el UUID real del backend).
+      let lineasArr = [];
+      try {
+        const lnRaw = await lineasApi.list({ is_active: true });
+        lineasArr = Array.isArray(lnRaw) ? lnRaw : (lnRaw?.results || []);
+      } catch { lineasArr = []; }
+
+      const productMap = {};
+      try {
+        const prodList = await productosApi.list();
+        const arr = Array.isArray(prodList) ? prodList : (prodList?.results || []);
+        for (const p of arr) { if (p?.id) productMap[p.id] = p; }
+      } catch { /* fallthrough — order_value queda en 0 */ }
+
+      // Clientes: 1 fetch por client_id único
+      const uniqueClientIds = Array.from(new Set(
+        mapped.map(e => e.client_id).filter(Boolean)
+      ));
+      let clientMap = {};
+      if (uniqueClientIds.length > 0) {
+        try {
+          const cliResults = await Promise.all(
+            uniqueClientIds.map(id => clientesApi.get(id).catch(() => null))
+          );
+          clientMap = cliResults.reduce((acc, c) => {
+            if (c?.id) acc[c.id] = c;
+            return acc;
+          }, {});
+        } catch { clientMap = {}; }
+      }
+
+      // Marcas: lookup por brand_id real (no solo el mock BRANDS).
+      const brandMap = {};
+      try {
+        const brList = await marcasApi.list();
+        const arr = Array.isArray(brList) ? brList : (brList?.results || []);
+        for (const b of arr) { if (b?.id) brandMap[b.id] = b; }
+      } catch { /* fallthrough */ }
+
+      const enriched = mapped.map(e => {
+        const cli = clientMap[e.client_id];
+        const br  = brandMap[e.brand_id];
+
+        // order_value = Σ qty × unit (con fallback a precio_lista /
+        // override por cliente cuando la línea no trae unit_price).
+        const expLines = lineasArr.filter(
+          l => l.expediente_id === e._raw.id
+        );
+        let orderValue = 0;
+        for (const ln of expLines) {
+          const qty = Number(ln.qty || 0);
+          let unit  = Number(ln.unit_price || 0);
+          if (unit === 0 && ln.producto_id) {
+            const p = productMap[ln.producto_id];
+            if (p) {
+              const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
+              const override = Number(cliMap[e.client_id] || 0);
+              const lista    = Number(p.precio_lista || 0);
+              unit = override > 0 ? override : lista;
+            }
+          }
+          orderValue += qty * unit;
+        }
+
+        return {
+          ...e,
+          // Cliente
+          client: cli
+            ? (cli.razon_social || cli.nombre_comercial || cli.codigo || '')
+            : e.client,
+          client_country: cli?.pais_iso2 || e.client_country,
+          credit_days:    Number(
+            cli?.dias_credito ?? cli?.credit_days ?? cli?.credito_dias ?? e.credit_days ?? 0
+          ),
+          // Marca
+          brand: br ? (br.nombre || br.brand_code || br.slug || '') : e.brand,
+          // Monto
+          order_value: orderValue,
+        };
+      });
+
+      setApiExpedientes(enriched);
       setApiOcs(ocItems);
     } catch {
       setApiExpedientes([]);
@@ -209,7 +315,12 @@ export default function ScreenPipeline() {
       <div className="kanban" data-readonly={isClient}>
         {cols.map(state => {
           const cards = getCards(state);
-          const totalMoney = cards.reduce((a,c)=>a+c.total_invoiced, 0);
+          // Total de la columna: usa el monto efectivo (facturado o
+          // order_value como fallback) — coherente con el chip por card.
+          const totalMoney = cards.reduce(
+            (a,c) => a + (c.total_invoiced > 0 ? c.total_invoiced : (c.order_value || 0)),
+            0,
+          );
           const urgentCount = cards.filter(c => c.phase_signal === 'red').length;
           // En CLIENT no conectamos handlers de drag-drop — la columna es pasiva.
           const dropHandlers = can('pipeline_drag') ? {
@@ -276,7 +387,16 @@ export default function ScreenPipeline() {
 
 // ─── Rich pipeline card ────────────────────────
 function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, onDragEnd, isClient, canDrag, showMoney }) {
+  // El BRANDS mock no siempre matchea el UUID real del backend; en ese
+  // caso usamos el nombre que load() ya hidrato en exp.brand. El "dot"
+  // de color sigue dependiendo de la entrada mock cuando exista.
   const brand = BRANDS.find(b => b.id === exp.brand_id);
+  const brandName = brand?.name || exp.brand || '';
+  // Monto efectivo: prefiere total_invoiced; cae a order_value cuando
+  // todavía no hay facturación (mismo criterio que Expedientes.jsx).
+  const effectiveAmount = exp.total_invoiced > 0
+    ? exp.total_invoiced
+    : (exp.order_value || 0);
   const stateIdx = STATES.indexOf(currentState);
   // Track whether a real drag started, so mouseup-on-same-card still opens detail
   const dragStartedRef = useRef(false);
@@ -343,17 +463,30 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, 
         </div>
       </div>
 
-      {/* Row 2: Client + brand */}
+      {/* Row 2: Client + brand. Si load() aún no hidrata, mostramos un
+          placeholder en vez de una línea vacía (mejor UX que "—"). */}
       <div className="k-card-row2">
-        <div className="k-card-client-pro" title={exp.client}>
+        <div className="k-card-client-pro" title={exp.client || ''}>
           <CountryFlag country={exp.client_country}/>
-          <span className="truncate">{exp.client}</span>
+          <span className="truncate">
+            {exp.client || (
+              <span className="caption" style={{color:'var(--text-tertiary)'}}>
+                {lang==='es' ? 'Sin cliente' : 'No client'}
+              </span>
+            )}
+          </span>
         </div>
         <div className="k-card-brand-pro">
-          <span className="brand-dot" style={{ background: brand?.color }}/>
-          <span className="truncate">{exp.brand}</span>
-          <span className="caption" style={{color:'var(--text-tertiary)'}}>·</span>
-          <span className="mono caption">{exp.mode}</span>
+          {brand?.color && (
+            <span className="brand-dot" style={{ background: brand.color }}/>
+          )}
+          <span className="truncate">{brandName}</span>
+          {exp.incoterm && exp.incoterm !== '—' && (
+            <>
+              <span className="caption" style={{color:'var(--text-tertiary)'}}>·</span>
+              <span className="mono caption">{exp.incoterm}</span>
+            </>
+          )}
         </div>
       </div>
 
@@ -386,7 +519,12 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, 
           <span className="sla-label">{slaLabel}</span>
         </div>
         {showMoney && (
-          <span className="k-card-money-pro">{fmtMoney(exp.total_invoiced)}</span>
+          <span className="k-card-money-pro tabular-nums"
+                title={exp.total_invoiced > 0
+                  ? (lang==='es'?'Facturado':'Invoiced')
+                  : (lang==='es'?'Valor de la orden (sin facturar aún)':'Order value (not yet invoiced)')}>
+            {fmtMoney(effectiveAmount)}
+          </span>
         )}
       </div>
     </div>

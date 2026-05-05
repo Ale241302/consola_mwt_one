@@ -36,7 +36,11 @@ import {
 } from "../data/mockData.js";
 import ProductExpedientesTab from "../components/productos/ProductExpedientesTab.jsx";
 import { useRole } from "../context/RoleContext.jsx";
-import { productosApi, marcasApi, tallasApi, nodosApi, clientesApi, apiFetch, getToken } from "../lib/api.js";
+import {
+  productosApi, marcasApi, tallasApi, nodosApi, clientesApi,
+  productoAliasesApi,
+  apiFetch, getToken,
+} from "../lib/api.js";
 
 // Backend → shape lista compacta para los grids
 // "Excepciones por cliente" / "Override por cliente".
@@ -339,6 +343,106 @@ export default function ScreenProductFormView() {
       .catch(() => { /* sin grade_item activo aún → silencioso */ });
     return () => { cancelled = true; };
   }, [isEdit, existing?.sku]);
+
+  // ── Aliases comerciales por cliente (CEO/ADMIN-only) ──────────────
+  // Estado: { [clienteId]: { alias, cliente_sku?, status?, error? } }
+  //   · status:  'idle' | 'saving' | 'saved' | 'error'
+  //   · error:   mensaje del backend si la persistencia falló.
+  // Se carga una vez en modo edit y se persiste por blur (no por cada
+  // tecla, para no martillar el endpoint).
+  const [clientAliases, setClientAliases] = useState({});
+  useEffect(() => {
+    if (!isEdit || !productId) return;
+    let cancelled = false;
+    productoAliasesApi.list(productId)
+      .then(rows => {
+        if (cancelled) return;
+        const arr = Array.isArray(rows) ? rows : (rows?.results || []);
+        const map = {};
+        for (const r of arr) {
+          if (r?.cliente_id) {
+            map[r.cliente_id] = {
+              alias:       r.alias || '',
+              cliente_sku: r.cliente_sku || '',
+              status:      'idle',
+              error:       null,
+            };
+          }
+        }
+        setClientAliases(map);
+      })
+      .catch(() => { /* CLIENT no autorizado o BD vacía — silencioso */ });
+    return () => { cancelled = true; };
+  }, [isEdit, productId]);
+
+  // Persiste el alias de un cliente. Llamada explícita on blur.
+  // Si el alias quedó vacío y antes había uno persistido → DELETE.
+  // En cualquier otro caso → POST upsert.
+  const persistClientAlias = async (clienteId, nextAlias) => {
+    if (!isEdit || !productId || !clienteId) return;
+    const trimmed = (nextAlias || '').trim();
+    const previous = clientAliases[clienteId];
+
+    // Marca optimista de "guardando"
+    setClientAliases(prev => ({
+      ...prev,
+      [clienteId]: { ...(prev[clienteId] || {}),
+                      alias: trimmed,
+                      status: 'saving',
+                      error: null },
+    }));
+
+    try {
+      if (!trimmed) {
+        // Borrar alias previo (idempotente: 204 incluso si ya no existía).
+        if (previous?.alias) {
+          await productoAliasesApi.remove(productId, clienteId);
+        }
+        setClientAliases(prev => {
+          const next = { ...prev };
+          delete next[clienteId];
+          return next;
+        });
+        return;
+      }
+      const res = await productoAliasesApi.upsert(productId, {
+        cliente_id: clienteId,
+        alias:      trimmed,
+      });
+      setClientAliases(prev => ({
+        ...prev,
+        [clienteId]: {
+          alias:       res?.alias || trimmed,
+          cliente_sku: res?.cliente_sku || '',
+          status:      'saved',
+          error:       null,
+        },
+      }));
+      // Limpia el indicador "saved" después de 1.5s
+      setTimeout(() => {
+        setClientAliases(prev => {
+          const cur = prev[clienteId];
+          if (!cur || cur.status !== 'saved') return prev;
+          return { ...prev, [clienteId]: { ...cur, status: 'idle' } };
+        });
+      }, 1500);
+    } catch (e) {
+      let msg = String(e?.message || e || '');
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed && typeof parsed === 'object') {
+          msg = Object.values(parsed).flat().join(' · ') || msg;
+        }
+      } catch (_) { /* msg ya es texto */ }
+      setClientAliases(prev => ({
+        ...prev,
+        [clienteId]: { ...(prev[clienteId] || {}),
+                        alias:  trimmed,
+                        status: 'error',
+                        error:  msg },
+      }));
+    }
+  };
 
   // ── Role-aware rendering ────────
   // isClient → ProductFormView se vuelve read-only + solo pestaña "Detalles".
@@ -1169,6 +1273,18 @@ export default function ScreenProductFormView() {
             </div>
           </div>
         )}
+        {/* Encabezado de las 3 columnas */}
+        <div className="client-price-head">
+          <span>{lang==='es'?'Cliente':'Client'}</span>
+          <span title={lang==='es'
+                  ? 'Nombre que el cliente usa para este producto (aparece en proformas y OCs)'
+                  : 'Name the client uses for this product (shows on proformas and POs)'}>
+            {lang==='es'?'Alias del cliente':'Client alias'}
+          </span>
+          <span style={{textAlign:'right'}}>
+            {lang==='es'?'Precio override':'Override price'}
+          </span>
+        </div>
         <div className="client-price-grid">
           {realClients.map(c => {
             const resolved = resolvedClientsPricing?.clients?.find(
@@ -1197,6 +1313,13 @@ export default function ScreenProductFormView() {
                   ? Number(resolved.precio_final_usd).toFixed(2)
                   : fmtMoney(Number(listPrice)||0).replace('$','').trim());
 
+            // Alias por cliente (CEO/ADMIN-only). isEdit es requisito —
+            // en modo create todavía no existe productId al cual asociar.
+            const aliasState  = clientAliases[c.id] || {};
+            const aliasValue  = aliasState.alias ?? '';
+            const aliasStatus = aliasState.status || 'idle';
+            const aliasError  = aliasState.error || null;
+
             return (
               <div key={c.id} className="client-price-row"
                    data-subsidiary={isSubsidiary || undefined}
@@ -1204,7 +1327,7 @@ export default function ScreenProductFormView() {
                    style={isSubsidiary ? { paddingLeft: 22 } : undefined}>
                 <span className="client-price-id">
                   {isSubsidiary && (
-                    <span style={{color:'#00B286', fontWeight:700, marginRight:2}}
+                    <span style={{color:'var(--brand-accent)', fontWeight:700, marginRight:2}}
                           title={lang==='es'?'Subsidiaria':'Subsidiary'}>↳</span>
                   )}
                   <span className="heading-sm">{c.name}</span>
@@ -1216,6 +1339,56 @@ export default function ScreenProductFormView() {
                         ? (lang==='es' ? ' · hereda precio' : ' · inherits price')
                         : (lang==='es' ? ' · precio propio' : ' · own price')})
                     </span>
+                  )}
+                </span>
+                {/* Alias del producto para este cliente — persiste on blur.
+                    Disponible solo en modo edit (necesita productId). */}
+                <span style={{display:'inline-flex', alignItems:'center',
+                              gap:6, position:'relative'}}
+                      title={aliasError
+                        ? aliasError
+                        : (lang==='es'
+                            ? 'Cómo conoce este cliente el producto (proformas / OCs)'
+                            : 'How this client refers to the product (proformas / POs)')}>
+                  <input
+                    className="input client-alias-input tabular-nums"
+                    type="text"
+                    maxLength={255}
+                    value={aliasValue}
+                    placeholder={isEdit
+                      ? (lang==='es' ? 'Sin alias' : 'No alias')
+                      : (lang==='es' ? 'Guarda el producto primero' : 'Save product first')}
+                    disabled={!isEdit}
+                    data-saving={aliasStatus === 'saving' || undefined}
+                    data-error={aliasStatus === 'error' || undefined}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setClientAliases(prev => ({
+                        ...prev,
+                        [c.id]: { ...(prev[c.id] || {}),
+                                   alias: v,
+                                   status: 'idle',
+                                   error: null },
+                      }));
+                    }}
+                    onBlur={e => persistClientAlias(c.id, e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+                    }}
+                  />
+                  {aliasStatus === 'saving' && (
+                    <span className="caption"
+                          style={{position:'absolute', right:6, top:'50%',
+                                  transform:'translateY(-50%)',
+                                  color:'var(--brand-accent)', fontSize:10,
+                                  pointerEvents:'none'}}>…</span>
+                  )}
+                  {aliasStatus === 'saved' && (
+                    <span className="caption"
+                          style={{position:'absolute', right:6, top:'50%',
+                                  transform:'translateY(-50%)',
+                                  color:'var(--brand-accent)', fontSize:10,
+                                  pointerEvents:'none'}}>✓</span>
                   )}
                 </span>
                 <span style={{display:'inline-flex', alignItems:'center', gap:6}}>

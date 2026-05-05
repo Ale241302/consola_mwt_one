@@ -103,3 +103,31 @@ class EstadoCat(models.Model):
         managed = False
         db_table = 'productos"."estado_cat'
         ordering = ("orden", "label")
+
+class ProductClientAlias(models.Model):
+    """
+    Alias comercial del producto por cliente B2B.
+
+    Una sola fila ACTIVA por (producto_id, cliente_id) - el unique
+    parcial vive en la BD. La politica de upsert es: si llega un POST
+    con un (producto, cliente) que ya tiene fila activa -> se actualiza
+    in-place (no se crea otra fila ni se desactiva la existente).
+
+    Tabla creada por [AG-DATABASE] en backend/sql/B3_product_client_alias.sql.
+    """
+    id            = models.UUIDField(primary_key=True)
+    producto_id   = models.UUIDField()                  # sin FK
+    cliente_id    = models.UUIDField()                  # sin FK
+    alias         = models.CharField(max_length=255)
+    cliente_sku   = models.CharField(max_length=64, null=True, blank=True)
+    notas         = models.TextField(null=True, blank=True)
+    is_active     = models.BooleanField(default=True)
+    created_by_id = models.UUIDField(null=True, blank=True)
+    updated_by_id = models.UUIDField(null=True, blank=True)
+    created_at    = models.DateTimeField(auto_now_add=True)
+    updated_at    = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'productos"."product_client_alias'
+        ordering = ("alias",)
