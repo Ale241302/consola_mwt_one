@@ -11,7 +11,9 @@ from .views_simplified_wizard import (
 from .views_matchmaker import (
     UploadMatchView, ResolveMatchView, MatchHistoryView,
 )
-from .views_sap_analyze import AnalyzeSapConfirmationView
+from .views_sap_analyze import (
+    AnalyzeSapConfirmationView, SyncSapDiscrepanciesView,
+)
 from .views_builder_artifacts import (
     BuilderArtifactsListCreateView, BuilderArtifactDetailView,
     builder_templates_list, builder_template_detail,
@@ -62,6 +64,13 @@ urlpatterns = [
     path("expedientes/<uuid:expediente_id>/analyze-sap-confirmation/",
          AnalyzeSapConfirmationView.as_view(),
          name="expedientes-analyze-sap-confirmation"),
+
+    # Aplica las discrepancias detectadas por analyze-sap-confirmation
+    # (botón "Sincronizar" del drawer): ADD_LINE inserta la talla
+    # faltante con precio del cliente; UPDATE_QTY ajusta cantidad.
+    path("expedientes/<uuid:expediente_id>/sync-sap-discrepancies/",
+         SyncSapDiscrepanciesView.as_view(),
+         name="expedientes-sync-sap-discrepancies"),
 
     # ── Builder Artifacts (sprint 2026-05-01) ──────────────────
     # Instancias de artefactos cuyas plantillas vienen del Builder

@@ -122,6 +122,34 @@ async function postAnalyzeSap({ expedienteId, file }) {
   return data;
 }
 
+// ───── JSON POST a /expedientes/{id}/sync-sap-discrepancies/ ─────
+// Sprint 2026-05-04 (AG-03): aplica las acciones derivadas del análisis
+// IA. ADD_LINE inserta la talla faltante con precio del cliente
+// (cascada doc → CPA → precio_lista). UPDATE_QTY ajusta la cantidad.
+async function postSyncDiscrepancies({ expedienteId, actions }) {
+  const token = getToken();
+  const resp = await fetch(
+    `${API_BASE}/expedientes/${expedienteId}/sync-sap-discrepancies/`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ actions }),
+    },
+  );
+  const text = await resp.text();
+  let data = null;
+  if (text) { try { data = JSON.parse(text); } catch { data = { raw: text }; } }
+  if (!resp.ok) {
+    const err = new Error(data?.detail || data?.error || `HTTP ${resp.status}`);
+    err.status = resp.status; err.body = data;
+    throw err;
+  }
+  return data;
+}
+
 // ───── Multipart POST a /expedientes/{id}/confirm-sap/ ────────
 async function postConfirmSap({ expedienteId, sapId, fechaFabricacion,
                                 lineasConfirmadas, file }) {
@@ -164,6 +192,11 @@ export default function AddSAPConfirmationDrawer({
   expediente,         // { id, codigo, estado, ... }
   lines = [],         // [{ id, sku, size, qty, unit_price, ... }]
   onSuccess,          // (payload) => void  — padre refresca la vista
+  // Sprint 2026-05-04 (AG-03): callback opcional para que el padre
+  // refetche líneas tras una sincronización IA (botón Sincronizar).
+  // El drawer ya mantiene `extraLines` localmente, así que esto es
+  // best-effort: el flujo funciona aunque el padre ignore el callback.
+  onLinesChanged,     // () => void
   // Sprint 2026-05-01: si viene existingSap, el drawer entra en modo
   // EDIT. Pre-popula sapId/fechaFab/addedLineIds, omite el check de
   // estado (permite editar en PRODUCCION) y llama upsert-sap en vez
@@ -195,11 +228,35 @@ export default function AddSAPConfirmationDrawer({
   const [analysis, setAnalysis]           = useState(null);
   const [analysisError, setAnalysisError] = useState(null);
 
+  // Sprint 2026-05-04 (AG-03): líneas insertadas localmente por el
+  // botón "Sincronizar" — todavía no presentes en `lines` (prop del
+  // padre) hasta que onLinesChanged provoque un refetch. Se mergean
+  // con `lines` en `allLines` para que la búsqueda y la tabla de
+  // líneas agregadas las muestren inmediatamente.
+  const [extraLines, setExtraLines]       = useState([]);
+  const [syncing, setSyncing]             = useState(false);
+  const [syncError, setSyncError]         = useState(null);
+  const [syncedAt, setSyncedAt]           = useState(null);
+
   // Reset al re-abrir
+  // Sprint 2026-05-04 (AG-03): usamos un ref para inicializar UNA SOLA
+  // VEZ por apertura del drawer. Antes el effect dependía de `lines` y
+  // se reseteaba cada vez que el padre re-renderizaba — eso pisaba el
+  // estado del usuario (incluyendo addedLineIds que el botón
+  // Sincronizar acaba de actualizar).
+  const didInitRef = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      didInitRef.current = false;
+      return;
+    }
+    // Edit mode necesita `lines` para inicializar confirmedQtys; si aún
+    // no llegaron, esperamos.
+    if (didInitRef.current) return;
+    if (isEditMode && (!lines || lines.length === 0)) return;
+    didInitRef.current = true;
+
     if (isEditMode && existingSap) {
-      // Pre-popular con datos del SAP existente
       setSapId(existingSap.sap_id || "");
       setFechaFab(existingSap.fecha_fabricacion || todayISO());
       const ids = new Set(existingSap.line_ids || []);
@@ -223,23 +280,38 @@ export default function AddSAPConfirmationDrawer({
     setAnalyzing(false);
     setAnalysis(null);
     setAnalysisError(null);
+    setExtraLines([]);
+    setSyncing(false);
+    setSyncError(null);
+    setSyncedAt(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lines, isEditMode, existingSap?.sap_id]);
 
   const fileInputRef = useRef(null);
 
   // ───── computed ─────
+  // Sprint 2026-05-04 (AG-03): mergeamos `lines` (prop del padre) con
+  // `extraLines` (líneas insertadas localmente por Sincronizar). Cuando
+  // el padre eventualmente refetcha, las nuevas líneas aparecen en
+  // `lines` y deduplicamos por id para no mostrar duplicados.
+  const allLines = useMemo(() => {
+    const base = lines || [];
+    const baseIds = new Set(base.map(l => l.id));
+    const extras = (extraLines || []).filter(l => !baseIds.has(l.id));
+    return [...base, ...extras];
+  }, [lines, extraLines]);
+
   // Líneas agregadas por el usuario (subset filtrado por addedLineIds)
   const addedLines = useMemo(() => {
-    return (lines || []).filter(l => addedLineIds.has(l.id));
-  }, [lines, addedLineIds]);
+    return allLines.filter(l => addedLineIds.has(l.id));
+  }, [allLines, addedLineIds]);
 
   // Resultados del buscador: líneas del expediente que NO están aún
   // agregadas y matchean el query (SKU o talla).
   const searchResults = useMemo(() => {
     const q = searchQ.trim().toLowerCase();
     if (!q) return [];
-    return (lines || [])
+    return allLines
       .filter(l => !addedLineIds.has(l.id))
       .filter(l => {
         const sku = String(l.sku || "").toLowerCase();
@@ -248,7 +320,7 @@ export default function AddSAPConfirmationDrawer({
         return sku.includes(q) || sz.includes(q) || lbl.includes(q);
       })
       .slice(0, 12);
-  }, [lines, addedLineIds, searchQ]);
+  }, [allLines, addedLineIds, searchQ]);
 
   const cutTotal = useMemo(() => {
     return addedLines.reduce((acc, l) => {
@@ -311,7 +383,7 @@ export default function AddSAPConfirmationDrawer({
   const addAllRemaining = () => {
     const all = new Set(addedLineIds);
     const newQtys = { ...confirmedQtys };
-    (lines || []).forEach(l => {
+    allLines.forEach(l => {
       if (!all.has(l.id)) {
         all.add(l.id);
         newQtys[l.id] = Number(l.qty || 0);
@@ -404,6 +476,119 @@ export default function AddSAPConfirmationDrawer({
     setAnalysis(null);
     setAnalysisError(null);
     setAnalyzing(false);
+    setSyncError(null);
+    setSyncedAt(null);
+  };
+
+  // Sprint 2026-05-04 (AG-03): convierte las discrepancias actuales en
+  // acciones aplicables (ADD_LINE / UPDATE_QTY) y las envía al backend.
+  // Mismo patrón que /resolve-match/ del matchmaker OC/Proforma.
+  const buildSyncActions = () => {
+    if (!analysis?.discrepancies) return [];
+    const out = [];
+    for (const d of analysis.discrepancies) {
+      if (d.kind === "MISSING_IN_EXPEDIENTE" && d.sku && d.talla) {
+        out.push({
+          kind:        "ADD_LINE",
+          sku:         d.sku,
+          talla:       d.talla,
+          qty:         Number(d.qty_doc || 0),
+          qty_doc:     Number(d.qty_doc || 0),
+          descripcion: d.descripcion || null,
+          sap_doc:     d.sap_doc || null,
+        });
+      } else if (d.kind === "QTY_DIFF" && d.line_id) {
+        out.push({
+          kind:    "UPDATE_QTY",
+          line_id: d.line_id,
+          qty:     Number(d.qty_doc || 0),
+          qty_doc: Number(d.qty_doc || 0),
+          sku:     d.sku,
+          talla:   d.talla,
+        });
+      }
+      // NAME_DIFF y INCOMPLETE_KEY no son auto-sincronizables — el
+      // operador debe revisar manualmente.
+    }
+    return out;
+  };
+
+  const syncableCount = useMemo(
+    () => buildSyncActions().length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [analysis],
+  );
+
+  const handleSync = async () => {
+    if (syncing || !analysis?.ok || !expediente?.id) return;
+    const actions = buildSyncActions();
+    if (actions.length === 0) return;
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const res = await postSyncDiscrepancies({
+        expedienteId: expediente.id,
+        actions,
+      });
+
+      // 1) Mergear new_lines en extraLines y agregarlas a addedLineIds.
+      const incoming = (res.new_lines || []).map(l => ({
+        id:            l.id,
+        sku:           l.sku,
+        size:          l.size,
+        talla:         l.size,
+        qty:           Number(l.qty || 0),
+        descripcion:   l.descripcion || l.sku,
+        product:       l.descripcion || l.sku,
+        product_label: l.descripcion || l.sku,
+        producto_id:   l.producto_id || null,
+        unit_price:    Number(l.unit_price || 0),
+        total_price:   Number(l.total_price || 0),
+        sap:           l.sap || null,
+        expediente_id: expediente.id,
+        exp_id:        expediente.id,
+        estado:        "PENDIENTE_SAP",
+      }));
+      if (incoming.length > 0) {
+        setExtraLines(prev => {
+          const seen = new Set(prev.map(l => l.id));
+          const fresh = incoming.filter(l => !seen.has(l.id));
+          return [...prev, ...fresh];
+        });
+      }
+
+      // 2) Auto-add las líneas insertadas al SAP en curso, con qty del doc.
+      const newAdded = new Set(addedLineIds);
+      const newQtys  = { ...confirmedQtys };
+      incoming.forEach(l => {
+        newAdded.add(l.id);
+        newQtys[l.id] = Number(l.qty || 0);
+      });
+      // 3) Aplicar UPDATE_QTY locales (sin esperar refetch del padre).
+      (res.updated_lines || []).forEach(u => {
+        if (u.line_id) {
+          newQtys[u.line_id] = Number(u.qty || 0);
+          newAdded.add(u.line_id);
+        }
+      });
+      setAddedLineIds(newAdded);
+      setConfirmedQtys(newQtys);
+      setSyncedAt(new Date().toISOString());
+
+      // 4) Best-effort: avisar al padre para que refetche líneas (opcional).
+      try { onLinesChanged?.(); } catch { /* no-op */ }
+
+      // 5) Re-correr análisis: ahora la BD tiene las líneas, el cruce
+      //    debería volver perfect_match (o al menos sin MISSING/QTY_DIFF
+      //    de los que ya aplicamos).
+      if (file) {
+        await runAnalysis(file);
+      }
+    } catch (e) {
+      setSyncError(e.message || "Error sincronizando discrepancias");
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const submit = async () => {
@@ -750,13 +935,73 @@ export default function AddSAPConfirmationDrawer({
                         <summary style={{
                           cursor: "pointer", color: NAVY,
                           fontWeight: 700, fontSize: 12,
-                          display: "flex", alignItems: "center", gap: 6,
+                          display: "flex", alignItems: "center",
+                          gap: 6, flexWrap: "wrap",
                         }}>
                           <IconAlert size={12} style={{ color: AMBER }}/>
-                          {lang === "es"
-                            ? `${analysis.discrepancies.length} discrepancia(s) encontradas`
-                            : `${analysis.discrepancies.length} discrepancy(ies) found`}
+                          <span style={{ flex: 1 }}>
+                            {lang === "es"
+                              ? `${analysis.discrepancies.length} discrepancia(s) encontradas`
+                              : `${analysis.discrepancies.length} discrepancy(ies) found`}
+                          </span>
+                          {/* Sprint 2026-05-04 (AG-03): botón Sincronizar.
+                              Aplica las acciones derivadas del análisis IA
+                              (ADD_LINE para tallas faltantes con precio del
+                              cliente, UPDATE_QTY para cantidades distintas).
+                              Mismo patrón que /resolve-match/ del matchmaker
+                              OC/Proforma. */}
+                          {syncableCount > 0 && (
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              onClick={(e) => { e.preventDefault(); handleSync(); }}
+                              disabled={syncing}
+                              data-loading={syncing}
+                              style={{
+                                background: BLUE, color: "white",
+                                border: 0, padding: "4px 10px",
+                                borderRadius: 6, fontWeight: 700,
+                                fontSize: 11, cursor: syncing ? "wait" : "pointer",
+                                display: "inline-flex", alignItems: "center", gap: 5,
+                                opacity: syncing ? 0.7 : 1,
+                              }}
+                              title={lang === "es"
+                                ? "Crea las tallas faltantes con el precio del cliente y ajusta cantidades."
+                                : "Create missing sizes with client price and adjust quantities."}>
+                              {syncing
+                                ? <span className="sap-spinner" style={{ width: 10, height: 10 }}/>
+                                : <IconSparkle size={11}/>}
+                              {syncing
+                                ? (lang === "es" ? "Sincronizando…" : "Syncing…")
+                                : (lang === "es"
+                                    ? `Sincronizar ${syncableCount}`
+                                    : `Sync ${syncableCount}`)}
+                            </button>
+                          )}
                         </summary>
+                        {syncError && (
+                          <div className="sap-inline-error" style={{
+                            margin: "6px 0", padding: "6px 8px",
+                            borderRadius: 6,
+                          }}>
+                            <IconAlert size={11}/>
+                            <span style={{ fontSize: 11 }}>{syncError}</span>
+                          </div>
+                        )}
+                        {syncedAt && !syncing && !syncError && (
+                          <div style={{
+                            margin: "6px 0", padding: "6px 8px",
+                            borderRadius: 6,
+                            background: "rgba(0,178,134,0.08)",
+                            color: MINT, fontWeight: 700, fontSize: 11,
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                          }}>
+                            <IconCheck size={11}/>
+                            {lang === "es"
+                              ? "Discrepancias sincronizadas con el expediente."
+                              : "Discrepancies synced into expediente."}
+                          </div>
+                        )}
                         <div style={{
                           marginTop: 8, maxHeight: 220, overflowY: "auto",
                           border: "1px solid var(--border-subtle, rgba(11,30,58,0.08))",
