@@ -546,7 +546,7 @@ def _safe_float(v):
 # ─────────────────────────────────────────────────────────────────────
 # Resolver: IA → SKU canónico vía productos.producto
 # ─────────────────────────────────────────────────────────────────────
-def _resolve_oc_lines_to_canonical(lines: list[dict]) -> list[dict]:
+def _resolve_oc_lines_to_canonical(lines: list[dict], cliente_id=None) -> list[dict]:
     """Para cada línea OC extraída por la IA, resuelve el SKU canónico
     consultando productos.producto. Estrategias en cascada (la primera
     que matchea gana):
@@ -564,7 +564,7 @@ def _resolve_oc_lines_to_canonical(lines: list[dict]) -> list[dict]:
         return lines
 
     # Indexamos productos en memoria una sola vez para esta corrida.
-    catalog = _load_catalog_index()
+    catalog = _load_catalog_index(cliente_id=cliente_id)
 
     for ln in lines:
         # Sprint 2026-05-02 (AG-03): el AI puede devolver el SKU MWT canónico
@@ -584,6 +584,41 @@ def _resolve_oc_lines_to_canonical(lines: list[dict]) -> list[dict]:
         client_part = (ln.get("client_part_number") or "").upper()
         supplier_ref = (ln.get("supplier_ref") or "").upper()
         base_code = (ln.get("base_code") or "").upper()
+
+        # 0. ALIAS por cliente (Sprint 2026-05-05). Antes que cualquier
+        #    otra heuristica probamos si el alias del producto para ESTE
+        #    cliente coincide con la base extraida del documento. Esto
+        #    cubre el caso "27BM60B19M-CPAP-MIN-CP-38" donde el cliente
+        #    nombra el producto con su prefijo propio: el SKU/nombre del
+        #    catalogo MWT no matchea, pero el alias si.
+        alias_index = catalog.get("by_alias") or {}
+        if alias_index:
+            alias_keys = []
+            if client_part:
+                alias_keys.append(("CLIENT_PART", client_part))
+                b, _ = _split_base_and_talla(client_part)
+                if b and b != client_part:
+                    alias_keys.append(("CLIENT_PART_BASE", b))
+            if base_code and not any(k[1] == base_code for k in alias_keys):
+                alias_keys.append(("BASE_CODE", base_code))
+            if supplier_ref:
+                b, _ = _split_base_and_talla(supplier_ref)
+                if b and not any(k[1] == b for k in alias_keys):
+                    alias_keys.append(("SUPPLIER_REF_BASE", b))
+            alias_hit = None
+            for source, key in alias_keys:
+                if key and key in alias_index:
+                    alias_hit = (source, alias_index[key])
+                    break
+            if alias_hit:
+                source, p = alias_hit
+                ln["sku"] = p["sku"]
+                ln["matched_producto_id"] = p["id"]
+                ln["match_strategy"] = f"ALIAS_EXACT/{source}"
+                ln["match_score"] = 92
+                if not ln.get("product_label"):
+                    ln["product_label"] = p.get("nombre") or ""
+                continue
 
         # 1. SKU vía client_part_number (caso OC del cliente — el primer
         #    código de la fila puede coincidir con un SKU MWT)
@@ -669,6 +704,23 @@ def _resolve_oc_lines_to_canonical(lines: list[dict]) -> list[dict]:
         for haystack, source in substr_haystacks:
             if len(haystack) < 6:
                 continue
+            # 4.0 Substring contra ALIAS del cliente (Sprint 2026-05-05).
+            # Cubre cuando la IA pegó la talla al alias o le quedó algún
+            # prefijo extra. Score 78 — mejor que ref_proveedor substring
+            # porque el alias está fijado por el CEO específicamente para
+            # este cliente.
+            for alias_key, p in (catalog.get("by_alias") or {}).items():
+                if alias_key and len(alias_key) >= 6 and alias_key in haystack:
+                    ln["sku"] = p["sku"]
+                    ln["matched_producto_id"] = p["id"]
+                    ln["match_strategy"] = f"ALIAS_SUBSTRING/{source}"
+                    ln["match_score"] = 78
+                    if not ln.get("product_label"):
+                        ln["product_label"] = p.get("nombre") or ""
+                    substring_matched = True
+                    break
+            if substring_matched:
+                break
             # Probamos primero por ref_proveedor (más confiable para OC)
             for ref_key, p in catalog["by_ref_proveedor"].items():
                 if ref_key and len(ref_key) >= 6 and ref_key in haystack:
@@ -706,11 +758,20 @@ def _resolve_oc_lines_to_canonical(lines: list[dict]) -> list[dict]:
     return lines
 
 
-def _load_catalog_index() -> dict:
-    """Carga índices en memoria de productos.producto activos."""
+def _load_catalog_index(cliente_id=None) -> dict:
+    """Carga índices en memoria de productos.producto activos.
+
+    Sprint 2026-05-05 (AG-03): si recibe `cliente_id`, también carga
+    productos.product_client_alias activo para ese cliente y arma un
+    `by_alias` con la misma forma que `by_sku` (alias UPPER → row del
+    producto). Esto deja que el matchmaker resuelva OCs donde el cliente
+    nombra el producto con su propio "alias comercial" en vez del SKU
+    o nombre canónico MWT.
+    """
     by_sku = {}
     by_nombre = {}
     by_ref_proveedor = {}
+    by_alias = {}
     try:
         with connection.cursor() as c:
             c.execute("""
@@ -728,11 +789,45 @@ def _load_catalog_index() -> dict:
                 if nombre: by_nombre[nombre] = row
                 if ref:    by_ref_proveedor[ref] = row
     except Exception as e:
-        log.warning("[matchmaker] no pude cargar catálogo de productos: %s", e)
+        log.warning("[matchmaker] no pude cargar catalogo de productos: %s", e)
+
+    # ── Aliases por cliente (LOTE_SM_TICKETS · alias por cliente) ─────
+    # Sólo carga si el caller nos da un cliente_id (sólo en OC, nunca
+    # en proforma — proforma_extractor no consume este loader).
+    if cliente_id:
+        try:
+            with connection.cursor() as c:
+                c.execute("""
+                    SELECT a.producto_id::text,
+                           UPPER(COALESCE(a.alias, ''))     AS alias_upper,
+                           UPPER(COALESCE(p.sku, ''))       AS sku,
+                           UPPER(COALESCE(p.nombre, ''))    AS nombre,
+                           UPPER(COALESCE(p.especificaciones->>'ref_proveedor', '')) AS ref
+                      FROM productos.product_client_alias a
+                      JOIN productos.producto p ON p.id = a.producto_id
+                     WHERE a.is_active = TRUE
+                       AND a.cliente_id = %s::uuid
+                       AND COALESCE(p.is_active, TRUE) = TRUE
+                """, [str(cliente_id)])
+                for pid, alias_up, sku, nombre, ref in c.fetchall():
+                    if not alias_up:
+                        continue
+                    by_alias[alias_up] = {
+                        "id": pid,
+                        "sku": sku,
+                        "nombre": nombre,
+                        "ref_proveedor": ref,
+                        "alias": alias_up,
+                    }
+        except Exception as e:
+            log.warning("[matchmaker] no pude cargar aliases del cliente %s: %s",
+                        cliente_id, e)
+
     return {
         "by_sku":            by_sku,
         "by_nombre":         by_nombre,
         "by_ref_proveedor":  by_ref_proveedor,
+        "by_alias":          by_alias,
     }
 
 
@@ -888,8 +983,27 @@ def cross_match(ai_payload: dict, expediente_id) -> dict:
     #                       por si solo viene supplier_ref.
     #   · SAP del proveedor: las confirmaciones traen ref del proveedor,
     #                       no el SKU MWT.
+    # Sprint 2026-05-05 (AG-03): para OC consultamos el cliente del
+    # expediente y se lo pasamos al resolver para que pueda usar
+    # productos.product_client_alias en la cascada de match. PROFORMA y
+    # SAP siguen sin alias (decisión: solo OC del cliente usa esa señal).
+    cliente_id = None
+    try:
+        with connection.cursor() as c:
+            c.execute(
+                "SELECT client_id::text FROM expedientes.expediente WHERE id = %s::uuid",
+                [str(expediente_id)],
+            )
+            row = c.fetchone()
+            if row and row[0]:
+                cliente_id = row[0]
+    except Exception as e:
+        log.warning("[matchmaker] cross_match: no pude leer client_id del expediente: %s", e)
+
     if kind == "OC":
-        ai_payload["lines"] = _resolve_oc_lines_to_canonical(ai_payload.get("lines") or [])
+        ai_payload["lines"] = _resolve_oc_lines_to_canonical(
+            ai_payload.get("lines") or [], cliente_id=cliente_id,
+        )
     elif kind in ("PROFORMA", "SAP"):
         for g in (ai_payload.get("groups") or []):
             g["lines"] = _resolve_oc_lines_to_canonical(g.get("lines") or [])
