@@ -8000,6 +8000,8 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
 }
 .ticket-pill {
   display: inline-block;
+  width: auto;
+  max-width: none;
   padding: 3px 10px;
   border-radius: 999px;
   background: var(--surface-alt, #F8FAFC);
@@ -8007,6 +8009,12 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   font-size: 11px; font-weight: 600;
   letter-spacing: 0.2px;
   text-transform: uppercase;
+  /* Mantener el pill en una sola linea aunque el contenedor padre
+     sea flex con poco espacio. flex-shrink:0 evita que el flex-row
+     compacte el pill y rompa el texto en dos lineas. */
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.4;
 }
 .ticket-pill[data-color="amber"]  { background: rgba(245,158,11,0.10);  color: #B45309; }
 .ticket-pill[data-color="blue"]   { background: rgba(48,131,254,0.10);  color: #1D4ED8; }
