@@ -329,8 +329,18 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
     # llamada falle limpio antes de los 120s del worker de gunicorn. Con
     # los defaults (timeout=60, max_retries=2), una API lenta podía estirar
     # la request a 60×3=180s y matar el worker con SIGKILL → 500 mudo.
-    client = OpenAI(api_key=api_key, timeout=45.0, max_retries=1)
+    # Sprint 2026-05-06 (AG-03): subimos a 90s. Confirmado en producción
+    # que PDFs OC de SonDel (text-native pero pasados por path vision por
+    # falla silenciosa de pypdf) tomaban >45s y daban APITimeoutError. El
+    # worker gunicorn tiene timeout 120s, así que 90s + max_retries=1
+    # sigue dejando margen seguro.
+    client = OpenAI(api_key=api_key, timeout=90.0, max_retries=1)
     system_prompt = PROMPT_BY_TYPE.get(document_type, SYSTEM_PROMPT_OC)
+    # Trazabilidad: qué path tomó el extractor. Lo necesitamos para
+    # diagnosticar timeouts (text-only es 5-10s, vision puede ser 60s+).
+    extract_path = "TEXT" if text_payload is not None else "VISION"
+    log.info("[matchmaker] extract_document path=%s model=%s file=%s size=%dKB",
+             extract_path, OCR_MODEL, filename, len(file_bytes) // 1024)
 
     raw_text = None
     try:
@@ -983,6 +993,37 @@ def _fuzzy_lookup_nombre(base_code: str) -> Optional[dict]:
 def cross_match(ai_payload: dict, expediente_id) -> dict:
     """Cruza el payload de la IA contra expedientes.linea del expediente."""
     kind = (ai_payload.get("document_kind") or "OC").upper()
+
+    # ── Sprint 2026-05-06 (AG-03): early exit si la IA falló ────
+    # Si `extract_document` devolvió `error` poblado (timeout, JSON
+    # inválido, modelo no disponible, etc.), NO generamos discrepancias
+    # falsas contra la BD. Devolvemos un mismatch_payload con flag
+    # `ai_failed=True` para que el frontend muestre claramente "El
+    # análisis IA falló, reintenta" en vez de "N discrepancias" donde
+    # el usuario cree que la BD está desincronizada cuando en realidad
+    # la IA ni siquiera leyó el documento.
+    ai_error = ai_payload.get("error")
+    if ai_error:
+        log.warning("[matchmaker] cross_match: AI failed (%s) → ai_failed payload",
+                    ai_error)
+        return {
+            "ai_failed": True,
+            "ai_error":  str(ai_error),
+            "summary": {
+                "perfect_match":      False,
+                "coverage_pct":       0,
+                "lines_in_doc":       0,
+                "lines_in_expediente": 0,
+                "lines_matched":      0,
+                "discrepancies_count": 0,
+                "ai_failed":          True,
+                "ai_error":           str(ai_error),
+                "resolution":         None,
+            },
+            "discrepancies": [],
+            "groups":        [],
+            "lines":         [],
+        }
 
     # ── Resolver IA→SKU canónico ─────────────
     # Sprint 2026-05-02 (AG-03): aplicamos el resolver a OC, PROFORMA y SAP.

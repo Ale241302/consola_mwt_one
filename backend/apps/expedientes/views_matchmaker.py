@@ -154,6 +154,16 @@ class UploadMatchView(APIView):
         coverage_pct        = summary.get("coverage_pct") or 0
         discrepancies_count = summary.get("discrepancies_count") or 0
         is_perfect_match    = bool(summary.get("perfect_match"))
+        # Sprint 2026-05-06 (AG-03): si la IA falló (timeout, JSON inválido,
+        # etc.), `cross_match` retorna ai_failed=True con discrepancias
+        # vacías. Persistimos el log con coverage=0 y discrepancies_count=0
+        # para que match-history no contamine las métricas con runs fallidos
+        # ni le mienta al usuario diciéndole que hay "N discrepancias".
+        ai_failed = bool(mismatch_payload.get("ai_failed"))
+        if ai_failed:
+            coverage_pct        = 0
+            discrepancies_count = 0
+            is_perfect_match    = False
 
         # ── 5. Persistir en BD (artifact_instance + match_log) ─
         author_email = (
@@ -259,6 +269,10 @@ class UploadMatchView(APIView):
                 "mismatch_payload":  mismatch_payload,
                 "summary":           summary,
                 "is_perfect_match":  is_perfect_match,
+                # Sprint 2026-05-06 (AG-03): el frontend usa este flag para
+                # mostrar "Reintenta el análisis IA" en vez de "N discrepancias".
+                "ai_failed":         ai_failed,
+                "ai_error":          mismatch_payload.get("ai_error") or ai_payload.get("error"),
             },
             status=200,
         )

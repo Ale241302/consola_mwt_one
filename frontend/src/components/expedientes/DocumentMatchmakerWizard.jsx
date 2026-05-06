@@ -617,6 +617,64 @@ function Step3Dashboard({
   const isPerfect = summary.perfect_match;
   const isProforma = documentType === "ART-02_PROFORMA";
   const isSAP      = documentType === "ART-04_SAP";
+  // Sprint 2026-05-06 (AG-03): cuando el backend extractor falló (timeout
+  // del modelo, JSON inválido, modelo no disponible), `cross_match`
+  // marca el payload con `ai_failed=true` y discrepancias vacías. Mostramos
+  // un estado claro "Reintenta el análisis" en vez de simular discrepancias
+  // falsas que confunden al usuario.
+  const aiFailed = !!(result?.ai_failed || summary.ai_failed ||
+                      result?.mismatch_payload?.ai_failed);
+  const aiError  = result?.ai_error ||
+                   result?.mismatch_payload?.ai_error ||
+                   summary.ai_error;
+
+  // Sprint 2026-05-06 (AG-03): la IA falló (timeout, JSON inválido, etc.)
+  // → mostrar estado claro de error en vez de simular discrepancias falsas.
+  if (aiFailed) {
+    return (
+      <div style={{ padding: "32px 24px", textAlign: "center" }}>
+        <motion.div
+          initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.3, type: "spring" }}
+          style={{
+            width: 84, height: 84, borderRadius: "50%",
+            background: "linear-gradient(135deg, #F59E0B 0%, #EF4444 100%)",
+            margin: "0 auto 16px", display: "flex", alignItems: "center", justifyContent: "center",
+            color: "white",
+          }}>
+          <IconAlert size={36}/>
+        </motion.div>
+        <div style={{ fontWeight: 800, fontSize: 22, color: "var(--text-primary, #0B1E3A)", marginBottom: 6 }}>
+          {lang === "es" ? "El análisis IA falló" : "AI analysis failed"}
+        </div>
+        <div className="caption" style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 12, maxWidth: 480, margin: "0 auto 12px" }}>
+          {lang === "es"
+            ? "El modelo no pudo procesar el documento. Esto suele pasar por timeout transitorio del proveedor. Vuelve a subir el archivo en unos segundos — el documento ya quedó guardado en el expediente."
+            : "The model couldn't process the document. This is usually a transient provider timeout. Re-upload the file in a few seconds — the document is already saved in the file."}
+        </div>
+        {aiError && (
+          <div className="caption" style={{
+            display: "inline-block",
+            padding: "8px 12px", borderRadius: 8,
+            background: "rgba(239,68,68,0.08)", color: "#991B1B",
+            border: "1px solid rgba(239,68,68,0.25)",
+            fontFamily: "JetBrains Mono, monospace",
+            fontSize: 11, maxWidth: 600, textAlign: "left",
+            wordBreak: "break-word",
+          }}>
+            {String(aiError).slice(0, 220)}
+          </div>
+        )}
+        <div className="caption" style={{
+          color: "var(--text-tertiary)", fontSize: 11, marginTop: 12,
+        }}>
+          {lang === "es"
+            ? `Documento: ${result?.document_filename || "—"} · ${summary.lines_in_expediente || 0} líneas en el expediente · ninguna línea procesada del documento`
+            : `Document: ${result?.document_filename || "—"} · ${summary.lines_in_expediente || 0} lines in file · no lines processed from document`}
+        </div>
+      </div>
+    );
+  }
 
   // Resolved final view
   if (resolvedSummary) {
