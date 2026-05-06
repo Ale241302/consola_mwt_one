@@ -1128,8 +1128,10 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
           }}>
             {lang === "es" ? "TÉRMINOS DE PAGO" : "PAYMENT TERMS"}
           </div>
+
+          {/* ── Fila superior: Días crédito (cliente) + Forma de pago ── */}
           <div style={{
-            display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14,
+            display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14,
           }}>
             <div>
               <div style={{
@@ -1149,33 +1151,17 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
                 fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
                 letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4,
               }}>
-                {lang === "es" ? "Días de pago (este pedido)" : "Payment days (this order)"}
-              </div>
-              <input
-                type="number"
-                min="0"
-                className="input tabular-nums"
-                value={paymentDays}
-                onChange={(e) => setPaymentDays(Math.max(0, Number(e.target.value) || 0))}
-                disabled={paymentMethod === "CONTADO"}
-                style={{ fontWeight: 700 }}
-              />
-            </div>
-            <div>
-              <div style={{
-                fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
-                letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4,
-              }}>
                 {lang === "es" ? "Forma de pago" : "Payment method"}
               </div>
               <select
                 className="input"
                 value={paymentMethod}
                 onChange={(e) => {
-                  const v = e.target.value;
-                  setPaymentMethod(v);
-                  if (v === "CONTADO") setPaymentDays(0);
-                  else if (Number(client.dias_credito) > 0) setPaymentDays(Number(client.dias_credito));
+                  // Sprint 2026-05-06 · CONTADO y plazo son dimensiones
+                  // ortogonales. Un pedido puede ser CONTADO a 30 días
+                  // con descuento. Solo cambiamos paymentMethod; el plazo
+                  // sigue siendo el que el usuario elija en las cards.
+                  setPaymentMethod(e.target.value);
                 }}
                 style={{ fontWeight: 700 }}
               >
@@ -1184,6 +1170,7 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
               </select>
             </div>
           </div>
+
           {paymentMethod === "CONTADO" && (
             <div style={{
               marginTop: 12,
@@ -1196,6 +1183,120 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
                   : "Cash payment · does NOT affect client\u2019s available credit."}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── PROPUESTA — DESCUENTO POR PRONTO PAGO ─────────────────────────── */}
+      {/* Sprint 2026-05-06 · cards horizontales con descuento por plazo.
+          90 días = base (plazo actual de la PO). Plazos cortos = descuento %.
+          120 días = recargo (solo admin). El usuario hace click en una card
+          y se actualiza paymentDays. Visible solo cuando hay líneas con
+          totalValue > 0 (necesario para calcular ahorro). */}
+      {client && totalValue > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div className="micro" style={{
+            color: "#0B1E3A", letterSpacing: 1, fontWeight: 700,
+            marginBottom: 10, padding: "0 4px",
+          }}>
+            {lang === "es"
+              ? "PROPUESTA — DESCUENTO POR PRONTO PAGO"
+              : "PROPOSAL — EARLY-PAYMENT DISCOUNT"}
+          </div>
+
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${getAvailableTiers(isAdmin).length}, minmax(0, 1fr))`,
+            gap: 10,
+          }}>
+            {getAvailableTiers(isAdmin).map((tier) => {
+              const isSelected   = Number(paymentDays) === tier.days;
+              const tierDiscount = tier.pct / 100;
+              const tierTotal    = totalValue * (1 - tierDiscount);
+              const tierUnit     = totalUnits > 0 ? tierTotal / totalUnits : 0;
+              const baseTier     = EARLY_PAYMENT_TIERS.find(t => t.isBase);
+              const baseTotal    = totalValue * (1 - (baseTier ? baseTier.pct/100 : 0));
+              const ahorro       = baseTotal - tierTotal;
+
+              const fmt = (v) => `$${Number(v || 0).toLocaleString("en-US", {
+                minimumFractionDigits: 2, maximumFractionDigits: 2,
+              })}`;
+
+              return (
+                <button
+                  key={tier.days}
+                  type="button"
+                  onClick={() => setPaymentDays(tier.days)}
+                  style={{
+                    textAlign: "left",
+                    padding: "14px 14px",
+                    borderRadius: 10,
+                    cursor: "pointer",
+                    background: isSelected ? "rgba(0,178,134,0.08)" : "#fff",
+                    border: isSelected
+                      ? "2px solid #00B286"
+                      : "1px solid #E1E6ED",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  <div style={{
+                    fontSize: 11, fontWeight: 800,
+                    color: "var(--text-tertiary)", letterSpacing: 0.6,
+                    textTransform: "uppercase", marginBottom: 6,
+                  }}>
+                    {lang === "es" ? tier.label_es : tier.label_en}
+                  </div>
+                  <div className="tabular-nums" style={{
+                    fontSize: 22, fontWeight: 800, marginBottom: 8,
+                    color: tier.isBase
+                      ? "var(--text-tertiary)"
+                      : (tier.pct > 0 ? "#00875A" : "#0B1E3A"),
+                  }}>
+                    {tier.isBase
+                      ? (lang === "es" ? "base" : "base")
+                      : (tier.pct > 0 ? `−${tier.pct.toFixed(2)}%` : "—")}
+                  </div>
+                  <div className="tabular-nums" style={{
+                    fontSize: 16, fontWeight: 700, color: "#0B1E3A",
+                  }}>
+                    {fmt(tierUnit)}
+                  </div>
+                  <div style={{
+                    fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8,
+                  }}>
+                    {lang === "es" ? "por par" : "per pair"}
+                  </div>
+                  <div style={{
+                    height: 1, background: "#E1E6ED", margin: "6px 0",
+                  }}/>
+                  <div className="tabular-nums" style={{
+                    fontSize: 13, fontWeight: 700, color: "#0B1E3A",
+                  }}>
+                    {fmt(tierTotal)}
+                  </div>
+                  <div style={{
+                    fontSize: 10, color: tier.isBase ? "var(--text-tertiary)" : "#00875A",
+                    fontWeight: 600, marginTop: 2,
+                  }}>
+                    {tier.isBase
+                      ? (lang === "es" ? "Plazo actual PO" : "Current PO term")
+                      : (lang === "es" ? `Ahorro ${fmt(ahorro)}` : `Savings ${fmt(ahorro)}`)}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{
+            marginTop: 10, padding: "8px 12px", borderRadius: 6,
+            background: "rgba(0,178,134,0.06)",
+            border: "1px solid rgba(0,178,134,0.18)",
+            fontSize: 11, color: "#0B1E3A", lineHeight: 1.45,
+          }}>
+            <strong>{lang === "es" ? "Pronto pago:" : "Early payment:"}</strong>{" "}
+            {lang === "es"
+              ? "el descuento se aplica sobre el total facturado al confirmar el plazo de pago elegido. Plazo se cuenta desde la fecha de factura en destino. Sujeto a aprobación de crédito y disponibilidad de stock."
+              : "discount applies to the total invoiced upon confirming the chosen payment term. Term counted from the destination invoice date. Subject to credit approval and stock availability."}
+          </div>
         </div>
       )}
 
@@ -1225,6 +1326,31 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
 // ═════════════════════════════════════════════════════════════
 // HELPERS
 // ═════════════════════════════════════════════════════════════
+
+// Sprint 2026-05-06 · matriz de descuento por pronto pago (waterfall).
+// Valores canónicos del catálogo COMEX 2025 v6 (commercial.early_payment_tier
+// es la fuente de verdad oficial; aquí los hardcodeamos como fallback
+// estable mientras el endpoint /api/commercial/early-payment-tiers/ no
+// se enchufa al wizard. Cuando se haga el fetch real, este array se
+// reemplaza por el response del backend).
+//
+// 90 días = base (0% descuento, plazo "estándar" de la PO).
+// 120 días = recargo financiero — solo ADMIN puede ofrecerlo.
+const EARLY_PAYMENT_TIERS = [
+  { days: 8,   pct: 2.75, label_es: "8 días",   label_en: "8 days",   isBase: false, adminOnly: false },
+  { days: 30,  pct: 1.75, label_es: "30 días",  label_en: "30 days",  isBase: false, adminOnly: false },
+  { days: 60,  pct: 1.00, label_es: "60 días",  label_en: "60 days",  isBase: false, adminOnly: false },
+  { days: 90,  pct: 0.00, label_es: "90 días",  label_en: "90 days",  isBase: true,  adminOnly: false },
+  { days: 120, pct: 0.00, label_es: "120 días", label_en: "120 days", isBase: false, adminOnly: true  },
+];
+
+// Devuelve los tiers visibles según el rol y la moneda del pedido.
+// El parámetro `commissionPct` es informativo (cliente VIP con comisión >0
+// se considera "premium" y obtiene el tier 120; default sigue las flags).
+function getAvailableTiers(isAdmin) {
+  return EARLY_PAYMENT_TIERS.filter(t => isAdmin || !t.adminOnly);
+}
+
 function adaptClient(c) {
   return {
     id:              c.id,
