@@ -56,7 +56,10 @@ THIRD_PARTY = [
     "corsheaders",
     "django_filters",
     "django_celery_beat",
-    "django_celery_results",
+    # "django_celery_results",  # Sprint 2026-05-06 (AG-03): removido — la
+    # tabla django_celery_results_taskresult nunca se creó (managed=False
+    # en todo el repo) y rompía cada task en el store_result. Resultados
+    # ahora se ignoran (CELERY_TASK_IGNORE_RESULT=True).
     "drf_spectacular",
 ]
 
@@ -248,7 +251,17 @@ CACHES = {
 # Celery (Worker + Beat).  Listo para activar cuando quieras.
 # --------------------------------------------------------------------
 CELERY_BROKER_URL          = REDIS_URL
-CELERY_RESULT_BACKEND      = "django-db"
+# Sprint 2026-05-06 (AG-03): result_backend desactivado.
+# Antes era "django-db" pero `django_celery_results_taskresult` nunca se
+# creó porque el proyecto tiene MIGRATION_MODULES bloqueado (managed=False
+# en todo el repo). Eso hacía que cada task crasheara al final con
+# `relation "django_celery_results_taskresult" does not exist` y los
+# emails (pago + sap_extra) nunca llegaban a enviarse.
+# Nuestros tasks son fire-and-forget (emails) — no necesitamos persistir
+# resultados. Usamos `rpc://` (resultados volátiles vía broker, sin tabla)
+# y además ignoramos resultados por defecto con CELERY_TASK_IGNORE_RESULT.
+CELERY_RESULT_BACKEND      = None
+CELERY_TASK_IGNORE_RESULT  = True
 # IMPORTANTE: usamos el PersistentScheduler default (file-backed)
 # en lugar de django_celery_beat.DatabaseScheduler porque este
 # proyecto tiene MIGRATION_MODULES desactivado. DatabaseScheduler
