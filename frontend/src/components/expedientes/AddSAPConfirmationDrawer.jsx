@@ -1002,8 +1002,8 @@ export default function AddSAPConfirmationDrawer({
                               }}
                               title={isOnlyNotify
                                 ? (lang === "es"
-                                    ? "Notifica al cliente por email sobre las unidades extra confirmadas por la fábrica. NO se agregan al expediente."
-                                    : "Notify the client by email about the extra units confirmed by the factory. They are NOT added to the expediente.")
+                                    ? "Envía notificación interna a info@mwt.one con los extras confirmados por la fábrica. NO se agregan al expediente."
+                                    : "Send internal notification to info@mwt.one with the extras confirmed by the factory. They are NOT added to the expediente.")
                                 : (lang === "es"
                                     ? "Crea las tallas faltantes con el precio del cliente y ajusta cantidades."
                                     : "Create missing sizes with client price and adjust quantities.")}>
@@ -1016,8 +1016,8 @@ export default function AddSAPConfirmationDrawer({
                                     : (isOnlyNotify ? "Notifying…"   : "Syncing…"))
                                 : (isOnlyNotify
                                     ? (lang === "es"
-                                        ? `Notificar cliente (${syncableCount})`
-                                        : `Notify client (${syncableCount})`)
+                                        ? `Notificar MWT (${syncableCount})`
+                                        : `Notify MWT (${syncableCount})`)
                                     : (lang === "es"
                                         ? `Sincronizar ${syncableCount}`
                                         : `Sync ${syncableCount}`))}
@@ -1044,8 +1044,8 @@ export default function AddSAPConfirmationDrawer({
                             <IconCheck size={11}/>
                             {syncResult?.emails_queued?.length > 0
                               ? (lang === "es"
-                                  ? `Cliente notificado por email · ${syncResult.notify_extras?.length || 0} extra(s)`
-                                  : `Client notified by email · ${syncResult.notify_extras?.length || 0} extra(s)`)
+                                  ? `Notificación enviada a info@mwt.one · ${syncResult.notify_extras?.length || 0} extra(s)`
+                                  : `Notification sent to info@mwt.one · ${syncResult.notify_extras?.length || 0} extra(s)`)
                               : (lang === "es"
                                   ? "Discrepancias sincronizadas con el expediente."
                                   : "Discrepancies synced into expediente.")}

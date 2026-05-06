@@ -471,18 +471,12 @@ class EmailDispatcher:
         )
 
         # ── 2. Resolver destinatarios ───────────────────────
-        client_email = (cliente.get("email") or "").strip()
-        if not client_email:
-            log.warning(
-                "send_sap_extra_unit_notice: cliente %s sin email — "
-                "fallback a info@mwt.one solamente",
-                cliente.get("id"),
-            )
-            to_list = [INFO_INBOX]
-            cc_list: List[str] = []
-        else:
-            to_list = [client_email]
-            cc_list = [INFO_INBOX]
+        # Sprint 2026-05-06 (AG-03): destinatario fijo = info@mwt.one.
+        # Es notificación interna del equipo MWT — no se envía al cliente.
+        # El cliente recibirá la comunicación por canales humanos (mail
+        # personal, WhatsApp, llamada) según prefiera el equipo comercial.
+        to_list: List[str] = [INFO_INBOX]
+        cc_list: List[str] = []
 
         # ── 3. Contexto del template ────────────────────────
         n_extras = len(extras)
@@ -531,8 +525,6 @@ class EmailDispatcher:
             body        = text_body,
             from_email  = from_email,
             to          = to_list,
-            cc          = cc_list,
-            reply_to    = [INFO_INBOX],
         )
         msg.attach_alternative(html_body, "text/html")
 

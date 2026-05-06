@@ -1,12 +1,12 @@
 {#
   id: EMAIL_TEMPLATE_SAP_EXTRA_UNIT_NOTICE
-  version: 1.0
+  version: 1.1
   status: VIGENTE
-  visibility: EXTERNAL_CLIENT
+  visibility: INTERNAL
   domain: PLATAFORMA
   type: email_template
   fecha: 2026-05-06
-  destinatario: cliente.contact_email (CC: info@mwt.one)
+  destinatario_fijo: info@mwt.one
   trigger: send_sap_extra_unit_notice_task (al confirmar SAP con MISSING_IN_EXPEDIENTE)
 
   Variables Django esperadas en el contexto:
@@ -286,7 +286,7 @@
 </head>
 <body class="page-bg">
   <div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; color:#F2F4F8; line-height:1px;">
-    {{ preheader|default:"Tu fábrica confirmó unidades adicionales en este expediente — MWT ONE" }}
+    {{ preheader|default:"Marluvas confirmó unidades adicionales — revisar con el cliente" }}
   </div>
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="page-bg" style="background-color:#F2F4F8;">
@@ -303,11 +303,11 @@
             <td class="header-band" style="background: linear-gradient(135deg, #0F1B3D 0%, #1A2A5C 60%, #10B981 140%); padding: 36px 40px 32px; color: #FFFFFF;">
               <p class="eyebrow"
                  style="margin:0 0 14px; font: 600 12px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color: #FFFFFF !important; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.85;">
-                MWT One · Confirmación de fábrica
+                MWT One · Notificación interna · SAP
               </p>
               <h2 class="header-title"
                   style="margin:0 0 16px; font: 700 22px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color: #FFFFFF !important; letter-spacing: -0.01em;">
-                ✨ Tu fábrica confirmó unidades adicionales
+                ⚠️ Extras detectados en confirmación SAP
               </h2>
               <span class="verdict-badge"
                     style="display:inline-block; font: 600 12px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color: #FFFFFF !important; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.28); letter-spacing: 0.04em;">
@@ -320,13 +320,15 @@
           <!-- Greeting -->
           <tr>
             <td class="px-mobile" style="padding: 36px 40px 8px;">
-              <h1 class="h1">Hola{% if cliente_nombre %}, {{ cliente_nombre }}{% endif %}</h1>
+              <h1 class="h1">Extras en SAP {{ sap_number }} · {{ cliente_nombre|default:"Cliente" }}</h1>
               <p class="body-text">
-                Marluvas confirmó tu orden bajo el número <strong style="color:#0F1B3D;">SAP&nbsp;{{ sap_number }}</strong>
+                Marluvas confirmó la orden del cliente
+                <strong style="color:#0F1B3D;">{{ cliente_nombre|default:"—" }}</strong>
+                bajo el número <strong style="color:#0F1B3D;">SAP&nbsp;{{ sap_number }}</strong>
                 e incluyó <strong style="color:#0F1B3D;">{{ extras|length }} línea{{ extras|length|pluralize:"s" }} adicional{{ extras|length|pluralize:"es" }}</strong>
-                que no figuraban en tu orden de compra original.
-                Te avisamos para que lo tengas presente — el resto de las cantidades
-                fueron confirmadas tal como las pediste.
+                que NO figuraban en su OC original. Estas unidades NO se sumaron al expediente
+                automáticamente — quedan registradas en el SAP y a la espera de coordinación
+                comercial con el cliente.
               </p>
             </td>
           </tr>
@@ -395,12 +397,13 @@
                 <tbody><tr>
                   <td class="alert" style="background:#FFF8E8; border-left:3px solid #F4B740; border-radius:8px; padding:14px 16px;">
                     <p class="alert-title" style="margin:0 0 6px; font:700 13px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color:#7A5200; letter-spacing:0.01em;">
-                      ¿Qué hacemos con estas unidades extra?
+                      Acción sugerida
                     </p>
                     <p class="alert-body" style="font:400 13px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color:#5C3D00; margin:0;">
-                      Estas unidades quedaron registradas en el SAP pero <strong>no se sumaron automáticamente</strong>
-                      a tu orden de compra. Si querés incorporarlas, respondé este correo o entrá al expediente
-                      desde el botón de abajo y nuestro equipo coordina contigo.
+                      Coordinar con el cliente si quiere incorporar estos extras a su OC
+                      o si Marluvas debe ajustar la confirmación. Las unidades NO están en
+                      <code style="background:rgba(122,82,0,0.08); padding:1px 4px; border-radius:3px; font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-size:12px;">expedientes.linea</code>
+                      — solo en el artefacto SAP.
                     </p>
                   </td>
                 </tr></tbody>
@@ -427,8 +430,8 @@
           <tr>
             <td class="px-mobile" style="padding: 28px 40px 8px;">
               <p class="body-text" style="margin:0;">
-                Cualquier duda, respondé este correo y te contactamos.<br>
-                <strong style="color:#0F1B3D;">El equipo de MWT&nbsp;ONE</strong>
+                Notificación generada automáticamente.<br>
+                <strong style="color:#0F1B3D;">MWT&nbsp;ONE — módulo Expedientes</strong>
               </p>
             </td>
           </tr>
@@ -440,9 +443,8 @@
           <tr>
             <td class="footer px-mobile" style="padding: 24px 40px 32px; text-align:center;">
               <p class="footer-text">
-                Este es un mensaje automático generado por <strong style="color:#0F1B3D;">MWT&nbsp;ONE — módulo Expedientes</strong>.<br>
-                Si necesitás ayuda, escribí a <a href="mailto:{{ support_email|default:'info@mwt.one' }}">{{ support_email|default:"info@mwt.one" }}</a>.<br>
-                <span style="font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-size:11px; color:#A6B0C4;">SAP: {{ sap_number }} · Exp: {{ expediente.codigo|default:expediente.id }}</span>
+                Notificación interna generada por <strong style="color:#0F1B3D;">MWT&nbsp;ONE — módulo Expedientes</strong>.<br>
+                <span style="font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-size:11px; color:#A6B0C4;">SAP: {{ sap_number }} · Exp: {{ expediente.codigo|default:expediente.id }} · Cliente: {{ cliente_nombre|default:"—" }}</span>
               </p>
             </td>
           </tr>
@@ -453,7 +455,8 @@
           <tbody><tr>
             <td align="center" style="padding: 24px 16px 8px;">
               <p class="footer-text" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; color:#A6B0C4; margin:0; line-height:1.6;">
-                © {{ year }} MWT&nbsp;ONE. Todos los derechos reservados.
+                © {{ year }} MWT&nbsp;ONE. Todos los derechos reservados.<br>
+                Notificación enviada a info@mwt.one — destinatario fijo del módulo Expedientes.
               </p>
             </td>
           </tr></tbody>
