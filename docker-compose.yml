@@ -186,10 +186,18 @@ services:
   # -----------------------------------------------------------------
   # Celery beat — Fase 5A (cron · fx_rate_refresh @ 0 1 * * * UTC)
   # -----------------------------------------------------------------
-  # Una sola instancia: usa DatabaseScheduler de django-celery-beat,
-  # que persiste el lock en la DB y evita doble-disparo si por error
-  # se levantan dos beats. Si el contenedor se cae, no perdemos
-  # tasks: al rearrancar, el scheduler recoge el next-run desde la DB.
+  # Una sola instancia. Usa el PersistentScheduler default de Celery
+  # (file-backed) en lugar de django_celery_beat.DatabaseScheduler
+  # porque este proyecto tiene MIGRATION_MODULES desactivado y las
+  # tablas django_celery_beat_* no existen.
+  #
+  # El schedule lo lee desde settings.CELERY_BEAT_SCHEDULE (Python),
+  # y persiste el next-run en /var/celerybeat/schedule (volumen
+  # nombrado para sobrevivir a redeploys).
+  #
+  # Bootstrap: el contenedor crea /var/celerybeat si el volumen está
+  # vacío (chown root:root). Si en el futuro queremos migrar a
+  # DatabaseScheduler hay que desbloquear MIGRATION_MODULES selectivamente.
   celery-beat:
     build:
       context: ./backend
@@ -208,10 +216,12 @@ services:
       - ./backend:/app
       - ./database:/sql:ro
       - ./backend/sql:/sql-modules:ro
+      - consola-mwt-one-celerybeat:/var/celerybeat
     command: >
-      celery -A config beat
-        --loglevel=info
-        --scheduler=django_celery_beat.schedulers:DatabaseScheduler
+      sh -c "mkdir -p /var/celerybeat &&
+             celery -A config beat
+               --loglevel=info
+               --schedule=/var/celerybeat/schedule"
     networks:
       - consola-net
 
@@ -256,6 +266,11 @@ volumes:
     name: consola-mwt-one-pgdata
   consola-mwt-one-redis-data:
     name: consola-mwt-one-redis-data
+  # Persistencia del archivo schedule de celery-beat (PersistentScheduler).
+  # Sobrevive a `docker compose down` para no re-disparar el cron al
+  # próximo `up` si ya se ejecutó hoy.
+  consola-mwt-one-celerybeat:
+    name: consola-mwt-one-celerybeat
 
 # ---------------------------------------------------------------------
 # Red interna (nombres DNS: postgres, redis, django, frontend)

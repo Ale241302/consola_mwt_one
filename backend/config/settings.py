@@ -249,7 +249,14 @@ CACHES = {
 # --------------------------------------------------------------------
 CELERY_BROKER_URL          = REDIS_URL
 CELERY_RESULT_BACKEND      = "django-db"
-CELERY_BEAT_SCHEDULER      = "django_celery_beat.schedulers:DatabaseScheduler"
+# IMPORTANTE: usamos el PersistentScheduler default (file-backed)
+# en lugar de django_celery_beat.DatabaseScheduler porque este
+# proyecto tiene MIGRATION_MODULES desactivado. DatabaseScheduler
+# requiere las tablas django_celery_beat_periodictask que normalmente
+# las crearía `manage.py migrate` — aquí no corre.
+# El schedule en código (CELERY_BEAT_SCHEDULE) se carga al arranque
+# y se persiste en /var/celerybeat/schedule (volumen Docker).
+CELERY_BEAT_SCHEDULER      = "celery.beat:PersistentScheduler"
 CELERY_TASK_TRACK_STARTED  = True
 CELERY_TASK_TIME_LIMIT     = 60 * 30
 CELERY_ACCEPT_CONTENT      = ["json"]
