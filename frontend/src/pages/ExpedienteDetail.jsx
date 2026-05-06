@@ -119,7 +119,12 @@ export default function ScreenExpedienteDetail() {
     ref:              apiExp.codigo,
     codigo:           apiExp.codigo,
     estado:           apiExp.estado,
-    status:           (apiExp.estado || "").toLowerCase() || "registro",
+    // ⚠ status DEBE quedar UPPERCASE — StateTimeline, AdvanceStateModal,
+    // NextActionCard y StatusBadge indexan contra ['REGISTRO','PRODUCCION',
+    // 'PREPARACION', ...]. El toLowerCase() previo provocaba currentIdx=-1
+    // y la timeline aparecía vacía aunque el expediente estuviera en
+    // PRODUCCION en BD (bug visible al confirmar SAP).
+    status:           (apiExp.estado || "REGISTRO").toUpperCase(),
     client_id:        apiExp.client_id,
     brand_id:         apiExp.brand_id,
     oc_id:            apiExp.oc_id,
@@ -486,14 +491,38 @@ export default function ScreenExpedienteDetail() {
             pipeline" (available_transitions) que es info operativa interna.
             Para CLIENT lo reemplazamos por un tracking summary público. */}
         <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
-          <ClientCard client={client} exp={exp} lang={lang} isClient={isClient}/>
+          <ClientCard
+            client={client}
+            exp={exp}
+            lang={lang}
+            isClient={isClient}
+            onOpenClient={() => {
+              // CEO/Admin → ficha completa del cliente. CLIENT B2B nunca
+              // tiene acceso a /clientes (R3), por eso el botón se oculta.
+              if (!isClient && client?.id) navigate(`/clientes/${client.id}`);
+            }}
+          />
           {!isClient && <FinancialCard exp={exp} lang={lang}/>}
           {!isClient && <NextActionCard exp={exp} lang={lang} onAdvance={() => setShowAdvance(true)}/>}
           {isClient && <TrackingSummaryCard exp={exp} lang={lang}/>}
         </div>
       </div>
 
-      {showAdvance     && <AdvanceStateModal exp={exp} lang={lang} onClose={() => setShowAdvance(false)}/>}
+      {showAdvance     && (
+        <AdvanceStateModal
+          exp={exp}
+          lang={lang}
+          onClose={() => setShowAdvance(false)}
+          onTransitioned={(updatedExp) => {
+            // El backend devuelve el expediente con el nuevo estado en la
+            // misma respuesta — patcheamos apiExp en caliente para que la
+            // timeline, los badges y la lista de expedientes (al volver)
+            // queden en el estado correcto sin un round-trip extra.
+            if (updatedExp) setApiExp(updatedExp);
+            setShowAdvance(false);
+          }}
+        />
+      )}
       {showCostDrawer  && <CostDrawer lang={lang} exp={exp} onClose={() => setShowCostDrawer(false)}/>}
       {showPaymentDrawer && <PaymentDrawer lang={lang} exp={exp} onClose={() => setShowPaymentDrawer(false)}/>}
       {showMatchmaker && (
@@ -903,7 +932,7 @@ function KV({ label, value, good, warning }) {
 // R3 (POL_VISIBILIDAD): el bloque de Límite de Crédito es CEO_ONLY —
 // si `isClient`, no se renderiza ni la barra ni el band; el dato no
 // llega al DOM.
-function ClientCard({ client, exp, lang, isClient }) {
+function ClientCard({ client, exp, lang, isClient, onOpenClient }) {
   // Conversión ISO2 → emoji bandera (Unicode regional indicators).
   // Soluciona el caso "CO" mostrando 🇨🇴 en lugar del 🌎 fallback.
   const flag = client.country && /^[A-Za-z]{2}$/.test(client.country)
@@ -940,9 +969,18 @@ function ClientCard({ client, exp, lang, isClient }) {
             </span>
           </div>
         </div>
-        <button className="icon-btn" style={{ width:30, height:30 }} aria-label={lang==='es'?'Más opciones':'More options'}>
-          <IconMore size={14}/>
-        </button>
+        {!isClient && onOpenClient && (
+          <button
+            type="button"
+            className="icon-btn"
+            style={{ width:30, height:30 }}
+            onClick={onOpenClient}
+            aria-label={lang==='es'?'Abrir ficha del cliente':'Open client profile'}
+            title={lang==='es'?'Abrir ficha del cliente':'Open client profile'}
+          >
+            <IconMore size={14}/>
+          </button>
+        )}
       </div>
 
       <div style={{ display:'grid', gap: 8, fontSize: 13 }}>
@@ -1082,48 +1120,144 @@ function NextActionCard({ exp, lang, onAdvance }) {
 }
 
 // Modals / Drawers
-function AdvanceStateModal({ exp, lang, onClose }) {
+//
+// AdvanceStateModal
+// ──────────────────────────────────────────────────────────────────────
+// Wirea POST /api/expedientes/{id}/transition/ con body
+//   { fase_to, idempotence_token, note }
+// El backend valida contra `pipeline.transicion_cat`, muta el estado y
+// devuelve el expediente actualizado en `data.expediente`. El padre lo
+// usa para patchear `apiExp` sin re-fetch (R4 · invalidación optimista).
+//
+// HARD SHIELD: este modal solo se abre desde el action bar, que ya
+// está oculto para CLIENT_* (R3). Aun así, el backend deniega vía
+// _deny_client_mutation; un click directo no rompería invariantes.
+function AdvanceStateModal({ exp, lang, onClose, onTransitioned }) {
   const order = ['REGISTRO','PRODUCCION','PREPARACION','DESPACHO','TRANSITO','EN_DESTINO','CERRADO'];
-  const idx = order.indexOf(exp.status);
-  const next = order[idx+1];
+  const idx   = order.indexOf(exp.status);
+  const next  = order[idx+1];
+
+  const [note,    setNote]    = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState(null);
+
+  const canSubmit = !!next && !loading;
+
+  async function handleConfirm() {
+    if (!canSubmit) return;
+    setLoading(true);
+    setError(null);
+    try {
+      // Idempotence_token previene doble-disparo si el usuario hace
+      // doble click o la red retransmite. UUID v4 vía crypto si está
+      // disponible; fallback timestamp+random.
+      const idempotence_token =
+        (typeof crypto !== "undefined" && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      const res = await expedientesApi.action("transition", exp.id, {
+        fase_to: next,
+        idempotence_token,
+        note: note || null,
+      });
+
+      if (res?.expediente) {
+        onTransitioned?.(res.expediente);
+      } else {
+        // El backend respondió 200 pero sin payload; cerramos y dejamos
+        // que el padre re-resuelva en el próximo render.
+        onTransitioned?.(null);
+      }
+    } catch (e) {
+      // 409 si la transición no existe en transicion_cat, 400 si falta
+      // documento_id requerido. Mostramos el `detail` que el backend
+      // devuelve, sin colapsar a un genérico.
+      const msg = e?.response?.detail
+              ||  e?.detail
+              ||  e?.message
+              ||  (lang==='es' ? 'No se pudo avanzar el estado.' : 'Could not advance state.');
+      setError(String(msg));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <>
-      <div className="overlay" onClick={onClose}/>
+      <div className="overlay" onClick={loading ? undefined : onClose}/>
       <div className="modal modal-md" role="dialog" aria-modal="true">
         <div className="flex ai-center jc-between" style={{ padding: '18px 22px', borderBottom: '1px solid var(--divider)'}}>
           <div>
             <div className="heading-md">{tr(lang,'advance_state')}</div>
             <div className="caption">{exp.ref} · {exp.client}</div>
           </div>
-          <button className="icon-btn" onClick={onClose}><IconX size={16}/></button>
+          <button className="icon-btn" onClick={onClose} disabled={loading}>
+            <IconX size={16}/>
+          </button>
         </div>
         <div style={{ padding: 22 }}>
           <div className="flex ai-center gap-3 mb-4">
             <StatusBadge status={exp.status} lang={lang}/>
             <IconArrow size={16} style={{color:'var(--text-tertiary)'}}/>
-            <StatusBadge status={next} lang={lang}/>
+            {next
+              ? <StatusBadge status={next} lang={lang}/>
+              : <span className="caption">{lang==='es'?'Estado final':'Final state'}</span>}
           </div>
           <div className="body-md text-sec mb-4">
             {lang==='es'
               ? 'Confirma que el expediente cumple los requisitos del siguiente estado. Esto notificará al cliente si las notificaciones están activas.'
               : 'Confirm the file meets the next state\'s requirements. This will notify the client if notifications are active.'}
           </div>
-          <div className="card card-pad" style={{background: 'var(--bg-alt)'}}>
-            <div className="micro mb-2">{lang==='es' ? 'CHECKLIST PARA ' : 'CHECKLIST FOR '}{tr(lang,next)}</div>
-            <div style={{display:'flex', flexDirection:'column', gap: 6}}>
-              <div className="flex ai-center gap-2" style={{fontSize:13}}><IconCheck size={14} style={{color:'var(--success)'}}/>{lang==='es'?'Bill of Lading preliminar cargado':'Preliminary BL uploaded'}</div>
-              <div className="flex ai-center gap-2" style={{fontSize:13}}><IconCheck size={14} style={{color:'var(--success)'}}/>{lang==='es'?'50% de cobro aplicado':'50% payment applied'}</div>
-              <div className="flex ai-center gap-2" style={{fontSize:13}}><IconClock size={14} style={{color:'var(--warning)'}}/>{lang==='es'?'Falta confirmación de zarpe':'Missing departure confirmation'}</div>
+          {next && (
+            <div className="card card-pad" style={{background: 'var(--bg-alt)'}}>
+              <div className="micro mb-2">{lang==='es' ? 'CHECKLIST PARA ' : 'CHECKLIST FOR '}{tr(lang,next)}</div>
+              <div style={{display:'flex', flexDirection:'column', gap: 6}}>
+                <div className="flex ai-center gap-2" style={{fontSize:13}}><IconCheck size={14} style={{color:'var(--success)'}}/>{lang==='es'?'Bill of Lading preliminar cargado':'Preliminary BL uploaded'}</div>
+                <div className="flex ai-center gap-2" style={{fontSize:13}}><IconCheck size={14} style={{color:'var(--success)'}}/>{lang==='es'?'50% de cobro aplicado':'50% payment applied'}</div>
+                <div className="flex ai-center gap-2" style={{fontSize:13}}><IconClock size={14} style={{color:'var(--warning)'}}/>{lang==='es'?'Falta confirmación de zarpe':'Missing departure confirmation'}</div>
+              </div>
             </div>
-          </div>
+          )}
           <div className="mt-4">
             <label className="field-label">{lang==='es' ? 'Notas (opcional)' : 'Notes (optional)'}</label>
-            <textarea className="textarea" placeholder={lang==='es' ? 'Ej: Nave MSC Leone, contenedores MSCU-7821094, MSCU-4398721...' : 'E.g. MSC Leone vessel, containers MSCU-7821094, MSCU-4398721...'}/>
+            <textarea
+              className="textarea"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              disabled={loading}
+              placeholder={lang==='es' ? 'Ej: Nave MSC Leone, contenedores MSCU-7821094, MSCU-4398721...' : 'E.g. MSC Leone vessel, containers MSCU-7821094, MSCU-4398721...'}
+            />
           </div>
+          {error && (
+            <div
+              role="alert"
+              className="card card-pad mt-4"
+              style={{
+                background: 'var(--critical-soft, color-mix(in oklab, var(--critical), transparent 88%))',
+                borderColor: 'var(--critical)',
+                color: 'var(--critical)',
+                fontSize: 13,
+              }}
+            >
+              {error}
+            </div>
+          )}
         </div>
         <div style={{ padding: '14px 22px', borderTop: '1px solid var(--divider)', display:'flex', justifyContent:'flex-end', gap: 10 }}>
-          <button className="btn btn-ghost" onClick={onClose}>{tr(lang,'cancel')}</button>
-          <button className="btn btn-primary" onClick={onClose}><IconCheck size={14}/>{lang==='es' ? `Avanzar a ${tr(lang,next)}` : `Advance to ${tr(lang,next)}`}</button>
+          <button className="btn btn-ghost" onClick={onClose} disabled={loading}>
+            {tr(lang,'cancel')}
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={handleConfirm}
+            disabled={!canSubmit}
+            aria-busy={loading}
+          >
+            {loading
+              ? (lang==='es'?'Avanzando…':'Advancing…')
+              : <><IconCheck size={14}/>{lang==='es' ? `Avanzar a ${tr(lang,next)}` : `Advance to ${tr(lang,next)}`}</>}
+          </button>
         </div>
       </div>
     </>
