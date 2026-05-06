@@ -15,7 +15,7 @@ import {
   IconChevLeft, IconMapPin, IconShip, IconPlane, IconPackage, IconClock,
   IconArrow, IconDollar, IconPlus, IconPaperclip, IconMail, IconMore,
   IconSettings, IconUpload, IconCheck, IconFileText, IconDownload,
-  IconEye, IconLock, IconGlobe, IconSparkle, IconX,
+  IconEye, IconLock, IconGlobe, IconSparkle, IconX, IconCreditCard,
 } from "../lib/icons.jsx";
 import {
   EXPEDIENTES, CLIENTS, BRANDS, OCS, HERO_ID, HERO_LINES, HERO_COSTS,
@@ -163,20 +163,39 @@ export default function ScreenExpedienteDetail() {
   } : mockExp;
 
   // Mapear cliente API → shape esperado por el UI mock-based.
-  // El UI legacy lee `client.name`, `client.code`, `client.country`, etc.
-  // El API devuelve `razon_social`, `codigo`, `pais_iso2`. Si no hay
-  // apiClient (ruta hero o no resolvió), caemos al mock.
+  // El UI legacy lee `client.name`, `client.phone`, `client.credit_limit`,
+  // etc. El API devuelve `razon_social`, `contacto_tel`, `credito_limit_usd`,
+  // `credito_usado`. Si no hay apiClient (ruta hero o no resolvió), caemos
+  // al mock.
+  //
+  // ⚠ NO hacer `...mockClientFallback` cuando hay apiClient — eso filtraba
+  // teléfonos fake (+51 1234 5678), límites mock ($180,000) y bandas
+  // ('AMBER') del cliente seed. Construimos el objeto explícito.
   const mockClientFallback = CLIENTS.find(c => c.id === exp.client_id) || CLIENTS[0];
+  const apiCreditLimit = Number(apiClient?.credito_limit_usd ?? apiClient?.credito_aprobado ?? 0);
+  const apiCreditUsed  = Number(apiClient?.credito_usado ?? 0);
+  const apiCreditPct   = apiCreditLimit > 0 ? (apiCreditUsed / apiCreditLimit) * 100 : 0;
+  const apiCreditBand  = apiCreditPct > 85 ? 'RED' : apiCreditPct > 70 ? 'AMBER' : 'GREEN';
+
   const client = apiClient ? {
-    ...mockClientFallback,
-    id:        apiClient.id,
-    name:      apiClient.razon_social || apiClient.nombre || apiClient.codigo || "—",
-    code:      apiClient.codigo || apiClient.rut || apiClient.id || "",
-    country:   apiClient.pais_iso2 || mockClientFallback.country || "",
-    rfc:       apiClient.rfc || apiClient.rut || "",
-    city:      apiClient.ciudad || mockClientFallback.city || "",
-    contact:   apiClient.contacto_nombre || apiClient.contacto_email || mockClientFallback.contact || "",
-    email:     apiClient.contacto_email || mockClientFallback.email || "",
+    id:           apiClient.id,
+    name:         apiClient.razon_social || apiClient.nombre || apiClient.codigo || "—",
+    code:         apiClient.codigo_marluvas || apiClient.codigo || apiClient.rut || apiClient.id || "",
+    country:      apiClient.pais_iso2 || "",
+    rfc:          apiClient.rfc || apiClient.tax_id || apiClient.cedula_juridica || apiClient.rut || "",
+    city:         apiClient.ciudad || "",
+    address:      apiClient.direccion_entrega || "",
+    contact:      apiClient.contacto_nombre || apiClient.contacto_email || "",
+    email:        apiClient.contacto_email || "",
+    phone:        apiClient.contacto_tel || apiClient.telefono || "",
+    incoterm:     apiClient.incoterm || "",
+    dias_credito: Number(apiClient.dias_credito ?? apiClient.credito_dias ?? 0),
+    medio_pago:   apiClient.medio_pago || "",
+    canal:        apiClient.canal || apiClient.canal_venta || "",
+    credit_limit: apiCreditLimit,
+    credit_used:  apiCreditUsed,
+    band:         apiCreditBand,
+    estado:       (apiClient.estado || apiClient.estado_operativo || "ACTIVO").toUpperCase(),
   } : mockClientFallback;
 
   const brand  = apiBrand
@@ -467,7 +486,7 @@ export default function ScreenExpedienteDetail() {
             pipeline" (available_transitions) que es info operativa interna.
             Para CLIENT lo reemplazamos por un tracking summary público. */}
         <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
-          <ClientCard client={client} exp={exp} lang={lang}/>
+          <ClientCard client={client} exp={exp} lang={lang} isClient={isClient}/>
           {!isClient && <FinancialCard exp={exp} lang={lang}/>}
           {!isClient && <NextActionCard exp={exp} lang={lang} onAdvance={() => setShowAdvance(true)}/>}
           {isClient && <TrackingSummaryCard exp={exp} lang={lang}/>}
@@ -873,30 +892,114 @@ function KV({ label, value, good, warning }) {
 }
 
 // Right rail cards
-function ClientCard({ client, exp, lang }) {
+//
+// ClientCard
+// ──────────────────────────────────────────────────────────────
+// Lee los datos reales del cliente que vienen del API (mapeados arriba
+// en el componente padre). Antes este card mostraba el teléfono y
+// crédito del seed (+51 1234 5678 · $142,300 / $180,000) porque el
+// fallback hacía `...mockClientFallback`. Ya no.
+//
+// R3 (POL_VISIBILIDAD): el bloque de Límite de Crédito es CEO_ONLY —
+// si `isClient`, no se renderiza ni la barra ni el band; el dato no
+// llega al DOM.
+function ClientCard({ client, exp, lang, isClient }) {
+  // Conversión ISO2 → emoji bandera (Unicode regional indicators).
+  // Soluciona el caso "CO" mostrando 🇨🇴 en lugar del 🌎 fallback.
+  const flag = client.country && /^[A-Za-z]{2}$/.test(client.country)
+    ? String.fromCodePoint(
+        ...client.country.toUpperCase().split('')
+          .map(c => 0x1F1E6 + c.charCodeAt(0) - 65)
+      )
+    : '🌎';
+
+  // Subtítulo: ciudad · país (en lugar de "CO · razón social" que se
+  // veía redundante con el title).
+  const subtitle = [client.city, client.country].filter(Boolean).join(' · ');
+
+  // Chip de condiciones: 90d · FOB (sólo si tenemos el dato).
+  // CEO_ONLY — los días de crédito y el incoterm pactado son data
+  // comercial interna, no se exponen al portal del cliente.
+  const showConditions = !isClient && (client.dias_credito > 0 || client.incoterm);
+
   return (
     <div className="card card-pad-lg">
       <div className="flex ai-center gap-3 mb-4">
-        <div className="avatar" style={{ width: 40, height: 40, fontSize: 14, background:'var(--brand-primary)', color:'#fff' }}>
+        <div className="avatar" style={{
+          width: 40, height: 40, fontSize: 14,
+          background:'var(--brand-primary)', color:'var(--text-on-brand, #fff)',
+        }}>
           {(client?.name || "?").split(' ').map(s=>s[0]).slice(0,2).join('')}
         </div>
         <div style={{ flex:1, minWidth:0 }}>
           <div className="heading-md truncate">{client.name}</div>
-          <div className="caption flex ai-center gap-2"><CountryFlag country={client.country}/>{client.country} · {client.contact}</div>
+          <div className="caption flex ai-center gap-2">
+            <span aria-hidden="true">{flag}</span>
+            <span className="truncate">
+              {subtitle || (lang==='es' ? 'Sin ubicación' : 'No location')}
+            </span>
+          </div>
         </div>
-        <button className="icon-btn" style={{ width:30, height:30 }}><IconMore size={14}/></button>
+        <button className="icon-btn" style={{ width:30, height:30 }} aria-label={lang==='es'?'Más opciones':'More options'}>
+          <IconMore size={14}/>
+        </button>
       </div>
+
       <div style={{ display:'grid', gap: 8, fontSize: 13 }}>
-        <div className="flex ai-center gap-2 text-sec"><IconMail size={13}/>{client.email}</div>
-        <div className="flex ai-center gap-2 text-sec"><IconGlobe size={13}/>{client.phone}</div>
+        {client.email && (
+          <div className="flex ai-center gap-2 text-sec">
+            <IconMail size={13}/>
+            <span className="truncate">{client.email}</span>
+          </div>
+        )}
+        {client.phone && (
+          <div className="flex ai-center gap-2 text-sec">
+            <IconGlobe size={13}/>
+            <span className="tabular-nums">{client.phone}</span>
+          </div>
+        )}
+        {client.address && (
+          <div className="flex gap-2 text-sec" style={{ alignItems:'flex-start' }}>
+            <IconMapPin size={13} style={{ marginTop: 2, flexShrink: 0 }}/>
+            <span style={{
+              display:'-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient:'vertical',
+              overflow:'hidden',
+              lineHeight: 1.4,
+            }}>
+              {client.address}
+            </span>
+          </div>
+        )}
+        {showConditions && (
+          <div className="flex ai-center gap-2 text-sec">
+            <IconCreditCard size={13}/>
+            <span className="tabular-nums">
+              {client.dias_credito > 0
+                ? `${client.dias_credito}${lang==='es'?'d':'d'}`
+                : '—'}
+              {client.incoterm ? ` · ${client.incoterm}` : ''}
+            </span>
+          </div>
+        )}
       </div>
-      <div style={{ borderTop: '1px solid var(--divider)', marginTop: 14, paddingTop: 14 }}>
-        <div className="flex ai-center jc-between mb-2">
-          <div className="micro">{lang==='es' ? 'LÍMITE DE CRÉDITO' : 'CREDIT LIMIT'}</div>
-          <Badge kind={client.band==='GREEN'?'success':client.band==='AMBER'?'warning':'critical'} dot>{client.band}</Badge>
+
+      {/* R3 — CEO_ONLY: el cliente B2B nunca ve límite de crédito. */}
+      {!isClient && client.credit_limit > 0 && (
+        <div style={{ borderTop: '1px solid var(--divider)', marginTop: 14, paddingTop: 14 }}>
+          <div className="flex ai-center jc-between mb-2">
+            <div className="micro">{lang==='es' ? 'LÍMITE DE CRÉDITO' : 'CREDIT LIMIT'}</div>
+            <Badge
+              kind={client.band==='GREEN'?'success':client.band==='AMBER'?'warning':'critical'}
+              dot
+            >
+              {client.band}
+            </Badge>
+          </div>
+          <CreditBar limit={client.credit_limit} used={client.credit_used}/>
         </div>
-        <CreditBar limit={client.credit_limit} used={client.credit_used}/>
-      </div>
+      )}
     </div>
   );
 }
