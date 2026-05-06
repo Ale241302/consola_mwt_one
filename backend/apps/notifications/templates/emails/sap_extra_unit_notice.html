@@ -1,28 +1,11 @@
-{#
-  id: EMAIL_TEMPLATE_SAP_EXTRA_UNIT_NOTICE
-  version: 1.1
-  status: VIGENTE
-  visibility: INTERNAL
-  domain: PLATAFORMA
-  type: email_template
-  fecha: 2026-05-06
-  destinatario_fijo: info@mwt.one
-  trigger: send_sap_extra_unit_notice_task (al confirmar SAP con MISSING_IN_EXPEDIENTE)
-
-  Variables Django esperadas en el contexto:
-    - cliente            (Cliente — nombre comercial / razón social)
-    - cliente_nombre     (string — nombre humano del cliente)
-    - expediente         (Expediente — ref/código/id)
-    - expediente_url     (URL absoluta a la consola del expediente)
-    - sap_number         (string — número SAP de Marluvas, ej. "263360")
-    - extras             (lista[dict] con sku, nombre_producto, talla, qty)
-    - registrado_por     (User — quien confirmó producción)
-    - support_email      ("info@mwt.one")
-    - year               (año actual)
-    - preheader          (string opcional preview)
-
-  Hereda paleta y layout del template pago_registrado.html (MWT ONE).
-#}{% load static %}<!DOCTYPE html>
+{% comment %}
+  EMAIL_TEMPLATE_SAP_EXTRA_UNIT_NOTICE · v1.1 · INTERNAL · destinatario fijo: info@mwt.one
+  Trigger: send_sap_extra_unit_notice_task (SAP con MISSING_IN_EXPEDIENTE).
+  Vars contexto: cliente, cliente_nombre, expediente, expediente_url, sap_number,
+                 extras (list[dict]: sku/nombre_producto/talla/qty), registrado_por,
+                 support_email, year, preheader.
+  Hereda paleta y layout de pago_registrado.html.
+{% endcomment %}{% load static %}<!DOCTYPE html>
 <html lang="es"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">

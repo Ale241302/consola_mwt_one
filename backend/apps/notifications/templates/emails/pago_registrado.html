@@ -1,44 +1,10 @@
-{#
-  id: EMAIL_TEMPLATE_PAGO_REGISTRADO
-  version: 1.1
-  status: VIGENTE
-  visibility: INTERNAL
-  domain: PLATAFORMA
-  type: email_template
-  fecha: 2026-05-05
-  destinatario_fijo: info@mwt.one
-  trigger: send_payment_email_task (post AI verdict)
-
-  Variables Django esperadas en el contexto:
-    - payment            (Payment instance)
-    - cliente            (Cliente)
-    - expediente         (Expediente)
-    - verdict            (PaymentAIVerdict)
-    - aplicaciones       (lista[dict] con tipo, label, monto)
-    - consola_url        (string — link a la consola al expediente)
-    - registrado_por     (User)
-    - emoji_estado       (✅ / ⚠️ / ❌ según verdict.status)
-    - estado_human       ("Confirmado por IA" / "Requiere revisión" / etc.)
-    - support_email      ("soporte@mwt.one")
-    - year               (año actual, p.ej. 2026)
-    - preheader          (string opcional para preview en clientes de email)
-
-  Paleta heredada del template password_reset.html (MWT ONE):
-    - Background:       #F2F4F8
-    - Surface:          #FFFFFF
-    - Brand dark:       #0F1B3D / #1A2A5C
-    - Brand accent:     #10B981 / #0FB97A / #1FD39A (verde)
-    - Body text:        #3D4A6B
-    - Muted text:       #6B7894 / #8893AC / #A6B0C4
-    - Divider:          #EAEEF5 / #E5EAF2
-    - Soft surface:     #F7F9FC
-    - Alert amber:      #FFF8E8 / #F4B740 / #7A5200 / #5C3D00
-    - Alert danger:     #FEF2F2 / #DC2626 / #7F1D1D
-
-  La banda del header se mantiene fija en el gradiente azul→verde de la marca,
-  independientemente del verdict, para preservar identidad visual MWT.
-  El badge del verdict comunica el estado dentro del header.
-#}{% load static %}<!DOCTYPE html>
+{% comment %}
+  EMAIL_TEMPLATE_PAGO_REGISTRADO · v1.1 · INTERNAL · destinatario fijo: info@mwt.one
+  Trigger: send_payment_email_task (post AI verdict).
+  Vars contexto: payment, cliente, expediente, verdict, aplicaciones, consola_url,
+                 registrado_por, emoji_estado, estado_human, support_email, year, preheader.
+  Paleta heredada de password_reset.html (MWT ONE).
+{% endcomment %}{% load static %}<!DOCTYPE html>
 <html lang="es"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
