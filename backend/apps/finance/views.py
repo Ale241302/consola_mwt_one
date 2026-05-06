@@ -138,6 +138,160 @@ class PaymentViewSet(viewsets.ViewSet):
             for a in ApplicableTypeCat.objects.filter(is_active=True)
         ])
 
+    # ── Lista de items "Aplicar a" reales del expediente ──
+    # GET /api/finance/payments/applicables/?expediente=<uuid>&type=PROFORMA|FACTURA|COSTO
+    #
+    # Reemplaza los mocks del drawer (`mockPaymentApplicables` en
+    # ExpedienteDetail.jsx) con datos reales del expediente:
+    #
+    #   · PROFORMA / FACTURA → expedientes.documento (kind ignore-case),
+    #     LEFT JOIN cobros.cobro por (oc_id, expediente_id) para sacar
+    #     monto_pendiente. Si no hay cobro, fallback a oc.amount_total.
+    #
+    #   · COSTO → financiero.cost_line (raw SQL · sin modelo Django).
+    #     Si la tabla no existe en este DB, devuelve [] sin crashear.
+    #
+    # Schema uniforme para el frontend:
+    #   [{ id: uuid, code: str, label: str, balance: number,
+    #      meta: { kind, fecha, cost_type, currency, ... } }]
+    @action(detail=False, methods=["get"], url_path="applicables")
+    def applicables(self, request):
+        from django.db import connection
+
+        exp_id = request.query_params.get("expediente")
+        kind   = (request.query_params.get("type") or "").upper().strip()
+
+        if not exp_id:
+            return Response({"detail": "expediente requerido"}, status=400)
+        if kind not in ("PROFORMA", "FACTURA", "COSTO"):
+            return Response(
+                {"detail": f"type inválido: {kind!r} (PROFORMA/FACTURA/COSTO)"},
+                status=400,
+            )
+
+        items = []
+
+        # ── PROFORMA / FACTURA ────────────────────────────────────
+        if kind in ("PROFORMA", "FACTURA"):
+            try:
+                with connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT
+                            d.id::text,
+                            d.codigo,
+                            d.kind,
+                            d.fecha,
+                            d.file_size_bytes,
+                            d.author,
+                            COALESCE(c.monto_pendiente, c.monto_total, o.amount_total, 0) AS balance,
+                            COALESCE(c.monto_total,    o.amount_total,                0) AS total,
+                            c.estado AS cobro_estado
+                          FROM expedientes.documento d
+                     LEFT JOIN cobros.cobro c
+                            ON c.oc_id = d.oc_id
+                           AND c.is_active = TRUE
+                     LEFT JOIN expedientes.files o
+                            ON o.id = d.oc_id
+                         WHERE d.expediente_id = %s
+                           AND UPPER(d.kind) = %s
+                           AND d.is_active = TRUE
+                         ORDER BY d.fecha DESC NULLS LAST, d.created_at DESC
+                        """,
+                        [exp_id, kind],
+                    )
+                    rows = cur.fetchall()
+            except Exception as e:
+                log.warning("applicables(%s) query falló: %s", kind, e)
+                # Fallback más permisivo: SOLO documentos, sin JOINs.
+                try:
+                    with connection.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT id::text, codigo, kind, fecha, file_size_bytes, author
+                              FROM expedientes.documento
+                             WHERE expediente_id = %s
+                               AND UPPER(kind) = %s
+                               AND is_active = TRUE
+                             ORDER BY fecha DESC NULLS LAST, created_at DESC
+                            """,
+                            [exp_id, kind],
+                        )
+                        rows_simple = cur.fetchall()
+                    rows = [(r[0], r[1], r[2], r[3], r[4], r[5], 0, 0, None) for r in rows_simple]
+                except Exception as e2:
+                    log.error("applicables fallback falló: %s", e2)
+                    rows = []
+
+            for (doc_id, codigo, k, fecha, size_bytes, author,
+                 balance, total, cobro_estado) in rows:
+                # Construye un código legible aún cuando `codigo` venga NULL
+                code  = (codigo or "").strip()
+                label = code or (k or "Documento")
+                items.append({
+                    "id":      str(doc_id),
+                    "code":    code or label,
+                    "label":   label,
+                    "balance": float(balance or 0),
+                    "meta": {
+                        "kind":         k,
+                        "fecha":        fecha.isoformat() if fecha else None,
+                        "size_bytes":   int(size_bytes) if size_bytes else None,
+                        "author":       author,
+                        "cobro_estado": cobro_estado,
+                        "total":        float(total or 0),
+                    },
+                })
+
+        # ── COSTO ─────────────────────────────────────────────────
+        elif kind == "COSTO":
+            try:
+                with connection.cursor() as cur:
+                    # `financiero.cost_line` se crea en
+                    # backend/sql/94_pipeline_financiero_portal.sql.
+                    # Si la tabla no existe en este DB, devolvemos [] sin
+                    # crashear (defensivo · permite ambientes nuevos).
+                    cur.execute(
+                        """
+                        SELECT
+                            id::text,
+                            cost_type,
+                            COALESCE(amount, 0)         AS amount,
+                            currency,
+                            COALESCE(amount_usd, 0)     AS amount_usd,
+                            description,
+                            created_at
+                          FROM financiero.cost_line
+                         WHERE expediente_id = %s
+                           AND COALESCE(is_active, TRUE) = TRUE
+                         ORDER BY created_at DESC NULLS LAST
+                        """,
+                        [exp_id],
+                    )
+                    rows = cur.fetchall()
+            except Exception as e:
+                # La tabla puede no existir en algunos environments.
+                log.info("applicables(COSTO) query falló (probable schema): %s", e)
+                rows = []
+
+            for (cost_id, cost_type, amount, currency, amount_usd,
+                 description, created_at) in rows:
+                code  = (cost_type or "COSTO").upper()
+                label = description or cost_type or "Costo"
+                items.append({
+                    "id":      str(cost_id),
+                    "code":    code,
+                    "label":   label,
+                    "balance": float(amount_usd or amount or 0),
+                    "meta": {
+                        "cost_type": cost_type,
+                        "currency":  currency,
+                        "amount":    float(amount or 0),
+                    },
+                })
+
+        return Response(items)
+
     # ── Re-analyze (Fase 3) ───────────────────────────────
     # Útil cuando el modelo se actualiza o el revisor humano quiere
     # un segundo pase del AIPaymentAnalyzer. Borra el verdict actual

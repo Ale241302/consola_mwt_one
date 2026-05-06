@@ -440,6 +440,14 @@ export const financePaymentsApi = {
   selectTipos:   () => apiFetch("/finance/payments/select_tipos/",   { token: getToken() }),
   selectEstados: () => apiFetch("/finance/payments/select_estados/", { token: getToken() }),
 
+  // Lista de items "Aplicar a" reales del expediente (Fase 5A.5).
+  // Reemplaza los mocks · GET /finance/payments/applicables/?expediente=&type=
+  listApplicables: ({ expediente, type }) => apiFetch(
+    `/finance/payments/applicables/?expediente=${encodeURIComponent(expediente)}` +
+    `&type=${encodeURIComponent(type)}`,
+    { token: getToken() },
+  ),
+
   register: async ({
     expediente_id, monto, moneda, fecha, metodo, tipo_pago,
     referencia, notas, aplicaciones, evidencia, event_id,

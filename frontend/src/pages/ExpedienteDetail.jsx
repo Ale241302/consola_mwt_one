@@ -1368,32 +1368,13 @@ function newUuidV4() {
   });
 }
 
-// Mock policy de "Aplicar a" — los IDs son UUIDs porque el serializer
-// del backend valida con serializers.UUIDField. En Fase 5 reemplazamos
-// por una llamada a /api/finance/applicables/?expediente=<id>&type=<>.
-function mockPaymentApplicables(exp) {
-  const balance = Number(exp?.balance) || 0;
-  return {
-    COSTO: [
-      { id:'b1c0c0c0-0001-4000-8000-000000000001', code:'COSTO-LOGI-01', label:'Flete marítimo · MSC Leone', supplier:'Maersk',                balance: 1840 },
-      { id:'b1c0c0c0-0001-4000-8000-000000000002', code:'COSTO-ADU-01',  label:'Aduana destino · Lima',     supplier:'DHL Trade Forwarding',  balance:  620 },
-    ],
-    PRODUCTO: [
-      { id:'b1c0c0c0-0002-4000-8000-000000000001', code:'LEAP-CORE-42', label:'LeapCore-42 (50u)',  supplier:'Rana Walk', balance: 12500, qty: 50  },
-      { id:'b1c0c0c0-0002-4000-8000-000000000002', code:'LEAP-MINI-18', label:'LeapMini-18 (120u)', supplier:'Rana Walk', balance:  8400, qty: 120 },
-    ],
-    PROFORMA: [
-      { id:'b1c0c0c0-0003-4000-8000-000000000001', code:'PF-0942', label:'Proforma PF-0942', balance: Math.max(balance * 0.5, 12500), pct:'50%' },
-    ],
-    FACTURA: [
-      { id:'b1c0c0c0-0004-4000-8000-000000000001', code:'FAC-2026-01842', label:'Factura FAC-2026-01842', balance: balance || 25000, pct:'100%' },
-    ],
-  };
-}
+// Tabs disponibles en "Aplicar a". Producto se removió porque no
+// existe como entidad financiera del expediente — los pagos se aplican
+// a Costos, Proformas o Facturas.
+const PAY_APPLY_TABS = ['COSTO', 'PROFORMA', 'FACTURA'];
 
 function PaymentDrawer({ lang, exp, onClose }) {
   const today = new Date().toISOString().slice(0,10);
-  const applicables = useMemo(() => mockPaymentApplicables(exp), [exp]);
 
   // Estado del formulario
   const [monto,         setMonto]         = useState('');
@@ -1404,7 +1385,7 @@ function PaymentDrawer({ lang, exp, onClose }) {
   const [referencia,    setReferencia]    = useState('');
   const [notas,         setNotas]         = useState('');
   const [applyTab,      setApplyTab]      = useState('PROFORMA');
-  const [selectedDoc,   setSelectedDoc]   = useState(applicables.PROFORMA[0]?.id ?? null);
+  const [selectedDoc,   setSelectedDoc]   = useState(null);
   const [searchQuery,   setSearchQuery]   = useState('');
   const [evidence,      setEvidence]      = useState(null);   // File | null
   const [evidencePrev,  setEvidencePrev]  = useState(null);   // dataURL para imágenes
@@ -1414,10 +1395,45 @@ function PaymentDrawer({ lang, exp, onClose }) {
   const [submitResult,  setSubmitResult]  = useState(null);   // payload del backend
   const [submitError,   setSubmitError]   = useState(null);   // string | { detail, ...}
   const [dragOver,      setDragOver]      = useState(false);
+  // Applicables reales por tipo, fetched al abrir el drawer
+  const [applicables,    setApplicables]    = useState({ COSTO: [], PROFORMA: [], FACTURA: [] });
+  const [loadingApplicables, setLoadingApplicables] = useState(true);
+  const [applicablesError,   setApplicablesError]   = useState(null);
   const fileInputRef = useRef(null);
   // event_id estable para la sesión del drawer — evita doble-registro
   // si el usuario hace doble-click o hay reintento por red.
   const eventId = useMemo(() => newUuidV4(), []);
+
+  // ── Fetch real de "Aplicar a" cuando se abre el drawer ───
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingApplicables(true);
+    setApplicablesError(null);
+    Promise.all(PAY_APPLY_TABS.map(t =>
+      financePaymentsApi.listApplicables({ expediente: exp.id, type: t })
+        .catch(err => { console.error(`applicables ${t} falló`, err); return []; })
+    )).then(([costos, proformas, facturas]) => {
+      if (cancelled) return;
+      const next = {
+        COSTO:    Array.isArray(costos)    ? costos    : [],
+        PROFORMA: Array.isArray(proformas) ? proformas : [],
+        FACTURA:  Array.isArray(facturas)  ? facturas  : [],
+      };
+      setApplicables(next);
+      // Auto-seleccionar la primera tab no vacía con prioridad: PROFORMA → FACTURA → COSTO
+      const firstNonEmpty = ['PROFORMA','FACTURA','COSTO'].find(t => next[t].length > 0);
+      if (firstNonEmpty) {
+        setApplyTab(firstNonEmpty);
+        setSelectedDoc(next[firstNonEmpty][0]?.id ?? null);
+      } else {
+        // No hay nada aplicable → muestra el primer tab y deja al usuario informado
+        setSelectedDoc(null);
+      }
+    }).finally(() => {
+      if (!cancelled) setLoadingApplicables(false);
+    });
+    return () => { cancelled = true; };
+  }, [exp.id]);
 
   // Documento seleccionado (para validación monto vs saldo)
   const selectedDocObj = useMemo(() => {
@@ -1508,13 +1524,10 @@ function PaymentDrawer({ lang, exp, onClose }) {
     // Construye el array `aplicaciones` que espera el serializer
     // (lo serializa a JSON dentro del FormData en lib/api.js).
     const aplicaciones = [{
-      applicable_type:   applyTab,
-      applicable_id:     selectedDoc,
-      applicable_code:   selectedDocObj?.code || undefined,
-      cantidad_producto: applyTab === 'PRODUCTO'
-        ? (selectedDocObj?.qty || null)
-        : null,
-      monto_aplicado:    parseFloat(monto),
+      applicable_type: applyTab,
+      applicable_id:   selectedDoc,
+      applicable_code: selectedDocObj?.code || undefined,
+      monto_aplicado:  parseFloat(monto),
     }];
 
     try {
@@ -1916,7 +1929,6 @@ evidencia:    ${submitResult.evidencia?.original_name || evidence?.name || '—'
             <div className="tabs" style={{ marginBottom: 10 }}>
               {[
                 ['COSTO',    tr(lang,'pay_apply_costo'),    applicables.COSTO.length],
-                ['PRODUCTO', tr(lang,'pay_apply_producto'), applicables.PRODUCTO.length],
                 ['PROFORMA', tr(lang,'pay_apply_proforma'), applicables.PROFORMA.length],
                 ['FACTURA',  tr(lang,'pay_apply_factura'),  applicables.FACTURA.length],
               ].map(([k, l, c]) => (
@@ -1945,12 +1957,17 @@ evidencia:    ${submitResult.evidencia?.original_name || evidence?.name || '—'
             />
 
             <div style={{ display:'flex', flexDirection:'column', gap:6, maxHeight: 220, overflowY:'auto' }}>
-              {filteredItems.length === 0 ? (
+              {loadingApplicables ? (
+                <div className="card card-pad caption" style={{ textAlign:'center', color:'var(--text-tertiary)' }}>
+                  {lang==='es' ? 'Cargando…' : 'Loading…'}
+                </div>
+              ) : filteredItems.length === 0 ? (
                 <div className="card card-pad caption" style={{ textAlign:'center', color:'var(--text-tertiary)' }}>
                   {tr(lang,'pay_apply_empty')}
                 </div>
               ) : filteredItems.map((it) => {
                 const checked = selectedDoc === it.id;
+                const meta    = it.meta || {};
                 return (
                   <label
                     key={it.id}
@@ -1971,13 +1988,16 @@ evidencia:    ${submitResult.evidencia?.original_name || evidence?.name || '—'
                     <div style={{ flex:1, minWidth:0 }}>
                       <div className="flex ai-center gap-2">
                         <span className="mono-sm" style={{ fontWeight:600, color:'var(--interactive)' }}>{it.code}</span>
-                        <span className="body-sm">{it.label}</span>
+                        <span className="body-sm truncate">{it.label}</span>
                       </div>
-                      {(it.supplier || it.qty || it.pct) && (
+                      {(meta.fecha || meta.cobro_estado || meta.author || meta.cost_type) && (
                         <div className="caption" style={{ marginTop: 2 }}>
-                          {it.supplier && <>{it.supplier}</>}
-                          {it.qty && <> · {it.qty}u</>}
-                          {it.pct && <> · {it.pct}</>}
+                          {meta.fecha && <>{fmtDate(meta.fecha, lang)}</>}
+                          {meta.fecha && meta.cobro_estado && <> · </>}
+                          {meta.cobro_estado && <>{meta.cobro_estado}</>}
+                          {(meta.fecha || meta.cobro_estado) && meta.author && <> · </>}
+                          {meta.author && <>{meta.author}</>}
+                          {meta.cost_type && <>{meta.cost_type}</>}
                         </div>
                       )}
                     </div>
