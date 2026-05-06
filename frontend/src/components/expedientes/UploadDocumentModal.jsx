@@ -12,9 +12,10 @@
 // =====================================================================
 import React, { useState, useRef } from "react";
 import {
-  IconUpload, IconX, IconFileText, IconCheck, IconAlert, IconSparkle,
+  IconUpload, IconX, IconFileText, IconCheck, IconAlert, IconSparkle, IconLock,
 } from "../../lib/icons.jsx";
 import { documentosApi, getToken, documentMatchmakerApi } from "../../lib/api.js";
+import { useRole } from "../../context/RoleContext.jsx";
 
 const API_BASE = (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || "/api";
 
@@ -64,7 +65,14 @@ export default function UploadDocumentModal({
   const [uploading, setUploading] = useState(false);
   const [aiPhase, setAiPhase] = useState(null); // null | 'uploading' | 'analyzing'
   const [dragOver,  setDragOver]  = useState(false);
+  // Sprint 2026-05-06 · audiencia del documento. CLIENT siempre. ADMIN
+  // puede elegir CLIENT (default) o MWT_INTERNAL para Proforma/Factura.
+  const [audience, setAudience] = useState("CLIENT");
   const inputRef = useRef(null);
+
+  // El selector de audiencia solo aplica a ADMIN/MWT y a Proforma/Factura.
+  const { isClient: viewerIsClient } = useRole();
+  const audienceApplies = !viewerIsClient && (kind === "PROFORMA" || kind === "FACTURA");
 
   if (!open) return null;
 
@@ -72,7 +80,7 @@ export default function UploadDocumentModal({
   const aiEligible = !!(kindObj.aiPipeline && expedienteId && onAiAnalysisReady);
 
   const reset = () => {
-    setKind("OC"); setCodigo(""); setFile(null);
+    setKind("OC"); setCodigo(""); setFile(null); setAudience("CLIENT");
     setError(null); setUploading(false); setAiPhase(null);
   };
 
@@ -109,6 +117,14 @@ export default function UploadDocumentModal({
       fd.append("file", file, file.name);
       if (ocId) fd.append("oc_id", ocId);
       if (expedienteId) fd.append("expediente_id", expedienteId);
+      // Sprint 2026-05-06 · CLIENT_* siempre fuerza audience=CLIENT
+      // (no expone documentos internos MWT). ADMIN/MWT respeta la
+      // selección del usuario. El backend tolera el campo aunque no
+      // sea Proforma/Factura (lo ignora si no aplica).
+      const effectiveAudience = viewerIsClient
+        ? "CLIENT"
+        : (audienceApplies ? audience : "CLIENT");
+      fd.append("audience", effectiveAudience);
 
       const token = getToken();
       const resp = await fetch(`${API_BASE}/documentos/`, {
@@ -336,6 +352,81 @@ export default function UploadDocumentModal({
             </div>
           </div>
 
+          {/* Sprint 2026-05-06 · AUDIENCIA del documento. Solo se muestra
+              al ADMIN/MWT y solo cuando el tipo es Proforma o Factura.
+              CLIENT_* nunca lo ve — el backend fuerza CLIENT igualmente. */}
+          {audienceApplies && (
+            <div>
+              <div className="micro" style={{
+                fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                color: "var(--text-tertiary)", textTransform: "uppercase",
+                marginBottom: 6,
+              }}>
+                {lang === "es" ? "Audiencia" : "Audience"}{" "}
+                <span style={{ color: "var(--danger, #DC2626)" }}>*</span>
+              </div>
+              <div style={{
+                display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8,
+              }}>
+                {[
+                  {
+                    id: "CLIENT",
+                    es_label: "Para el cliente",
+                    en_label: "For the client",
+                    es_hint: "Visible en el portal B2B del cliente.",
+                    en_hint: "Visible in the client B2B portal.",
+                    icon: null,
+                  },
+                  {
+                    id: "MWT_INTERNAL",
+                    es_label: "Solo Muito Work Limitada",
+                    en_label: "Muito Work Limitada only",
+                    es_hint: "Interno · no se muestra al cliente.",
+                    en_hint: "Internal · not shown to the client.",
+                    icon: <IconLock size={11}/>,
+                  },
+                ].map((a) => {
+                  const active = audience === a.id;
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      disabled={uploading}
+                      onClick={() => setAudience(a.id)}
+                      style={{
+                        padding: "10px 12px", textAlign: "left",
+                        border: active
+                          ? "1.5px solid var(--success, #00B286)"
+                          : "1px solid var(--border)",
+                        borderRadius: 8,
+                        background: active
+                          ? "color-mix(in oklab, var(--success, #00B286) 6%, transparent)"
+                          : "var(--surface-raised, #fff)",
+                        cursor: uploading ? "not-allowed" : "pointer",
+                        display: "flex", flexDirection: "column", gap: 4,
+                      }}
+                    >
+                      <span style={{
+                        display: "flex", alignItems: "center", gap: 6,
+                        fontSize: 13, fontWeight: 700,
+                        color: "var(--text-primary)",
+                      }}>
+                        {active && <IconCheck size={11} style={{ color: "var(--success, #00B286)" }}/>}
+                        {!active && a.icon}
+                        {lang === "es" ? a.es_label : a.en_label}
+                      </span>
+                      <span className="caption" style={{
+                        fontSize: 11, color: "var(--text-tertiary)",
+                      }}>
+                        {lang === "es" ? a.es_hint : a.en_hint}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Numero / Codigo del documento */}
           <label style={{ display: "block" }}>
             <div className="micro" style={{
@@ -429,7 +520,7 @@ export default function UploadDocumentModal({
                       {prettyBytes(file.size)}
                     </div>
                   </div>
-                  <button
+                     <button
                     type="button" disabled={uploading}
                     onClick={(e) => { e.stopPropagation(); setFile(null); }}
                     style={{

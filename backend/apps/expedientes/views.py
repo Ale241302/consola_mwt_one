@@ -24,11 +24,13 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from django.db import connection, transaction
+from django.db.models import Q
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 
+from apps.core.constants import MWT_OPERATING_CLIENT_ID
 from apps.storage.services import delete_object as _storage_delete
 
 from .models import (
@@ -58,6 +60,42 @@ log = logging.getLogger(__name__)
 # (pasa a la acción original) si es staff interno.
 # ══════════════════════════════════════════════════════════════════════
 _CLIENT_ROLES = {"client_b2b", "cliente", "client"}
+
+
+def _viewer_role_upper(request) -> str:
+    """Devuelve el rol del usuario en MAYÚSCULAS (string seguro, '' si N/A)."""
+    user = getattr(request, "user", None)
+    if user is None:
+        return ""
+    role = (getattr(user, "role_default", "") or
+            getattr(user, "role", "") or "")
+    try:
+        return str(role).upper()
+    except (TypeError, ValueError):
+        return ""
+
+
+def _is_client_viewer(request) -> bool:
+    """True si el usuario es CLIENT_* (rol del Portal B2B).
+
+    Reglas:
+      · is_superuser → False (Admin total).
+      · role_default que empieza con CLIENT_* → True.
+      · rol legacy `client` / `cliente` / `client_b2b` → True.
+    """
+    user = getattr(request, "user", None)
+    if user is None:
+        return False
+    if getattr(user, "is_superuser", False):
+        return False
+    role_upper = _viewer_role_upper(request)
+    if role_upper.startswith("CLIENT_"):
+        return True
+    role_lower = role_upper.lower()
+    if role_lower in _CLIENT_ROLES:
+        return True
+    return False
+
 
 def _deny_client_mutation(request, action_label: str = ""):
     """Si el usuario es CLIENT B2B, devuelve Response 403. Si no, None."""
@@ -209,6 +247,21 @@ class ExpedienteViewSet(viewsets.ViewSet):
         q = request.query_params.get("q")
         if q:
             qs = qs.filter(codigo__icontains=q)
+
+        # Sprint 2026-05-06 · Aislamiento de visibilidad por rol.
+        # Para CLIENT_*: solo expedientes cuyo client_id u
+        # operating_company_id estén en su pool de empresas
+        # (legal_entity_ids). Admin/CEO/staff: sin filtro.
+        if _is_client_viewer(request):
+            user_companies = list(getattr(request.user, "legal_entity_ids", None) or [])
+            if user_companies:
+                qs = qs.filter(
+                    Q(client_id__in=user_companies) |
+                    Q(operating_company_id__in=user_companies)
+                )
+            else:
+                # Sin scope → no ve nada (defensivo).
+                qs = qs.none()
         return Response(ExpedienteListSerializer(qs, many=True).data)
 
     def retrieve(self, request, pk=None):
@@ -263,6 +316,16 @@ class ExpedienteViewSet(viewsets.ViewSet):
             payload = {k: request.data.get(k) for k in request.data.keys()}
         except Exception:
             payload = dict(request.data)
+
+        # Sprint 2026-05-06 · operador del expediente.
+        # Default: MWT_OPERATING_CLIENT_ID (Muito Work Limitada). Si el
+        # admin manda operating_company_id explicito en el payload, se
+        # respeta. Si es CLIENT_* (no debería llegar aquí por la guard,
+        # pero por defensa) forzamos al client_id del usuario.
+        operating_company_id = (
+            payload.get("operating_company_id") or MWT_OPERATING_CLIENT_ID
+        )
+        payload["operating_company_id"] = operating_company_id
 
         # Auto-generar codigo si no viene
         if not payload.get("codigo"):
@@ -355,7 +418,16 @@ class ExpedienteViewSet(viewsets.ViewSet):
             from apps.commercial.views import compute_client_price
 
             client_id_val = payload.get("client_id")
-            price_map = {}   # { producto_id (str): unit_price (Decimal) }
+            # Sprint 2026-05-06 · "snapshot dual" de precios.
+            # price_map_mwt    → precio para Muito Work Limitada (visible
+            #                    a Admin/CEO/staff).
+            # price_map_client → precio para el cliente final del exp
+            #                    (visible a CLIENT_*).
+            # `price_map` (legacy) queda como alias del precio del operador
+            # — si operating_company_id == MWT, apunta a price_map_mwt;
+            # si es el client_id, apunta a price_map_client.
+            price_map_mwt    = {}
+            price_map_client = {}
             try:
                 unique_pids = {str(ln.get("producto_id")) for ln in raw_lines
                                if isinstance(ln, dict) and ln.get("producto_id")}
@@ -369,30 +441,49 @@ class ExpedienteViewSet(viewsets.ViewSet):
                              WHERE id IN ({placeholders})
                         """, list(unique_pids))
                         for pid, sku_db, brand_id, pl in c.fetchall():
-                            # 1) Intentar waterfall COMEX
-                            waterfall_price = None
+                            # ── Precio MWT (perspectiva Muito Work) ──
+                            p_mwt = None
+                            if brand_id and sku_db:
+                                try:
+                                    p_mwt = compute_client_price(
+                                        client_id  = MWT_OPERATING_CLIENT_ID,
+                                        brand_id   = brand_id,
+                                        product_sku= sku_db,
+                                        days_req   = 0,
+                                    )
+                                except Exception as e:
+                                    log.warning("[expediente.create] waterfall MWT pid=%s: %s", pid, e)
+                                    p_mwt = None
+                            if p_mwt is not None and p_mwt > 0:
+                                price_map_mwt[pid] = p_mwt
+                            else:
+                                try:
+                                    price_map_mwt[pid] = Decimal(str(pl or 0))
+                                except (TypeError, ValueError):
+                                    price_map_mwt[pid] = Decimal("0")
+
+                            # ── Precio cliente final ──
+                            p_cli = None
                             if client_id_val and brand_id and sku_db:
                                 try:
-                                    waterfall_price = compute_client_price(
+                                    p_cli = compute_client_price(
                                         client_id  = client_id_val,
                                         brand_id   = brand_id,
                                         product_sku= sku_db,
                                         days_req   = 0,
                                     )
                                 except Exception as e:
-                                    log.warning("[expediente.create] waterfall pid=%s: %s", pid, e)
-                                    waterfall_price = None
-                            # 2) Si la waterfall no resolvió, fallback a precio_lista
-                            if waterfall_price is not None and waterfall_price > 0:
-                                price_map[pid] = waterfall_price
+                                    log.warning("[expediente.create] waterfall CLIENT pid=%s: %s", pid, e)
+                                    p_cli = None
+                            if p_cli is not None and p_cli > 0:
+                                price_map_client[pid] = p_cli
                             else:
-                                try:
-                                    price_map[pid] = Decimal(str(pl or 0))
-                                except Exception:
-                                    price_map[pid] = Decimal("0")
+                                # Fallback al precio MWT ya resuelto.
+                                price_map_client[pid] = price_map_mwt[pid]
             except Exception as e:
                 log.warning("[expediente.create] price_map fetch failed: %s", e)
-                price_map = {}
+                price_map_mwt    = {}
+                price_map_client = {}
 
             with connection.cursor() as c:
                 for ln in raw_lines:
@@ -409,29 +500,38 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         cantidad = 0
                     if cantidad <= 0:
                         continue
-                    # Precio congelado: lookup en price_map por producto_id.
+                    # Precio congelado: lookup en price_map_* por producto_id.
                     # Fallback: 0 (línea sin producto resuelto, ej. SKU libre).
                     pid = str(ln.get("producto_id")) if ln.get("producto_id") else None
-                    unit_price = price_map.get(pid, Decimal("0")) if pid else Decimal("0")
+                    unit_price_mwt    = (price_map_mwt.get(pid, Decimal("0"))
+                                         if pid else Decimal("0"))
+                    unit_price_client = (price_map_client.get(pid, Decimal("0"))
+                                         if pid else Decimal("0"))
+                    # Legacy unit_price = el precio que le toca al OPERADOR.
+                    unit_price = (unit_price_mwt
+                                  if str(operating_company_id) == MWT_OPERATING_CLIENT_ID
+                                  else unit_price_client)
                     total_price = (unit_price * Decimal(cantidad)).quantize(Decimal("0.01"))
 
-                    # Schema real (70_expedientes.sql) — columnas que SÍ existen:
+                    # Schema real (70_expedientes.sql + C0_expedientes_operating_company.sql):
                     #   id, oc_id (NOT NULL), expediente_id, producto_id,
                     #   sku, size (NO 'talla'), qty, unit_cost, unit_price,
+                    #   unit_price_mwt, unit_price_client (sprint 2026-05-06),
                     #   total_price, sap, transport_mode, production_date,
                     #   estado, is_active, ...
-                    # `product_label` NO existe — se descarta. La descripción
-                    # del producto se mantiene en `productos.producto.nombre`
-                    # vía producto_id.
                     try:
                         c.execute("""
                             INSERT INTO expedientes.linea (
                                 id, oc_id, expediente_id, producto_id,
-                                sku, size, qty, unit_price, total_price,
+                                sku, size, qty,
+                                unit_price, unit_price_mwt, unit_price_client,
+                                total_price,
                                 estado, is_active, created_at, updated_at
                             ) VALUES (
                                 %s, %s, %s, %s,
-                                %s, %s, %s, %s, %s,
+                                %s, %s, %s,
+                                %s, %s, %s,
+                                %s,
                                 'PENDIENTE_SAP', TRUE, NOW(), NOW()
                             )
                         """, [
@@ -440,7 +540,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
                             str(new_id),
                             pid,
                             sku, talla, cantidad,
-                            unit_price, total_price,
+                            unit_price, unit_price_mwt, unit_price_client,
+                            total_price,
                         ])
                         line_count += 1
                     except Exception as e:
@@ -1424,12 +1525,24 @@ class DocumentoViewSet(viewsets.ViewSet):
             v = request.query_params.get(p)
             if v:
                 qs = qs.filter(**{f: v})
+        # Sprint 2026-05-06 · audiencia. CLIENT_* solo ve audience='CLIENT';
+        # Admin/CEO/staff ven todo. Param ?audience= permite filtrar de
+        # forma explícita para vistas internas.
+        if _is_client_viewer(request):
+            qs = qs.filter(audience="CLIENT")
+        else:
+            audience = request.query_params.get("audience")
+            if audience:
+                qs = qs.filter(audience=audience)
         return Response(DocumentoSerializer(qs, many=True).data)
 
     def retrieve(self, request, pk=None):
         try:
             d = Documento.objects.get(pk=pk, is_active=True)
         except Documento.DoesNotExist:
+            return Response({"detail": "Documento no existe"}, status=404)
+        # Sprint 2026-05-06 · CLIENT_* no puede acceder a docs MWT_INTERNAL.
+        if _is_client_viewer(request) and getattr(d, "audience", "CLIENT") != "CLIENT":
             return Response({"detail": "Documento no existe"}, status=404)
         return Response(DocumentoSerializer(d).data)
 
@@ -1444,6 +1557,13 @@ class DocumentoViewSet(viewsets.ViewSet):
             codigo = (request.data.get("codigo") or "").strip() or documento_file.name
             oc_id  = request.data.get("oc_id") or None
             exp_id = request.data.get("expediente_id") or None
+            # Sprint 2026-05-06 · audiencia.
+            audience = (request.data.get("audience") or "CLIENT").strip().upper()
+            if audience not in ("CLIENT", "MWT_INTERNAL"):
+                audience = "CLIENT"
+            if _is_client_viewer(request):
+                # CLIENT_* nunca puede crear documentos MWT_INTERNAL.
+                audience = "CLIENT"
             try:
                 doc_uuid   = uuid.uuid4()
                 fname      = documento_file.name or f"documento_{doc_uuid}.bin"
@@ -1502,13 +1622,13 @@ class DocumentoViewSet(viewsets.ViewSet):
                     c.execute("""
                         INSERT INTO expedientes.documento (
                             id, oc_id, expediente_id,
-                            kind, codigo,
+                            kind, audience, codigo,
                             file_ext, file_size_bytes, storage_url,
                             author, fecha,
                             is_active, created_at, updated_at
                         ) VALUES (
                             %s, %s, %s,
-                            %s, %s,
+                            %s, %s, %s,
                             %s, %s, %s,
                             %s, CURRENT_DATE,
                             TRUE, now(), now()
@@ -1517,7 +1637,7 @@ class DocumentoViewSet(viewsets.ViewSet):
                         str(doc_uuid),
                         oc_id  if oc_id  else None,
                         exp_id if exp_id else None,
-                        kind, codigo,
+                        kind, audience, codigo,
                         file_ext, file_size, storage_url,
                         (getattr(request.user, "email", None)
                          or getattr(request.user, "username", None)
@@ -1530,7 +1650,24 @@ class DocumentoViewSet(viewsets.ViewSet):
                 return Response({"detail": "upload_failed", "error": str(e)[:200]},
                                 status=500)
 
-        s = DocumentoSerializer(data=request.data)
+        # Sprint 2026-05-06 · audiencia. Si CLIENT_* manda 'MWT_INTERNAL'
+        # se ignora silenciosamente (HARD SHIELD). Default 'CLIENT'.
+        body = dict(request.data) if hasattr(request.data, "items") else {}
+        try:
+            body = {k: request.data.get(k) for k in request.data.keys()}
+        except Exception:
+            body = dict(request.data)
+        aud = (body.get("audience") or "CLIENT")
+        try:
+            aud = str(aud).strip().upper()
+        except (TypeError, ValueError):
+            aud = "CLIENT"
+        if aud not in ("CLIENT", "MWT_INTERNAL"):
+            aud = "CLIENT"
+        if _is_client_viewer(request):
+            aud = "CLIENT"
+        body["audience"] = aud
+        s = DocumentoSerializer(data=body)
         s.is_valid(raise_exception=True)
         s.save(id=uuid.uuid4())
         return Response(s.data, status=201)
@@ -1584,6 +1721,146 @@ class DocumentoViewSet(viewsets.ViewSet):
         El upload (create()) persiste la key real como
         `documento/<doc_uuid>/<safe_filename>` y la guarda en
         `Documento.storage_url`. Eso es lo único que tiene que leer
+        este endpoint. Mantenemos el fallback legacy sólo para docs
+        muy antiguos que pudieran existir sin storage_url poblado.
+        """
+        try:
+            d = Documento.objects.get(pk=pk, is_active=True)
+        except Documento.DoesNotExist:
+            return Response({"detail": "Documento no existe"}, status=404)
+
+        # Prioridad: storage_url persistido en el upload (forma canónica
+        # vigente), luego bucket_key (compat futura), luego fallback legacy.
+        key = (
+            getattr(d, "storage_url", None)
+            or getattr(d, "bucket_key", None)
+            or f"expedientes/{d.expediente_id}/{d.id}"
+        )
+        ttl = int(request.query_params.get("ttl") or 900)
+
+        try:
+            from apps.storage.services import generate_signed_url  # noqa: PLC0415
+            data = generate_signed_url(key=key, kind="get", ttl=ttl)
+        except Exception as e:
+            data = {"url": None, "available": False, "error": str(e), "key": key}
+
+        data["documento_id"]  = str(d.id)
+        data["expediente_id"] = str(d.expediente_id) if d.expediente_id else None
+        data["key"]           = key  # útil para debugging
+        return Response(data)
+
+
+# ════════════════════════════════════════════════════════════
+# PIPELINE ViewSets (schema "pipeline")
+# ════════════════════════════════════════════════════════════
+class TransicionCatViewSet(viewsets.ViewSet):
+    """Catálogo cerrado de transiciones válidas del motor de fases."""
+    def list(self, request):
+        qs = TransicionCat.objects.filter(is_active=True)
+        for p, f in (("fase_from", "fase_from"), ("fase_to", "fase_to")):
+            v = request.query_params.get(p)
+            if v:
+                qs = qs.filter(**{f: v})
+        is_rb = request.query_params.get("is_rollback")
+        if is_rb in ("true", "false"):
+            qs = qs.filter(is_rollback=(is_rb == "true"))
+        return Response(TransicionCatSerializer(qs, many=True).data)
+
+    def retrieve(self, request, pk=None):
+        try:
+            t = TransicionCat.objects.get(pk=pk, is_active=True)
+        except TransicionCat.DoesNotExist:
+            return Response({"detail": "Transición no existe"}, status=404)
+        return Response(TransicionCatSerializer(t).data)
+
+
+class EventLogViewSet(viewsets.ViewSet):
+    """Audit trail inmutable del pipeline (pipeline.event_log).
+    Solo GET — INSERTs se hacen desde las actions de negocio."""
+    def list(self, request):
+        qs = EventLog.objects.filter(is_active=True)
+        mapping = {
+            "aggregate_type": "aggregate_type",
+            "aggregate_id":   "aggregate_id",
+            "event_type":     "event_type",
+            "action_source":  "action_source",
+            "correlation_id": "correlation_id",
+            "emitted_by":     "emitted_by_id",
+            "phase_from":     "phase_from",
+            "phase_to":       "phase_to",
+        }
+        for p, f in mapping.items():
+            v = request.query_params.get(p)
+            if v:
+                qs = qs.filter(**{f: v})
+        limit = int(request.query_params.get("limit") or 200)
+        return Response(EventLogSerializer(qs.order_by("-created_at")[:limit], many=True).data)
+
+    def retrieve(self, request, pk=None):
+        try:
+            e = EventLog.objects.get(pk=pk, is_active=True)
+        except EventLog.DoesNotExist:
+            return Response({"detail": "Event no existe"}, status=404)
+        return Response(EventLogSerializer(e).data)
+
+    @action(detail=False, methods=["get"])
+    def kpis(self, request):
+        """KPIs de pipeline.event_log — útil para el Dashboard widget."""
+        out = {"total": 0, "last_24h": 0, "last_7d": 0, "by_aggregate": {}}
+        with connection.cursor() as c:
+            try:
+                c.execute("""
+                    SELECT
+                      COUNT(*),
+                      COUNT(*) FILTER (WHERE created_at > now() - interval '24 hours'),
+                      COUNT(*) FILTER (WHERE created_at > now() - interval '7 days')
+                    FROM pipeline.event_log
+                    WHERE is_active = TRUE
+                """)
+                r = c.fetchone()
+                out.update({
+                    "total":    r[0],
+                    "last_24h": r[1],
+                    "last_7d":  r[2],
+                })
+                c.execute("""
+                    SELECT aggregate_type, COUNT(*)
+                      FROM pipeline.event_log
+                     WHERE is_active = TRUE
+                       AND created_at > now() - interval '7 days'
+                     GROUP BY 1
+                     ORDER BY 2 DESC
+                """)
+                out["by_aggregate"] = {row[0]: row[1] for row in c.fetchall()}
+            except Exception:
+                pass
+        return Response(out)
+
+
+class OcrParsingLogViewSet(viewsets.ViewSet):
+    """Log de corridas de OCR (Paperless+Tika). GET-only desde la app.
+    Los INSERTs los hace el worker de OCR."""
+    def list(self, request):
+        qs = OcrParsingLog.objects.filter(is_active=True)
+        for p, f in (("expediente", "expediente_id"),
+                     ("artifact",   "artifact_id"),
+                     ("status",     "status"),
+                     ("tipo",       "artifact_tipo")):
+            v = request.query_params.get(p)
+            if v:
+                qs = qs.filter(**{f: v})
+        nhr = request.query_params.get("needs_human_review")
+        if nhr in ("true", "false"):
+            qs = qs.filter(needs_human_review=(nhr == "true"))
+        limit = int(request.query_params.get("limit") or 100)
+        return Response(OcrParsingLogSerializer(qs.order_by("-created_at")[:limit], many=True).data)
+
+    def retrieve(self, request, pk=None):
+        try:
+            r = OcrParsingLog.objects.get(pk=pk, is_active=True)
+        except OcrParsingLog.DoesNotExist:
+            return Response({"detail": "OCR log no existe"}, status=404)
+        return Response(OcrParsingLogSerializer(r).data)
         este endpoint. Mantenemos el fallback legacy sólo para docs
         muy antiguos que pudieran existir sin storage_url poblado.
         """

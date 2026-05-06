@@ -265,6 +265,12 @@ export default function UserFormView() {
     if (user.legal_entity_id && !ids.includes(user.legal_entity_id)) ids.unshift(user.legal_entity_id);
     return ids;
   }, [user.legal_entity_ids, user.legal_entity_id]);
+
+  // Sprint 2026-05-06 · validación R3: para roles CLIENT_* es
+  // OBLIGATORIO al menos una empresa asignada (de lo contrario el
+  // backend filtra todo a 0 expedientes y el portal queda vacío).
+  const isClientRoleSelected = String(user.role_default || '').toLowerCase().startsWith('client');
+  const companyMissing = isClientRoleSelected && selectedIds.length === 0;
   const selectedCompanies = useMemo(
     () => selectedIds.map((id) => companies.find((c) => c.id === id)).filter(Boolean),
     [selectedIds, companies]
@@ -441,12 +447,15 @@ export default function UserFormView() {
         </button>
         <button
           onClick={save}
-          disabled={!user.email_plain || saving}
+          disabled={!user.email_plain || saving || companyMissing}
+          title={companyMissing
+            ? "Asigna al menos una empresa para roles CLIENT_*"
+            : undefined}
           style={{
             background: "var(--mint, #00B286)", color: "#fff", border: "none",
             padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-            cursor: (user.email_plain && !saving) ? "pointer" : "default",
-            opacity: (!user.email_plain || saving) ? 0.6 : 1,
+            cursor: (user.email_plain && !saving && !companyMissing) ? "pointer" : "default",
+            opacity: (!user.email_plain || saving || companyMissing) ? 0.6 : 1,
           }}
         >
           <IconCheck size={12}/> {saving ? "Guardando…" : (isEdit ? "Guardar cambios" : "Crear usuario")}
@@ -518,13 +527,26 @@ export default function UserFormView() {
         </div>
       </Section>
 
-      {/* C · Empresa asignada */}
-      <Section title="C · Empresa asignada"
+      {/* C · Empresa(s) asignada(s) — multi-empresa.
+          Sprint 2026-05-06 · la primera empresa se persiste tambien como
+          legal_entity_id (singular) por retrocompat con codigo legacy. */}
+      <Section title="C · Empresas asignadas"
                hint={
-                 user.role_default === "client_b2b"
-                   ? "OBLIGATORIO para rol CLIENT — el cliente solo verá expedientes/OCs/documentos de esta empresa."
+                 isClientRoleSelected
+                   ? "OBLIGATORIO para rol CLIENT — el cliente solo verá expedientes/OCs/documentos de las empresas asignadas. La primera es la empresa primaria."
                    : "Opcional. Para roles internos de MWT no asigna empresa (quedan con scope global). Los datos corporativos vienen del módulo Clientes."
                }>
+        {companyMissing && (
+          <div style={{
+            padding: "8px 12px", borderRadius: 6, marginBottom: 10,
+            background: "rgba(220,38,38,0.08)",
+            color: "#991B1B",
+            border: "1px solid rgba(220,38,38,0.30)",
+            fontSize: 12, fontWeight: 600,
+          }}>
+            Para guardar un usuario CLIENT_* debes asignarle al menos una empresa.
+          </div>
+        )}
         {/* Chips de empresas seleccionadas — multi-empresa (sprint M-Empresa) */}
         {selectedCompanies.length > 0 && (
           <div style={{

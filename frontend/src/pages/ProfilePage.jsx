@@ -55,21 +55,39 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // ── Cargar perfil + empresa (si aplica) ─────────────────────
+  // Sprint 2026-05-06 · todas las empresas asociadas al usuario.
+  // Primera = empresa primaria (legal_entity_id legacy / lehgal_entity_ids[0]).
+  const [companies, setCompanies] = useState([]);
+
+  // ── Cargar perfil + empresa(s) (si aplica) ─────────────────────
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const me = await apiFetch("/users/me/profile/", { token: getToken() });
       setProfile(me);
-      if (me?.legal_entity_id) {
-        try {
-          const co = await apiFetch(`/legal-entities/${me.legal_entity_id}/`,
-            { token: getToken() });
-          setCompany(co);
-        } catch { setCompany(null); }
-      } else {
-        setCompany(null);
+      // Resolver el array completo legal_entity_ids; compat con singular.
+      const ids = Array.isArray(me?.legal_entity_ids) ? me.legal_entity_ids.slice() : [];
+      if (me?.legal_entity_id && !ids.includes(me.legal_entity_id)) {
+        ids.unshift(me.legal_entity_id);
       }
+      if (ids.length === 0) {
+        setCompany(null);
+        setCompanies([]);
+        return;
+      }
+      // Empresa primaria → tab "Mi empresa" (compat existente).
+      try {
+        const co = await apiFetch(`/legal-entities/${ids[0]}/`,
+          { token: getToken() });
+        setCompany(co);
+      } catch { setCompany(null); }
+      // Lista completa para mostrar todas las asociadas (read-only).
+      try {
+        const all = await Promise.all(
+          ids.map((id) => apiFetch(`/legal-entities/${id}/`, { token: getToken() }).catch(() => null))
+        );
+        setCompanies(all.filter(Boolean));
+      } catch { setCompanies([]); }
     } finally {
       setLoading(false);
     }
@@ -229,7 +247,7 @@ export default function ProfilePage() {
       {/* Panels */}
       {activeTab === "personal"  && <PersonalTab profile={profile} patch={patch} isClient={isClient}/>}
       {activeTab === "addresses" && <AddressesTab profile={profile} patch={patch}/>}
-      {activeTab === "company"   && <CompanyTab   company={company}/>}
+      {activeTab === "company"   && <CompanyTab   company={company} companies={companies} primaryId={profile?.legal_entity_id}/>}
       {activeTab === "system" && isAdmin && <SystemTab/>}
 
       {/* Toast */}
@@ -487,7 +505,14 @@ function AddressesTab({ profile, patch }) {
 }
 
 
-function CompanyTab({ company }) {
+/**
+ * @typedef {Object} CompanyTabProps
+ * @property {object|null} company — empresa primaria (compat singular).
+ * @property {Array<object>} [companies] — todas las empresas asociadas.
+ * @property {string|null} [primaryId] — id de la empresa primaria.
+ */
+/** @param {CompanyTabProps} props */
+function CompanyTab({ company, companies = [], primaryId = null }) {
   if (!company) {
     return (
       <Section title="Mi empresa" hint="Este perfil no está asociado a ninguna empresa cliente.">
@@ -499,7 +524,7 @@ function CompanyTab({ company }) {
   }
   return (
     <Section
-      title="Mi empresa"
+      title="Mis empresas"
       hint={
         <>
           <IconLock size={11} style={{ verticalAlign: -1, marginRight: 4 }}/>
@@ -508,6 +533,51 @@ function CompanyTab({ company }) {
         </>
       }
     >
+      {/* Sprint 2026-05-06 · si hay más de 1 empresa, mostramos la lista
+          arriba con la primaria marcada. La empresa primaria se sigue
+          renderizando con detalle en la card de abajo. */}
+      {companies && companies.length > 1 && (
+        <div style={{
+          marginBottom: 14,
+          display: "flex", flexDirection: "column", gap: 6,
+        }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
+            letterSpacing: 0.5, textTransform: "uppercase",
+          }}>
+            Empresas asociadas ({companies.length})
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {companies.map((c) => {
+              const isPrimary = c.id === primaryId;
+              return (
+                <span key={c.id} style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: "5px 10px",
+                  background: isPrimary ? "rgba(0,178,134,0.10)" : "rgba(11,30,58,0.04)",
+                  border: isPrimary ? "1px solid rgba(0,178,134,0.40)" : "1px solid var(--border)",
+                  borderRadius: 999, fontSize: 12,
+                  fontWeight: isPrimary ? 700 : 500,
+                  color: "var(--navy, #0B1E3A)",
+                }}>
+                  {isPrimary && (
+                    <span style={{
+                      fontSize: 9, fontWeight: 800, letterSpacing: 0.4,
+                      color: "var(--mint, #00B286)",
+                    }}>★ PRIMARIA</span>
+                  )}
+                  <span>{c.razon_social || c.nombre_comercial || "—"}</span>
+                  {c.tax_id && (
+                    <code className="mono-sm" style={{
+                      fontSize: 10, color: "var(--text-tertiary)",
+                    }}>{c.tax_id}</code>
+                  )}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div style={{
         padding: 20, border: "1px solid var(--border)", borderRadius: 10,
         background: "#FAFBFD",

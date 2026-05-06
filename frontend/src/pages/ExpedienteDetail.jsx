@@ -27,11 +27,18 @@ import {
   HERO_PAGOS, HERO_ARTIFACTS, HERO_ACTIVITY,
 } from "../data/mockData.js";
 import { useRole } from "../context/RoleContext.jsx";
+import {
+  MWT_OPERATING_CLIENT_ID, MWT_OPERATOR_NAME, isMwtOperated,
+} from "../lib/operatingCompany.js";
 
 export default function ScreenExpedienteDetail() {
   const navigate = useNavigate();
   const { expedienteId: paramExpId } = useParams();
   const { lang } = useOutletContext();
+  // Sprint 2026-05-06 · usamos isClient temprano (badge en header,
+  // filtros de docs por audiencia). El hook tiene que vivir antes
+  // del primer return para no violar reglas de React.
+  const { isClient } = useRole();
   const expedienteId = paramExpId || HERO_ID;
   const onBack = () => navigate(-1);
   const onNavigate = (key) => {
@@ -141,6 +148,7 @@ export default function ScreenExpedienteDetail() {
     // PRODUCCION en BD (bug visible al confirmar SAP).
     status:           (apiExp.estado || "REGISTRO").toUpperCase(),
     client_id:        apiExp.client_id,
+    operating_company_id: apiExp.operating_company_id || null,
     brand_id:         apiExp.brand_id,
     oc_id:            apiExp.oc_id,
     oc_client:        apiExp.oc_id || "",
@@ -231,7 +239,7 @@ export default function ScreenExpedienteDetail() {
   // expone logs internos de state machine), el action bar completo
   // (Avanzar estado, Registrar pago, Registrar costo, Agregar docu,
   // Enviar portal) y el NextActionCard del rail derecho.
-  const { isClient } = useRole();
+  // (isClient ya viene de useRole() arriba en la función)
   const [tab, setTab] = useState('overview');
   // Si el rol cambia en caliente y el tab activo ya no es visible al
   // cliente, lo re-anclamos a 'overview' en el próximo render.
@@ -321,8 +329,27 @@ export default function ScreenExpedienteDetail() {
             </>}
             <span style={{ opacity: 0.5 }}>·</span>
             <span style={{ opacity: 0.75, fontSize: 13 }}>{exp.proforma}</span>
+            {/* Sprint 2026-05-06 · Badge "Operado por MWT" — visible solo
+                a Admin/MWT cuando el operador del expediente es Muito Work
+                Limitada y el cliente final es OTRO (es decir, MWT opera
+                un expediente para un cliente que no es el operador). */}
+            {!isClient && isMwtOperated(exp.operating_company_id)
+              && exp.operating_company_id && exp.client_id
+              && String(exp.operating_company_id).toLowerCase() !== String(exp.client_id).toLowerCase() && (
+              <span style={{
+                marginLeft: 'auto',
+                padding: '3px 10px', borderRadius: 999,
+                background: 'rgba(72,30,227,0.18)',
+                color: '#fff', fontSize: 10, fontWeight: 800,
+                letterSpacing: 0.5, border: '1px solid rgba(255,255,255,0.30)',
+              }}>
+                {lang === 'es'
+                  ? `Operado por ${MWT_OPERATOR_NAME}`
+                  : `Operated by ${MWT_OPERATOR_NAME}`}
+              </span>
+            )}
             {exp.is_blocked && (
-              <span style={{ marginLeft: 'auto' }}>
+              <span style={{ marginLeft: !isClient ? 8 : 'auto' }}>
                 <Badge kind="critical" dot>{lang==='es' ? 'BLOQUEADO · Crédito' : 'BLOCKED · Credit'}</Badge>
               </span>
             )}
@@ -622,7 +649,10 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifacts
               // (Decimal serializado). Sin Number(), `qty * unit_price` hace
               // string concat y `(margin*100)` es NaN%.
               const qty   = Number(l.qty || 0);
-              let unit    = Number(l.unit_price || 0);
+              // Sprint 2026-05-06 · backend resuelve `unit_price_for_viewer`
+              // según el rol del consumidor (CLIENT_* → cliente, MWT/Admin
+              // → mwt). Si el campo no llega (compat), caemos a unit_price.
+              let unit    = Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
               // Fallback: cuando la linea trae unit_price=0 leemos el
               // precio del catalogo de productos (cpaPriceMap),
               // indexado por producto_id. Mismo enfoque que OCDetail.
@@ -684,8 +714,9 @@ function DetailRow({ label, value }) {
 
 function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, onLineAdded }) {
   // Sprint 2026-05-01: total con fallback al catalogo de productos
+  // Sprint 2026-05-06 · prefer unit_price_for_viewer (resuelto por rol).
   const total = lines.reduce((a, l) => {
-    let unit = Number(l.unit_price || 0);
+    let unit = Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
     if (unit === 0 && cpaPriceMap && l.producto_id) {
       const fb = Number(cpaPriceMap[l.producto_id] || 0);
       if (fb > 0) unit = fb;
@@ -768,7 +799,8 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, onLineAdde
         <tbody>
           {lines.map(l => {
             // Fallback al catalogo de productos si la linea trae 0
-            let _unit = Number(l.unit_price || 0);
+            // Sprint 2026-05-06 · prefer unit_price_for_viewer (rol-aware)
+            let _unit = Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
             let _total = Number(l.total_price || 0);
             if (_unit === 0 && cpaPriceMap && l.producto_id) {
               const fb = Number(cpaPriceMap[l.producto_id] || 0);

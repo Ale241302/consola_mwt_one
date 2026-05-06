@@ -113,7 +113,12 @@ class Cliente(models.Model):
     #   · Padre con subsidiarias → suma todo el pool.
     # ─────────────────────────────────────────────────────────────────
     def calcular_consumo_credito_pool(self) -> Decimal:
-        """Crédito consumido en VIVO por el pool (padre + subsidiarias)."""
+        """Crédito consumido en VIVO por el pool (padre + subsidiarias).
+
+        Sprint 2026-05-06 · el crédito impacta al OPERADOR del expediente
+        (e.operating_company_id), no al cliente final. Si operating_company_id
+        es NULL (filas legacy pre-C0), fallback a e.client_id.
+        """
         from django.db import connection
         ids = self.pool_ids() if self.is_parent else [str(self.id)]
         if not ids:
@@ -153,7 +158,7 @@ class Cliente(models.Model):
                            AND (e.forma_pago = 'CREDITO' OR e.forma_pago IS NULL)
                     LEFT JOIN productos.producto p ON p.id = l.producto_id
                     WHERE l.is_active = TRUE
-                      AND e.client_id::text IN ({placeholders})
+                      AND COALESCE(e.operating_company_id, e.client_id)::text IN ({placeholders})
                     """,
                     ids,
                 )
@@ -170,7 +175,12 @@ class Cliente(models.Model):
             return Decimal(self.credito_usado or 0)
 
     def calcular_credito_consumido(self) -> Decimal:
-        """Crédito consumido SOLO por este cliente (sin pool consolidado)."""
+        """Crédito consumido SOLO por este cliente (sin pool consolidado).
+
+        Sprint 2026-05-06 · el crédito impacta al OPERADOR del expediente
+        (e.operating_company_id), no al cliente final. Si operating_company_id
+        es NULL (filas legacy pre-C0), fallback a e.client_id.
+        """
         from django.db import connection
         try:
             with connection.cursor() as c:
@@ -206,7 +216,7 @@ class Cliente(models.Model):
                            AND (e.forma_pago = 'CREDITO' OR e.forma_pago IS NULL)
                     LEFT JOIN productos.producto p ON p.id = l.producto_id
                     WHERE l.is_active = TRUE
-                      AND e.client_id::text = %s
+                      AND COALESCE(e.operating_company_id, e.client_id)::text = %s
                     """,
                     [str(self.id)],
                 )

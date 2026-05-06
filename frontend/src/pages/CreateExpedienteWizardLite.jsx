@@ -28,13 +28,24 @@ import {
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import {
-  clientesApi, expedientesApi, lineasApi, productosApi, tallasApi, apiFetch, getToken,
+  clientesApi, expedientesApi, lineasApi, productosApi, tallasApi, getToken,
 } from "../lib/api.js";
 import {
   ManualLinePanel, RequestAssignmentDialog,
 } from "../components/expedientes/ManualLineModal.jsx";
+import {
+  MWT_OPERATING_CLIENT_ID, MWT_OPERATOR_NAME,
+} from "../lib/operatingCompany.js";
 
-const STEPS = [
+// Sprint 2026-05-06 · Step 0 visible solo para ADMIN/CEO/staff. CLIENT_*
+// salta este paso; el operador se asume "el propio cliente" implicitamente.
+const STEPS_ADMIN = [
+  { id: 0, label: "Operador" },
+  { id: 1, label: "Cliente" },
+  { id: 2, label: "Productos" },
+  { id: 3, label: "Revisar y crear" },
+];
+const STEPS_CLIENT = [
   { id: 1, label: "Cliente" },
   { id: 2, label: "Productos" },
   { id: 3, label: "Revisar y crear" },
@@ -74,14 +85,23 @@ const TEMPLATE_CSV =
 export default function CreateExpedienteWizardLite() {
   const navigate = useNavigate();
   const { lang = "es" } = useOutletContext() || {};
-  const [step, setStep]   = useState(1);
+  const { isAdmin, user } = useRole();
+  // ── Sprint 2026-05-06 · Step 0 (operador) solo para ADMIN/CEO/staff.
+  // Para CLIENT_* arrancamos directo en el Step 1 con el cliente
+  // pre-fijado a su empresa primaria (legal_entity_ids[0]).
+  const STEPS = isAdmin ? STEPS_ADMIN : STEPS_CLIENT;
+  const [step, setStep]   = useState(isAdmin ? 0 : 1);
   const [error, setError] = useState(null);
+
+  // ── Empresa OPERADORA del expediente.
+  // 'mwt'    → operating_company_id = MWT_OPERATING_CLIENT_ID
+  // 'client' → operating_company_id = selClient.id
+  // CLIENT_* fuerza 'client' (el operador es siempre el propio cliente).
+  const [operatingMode, setOperatingMode] = useState(isAdmin ? 'mwt' : 'client');
 
   // ── Estado global ──
   const [clients, setClients]   = useState([]);
-  const [users,   setUsers]     = useState([]);
   const [selClient, setSelClient]       = useState(null);   // {id, label, parent_id, …}
-  const [selResponsable, setSelResp]    = useState(null);
 
   const [orderLines, setOrderLines]     = useState([]);     // [{tmpId, sku, talla, cantidad, producto_id, product_label, is_assigned, unassigned_request_sent}]
   const [parsing, setParsing]           = useState(false);
@@ -95,11 +115,10 @@ export default function CreateExpedienteWizardLite() {
 
   // ── Sprint 2026-05-01: precios y proyeccion de credito ─────────
   // Mapa { producto_id -> unit_price } resuelto desde el catalogo de
-  // productos para el cliente actual (especificaciones.client_prices
-  // [client_id] || precio_lista). Lo usa el ADMIN para ver el valor
-  // total del pedido y el impacto en el credito disponible. CLIENT
-  // no ve precios (POL_VISIBILIDAD).
-  const { isAdmin } = useRole();
+  // productos para la EMPRESA QUE OPERA (operatingMode === 'mwt'
+  // → catalogo MWT, 'client' → override por client_id). El backend
+  // congela el snapshot dual (mwt + cliente) al crear; aqui solo
+  // mostramos en pantalla el precio del operador elegido.
   const [priceMap, setPriceMap] = useState({});
   // Sprint 2026-05-01: credito usado REAL del cliente, calculado a partir
   // de sus expedientes existentes (activos) + valor de cada linea
@@ -120,11 +139,12 @@ export default function CreateExpedienteWizardLite() {
   }, [selClient]);
 
   useEffect(() => {
-    // Reset cuando cambia el cliente: el override de precio depende
-    // de client_id, asi que no podemos reusar el map anterior.
+    // Reset cuando cambia el cliente o el operador: el override de
+    // precio depende del client_id usado para resolver, asi que no
+    // podemos reusar el map anterior.
     setPriceMap({});
     setExistingClientUsage(0);
-  }, [selClient?.id]);
+  }, [selClient?.id, pricingClientId]);
 
   // Sprint 2026-05-01: calcular credito usado proyectado desde
   // expedientes existentes del cliente.
@@ -190,7 +210,7 @@ export default function CreateExpedienteWizardLite() {
   }, [selClient?.id]);
 
   useEffect(() => {
-    if (!selClient?.id) return;
+    if (!pricingClientId) return;
     const uniquePidIds = Array.from(new Set(
       orderLines.map(l => l.producto_id).filter(Boolean)
     ));
@@ -206,7 +226,7 @@ export default function CreateExpedienteWizardLite() {
       for (const p of prods) {
         if (!p?.id) continue;
         const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
-        const override = Number(cliMap[selClient.id] || 0);
+        const override = Number(cliMap[pricingClientId] || 0);
         const lista    = Number(p.precio_lista || 0);
         next[p.id] = override > 0 ? override : lista;
       }
@@ -214,7 +234,7 @@ export default function CreateExpedienteWizardLite() {
     });
     return () => { cancel = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selClient?.id, orderLines]);
+  }, [pricingClientId, orderLines]);
 
   // Total del pedido segun precios resueltos
   const orderTotalValue = useMemo(() => {
@@ -224,15 +244,37 @@ export default function CreateExpedienteWizardLite() {
     }, 0);
   }, [orderLines, priceMap]);
 
-  // Proyeccion de credito post-pedido.
-  // Sprint 2026-05-01: el `used` toma el MAX entre el campo persistido
-  // (credito_usado del backend, suele ser 0 hasta que hay facturas) y
-  // el calculo proyectado desde los expedientes existentes del cliente.
+  // Sprint 2026-05-06 · cuando el operador es MWT, traemos el credito
+  // de Muito Work Limitada (sus campos credito_aprobado / credito_usado)
+  // para mostrar el impacto sobre EL OPERADOR, no sobre el cliente final.
+  const [mwtOperator, setMwtOperator] = useState(null);
+  useEffect(() => {
+    if (!isAdmin) { setMwtOperator(null); return; }
+    let cancel = false;
+    clientesApi.get(MWT_OPERATING_CLIENT_ID)
+      .then((d) => { if (!cancel) setMwtOperator(d || null); })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, [isAdmin]);
+
+  // Proyeccion de credito post-pedido sobre el OPERADOR del expediente.
+  // Sprint 2026-05-06 · si operatingMode === 'mwt', el credito relevante
+  // es el de Muito Work Limitada. Si 'client', el del cliente final.
   const creditProjection = useMemo(() => {
-    if (!selClient) return null;
-    const limit = Number(selClient.credito_limit || 0);
-    const persistedUsed = Number(selClient.credito_used || 0);
-    const used  = Math.max(persistedUsed, Number(existingClientUsage || 0));
+    const isMwt = operatingMode === 'mwt';
+    const source = isMwt ? mwtOperator : selClient;
+    if (!source) return null;
+    const limit = isMwt
+      ? Number(source.credito_aprobado || source.credito_limit_usd || 0)
+      : Number(source.credito_limit || 0);
+    const persistedUsed = isMwt
+      ? Number(source.credito_usado || 0)
+      : Number(source.credito_used || 0);
+    // Para MWT no proyectamos uso desde otros expedientes (ya esta
+    // consolidado en credito_usado por el backend).
+    const used  = isMwt
+      ? persistedUsed
+      : Math.max(persistedUsed, Number(existingClientUsage || 0));
     const available = Math.max(0, limit - used);
     const afterUsed = used + orderTotalValue;
     const afterAvailable = limit - afterUsed;
@@ -246,32 +288,57 @@ export default function CreateExpedienteWizardLite() {
       exceedsLimit,
       utilPctAfter,
       persistedUsed,
-      projectedUsed: existingClientUsage,
+      projectedUsed: isMwt ? 0 : existingClientUsage,
+      // Etiqueta de la entidad cuyo credito mostramos.
+      subjectLabel: isMwt
+        ? MWT_OPERATOR_NAME
+        : (selClient?.label || ''),
     };
-  }, [selClient, orderTotalValue, existingClientUsage]);
+  }, [selClient, mwtOperator, operatingMode, orderTotalValue, existingClientUsage]);
 
   // ── Cargar catálogos ──
   useEffect(() => {
     clientesApi.list({ is_parent: "all" }).then((d) => {
       const arr = Array.isArray(d) ? d : (d?.results || []);
-      setClients(orderClientsHierarchy(arr.map(adaptClient)));
+      const adapted = arr.map(adaptClient);
+      setClients(orderClientsHierarchy(adapted));
+      // CLIENT_* → fija el cliente final a su empresa primaria.
+      // Sprint 2026-05-06 · usamos legal_entity_ids[0] (compat: legacy
+      // legal_entity_id singular) — el backend ya filtra el listado
+      // por estos UUIDs.
+      if (!isAdmin && user) {
+        const primaryId = (Array.isArray(user.legal_entity_ids) && user.legal_entity_ids[0])
+          || user.legal_entity_id || null;
+        if (primaryId) {
+          const c = adapted.find(x => x.id === primaryId);
+          if (c) setSelClient(c);
+        }
+      }
     }).catch(() => setClients([]));
+  }, [isAdmin, user]);
 
-    apiFetch("/users/?role=admin&include_inactive=false", { token: getToken() })
-      .then((d) => {
-        const arr = Array.isArray(d) ? d : (d?.results || []);
-        setUsers(arr.filter((u) => u.is_active !== false));
-      })
-      .catch(() => setUsers([]));
-  }, []);
+  // ── Operador efectivo (UUID que se manda al backend) ──
+  const operatingCompanyId = useMemo(() => {
+    if (operatingMode === 'mwt') return MWT_OPERATING_CLIENT_ID;
+    return selClient?.id || null;
+  }, [operatingMode, selClient]);
+
+  // Cliente cuyo precio mostramos en pantalla.
+  // Sprint 2026-05-06 · si el operador es MWT, el ADMIN ve el precio
+  // MWT (precio_lista). Si es operada por el cliente, el override de
+  // ese cliente. CLIENT_* siempre ve su precio.
+  const pricingClientId = operatingMode === 'mwt'
+    ? MWT_OPERATING_CLIENT_ID
+    : (selClient?.id || null);
 
   // ── Validación de step ──
   const canAdvance = useMemo(() => {
+    if (step === 0) return operatingMode === 'mwt' || operatingMode === 'client';
     if (step === 1) return !!selClient;
     if (step === 2) return orderLines.length > 0
                        && orderLines.every((l) => l.is_assigned !== false && l.cantidad > 0);
     return true;
-  }, [step, selClient, orderLines]);
+  }, [step, selClient, orderLines, operatingMode]);
 
   // ── Submit ──
   const submit = useCallback(async () => {
@@ -289,17 +356,19 @@ export default function CreateExpedienteWizardLite() {
       });
 
       // Payload mínimo — el orchestrator legacy soporta crear con NULLs.
+      // Sprint 2026-05-06 · operating_company_id define quien opera
+      // el expediente (MWT vs cliente). Los precios duales se congelan
+      // en el backend al crear las lineas (snapshot mwt + cliente).
       const payload = {
-        client_id:         selClient.id,
-        responsable_id:    selResponsable?.id || null,
-        responsable_name:  selResponsable?.full_name || null,
+        client_id:           selClient.id,
+        operating_company_id: operatingCompanyId,
         // Esto NO va: marca, mode, freight_mode, currency.
         // El backend ya las marca como required=False.
-        estado:            "REGISTRO",
-        notas:             null,
+        estado:              "REGISTRO",
+        notas:               null,
         // Sprint 2026-05-06 · términos de pago del expediente.
-        credit_days:       Number(paymentDays) || 0,
-        forma_pago:        paymentMethod || 'CREDITO',
+        credit_days:         Number(paymentDays) || 0,
+        forma_pago:          paymentMethod || 'CREDITO',
         lines: Object.values(grouped).map((l) => ({
           sku:           l.sku,
           talla:         l.talla || null,
@@ -327,7 +396,7 @@ export default function CreateExpedienteWizardLite() {
     } finally {
       setSaving(false);
     }
-  }, [saving, orderLines, selClient, selResponsable, navigate]);
+  }, [saving, orderLines, selClient, operatingCompanyId, paymentDays, paymentMethod, navigate]);
 
   return (
     <div className="page" style={{ paddingBottom: 96 }}>
@@ -352,7 +421,7 @@ export default function CreateExpedienteWizardLite() {
       </div>
 
       {/* ── Stepper ─────────────────────── */}
-      <Stepper step={step} onJump={(s) => s < step && setStep(s)} lang={lang}/>
+      <Stepper step={step} steps={STEPS} onJump={(s) => s < step && setStep(s)} lang={lang}/>
 
       {/* ── Contenido ────────────────────── */}
       <AnimatePresence mode="wait">
@@ -360,13 +429,21 @@ export default function CreateExpedienteWizardLite() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0,  transition: { duration: 0.22 } }}
           exit   ={{ opacity: 0, y: -8, transition: { duration: 0.14 } }}>
+          {step === 0 && isAdmin && (
+            <Step0Operador
+              lang={lang}
+              operatingMode={operatingMode}
+              setOperatingMode={setOperatingMode}
+            />
+          )}
           {step === 1 && (
             <Step1Cliente
               lang={lang}
               clients={clients}
-              users={users}
+              isAdmin={isAdmin}
+              isClientLocked={!isAdmin}
+              operatingMode={operatingMode}
               selClient={selClient}     setSelClient={setSelClient}
-              selResp={selResponsable}  setSelResp={setSelResp}
               existingClientUsage={existingClientUsage}
             />
           )}
@@ -389,7 +466,8 @@ export default function CreateExpedienteWizardLite() {
             <Step3Resumen
               lang={lang}
               client={selClient}
-              responsable={selResponsable}
+              operatingMode={operatingMode}
+              operatingCompanyId={operatingCompanyId}
               orderLines={orderLines}
               priceMap={priceMap}
               creditProjection={creditProjection}
@@ -419,8 +497,8 @@ export default function CreateExpedienteWizardLite() {
         )}
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
           <button className="btn btn-ghost"
-                  disabled={step === 1}
-                  onClick={() => setStep((s) => Math.max(1, s - 1))}>
+                  disabled={step === (isAdmin ? 0 : 1)}
+                  onClick={() => setStep((s) => Math.max(isAdmin ? 0 : 1, s - 1))}>
             <IconChevLeft size={12}/> {lang === "es" ? "Anterior" : "Back"}
           </button>
           {step < 3 ? (
@@ -482,16 +560,19 @@ export default function CreateExpedienteWizardLite() {
 // ═════════════════════════════════════════════════════════════
 // STEPPER
 // ═════════════════════════════════════════════════════════════
-function Stepper({ step, onJump, lang }) {
+function Stepper({ step, steps, onJump, lang }) {
+  const list = Array.isArray(steps) && steps.length ? steps : STEPS_CLIENT;
   return (
     <div className="card card-pad-md" style={{ marginBottom: 18 }}>
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
         gap: 12, flexWrap: "wrap",
       }}>
-        {STEPS.map((s, idx) => {
+        {list.map((s, idx) => {
           const done = step > s.id;
           const active = step === s.id;
+          // Etiqueta del nodo: en steps con id=0 mostramos un punto.
+          const dotLabel = s.id === 0 ? "0" : s.id;
           return (
             <React.Fragment key={s.id}>
               <button type="button"
@@ -499,25 +580,25 @@ function Stepper({ step, onJump, lang }) {
                       style={{
                         display: "flex", alignItems: "center", gap: 10,
                         padding: "8px 14px", borderRadius: 999,
-                        border: active ? "1.5px solid #00B286" : "1px solid var(--border, #E1E6ED)",
-                        background: active ? "rgba(0,178,134,0.06)" : (done ? "rgba(0,178,134,0.10)" : "#fff"),
-                        color: active ? "#0B1E3A" : (done ? "#00B286" : "var(--text-secondary)"),
+                        border: active ? "1.5px solid var(--brand-accent, #00B286)" : "1px solid var(--border, #E1E6ED)",
+                        background: active ? "rgba(0,178,134,0.06)" : (done ? "rgba(0,178,134,0.10)" : "var(--surface-raised, #fff)"),
+                        color: active ? "var(--text-primary, #0B1E3A)" : (done ? "var(--brand-accent, #00B286)" : "var(--text-secondary)"),
                         fontWeight: 600, fontSize: 13,
                         cursor: s.id < step ? "pointer" : "default",
                       }}>
                 <span style={{
                   width: 22, height: 22, borderRadius: 99,
-                  background: active ? "#00B286" : (done ? "#00B286" : "#E1E6ED"),
-                  color: (active || done) ? "#fff" : "#64748B",
+                  background: active ? "var(--brand-accent, #00B286)" : (done ? "var(--brand-accent, #00B286)" : "var(--border, #E1E6ED)"),
+                  color: (active || done) ? "#fff" : "var(--text-tertiary, #64748B)",
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
                   fontSize: 12, fontWeight: 700,
                 }}>
-                  {done ? <IconCheck size={11}/> : s.id}
+                  {done ? <IconCheck size={11}/> : dotLabel}
                 </span>
                 <span>{s.label}</span>
               </button>
-              {idx < STEPS.length - 1 && (
-                <span style={{ flex: 1, height: 1, background: "#E1E6ED", maxWidth: 60 }}/>
+              {idx < list.length - 1 && (
+                <span style={{ flex: 1, height: 1, background: "var(--border, #E1E6ED)", maxWidth: 60 }}/>
               )}
             </React.Fragment>
           );
@@ -528,9 +609,128 @@ function Stepper({ step, onJump, lang }) {
 }
 
 // ═════════════════════════════════════════════════════════════
+// STEP 0 · OPERADOR (solo ADMIN)
+// ─────────────────────────────────────────────────────────────
+// Sprint 2026-05-06 · el ADMIN decide si el expediente lo opera
+// Muito Work Limitada (default · pricing MWT, credito MWT) o el
+// propio cliente (pricing del cliente, credito del cliente).
+// ═════════════════════════════════════════════════════════════
+/**
+ * @typedef {Object} Step0Props
+ * @property {string} lang
+ * @property {'mwt'|'client'} operatingMode
+ * @property {(m:'mwt'|'client') => void} setOperatingMode
+ */
+/** @param {Step0Props} props */
+function Step0Operador({ lang, operatingMode, setOperatingMode }) {
+  const cards = [
+    {
+      id: 'mwt',
+      title_es: `Operada por ${MWT_OPERATOR_NAME}`,
+      title_en: `Operated by ${MWT_OPERATOR_NAME}`,
+      sub_es: 'Recomendada · MWT consolida pricing, crédito y exposición financiera.',
+      sub_en: 'Recommended · MWT consolidates pricing, credit and financial exposure.',
+      meta_es: 'Crédito y precios MWT · cliente final solo ve su precio congelado.',
+      meta_en: 'MWT credit and pricing · the final client only sees the frozen client price.',
+    },
+    {
+      id: 'client',
+      title_es: 'Operada por el cliente',
+      title_en: 'Operated by the client',
+      sub_es: 'El cliente paga directo al proveedor; MWT actúa solo como facilitador.',
+      sub_en: 'Client pays the supplier directly; MWT acts as facilitator only.',
+      meta_es: 'Precios y crédito del cliente final. Sin snapshot dual.',
+      meta_en: 'Final client pricing and credit. No dual snapshot.',
+    },
+  ];
+
+  return (
+    <div className="card card-pad-lg">
+      <h2 className="heading-md" style={{ marginBottom: 6 }}>
+        {lang === 'es'
+          ? 'Paso 0 · ¿Quién opera el expediente?'
+          : 'Step 0 · Who operates this file?'}
+      </h2>
+      <div className="caption" style={{
+        color: 'var(--text-tertiary)', marginBottom: 18, lineHeight: 1.5,
+      }}>
+        {lang === 'es'
+          ? 'Define quién es responsable comercial y financieramente del expediente. Puedes cambiarlo más adelante mientras el expediente esté en REGISTRO.'
+          : 'Defines who is commercially and financially responsible. You can change this later while the file is in REGISTRO.'}
+      </div>
+
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14,
+      }}>
+        {cards.map((c) => {
+          const active = operatingMode === c.id;
+          return (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => setOperatingMode(c.id)}
+              style={{
+                textAlign: 'left',
+                padding: '18px 18px',
+                borderRadius: 12,
+                cursor: 'pointer',
+                background: active
+                  ? 'rgba(0,178,134,0.07)'
+                  : 'var(--surface-raised, #fff)',
+                border: active
+                  ? '2px solid var(--brand-accent, #00B286)'
+                  : '1px solid var(--border, #E1E6ED)',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <span style={{
+                  width: 22, height: 22, borderRadius: 99,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  background: active ? 'var(--brand-accent, #00B286)' : 'var(--border, #E1E6ED)',
+                  color: active ? '#fff' : 'var(--text-tertiary, #64748B)',
+                  fontSize: 11, fontWeight: 800,
+                }}>
+                  {active ? <IconCheck size={11}/> : ''}
+                </span>
+                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary, #0B1E3A)' }}>
+                  {lang === 'es' ? c.title_es : c.title_en}
+                </div>
+              </div>
+              <div className="caption" style={{
+                color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 6,
+              }}>
+                {lang === 'es' ? c.sub_es : c.sub_en}
+              </div>
+              <div className="caption" style={{
+                color: 'var(--text-tertiary)', fontSize: 11, lineHeight: 1.4,
+              }}>
+                {lang === 'es' ? c.meta_es : c.meta_en}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
 // STEP 1 · CLIENTE
 // ═════════════════════════════════════════════════════════════
-function Step1Cliente({ lang, clients, users, selClient, setSelClient, selResp, setSelResp, existingClientUsage = 0 }) {
+/**
+ * @typedef {Object} Step1Props
+ * @property {string} lang
+ * @property {Array<object>} clients
+ * @property {object|null} selClient
+ * @property {(c:object|null)=>void} setSelClient
+ * @property {boolean} [isAdmin]
+ * @property {boolean} [isClientLocked]
+ * @property {'mwt'|'client'} [operatingMode]
+ * @property {number} [existingClientUsage]
+ */
+/** @param {Step1Props} props */
+function Step1Cliente({ lang, clients, selClient, setSelClient, existingClientUsage = 0, isAdmin = true, isClientLocked = false, operatingMode = 'client' }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -550,16 +750,39 @@ function Step1Cliente({ lang, clients, users, selClient, setSelClient, selResp, 
     ).slice(0, 100);
   }, [clients, search]);
 
+  // ── Sprint 2026-05-06 · si el operador es MWT, mostramos un card
+  // resumen del crédito de Muito Work Limitada por arriba del picker.
+  // El cliente final (Step 1) sigue siendo independiente.
+  const showMwtOperatorCard = isAdmin && operatingMode === 'mwt';
+
   return (
     <div className="card card-pad-lg">
       <h2 className="heading-md" style={{ marginBottom: 14 }}>
         {lang === "es" ? "Paso 1 · Cliente" : "Step 1 · Client"}
       </h2>
 
-      {/* Selector de cliente */}
-      <Field label={lang === "es" ? "Cliente / Subsidiaria *" : "Client / Subsidiary *"}>
+      {showMwtOperatorCard && (
+        <div style={{ marginBottom: 14 }}>
+          <Field label={lang === 'es' ? 'Operador del expediente' : 'File operator'}>
+            <MwtOperatorCard lang={lang}/>
+          </Field>
+        </div>
+      )}
+
+      {/* Selector de cliente final */}
+      <Field label={
+        showMwtOperatorCard
+          ? (lang === 'es' ? 'Cliente final · ¿a quién factura MWT? *' : 'Final client · who does MWT invoice? *')
+          : (lang === 'es' ? 'Cliente / Subsidiaria *' : 'Client / Subsidiary *')
+      }>
         {selClient ? (
-          <SelectedClientCard client={selClient} onClear={() => setSelClient(null)} lang={lang} existingUsage={existingClientUsage}/>
+          <SelectedClientCard
+            client={selClient}
+            onClear={isClientLocked ? null : () => setSelClient(null)}
+            lang={lang}
+            existingUsage={existingClientUsage}
+            locked={isClientLocked}
+          />
         ) : (
           <div ref={ref} style={{ position: "relative" }}>
             <input
@@ -572,7 +795,7 @@ function Step1Cliente({ lang, clients, users, selClient, setSelClient, selResp, 
             {open && filtered.length > 0 && (
               <div style={{
                 position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20,
-                background: "#fff", border: "1px solid var(--border)",
+                background: "var(--surface-raised, #fff)", border: "1px solid var(--border)",
                 borderRadius: 8, marginTop: 4, maxHeight: 320, overflowY: "auto",
                 boxShadow: "0 8px 24px rgba(11,30,58,0.15)",
               }}>
@@ -584,30 +807,31 @@ function Step1Cliente({ lang, clients, users, selClient, setSelClient, selResp, 
                             padding: "10px 14px",
                             paddingLeft: c.parent_id ? 28 : 14,
                             border: "none",
-                            borderBottom: "1px solid #F3F5F8", background: "#fff",
+                            borderBottom: "1px solid var(--border-subtle, #F3F5F8)",
+                            background: "var(--surface-raised, #fff)",
                             cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
                           }}
-                          onMouseEnter={(e) => e.currentTarget.style.background = "#F7F9FC"}
-                          onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
+                          onMouseEnter={(e) => e.currentTarget.style.background = "var(--surface-alt, #F7F9FC)"}
+                          onMouseLeave={(e) => e.currentTarget.style.background = "var(--surface-raised, #fff)"}>
                     {c.parent_id && (
-                      <span style={{ color: "#00B286", fontWeight: 700 }} title="Subsidiaria">↳</span>
+                      <span style={{ color: "var(--brand-accent, #00B286)", fontWeight: 700 }} title="Subsidiaria">↳</span>
                     )}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, color: "#0B1E3A", fontSize: 13 }}>
+                      <div style={{ fontWeight: 600, color: "var(--text-primary, #0B1E3A)", fontSize: 13 }}>
                         {c.label}
                       </div>
                       <div className="caption" style={{ color: "var(--text-tertiary)" }}>
                         {c.tax_id && <code className="mono-sm">{c.tax_id}</code>}
                         {c.parent_label && (
-                          <> · <span style={{ color: "#00B286" }}>hija de {c.parent_label}</span></>
+                          <> · <span style={{ color: "var(--brand-accent, #00B286)" }}>hija de {c.parent_label}</span></>
                         )}
                       </div>
                     </div>
                     {c.credito_limit > 0 && (
-                      <span style={{
-                        fontSize: 11, fontWeight: 700, color: "#00B286",
+                      <span className="tabular-nums" style={{
+                        fontSize: 11, fontWeight: 700, color: "var(--brand-accent, #00B286)",
                         background: "rgba(0,178,134,0.10)", padding: "2px 8px",
-                        borderRadius: 999, fontVariantNumeric: "tabular-nums",
+                        borderRadius: 999,
                       }}>
                         ${(c.credito_limit / 1000).toFixed(0)}k
                       </span>
@@ -619,29 +843,91 @@ function Step1Cliente({ lang, clients, users, selClient, setSelClient, selResp, 
           </div>
         )}
       </Field>
-
-      {/* Selector de responsable (opcional) */}
-      <div style={{ marginTop: 18 }}>
-        <Field label={lang === "es" ? "Responsable" : "Responsible"}>
-          <select className="input" value={selResp?.id || ""}
-                  onChange={(e) => {
-                    const u = users.find((x) => String(x.id) === e.target.value);
-                    setSelResp(u || null);
-                  }}>
-            <option value="">— {lang === "es" ? "Sin asignar" : "Unassigned"} —</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.full_name || u.email_plain || u.email}
-              </option>
-            ))}
-          </select>
-        </Field>
-      </div>
     </div>
   );
 }
 
-function SelectedClientCard({ client, onClear, lang, existingUsage = 0 }) {
+// ── Sprint 2026-05-06 · Card readonly de Muito Work Limitada como
+// operador. Muestra el credito disponible (pool) en barra verde.
+// El backend exporta MWT como un cliente normal (cliente.cliente con
+// id=MWT_OPERATING_CLIENT_ID); aqui la fetcheamos via clientesApi.get.
+function MwtOperatorCard({ lang }) {
+  const [op, setOp] = React.useState(null);
+  React.useEffect(() => {
+    let cancel = false;
+    clientesApi.get(MWT_OPERATING_CLIENT_ID)
+      .then((d) => { if (!cancel) setOp(d || null); })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, []);
+
+  const limit = Number(op?.credito_aprobado || op?.credito_limit_usd || 0);
+  const used  = Number(op?.credito_usado || 0);
+  const utilPct = limit > 0 ? Math.round((used / limit) * 100) : 0;
+  const disponible = Math.max(0, limit - used);
+  const fmt = (v) => `$${Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+
+  return (
+    <div style={{
+      padding: '14px 16px',
+      border: '1.5px solid var(--brand-accent, #00B286)',
+      background: 'rgba(0,178,134,0.05)',
+      borderRadius: 12,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <div style={{
+          width: 30, height: 30, borderRadius: 8,
+          background: 'var(--brand-accent, #00B286)',
+          color: '#fff',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          fontWeight: 800, fontSize: 13, letterSpacing: 0.4,
+        }}>
+          MW
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary, #0B1E3A)' }}>
+            {MWT_OPERATOR_NAME}
+          </div>
+          <div className="caption" style={{ color: 'var(--text-tertiary)' }}>
+            {lang === 'es' ? 'Operador del expediente' : 'File operator'}
+          </div>
+        </div>
+      </div>
+      {limit > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4,
+          }}>
+            <span>{lang === 'es' ? 'Crédito disponible (pool)' : 'Available credit (pool)'}</span>
+            <span className="tabular-nums" style={{ fontWeight: 700, color: 'var(--text-primary, #0B1E3A)' }}>
+              {fmt(disponible)} / {fmt(limit)}
+            </span>
+          </div>
+          <div style={{ height: 6, background: 'var(--border, #E1E6ED)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
+              width: `${Math.min(100, utilPct)}%`,
+              background: utilPct >= 85 ? 'var(--danger, #DC2626)' : utilPct >= 70 ? 'var(--warning, #F59E0B)' : 'var(--brand-accent, #00B286)',
+              transition: 'width 0.18s ease',
+            }}/>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * @typedef {Object} SelectedClientCardProps
+ * @property {object} client
+ * @property {(()=>void)|null} [onClear] — null fuerza locked (CLIENT_* sin opcion de cambiar).
+ * @property {string} lang
+ * @property {number} [existingUsage]
+ * @property {boolean} [locked]
+ */
+/** @param {SelectedClientCardProps} props */
+function SelectedClientCard({ client, onClear, lang, existingUsage = 0, locked = false }) {
   // Sprint 2026-05-01: el "usado" toma el max entre el campo persistido
   // y el proyectado desde expedientes existentes del cliente.
   const persistedUsed = Number(client.credito_used || 0);
@@ -700,9 +986,19 @@ function SelectedClientCard({ client, onClear, lang, existingUsage = 0 }) {
             </div>
           )}
         </div>
-        <button onClick={onClear} className="btn btn-ghost btn-sm" style={{ color: "#D64545" }}>
-          <IconX size={12}/>
-        </button>
+        {(!locked && typeof onClear === 'function') && (
+          <button onClick={onClear} className="btn btn-ghost btn-sm" style={{ color: "var(--danger, #D64545)" }}>
+            <IconX size={12}/>
+          </button>
+        )}
+        {locked && (
+          <span className="caption" style={{
+            color: 'var(--text-tertiary)',
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+          }}>
+            <IconLock size={11}/>{lang === 'es' ? 'Fijo' : 'Locked'}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -988,7 +1284,24 @@ function Step2Productos({
 // ═════════════════════════════════════════════════════════════
 // STEP 3 · RESUMEN (sin financiero)
 // ═════════════════════════════════════════════════════════════
-function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentMethod, setPaymentMethod }) {
+/**
+ * @typedef {Object} Step3Props
+ * @property {string} lang
+ * @property {object|null} client
+ * @property {'mwt'|'client'} [operatingMode]
+ * @property {string|null} [operatingCompanyId]
+ * @property {Array<object>} orderLines
+ * @property {Object<string, number>} [priceMap]
+ * @property {object|null} creditProjection
+ * @property {boolean} [isAdmin]
+ * @property {number} paymentDays
+ * @property {(d:number)=>void} setPaymentDays
+ * @property {string} paymentMethod
+ * @property {(m:string)=>void} setPaymentMethod
+ */
+/** @param {Step3Props} props */
+function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentMethod, setPaymentMethod }) {
+  const operatedByMwt = operatingMode === 'mwt';
   const totalUnits = orderLines.reduce((a, l) => a + Number(l.cantidad || 0), 0);
   // Agrupar por SKU para el resumen + acumular subtotales por SKU
   const bySku = {};
@@ -1023,23 +1336,34 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
 
       {/* Cliente */}
       <div style={{ padding: "14px 16px", border: "1px solid var(--border)", borderRadius: 10, marginBottom: 14 }}>
-        <div className="micro" style={{ color: "#00B286", letterSpacing: 1, marginBottom: 6 }}>
-          {lang === "es" ? "CLIENTE" : "CLIENT"}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
+          <div className="micro" style={{ color: "var(--brand-accent, #00B286)", letterSpacing: 1 }}>
+            {lang === "es" ? "CLIENTE" : "CLIENT"}
+          </div>
+          {isAdmin && operatedByMwt && (
+            <span style={{
+              fontSize: 10, fontWeight: 800, letterSpacing: 0.5,
+              padding: '3px 10px', borderRadius: 999,
+              background: 'rgba(72,30,227,0.10)',
+              color: 'var(--brand-accent-2, #481EE3)',
+              border: '1px solid rgba(72,30,227,0.30)',
+              textTransform: 'uppercase',
+            }}>
+              {lang === 'es' ? `Operado por ${MWT_OPERATOR_NAME}` : `Operated by ${MWT_OPERATOR_NAME}`}
+            </span>
+          )}
         </div>
-        <div style={{ fontSize: 16, fontWeight: 700, color: "#0B1E3A",
+        <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary, #0B1E3A)",
                       display: "flex", alignItems: "center", gap: 8 }}>
           {client?.parent_id && (
-            <span style={{ color: "#00B286", fontWeight: 800 }}>↳</span>
+            <span style={{ color: "var(--brand-accent, #00B286)", fontWeight: 800 }}>↳</span>
           )}
           {client?.label}
         </div>
         <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
           {client?.tax_id && <>RUC/CUIT <code className="mono-sm">{client.tax_id}</code></>}
           {client?.parent_label && (
-            <> · <span style={{ color: "#00B286" }}>hija de {client.parent_label}</span></>
-          )}
-          {responsable && (
-            <> · {lang === "es" ? "Responsable:" : "Responsible:"} <strong>{responsable.full_name || responsable.email_plain}</strong></>
+            <> · <span style={{ color: "var(--brand-accent, #00B286)" }}>hija de {client.parent_label}</span></>
           )}
         </div>
       </div>
@@ -1187,9 +1511,9 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
               background: "rgba(0,178,134,0.10)",
               color: "#00875A", fontSize: 12, fontWeight: 600,
             }}>
-              ✓ {lang === "es"
-                  ? "Pago al contado · NO afecta el crédito disponible del cliente."
-                  : "Cash payment · does NOT affect client\u2019s available credit."}
+              {lang === "es"
+                  ? "Pago al contado · sin impacto en crédito"
+                  : "Cash payment · no credit impact"}
             </div>
           )}
         </div>

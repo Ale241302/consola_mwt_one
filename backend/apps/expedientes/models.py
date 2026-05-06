@@ -100,6 +100,11 @@ class Expediente(models.Model):
     codigo              = models.CharField(max_length=32, unique=True)
     oc_id               = models.UUIDField(null=True, blank=True)
     client_id           = models.UUIDField(null=True, blank=True)
+    # Sprint 2026-05-06 · operador del expediente.
+    # Si == client_id → expediente directo del cliente final.
+    # Si == MWT_OPERATING_CLIENT_ID → lo opera Muito Work Limitada y
+    # el crédito impacta a MWT, no al cliente final.
+    operating_company_id = models.UUIDField(null=True, blank=True)
     brand_id            = models.UUIDField(null=True, blank=True)
     sap                 = models.CharField(max_length=32, null=True, blank=True)
     estado              = models.CharField(max_length=32, default="REGISTRO")
@@ -182,6 +187,12 @@ class Linea(models.Model):
     qty                     = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     unit_cost               = models.DecimalField(max_digits=14, decimal_places=4, default=0)
     unit_price              = models.DecimalField(max_digits=14, decimal_places=4, default=0)
+    # Sprint 2026-05-06 · "snapshot dual" de precios.
+    # unit_price (legacy) queda como precio del operador.
+    # unit_price_mwt    → precio que ven Admin/CEO/usuarios MWT.
+    # unit_price_client → precio que ven usuarios CLIENT_*.
+    unit_price_mwt          = models.DecimalField(max_digits=14, decimal_places=4, default=0)
+    unit_price_client       = models.DecimalField(max_digits=14, decimal_places=4, default=0)
     total_price             = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     sap                     = models.CharField(max_length=32, null=True, blank=True)
     transport_mode          = models.CharField(max_length=16, null=True, blank=True)
@@ -207,6 +218,10 @@ class Documento(models.Model):
     oc_id            = models.UUIDField(null=True, blank=True)
     expediente_id    = models.UUIDField(null=True, blank=True)
     kind             = models.CharField(max_length=64)
+    # Sprint 2026-05-06 · audiencia del documento.
+    # 'CLIENT'        → visible a clientes finales y a MWT.
+    # 'MWT_INTERNAL'  → solo Admin / usuarios MWT.
+    audience         = models.CharField(max_length=16, default="CLIENT")
     codigo           = models.CharField(max_length=96, null=True, blank=True)
     file_ext         = models.CharField(max_length=16, null=True, blank=True)
     file_size_bytes  = models.BigIntegerField(default=0)

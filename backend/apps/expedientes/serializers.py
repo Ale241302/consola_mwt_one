@@ -29,7 +29,8 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Expediente
         fields = (
-            "id", "codigo", "oc_id", "client_id", "brand_id", "sap",
+            "id", "codigo", "oc_id", "client_id", "operating_company_id",
+            "brand_id", "sap",
             "estado", "modo_operacion", "incoterm", "freight_mode", "dispatch_mode",
             "origin", "destination", "origin_country", "destination_country",
             "shipment_date", "eta",
@@ -62,6 +63,8 @@ class ExpedienteSerializer(serializers.ModelSerializer):
     codigo          = serializers.CharField(max_length=32, required=False,
                                             allow_blank=True, allow_null=True)
     brand_id        = serializers.UUIDField(required=False, allow_null=True)
+    # Sprint 2026-05-06 · operador del expediente (default MWT).
+    operating_company_id = serializers.UUIDField(required=False, allow_null=True)
     modo_operacion  = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     moneda          = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     incoterm        = serializers.CharField(required=False, allow_null=True, allow_blank=True)
@@ -87,9 +90,38 @@ class ExpedienteSerializer(serializers.ModelSerializer):
 
 
 class LineaSerializer(serializers.ModelSerializer):
+    """Serializer de líneas con resolución dual de precio por viewer.
+
+    Sprint 2026-05-06:
+      · `unit_price`        → legacy, precio del OPERADOR (compat).
+      · `unit_price_mwt`    → snapshot precio MWT.
+      · `unit_price_client` → snapshot precio cliente final.
+      · `unit_price_for_viewer` (read-only) → precio resuelto según
+        el rol del request.user:
+            CLIENT_*       → unit_price_client
+            Admin/CEO/staff→ unit_price_mwt
+            sin contexto   → unit_price (compat)
+    """
+    unit_price_for_viewer = serializers.SerializerMethodField()
+
     class Meta:
         model  = Linea
         fields = "__all__"
+
+    def get_unit_price_for_viewer(self, obj):
+        request = self.context.get("request") if hasattr(self, "context") else None
+        user    = getattr(request, "user", None) if request is not None else None
+        if user is None or not getattr(user, "is_authenticated", False):
+            return obj.unit_price
+        role = (getattr(user, "role_default", "") or
+                getattr(user, "role", "") or "")
+        try:
+            role_upper = str(role).upper()
+        except (TypeError, ValueError):
+            role_upper = ""
+        if role_upper.startswith("CLIENT_") or role_upper in ("CLIENT", "CLIENTE", "CLIENT_B2B"):
+            return obj.unit_price_client or obj.unit_price
+        return obj.unit_price_mwt or obj.unit_price
 
 
 class DocumentoSerializer(serializers.ModelSerializer):

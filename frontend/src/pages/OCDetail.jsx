@@ -285,6 +285,10 @@ export default function ScreenOCDetail() {
       size:   _formatBytes(d.file_size_bytes ?? d.file_size ?? 0),
       author: d.author || d.created_by_name || d.uploaded_by || '—',
       url:    d.storage_url || null,
+      // Sprint 2026-05-06 · audiencia (CLIENT vs MWT_INTERNAL).
+      // El backend ya filtra MWT_INTERNAL para CLIENT_*, aqui lo
+      // exponemos para que el render aplique badge/filtro defensivo.
+      audience: (d.audience || 'CLIENT').toUpperCase(),
       // Conservamos el shape backend por si otro consumidor lo necesita
       _raw:   d,
     })),
