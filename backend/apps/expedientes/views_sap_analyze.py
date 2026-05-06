@@ -227,6 +227,9 @@ class SyncSapDiscrepanciesView(APIView):
         errors         = []
         new_lines      = []  # detalle completo de líneas insertadas
         updated_lines  = []  # detalle de qty actualizadas
+        notify_extras  = []  # Sprint 2026-05-06: kind=NOTIFY_CLIENT — extras
+                             # confirmados por la fábrica que NO se sincronizan
+                             # al expediente; al final disparamos email al cliente.
 
         try:
             with transaction.atomic():
@@ -254,6 +257,16 @@ class SyncSapDiscrepanciesView(APIView):
                                 })
                             elif kind == "ATTACH_SAP":
                                 _apply_attach_sap(c, exp, act)
+                            elif kind == "NOTIFY_CLIENT":
+                                # Sprint 2026-05-06 (AG-03): extras confirmados
+                                # por Marluvas que NO estaban en la OC del cliente.
+                                # NO insertamos línea — solo recolectamos para
+                                # disparar email al cliente DESPUÉS del commit.
+                                # `nombre_producto` se resuelve desde el catálogo
+                                # si no viene en el payload.
+                                extra = _build_notify_extra(c, act)
+                                if extra:
+                                    notify_extras.append(extra)
                             else:
                                 errors.append({
                                     "idx": idx,
@@ -275,11 +288,47 @@ class SyncSapDiscrepanciesView(APIView):
                 status=500,
             )
 
+        # ── Disparar emails (post-commit, fuera de la transacción) ──
+        # Agrupamos los extras por sap_doc — un email por SAP. Si el
+        # broker está caído, el helper enqueue cae a sync.
+        emails_queued = []
+        if notify_extras:
+            try:
+                from apps.notifications.tasks import enqueue_sap_extra_unit_notice
+                buckets: dict = {}
+                for e in notify_extras:
+                    bucket = e.get("sap_number") or "—"
+                    buckets.setdefault(bucket, []).append({
+                        "sku":             e.get("sku"),
+                        "nombre_producto": e.get("nombre_producto") or "",
+                        "talla":           e.get("talla"),
+                        "qty":             e.get("qty"),
+                    })
+                user_id = getattr(request.user, "id", None)
+                for sap_number, bucket in buckets.items():
+                    mode = enqueue_sap_extra_unit_notice(
+                        expediente_id          = str(exp.id),
+                        sap_number             = sap_number,
+                        extras                 = bucket,
+                        registrado_por_user_id = str(user_id) if user_id else None,
+                    )
+                    emails_queued.append({
+                        "sap_number": sap_number,
+                        "n_extras":   len(bucket),
+                        "mode":       mode,
+                    })
+            except Exception as e:
+                log.exception(
+                    "[sync-sap] enqueue email cliente falló · expediente=%s · err=%s",
+                    exp.id, e,
+                )
+
         log.info(
             "[sync-sap] expediente=%s actions=%d applied=%d errors=%d "
-            "new=%d updated=%d",
+            "new=%d updated=%d notify_extras=%d emails_queued=%d",
             exp.id, len(actions), len(applied), len(errors),
             len(new_lines), len(updated_lines),
+            len(notify_extras), len(emails_queued),
         )
 
         return Response({
@@ -291,6 +340,10 @@ class SyncSapDiscrepanciesView(APIView):
             "errors":         errors,
             "new_lines":      new_lines,
             "updated_lines":  updated_lines,
+            # Sprint 2026-05-06: para que el frontend muestre confirmación
+            # tipo "Notificamos al cliente sobre N unidades extra".
+            "notify_extras":  notify_extras,
+            "emails_queued":  emails_queued,
         }, status=200)
 
 
@@ -374,4 +427,59 @@ def _sap_apply_add_line(c, exp, act, author_email):
         "sap":          (sap or None),
         "descripcion":  descripcion,
         "producto_id":  producto_id,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 2026-05-06 (AG-03) · NOTIFY_CLIENT helper
+# ─────────────────────────────────────────────────────────────────────
+def _build_notify_extra(c, act: dict) -> dict | None:
+    """Construye el payload de un extra para notificación al cliente.
+
+    El frontend manda:
+      kind:        "NOTIFY_CLIENT"
+      sku:         "701340"
+      talla:       "46"
+      qty | qty_doc: 10
+      sap_doc:     "263360"
+      descripcion: opcional — si no viene, lo resolvemos del catálogo
+
+    Devuelve dict con sku, nombre_producto, talla, qty, sap_number.
+    """
+    sku   = (act.get("sku") or "").strip().upper()
+    talla = (act.get("talla") or "").strip().upper()
+    qty   = int(act.get("qty_doc") or act.get("qty") or 0)
+    sap_number = (act.get("sap_doc") or act.get("sap_number") or "").strip() or None
+
+    if not sku or not talla or qty <= 0:
+        log.warning(
+            "[notify-extra] payload incompleto · sku=%s talla=%s qty=%s",
+            sku, talla, qty,
+        )
+        return None
+
+    nombre_producto = (act.get("descripcion") or "").strip()
+    if not nombre_producto:
+        try:
+            c.execute(
+                """
+                SELECT nombre FROM productos.producto
+                 WHERE UPPER(sku) = %s
+                   AND COALESCE(is_active, TRUE) = TRUE
+                 LIMIT 1
+                """,
+                [sku],
+            )
+            row = c.fetchone()
+            if row and row[0]:
+                nombre_producto = row[0]
+        except Exception as e:
+            log.warning("[notify-extra] lookup nombre_producto falló: %s", e)
+
+    return {
+        "sku":             sku,
+        "nombre_producto": nombre_producto or sku,
+        "talla":           talla,
+        "qty":             qty,
+        "sap_number":      sap_number,
     }

@@ -53,6 +53,12 @@ TEMPLATE_KEY      = "pago_registrado"           # canónico para NotificationLog
 TRIGGER_KEY       = "payment.verdict"           # NotificationLog.trigger
 SUBJECT_TEMPLATE  = "[MWT] Pago {estado_human} · {ref} · {cliente}"
 
+# ── Sprint 2026-05-06: SAP extras notice ──────────────────────────
+SAP_EXTRA_TEMPLATE_HTML = "emails/sap_extra_unit_notice.html"
+SAP_EXTRA_TEMPLATE_KEY  = "sap_extra_unit_notice"
+SAP_EXTRA_TRIGGER_KEY   = "expediente.sap_extra_unit"
+SAP_EXTRA_SUBJECT       = "[MWT] Confirmación SAP {sap_number} · {n_extras} línea{plural} adicional{plural_es} · {ref}"
+
 # Mapeo verdict → emoji / estado human / preheader. El template HTML
 # heredó el estilo del email de password_reset, así que el header
 # siempre tiene el gradiente azul→verde (no hace falta `color_estado`).
@@ -417,6 +423,279 @@ class EmailDispatcher:
         except Exception as e:
             log.warning("Update NotificationLog falló: %s", e)
 
+    # ════════════════════════════════════════════════════════════
+    # Sprint 2026-05-06 (AG-03): notificar al cliente cuando la
+    # confirmación SAP de Marluvas trae líneas que NO estaban en su
+    # OC original. El SAP se persiste, pero esas líneas extra NO se
+    # insertan en `expedientes.linea` — al cliente le llega un email
+    # informativo con el detalle (SKU, nombre, talla, qty extra) y un
+    # botón "Ver Expediente" para que decida si las quiere incorporar.
+    # ════════════════════════════════════════════════════════════
+    def send_sap_extra_unit_notice(
+        self,
+        *,
+        expediente_id,
+        sap_number: str,
+        extras: List[Dict[str, Any]],
+        registrado_por_user_id=None,
+    ) -> DispatchResult:
+        """
+        Envía el correo de "extras detectados en SAP" al cliente del
+        expediente con CC a info@mwt.one.
+
+        Args:
+            expediente_id: UUID del expediente.
+            sap_number:    Número SAP de Marluvas (ej. "263360").
+            extras:        Lista de dicts {sku, nombre_producto, talla, qty}.
+            registrado_por_user_id: usuario que confirmó producción (opcional).
+        """
+        if not extras:
+            log.warning("send_sap_extra_unit_notice: extras vacío · exp=%s", expediente_id)
+            return DispatchResult(
+                ok=False, notification_log_id=uuid.uuid4(),
+                recipient="—", subject="(no extras)", sent_messages=0,
+                error="no_extras",
+            )
+
+        # ── 1. Cargar expediente + cliente ──────────────────
+        expediente = self._load_expediente_for_sap(expediente_id)
+        if not expediente:
+            return DispatchResult(
+                ok=False, notification_log_id=uuid.uuid4(),
+                recipient="—", subject="(no expediente)", sent_messages=0,
+                error="expediente_not_found",
+            )
+        cliente = self._load_cliente_full(expediente["client_id"])
+        registrado_por = (
+            self._load_user(registrado_por_user_id) if registrado_por_user_id else None
+        )
+
+        # ── 2. Resolver destinatarios ───────────────────────
+        client_email = (cliente.get("email") or "").strip()
+        if not client_email:
+            log.warning(
+                "send_sap_extra_unit_notice: cliente %s sin email — "
+                "fallback a info@mwt.one solamente",
+                cliente.get("id"),
+            )
+            to_list = [INFO_INBOX]
+            cc_list: List[str] = []
+        else:
+            to_list = [client_email]
+            cc_list = [INFO_INBOX]
+
+        # ── 3. Contexto del template ────────────────────────
+        n_extras = len(extras)
+        plural   = "s" if n_extras != 1 else ""
+        plural_es = "es" if n_extras != 1 else ""
+
+        ctx: Dict[str, Any] = {
+            "cliente":         cliente,
+            "cliente_nombre":  cliente.get("nombre") or "",
+            "expediente":      _DictAsObj(expediente),
+            "expediente_url":  self._consola_expediente_url(expediente),
+            "sap_number":      sap_number,
+            "extras":          extras,
+            "registrado_por":  _DictAsObj(registrado_por) if registrado_por else None,
+            "support_email":   INFO_INBOX,
+            "year":            datetime.now(tz=_tz.utc).year,
+            "preheader":       (
+                f"SAP {sap_number} · {n_extras} línea{plural} adicional{plural_es} "
+                f"confirmada por la fábrica"
+            ),
+        }
+
+        subject = SAP_EXTRA_SUBJECT.format(
+            sap_number=sap_number,
+            n_extras=n_extras,
+            plural=plural,
+            plural_es=plural_es,
+            ref=expediente.get("codigo") or expediente.get("id") or "—",
+        )
+
+        # ── 4. Renderizar template HTML + TXT fallback ──────
+        html_body = render_to_string(SAP_EXTRA_TEMPLATE_HTML, ctx)
+        text_body = self._build_sap_extra_text_fallback(ctx)
+
+        # ── 5. NotificationLog ──────────────────────────────
+        log_id = self._create_sap_extra_notification_log(
+            expediente=expediente, sap_number=sap_number,
+            recipient=to_list[0], subject=subject,
+            body_preview=text_body[:1000],
+        )
+
+        # ── 6. Construir + enviar ───────────────────────────
+        from_email = getattr(settings, "DEFAULT_FROM_EMAIL", None) or INFO_INBOX
+        msg = EmailMultiAlternatives(
+            subject     = subject,
+            body        = text_body,
+            from_email  = from_email,
+            to          = to_list,
+            cc          = cc_list,
+            reply_to    = [INFO_INBOX],
+        )
+        msg.attach_alternative(html_body, "text/html")
+
+        try:
+            sent = msg.send(fail_silently=False)
+            self._update_notification_log(log_id, status="SENT", error=None)
+            log.info(
+                "send_sap_extra_unit_notice: enviado · exp=%s · sap=%s · "
+                "to=%s · cc=%s · n_extras=%d · sent=%d",
+                expediente_id, sap_number, to_list, cc_list, n_extras, sent,
+            )
+            return DispatchResult(
+                ok=True, notification_log_id=log_id,
+                recipient=to_list[0], subject=subject, sent_messages=sent,
+            )
+        except Exception as e:
+            log.exception(
+                "send_sap_extra_unit_notice: send falló · exp=%s · sap=%s · err=%s",
+                expediente_id, sap_number, e,
+            )
+            self._update_notification_log(
+                log_id, status="FAILED", error=f"{type(e).__name__}: {e}"[:512],
+            )
+            raise
+
+    # ── Helpers para SAP-extra notice ─────────────────────
+    def _load_expediente_for_sap(self, expediente_id) -> Optional[Dict[str, Any]]:
+        """Lee el expediente con su client_id desde expedientes.expediente.
+        Schema canónico: id, codigo, client_id, oc_id, estado."""
+        if not expediente_id:
+            return None
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id::text,
+                           codigo,
+                           client_id::text,
+                           oc_id::text,
+                           estado
+                      FROM expedientes.expediente
+                     WHERE id = %s::uuid LIMIT 1
+                    """,
+                    [str(expediente_id)],
+                )
+                row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "id":        row[0],
+                "codigo":    row[1] or "",
+                "client_id": row[2],
+                "oc_id":     row[3],
+                "estado":    row[4] or "—",
+            }
+        except Exception as e:
+            log.warning("Lookup expediente %s para SAP-extra falló: %s", expediente_id, e)
+            return None
+
+    def _load_cliente_full(self, client_id) -> Dict[str, Any]:
+        """Lee cliente con email de contacto desde clientes.cliente.
+        Schema canónico (30_clientes.sql): `contacto_email VARCHAR(160)`.
+        Si está vacío, el caller deberá fallback a info@mwt.one."""
+        if not client_id:
+            return {"id": None, "nombre": "(cliente desconocido)", "email": ""}
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id::text,
+                           COALESCE(nombre_comercial, razon_social, '(sin nombre)') AS nombre,
+                           COALESCE(contacto_email, '')                              AS email
+                      FROM clientes.cliente
+                     WHERE id = %s::uuid LIMIT 1
+                    """,
+                    [str(client_id)],
+                )
+                row = cur.fetchone()
+            if row:
+                return {
+                    "id":     row[0],
+                    "nombre": row[1] or "(sin nombre)",
+                    "email":  (row[2] or "").strip(),
+                }
+        except Exception as e:
+            log.warning("Lookup cliente %s (full) falló: %s", client_id, e)
+        return {"id": str(client_id), "nombre": "(cliente)", "email": ""}
+
+    def _consola_expediente_url(self, expediente: Dict[str, Any]) -> str:
+        base = (
+            getattr(settings, "CONSOLA_PUBLIC_URL", None)
+            or getattr(settings, "FRONTEND_BASE_URL", None)
+            or "https://consola.mwt.one"
+        ).rstrip("/")
+        if expediente.get("oc_id") and expediente.get("id"):
+            return f"{base}/expedientes/{expediente['oc_id']}/exp/{expediente['id']}"
+        if expediente.get("id"):
+            return f"{base}/expedientes/{expediente['id']}"
+        return f"{base}/expedientes"
+
+    def _build_sap_extra_text_fallback(self, ctx: Dict[str, Any]) -> str:
+        lines = [
+            f"Hola {ctx.get('cliente_nombre') or ''},",
+            "",
+            f"Marluvas confirmó tu orden bajo el SAP {ctx['sap_number']} e incluyó",
+            f"{len(ctx['extras'])} línea(s) adicional(es) que no figuraban en tu OC original.",
+            "",
+            "Detalle de las unidades adicionales:",
+        ]
+        for x in ctx["extras"]:
+            lines.append(
+                f"  · {x.get('sku', '—')}  "
+                f"{x.get('nombre_producto') or ''}  "
+                f"talla {x.get('talla', '—')}  "
+                f"+{x.get('qty', 0)} u."
+            )
+        lines += [
+            "",
+            "Estas unidades quedaron registradas en el SAP pero NO se sumaron",
+            "automáticamente a tu OC. Si querés incorporarlas, respondé este correo",
+            "o entrá al expediente:",
+            "",
+            ctx.get("expediente_url", ""),
+            "",
+            "El equipo de MWT ONE",
+        ]
+        return "\n".join(lines)
+
+    def _create_sap_extra_notification_log(self, *, expediente, sap_number,
+                                           recipient: str, subject: str,
+                                           body_preview: str) -> uuid.UUID:
+        log_id = uuid.uuid4()
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO notifications.notification_log (
+                        id, ts, expediente_id, template_key, recipient_email,
+                        subject, body_preview, trigger, status,
+                        retries, attempt_count, is_active,
+                        idempotence_token,
+                        created_at, updated_at
+                    ) VALUES (
+                        %s, now(), %s, %s, %s,
+                        %s, %s, %s, %s,
+                        0, 1, TRUE,
+                        %s,
+                        now(), now()
+                    )
+                    """,
+                    [
+                        str(log_id),
+                        expediente.get("id"),
+                        SAP_EXTRA_TEMPLATE_KEY, recipient,
+                        subject[:512], body_preview[:1000],
+                        SAP_EXTRA_TRIGGER_KEY, "PENDING",
+                        f"sap_extra:{expediente.get('id')}:{sap_number}",
+                    ],
+                )
+        except Exception as e:
+            log.warning("Create NotificationLog (sap_extra) falló: %s", e)
+        return log_id
+
 
 # ════════════════════════════════════════════════════════════
 # Template proxies — adaptan los modelos Django al shape que el
@@ -465,6 +744,22 @@ class _EvidenceTemplateProxy:
         # template resolver respeta setattr aunque el identificador
         # tenga caracteres no-ASCII).
         setattr(self, "tamaño_bytes", evidence.size_bytes)
+
+
+class _DictAsObj:
+    """Adapter que expone un dict como objeto con atributos.
+    Sprint 2026-05-06 (AG-03): el template `sap_extra_unit_notice.html`
+    usa `{{ expediente.codigo }}` y `{{ registrado_por.full_name }}` —
+    Django template pide getattr antes que __getitem__, así que envolvemos
+    el dict para que ambos accesos funcionen."""
+    def __init__(self, d: Dict[str, Any]):
+        self._d = d or {}
+        for k, v in (d or {}).items():
+            setattr(self, k, v)
+    def __getattr__(self, name):
+        return self._d.get(name)
+    def __getitem__(self, key):
+        return self._d.get(key)
 
 
 def _empty_verdict_proxy(payment):

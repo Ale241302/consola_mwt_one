@@ -237,6 +237,10 @@ export default function AddSAPConfirmationDrawer({
   const [syncing, setSyncing]             = useState(false);
   const [syncError, setSyncError]         = useState(null);
   const [syncedAt, setSyncedAt]           = useState(null);
+  // Sprint 2026-05-06 (AG-03): guardamos la respuesta de /sync-sap-disc/
+  // para poder mostrar el confirm "Cliente notificado por email · N extras"
+  // cuando el backend disparó el email a partir de NOTIFY_CLIENT.
+  const [syncResult, setSyncResult]       = useState(null);
 
   // Reset al re-abrir
   // Sprint 2026-05-04 (AG-03): usamos un ref para inicializar UNA SOLA
@@ -488,8 +492,14 @@ export default function AddSAPConfirmationDrawer({
     const out = [];
     for (const d of analysis.discrepancies) {
       if (d.kind === "MISSING_IN_EXPEDIENTE" && d.sku && d.talla) {
+        // Sprint 2026-05-06 (AG-03): MISSING_IN_EXPEDIENTE ya NO se
+        // sincroniza al expediente como ADD_LINE. En su lugar lo
+        // mandamos como NOTIFY_CLIENT — el backend persiste el SAP,
+        // NO inserta línea en expedientes.linea, y dispara email al
+        // cliente con el detalle de las unidades extra confirmadas
+        // por la fábrica.
         out.push({
-          kind:        "ADD_LINE",
+          kind:        "NOTIFY_CLIENT",
           sku:         d.sku,
           talla:       d.talla,
           qty:         Number(d.qty_doc || 0),
@@ -507,8 +517,9 @@ export default function AddSAPConfirmationDrawer({
           talla:   d.talla,
         });
       }
-      // NAME_DIFF y INCOMPLETE_KEY no son auto-sincronizables — el
-      // operador debe revisar manualmente.
+      // NAME_DIFF e INCOMPLETE_KEY: el backend ya no emite NAME_DIFF
+      // (sprint 2026-05-06). INCOMPLETE_KEY requiere intervención
+      // manual del operador.
     }
     return out;
   };
@@ -518,6 +529,21 @@ export default function AddSAPConfirmationDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [analysis],
   );
+
+  // Sprint 2026-05-06 (AG-03): clasificar las acciones para elegir el
+  // copy del botón. Si TODAS son NOTIFY_CLIENT (extras confirmados por
+  // la fábrica), el botón dice "Notificar cliente". Si hay mezcla con
+  // UPDATE_QTY u otros, queda como "Sincronizar".
+  const syncBreakdown = useMemo(() => {
+    const acts = buildSyncActions();
+    return {
+      total:    acts.length,
+      notify:   acts.filter(a => a.kind === "NOTIFY_CLIENT").length,
+      sync:     acts.filter(a => a.kind !== "NOTIFY_CLIENT").length,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysis]);
+  const isOnlyNotify = syncBreakdown.total > 0 && syncBreakdown.sync === 0;
 
   const handleSync = async () => {
     if (syncing || !analysis?.ok || !expediente?.id) return;
@@ -530,6 +556,8 @@ export default function AddSAPConfirmationDrawer({
         expedienteId: expediente.id,
         actions,
       });
+      setSyncResult(res); // Sprint 2026-05-06: guardamos para mostrar
+                          // "Cliente notificado por email · N extras"
 
       // 1) Mergear new_lines en extraLines y agregarlas a addedLineIds.
       const incoming = (res.new_lines || []).map(l => ({
@@ -940,9 +968,15 @@ export default function AddSAPConfirmationDrawer({
                         }}>
                           <IconAlert size={12} style={{ color: AMBER }}/>
                           <span style={{ flex: 1 }}>
-                            {lang === "es"
-                              ? `${analysis.discrepancies.length} discrepancia(s) encontradas`
-                              : `${analysis.discrepancies.length} discrepancy(ies) found`}
+                            {(() => {
+                              // Sprint 2026-05-06: NAME_DIFF ya no es discrepancia
+                              // accionable, no lo contamos en el header.
+                              const visibleCount = (analysis.discrepancies || [])
+                                .filter(d => d.kind !== "NAME_DIFF").length;
+                              return lang === "es"
+                                ? `${visibleCount} discrepancia(s) encontradas`
+                                : `${visibleCount} discrepancy(ies) found`;
+                            })()}
                           </span>
                           {/* Sprint 2026-05-04 (AG-03): botón Sincronizar.
                               Aplica las acciones derivadas del análisis IA
@@ -958,24 +992,35 @@ export default function AddSAPConfirmationDrawer({
                               disabled={syncing}
                               data-loading={syncing}
                               style={{
-                                background: BLUE, color: "white",
+                                background: isOnlyNotify ? MINT : BLUE,
+                                color: "white",
                                 border: 0, padding: "4px 10px",
                                 borderRadius: 6, fontWeight: 700,
                                 fontSize: 11, cursor: syncing ? "wait" : "pointer",
                                 display: "inline-flex", alignItems: "center", gap: 5,
                                 opacity: syncing ? 0.7 : 1,
                               }}
-                              title={lang === "es"
-                                ? "Crea las tallas faltantes con el precio del cliente y ajusta cantidades."
-                                : "Create missing sizes with client price and adjust quantities."}>
+                              title={isOnlyNotify
+                                ? (lang === "es"
+                                    ? "Notifica al cliente por email sobre las unidades extra confirmadas por la fábrica. NO se agregan al expediente."
+                                    : "Notify the client by email about the extra units confirmed by the factory. They are NOT added to the expediente.")
+                                : (lang === "es"
+                                    ? "Crea las tallas faltantes con el precio del cliente y ajusta cantidades."
+                                    : "Create missing sizes with client price and adjust quantities.")}>
                               {syncing
                                 ? <span className="sap-spinner" style={{ width: 10, height: 10 }}/>
                                 : <IconSparkle size={11}/>}
                               {syncing
-                                ? (lang === "es" ? "Sincronizando…" : "Syncing…")
-                                : (lang === "es"
-                                    ? `Sincronizar ${syncableCount}`
-                                    : `Sync ${syncableCount}`)}
+                                ? (lang === "es"
+                                    ? (isOnlyNotify ? "Notificando…" : "Sincronizando…")
+                                    : (isOnlyNotify ? "Notifying…"   : "Syncing…"))
+                                : (isOnlyNotify
+                                    ? (lang === "es"
+                                        ? `Notificar cliente (${syncableCount})`
+                                        : `Notify client (${syncableCount})`)
+                                    : (lang === "es"
+                                        ? `Sincronizar ${syncableCount}`
+                                        : `Sync ${syncableCount}`))}
                             </button>
                           )}
                         </summary>
@@ -997,9 +1042,13 @@ export default function AddSAPConfirmationDrawer({
                             display: "inline-flex", alignItems: "center", gap: 5,
                           }}>
                             <IconCheck size={11}/>
-                            {lang === "es"
-                              ? "Discrepancias sincronizadas con el expediente."
-                              : "Discrepancies synced into expediente."}
+                            {syncResult?.emails_queued?.length > 0
+                              ? (lang === "es"
+                                  ? `Cliente notificado por email · ${syncResult.notify_extras?.length || 0} extra(s)`
+                                  : `Client notified by email · ${syncResult.notify_extras?.length || 0} extra(s)`)
+                              : (lang === "es"
+                                  ? "Discrepancias sincronizadas con el expediente."
+                                  : "Discrepancies synced into expediente.")}
                           </div>
                         )}
                         <div style={{
@@ -1007,17 +1056,22 @@ export default function AddSAPConfirmationDrawer({
                           border: "1px solid var(--border-subtle, rgba(11,30,58,0.08))",
                           borderRadius: 8, background: "white",
                         }}>
-                          {analysis.discrepancies.map((d, i) => {
+                          {analysis.discrepancies
+                            // Sprint 2026-05-06 (AG-03): filtro defensivo de
+                            // NAME_DIFF. El backend ya no lo emite, pero si
+                            // alguna respuesta vieja persiste, lo ocultamos
+                            // del listado de discrepancias accionables.
+                            .filter(d => d.kind !== "NAME_DIFF")
+                            .map((d, i) => {
                             const tone = d.severity === "ERROR" ? RED
                                        : d.severity === "WARN"  ? AMBER
                                        : BLUE;
                             const labelByKind = {
                               MISSING_IN_EXPEDIENTE: lang === "es"
-                                ? "No está en el expediente" : "Not in expediente",
+                                ? "Confirmado por fábrica · falta en expediente"
+                                : "Confirmed by factory · not in expediente",
                               QTY_DIFF: lang === "es"
                                 ? "Cantidad difiere" : "Qty differs",
-                              NAME_DIFF: lang === "es"
-                                ? "Nombre difiere" : "Name differs",
                               INCOMPLETE_KEY: lang === "es"
                                 ? "Falta SKU o talla" : "Missing SKU or size",
                             };

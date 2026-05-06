@@ -1,0 +1,465 @@
+{#
+  id: EMAIL_TEMPLATE_SAP_EXTRA_UNIT_NOTICE
+  version: 1.0
+  status: VIGENTE
+  visibility: EXTERNAL_CLIENT
+  domain: PLATAFORMA
+  type: email_template
+  fecha: 2026-05-06
+  destinatario: cliente.contact_email (CC: info@mwt.one)
+  trigger: send_sap_extra_unit_notice_task (al confirmar SAP con MISSING_IN_EXPEDIENTE)
+
+  Variables Django esperadas en el contexto:
+    - cliente            (Cliente — nombre comercial / razón social)
+    - cliente_nombre     (string — nombre humano del cliente)
+    - expediente         (Expediente — ref/código/id)
+    - expediente_url     (URL absoluta a la consola del expediente)
+    - sap_number         (string — número SAP de Marluvas, ej. "263360")
+    - extras             (lista[dict] con sku, nombre_producto, talla, qty)
+    - registrado_por     (User — quien confirmó producción)
+    - support_email      ("info@mwt.one")
+    - year               (año actual)
+    - preheader          (string opcional preview)
+
+  Hereda paleta y layout del template pago_registrado.html (MWT ONE).
+#}{% load static %}<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>[MWT] Confirmación SAP {{ sap_number }} · {{ expediente.codigo }}</title>
+
+<style>
+  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
+  body { margin: 0 !important; padding: 0 !important; width: 100% !important; background-color: #F2F4F8; }
+  a { color: #10B981; text-decoration: none; }
+
+  .page-bg { background-color: #F2F4F8; }
+  .container { width: 100%; max-width: 600px; margin: 0 auto; }
+
+  .card {
+    background: #FFFFFF;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(15, 27, 61, 0.04), 0 8px 24px rgba(15, 27, 61, 0.06);
+  }
+
+  .header-band {
+    background: linear-gradient(135deg, #0F1B3D 0%, #1A2A5C 60%, #10B981 140%);
+    padding: 36px 40px 32px;
+    position: relative;
+  }
+
+  .h1 {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 26px;
+    line-height: 1.25;
+    font-weight: 700;
+    color: #0F1B3D;
+    letter-spacing: -0.01em;
+    margin: 0 0 12px;
+  }
+  .body-text {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    color: #3D4A6B;
+    margin: 0 0 16px;
+  }
+  .small {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    line-height: 1.55;
+    color: #6B7894;
+  }
+  .eyebrow {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 600;
+    color: rgba(255,255,255,0.7);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 0 0 14px;
+  }
+  .header-title {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 22px;
+    line-height: 1.3;
+    font-weight: 700;
+    color: #FFFFFF;
+    margin: 0 0 16px;
+    letter-spacing: -0.01em;
+  }
+
+  .verdict-badge {
+    display: inline-block;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.16);
+    color: #FFFFFF;
+    border: 1px solid rgba(255,255,255,0.28);
+  }
+  .verdict-badge .dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #1FD39A;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+
+  .btn {
+    display: inline-block;
+    background: linear-gradient(135deg, #0FB97A 0%, #10B981 50%, #1FD39A 100%);
+    color: #FFFFFF !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    padding: 16px 36px;
+    border-radius: 10px;
+    text-decoration: none;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.28);
+    mso-padding-alt: 0;
+  }
+
+  .kv {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 8px;
+  }
+  .kv td {
+    padding: 10px 0;
+    border-bottom: 1px solid #EAEEF5;
+    vertical-align: top;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+  .kv .k {
+    font-size: 13px;
+    color: #6B7894;
+    width: 42%;
+  }
+  .kv .v {
+    font-size: 14px;
+    color: #0F1B3D;
+    font-weight: 500;
+  }
+  .kv .v-mono {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: #0F1B3D;
+  }
+  .kv tr:last-child td { border-bottom: none; }
+
+  .section-title {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #6B7894;
+    margin: 0 0 12px;
+  }
+
+  /* Tabla de extras (SKU / Nombre / Talla / Qty) */
+  .extras {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 8px;
+    margin: 0;
+  }
+  .extras td {
+    background: #F7F9FC;
+    border: 1px solid #E5EAF2;
+    padding: 12px 14px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    color: #0F1B3D;
+    vertical-align: middle;
+  }
+  .extras .col-sku { border-right: none; border-radius: 8px 0 0 8px; width: 22%; }
+  .extras .col-name { border-left: none; border-right: none; }
+  .extras .col-talla {
+    border-left: none; border-right: none;
+    text-align: center;
+    font-weight: 600;
+    width: 11%;
+    font-variant-numeric: tabular-nums;
+  }
+  .extras .col-qty {
+    border-left: none;
+    border-radius: 0 8px 8px 0;
+    text-align: right;
+    font-weight: 700;
+    width: 16%;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .extras .pill {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 7px;
+    background: #0F1B3D;
+    color: #FFFFFF;
+    border-radius: 4px;
+    margin-right: 8px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    vertical-align: middle;
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  }
+  .extras .qty-tag {
+    display: inline-block;
+    background: linear-gradient(135deg, #0FB97A 0%, #10B981 100%);
+    color: #FFFFFF;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-weight: 700;
+  }
+  .extras .qty-suffix {
+    font-size: 11px;
+    color: #6B7894;
+    font-weight: 500;
+    margin-left: 4px;
+  }
+
+  /* Caja informativa amber (heads-up) */
+  .alert {
+    background: #FFF8E8;
+    border-left: 3px solid #F4B740;
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .alert-title {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    color: #7A5200;
+    margin: 0 0 6px;
+    letter-spacing: 0.01em;
+  }
+  .alert-body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    color: #5C3D00;
+    line-height: 1.55;
+    margin: 0;
+  }
+
+  .divider { height: 1px; background: #EAEEF5; line-height: 1px; font-size: 1px; }
+
+  .footer { padding: 28px 40px 36px; text-align: center; }
+  .footer-text {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #8893AC;
+    margin: 0;
+  }
+  .footer-text a { color: #10B981; font-weight: 500; }
+
+  .brand {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 18px; font-weight: 800; letter-spacing: 0.18em;
+    color: #0F1B3D;
+  }
+  .brand .dot { color: #10B981; }
+
+  @media screen and (max-width: 600px) {
+    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
+    .header-band { padding: 28px 24px 26px !important; }
+    .h1 { font-size: 22px !important; }
+    .header-title { font-size: 18px !important; }
+    .btn { display: block !important; padding: 16px 24px !important; }
+    .kv .k { width: 50% !important; }
+    .extras td { padding: 10px 8px !important; font-size: 12px !important; }
+  }
+</style>
+</head>
+<body class="page-bg">
+  <div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; color:#F2F4F8; line-height:1px;">
+    {{ preheader|default:"Tu fábrica confirmó unidades adicionales en este expediente — MWT ONE" }}
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="page-bg" style="background-color:#F2F4F8;">
+    <tbody><tr>
+      <td align="center" style="padding: 32px 16px;">
+
+        <div style="height: 12px; line-height: 12px; font-size: 1px;">&nbsp;</div>
+
+        <table role="presentation" class="container card" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px; background:#FFFFFF; border-radius:16px;">
+          <tbody>
+
+          <!-- Header band -->
+          <tr>
+            <td class="header-band" style="background: linear-gradient(135deg, #0F1B3D 0%, #1A2A5C 60%, #10B981 140%); padding: 36px 40px 32px; color: #FFFFFF;">
+              <p class="eyebrow"
+                 style="margin:0 0 14px; font: 600 12px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color: #FFFFFF !important; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.85;">
+                MWT One · Confirmación de fábrica
+              </p>
+              <h2 class="header-title"
+                  style="margin:0 0 16px; font: 700 22px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color: #FFFFFF !important; letter-spacing: -0.01em;">
+                ✨ Tu fábrica confirmó unidades adicionales
+              </h2>
+              <span class="verdict-badge"
+                    style="display:inline-block; font: 600 12px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color: #FFFFFF !important; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.28); letter-spacing: 0.04em;">
+                <span class="dot" style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#1FD39A; margin-right:6px; vertical-align:middle;"></span>
+                SAP {{ sap_number }} · {{ extras|length }} línea{{ extras|length|pluralize:"s" }} extra
+              </span>
+            </td>
+          </tr>
+
+          <!-- Greeting -->
+          <tr>
+            <td class="px-mobile" style="padding: 36px 40px 8px;">
+              <h1 class="h1">Hola{% if cliente_nombre %}, {{ cliente_nombre }}{% endif %}</h1>
+              <p class="body-text">
+                Marluvas confirmó tu orden bajo el número <strong style="color:#0F1B3D;">SAP&nbsp;{{ sap_number }}</strong>
+                e incluyó <strong style="color:#0F1B3D;">{{ extras|length }} línea{{ extras|length|pluralize:"s" }} adicional{{ extras|length|pluralize:"es" }}</strong>
+                que no figuraban en tu orden de compra original.
+                Te avisamos para que lo tengas presente — el resto de las cantidades
+                fueron confirmadas tal como las pediste.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Expediente / SAP info -->
+          <tr>
+            <td class="px-mobile" style="padding: 16px 40px 0;">
+              <p class="section-title">Expediente</p>
+              <table class="kv" role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tbody>
+                  <tr>
+                    <td class="k">Referencia</td>
+                    <td class="v v-mono">{{ expediente.codigo|default:expediente.id }}</td>
+                  </tr>
+                  <tr>
+                    <td class="k">Cliente</td>
+                    <td class="v">{{ cliente_nombre|default:cliente }}</td>
+                  </tr>
+                  <tr>
+                    <td class="k">Número SAP</td>
+                    <td class="v v-mono">{{ sap_number }}</td>
+                  </tr>
+                  {% if registrado_por %}
+                  <tr>
+                    <td class="k">Registrado por</td>
+                    <td class="v">{{ registrado_por.full_name|default:registrado_por.email_plain|default:registrado_por.email }}</td>
+                  </tr>
+                  {% endif %}
+                </tbody>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Extras detectados -->
+          <tr>
+            <td class="px-mobile" style="padding: 24px 40px 0;">
+              <p class="section-title">Unidades adicionales confirmadas</p>
+              <table class="extras" role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tbody>
+                  {% for x in extras %}
+                    <tr>
+                      <td class="col-sku" style="background:#F7F9FC; border:1px solid #E5EAF2; border-right:none; border-radius:8px 0 0 8px; padding:12px 14px;">
+                        <span class="pill" style="display:inline-block; font:700 10px/1 ui-monospace,'SF Mono',Menlo,Consolas,monospace; padding:3px 7px; background:#0F1B3D; color:#FFFFFF; border-radius:4px; letter-spacing:0.08em; text-transform:uppercase; vertical-align:middle;">{{ x.sku }}</span>
+                      </td>
+                      <td class="col-name" style="background:#F7F9FC; border:1px solid #E5EAF2; border-left:none; border-right:none; padding:12px 14px; font:500 13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color:#0F1B3D;">
+                        {{ x.nombre_producto|default:"—" }}
+                      </td>
+                      <td class="col-talla" style="background:#F7F9FC; border:1px solid #E5EAF2; border-left:none; border-right:none; padding:12px 14px; text-align:center; font-weight:600; font-variant-numeric:tabular-nums; color:#0F1B3D;">
+                        {{ x.talla }}
+                      </td>
+                      <td class="col-qty" style="background:#F7F9FC; border:1px solid #E5EAF2; border-left:none; border-radius:0 8px 8px 0; padding:12px 14px; text-align:right; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap;">
+                        <span class="qty-tag" style="display:inline-block; background: linear-gradient(135deg, #0FB97A 0%, #10B981 100%); color:#FFFFFF; padding:4px 10px; border-radius:6px; font-weight:700;">+{{ x.qty }}</span>
+                        <span class="qty-suffix" style="font-size:11px; color:#6B7894; font-weight:500; margin-left:4px;">u.</span>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Heads-up -->
+          <tr>
+            <td class="px-mobile" style="padding: 24px 40px 0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tbody><tr>
+                  <td class="alert" style="background:#FFF8E8; border-left:3px solid #F4B740; border-radius:8px; padding:14px 16px;">
+                    <p class="alert-title" style="margin:0 0 6px; font:700 13px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color:#7A5200; letter-spacing:0.01em;">
+                      ¿Qué hacemos con estas unidades extra?
+                    </p>
+                    <p class="alert-body" style="font:400 13px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; color:#5C3D00; margin:0;">
+                      Estas unidades quedaron registradas en el SAP pero <strong>no se sumaron automáticamente</strong>
+                      a tu orden de compra. Si querés incorporarlas, respondé este correo o entrá al expediente
+                      desde el botón de abajo y nuestro equipo coordina contigo.
+                    </p>
+                  </td>
+                </tr></tbody>
+              </table>
+            </td>
+          </tr>
+
+          <!-- CTA Button -->
+          <tr>
+            <td align="center" class="px-mobile" style="padding: 28px 40px 8px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tbody><tr>
+                  <td align="center" bgcolor="#10B981" style="border-radius: 10px; background: linear-gradient(135deg, #0FB97A 0%, #10B981 50%, #1FD39A 100%); box-shadow: 0 4px 12px rgba(16,185,129,0.28);">
+                    <a href="{{ expediente_url }}" class="btn" style="display:inline-block; background: linear-gradient(135deg, #0FB97A 0%, #10B981 50%, #1FD39A 100%); color:#FFFFFF; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; font-weight:600; padding:16px 36px; border-radius:10px; text-decoration:none;">
+                      Ver expediente →
+                    </a>
+                  </td>
+                </tr></tbody>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Sign-off -->
+          <tr>
+            <td class="px-mobile" style="padding: 28px 40px 8px;">
+              <p class="body-text" style="margin:0;">
+                Cualquier duda, respondé este correo y te contactamos.<br>
+                <strong style="color:#0F1B3D;">El equipo de MWT&nbsp;ONE</strong>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Divider -->
+          <tr><td style="padding: 28px 40px 0;"><div class="divider"></div></td></tr>
+
+          <!-- Footer interno -->
+          <tr>
+            <td class="footer px-mobile" style="padding: 24px 40px 32px; text-align:center;">
+              <p class="footer-text">
+                Este es un mensaje automático generado por <strong style="color:#0F1B3D;">MWT&nbsp;ONE — módulo Expedientes</strong>.<br>
+                Si necesitás ayuda, escribí a <a href="mailto:{{ support_email|default:'info@mwt.one' }}">{{ support_email|default:"info@mwt.one" }}</a>.<br>
+                <span style="font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; font-size:11px; color:#A6B0C4;">SAP: {{ sap_number }} · Exp: {{ expediente.codigo|default:expediente.id }}</span>
+              </p>
+            </td>
+          </tr>
+
+        </tbody></table>
+
+        <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;">
+          <tbody><tr>
+            <td align="center" style="padding: 24px 16px 8px;">
+              <p class="footer-text" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; color:#A6B0C4; margin:0; line-height:1.6;">
+                © {{ year }} MWT&nbsp;ONE. Todos los derechos reservados.
+              </p>
+            </td>
+          </tr></tbody>
+        </table>
+
+      </td>
+    </tr>
+  </tbody></table>
+</body></html>

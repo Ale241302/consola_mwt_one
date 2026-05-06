@@ -380,6 +380,11 @@ def cross_match_sap(extracted: dict, expediente_id) -> dict:
                 "reason": "MISSING_IN_EXPEDIENTE",
                 "line_id": None,
             }
+            # Sprint 2026-05-06 (AG-03): MISSING_IN_EXPEDIENTE NO se sincroniza
+            # al expediente. El producto extra confirmado por la fábrica
+            # queda registrado en el SAP pero NO se inserta en
+            # expedientes.linea. En su lugar, al confirmar producción se
+            # dispara un email al cliente notificándole del extra.
             discrepancies.append({
                 "kind":             "MISSING_IN_EXPEDIENTE",
                 "severity":         "WARN",
@@ -390,7 +395,7 @@ def cross_match_sap(extracted: dict, expediente_id) -> dict:
                 "descripcion":      ln.get("descripcion"),
                 "raw_material":     ln.get("raw_material"),
                 "sap_doc":          ln.get("sap_doc"),
-                "suggested_action": "MANUAL",
+                "suggested_action": "NOTIFY_CLIENT",
             })
             continue
 
@@ -438,19 +443,14 @@ def cross_match_sap(extracted: dict, expediente_id) -> dict:
                 "sap_doc":          ln.get("sap_doc"),
                 "suggested_action": "UPDATE_QTY",
             })
-        if not name_match:
-            discrepancies.append({
-                "kind":             "NAME_DIFF",
-                "severity":         "INFO",
-                "sku":              sku,
-                "talla":            talla,
-                "qty_doc":          qty_doc,
-                "qty_exp":          qty_exp,
-                "descripcion_doc":  ln.get("descripcion"),
-                "nombre_exp":       db.get("nombre"),
-                "line_id":          db["line_id"],
-                "suggested_action": "MANUAL",
-            })
+        # Sprint 2026-05-06 (AG-03): NAME_DIFF deja de emitir discrepancia.
+        # El SKU + talla + qty matchean → la línea está OK desde el punto de
+        # vista operativo. La diferencia de nombre es solo cosmética (ej.
+        # "75BPR29-CLI-MM-CPAP-EXP" vs "75BPR29-CLI-MM-E-CPAP" — el cliente
+        # codifica con prefijo distinto pero referencia el mismo producto).
+        # La info queda en `match.name_match=False` por si la UI quiere
+        # mostrarlo como nota informativa, pero NO entra a la lista de
+        # discrepancies y NO cuenta en `discrepancies_count`.
 
     lines_in_doc    = len(extracted["lineas"])
     lines_matched   = len(matched_keys)

@@ -247,3 +247,103 @@ def _log_activity_email(*, payment_id: str, action: str, metadata: dict) -> None
     except Exception as e:
         # Log to stdout pero no propagar — ActivityLog es nice-to-have
         log.warning("ActivityLog (%s) falló: %s", action, e)
+
+
+# ════════════════════════════════════════════════════════════
+# Sprint 2026-05-06 (AG-03) · SAP extra unit notice
+# ════════════════════════════════════════════════════════════
+def enqueue_sap_extra_unit_notice(
+    expediente_id,
+    sap_number: str,
+    extras: list,
+    registrado_por_user_id=None,
+    *,
+    force_sync: bool = False,
+) -> str:
+    """Encola el email de "extras detectados en SAP" al cliente con CC a
+    info@mwt.one. Mismo contrato que `enqueue_payment_email`:
+    queued/sync/skipped según broker disponibilidad y env vars.
+    """
+    if os.environ.get("NOTIFICATIONS_EMAIL_DISABLE") == "1":
+        log.info(
+            "send_sap_extra_unit_notice_task skipped · exp=%s · sap=%s",
+            expediente_id, sap_number,
+        )
+        return "skipped"
+
+    sync_mode = force_sync or os.environ.get("NOTIFICATIONS_EMAIL_SYNC") == "1"
+    args = [
+        str(expediente_id), sap_number, extras,
+        str(registrado_por_user_id) if registrado_por_user_id else None,
+    ]
+    if sync_mode:
+        send_sap_extra_unit_notice_task.apply(args=args)
+        return "sync"
+
+    try:
+        send_sap_extra_unit_notice_task.apply_async(args=args, queue="emails")
+        return "queued"
+    except Exception as e:
+        log.warning(
+            "send_sap_extra_unit_notice_task broker unavailable, running sync: %s", e,
+        )
+        send_sap_extra_unit_notice_task.apply(args=args)
+        return "sync"
+
+
+@shared_task(
+    name="notifications.send_sap_extra_unit_notice",
+    bind=True,
+    queue="emails",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    max_retries=3,
+    acks_late=True,
+)
+def send_sap_extra_unit_notice_task(self, expediente_id: str, sap_number: str,
+                                     extras: list,
+                                     registrado_por_user_id: str | None) -> dict:
+    """Manda el email de notificación al cliente cuando la fábrica
+    confirmó unidades extra en una SAP que no estaban en su OC.
+
+    Resilient: si SMTP cae, retries exponenciales 3 intentos.
+    """
+    from .email_dispatcher import EmailDispatcher
+
+    log.info(
+        "send_sap_extra_unit_notice_task START · exp=%s · sap=%s · extras=%d · attempt=%d",
+        expediente_id, sap_number, len(extras or []), self.request.retries + 1,
+    )
+
+    try:
+        result = EmailDispatcher().send_sap_extra_unit_notice(
+            expediente_id           = expediente_id,
+            sap_number              = sap_number,
+            extras                  = extras or [],
+            registrado_por_user_id  = (
+                uuid.UUID(registrado_por_user_id) if registrado_por_user_id else None
+            ),
+        )
+    except Exception as e:
+        attempt = self.request.retries + 1
+        log.error(
+            "send_sap_extra_unit_notice_task fallo · exp=%s · sap=%s · attempt=%d · err=%s",
+            expediente_id, sap_number, attempt, e,
+        )
+        raise
+
+    log.info(
+        "send_sap_extra_unit_notice_task DONE · exp=%s · sap=%s · subject=%r",
+        expediente_id, sap_number, result.subject,
+    )
+    return {
+        "ok":                  True,
+        "expediente_id":       expediente_id,
+        "sap_number":          sap_number,
+        "n_extras":            len(extras or []),
+        "notification_log_id": str(result.notification_log_id),
+        "recipient":           result.recipient,
+        "subject":             result.subject,
+    }
