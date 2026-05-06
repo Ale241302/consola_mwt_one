@@ -1090,43 +1090,66 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         fabricacion_dt,
                     ])
 
-                    # Sprint 2026-05-06 · ALSO insertar en expedientes.documento
+                    # Sprint 2026-05-06 · UPSERT idempotente en expedientes.documento
                     # con audience=ADMIN_ONLY → aparece en "Documentos
-                    # comerciales" SOLO al rol Admin/CEO/superuser. Esto cubre
-                    # el requerimiento del CEO de que la SAP esté disponible
-                    # en el listado de documentos del expediente sin perder
-                    # el aislamiento por audiencia (ni MWT staff la ve).
+                    # comerciales" SOLO al rol Admin/CEO/superuser. Si ya
+                    # existe un ART-04 con el mismo sap_id para este
+                    # expediente (re-confirmación), lo actualizamos en
+                    # lugar de duplicar.
                     if storage_url:
                         try:
-                            doc_uuid = uuid.uuid4()
                             c.execute("""
-                                INSERT INTO expedientes.documento (
-                                    id, oc_id, expediente_id, kind, codigo,
-                                    audience,
+                                SELECT id FROM expedientes.documento
+                                 WHERE expediente_id = %s::uuid
+                                   AND kind = 'ART-04'
+                                   AND codigo LIKE %s
+                                   AND is_active = TRUE
+                                 LIMIT 1
+                            """, [str(exp.id), f"ART-04 · {sap_id}%"])
+                            row_doc = c.fetchone()
+                            if row_doc:
+                                c.execute("""
+                                    UPDATE expedientes.documento
+                                       SET storage_url = %s,
+                                           file_ext = %s,
+                                           file_size_bytes = %s,
+                                           audience = 'ADMIN_ONLY',
+                                           fecha = %s,
+                                           updated_at = NOW()
+                                     WHERE id = %s
+                                """, [
+                                    storage_url, file_ext, file_size_bytes,
+                                    fabricacion_dt, str(row_doc[0]),
+                                ])
+                            else:
+                                c.execute("""
+                                    INSERT INTO expedientes.documento (
+                                        id, oc_id, expediente_id, kind, codigo,
+                                        audience,
+                                        file_ext, file_size_bytes, storage_url,
+                                        author, fecha,
+                                        is_active, created_at, updated_at
+                                    ) VALUES (
+                                        %s, %s, %s, 'ART-04', %s,
+                                        'ADMIN_ONLY',
+                                        %s, %s, %s,
+                                        %s, %s,
+                                        TRUE, NOW(), NOW()
+                                    )
+                                """, [
+                                    str(uuid.uuid4()),
+                                    str(exp.oc_id) if exp.oc_id else None,
+                                    str(exp.id),
+                                    f"ART-04 · {sap_id}",
                                     file_ext, file_size_bytes, storage_url,
-                                    author, fecha,
-                                    is_active, created_at, updated_at
-                                ) VALUES (
-                                    %s, %s, %s, 'ART-04', %s,
-                                    'ADMIN_ONLY',
-                                    %s, %s, %s,
-                                    %s, %s,
-                                    TRUE, NOW(), NOW()
-                                )
-                            """, [
-                                str(doc_uuid),
-                                str(exp.oc_id) if exp.oc_id else None,
-                                str(exp.id),
-                                f"ART-04 · {sap_id}",
-                                file_ext, file_size_bytes, storage_url,
-                                (getattr(request.user, "email", None)
-                                 or getattr(request.user, "username", None)
-                                 or "system"),
-                                fabricacion_dt,
-                            ])
+                                    (getattr(request.user, "email", None)
+                                     or getattr(request.user, "username", None)
+                                     or "system"),
+                                    fabricacion_dt,
+                                ])
                         except Exception as e:
                             log.warning(
-                                "[confirm_sap] insertar documento ADMIN_ONLY fallo: %s", e
+                                "[confirm_sap] upsert documento ADMIN_ONLY fallo: %s", e
                             )
 
                     # 2. Actualizar líneas confirmadas (split/match)

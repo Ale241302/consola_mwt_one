@@ -756,11 +756,13 @@ export default function AddSAPConfirmationDrawer({
               </div>
 
               {/* Sprint 2026-05-06 · sap_id y fecha_fabricacion se extraen
-                  del Excel en /analyze-sap-confirmation/. Mostramos chips
-                  read-only con los valores leídos en lugar de inputs. */}
-              {(sapId || fechaFab) && !isEditMode && (
+                  del Excel en /analyze-sap-confirmation/. Los chips read-only
+                  SOLO se muestran cuando el analysis ya devolvió valores
+                  reales — antes muestra solo el dropzone para evitar
+                  confundir al usuario con el todayISO() default. */}
+              {!isEditMode && analysis && (analysis.sap_id || analysis.fecha_fabricacion) && (
                 <div className="sap-form-grid" style={{ marginBottom: 8 }}>
-                  {sapId && (
+                  {analysis.sap_id && (
                     <div className="sap-field">
                       <span className="sap-label">
                         {lang === "es" ? "Número SAP detectado" : "Detected SAP number"}
@@ -770,11 +772,11 @@ export default function AddSAPConfirmationDrawer({
                         color: 'var(--text-primary)',
                         cursor: 'default',
                       }} title={lang === 'es' ? 'Leído del Excel (col Documento de vendas)' : 'Read from Excel (Sales document column)'}>
-                        {sapId}
+                        {String(analysis.sap_id)}
                       </div>
                     </div>
                   )}
-                  {fechaFab && (
+                  {analysis.fecha_fabricacion && (
                     <div className="sap-field">
                       <span className="sap-label">
                         {lang === "es" ? "Fecha de Fabricación detectada" : "Detected manufacturing date"}
@@ -784,12 +786,31 @@ export default function AddSAPConfirmationDrawer({
                         color: 'var(--text-primary)',
                         cursor: 'default',
                       }} title={lang === 'es' ? 'Leído del Excel (col Data do documento)' : 'Read from Excel (Document date column)'}>
-                        {fechaFab}
+                        {String(analysis.fecha_fabricacion).slice(0, 10)}
                       </div>
                       <span className="micro text-sec" style={{ marginTop: 4 }}>
                         {lang === "es"
                           ? "Punto de partida del ETA proyectado."
                           : "Starting point of the projected ETA."}
+                      </span>
+                    </div>
+                  )}
+                  {!analysis.fecha_fabricacion && (
+                    <div className="sap-field">
+                      <span className="sap-label" style={{ color: 'var(--warning, #B45309)' }}>
+                        {lang === "es" ? "Fecha de Fabricación (manual)" : "Manufacturing Date (manual)"}
+                        <span className="sap-req">*</span>
+                      </span>
+                      <input
+                        type="date"
+                        className="input tabular-nums"
+                        value={fechaFab}
+                        onChange={(e) => setFechaFab(e.target.value)}
+                      />
+                      <span className="micro text-sec" style={{ marginTop: 4, color: 'var(--warning, #B45309)' }}>
+                        {lang === "es"
+                          ? "El Excel no incluyó columna 'Data do documento' — completala manualmente."
+                          : "The Excel did not include 'Data do documento' — fill manually."}
                       </span>
                     </div>
                   )}
