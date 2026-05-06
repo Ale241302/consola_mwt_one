@@ -643,20 +643,3 @@ export default function UploadDocumentModal({
     </div>
   );
 }
-|| !file || !kind}
-            onClick={onSubmit}
-            className="btn btn-accent"
-            style={{
-              fontWeight: 700, minWidth: 180,
-              background: aiEligible ? "var(--brand-accent, #481EE3)" : "var(--success, #00B286)",
-              borderColor: aiEligible ? "var(--brand-accent, #481EE3)" : "var(--success, #00B286)",
-            }}
-          >
-            {aiEligible ? <IconSparkle size={12}/> : <IconCheck size={12}/>}
-            <span style={{ marginLeft: 6 }}>{cta}</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
