@@ -54,3 +54,27 @@ export function isClientRole(user) {
   const role = String(user.role_default || user.role || "").toLowerCase();
   return role.startsWith("client_") || role === "client";
 }
+
+/**
+ * Es estrictamente Admin / CEO / superuser. Sprint 2026-05-06.
+ * Más estricto que isInternalRole: staff/ops NO cuentan como Admin.
+ * Usado para audiencia ADMIN_ONLY (ART-04 SAP, etc.).
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export function isAdminRole(user) {
+  if (!user) return false;
+  if (user.is_superuser) return true;
+  const role = String(user.role_default || user.role || "").toLowerCase();
+  return role === "admin" || role === "ceo";
+}
+
+/**
+ * Audiencias soportadas para Documento y artifact_instances.
+ * Mantener en sync con backend/sql/C2_audience_admin_only.sql.
+ */
+export const DOCUMENT_AUDIENCES = Object.freeze({
+  CLIENT:        "CLIENT",
+  MWT_INTERNAL:  "MWT_INTERNAL",
+  ADMIN_ONLY:    "ADMIN_ONLY",
+});

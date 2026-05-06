@@ -71,7 +71,7 @@ export default function UploadDocumentModal({
   const inputRef = useRef(null);
 
   // El selector de audiencia solo aplica a ADMIN/MWT y a Proforma/Factura.
-  const { isClient: viewerIsClient } = useRole();
+  const { isClient: viewerIsClient, isAdmin: viewerIsAdmin } = useRole();
   const audienceApplies = !viewerIsClient && (kind === "PROFORMA" || kind === "FACTURA");
 
   if (!open) return null;
@@ -366,7 +366,9 @@ export default function UploadDocumentModal({
                 <span style={{ color: "var(--danger, #DC2626)" }}>*</span>
               </div>
               <div style={{
-                display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8,
+                display: "grid",
+                gridTemplateColumns: viewerIsAdmin ? "repeat(3, 1fr)" : "repeat(2, 1fr)",
+                gap: 8,
               }}>
                 {[
                   {
@@ -376,6 +378,7 @@ export default function UploadDocumentModal({
                     es_hint: "Visible en el portal B2B del cliente.",
                     en_hint: "Visible in the client B2B portal.",
                     icon: null,
+                    show: true,
                   },
                   {
                     id: "MWT_INTERNAL",
@@ -384,8 +387,18 @@ export default function UploadDocumentModal({
                     es_hint: "Interno · no se muestra al cliente.",
                     en_hint: "Internal · not shown to the client.",
                     icon: <IconLock size={11}/>,
+                    show: true,
                   },
-                ].map((a) => {
+                  {
+                    id: "ADMIN_ONLY",
+                    es_label: "Solo Admin (CEO)",
+                    en_label: "Admin only (CEO)",
+                    es_hint: "Confidencial · solo CEO/superuser.",
+                    en_hint: "Confidential · CEO/superuser only.",
+                    icon: <IconLock size={11}/>,
+                    show: viewerIsAdmin,
+                  },
+                ].filter((a) => a.show).map((a) => {
                   const active = audience === a.id;
                   return (
                     <button
@@ -614,6 +627,23 @@ export default function UploadDocumentModal({
           <button
             type="button"
             disabled={uploading || !file || !kind}
+            onClick={onSubmit}
+            className="btn btn-accent"
+            style={{
+              fontWeight: 700, minWidth: 180,
+              background: aiEligible ? "var(--brand-accent, #481EE3)" : "var(--success, #00B286)",
+              borderColor: aiEligible ? "var(--brand-accent, #481EE3)" : "var(--success, #00B286)",
+            }}
+          >
+            {aiEligible ? <IconSparkle size={12}/> : <IconCheck size={12}/>}
+            <span style={{ marginLeft: 6 }}>{cta}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+|| !file || !kind}
             onClick={onSubmit}
             className="btn btn-accent"
             style={{

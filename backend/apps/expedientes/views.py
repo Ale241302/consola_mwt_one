@@ -97,6 +97,22 @@ def _is_client_viewer(request) -> bool:
     return False
 
 
+def _is_admin_viewer(request) -> bool:
+    """True si el usuario es Admin / CEO / superuser.
+
+    Sprint 2026-05-06 · audiencia ADMIN_ONLY (ART-04 SAP, etc.).
+    Solo este conjunto reducido ve documentos y artefactos marcados
+    como ADMIN_ONLY. Staff interno de MWT y CLIENT_* quedan fuera.
+    """
+    user = getattr(request, "user", None)
+    if user is None:
+        return False
+    if getattr(user, "is_superuser", False):
+        return True
+    role_upper = _viewer_role_upper(request)
+    return role_upper in ("ADMIN", "CEO")
+
+
 def _deny_client_mutation(request, action_label: str = ""):
     """Si el usuario es CLIENT B2B, devuelve Response 403. Si no, None."""
     role = (getattr(request.user, "role", "") or "").lower()
@@ -998,6 +1014,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         "paperless_task_id": paperless_task_id,
                         "lineas_confirmadas_count": len(lineas_confirmadas),
                     }
+                    # Sprint 2026-05-06 · audience=ADMIN_ONLY:
+                    # ART-04 (Confirmación SAP) NO se muestra a CLIENT_*
+                    # ni a usuarios MWT staff. Solo Admin/CEO/superuser.
                     c.execute("""
                         INSERT INTO expedientes.artifact_instances (
                             id, expediente_id, oc_id,
@@ -1005,14 +1024,14 @@ class ExpedienteViewSet(viewsets.ViewSet):
                             file_ext, file_size_bytes, storage_url, paperless_doc_id,
                             ocr_status, ocr_engine, ocr_confidence, ocr_payload,
                             action_source, correlation_id,
-                            author, fecha, visibility_tier, is_active
+                            author, fecha, visibility_tier, audience, is_active
                         ) VALUES (
                             %s, %s, %s,
                             'ART-04', 'Confirmación SAP', %s,
                             %s, %s, %s, %s,
                             'DONE', 'manual-upload', 1.0, %s::jsonb,
                             'C5', %s,
-                            %s, %s, 'INTERNAL', TRUE
+                            %s, %s, 'INTERNAL', 'ADMIN_ONLY', TRUE
                         )
                     """, [
                         str(artifact_id), str(exp.id),
@@ -1356,6 +1375,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
                             update_args,
                         )
                     else:
+                        # Sprint 2026-05-06 · audience=ADMIN_ONLY (mismo
+                        # criterio que confirm_sap arriba).
                         c.execute("""
                             INSERT INTO expedientes.artifact_instances (
                                 id, expediente_id, oc_id,
@@ -1363,14 +1384,14 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                 file_ext, file_size_bytes, storage_url, paperless_doc_id,
                                 ocr_status, ocr_engine, ocr_confidence, ocr_payload,
                                 action_source, correlation_id,
-                                author, fecha, visibility_tier, is_active
+                                author, fecha, visibility_tier, audience, is_active
                             ) VALUES (
                                 %s, %s, %s,
                                 'ART-04', 'Confirmacion SAP', %s,
                                 %s, %s, %s, %s,
                                 'DONE', 'manual-upload', 1.0, %s::jsonb,
                                 'C5', %s,
-                                %s, %s, 'INTERNAL', TRUE
+                                %s, %s, 'INTERNAL', 'ADMIN_ONLY', TRUE
                             )
                         """, [
                             str(artifact_id), str(exp.id),
@@ -1525,11 +1546,14 @@ class DocumentoViewSet(viewsets.ViewSet):
             v = request.query_params.get(p)
             if v:
                 qs = qs.filter(**{f: v})
-        # Sprint 2026-05-06 · audiencia. CLIENT_* solo ve audience='CLIENT';
-        # Admin/CEO/staff ven todo. Param ?audience= permite filtrar de
-        # forma explícita para vistas internas.
+        # Sprint 2026-05-06 · audiencia (3 niveles).
+        #   · CLIENT_*               → solo audience='CLIENT'.
+        #   · MWT staff (no Admin)   → 'CLIENT' + 'MWT_INTERNAL', NO ADMIN_ONLY.
+        #   · Admin/CEO/superuser    → todos. Param ?audience= permite filtrar.
         if _is_client_viewer(request):
             qs = qs.filter(audience="CLIENT")
+        elif not _is_admin_viewer(request):
+            qs = qs.exclude(audience="ADMIN_ONLY")
         else:
             audience = request.query_params.get("audience")
             if audience:
@@ -1541,8 +1565,13 @@ class DocumentoViewSet(viewsets.ViewSet):
             d = Documento.objects.get(pk=pk, is_active=True)
         except Documento.DoesNotExist:
             return Response({"detail": "Documento no existe"}, status=404)
-        # Sprint 2026-05-06 · CLIENT_* no puede acceder a docs MWT_INTERNAL.
-        if _is_client_viewer(request) and getattr(d, "audience", "CLIENT") != "CLIENT":
+        # Sprint 2026-05-06 · audiencia.
+        #   CLIENT_*  no puede acceder a MWT_INTERNAL ni ADMIN_ONLY.
+        #   MWT staff no puede acceder a ADMIN_ONLY.
+        doc_aud = getattr(d, "audience", "CLIENT")
+        if _is_client_viewer(request) and doc_aud != "CLIENT":
+            return Response({"detail": "Documento no existe"}, status=404)
+        if doc_aud == "ADMIN_ONLY" and not _is_admin_viewer(request):
             return Response({"detail": "Documento no existe"}, status=404)
         return Response(DocumentoSerializer(d).data)
 
@@ -1557,13 +1586,16 @@ class DocumentoViewSet(viewsets.ViewSet):
             codigo = (request.data.get("codigo") or "").strip() or documento_file.name
             oc_id  = request.data.get("oc_id") or None
             exp_id = request.data.get("expediente_id") or None
-            # Sprint 2026-05-06 · audiencia.
+            # Sprint 2026-05-06 · audiencia (3 niveles: CLIENT, MWT_INTERNAL, ADMIN_ONLY).
             audience = (request.data.get("audience") or "CLIENT").strip().upper()
-            if audience not in ("CLIENT", "MWT_INTERNAL"):
+            if audience not in ("CLIENT", "MWT_INTERNAL", "ADMIN_ONLY"):
                 audience = "CLIENT"
             if _is_client_viewer(request):
-                # CLIENT_* nunca puede crear documentos MWT_INTERNAL.
+                # CLIENT_* nunca puede crear documentos MWT_INTERNAL ni ADMIN_ONLY.
                 audience = "CLIENT"
+            elif audience == "ADMIN_ONLY" and not _is_admin_viewer(request):
+                # Solo Admin/CEO puede marcar un documento como ADMIN_ONLY.
+                audience = "MWT_INTERNAL"
             try:
                 doc_uuid   = uuid.uuid4()
                 fname      = documento_file.name or f"documento_{doc_uuid}.bin"
@@ -1964,6 +1996,44 @@ class EventLogViewSet(viewsets.ViewSet):
                     "last_7d":  r[2],
                 })
                 c.execute("""
+                    SELECT aggregate_type, COUNT(*)
+                      FROM pipeline.event_log
+                     WHERE is_active = TRUE
+                       AND created_at > now() - interval '7 days'
+                     GROUP BY 1
+                     ORDER BY 2 DESC
+                """)
+                out["by_aggregate"] = {row[0]: row[1] for row in c.fetchall()}
+            except Exception:
+                pass
+        return Response(out)
+
+
+class OcrParsingLogViewSet(viewsets.ViewSet):
+    """Log de corridas de OCR (Paperless+Tika). GET-only desde la app.
+    Los INSERTs los hace el worker de OCR."""
+    def list(self, request):
+        qs = OcrParsingLog.objects.filter(is_active=True)
+        for p, f in (("expediente", "expediente_id"),
+                     ("artifact",   "artifact_id"),
+                     ("status",     "status"),
+                     ("tipo",       "artifact_tipo")):
+            v = request.query_params.get(p)
+            if v:
+                qs = qs.filter(**{f: v})
+        nhr = request.query_params.get("needs_human_review")
+        if nhr in ("true", "false"):
+            qs = qs.filter(needs_human_review=(nhr == "true"))
+        limit = int(request.query_params.get("limit") or 100)
+        return Response(OcrParsingLogSerializer(qs.order_by("-created_at")[:limit], many=True).data)
+
+    def retrieve(self, request, pk=None):
+        try:
+            r = OcrParsingLog.objects.get(pk=pk, is_active=True)
+        except OcrParsingLog.DoesNotExist:
+            return Response({"detail": "OCR log no existe"}, status=404)
+        return Response(OcrParsingLogSerializer(r).data)
+"""
                     SELECT aggregate_type, COUNT(*)
                       FROM pipeline.event_log
                      WHERE is_active = TRUE
