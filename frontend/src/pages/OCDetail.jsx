@@ -600,7 +600,23 @@ export default function ScreenOCDetail() {
       if (!url) {
         throw new Error(resp?.error || 'URL no disponible');
       }
-      window.open(url, '_blank', 'noopener,noreferrer');
+      // Sprint 2026-05-06 · si el archivo es Excel/CSV/Word/Zip → forzar
+      // download (esos formatos no se renderean inline en el browser y
+      // window.open abre una pestaña vacía). PDF/imagenes siguen abriendo
+      // en pestaña nueva como antes.
+      const ext = String(doc.ext || doc.file_ext || '').toLowerCase().replace(/^\./, '');
+      const downloadExts = new Set(['xlsx', 'xls', 'xlsm', 'csv', 'docx', 'doc', 'zip']);
+      if (downloadExts.has(ext)) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = doc.code || doc.codigo || doc.filename || `${doc.id}.${ext}`;
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } else {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('[OCDetail] view doc falló:', e);

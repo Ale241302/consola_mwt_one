@@ -124,6 +124,13 @@ _HEADER_ALIASES = {
                     "description", "descricao de material", "material description"),
     "qty":         ("pares aberto", "qtd ordem", "qty open", "qty",
                     "cantidad", "quantity", "pares"),
+    # Sprint 2026-05-06 · fecha de fabricación (col H típica del export
+    # Marluvas: "Data do documento"). El drawer la auto-rellenaba a hoy
+    # antes; ahora se extrae del Excel para que el usuario no tenga que
+    # ingresarla.
+    "fecha_fab":   ("data do documento", "data documento", "fecha documento",
+                    "fecha de fabricacion", "fecha de fabricación",
+                    "fabrication date", "production date", "data fabricacao"),
 }
 
 
@@ -205,6 +212,7 @@ def _parse_xlsx_marluvas(file_bytes: bytes) -> dict:
         }
 
     sap_set = set()
+    fecha_fab_set = set()
     lineas = []
     for row in rows_iter:
         if not row:
@@ -218,6 +226,27 @@ def _parse_xlsx_marluvas(file_bytes: bytes) -> dict:
                 # Normalizar SAP a string sin '.0' si vino como float
                 if sap_val.endswith(".0"):
                     sap_val = sap_val[:-2]
+
+        # Fecha de fabricación (col "Data do documento")
+        if "fecha_fab" in cols:
+            v_fec = row[cols["fecha_fab"]]
+            if v_fec not in (None, ""):
+                # openpyxl con data_only=True suele entregar datetime;
+                # tolerar también string ISO o "DD/MM/YYYY".
+                try:
+                    if hasattr(v_fec, "date"):
+                        fecha_fab_set.add(v_fec.date().isoformat())
+                    else:
+                        s = str(v_fec).strip()
+                        # Intentar parsear "DD/MM/YYYY" o "YYYY-MM-DD"
+                        m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})", s)
+                        if m:
+                            d, mth, y = m.groups()
+                            fecha_fab_set.add(f"{y}-{int(mth):02d}-{int(d):02d}")
+                        elif re.match(r"^\d{4}-\d{2}-\d{2}", s):
+                            fecha_fab_set.add(s[:10])
+                except (TypeError, ValueError, AttributeError):
+                    pass
 
         # Material → sku, talla
         material_raw = None
@@ -261,15 +290,18 @@ def _parse_xlsx_marluvas(file_bytes: bytes) -> dict:
 
     sap_list = sorted(sap_set)
     sap_id = sap_list[0] if sap_list else None
+    fecha_list = sorted(fecha_fab_set)
+    fecha_fab = fecha_list[0] if fecha_list else None
 
     return {
-        "ok":           True,
-        "kind":         "xlsx_marluvas",
-        "sap_id":       sap_id,
-        "sap_count":    len(sap_list),
-        "all_saps":     sap_list,
-        "lineas":       lineas,
-        "error":        None,
+        "ok":               True,
+        "kind":             "xlsx_marluvas",
+        "sap_id":           sap_id,
+        "sap_count":        len(sap_list),
+        "all_saps":         sap_list,
+        "fecha_fabricacion": fecha_fab,   # ISO yyyy-mm-dd, o None si no estaba
+        "lineas":           lineas,
+        "error":            None,
     }
 
 
@@ -558,7 +590,7 @@ def _parse_csv_marluvas(file_bytes: bytes) -> dict:
             "lineas": [], "sap_id": None,
         }
 
-    sap_set = set(); lineas = []
+    sap_set = set(); fecha_fab_set = set(); lineas = []
     for row in rows[1:]:
         if not row:
             continue
@@ -568,6 +600,21 @@ def _parse_csv_marluvas(file_bytes: bytes) -> dict:
         sap_val = (str(sap_val).strip() if sap_val not in (None, "") else None)
         if sap_val and sap_val.endswith(".0"):
             sap_val = sap_val[:-2]
+
+        # fecha de fabricación
+        if "fecha_fab" in cols:
+            v_fec = _at(cols.get("fecha_fab"))
+            if v_fec not in (None, ""):
+                try:
+                    s = str(v_fec).strip()
+                    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})", s)
+                    if m:
+                        d, mth, y = m.groups()
+                        fecha_fab_set.add(f"{y}-{int(mth):02d}-{int(d):02d}")
+                    elif re.match(r"^\d{4}-\d{2}-\d{2}", s):
+                        fecha_fab_set.add(s[:10])
+                except (TypeError, ValueError):
+                    pass
         material_raw = _at(cols.get("material")) if "material" in cols else None
         sku, talla = _split_material(material_raw)
         descripcion_raw = _at(cols.get("descripcion")) if "descripcion" in cols else None
@@ -591,14 +638,16 @@ def _parse_csv_marluvas(file_bytes: bytes) -> dict:
         })
 
     sap_list = sorted(sap_set)
+    fecha_list = sorted(fecha_fab_set)
     return {
-        "ok":           True,
-        "kind":         "csv_marluvas",
-        "sap_id":       sap_list[0] if sap_list else None,
-        "sap_count":    len(sap_list),
-        "all_saps":     sap_list,
-        "lineas":       lineas,
-        "error":        None,
+        "ok":               True,
+        "kind":             "csv_marluvas",
+        "sap_id":           sap_list[0] if sap_list else None,
+        "sap_count":        len(sap_list),
+        "all_saps":         sap_list,
+        "fecha_fabricacion": fecha_list[0] if fecha_list else None,
+        "lineas":           lineas,
+        "error":            None,
     }
 
 

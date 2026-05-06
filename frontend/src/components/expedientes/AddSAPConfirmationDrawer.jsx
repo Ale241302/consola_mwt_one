@@ -418,6 +418,12 @@ export default function AddSAPConfirmationDrawer({
       if (!isEditMode && res?.sap_id && !sapId.trim()) {
         setSapId(String(res.sap_id));
       }
+      // Sprint 2026-05-06 · Auto-fill fecha de fabricación leída del Excel
+      // (col H "Data do documento"). Si el archivo la trae, sobreescribimos
+      // el todayISO() default para que el usuario no tenga que tocarla.
+      if (!isEditMode && res?.fecha_fabricacion) {
+        setFechaFab(String(res.fecha_fabricacion).slice(0, 10));
+      }
 
       // Auto-add líneas matched por (sku,talla) — el usuario podrá
       // remover manualmente las que no quiera incluir en este SAP.
@@ -743,45 +749,82 @@ export default function AddSAPConfirmationDrawer({
                   </div>
                   <div className="caption">
                     {lang === "es"
-                      ? "Número SAP de Marluvas + fecha de fabricación + PDF de confirmación."
-                      : "Marluvas SAP number + manufacturing date + confirmation PDF."}
+                      ? "Sube el Excel/PDF de Marluvas — el sistema extrae automáticamente número SAP y fecha de fabricación."
+                      : "Upload the Marluvas Excel/PDF — the system auto-extracts SAP number and manufacturing date."}
                   </div>
                 </div>
               </div>
 
-              <div className="sap-form-grid">
-                <label className="sap-field">
-                  <span className="sap-label">
-                    {lang === "es" ? "Número SAP (Marluvas)" : "SAP Number (Marluvas)"}
-                    <span className="sap-req">*</span>
-                  </span>
-                  <input
-                    className="input mono"
-                    placeholder="SAP-202600123"
-                    value={sapId}
-                    onChange={(e) => setSapId(e.target.value)}
-                    autoFocus
-                  />
-                </label>
+              {/* Sprint 2026-05-06 · sap_id y fecha_fabricacion se extraen
+                  del Excel en /analyze-sap-confirmation/. Mostramos chips
+                  read-only con los valores leídos en lugar de inputs. */}
+              {(sapId || fechaFab) && !isEditMode && (
+                <div className="sap-form-grid" style={{ marginBottom: 8 }}>
+                  {sapId && (
+                    <div className="sap-field">
+                      <span className="sap-label">
+                        {lang === "es" ? "Número SAP detectado" : "Detected SAP number"}
+                      </span>
+                      <div className="input mono" style={{
+                        background: 'var(--surface-alt, #F1F4F8)',
+                        color: 'var(--text-primary)',
+                        cursor: 'default',
+                      }} title={lang === 'es' ? 'Leído del Excel (col Documento de vendas)' : 'Read from Excel (Sales document column)'}>
+                        {sapId}
+                      </div>
+                    </div>
+                  )}
+                  {fechaFab && (
+                    <div className="sap-field">
+                      <span className="sap-label">
+                        {lang === "es" ? "Fecha de Fabricación detectada" : "Detected manufacturing date"}
+                      </span>
+                      <div className="input tabular-nums" style={{
+                        background: 'var(--surface-alt, #F1F4F8)',
+                        color: 'var(--text-primary)',
+                        cursor: 'default',
+                      }} title={lang === 'es' ? 'Leído del Excel (col Data do documento)' : 'Read from Excel (Document date column)'}>
+                        {fechaFab}
+                      </div>
+                      <span className="micro text-sec" style={{ marginTop: 4 }}>
+                        {lang === "es"
+                          ? "Punto de partida del ETA proyectado."
+                          : "Starting point of the projected ETA."}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
 
-                <label className="sap-field">
-                  <span className="sap-label">
-                    {lang === "es" ? "Fecha de Fabricación" : "Manufacturing Date"}
-                    <span className="sap-req">*</span>
-                  </span>
-                  <input
-                    type="date"
-                    className="input tabular-nums"
-                    value={fechaFab}
-                    onChange={(e) => setFechaFab(e.target.value)}
-                  />
-                  <span className="micro text-sec" style={{ marginTop: 4 }}>
-                    {lang === "es"
-                      ? "Punto de partida del ETA proyectado."
-                      : "Starting point of the projected ETA."}
-                  </span>
-                </label>
-              </div>
+              {/* En edit mode (upsert) sí permitimos override manual. */}
+              {isEditMode && (
+                <div className="sap-form-grid">
+                  <label className="sap-field">
+                    <span className="sap-label">
+                      {lang === "es" ? "Número SAP (Marluvas)" : "SAP Number (Marluvas)"}
+                      <span className="sap-req">*</span>
+                    </span>
+                    <input
+                      className="input mono"
+                      placeholder="SAP-202600123"
+                      value={sapId}
+                      onChange={(e) => setSapId(e.target.value)}
+                    />
+                  </label>
+                  <label className="sap-field">
+                    <span className="sap-label">
+                      {lang === "es" ? "Fecha de Fabricación" : "Manufacturing Date"}
+                      <span className="sap-req">*</span>
+                    </span>
+                    <input
+                      type="date"
+                      className="input tabular-nums"
+                      value={fechaFab}
+                      onChange={(e) => setFechaFab(e.target.value)}
+                    />
+                  </label>
+                </div>
+              )}
 
               {/* Dropzone */}
               <div

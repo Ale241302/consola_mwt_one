@@ -1090,6 +1090,45 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         fabricacion_dt,
                     ])
 
+                    # Sprint 2026-05-06 · ALSO insertar en expedientes.documento
+                    # con audience=ADMIN_ONLY → aparece en "Documentos
+                    # comerciales" SOLO al rol Admin/CEO/superuser. Esto cubre
+                    # el requerimiento del CEO de que la SAP esté disponible
+                    # en el listado de documentos del expediente sin perder
+                    # el aislamiento por audiencia (ni MWT staff la ve).
+                    if storage_url:
+                        try:
+                            doc_uuid = uuid.uuid4()
+                            c.execute("""
+                                INSERT INTO expedientes.documento (
+                                    id, oc_id, expediente_id, kind, codigo,
+                                    audience,
+                                    file_ext, file_size_bytes, storage_url,
+                                    author, fecha,
+                                    is_active, created_at, updated_at
+                                ) VALUES (
+                                    %s, %s, %s, 'ART-04', %s,
+                                    'ADMIN_ONLY',
+                                    %s, %s, %s,
+                                    %s, %s,
+                                    TRUE, NOW(), NOW()
+                                )
+                            """, [
+                                str(doc_uuid),
+                                str(exp.oc_id) if exp.oc_id else None,
+                                str(exp.id),
+                                f"ART-04 · {sap_id}",
+                                file_ext, file_size_bytes, storage_url,
+                                (getattr(request.user, "email", None)
+                                 or getattr(request.user, "username", None)
+                                 or "system"),
+                                fabricacion_dt,
+                            ])
+                        except Exception as e:
+                            log.warning(
+                                "[confirm_sap] insertar documento ADMIN_ONLY fallo: %s", e
+                            )
+
                     # 2. Actualizar líneas confirmadas (split/match)
                     #    Cada item: {linea_id, qty_confirmada, unit_price?}
                     #    `unit_price` (sprint 2026-05-01) — opcional. Si
@@ -1449,6 +1488,64 @@ class ExpedienteViewSet(viewsets.ViewSet):
                             (getattr(request.user, "email", None) or "system"),
                             fabricacion_dt,
                         ])
+
+                    # Sprint 2026-05-06 · upsert también la fila documento
+                    # con audience=ADMIN_ONLY si subió un archivo nuevo.
+                    # Si ya existía documento ART-04 para este sap_id, lo
+                    # actualizamos; si no, lo insertamos.
+                    if new_storage_url:
+                        try:
+                            c.execute("""
+                                SELECT id FROM expedientes.documento
+                                 WHERE expediente_id = %s::uuid
+                                   AND kind = 'ART-04'
+                                   AND codigo LIKE %s
+                                   AND is_active = TRUE
+                                 LIMIT 1
+                            """, [str(exp.id), f"ART-04 · {sap_id}%"])
+                            row_doc = c.fetchone()
+                            if row_doc:
+                                c.execute("""
+                                    UPDATE expedientes.documento
+                                       SET storage_url = %s,
+                                           file_ext = %s,
+                                           file_size_bytes = %s,
+                                           audience = 'ADMIN_ONLY',
+                                           fecha = %s,
+                                           updated_at = NOW()
+                                     WHERE id = %s
+                                """, [
+                                    new_storage_url, new_file_ext, new_file_size,
+                                    fabricacion_dt, str(row_doc[0]),
+                                ])
+                            else:
+                                c.execute("""
+                                    INSERT INTO expedientes.documento (
+                                        id, oc_id, expediente_id, kind, codigo,
+                                        audience,
+                                        file_ext, file_size_bytes, storage_url,
+                                        author, fecha,
+                                        is_active, created_at, updated_at
+                                    ) VALUES (
+                                        %s, %s, %s, 'ART-04', %s,
+                                        'ADMIN_ONLY',
+                                        %s, %s, %s,
+                                        %s, %s,
+                                        TRUE, NOW(), NOW()
+                                    )
+                                """, [
+                                    str(uuid.uuid4()),
+                                    str(exp.oc_id) if exp.oc_id else None,
+                                    str(exp.id),
+                                    f"ART-04 · {sap_id}",
+                                    new_file_ext, new_file_size, new_storage_url,
+                                    (getattr(request.user, "email", None) or "system"),
+                                    fabricacion_dt,
+                                ])
+                        except Exception as e:
+                            log.warning(
+                                "[upsert_sap] documento ADMIN_ONLY upsert fallo: %s", e
+                            )
 
                     # Actualizar lineas
                     for item in lineas_confirmadas:
