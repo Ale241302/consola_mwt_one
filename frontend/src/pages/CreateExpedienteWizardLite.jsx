@@ -1006,6 +1006,15 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
   const groups = Object.values(bySku);
   const totalValue = groups.reduce((a, g) => a + g.subtotalValue, 0);
 
+  // Sprint 2026-05-06 · valor ajustado por el tier de pronto pago.
+  // El "VALOR DEL PEDIDO" del bloque IMPACTO EN CRÉDITO refleja el
+  // total con el descuento aplicado del plazo seleccionado.
+  const selectedTier = EARLY_PAYMENT_TIERS.find(
+    t => t.days === Number(paymentDays)
+  ) || EARLY_PAYMENT_TIERS.find(t => t.isBase);
+  const tierPct = selectedTier ? selectedTier.pct / 100 : 0;
+  const adjustedTotalValue = totalValue * (1 - tierPct);
+
   return (
     <div className="card card-pad-lg">
       <h2 className="heading-md" style={{ marginBottom: 14 }}>
@@ -1249,11 +1258,13 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
                     fontSize: 22, fontWeight: 800, marginBottom: 8,
                     color: tier.isBase
                       ? "var(--text-tertiary)"
-                      : (tier.pct > 0 ? "#00875A" : "#0B1E3A"),
+                      : (tier.pct > 0 ? "#00875A" : "#B45309"),
                   }}>
                     {tier.isBase
                       ? (lang === "es" ? "base" : "base")
-                      : (tier.pct > 0 ? `−${tier.pct.toFixed(2)}%` : "—")}
+                      : (tier.pct > 0
+                          ? `−${tier.pct.toFixed(2)}%`
+                          : `+${Math.abs(tier.pct).toFixed(2)}%`)}
                   </div>
                   <div className="tabular-nums" style={{
                     fontSize: 16, fontWeight: 700, color: "#0B1E3A",
@@ -1274,12 +1285,17 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
                     {fmt(tierTotal)}
                   </div>
                   <div style={{
-                    fontSize: 10, color: tier.isBase ? "var(--text-tertiary)" : "#00875A",
+                    fontSize: 10,
+                    color: tier.isBase
+                      ? "var(--text-tertiary)"
+                      : (tier.pct > 0 ? "#00875A" : "#B45309"),
                     fontWeight: 600, marginTop: 2,
                   }}>
                     {tier.isBase
                       ? (lang === "es" ? "Plazo actual PO" : "Current PO term")
-                      : (lang === "es" ? `Ahorro ${fmt(ahorro)}` : `Savings ${fmt(ahorro)}`)}
+                      : (tier.pct > 0
+                          ? (lang === "es" ? `Ahorro ${fmt(ahorro)}`   : `Savings ${fmt(ahorro)}`)
+                          : (lang === "es" ? `Recargo ${fmt(Math.abs(ahorro))}` : `Surcharge ${fmt(Math.abs(ahorro))}`))}
                   </div>
                 </button>
               );
@@ -1304,7 +1320,7 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
       {/* Sprint 2026-05-06: ocultar si forma_pago = CONTADO */}
       {paymentMethod !== "CONTADO" && isAdmin && creditProjection && creditProjection.limit > 0 && orderLines.length > 0 && (
         <div style={{ marginTop: 18 }}>
-          <CreditProjectionCard cp={creditProjection} lang={lang}/>
+          <CreditProjectionCard cp={creditProjection} lang={lang} adjustedOrderValue={adjustedTotalValue}/>
         </div>
       )}
 
@@ -1341,7 +1357,7 @@ const EARLY_PAYMENT_TIERS = [
   { days: 30,  pct: 1.75, label_es: "30 días",  label_en: "30 days",  isBase: false, adminOnly: false },
   { days: 60,  pct: 1.00, label_es: "60 días",  label_en: "60 days",  isBase: false, adminOnly: false },
   { days: 90,  pct: 0.00, label_es: "90 días",  label_en: "90 days",  isBase: true,  adminOnly: false },
-  { days: 120, pct: 0.00, label_es: "120 días", label_en: "120 days", isBase: false, adminOnly: true  },
+  { days: 120, pct: -1.00, label_es: "120 días", label_en: "120 days", isBase: false, adminOnly: true  },
 ];
 
 // Devuelve los tiers visibles según el rol y la moneda del pedido.
@@ -1398,7 +1414,25 @@ function Field({ label, children }) {
 // CREDIT PROJECTION CARD — visualizacion del impacto del pedido en
 // el credito disponible del cliente. Sprint 2026-05-01.
 // ═════════════════════════════════════════════════════════════
-function CreditProjectionCard({ cp, lang }) {
+function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
+  // Sprint 2026-05-06 · si llega adjustedOrderValue (tier de pronto pago),
+  // recalculamos los derivados sobre la base ajustada para que el bloque
+  // refleje el efecto del descuento elegido en el wizard.
+  if (typeof adjustedOrderValue === "number" && !isNaN(adjustedOrderValue)) {
+    const limit = Number(cp.limit) || 0;
+    const used  = Number(cp.used) || 0;
+    const newAfter = limit - used - adjustedOrderValue;
+    const newUtil  = limit > 0
+      ? Math.max(0, ((used + adjustedOrderValue) / limit) * 100)
+      : 0;
+    cp = {
+      ...cp,
+      orderValue:     adjustedOrderValue,
+      afterAvailable: newAfter,
+      utilPctAfter:   Math.round(newUtil * 10) / 10,
+      exceedsLimit:   limit > 0 && newAfter < 0,
+    };
+  }
   const tone = cp.exceedsLimit ? "red"
              : cp.utilPctAfter >= 85 ? "red"
              : cp.utilPctAfter >= 70 ? "amber" : "green";
