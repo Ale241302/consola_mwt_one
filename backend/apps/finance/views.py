@@ -171,6 +171,32 @@ class PaymentViewSet(viewsets.ViewSet):
 
         items = []
 
+        # Resolver OC y montos del expediente (best-effort).
+        # Los documentos suelen estar asociados a la OC, NO directamente
+        # al expediente, así que necesitamos el oc_id para hacer match.
+        oc_id = None
+        exp_balance_fallback = 0.0
+        exp_total_fallback   = 0.0
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT oc_id,
+                           COALESCE(balance, 0),
+                           COALESCE(total_invoiced, 0)
+                      FROM expedientes.expediente
+                     WHERE id = %s LIMIT 1
+                    """,
+                    [exp_id],
+                )
+                row = cur.fetchone()
+                if row:
+                    oc_id = row[0]
+                    exp_balance_fallback = float(row[1] or 0)
+                    exp_total_fallback   = float(row[2] or 0)
+        except Exception as e:
+            log.info("expediente lookup falló (continuamos): %s", e)
+
         # ── PROFORMA / FACTURA ────────────────────────────────────
         if kind in ("PROFORMA", "FACTURA"):
             try:
@@ -184,21 +210,21 @@ class PaymentViewSet(viewsets.ViewSet):
                             d.fecha,
                             d.file_size_bytes,
                             d.author,
-                            COALESCE(c.monto_pendiente, c.monto_total, o.amount_total, 0) AS balance,
-                            COALESCE(c.monto_total,    o.amount_total,                0) AS total,
+                            COALESCE(c.monto_pendiente, c.monto_total, 0) AS cobro_balance,
+                            COALESCE(c.monto_total,                    0) AS cobro_total,
                             c.estado AS cobro_estado
                           FROM expedientes.documento d
                      LEFT JOIN cobros.cobro c
                             ON c.oc_id = d.oc_id
                            AND c.is_active = TRUE
-                     LEFT JOIN expedientes.files o
-                            ON o.id = d.oc_id
-                         WHERE d.expediente_id = %s
-                           AND UPPER(d.kind) = %s
+                         WHERE UPPER(d.kind) = %s
                            AND d.is_active = TRUE
+                           AND (d.expediente_id = %s
+                                OR (%s::uuid IS NOT NULL AND d.oc_id = %s::uuid))
                          ORDER BY d.fecha DESC NULLS LAST, d.created_at DESC
                         """,
-                        [exp_id, kind],
+                        [kind, exp_id, str(oc_id) if oc_id else None,
+                         str(oc_id) if oc_id else None],
                     )
                     rows = cur.fetchall()
             except Exception as e:
@@ -210,21 +236,36 @@ class PaymentViewSet(viewsets.ViewSet):
                             """
                             SELECT id::text, codigo, kind, fecha, file_size_bytes, author
                               FROM expedientes.documento
-                             WHERE expediente_id = %s
-                               AND UPPER(kind) = %s
+                             WHERE UPPER(kind) = %s
                                AND is_active = TRUE
+                               AND (expediente_id = %s
+                                    OR (%s::uuid IS NOT NULL AND oc_id = %s::uuid))
                              ORDER BY fecha DESC NULLS LAST, created_at DESC
                             """,
-                            [exp_id, kind],
+                            [kind, exp_id,
+                             str(oc_id) if oc_id else None,
+                             str(oc_id) if oc_id else None],
                         )
                         rows_simple = cur.fetchall()
-                    rows = [(r[0], r[1], r[2], r[3], r[4], r[5], 0, 0, None) for r in rows_simple]
+                    rows = [(r[0], r[1], r[2], r[3], r[4], r[5], 0, 0, None)
+                            for r in rows_simple]
                 except Exception as e2:
                     log.error("applicables fallback falló: %s", e2)
                     rows = []
 
             for (doc_id, codigo, k, fecha, size_bytes, author,
-                 balance, total, cobro_estado) in rows:
+                 cobro_balance, cobro_total, cobro_estado) in rows:
+                # Balance prioritario:
+                #   1. monto_pendiente del cobro asociado a la OC
+                #   2. balance del expediente (suma de todas sus líneas)
+                #   3. 0 si nada está poblado
+                balance = float(cobro_balance or 0)
+                total   = float(cobro_total or 0)
+                if balance <= 0:
+                    balance = exp_balance_fallback
+                if total <= 0:
+                    total = exp_total_fallback
+
                 # Construye un código legible aún cuando `codigo` venga NULL
                 code  = (codigo or "").strip()
                 label = code or (k or "Documento")
@@ -232,14 +273,14 @@ class PaymentViewSet(viewsets.ViewSet):
                     "id":      str(doc_id),
                     "code":    code or label,
                     "label":   label,
-                    "balance": float(balance or 0),
+                    "balance": balance,
                     "meta": {
                         "kind":         k,
                         "fecha":        fecha.isoformat() if fecha else None,
                         "size_bytes":   int(size_bytes) if size_bytes else None,
                         "author":       author,
                         "cobro_estado": cobro_estado,
-                        "total":        float(total or 0),
+                        "total":        total,
                     },
                 })
 
