@@ -451,15 +451,32 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 if unique_pids:
                     with connection.cursor() as c:
                         placeholders = ",".join(["%s::uuid"] * len(unique_pids))
+                        # BUG FIX 2026-05-06: la columna en productos.producto
+                        # se llama `marca_id`, no `brand_id`. La query antigua
+                        # lanzaba `column "brand_id" does not exist`, el except
+                        # la silenciaba y price_map quedaba vacío → todos los
+                        # precios se guardaban en 0. Además leemos `precio_mwt`
+                        # como fallback canónico para la perspectiva MWT
+                        # (override directo del CEO sobre productos.producto).
                         c.execute(f"""
-                            SELECT id::text, sku, brand_id::text, precio_lista
+                            SELECT id::text, sku, marca_id::text,
+                                   precio_lista, precio_mwt
                               FROM productos.producto
                              WHERE id IN ({placeholders})
                         """, list(unique_pids))
-                        for pid, sku_db, brand_id, pl in c.fetchall():
+                        for pid, sku_db, brand_id, pl, p_mwt_override in c.fetchall():
                             # ── Precio MWT (perspectiva Muito Work) ──
+                            # Prioridad:
+                            #   1) productos.producto.precio_mwt (override CEO)
+                            #   2) waterfall COMEX con cliente=MWT
+                            #   3) productos.producto.precio_lista
                             p_mwt = None
-                            if brand_id and sku_db:
+                            try:
+                                if p_mwt_override and Decimal(str(p_mwt_override)) > 0:
+                                    p_mwt = Decimal(str(p_mwt_override))
+                            except (TypeError, ValueError):
+                                p_mwt = None
+                            if p_mwt is None and brand_id and sku_db:
                                 try:
                                     p_mwt = compute_client_price(
                                         client_id  = MWT_OPERATING_CLIENT_ID,
@@ -497,7 +514,10 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                 # Fallback al precio MWT ya resuelto.
                                 price_map_client[pid] = price_map_mwt[pid]
             except Exception as e:
-                log.warning("[expediente.create] price_map fetch failed: %s", e)
+                # Subimos a ERROR para que NO se pierda en logs si la query
+                # principal del waterfall vuelve a romperse (caso brand_id
+                # vs marca_id que dejó precios en 0 silenciosamente).
+                log.exception("[expediente.create] price_map fetch failed: %s", e)
                 price_map_mwt    = {}
                 price_map_client = {}
 
