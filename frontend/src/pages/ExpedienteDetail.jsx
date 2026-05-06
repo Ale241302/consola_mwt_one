@@ -59,6 +59,9 @@ export default function ScreenExpedienteDetail() {
   // es el catalogo de productos (especificaciones.client_prices[client]
   // || precio_lista). Mismo enfoque que OCDetail.jsx.
   const [cpaPriceMap, setCpaPriceMap] = useState({});
+  // Mapa nombre del producto por producto_id — fallback de la columna
+  // 'Descripción' cuando la línea no trae l.name. Fuente: productosApi.get().
+  const [productoNombreMap, setProductoNombreMap] = useState({});
   const [loading,   setLoading]   = useState(!isHeroOrMock);
   const [notFound,  setNotFound]  = useState(false);
 
@@ -99,14 +102,18 @@ export default function ScreenExpedienteDetail() {
               );
               if (cancel) return;
               const map = {};
+              const nombreMap = {};
               for (const p of prods) {
                 if (!p?.id) continue;
                 const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
                 const override = Number(cliMap[e.client_id] || 0);
                 const lista    = Number(p.precio_lista || 0);
                 map[p.id] = override > 0 ? override : lista;
+                // Sprint 2026-05-06: nombre del producto para columna Descripción
+                nombreMap[p.id] = p.nombre || p.descripcion || p.product_label || p.sku || '';
               }
               setCpaPriceMap(map);
+              setProductoNombreMap(nombreMap);
             } catch { /* swallow */ }
           }
         }
@@ -423,11 +430,11 @@ export default function ScreenExpedienteDetail() {
               <OverviewTab exp={exp} lang={lang} lines={lines}
                            activity={activity} isClient={isClient}
                            isHeroOrMock={isHeroOrMock}
-                           cpaPriceMap={cpaPriceMap}
+                           cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap}
                            onOpenArtifactsTab={() => setTab('artifacts')}/>
             </>
           )}
-          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap} exp={exp} onLineAdded={() => setLinesReload(n => n + 1)}/>}
+          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap} exp={exp} onLineAdded={() => setLinesReload(n => n + 1)}/>}
           {tab === 'artifacts' && (
             <div>
               {/* Toolbar de artifacts: solo visible para CEO/admin.
@@ -551,7 +558,7 @@ export default function ScreenExpedienteDetail() {
   );
 }
 
-function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifactsTab, cpaPriceMap }) {
+function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifactsTab, cpaPriceMap, productoNombreMap }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
       {/* Sprint 2026-05-01: el card "Detalles" mostraba modo/flete/ETA/
@@ -630,7 +637,7 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifacts
               return (
                 <tr key={l.id}>
                   <td><span className="mono-sm" style={{fontWeight:600, color:'var(--interactive)'}}>{l.sku}</span></td>
-                  <td>{l.name || l.product_label || l.descripcion || ''}</td>
+                  <td>{l.name || l.product_label || l.descripcion || (productoNombreMap && productoNombreMap[l.producto_id]) || '—'}</td>
                   <td className="td-num tabular">{qty}</td>
                   <td className="td-money">{fmtMoneyDetail(unit)}</td>
                   <td className="td-money">{fmtMoney(sub)}</td>
@@ -675,7 +682,7 @@ function DetailRow({ label, value }) {
   );
 }
 
-function LinesTab({ lines, lang, cpaPriceMap, exp, onLineAdded }) {
+function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, onLineAdded }) {
   // Sprint 2026-05-01: total con fallback al catalogo de productos
   const total = lines.reduce((a, l) => {
     let unit = Number(l.unit_price || 0);
@@ -752,6 +759,7 @@ function LinesTab({ lines, lang, cpaPriceMap, exp, onLineAdded }) {
       <table className="table">
         <thead><tr>
           <th>SKU</th>
+          <th>{lang==='es' ? 'Descripción' : 'Description'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Cant.' : 'Qty'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Precio unit.' : 'Unit price'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Subtotal' : 'Subtotal'}</th>
@@ -771,6 +779,7 @@ function LinesTab({ lines, lang, cpaPriceMap, exp, onLineAdded }) {
             return (
             <tr key={l.id}>
               <td><span className="mono-sm" style={{ fontWeight: 600, color:'var(--interactive)' }}>{l.sku}</span></td>
+              <td>{l.name || l.product_label || l.descripcion || (productoNombreMap && productoNombreMap[l.producto_id]) || '—'}</td>
               <td className="td-num tabular">{l.qty}</td>
               <td className="td-money">{fmtMoneyDetail(_unit)}</td>
               <td className="td-money">{fmtMoney(_total)}</td>
@@ -782,7 +791,7 @@ function LinesTab({ lines, lang, cpaPriceMap, exp, onLineAdded }) {
         </tbody>
         <tfoot>
           <tr>
-            <td colSpan={3} style={{ padding: 14, textAlign:'right', fontWeight: 600, color:'var(--text-tertiary)', textTransform:'uppercase', fontSize: 11, letterSpacing: '0.08em' }}>
+            <td colSpan={4} style={{ padding: 14, textAlign:'right', fontWeight: 600, color:'var(--text-tertiary)', textTransform:'uppercase', fontSize: 11, letterSpacing: '0.08em' }}>
               {lang==='es' ? 'Total' : 'Total'}
             </td>
             <td className="td-money" style={{ padding: 14, fontSize: 15, fontFamily: 'var(--font-mono)' }}>{fmtMoney(total)}</td>
