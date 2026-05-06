@@ -127,6 +127,22 @@ export default function CreateExpedienteWizardLite() {
   // estar en 0 hasta que se emiten facturas).
   const [existingClientUsage, setExistingClientUsage] = useState(0);
 
+  // ── Operador efectivo (UUID que se manda al backend) ──
+  // IMPORTANTE: declarar ANTES de los useEffect que dependen de
+  // operatingCompanyId / pricingClientId para evitar TDZ.
+  const operatingCompanyId = useMemo(() => {
+    if (operatingMode === 'mwt') return MWT_OPERATING_CLIENT_ID;
+    return selClient?.id || null;
+  }, [operatingMode, selClient]);
+
+  // Cliente cuyo precio mostramos en pantalla.
+  // Sprint 2026-05-06 · si el operador es MWT, el ADMIN ve el precio
+  // MWT (precio_lista). Si es operada por el cliente, el override de
+  // ese cliente. CLIENT_* siempre ve su precio.
+  const pricingClientId = operatingMode === 'mwt'
+    ? MWT_OPERATING_CLIENT_ID
+    : (selClient?.id || null);
+
   // Sprint 2026-05-06 · cuando el usuario elige un cliente,
   // pre-llenamos paymentDays con su dias_credito por defecto.
   useEffect(() => {
@@ -316,20 +332,6 @@ export default function CreateExpedienteWizardLite() {
       }
     }).catch(() => setClients([]));
   }, [isAdmin, user]);
-
-  // ── Operador efectivo (UUID que se manda al backend) ──
-  const operatingCompanyId = useMemo(() => {
-    if (operatingMode === 'mwt') return MWT_OPERATING_CLIENT_ID;
-    return selClient?.id || null;
-  }, [operatingMode, selClient]);
-
-  // Cliente cuyo precio mostramos en pantalla.
-  // Sprint 2026-05-06 · si el operador es MWT, el ADMIN ve el precio
-  // MWT (precio_lista). Si es operada por el cliente, el override de
-  // ese cliente. CLIENT_* siempre ve su precio.
-  const pricingClientId = operatingMode === 'mwt'
-    ? MWT_OPERATING_CLIENT_ID
-    : (selClient?.id || null);
 
   // ── Validación de step ──
   const canAdvance = useMemo(() => {
