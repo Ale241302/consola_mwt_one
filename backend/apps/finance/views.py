@@ -171,18 +171,37 @@ class PaymentViewSet(viewsets.ViewSet):
 
         items = []
 
-        # Resolver OC y montos del expediente (best-effort).
+        # Resolver OC y montos del expediente (best-effort, defensivo).
         # Los documentos suelen estar asociados a la OC, NO directamente
         # al expediente, así que necesitamos el oc_id para hacer match.
+        # Hacemos 2 queries separadas para que si una columna no existe
+        # (ej. balance/total_invoiced en algunos schemas viejos), la otra
+        # siga funcionando.
         oc_id = None
         exp_balance_fallback = 0.0
         exp_total_fallback   = 0.0
+
+        # Query 1: solo oc_id (mínimo absoluto). Si esto falla, las
+        # tabs Proforma/Factura no van a poder hacer JOIN por OC.
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT oc_id FROM expedientes.expediente WHERE id = %s LIMIT 1",
+                    [exp_id],
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    oc_id = row[0]
+        except Exception as e:
+            log.info("expediente.oc_id lookup falló: %s", e)
+
+        # Query 2: balance/total como fallback opcional. Tolerante a
+        # cualquier mismatch de columnas; si falla, queda en 0.
         try:
             with connection.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT oc_id,
-                           COALESCE(balance, 0),
+                    SELECT COALESCE(balance, 0),
                            COALESCE(total_invoiced, 0)
                       FROM expedientes.expediente
                      WHERE id = %s LIMIT 1
@@ -191,11 +210,16 @@ class PaymentViewSet(viewsets.ViewSet):
                 )
                 row = cur.fetchone()
                 if row:
-                    oc_id = row[0]
-                    exp_balance_fallback = float(row[1] or 0)
-                    exp_total_fallback   = float(row[2] or 0)
+                    exp_balance_fallback = float(row[0] or 0)
+                    exp_total_fallback   = float(row[1] or 0)
         except Exception as e:
-            log.info("expediente lookup falló (continuamos): %s", e)
+            # Schema sin balance/total_invoiced — silenciar y seguir
+            log.debug("expediente.balance/total_invoiced no disponibles: %s", e)
+
+        log.info(
+            "applicables · exp=%s · type=%s · oc_id=%s · exp_balance=%s",
+            exp_id, kind, oc_id, exp_balance_fallback,
+        )
 
         # ── PROFORMA / FACTURA ────────────────────────────────────
         if kind in ("PROFORMA", "FACTURA"):

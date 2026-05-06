@@ -141,6 +141,9 @@ class Expediente(models.Model):
 
     credit_days         = models.IntegerField(default=0)
     credit_band         = models.CharField(max_length=16, null=True, blank=True)
+    # Sprint 2026-05-06 · forma de pago del expediente.
+    # 'CREDITO' afecta credito_usado del cliente. 'CONTADO' no.
+    forma_pago          = models.CharField(max_length=16, null=True, blank=True)
     is_blocked          = models.BooleanField(default=False)
     block_reason        = models.CharField(max_length=128, null=True, blank=True)
     block_cause         = models.CharField(max_length=32, null=True, blank=True)

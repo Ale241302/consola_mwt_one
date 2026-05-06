@@ -67,6 +67,13 @@ class ExpedienteSerializer(serializers.ModelSerializer):
     incoterm        = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     freight_mode    = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     dispatch_mode   = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    # Sprint 2026-05-06 · términos de pago del expediente.
+    # CREDITO: el monto cuenta contra credito_usado del cliente.
+    # CONTADO: pago al momento, no afecta crédito.
+    forma_pago      = serializers.ChoiceField(
+        choices=[('CREDITO', 'Crédito'), ('CONTADO', 'Contado')],
+        required=False, allow_null=True, default=None,
+    )
 
     # Permitimos que el wizard incluya `lines` en el payload — el ViewSet
     # las pop()-ea antes de validar y las crea como Linea aparte. Aqui

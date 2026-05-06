@@ -89,6 +89,9 @@ export default function CreateExpedienteWizardLite() {
   const [reqDialog, setReqDialog]       = useState(null);   // {sku} cuando solicita asignación
   const [saving, setSaving]             = useState(false);
   const [toast, setToast]               = useState(null);
+  // Sprint 2026-05-06 · términos de pago del expediente.
+  const [paymentDays,   setPaymentDays]   = useState(0);
+  const [paymentMethod, setPaymentMethod] = useState("CREDITO");
 
   // ── Sprint 2026-05-01: precios y proyeccion de credito ─────────
   // Mapa { producto_id -> unit_price } resuelto desde el catalogo de
@@ -104,6 +107,17 @@ export default function CreateExpedienteWizardLite() {
   // refleja la situacion real, no solo el campo persistido (que suele
   // estar en 0 hasta que se emiten facturas).
   const [existingClientUsage, setExistingClientUsage] = useState(0);
+
+  // Sprint 2026-05-06 · cuando el usuario elige un cliente,
+  // pre-llenamos paymentDays con su dias_credito por defecto.
+  useEffect(() => {
+    if (selClient && Number(selClient.dias_credito) > 0) {
+      setPaymentDays(Number(selClient.dias_credito));
+    } else if (!selClient) {
+      setPaymentDays(0);
+      setPaymentMethod("CREDITO");
+    }
+  }, [selClient]);
 
   useEffect(() => {
     // Reset cuando cambia el cliente: el override de precio depende
@@ -283,6 +297,9 @@ export default function CreateExpedienteWizardLite() {
         // El backend ya las marca como required=False.
         estado:            "REGISTRO",
         notas:             null,
+        // Sprint 2026-05-06 · términos de pago del expediente.
+        credit_days:       Number(paymentDays) || 0,
+        forma_pago:        paymentMethod || 'CREDITO',
         lines: Object.values(grouped).map((l) => ({
           sku:           l.sku,
           talla:         l.talla || null,
@@ -377,6 +394,10 @@ export default function CreateExpedienteWizardLite() {
               priceMap={priceMap}
               creditProjection={creditProjection}
               isAdmin={isAdmin}
+              paymentDays={paymentDays}
+              setPaymentDays={setPaymentDays}
+              paymentMethod={paymentMethod}
+              setPaymentMethod={setPaymentMethod}
             />
           )}
         </motion.div>
@@ -967,7 +988,7 @@ function Step2Productos({
 // ═════════════════════════════════════════════════════════════
 // STEP 3 · RESUMEN (sin financiero)
 // ═════════════════════════════════════════════════════════════
-function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, creditProjection, isAdmin = false }) {
+function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentMethod, setPaymentMethod }) {
   const totalUnits = orderLines.reduce((a, l) => a + Number(l.cantidad || 0), 0);
   // Agrupar por SKU para el resumen + acumular subtotales por SKU
   const bySku = {};
@@ -1093,8 +1114,94 @@ function Step3Resumen({ lang, client, responsable, orderLines, priceMap = {}, cr
         </div>
       )}
 
+      {/* Sprint 2026-05-06 · TÉRMINOS DE PAGO ────────────────────────────── */}
+      {client && (
+        <div style={{
+          marginTop: 14,
+          padding: "14px 16px",
+          borderRadius: 10,
+          background: "#F7F9FC",
+          border: "1px solid #E1E6ED",
+        }}>
+          <div className="micro" style={{
+            color: "#0B1E3A", letterSpacing: 1, fontWeight: 700, marginBottom: 12,
+          }}>
+            {lang === "es" ? "TÉRMINOS DE PAGO" : "PAYMENT TERMS"}
+          </div>
+          <div style={{
+            display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14,
+          }}>
+            <div>
+              <div style={{
+                fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
+                letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4,
+              }}>
+                {lang === "es" ? "Días crédito (cliente)" : "Client credit days"}
+              </div>
+              <div className="tabular-nums" style={{
+                fontSize: 16, fontWeight: 700, color: "#0B1E3A", padding: "8px 0",
+              }}>
+                {Number(client.dias_credito || 0)} {lang === "es" ? "días" : "days"}
+              </div>
+            </div>
+            <div>
+              <div style={{
+                fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
+                letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4,
+              }}>
+                {lang === "es" ? "Días de pago (este pedido)" : "Payment days (this order)"}
+              </div>
+              <input
+                type="number"
+                min="0"
+                className="input tabular-nums"
+                value={paymentDays}
+                onChange={(e) => setPaymentDays(Math.max(0, Number(e.target.value) || 0))}
+                disabled={paymentMethod === "CONTADO"}
+                style={{ fontWeight: 700 }}
+              />
+            </div>
+            <div>
+              <div style={{
+                fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
+                letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4,
+              }}>
+                {lang === "es" ? "Forma de pago" : "Payment method"}
+              </div>
+              <select
+                className="input"
+                value={paymentMethod}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setPaymentMethod(v);
+                  if (v === "CONTADO") setPaymentDays(0);
+                  else if (Number(client.dias_credito) > 0) setPaymentDays(Number(client.dias_credito));
+                }}
+                style={{ fontWeight: 700 }}
+              >
+                <option value="CREDITO">{lang === "es" ? "Crédito" : "Credit"}</option>
+                <option value="CONTADO">{lang === "es" ? "Contado" : "Cash"}</option>
+              </select>
+            </div>
+          </div>
+          {paymentMethod === "CONTADO" && (
+            <div style={{
+              marginTop: 12,
+              padding: "8px 12px", borderRadius: 6,
+              background: "rgba(0,178,134,0.10)",
+              color: "#00875A", fontSize: 12, fontWeight: 600,
+            }}>
+              ✓ {lang === "es"
+                  ? "Pago al contado · NO afecta el crédito disponible del cliente."
+                  : "Cash payment · does NOT affect client\u2019s available credit."}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Sprint 2026-05-01: Impacto en credito (CEO-only) ── */}
-      {isAdmin && creditProjection && creditProjection.limit > 0 && orderLines.length > 0 && (
+      {/* Sprint 2026-05-06: ocultar si forma_pago = CONTADO */}
+      {paymentMethod !== "CONTADO" && isAdmin && creditProjection && creditProjection.limit > 0 && orderLines.length > 0 && (
         <div style={{ marginTop: 18 }}>
           <CreditProjectionCard cp={creditProjection} lang={lang}/>
         </div>
@@ -1129,6 +1236,9 @@ function adaptClient(c) {
     contacto_email:  c.contacto_email,
     credito_limit:   Number(c.credito_aprobado || c.credito_limit_usd || 0),
     credito_used:    Number(c.credito_usado || 0),
+    // Sprint 2026-05-06 · días de crédito por defecto del cliente.
+    // El wizard lo usa como default del input 'Días de pago' del Paso 3.
+    dias_credito:    Number(c.dias_credito || 0),
   };
 }
 

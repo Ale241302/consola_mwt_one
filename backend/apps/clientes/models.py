@@ -148,6 +148,9 @@ class Cliente(models.Model):
                              -- consumiendo crédito (compromiso con fábrica). Sin SAP → libera.
                              (e.is_active = FALSE AND l.sap IS NOT NULL AND l.sap <> '')
                            )
+                           -- Sprint 2026-05-06 · CONTADO no afecta crédito.
+                           -- IS NULL = retro-compat con expedientes pre-fix (asumimos CREDITO).
+                           AND (e.forma_pago = 'CREDITO' OR e.forma_pago IS NULL)
                     LEFT JOIN productos.producto p ON p.id = l.producto_id
                     WHERE l.is_active = TRUE
                       AND e.client_id::text IN ({placeholders})
@@ -198,6 +201,9 @@ class Cliente(models.Model):
                              -- consumiendo crédito (compromiso con fábrica). Sin SAP → libera.
                              (e.is_active = FALSE AND l.sap IS NOT NULL AND l.sap <> '')
                            )
+                           -- Sprint 2026-05-06 · CONTADO no afecta crédito.
+                           -- IS NULL = retro-compat con expedientes pre-fix (asumimos CREDITO).
+                           AND (e.forma_pago = 'CREDITO' OR e.forma_pago IS NULL)
                     LEFT JOIN productos.producto p ON p.id = l.producto_id
                     WHERE l.is_active = TRUE
                       AND e.client_id::text = %s
