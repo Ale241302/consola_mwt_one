@@ -876,23 +876,12 @@ function MwtOperatorCard({ lang }) {
       background: 'rgba(0,178,134,0.05)',
       borderRadius: 12,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-        <div style={{
-          width: 30, height: 30, borderRadius: 8,
-          background: 'var(--brand-accent, #00B286)',
-          color: '#fff',
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          fontWeight: 800, fontSize: 13, letterSpacing: 0.4,
-        }}>
-          MW
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary, #0B1E3A)' }}>
+          {MWT_OPERATOR_NAME}
         </div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary, #0B1E3A)' }}>
-            {MWT_OPERATOR_NAME}
-          </div>
-          <div className="caption" style={{ color: 'var(--text-tertiary)' }}>
-            {lang === 'es' ? 'Operador del expediente' : 'File operator'}
-          </div>
+        <div className="caption" style={{ color: 'var(--text-tertiary)' }}>
+          {lang === 'es' ? 'Operador del expediente' : 'File operator'}
         </div>
       </div>
       {limit > 0 && (

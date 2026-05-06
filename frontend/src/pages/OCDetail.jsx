@@ -43,6 +43,9 @@ import AddOCProductModal from "../components/expedientes/AddOCProductModal.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
          productosApi, documentosApi, storageApi } from "../lib/api.js";
+import {
+  MWT_OPERATING_CLIENT_ID, MWT_OPERATOR_NAME, isMwtOperated, isClientRole,
+} from "../lib/operatingCompany.js";
 
 // ─────────────────────────────────────────────────────────────────────
 // Sprint 2026-05-02 (AG-03): helpers para adaptar el shape de
@@ -303,7 +306,10 @@ export default function ScreenOCDetail() {
       // precio del día de creación. Solo si la línea histórica tiene
       // unit_price=0 (líneas creadas antes del fix), caemos al lookup
       // live como mejor esfuerzo de backfill visual.
-      const persistedPrice = Number(l.unit_price || 0);
+      // Sprint 2026-05-06 · backend devuelve unit_price_for_viewer
+      // resuelto por rol: Admin/MWT → unit_price_mwt, CLIENT_* →
+      // unit_price_client. Si no llegó (compat) caemos a unit_price.
+      const persistedPrice = Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
       const livePrice      = l.producto_id ? Number(cpaPriceMap[l.producto_id] || 0) : 0;
       const unit = persistedPrice > 0 ? persistedPrice : livePrice;
       // Sprint 2026-05-02 (AG-03): para el campo "Nombre" priorizamos
@@ -740,12 +746,31 @@ export default function ScreenOCDetail() {
             <span className="micro">{tr(lang,'po_number')}</span>
           </div>
 
-          <div className="flex ai-center gap-3" style={{marginBottom: 6}}>
+          <div className="flex ai-center gap-3" style={{marginBottom: 6, flexWrap: 'wrap'}}>
             <h1 className="page-title" style={{margin: 0}}>{oc.code}</h1>
             <span className="oc-status-chip" style={{
               color: statusColor, background: 'color-mix(in oklab,' + statusColor + ' 14%, transparent)',
               border: '1px solid color-mix(in oklab,' + statusColor + ' 36%, transparent)',
             }}>● {statusLabel}</span>
+            {/* Sprint 2026-05-06 · si la OC está operada por Muito Work Limitada
+                (operating_company_id en cualquiera de sus expedientes), mostramos
+                un chip explícito. Visible para todos los roles (es información
+                contractual: el cliente final también debe saber que MWT opera). */}
+            {(() => {
+              const opId = (apiOcExpedientes || []).find(e => e?.operating_company_id)?.operating_company_id;
+              if (!isMwtOperated(opId)) return null;
+              return (
+                <span className="oc-status-chip" style={{
+                  color: 'var(--brand-primary, #0B1E3A)',
+                  background: 'color-mix(in oklab, var(--brand-accent, #00B286) 12%, transparent)',
+                  border: '1px solid color-mix(in oklab, var(--brand-accent, #00B286) 40%, transparent)',
+                  fontWeight: 600,
+                }}
+                title={lang === 'es' ? 'El expediente lo opera Muito Work Limitada' : 'Operated by Muito Work Limitada'}>
+                  {lang === 'es' ? `Operado por ${MWT_OPERATOR_NAME}` : `Operated by ${MWT_OPERATOR_NAME}`}
+                </span>
+              );
+            })()}
           </div>
 
           <div className="flex ai-center gap-3 page-subtitle" style={{flexWrap:'wrap'}}>
@@ -1838,4 +1863,3 @@ export default function ScreenOCDetail() {
     </div>
   );
 }
-
