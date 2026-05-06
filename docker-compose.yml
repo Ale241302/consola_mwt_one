@@ -140,6 +140,82 @@ services:
       start_period: 40s
 
   # -----------------------------------------------------------------
+  # Celery worker — Fase 3 (queue ai_analyzer + emails + default)
+  # -----------------------------------------------------------------
+  # Usa la misma imagen del servicio django (build context idéntico)
+  # pero arranca como worker en lugar de gunicorn. Escucha 3 queues:
+  #   · ai_analyzer  — llamadas a Claude para validar comprobantes
+  #   · emails       — envíos SMTP/SES (Fase 4)
+  #   · default      — todo lo demás (tickets, etc.)
+  # Si el worker se cae, la API sigue funcionando: tasks.enqueue_*
+  # tiene fallback síncrono (FINANCE_AI_SYNC=1 fuerza in-process).
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: consola-mwt-one/django:latest
+    container_name: consola-mwt-one-celery-worker
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+      django:   { condition: service_started }
+    env_file:
+      - .env
+    environment: *backend-env
+    volumes:
+      - ./backend:/app
+      - ./database:/sql:ro
+      - ./backend/sql:/sql-modules:ro
+    command: >
+      celery -A config worker
+        --loglevel=info
+        --concurrency=2
+        --queues=ai_analyzer,emails,default
+        --hostname=worker@%h
+    networks:
+      - consola-net
+    healthcheck:
+      # `celery inspect ping` devuelve "pong" si el worker está vivo.
+      test: ["CMD-SHELL", "celery -A config inspect ping -d worker@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # -----------------------------------------------------------------
+  # Celery beat — Fase 5A (cron · fx_rate_refresh @ 0 1 * * * UTC)
+  # -----------------------------------------------------------------
+  # Una sola instancia: usa DatabaseScheduler de django-celery-beat,
+  # que persiste el lock en la DB y evita doble-disparo si por error
+  # se levantan dos beats. Si el contenedor se cae, no perdemos
+  # tasks: al rearrancar, el scheduler recoge el next-run desde la DB.
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: consola-mwt-one/django:latest
+    container_name: consola-mwt-one-celery-beat
+    restart: unless-stopped
+    depends_on:
+      postgres:      { condition: service_healthy }
+      redis:         { condition: service_healthy }
+      celery-worker: { condition: service_started }
+    env_file:
+      - .env
+    environment: *backend-env
+    volumes:
+      - ./backend:/app
+      - ./database:/sql:ro
+      - ./backend/sql:/sql-modules:ro
+    command: >
+      celery -A config beat
+        --loglevel=info
+        --scheduler=django_celery_beat.schedulers:DatabaseScheduler
+    networks:
+      - consola-net
+
+  # -----------------------------------------------------------------
   # Frontend (Vite build + nginx)
   # -----------------------------------------------------------------
   frontend:

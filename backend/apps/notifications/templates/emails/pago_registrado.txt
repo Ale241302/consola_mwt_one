@@ -1,0 +1,56 @@
+{# Versión texto plano del pago_registrado.html — fallback para clientes
+   que no soportan HTML. Mismas variables que el template HTML. #}MWT One · Notificación de pago
+========================================
+
+{{ emoji_estado }} Pago {{ estado_human }}
+Verdict IA: {{ verdict.status }} · Confianza {{ verdict.confianza }}%
+
+EXPEDIENTE
+----------
+Referencia:        {{ expediente.ref }}
+Cliente:           {{ cliente.nombre }}
+Estado expediente: {{ expediente.estado }}
+
+DETALLE DEL PAGO
+----------------
+Monto:        {{ payment.monto|floatformat:2 }} {{ payment.moneda }}{% if payment.moneda != "USD" %} (≈ ${{ payment.monto_usd|floatformat:2 }} USD){% endif %}
+Fecha:        {{ payment.fecha|date:"d M Y" }}
+Método:       {{ payment.get_metodo_display }}
+Tipo de pago: {{ payment.get_tipo_pago_display }}
+Referencia:   {{ payment.referencia }}{% if payment.notas %}
+Notas:        {{ payment.notas }}{% endif %}
+Registrado por: {{ registrado_por.get_full_name|default:registrado_por.email }}
+
+SE APLICA A
+-----------
+{% for ap in aplicaciones %}- [{{ ap.tipo }}] {{ ap.label }} → {{ ap.monto|floatformat:2 }} {{ payment.moneda }}
+{% endfor %}
+
+ANÁLISIS DE IA
+--------------
+{{ verdict.razon_humana }}
+{% if verdict.mismatch_fields %}
+Campos divergentes: {{ verdict.mismatch_fields|join:", " }}{% endif %}
+Modelo: {{ verdict.model_version }} · Analizado: {{ verdict.analyzed_at|date:"d M Y H:i" }} UTC
+{% if verdict.alertas_fraude %}
+ALERTAS DE POTENCIAL FRAUDE
+---------------------------{% for alerta in verdict.alertas_fraude %}
+- {{ alerta|cut:"_"|capfirst }}{% endfor %}
+{% endif %}
+
+DATOS EXTRAÍDOS DEL COMPROBANTE
+-------------------------------{% if verdict.monto_extraido %}
+Monto en comprobante: {{ verdict.monto_extraido }} {{ verdict.moneda_extraida|default:"—" }}{% endif %}{% if verdict.ordenante_extraido %}
+Ordenante:            {{ verdict.ordenante_extraido }}{% endif %}{% if verdict.beneficiario_extraido %}
+Beneficiario:         {{ verdict.beneficiario_extraido }}{% endif %}{% if verdict.banco_emisor or verdict.banco_receptor %}
+Banca:                {{ verdict.banco_emisor|default:"—" }} → {{ verdict.banco_receptor|default:"—" }}{% endif %}
+
+Ver expediente en consola: {{ consola_url }}
+
+El comprobante está adjunto a este correo ({{ payment.evidencia.mime_type }}, {{ payment.evidencia.tamaño_bytes|filesizeformat }}).
+
+----------------------------------------
+Mensaje automático · MWT ONE — módulo Finance
+Soporte: {{ support_email|default:"soporte@mwt.one" }}
+ID del pago: {{ payment.id }}
+© {{ year }} MWT ONE

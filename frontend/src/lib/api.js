@@ -418,6 +418,48 @@ export const builderTemplatesApi = {
 
 export const pagosApi          = resource("pagos");
 export const conciliacionesApi = resource("conciliaciones");
+
+// ---------------------------------------------------------------------
+// Finance v2.0 · "Registrar Pago" con validación IA del comprobante
+//   POST /api/finance/payments/                  (multipart · drawer)
+//   GET  /api/finance/payments/                  (lista + filtros)
+//   GET  /api/finance/payments/{id}/             (detalle + aplicaciones + evidencia)
+//   GET  /api/finance/payments/select_metodos/   (catálogo)
+//   GET  /api/finance/payments/select_tipos/     (catálogo)
+//   GET  /api/finance/payments/select_estados/   (catálogo)
+//
+// `register({...campos, evidencia: File, aplicaciones: [{...}]})` arma
+// el FormData multipart automáticamente. El backend devuelve el Payment
+// con codigo (PAY-YYYY-#####) y estado=PENDIENTE_AI (Fase 2 — sin IA).
+// ---------------------------------------------------------------------
+const _financeListGet = resource("finance/payments");
+export const financePaymentsApi = {
+  list:    _financeListGet.list,
+  get:     _financeListGet.get,
+  selectMetodos: () => apiFetch("/finance/payments/select_metodos/", { token: getToken() }),
+  selectTipos:   () => apiFetch("/finance/payments/select_tipos/",   { token: getToken() }),
+  selectEstados: () => apiFetch("/finance/payments/select_estados/", { token: getToken() }),
+
+  register: async ({
+    expediente_id, monto, moneda, fecha, metodo, tipo_pago,
+    referencia, notas, aplicaciones, evidencia, event_id,
+  }) => {
+    const fd = new FormData();
+    fd.append("expediente_id", expediente_id);
+    fd.append("monto",         String(monto));
+    fd.append("moneda",        moneda);
+    fd.append("fecha",         fecha);  // ISO YYYY-MM-DD
+    fd.append("metodo",        metodo);
+    fd.append("tipo_pago",     tipo_pago);
+    fd.append("referencia",    referencia);
+    if (notas) fd.append("notas", notas);
+    if (event_id) fd.append("event_id", event_id);
+    fd.append("aplicaciones", JSON.stringify(aplicaciones || []));
+    fd.append("evidencia", evidencia);
+    return postMultipart("/finance/payments/", fd, { token: getToken() });
+  },
+};
+
 export const transferenciasApi    = resource("transferencias");
 export const transferLineasApi    = resource("transfer-lineas");
 export const transferEventosApi   = resource("transfer-eventos");

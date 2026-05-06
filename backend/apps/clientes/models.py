@@ -368,3 +368,52 @@ class ClienteCreditSnapshot(models.Model):
         managed  = False
         db_table = 'clientes\".\"cliente_credit_snapshot'
         ordering = ('-snapshot_date', '-created_at')
+
+
+# ════════════════════════════════════════════════════════════
+# Credit Clock v2.0 — Fase 5A
+# Tablas creadas por backend/sql/B8_finance_credit_clock.sql
+# ════════════════════════════════════════════════════════════
+class ClienteCreditConfig(models.Model):
+    """Configuración del reloj de crédito por cliente.
+
+    Defaults globales: 90 / 60 / 75. Premium 120/90/105, nuevos 60/40/50.
+    Editado por CEO/ADMIN desde el perfil del cliente.
+    """
+    cliente_id           = models.UUIDField(primary_key=True)
+    tope_dias            = models.PositiveIntegerField(default=90)
+    umbral_amarillo_dias = models.PositiveIntegerField(default=60)
+    umbral_rojo_dias     = models.PositiveIntegerField(default=75)
+    bloqueo_automatico   = models.BooleanField(default=True)
+    notas                = models.TextField(null=True, blank=True)
+    updated_by           = models.UUIDField(null=True, blank=True)
+    created_at           = models.DateTimeField()
+    updated_at           = models.DateTimeField()
+
+    class Meta:
+        managed  = False
+        db_table = 'clientes\".\"credit_config'
+
+
+class ClienteCreditClock(models.Model):
+    """Cache derivada del estado de crédito.
+
+    Recomputada por CreditClockProjector cuando un Payment confirmado
+    cambia el balance del cliente. Append-only de hecho via UPDATE
+    (no se borra; siempre hay 1 fila por cliente).
+    """
+    cliente_id                    = models.UUIDField(primary_key=True)
+    dias_credito_consumidos       = models.PositiveIntegerField(default=0)
+    expedientes_abiertos_total    = models.IntegerField(default=0)
+    expedientes_abiertos_amarillo = models.IntegerField(default=0)
+    expedientes_abiertos_rojo     = models.IntegerField(default=0)
+    monto_pendiente_usd           = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    bloqueado                     = models.BooleanField(default=False)
+    bloqueo_reason                = models.CharField(max_length=64, null=True, blank=True)
+    last_recalc_at                = models.DateTimeField()
+    last_payment_id               = models.UUIDField(null=True, blank=True)
+    updated_at                    = models.DateTimeField()
+
+    class Meta:
+        managed  = False
+        db_table = 'clientes\".\"credit_clock'

@@ -658,3 +658,169 @@ class ClienteViewSet(viewsets.ViewSet):
             "monto_vencido_usd":  float(monto_vencido),
             "estado_semaforo":    estado,
         })
+
+    # ════════════════════════════════════════════════════════
+    # Credit Clock v2.0 — Fase 5A
+    # ════════════════════════════════════════════════════════
+    @action(detail=True, methods=["get", "patch"], url_path="credit_config")
+    def credit_config(self, request, pk=None):
+        """GET → devuelve la config; PATCH → actualiza tope/umbrales/bloqueo.
+
+        Defaults globales 90/60/75/True. Editable solo por CEO/ADMIN
+        (R3). El recompute del clock se dispara automáticamente al
+        guardar, para reflejar de inmediato el cambio en el dashboard.
+        """
+        # Validar que el cliente existe (para 404 limpio)
+        try:
+            Cliente.objects.get(pk=pk)
+        except Cliente.DoesNotExist:
+            return Response({"detail": "Cliente no existe"}, status=404)
+
+        # GET — leer (con defaults si no hay row)
+        if request.method == "GET":
+            with connection.cursor() as c:
+                c.execute(
+                    """
+                    SELECT tope_dias, umbral_amarillo_dias, umbral_rojo_dias,
+                           bloqueo_automatico, notas, updated_by, updated_at
+                      FROM clientes.credit_config
+                     WHERE cliente_id = %s LIMIT 1
+                    """,
+                    [pk],
+                )
+                row = c.fetchone()
+            if not row:
+                return Response({
+                    "cliente_id":           pk,
+                    "tope_dias":            90,
+                    "umbral_amarillo_dias": 60,
+                    "umbral_rojo_dias":     75,
+                    "bloqueo_automatico":   True,
+                    "notas":                None,
+                    "is_default":           True,
+                })
+            return Response({
+                "cliente_id":           pk,
+                "tope_dias":            row[0],
+                "umbral_amarillo_dias": row[1],
+                "umbral_rojo_dias":     row[2],
+                "bloqueo_automatico":   bool(row[3]),
+                "notas":                row[4],
+                "updated_by":           str(row[5]) if row[5] else None,
+                "updated_at":           row[6].isoformat() if row[6] else None,
+                "is_default":           False,
+            })
+
+        # PATCH — actualizar (R3 · solo ADMIN/CEO; el endpoint global
+        # tiene RoleBasedPermission por DEFAULT_PERMISSION_CLASSES, pero
+        # marcamos required_module aquí por claridad)
+        body = request.data or {}
+        tope     = int(body.get("tope_dias", 90))
+        amarillo = int(body.get("umbral_amarillo_dias", 60))
+        rojo     = int(body.get("umbral_rojo_dias", 75))
+        if not (0 < amarillo < rojo <= tope):
+            return Response({
+                "detail": ("Umbrales inválidos: se requiere "
+                           "0 < umbral_amarillo_dias < umbral_rojo_dias <= tope_dias"),
+            }, status=400)
+
+        with connection.cursor() as c:
+            c.execute(
+                """
+                INSERT INTO clientes.credit_config (
+                    cliente_id, tope_dias, umbral_amarillo_dias, umbral_rojo_dias,
+                    bloqueo_automatico, notas, updated_by, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                ON CONFLICT (cliente_id) DO UPDATE SET
+                    tope_dias            = EXCLUDED.tope_dias,
+                    umbral_amarillo_dias = EXCLUDED.umbral_amarillo_dias,
+                    umbral_rojo_dias     = EXCLUDED.umbral_rojo_dias,
+                    bloqueo_automatico   = EXCLUDED.bloqueo_automatico,
+                    notas                = EXCLUDED.notas,
+                    updated_by           = EXCLUDED.updated_by,
+                    updated_at           = NOW()
+                """,
+                [
+                    pk, tope, amarillo, rojo,
+                    bool(body.get("bloqueo_automatico", True)),
+                    (body.get("notas") or None),
+                    str(request.user.id) if getattr(request.user, "id", None) else None,
+                ],
+            )
+
+        # Recompute inmediato — el dashboard refleja el cambio en <2s
+        from apps.clientes.credit_clock import CreditClockProjector
+        snap = CreditClockProjector.recompute(uuid.UUID(pk))
+        return Response({
+            "ok":         True,
+            "cliente_id": pk,
+            "config": {
+                "tope_dias":            tope,
+                "umbral_amarillo_dias": amarillo,
+                "umbral_rojo_dias":     rojo,
+                "bloqueo_automatico":   bool(body.get("bloqueo_automatico", True)),
+            },
+            "clock": snap.as_dict(),
+        })
+
+    @action(detail=True, methods=["get", "post"], url_path="credit_clock")
+    def credit_clock(self, request, pk=None):
+        """
+        GET  → devuelve la cache derivada (días, expedientes en banda,
+               monto pendiente, bloqueado).
+        POST → recompute manual (reservado a CEO/ADMIN). Útil cuando
+               el cron del worker no corrió o cambió un dato externo.
+        """
+        try:
+            Cliente.objects.get(pk=pk)
+        except Cliente.DoesNotExist:
+            return Response({"detail": "Cliente no existe"}, status=404)
+
+        if request.method == "POST":
+            from apps.clientes.credit_clock import CreditClockProjector
+            snap = CreditClockProjector.recompute(uuid.UUID(pk))
+            return Response({"ok": True, "clock": snap.as_dict()})
+
+        # GET — read cache
+        with connection.cursor() as c:
+            c.execute(
+                """
+                SELECT dias_credito_consumidos,
+                       expedientes_abiertos_total,
+                       expedientes_abiertos_amarillo,
+                       expedientes_abiertos_rojo,
+                       monto_pendiente_usd, bloqueado, bloqueo_reason,
+                       last_recalc_at, last_payment_id, updated_at
+                  FROM clientes.credit_clock
+                 WHERE cliente_id = %s LIMIT 1
+                """,
+                [pk],
+            )
+            row = c.fetchone()
+        if not row:
+            return Response({
+                "cliente_id":              pk,
+                "dias_credito_consumidos": 0,
+                "expedientes_abiertos_total":    0,
+                "expedientes_abiertos_amarillo": 0,
+                "expedientes_abiertos_rojo":     0,
+                "monto_pendiente_usd": "0.00",
+                "bloqueado":           False,
+                "bloqueo_reason":      None,
+                "last_recalc_at":      None,
+                "is_stale":            True,
+            })
+        return Response({
+            "cliente_id":                    pk,
+            "dias_credito_consumidos":       row[0],
+            "expedientes_abiertos_total":    row[1],
+            "expedientes_abiertos_amarillo": row[2],
+            "expedientes_abiertos_rojo":     row[3],
+            "monto_pendiente_usd":           str(row[4]),
+            "bloqueado":                     bool(row[5]),
+            "bloqueo_reason":                row[6],
+            "last_recalc_at":                row[7].isoformat() if row[7] else None,
+            "last_payment_id":               str(row[8]) if row[8] else None,
+            "updated_at":                    row[9].isoformat() if row[9] else None,
+            "is_stale":                      False,
+        })

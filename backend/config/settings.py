@@ -83,6 +83,7 @@ LOCAL_APPS = [
     "apps.users",           # M3 CORE · identidad — usuarios + addresses + activity feed + password reset tokens
     "apps.roles",           # M3 CORE · RBAC — role_cat + module_cat + role_permission + user_role_bridge
     "apps.tickets",         # Modulo de tickets / soporte interno (LOTE_SM_TICKETS)
+    "apps.finance",         # Finance v2.0 · "Registrar Pago" + IA + audit append-only
     # Los siguientes módulos se irán activando cuando cada app tenga su
     # apps.py + views.py correspondiente. Dejarlos comentados evita que
     # Django falle al arrancar por ImportError durante INSTALLED_APPS.
@@ -255,6 +256,36 @@ CELERY_ACCEPT_CONTENT      = ["json"]
 CELERY_TASK_SERIALIZER     = "json"
 CELERY_RESULT_SERIALIZER   = "json"
 CELERY_TIMEZONE            = "America/Mexico_City"
+
+# Beat schedule en código (también persistido en DB por el
+# DatabaseScheduler — la primera corrida lo backfilla automáticamente).
+# Cron en UTC para no depender de DST de México (que ya no se aplica
+# desde 2022 pero igual mantenemos UTC para deploys multi-región).
+from celery.schedules import crontab as _crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    # FX rate refresh — Fase 5A. 0 1 * * * UTC = 8 PM hora COL del día
+    # anterior, antes del cierre operativo del banco.
+    "fx_rate_refresh": {
+        "task":     "finance.fx_rate_refresh",
+        "schedule": _crontab(hour=1, minute=0),
+        "options":  {"queue": "default", "expires": 3600},
+    },
+    # Archival a S3 Glacier — Fase 5C (placeholder; el task se crea
+    # en una sub-fase posterior. Comentado hasta que esté implementado).
+    # "archive_old_payments": {
+    #     "task":     "finance.archive_old_payments",
+    #     "schedule": _crontab(hour=3, minute=0, day_of_month=1),
+    #     "options":  {"queue": "default"},
+    # },
+}
+
+# --------------------------------------------------------------------
+# Open Exchange Rates · FXService (Fase 5A)
+# --------------------------------------------------------------------
+OXR_APP_ID = os.environ.get("OXR_APP_ID", "")
+OXR_BASE_URL = os.environ.get("OXR_BASE_URL", "https://openexchangerates.org/api")
+FX_REQUEST_TIMEOUT = int(os.environ.get("FX_REQUEST_TIMEOUT", "8"))
 
 # --------------------------------------------------------------------
 # MinIO (S3-compatible) — endpoint del VPS compartido.

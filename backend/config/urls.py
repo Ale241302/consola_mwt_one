@@ -25,4 +25,5 @@ urlpatterns = [
     path("api/",           include("apps.users.urls")),            # /api/users/ + /api/user-addresses/ + /api/activity-feed/ [M3 CORE · identidad]
     path("api/",           include("apps.roles.urls")),            # /api/roles/ + /api/permissions/*  [M3 CORE · RBAC]
     path("api/",           include("apps.tickets.urls")),          # /api/tickets/ + chat + adjuntos + dashboard [LOTE_SM_TICKETS]
+    path("api/",           include("apps.finance.urls")),          # /api/finance/payments/ [v2.0 · drawer Registrar Pago + IA + audit]
 ]

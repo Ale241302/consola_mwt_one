@@ -1,8 +1,11 @@
 // Expediente detail — the hero screen
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtMoneyDetail, fmtDate, relativeTime } from "../lib/i18n.js";
-import { expedientesApi, clientesApi, marcasApi, lineasApi, productosApi } from "../lib/api.js";
+import {
+  expedientesApi, clientesApi, marcasApi, lineasApi, productosApi,
+  financePaymentsApi,
+} from "../lib/api.js";
 import {
   Badge, StatusBadge, Progress, StateTimeline, CreditBar, CountryFlag,
 } from "../components/ui/primitives.jsx";
@@ -16,6 +19,7 @@ import {
   IconArrow, IconDollar, IconPlus, IconPaperclip, IconMail, IconMore,
   IconSettings, IconUpload, IconCheck, IconFileText, IconDownload,
   IconEye, IconLock, IconGlobe, IconSparkle, IconX, IconCreditCard,
+  IconAlert, IconRefresh,
 } from "../lib/icons.jsx";
 import {
   EXPEDIENTES, CLIENTS, BRANDS, OCS, HERO_ID, HERO_LINES, HERO_COSTS,
@@ -1334,7 +1338,344 @@ function CostDrawer({ lang, exp, onClose }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// PaymentDrawer · v2.0 (Fase 2 · conectado al backend)
+// Implementa el spec de "Registrar pago" con todos los campos requeridos:
+// monto, moneda, fecha, método (TRANSFERENCIA_BANCARIA / NOTA_CREDITO),
+// tipo de pago (PARCIAL / COMPLETO), referencia, notas, aplicar a
+// (Costo / Producto / Proforma / Factura) y comprobante adjunto.
+//
+// El submit hace POST multipart a /api/finance/payments/ y persiste el
+// pago en estado PENDIENTE_AI. La validación IA del comprobante se
+// enchufa en Fase 3 (Celery + AIPaymentAnalyzer); el email transaccional
+// se enchufa en Fase 4. Los items mock de "Aplicar a" usan UUIDs estables
+// hasta que en Fase 5 conectemos endpoints reales por expediente.
+// ─────────────────────────────────────────────────────────────────────────
+const PAY_CURRENCIES = ['USD','EUR','COP','MXN','PEN'];
+const PAY_EVIDENCE_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const PAY_EVIDENCE_MIMES = ['application/pdf','image/png','image/jpeg','image/webp'];
+
+// Genera un UUID v4 RFC4122 sin depender de crypto.randomUUID() (que no
+// existe en algunos browsers / contextos no-secure). Suficiente para
+// IDs de eventos y mocks de "Aplicar a" hasta Fase 5.
+function newUuidV4() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    try { return crypto.randomUUID(); } catch (_) { /* fallthrough */ }
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+// Mock policy de "Aplicar a" — los IDs son UUIDs porque el serializer
+// del backend valida con serializers.UUIDField. En Fase 5 reemplazamos
+// por una llamada a /api/finance/applicables/?expediente=<id>&type=<>.
+function mockPaymentApplicables(exp) {
+  const balance = Number(exp?.balance) || 0;
+  return {
+    COSTO: [
+      { id:'b1c0c0c0-0001-4000-8000-000000000001', code:'COSTO-LOGI-01', label:'Flete marítimo · MSC Leone', supplier:'Maersk',                balance: 1840 },
+      { id:'b1c0c0c0-0001-4000-8000-000000000002', code:'COSTO-ADU-01',  label:'Aduana destino · Lima',     supplier:'DHL Trade Forwarding',  balance:  620 },
+    ],
+    PRODUCTO: [
+      { id:'b1c0c0c0-0002-4000-8000-000000000001', code:'LEAP-CORE-42', label:'LeapCore-42 (50u)',  supplier:'Rana Walk', balance: 12500, qty: 50  },
+      { id:'b1c0c0c0-0002-4000-8000-000000000002', code:'LEAP-MINI-18', label:'LeapMini-18 (120u)', supplier:'Rana Walk', balance:  8400, qty: 120 },
+    ],
+    PROFORMA: [
+      { id:'b1c0c0c0-0003-4000-8000-000000000001', code:'PF-0942', label:'Proforma PF-0942', balance: Math.max(balance * 0.5, 12500), pct:'50%' },
+    ],
+    FACTURA: [
+      { id:'b1c0c0c0-0004-4000-8000-000000000001', code:'FAC-2026-01842', label:'Factura FAC-2026-01842', balance: balance || 25000, pct:'100%' },
+    ],
+  };
+}
+
 function PaymentDrawer({ lang, exp, onClose }) {
+  const today = new Date().toISOString().slice(0,10);
+  const applicables = useMemo(() => mockPaymentApplicables(exp), [exp]);
+
+  // Estado del formulario
+  const [monto,         setMonto]         = useState('');
+  const [moneda,        setMoneda]        = useState('USD');
+  const [fecha,         setFecha]         = useState(today);
+  const [metodo,        setMetodo]        = useState('TRANSFERENCIA_BANCARIA');
+  const [tipoPago,      setTipoPago]      = useState('PARCIAL');
+  const [referencia,    setReferencia]    = useState('');
+  const [notas,         setNotas]         = useState('');
+  const [applyTab,      setApplyTab]      = useState('PROFORMA');
+  const [selectedDoc,   setSelectedDoc]   = useState(applicables.PROFORMA[0]?.id ?? null);
+  const [searchQuery,   setSearchQuery]   = useState('');
+  const [evidence,      setEvidence]      = useState(null);   // File | null
+  const [evidencePrev,  setEvidencePrev]  = useState(null);   // dataURL para imágenes
+  const [touched,       setTouched]       = useState({});
+  const [submitting,    setSubmitting]    = useState(false);
+  const [submitted,     setSubmitted]     = useState(false);
+  const [submitResult,  setSubmitResult]  = useState(null);   // payload del backend
+  const [submitError,   setSubmitError]   = useState(null);   // string | { detail, ...}
+  const [dragOver,      setDragOver]      = useState(false);
+  const fileInputRef = useRef(null);
+  // event_id estable para la sesión del drawer — evita doble-registro
+  // si el usuario hace doble-click o hay reintento por red.
+  const eventId = useMemo(() => newUuidV4(), []);
+
+  // Documento seleccionado (para validación monto vs saldo)
+  const selectedDocObj = useMemo(() => {
+    const list = applicables[applyTab] || [];
+    return list.find(d => d.id === selectedDoc) || null;
+  }, [applicables, applyTab, selectedDoc]);
+
+  // Auto-ajuste de monto cuando se elige tipo COMPLETO
+  useEffect(() => {
+    if (tipoPago === 'COMPLETO' && selectedDocObj?.balance) {
+      setMonto(Number(selectedDocObj.balance).toFixed(2));
+    }
+  }, [tipoPago, selectedDocObj]);
+
+  // Lista filtrable por tab + searchQuery
+  const filteredItems = useMemo(() => {
+    const list = applicables[applyTab] || [];
+    if (!searchQuery.trim()) return list;
+    const q = searchQuery.trim().toLowerCase();
+    return list.filter(it =>
+      (it.code || '').toLowerCase().includes(q) ||
+      (it.label || '').toLowerCase().includes(q) ||
+      String(it.balance || '').includes(q)
+    );
+  }, [applicables, applyTab, searchQuery]);
+
+  // Validaciones derivadas
+  const errors = useMemo(() => {
+    const e = {};
+    const num = parseFloat(monto);
+    if (!monto || isNaN(num) || num <= 0) {
+      e.monto = tr(lang,'pay_amount_invalid');
+    } else if (selectedDocObj?.balance) {
+      if (tipoPago === 'COMPLETO' && Math.abs(num - selectedDocObj.balance) > 0.01) {
+        e.monto = tr(lang,'pay_amount_complete_mismatch');
+      }
+      if (tipoPago === 'PARCIAL' && num >= selectedDocObj.balance) {
+        e.monto = tr(lang,'pay_amount_partial_too_high');
+      }
+    }
+    if (!referencia || referencia.trim().length < 3) e.referencia = tr(lang,'pay_min_chars');
+    if (!selectedDoc) e.apply = tr(lang,'pay_apply_required');
+    if (!evidence) {
+      e.evidence = tr(lang,'pay_evidence_required');
+    } else if (evidence.size > PAY_EVIDENCE_MAX_BYTES) {
+      e.evidence = tr(lang,'pay_evidence_too_big');
+    } else if (!PAY_EVIDENCE_MIMES.includes(evidence.type)) {
+      e.evidence = tr(lang,'pay_evidence_bad_type');
+    }
+    return e;
+  }, [monto, referencia, selectedDoc, evidence, tipoPago, selectedDocObj, lang]);
+
+  const canSubmit = Object.keys(errors).length === 0 && !submitting;
+  const showErr = (field) => touched[field] || touched.__all;
+
+  // Uploader handlers
+  function handleFile(file) {
+    if (!file) return;
+    setEvidence(file);
+    setTouched(t => ({ ...t, evidence: true }));
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (ev) => setEvidencePrev(ev.target?.result || null);
+      reader.readAsDataURL(file);
+    } else {
+      setEvidencePrev(null);
+    }
+  }
+  function clearFile() {
+    setEvidence(null);
+    setEvidencePrev(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+  function onDrop(e) {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer?.files?.[0];
+    if (f) handleFile(f);
+  }
+
+  // Submit (Fase 2: POST multipart real → /api/finance/payments/)
+  async function onSubmit() {
+    setTouched({ __all: true });
+    if (Object.keys(errors).length > 0) return;
+    setSubmitError(null);
+    setSubmitting(true);
+
+    // Construye el array `aplicaciones` que espera el serializer
+    // (lo serializa a JSON dentro del FormData en lib/api.js).
+    const aplicaciones = [{
+      applicable_type:   applyTab,
+      applicable_id:     selectedDoc,
+      applicable_code:   selectedDocObj?.code || undefined,
+      cantidad_producto: applyTab === 'PRODUCTO'
+        ? (selectedDocObj?.qty || null)
+        : null,
+      monto_aplicado:    parseFloat(monto),
+    }];
+
+    try {
+      const result = await financePaymentsApi.register({
+        expediente_id: exp.id,
+        monto:         parseFloat(monto),
+        moneda,
+        fecha,
+        metodo,
+        tipo_pago:     tipoPago,
+        referencia:    referencia.trim(),
+        notas:         notas.trim() || undefined,
+        aplicaciones,
+        evidencia:     evidence,
+        event_id:      eventId,
+      });
+      setSubmitting(false);
+      setSubmitResult(result);
+      setSubmitted(true);
+    } catch (err) {
+      setSubmitting(false);
+      // El backend devuelve `detail` (string) o un dict de errores por
+      // campo (validate_*). Lo normalizamos a string para mostrarlo.
+      let msg = err?.message || 'Error al registrar el pago.';
+      const data = err?.data;
+      if (data && typeof data === 'object') {
+        const fieldErrs = Object.entries(data)
+          .filter(([k]) => k !== 'detail')
+          .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(' · ') : v}`)
+          .join('\n');
+        if (fieldErrs) msg = fieldErrs;
+        else if (data.detail) msg = data.detail;
+      }
+      setSubmitError(msg);
+    }
+  }
+
+  // ─── Panel post-submit (Fase 2 · backend real) ───
+  if (submitted && submitResult) {
+    const codigo = submitResult.codigo || '—';
+    const estado = submitResult.estado || 'PENDIENTE_AI';
+    return (
+      <>
+        <div className="overlay" onClick={onClose}/>
+        <div className="drawer">
+          <div className="drawer-head">
+            <div>
+              <div className="heading-md">{tr(lang,'register_payment')}</div>
+              <div className="caption">{exp.ref} · {exp.client}</div>
+            </div>
+            <button className="icon-btn" onClick={onClose}><IconX size={16}/></button>
+          </div>
+          <div className="drawer-body" style={{display:'flex',flexDirection:'column',gap:16, justifyContent:'center'}}>
+            <div className="card card-pad-lg" style={{
+              background: 'var(--success-bg)',
+              border: '1px solid color-mix(in oklab, var(--success), transparent 70%)',
+              borderLeft: '3px solid var(--success)',
+            }}>
+              <div className="flex ai-center gap-2 mb-2">
+                <IconCheck size={16} style={{ color:'var(--success)' }}/>
+                <span className="heading-sm" style={{ color:'var(--success)' }}>
+                  {lang==='es' ? 'Pago registrado' : 'Payment registered'}
+                </span>
+              </div>
+              <p className="body-sm text-sec" style={{ margin:'0 0 10px', lineHeight:1.55 }}>
+                {lang==='es'
+                  ? 'El pago quedó persistido y agendado para análisis IA del comprobante. Recibirás el verdict por email en cuanto el AIPaymentAnalyzer termine (Fase 3).'
+                  : 'Payment persisted and queued for AI receipt analysis. You will receive the verdict by email once the AIPaymentAnalyzer completes (Phase 3).'}
+              </p>
+              <div className="grid col-2 gap-4">
+                <div>
+                  <div className="micro">{lang==='es' ? 'CÓDIGO' : 'CODE'}</div>
+                  <div className="mono-sm tabular-nums" style={{ fontWeight:600, color:'var(--brand-primary)' }}>
+                    {codigo}
+                  </div>
+                </div>
+                <div>
+                  <div className="micro">{lang==='es' ? 'ESTADO' : 'STATUS'}</div>
+                  <Badge kind="warning" dot>{estado}</Badge>
+                </div>
+              </div>
+            </div>
+            <div className="card card-pad" style={{ background:'var(--bg-alt)' }}>
+              <div className="micro" style={{ marginBottom: 8 }}>
+                {tr(lang,'pay_payload_captured')}
+              </div>
+              <div className="mono-sm text-sec" style={{
+                fontFamily:'var(--font-mono)', fontSize:11, lineHeight:1.6, whiteSpace:'pre-wrap',
+              }}>
+{`id:           ${submitResult.id || '—'}
+codigo:       ${codigo}
+monto:        ${submitResult.monto ?? monto} ${submitResult.moneda || moneda}
+monto_usd:    ${submitResult.monto_usd ?? '—'}
+fecha:        ${submitResult.fecha || fecha}
+metodo:       ${submitResult.metodo || metodo}
+tipo_pago:    ${submitResult.tipo_pago || tipoPago}
+referencia:   ${submitResult.referencia || referencia}
+estado:       ${estado}
+event_id:     ${submitResult.event_id || eventId}
+evidencia:    ${submitResult.evidencia?.original_name || evidence?.name || '—'}`}
+              </div>
+            </div>
+          </div>
+          <div className="drawer-foot">
+            <button className="btn btn-primary" onClick={onClose}>
+              <IconCheck size={14}/>{tr(lang,'pay_understood')}
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // ─── Panel de error (backend rechazó) ───
+  if (submitError) {
+    return (
+      <>
+        <div className="overlay" onClick={onClose}/>
+        <div className="drawer">
+          <div className="drawer-head">
+            <div>
+              <div className="heading-md">{tr(lang,'register_payment')}</div>
+              <div className="caption">{exp.ref} · {exp.client}</div>
+            </div>
+            <button className="icon-btn" onClick={onClose}><IconX size={16}/></button>
+          </div>
+          <div className="drawer-body" style={{display:'flex',flexDirection:'column',gap:16, justifyContent:'center'}}>
+            <div className="card card-pad-lg" style={{
+              background: 'var(--critical-bg)',
+              border: '1px solid color-mix(in oklab, var(--critical), transparent 70%)',
+              borderLeft: '3px solid var(--critical)',
+            }}>
+              <div className="flex ai-center gap-2 mb-2">
+                <IconAlert size={16} style={{ color:'var(--critical)' }}/>
+                <span className="heading-sm" style={{ color:'var(--critical)' }}>
+                  {lang==='es' ? 'No se pudo registrar el pago' : 'Could not register payment'}
+                </span>
+              </div>
+              <pre className="body-sm text-sec" style={{
+                margin:0, whiteSpace:'pre-wrap', wordBreak:'break-word',
+                fontFamily:'inherit', lineHeight:1.55,
+              }}>
+                {submitError}
+              </pre>
+            </div>
+          </div>
+          <div className="drawer-foot">
+            <button className="btn btn-ghost" onClick={onClose}>{tr(lang,'cancel')}</button>
+            <button
+              className="btn btn-primary"
+              onClick={() => { setSubmitError(null); }}
+            >
+              {lang==='es' ? 'Volver al formulario' : 'Back to form'}
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // ─── Drawer principal ───
   return (
     <>
       <div className="overlay" onClick={onClose}/>
@@ -1346,62 +1687,339 @@ function PaymentDrawer({ lang, exp, onClose }) {
           </div>
           <button className="icon-btn" onClick={onClose}><IconX size={16}/></button>
         </div>
-        <div className="drawer-body" style={{display:'flex',flexDirection:'column',gap:16}}>
+
+        <div className="drawer-body" style={{display:'flex',flexDirection:'column',gap:18}}>
+
+          {/* ─── Resumen saldo / total facturado ─── */}
           <div className="card card-pad" style={{background:'var(--brand-accent-soft)'}}>
             <div className="flex ai-center jc-between">
               <div>
                 <div className="micro">{tr(lang,'balance')}</div>
-                <div className="tabular" style={{ font:'700 20px/1 var(--font-mono)', color:'var(--brand-primary)'}}>{fmtMoney(exp.balance)}</div>
+                <div className="tabular tabular-nums" style={{ font:'700 22px/1 var(--font-mono)', color:'var(--brand-primary)'}}>
+                  {fmtMoney(exp.balance)}
+                </div>
+              </div>
+              <div style={{ textAlign:'right' }}>
+                <div className="micro">{tr(lang,'total_invoiced_lbl')}</div>
+                <div className="tabular tabular-nums" style={{ font:'600 14px/1 var(--font-mono)'}}>
+                  {fmtMoney(exp.total_invoiced)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ─── Sección: Monto y moneda ─── */}
+          <div>
+            <div className="micro" style={{ marginBottom: 8, color:'var(--text-tertiary)' }}>
+              {tr(lang,'pay_section_amount')}
+            </div>
+            <div className="grid col-2 gap-4">
+              <div>
+                <label className="field-label">{tr(lang,'amount')}</label>
+                <input
+                  className="input tabular-nums"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={monto}
+                  onChange={(e) => setMonto(e.target.value.replace(/[^0-9.,]/g,'').replace(',','.'))}
+                  onBlur={() => setTouched(t => ({ ...t, monto:true }))}
+                  disabled={tipoPago === 'COMPLETO'}
+                  style={{ fontFamily:'var(--font-mono)', fontWeight:600 }}
+                  aria-invalid={!!(showErr('monto') && errors.monto)}
+                />
+                {showErr('monto') && errors.monto && (
+                  <div className="field-hint" style={{ color:'var(--critical)' }}>{errors.monto}</div>
+                )}
               </div>
               <div>
-                <div className="micro">{tr(lang,'total_invoiced_lbl')}</div>
-                <div className="tabular" style={{ font:'600 14px/1 var(--font-mono)'}}>{fmtMoney(exp.total_invoiced)}</div>
+                <label className="field-label">{lang==='es' ? 'Moneda' : 'Currency'}</label>
+                <select className="select" value={moneda} onChange={(e) => setMoneda(e.target.value)}>
+                  {PAY_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
             </div>
           </div>
-          <div className="grid col-2 gap-4">
-            <div>
-              <label className="field-label">{tr(lang,'amount')}</label>
-              <input className="input" placeholder="0.00" defaultValue={Number(exp.balance || 0).toFixed(2)}/>
+
+          {/* ─── Sección: Tipo de pago ─── */}
+          <div>
+            <label className="field-label">{tr(lang,'pay_type')}</label>
+            <div className="seg" style={{ height: 40 }}>
+              <button
+                type="button"
+                data-active={tipoPago === 'PARCIAL'}
+                onClick={() => setTipoPago('PARCIAL')}
+              >
+                {tr(lang,'pay_type_partial')}
+              </button>
+              <button
+                type="button"
+                data-active={tipoPago === 'COMPLETO'}
+                onClick={() => setTipoPago('COMPLETO')}
+              >
+                {tr(lang,'pay_type_complete')}
+              </button>
             </div>
-            <div>
-              <label className="field-label">{lang==='es' ? 'Moneda' : 'Currency'}</label>
-              <select className="select"><option>USD</option><option>PEN</option></select>
+            <div className="field-hint">
+              {tipoPago === 'COMPLETO' ? tr(lang,'pay_type_complete_hint') : tr(lang,'pay_type_partial_hint')}
             </div>
           </div>
-          <div className="grid col-2 gap-4">
-            <div>
-              <label className="field-label">{lang==='es' ? 'Fecha' : 'Date'}</label>
-              <input className="input" type="date" defaultValue="2026-04-20"/>
+
+          {/* ─── Sección: Fecha y método ─── */}
+          <div>
+            <div className="micro" style={{ marginBottom: 8, color:'var(--text-tertiary)' }}>
+              {tr(lang,'pay_section_when')}
             </div>
-            <div>
-              <label className="field-label">{tr(lang,'payment_method')}</label>
-              <select className="select">
-                <option>{lang==='es'?'Transferencia':'Wire transfer'}</option>
-                <option>{lang==='es'?'Carta de crédito':'Letter of credit'}</option>
-                <option>{lang==='es'?'Cobranza documentaria':'Documentary collection'}</option>
-              </select>
+            <div className="grid col-2 gap-4">
+              <div>
+                <label className="field-label">{lang==='es' ? 'Fecha' : 'Date'}</label>
+                <input
+                  className="input"
+                  type="date"
+                  value={fecha}
+                  max={today}
+                  onChange={(e) => setFecha(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="field-label">{tr(lang,'payment_method')}</label>
+                <select className="select" value={metodo} onChange={(e) => setMetodo(e.target.value)}>
+                  <option value="TRANSFERENCIA_BANCARIA">{tr(lang,'pay_method_transfer')}</option>
+                  <option value="NOTA_CREDITO">{tr(lang,'pay_method_credit_note')}</option>
+                </select>
+              </div>
             </div>
           </div>
+
+          {/* ─── Sección: Referencia ─── */}
           <div>
             <label className="field-label">{tr(lang,'reference')}</label>
-            <input className="input" placeholder="TRX-…"/>
+            <input
+              className="input"
+              placeholder="TRX-998877"
+              value={referencia}
+              onChange={(e) => setReferencia(e.target.value)}
+              onBlur={() => setTouched(t => ({ ...t, referencia:true }))}
+              style={{ fontFamily:'var(--font-mono)' }}
+              aria-invalid={!!(showErr('referencia') && errors.referencia)}
+            />
+            {showErr('referencia') && errors.referencia && (
+              <div className="field-hint" style={{ color:'var(--critical)' }}>{errors.referencia}</div>
+            )}
           </div>
+
+          {/* ─── Sección: Notas ─── */}
           <div>
-            <label className="field-label">{tr(lang,'apply_to')}</label>
-            <div style={{display:'flex',flexDirection:'column',gap:6}}>
-              {['Proforma PF-0942 · saldo 50%', 'Factura FAC-2026-01842 · 100%'].map((x,i) => (
-                <label key={i} className="card card-pad" style={{display:'flex',alignItems:'center',gap:10, cursor:'pointer'}}>
-                  <input type="radio" name="apply" defaultChecked={i===0}/>
-                  <span className="body-sm">{x}</span>
-                </label>
-              ))}
+            <label className="field-label">{tr(lang,'pay_notes_optional')}</label>
+            <textarea
+              className="textarea"
+              rows={2}
+              maxLength={500}
+              placeholder={tr(lang,'pay_notes_ph')}
+              value={notas}
+              onChange={(e) => setNotas(e.target.value)}
+            />
+            <div className="field-hint" style={{ textAlign:'right', fontVariantNumeric:'tabular-nums' }}>
+              {notas.length}/500
             </div>
           </div>
+
+          {/* ─── Sección: Comprobante de pago ─── */}
+          <div>
+            <label className="field-label">
+              {metodo === 'NOTA_CREDITO' ? tr(lang,'pay_evidence_credit_note') : tr(lang,'pay_evidence')}
+            </label>
+            {!evidence ? (
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={onDrop}
+                className="card card-pad"
+                style={{
+                  borderStyle: 'dashed',
+                  borderColor: dragOver ? 'var(--brand-accent)' : 'var(--border-subtle)',
+                  background: dragOver ? 'var(--brand-accent-soft)' : 'var(--bg-alt)',
+                  textAlign: 'center',
+                  cursor: 'pointer',
+                  padding: '22px 16px',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <IconUpload size={22} style={{ color:'var(--text-tertiary)', marginBottom: 6 }}/>
+                <div className="body-sm" style={{ color:'var(--text-primary)', fontWeight:500 }}>
+                  {tr(lang,'pay_evidence_drop')}
+                </div>
+                <div className="caption" style={{ marginTop: 4 }}>
+                  {metodo === 'NOTA_CREDITO' ? tr(lang,'pay_evidence_hint_credit_note') : tr(lang,'pay_evidence_hint_transfer')}
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={PAY_EVIDENCE_MIMES.join(',')}
+                  onChange={(e) => handleFile(e.target.files?.[0])}
+                  style={{ display:'none' }}
+                />
+              </div>
+            ) : (
+              <div className="card card-pad" style={{ display:'flex', alignItems:'center', gap: 14 }}>
+                <div style={{
+                  width: 48, height: 48, borderRadius: 8,
+                  background: 'var(--bg-alt)',
+                  display: 'grid', placeItems:'center', flexShrink: 0,
+                  overflow: 'hidden',
+                  border: '1px solid var(--border-subtle)',
+                }}>
+                  {evidencePrev ? (
+                    <img src={evidencePrev} alt="preview"
+                         style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
+                  ) : (
+                    <IconFileText size={20} style={{ color:'var(--brand-primary)' }}/>
+                  )}
+                </div>
+                <div style={{ flex:1, minWidth: 0 }}>
+                  <div className="body-sm truncate" style={{ fontWeight:500, color:'var(--text-primary)' }}>
+                    {evidence.name}
+                  </div>
+                  <div className="caption tabular-nums">
+                    {(evidence.size/1024).toFixed(0)} KB · {evidence.type}
+                  </div>
+                </div>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => fileInputRef.current?.click()}>
+                  {tr(lang,'pay_evidence_change')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={clearFile}
+                  style={{ color:'var(--critical)' }}
+                >
+                  <IconX size={13}/>{tr(lang,'pay_evidence_remove')}
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={PAY_EVIDENCE_MIMES.join(',')}
+                  onChange={(e) => handleFile(e.target.files?.[0])}
+                  style={{ display:'none' }}
+                />
+              </div>
+            )}
+            {showErr('evidence') && errors.evidence && (
+              <div className="field-hint" style={{ color:'var(--critical)' }}>{errors.evidence}</div>
+            )}
+          </div>
+
+          {/* ─── Sección: Aplicar a (tabs) ─── */}
+          <div>
+            <label className="field-label">{tr(lang,'pay_subject')}</label>
+
+            <div className="tabs" style={{ marginBottom: 10 }}>
+              {[
+                ['COSTO',    tr(lang,'pay_apply_costo'),    applicables.COSTO.length],
+                ['PRODUCTO', tr(lang,'pay_apply_producto'), applicables.PRODUCTO.length],
+                ['PROFORMA', tr(lang,'pay_apply_proforma'), applicables.PROFORMA.length],
+                ['FACTURA',  tr(lang,'pay_apply_factura'),  applicables.FACTURA.length],
+              ].map(([k, l, c]) => (
+                <button
+                  key={k}
+                  type="button"
+                  className="tab"
+                  data-active={applyTab === k}
+                  onClick={() => {
+                    setApplyTab(k);
+                    setSelectedDoc(applicables[k]?.[0]?.id ?? null);
+                  }}
+                >
+                  {l}{c != null && <span className="count">{c}</span>}
+                </button>
+              ))}
+            </div>
+
+            <input
+              className="input"
+              type="text"
+              placeholder={tr(lang,'pay_apply_search_ph')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ marginBottom: 8 }}
+            />
+
+            <div style={{ display:'flex', flexDirection:'column', gap:6, maxHeight: 220, overflowY:'auto' }}>
+              {filteredItems.length === 0 ? (
+                <div className="card card-pad caption" style={{ textAlign:'center', color:'var(--text-tertiary)' }}>
+                  {tr(lang,'pay_apply_empty')}
+                </div>
+              ) : filteredItems.map((it) => {
+                const checked = selectedDoc === it.id;
+                return (
+                  <label
+                    key={it.id}
+                    className="card card-pad"
+                    style={{
+                      display:'flex', alignItems:'center', gap:12, cursor:'pointer',
+                      borderColor: checked ? 'var(--brand-accent)' : 'var(--border-subtle)',
+                      background: checked ? 'var(--brand-accent-soft)' : 'var(--surface)',
+                      transition: 'all 0.12s ease',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="apply"
+                      checked={checked}
+                      onChange={() => { setSelectedDoc(it.id); setTouched(t => ({ ...t, apply:true })); }}
+                    />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div className="flex ai-center gap-2">
+                        <span className="mono-sm" style={{ fontWeight:600, color:'var(--interactive)' }}>{it.code}</span>
+                        <span className="body-sm">{it.label}</span>
+                      </div>
+                      {(it.supplier || it.qty || it.pct) && (
+                        <div className="caption" style={{ marginTop: 2 }}>
+                          {it.supplier && <>{it.supplier}</>}
+                          {it.qty && <> · {it.qty}u</>}
+                          {it.pct && <> · {it.pct}</>}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ textAlign:'right', flexShrink:0 }}>
+                      <div className="caption">{lang==='es' ? 'Saldo' : 'Balance'}</div>
+                      <div className="mono-sm tabular-nums" style={{ fontWeight:600, color:'var(--text-primary)' }}>
+                        {fmtMoney(it.balance)}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            {showErr('apply') && errors.apply && (
+              <div className="field-hint" style={{ color:'var(--critical)' }}>{errors.apply}</div>
+            )}
+          </div>
+
         </div>
+
         <div className="drawer-foot">
-          <button className="btn btn-ghost" onClick={onClose}>{tr(lang,'cancel')}</button>
-          <button className="btn btn-primary" onClick={onClose}><IconCheck size={14}/>{tr(lang,'save')}</button>
+          <button className="btn btn-ghost" onClick={onClose} disabled={submitting}>
+            {tr(lang,'cancel')}
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={onSubmit}
+            disabled={!canSubmit}
+            aria-busy={submitting}
+          >
+            {submitting ? (
+              <>
+                <IconRefresh size={14} className="spin"/>
+                {tr(lang,'pay_submitting')}
+              </>
+            ) : (
+              <>
+                <IconCheck size={14}/>
+                {tr(lang,'pay_submit')}
+              </>
+            )}
+          </button>
         </div>
       </div>
     </>
