@@ -133,17 +133,22 @@ class AnalyzeSapConfirmationView(APIView):
         )
 
         return Response({
-            "ok":             bool(result.get("ok")),
-            "expediente_id":  str(exp.id),
-            "filename":       result.get("filename") or filename,
-            "kind":           result.get("kind"),
-            "sap_id":         result.get("sap_id"),
-            "sap_count":      result.get("sap_count") or 0,
-            "all_saps":       result.get("all_saps") or [],
-            "lineas":         result.get("lineas") or [],
-            "discrepancies":  result.get("discrepancies") or [],
-            "summary":        result.get("summary") or {},
-            "error":          result.get("error"),
+            "ok":               bool(result.get("ok")),
+            "expediente_id":    str(exp.id),
+            "filename":         result.get("filename") or filename,
+            "kind":             result.get("kind"),
+            "sap_id":           result.get("sap_id"),
+            "sap_count":        result.get("sap_count") or 0,
+            "all_saps":         result.get("all_saps") or [],
+            # Sprint 2026-05-06 · BUG FIX: el Response usaba un whitelist
+            # de campos y `fecha_fabricacion` (extraída de col H "Data do
+            # documento") quedaba descartada → el frontend siempre veía
+            # null y el chip caía al fallback manual con todayISO.
+            "fecha_fabricacion": result.get("fecha_fabricacion"),
+            "lineas":           result.get("lineas") or [],
+            "discrepancies":    result.get("discrepancies") or [],
+            "summary":          result.get("summary") or {},
+            "error":            result.get("error"),
         }, status=200)
 
 
