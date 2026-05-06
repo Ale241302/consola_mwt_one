@@ -452,30 +452,49 @@ class ExpedienteViewSet(viewsets.ViewSet):
                     with connection.cursor() as c:
                         placeholders = ",".join(["%s::uuid"] * len(unique_pids))
                         # BUG FIX 2026-05-06: la columna en productos.producto
-                        # se llama `marca_id`, no `brand_id`. La query antigua
-                        # lanzaba `column "brand_id" does not exist`, el except
-                        # la silenciaba y price_map quedaba vacío → todos los
-                        # precios se guardaban en 0. Además leemos `precio_mwt`
-                        # como fallback canónico para la perspectiva MWT
-                        # (override directo del CEO sobre productos.producto).
+                        # se llama `marca_id`, no `brand_id`. Además leemos
+                        # `precio_mwt` (override CEO directo) y el JSON
+                        # `especificaciones.client_prices` que es donde el
+                        # ProductFormView guarda los overrides por cliente
+                        # ($36.46 MWT, $47.74 SonDel, $37 Sonepar, etc.).
                         c.execute(f"""
-                            SELECT id::text, sku, marca_id::text,
-                                   precio_lista, precio_mwt
+                            SELECT id::text,
+                                   sku,
+                                   marca_id::text,
+                                   precio_lista,
+                                   precio_mwt,
+                                   COALESCE(especificaciones->'client_prices', '{{}}'::jsonb) AS client_prices
                               FROM productos.producto
                              WHERE id IN ({placeholders})
                         """, list(unique_pids))
-                        for pid, sku_db, brand_id, pl, p_mwt_override in c.fetchall():
+
+                        def _to_decimal(v):
+                            try:
+                                d = Decimal(str(v))
+                                return d if d > 0 else None
+                            except (TypeError, ValueError, ArithmeticError):
+                                return None
+
+                        for pid, sku_db, brand_id, pl, p_mwt_override, client_prices_json in c.fetchall():
+                            # `client_prices_json` es un dict { cliente_id: precio }
+                            # (puede venir ya parseado por psycopg2 si es JSONB).
+                            cp_map = client_prices_json or {}
+                            if isinstance(cp_map, str):
+                                try:
+                                    cp_map = json.loads(cp_map)
+                                except (TypeError, ValueError):
+                                    cp_map = {}
+
                             # ── Precio MWT (perspectiva Muito Work) ──
                             # Prioridad:
-                            #   1) productos.producto.precio_mwt (override CEO)
-                            #   2) waterfall COMEX con cliente=MWT
-                            #   3) productos.producto.precio_lista
-                            p_mwt = None
-                            try:
-                                if p_mwt_override and Decimal(str(p_mwt_override)) > 0:
-                                    p_mwt = Decimal(str(p_mwt_override))
-                            except (TypeError, ValueError):
-                                p_mwt = None
+                            #   1) especificaciones.client_prices[MWT_ID]   (override directo)
+                            #   2) productos.producto.precio_mwt           (override CEO global)
+                            #   3) waterfall COMEX con cliente=MWT
+                            #   4) productos.producto.precio_lista
+                            p_mwt = _to_decimal(cp_map.get(MWT_OPERATING_CLIENT_ID)
+                                                or cp_map.get(str(MWT_OPERATING_CLIENT_ID)))
+                            if p_mwt is None:
+                                p_mwt = _to_decimal(p_mwt_override)
                             if p_mwt is None and brand_id and sku_db:
                                 try:
                                     p_mwt = compute_client_price(
@@ -496,8 +515,15 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                     price_map_mwt[pid] = Decimal("0")
 
                             # ── Precio cliente final ──
+                            # Prioridad:
+                            #   1) especificaciones.client_prices[client_id]
+                            #   2) waterfall COMEX (CPA → PriceListVersion → EPP)
+                            #   3) Fallback al precio MWT
                             p_cli = None
-                            if client_id_val and brand_id and sku_db:
+                            if client_id_val:
+                                p_cli = _to_decimal(cp_map.get(str(client_id_val))
+                                                    or cp_map.get(client_id_val))
+                            if p_cli is None and client_id_val and brand_id and sku_db:
                                 try:
                                     p_cli = compute_client_price(
                                         client_id  = client_id_val,
