@@ -79,6 +79,25 @@ export function TopBar({ breadcrumbs, onOpenSearch, lang, onToggleLang, onToggle
         </div>
         <button className="icon-btn" title="Tweaks" onClick={onToggleTweaks}><IconSliders size={17}/></button>
 
+        {/* Soporte (tickets) — abre el panel global TicketWidget via CustomEvent */}
+        <button
+          className="icon-btn"
+          title={lang==='es' ? 'Soporte / Tickets' : 'Support / Tickets'}
+          aria-label={lang==='es' ? 'Abrir soporte' : 'Open support'}
+          onClick={() => {
+            try { window.dispatchEvent(new CustomEvent('mwt-tickets:open')); }
+            catch (_) { /* no-op */ }
+          }}
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" strokeWidth="1.75"
+               strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7"/>
+            <circle cx="12" cy="17" r="0.6" fill="currentColor"/>
+          </svg>
+        </button>
+
         {/* Campana + badge de unread */}
         <button
           className="icon-btn"
