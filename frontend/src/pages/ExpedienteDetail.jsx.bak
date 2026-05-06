@@ -14,7 +14,6 @@ import BuilderArtifactsBoard from "../components/expedientes/builderArtifacts/Bu
 import ArtifactsSummaryCard from "../components/expedientes/builderArtifacts/ArtifactsSummaryCard.jsx";
 import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmakerWizard.jsx";
 import CommercialDataHardStop from "../components/expedientes/CommercialDataHardStop.jsx";
-import { ManualLinePanel } from "../components/expedientes/ManualLineModal.jsx";
 import {
   IconChevLeft, IconMapPin, IconShip, IconPlane, IconPackage, IconClock,
   IconArrow, IconDollar, IconPlus, IconPaperclip, IconMail, IconMore,
@@ -51,9 +50,6 @@ export default function ScreenExpedienteDetail() {
   const [apiClient, setApiClient] = useState(null);
   const [apiBrand,  setApiBrand]  = useState(null);
   const [apiLines,  setApiLines]  = useState([]);
-  // Counter para forzar re-fetch de líneas tras crear una nueva
-  // (LinesTab → onLineAdded → setLinesReload(n=>n+1)).
-  const [linesReload, setLinesReload] = useState(0);
   // Sprint 2026-05-01: mapa { producto_id -> precio } para fallback de
   // unit_price cuando la linea del expediente tiene precio 0. La fuente
   // es el catalogo de productos (especificaciones.client_prices[client]
@@ -114,7 +110,7 @@ export default function ScreenExpedienteDetail() {
       .catch(() => { if (!cancel) setNotFound(true); })
       .finally(() => { if (!cancel) setLoading(false); });
     return () => { cancel = true; };
-  }, [expedienteId, isHeroOrMock, linesReload]);
+  }, [expedienteId, isHeroOrMock]);
 
   // Mapper: API → shape esperado por el UI viejo (mock-shape).
   // ⚠ NO hacemos spread de mockExp — eso filtraba defaults seed (CIF/SEA/
@@ -427,7 +423,7 @@ export default function ScreenExpedienteDetail() {
                            onOpenArtifactsTab={() => setTab('artifacts')}/>
             </>
           )}
-          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap} exp={exp} onLineAdded={() => setLinesReload(n => n + 1)}/>}
+          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap}/>}
           {tab === 'artifacts' && (
             <div>
               {/* Toolbar de artifacts: solo visible para CEO/admin.
@@ -675,7 +671,7 @@ function DetailRow({ label, value }) {
   );
 }
 
-function LinesTab({ lines, lang, cpaPriceMap, exp, onLineAdded }) {
+function LinesTab({ lines, lang, cpaPriceMap }) {
   // Sprint 2026-05-01: total con fallback al catalogo de productos
   const total = lines.reduce((a, l) => {
     let unit = Number(l.unit_price || 0);
@@ -685,74 +681,19 @@ function LinesTab({ lines, lang, cpaPriceMap, exp, onLineAdded }) {
     }
     return a + Number(l.qty || 0) * unit;
   }, 0);
-
-  // Modal "Agregar línea manual" — Sprint 2026-05-06
-  // Mismo flujo que /portal/nueva-oc Step 2: SKU search → ASIGNADO/NO
-  // ASIGNADO → matriz tallas. Cuando el usuario hace "Añadir al pedido",
-  // creamos las líneas en /api/lineas/ una por una y refetch del expediente.
-  const [manualOpen, setManualOpen] = useState(false);
-  const [manualBusy, setManualBusy] = useState(false);
-  const [manualErr,  setManualErr]  = useState(null);
-
-  const handleAddRows = async (rows) => {
-    if (!Array.isArray(rows) || rows.length === 0) return;
-    if (!exp?.id) {
-      setManualErr(lang === 'es'
-        ? 'Expediente sin id — no se puede crear la línea.'
-        : 'Expediente has no id — cannot create line.');
-      return;
-    }
-    setManualBusy(true);
-    setManualErr(null);
-    try {
-      // Crear una línea por talla (rows[i] = {sku, talla, cantidad, producto_id, ...})
-      for (const r of rows) {
-        await lineasApi.create({
-          expediente_id: exp.id,
-          producto_id:   r.producto_id || null,
-          sku:           r.sku,
-          name:          r.product_label || r.sku,
-          talla:         r.talla || null,
-          qty:           Number(r.cantidad) || 0,
-        });
-      }
-      setManualOpen(false);
-      // Refetch del expediente (cliente + marca + líneas + precios)
-      if (typeof onLineAdded === 'function') onLineAdded();
-    } catch (e) {
-      setManualErr(e?.message || (lang === 'es'
-        ? 'No se pudo crear la línea.'
-        : 'Could not create the line.'));
-    } finally {
-      setManualBusy(false);
-    }
-  };
-
   return (
     <div className="card">
       <div className="card-head">
         <div className="card-title">{lang==='es' ? 'Productos del expediente' : 'File products'}</div>
-        <button
-          className="btn btn-ghost btn-sm"
-          onClick={() => setManualOpen(true)}
-          disabled={manualBusy}
-        >
-          <IconPlus size={13}/>{lang==='es' ? 'Agregar línea' : 'Add line'}
-        </button>
+        <button className="btn btn-ghost btn-sm"><IconPlus size={13}/>{lang==='es' ? 'Agregar línea' : 'Add line'}</button>
       </div>
-      {manualErr && (
-        <div className="caption" style={{
-          padding: '10px 14px', background: 'var(--critical-bg)',
-          borderLeft: '3px solid var(--critical)', color: 'var(--critical)',
-          margin: '8px 14px',
-        }}>
-          {manualErr}
-        </div>
-      )}
       <table className="table">
         <thead><tr>
           <th>SKU</th>
+          <th>{lang==='es' ? 'Descripción' : 'Description'}</th>
+          <th>{lang==='es' ? 'Contenedor' : 'Container'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Cant.' : 'Qty'}</th>
+          <th style={{textAlign:'right'}}>{lang==='es' ? 'Costo unit.' : 'Unit cost'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Precio unit.' : 'Unit price'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Subtotal' : 'Subtotal'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Margen' : 'Margin'}</th>
@@ -771,7 +712,10 @@ function LinesTab({ lines, lang, cpaPriceMap, exp, onLineAdded }) {
             return (
             <tr key={l.id}>
               <td><span className="mono-sm" style={{ fontWeight: 600, color:'var(--interactive)' }}>{l.sku}</span></td>
+              <td>{l.name}</td>
+              <td className="mono-sm text-sec">{l.container}</td>
               <td className="td-num tabular">{l.qty}</td>
+              <td className="td-money text-sec">{fmtMoneyDetail(Number(l.unit_cost || 0))}</td>
               <td className="td-money">{fmtMoneyDetail(_unit)}</td>
               <td className="td-money">{fmtMoney(_total)}</td>
               <td className="td-num">{Number(l.margin || 0) > 0
@@ -782,7 +726,7 @@ function LinesTab({ lines, lang, cpaPriceMap, exp, onLineAdded }) {
         </tbody>
         <tfoot>
           <tr>
-            <td colSpan={3} style={{ padding: 14, textAlign:'right', fontWeight: 600, color:'var(--text-tertiary)', textTransform:'uppercase', fontSize: 11, letterSpacing: '0.08em' }}>
+            <td colSpan={6} style={{ padding: 14, textAlign:'right', fontWeight: 600, color:'var(--text-tertiary)', textTransform:'uppercase', fontSize: 11, letterSpacing: '0.08em' }}>
               {lang==='es' ? 'Total' : 'Total'}
             </td>
             <td className="td-money" style={{ padding: 14, fontSize: 15, fontFamily: 'var(--font-mono)' }}>{fmtMoney(total)}</td>
@@ -790,16 +734,6 @@ function LinesTab({ lines, lang, cpaPriceMap, exp, onLineAdded }) {
           </tr>
         </tfoot>
       </table>
-
-      {manualOpen && (
-        <ManualLinePanel
-          lang={lang}
-          clientId={exp?.client_id}
-          clientLabel={exp?.client}
-          onClose={() => setManualOpen(false)}
-          onAdd={handleAddRows}
-        />
-      )}
     </div>
   );
 }
