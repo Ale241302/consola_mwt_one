@@ -456,10 +456,21 @@ export default function CreateExpedienteWizardLite() {
           lines_removed,
           lines_updated,
         };
-        // Solo incluir client_id si el usuario lo cambió (backend devuelve 422 hoy).
-        if (initialClientIdRef.current
-            && selClient?.id
-            && selClient.id !== initialClientIdRef.current) {
+        // Si el usuario cambió de cliente, pedir confirmación: split.
+        const clientChanged = !!(
+          initialClientIdRef.current
+          && selClient?.id
+          && selClient.id !== initialClientIdRef.current
+        );
+        if (clientChanged) {
+          const confirmMsg = lang === 'es'
+            ? 'Cambiar el cliente creará un nuevo expediente con este SAP, separándolo del actual. ¿Continuar?'
+            : 'Changing the client will create a new expediente with this SAP, splitting it from the current one. Continue?';
+          // eslint-disable-next-line no-alert
+          if (!window.confirm(confirmMsg)) {
+            setSaving(false);
+            return;
+          }
           body.client_id = selClient.id;
         }
 
@@ -482,17 +493,27 @@ export default function CreateExpedienteWizardLite() {
           throw new Error(detail);
         }
 
-        // OK → resolver oc_id del expediente y navegar al detalle.
+        // Parse response — puede traer new_expediente_id si hubo split.
+        let respData = null;
+        try { respData = await resp.json(); } catch { /* fallthrough */ }
+        const targetExpId = respData?.new_expediente_id || editExp;
+        const didSplit = !!respData?.split;
+
+        // OK → resolver oc_id del expediente final (puede ser el nuevo).
         let ocId = 'none';
         try {
-          const exp = await expedientesApi.get(editExp);
+          const exp = await expedientesApi.get(targetExpId);
           ocId = exp?.oc_id || exp?.oc?.id || 'none';
         } catch { /* fallthrough */ }
         setToast({
           kind: 'ok',
-          msg: lang === 'es' ? 'Cambios guardados.' : 'Changes saved.',
+          msg: didSplit
+            ? (lang === 'es'
+                ? `Expediente dividido. Nuevo: ${respData?.new_expediente_codigo || ''}`
+                : `Expediente split. New: ${respData?.new_expediente_codigo || ''}`)
+            : (lang === 'es' ? 'Cambios guardados.' : 'Changes saved.'),
         });
-        navigate(`/expedientes/${encodeURIComponent(ocId)}/exp/${encodeURIComponent(editExp)}`);
+        navigate(`/expedientes/${encodeURIComponent(ocId)}/exp/${encodeURIComponent(targetExpId)}`);
         return;
       }
 
@@ -1911,7 +1932,6 @@ function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
       : 0;
     cp = {
       ...cp,
-      orderValue:     adjustedOrderValue,
       afterAvailable: newAfter,
       utilPctAfter:   Math.round(newUtil * 10) / 10,
       exceedsLimit:   limit > 0 && newAfter < 0,

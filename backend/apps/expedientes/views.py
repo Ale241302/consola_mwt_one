@@ -1475,29 +1475,229 @@ class ExpedienteViewSet(viewsets.ViewSet):
             or (lines_updated and len(lines_updated) > 0)
         )
 
-        # ── Cambio de cliente: aún no soportado (split de expediente) ──
+        # ── Cambio de cliente: split de expediente (Fase 2.F) ──
+        # Si new_client_id != cur_client_id, generamos un nuevo expediente
+        # heredando metadatos del original y migramos las líneas, el
+        # artifact_instance del SAP y los documentos ART-04 asociados.
         new_client_id = payload.get("client_id")
-        if new_client_id and str(new_client_id) != str(getattr(exp, "client_id", "") or ""):
-            return Response(
-                {
-                    "detail": "client_change_not_supported_yet",
-                    "hint":   "El cambio de cliente con split de expediente se entrega en F2.F",
-                },
-                status=422,
-            )
+        cur_client_id = getattr(exp, "client_id", None)
+        wants_split = bool(
+            new_client_id and str(new_client_id) != str(cur_client_id or "")
+        )
 
         # Si nada vino, 400
         if (new_op is None and new_fp is None and new_pd_val is None
-                and not has_line_ops):
-            return Response({"detail": "Sin cambios — incluí al menos uno de operating_company_id, forma_pago, payment_days, lines_added, lines_removed, lines_updated"}, status=400)
+                and not has_line_ops and not wants_split):
+            return Response({"detail": "Sin cambios — incluí al menos uno de operating_company_id, forma_pago, payment_days, lines_added, lines_removed, lines_updated, client_id"}, status=400)
 
         # Aplicar cambios atómicamente
         added_ids:   list = []
         removed_ids: list = []
         updated_ids: list = []
+        # Defaults para split (sobrescritos abajo si wants_split).
+        split_done = False
+        new_exp_id = None
+        new_exp_codigo = None
+        lines_moved_count = 0
+        # eff_exp_id es el expediente SOBRE EL QUE caen los demás cambios
+        # (operating_company_id, forma_pago, payment_days, lines_*). Si hay
+        # split, apuntamos al nuevo expediente; si no, al original.
+        eff_exp_id = str(exp.id)
         try:
             with transaction.atomic():
                 with connection.cursor() as c:
+                    # ────────────────────────────────────────────────
+                    # SPLIT · Fase 2.F
+                    # 1) Genera nuevo expediente clonando metadatos.
+                    # 2) Migra líneas, artifact_instance y documentos.
+                    # 3) Recalcula total_cost del original.
+                    # ────────────────────────────────────────────────
+                    if wants_split:
+                        new_exp_id = str(uuid.uuid4())
+                        # Generar código EXP-YYYY-NNNN secuencial.
+                        cur_year = datetime.utcnow().year
+                        like_pat = f"EXP-{cur_year}-%"
+                        c.execute(
+                            "SELECT COUNT(*) FROM expedientes.expediente "
+                            "WHERE codigo LIKE %s",
+                            [like_pat],
+                        )
+                        seq = (c.fetchone() or [0])[0] + 1
+                        new_exp_codigo = f"EXP-{cur_year}-{seq:04d}"
+
+                        # operating_company_id heredado a menos que el
+                        # payload mande uno nuevo (se aplica abajo igual,
+                        # pero queremos que el INSERT inicial lo refleje
+                        # ya correcto).
+                        eff_op_for_insert = (
+                            str(new_op) if new_op is not None
+                            else (str(cur_op) if cur_op else None)
+                        )
+                        eff_fp_for_insert = new_fp or cur_fp or "CREDITO"
+                        eff_cd_for_insert = (
+                            new_pd_val if new_pd_val is not None
+                            else (cur_pd if cur_pd is not None else 0)
+                        )
+
+                        c.execute(
+                            """
+                            INSERT INTO expedientes.expediente (
+                                id, codigo, oc_id, client_id,
+                                operating_company_id, brand_id, sap,
+                                estado, modo_operacion, moneda,
+                                forma_pago, credit_days,
+                                total_cost, base_price,
+                                is_active, created_at, updated_at
+                            ) VALUES (
+                                %s::uuid, %s, %s, %s::uuid,
+                                %s, %s, %s,
+                                'REGISTRO', %s, %s,
+                                %s, %s,
+                                0, 0,
+                                TRUE, NOW(), NOW()
+                            )
+                            """,
+                            [
+                                new_exp_id,
+                                new_exp_codigo,
+                                exp.oc_id,
+                                str(new_client_id),
+                                eff_op_for_insert,
+                                str(exp.brand_id) if exp.brand_id else None,
+                                exp.sap,
+                                exp.modo_operacion or "FULL",
+                                exp.moneda or "USD",
+                                eff_fp_for_insert,
+                                eff_cd_for_insert,
+                            ],
+                        )
+
+                        # Migrar líneas activas del SAP al nuevo expediente.
+                        c.execute(
+                            """
+                            UPDATE expedientes.linea
+                               SET expediente_id = %s::uuid,
+                                   updated_at   = NOW()
+                             WHERE expediente_id = %s::uuid
+                               AND sap = %s
+                               AND is_active = TRUE
+                            """,
+                            [new_exp_id, str(exp.id), sap_id],
+                        )
+                        lines_moved_count = c.rowcount or 0
+
+                        # Migrar artifact_instance del SAP.
+                        c.execute(
+                            """
+                            UPDATE expedientes.artifact_instances
+                               SET expediente_id = %s::uuid,
+                                   updated_at   = NOW()
+                             WHERE expediente_id = %s::uuid
+                               AND artifact_code = 'ART-04'
+                               AND codigo = %s
+                               AND is_active = TRUE
+                            """,
+                            [new_exp_id, str(exp.id), sap_id],
+                        )
+
+                        # Migrar documentos ART-04 del SAP.
+                        c.execute(
+                            """
+                            UPDATE expedientes.documento
+                               SET expediente_id = %s::uuid,
+                                   updated_at   = NOW()
+                             WHERE expediente_id = %s::uuid
+                               AND kind = 'ART-04'
+                               AND codigo LIKE %s
+                               AND is_active = TRUE
+                            """,
+                            [new_exp_id, str(exp.id), f"ART-04 · {sap_id}%"],
+                        )
+
+                        # Recalcular total_cost del expediente original
+                        # con las líneas activas restantes (qty * unit_price).
+                        c.execute(
+                            """
+                            UPDATE expedientes.expediente
+                               SET total_cost = COALESCE((
+                                       SELECT SUM(qty * unit_price)
+                                         FROM expedientes.linea
+                                        WHERE expediente_id = %s::uuid
+                                          AND is_active = TRUE
+                                   ), 0),
+                                   updated_at = NOW()
+                             WHERE id = %s::uuid
+                            """,
+                            [str(exp.id), str(exp.id)],
+                        )
+
+                        # Setear total_cost del nuevo expediente con las
+                        # líneas que acaba de recibir (antes de aplicar
+                        # line ops adicionales, que se reflejan luego).
+                        c.execute(
+                            """
+                            UPDATE expedientes.expediente
+                               SET total_cost = COALESCE((
+                                       SELECT SUM(qty * unit_price)
+                                         FROM expedientes.linea
+                                        WHERE expediente_id = %s::uuid
+                                          AND is_active = TRUE
+                                   ), 0),
+                                   updated_at = NOW()
+                             WHERE id = %s::uuid
+                            """,
+                            [new_exp_id, new_exp_id],
+                        )
+
+                        # Audit del split.
+                        emitter_id_split = getattr(request.user, "id", None)
+                        emitter_role_split = (
+                            getattr(request.user, "role_default", None)
+                            or getattr(request.user, "role", None)
+                            or "unknown"
+                        )
+                        try:
+                            c.execute(
+                                """
+                                INSERT INTO pipeline.event_log
+                                  (id, correlation_id,
+                                   event_type, aggregate_type, aggregate_id,
+                                   payload,
+                                   emitted_by_id, emitted_by_role,
+                                   is_active, created_at, updated_at)
+                                VALUES
+                                  (%s, %s,
+                                   'sap.split_expediente', 'expediente', %s::uuid,
+                                   %s::jsonb,
+                                   %s, %s,
+                                   TRUE, NOW(), NOW())
+                                """,
+                                [
+                                    str(uuid.uuid4()),
+                                    str(uuid.uuid4()),
+                                    str(exp.id),
+                                    json.dumps({
+                                        "old_expediente_id":  str(exp.id),
+                                        "new_expediente_id":  new_exp_id,
+                                        "new_expediente_codigo": new_exp_codigo,
+                                        "sap_id":             sap_id,
+                                        "lines_moved_count":  lines_moved_count,
+                                        "old_client_id":      str(cur_client_id) if cur_client_id else None,
+                                        "new_client_id":      str(new_client_id),
+                                    }),
+                                    str(emitter_id_split) if emitter_id_split else None,
+                                    emitter_role_split,
+                                ],
+                            )
+                        except (ValueError, TypeError) as ev_err:
+                            log.warning("[patch_sap] event_log split insert failed: %s", ev_err)
+
+                        split_done = True
+                        # Re-leer el ai_id (que sigue siendo el mismo,
+                        # solo se le actualizó expediente_id) para que
+                        # los UPDATEs siguientes sigan apuntando bien.
+                        eff_exp_id = new_exp_id
+
                     sets = []
                     args = []
                     if new_op is not None:
@@ -1534,6 +1734,28 @@ class ExpedienteViewSet(viewsets.ViewSet):
                             lines_added=lines_added or [],
                             lines_removed=lines_removed or [],
                             lines_updated=lines_updated or [],
+                            target_exp_id=eff_exp_id if split_done else None,
+                            target_client_id=(
+                                str(new_client_id) if split_done else None
+                            ),
+                        )
+
+                    # Si hubo split + line ops, recalculamos total_cost
+                    # del nuevo expediente para reflejar el estado final.
+                    if split_done and has_line_ops:
+                        c.execute(
+                            """
+                            UPDATE expedientes.expediente
+                               SET total_cost = COALESCE((
+                                       SELECT SUM(qty * unit_price)
+                                         FROM expedientes.linea
+                                        WHERE expediente_id = %s::uuid
+                                          AND is_active = TRUE
+                                   ), 0),
+                                   updated_at = NOW()
+                             WHERE id = %s::uuid
+                            """,
+                            [eff_exp_id, eff_exp_id],
                         )
 
                     # ── Auditoría: pipeline.event_log (schema real)
@@ -1626,9 +1848,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
             log.exception("[patch_sap] update failed: %s", e)
             return Response({"detail": "update_failed", "error": str(e)[:300]}, status=500)
 
-        return Response({
+        resp_body = {
             "ok": True,
-            "expediente_id": str(exp.id),
+            "expediente_id": eff_exp_id,
             "sap_id": sap_id,
             "artifact_id": str(ai_id),
             "operating_company_id": str(new_op) if new_op else (str(cur_op) if cur_op else None),
@@ -1637,7 +1859,16 @@ class ExpedienteViewSet(viewsets.ViewSet):
             "lines_added":   added_ids,
             "lines_removed": removed_ids,
             "lines_updated": updated_ids,
-        }, status=200)
+        }
+        if split_done:
+            resp_body.update({
+                "split":                 True,
+                "old_expediente_id":     str(exp.id),
+                "new_expediente_id":     new_exp_id,
+                "new_expediente_codigo": new_exp_codigo,
+                "lines_moved_count":     lines_moved_count,
+            })
+        return Response(resp_body, status=200)
 
     # ══════════════════════════════════════════════════════════
     # GET helper · /api/expedientes/{exp_id}/sap/{sap_id}/
@@ -1823,7 +2054,16 @@ class ExpedienteViewSet(viewsets.ViewSet):
     def _apply_sap_line_ops(
         self, *, cursor, exp, sap_id, operating_company_id,
         lines_added, lines_removed, lines_updated,
+        target_exp_id=None, target_client_id=None,
     ):
+        # `target_exp_id` permite redirigir las operaciones a un expediente
+        # distinto del original (caso split en F2.F). Si no viene,
+        # operamos sobre exp.id como antes (compat hacia atrás).
+        eff_exp_id = str(target_exp_id) if target_exp_id else str(exp.id)
+        eff_client_id = (
+            target_client_id if target_client_id is not None
+            else getattr(exp, "client_id", None)
+        )
         added_ids:   list = []
         removed_ids: list = []
         updated_ids: list = []
@@ -1847,7 +2087,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                        AND sap = %s
                        AND is_active = TRUE
                     """,
-                    [lid, str(exp.id), sap_id],
+                    [lid, eff_exp_id, sap_id],
                 )
                 if cursor.rowcount and cursor.rowcount > 0:
                     removed_ids.append(lid)
@@ -1882,7 +2122,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                        AND sap = %s
                        AND is_active = TRUE
                     """,
-                    [new_qty, new_qty, lid, str(exp.id), sap_id],
+                    [new_qty, new_qty, lid, eff_exp_id, sap_id],
                 )
                 if cursor.rowcount and cursor.rowcount > 0:
                     updated_ids.append({"id": lid, "qty": new_qty})
@@ -1893,7 +2133,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
         if lines_added:
             from apps.commercial.views import compute_client_price  # noqa: PLC0415
 
-            client_id_val = getattr(exp, "client_id", None)
+            client_id_val = eff_client_id
             oc_id_val     = getattr(exp, "oc_id", None)
 
             unique_pids = []
@@ -2043,7 +2283,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         [
                             str(new_line_id),
                             str(oc_id_val) if oc_id_val else None,
-                            str(exp.id),
+                            eff_exp_id,
                             pid,
                             sku, talla, cantidad,
                             unit_price, unit_price_mwt, unit_price_client,
