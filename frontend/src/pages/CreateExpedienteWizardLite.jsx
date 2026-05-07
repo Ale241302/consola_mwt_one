@@ -19,7 +19,7 @@
 // POL_VISIBILIDAD: cero precios, cero subtotales, cero totales financieros.
 // ─────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useOutletContext } from "react-router-dom";
+import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IconChevLeft, IconChevRight, IconCheck, IconX, IconUpload, IconAlert,
@@ -86,6 +86,14 @@ export default function CreateExpedienteWizardLite() {
   const navigate = useNavigate();
   const { lang = "es" } = useOutletContext() || {};
   const { isAdmin, user } = useRole();
+  // ── Sprint 2026-05-07 · Modo EDIT (?editExp=&editSap=).
+  // R3: defensa en profundidad — si CLIENT_* llega al wizard con esos
+  // params, los ignoramos (no debería pasar — ExpedienteDetail filtra el
+  // botón — pero si por URL directa llegan, modo CREATE normal).
+  const [searchParams] = useSearchParams();
+  const editExp = isAdmin ? (searchParams.get('editExp') || null) : null;
+  const editSap = isAdmin ? (searchParams.get('editSap') || null) : null;
+  const isEditMode = !!(editExp && editSap);
   // ── Sprint 2026-05-06 · Step 0 (operador) solo para ADMIN/CEO/staff.
   // Para CLIENT_* arrancamos directo en el Step 1 con el cliente
   // pre-fijado a su empresa primaria (legal_entity_ids[0]).
@@ -333,6 +341,72 @@ export default function CreateExpedienteWizardLite() {
     }).catch(() => setClients([]));
   }, [isAdmin, user]);
 
+  // ── Sprint 2026-05-07 · EDIT MODE precarga ────────────────────
+  // Cuando entramos con ?editExp=&editSap=, hidratamos el state desde
+  // GET /expedientes/{exp}/sap/{sap}/. Si el endpoint todavía no está
+  // deployado (404/500), caemos a modo CREATE silenciosamente.
+  // initialLinesRef guarda el snapshot inicial para calcular diffs en
+  // el submit (lines_added / lines_removed / lines_updated).
+  const initialLinesRef = useRef([]);
+  const initialClientIdRef = useRef(null);
+  useEffect(() => {
+    if (!isEditMode) return;
+    let cancel = false;
+    (async () => {
+      try {
+        const token = getToken();
+        const url = `/api/expedientes/${encodeURIComponent(editExp)}/sap/${encodeURIComponent(editSap)}/`;
+        const resp = await fetch(url, {
+          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        if (cancel) return;
+
+        // 1. operatingMode
+        const opIsMwt = String(data.operating_company_id || '').toLowerCase()
+          === String(MWT_OPERATING_CLIENT_ID || '').toLowerCase();
+        setOperatingMode(opIsMwt ? 'mwt' : 'client');
+
+        // 2. selClient: resolver objeto completo (necesitamos dias_credito, etc.)
+        if (data.client_id) {
+          initialClientIdRef.current = data.client_id;
+          try {
+            const cli = await clientesApi.get(data.client_id);
+            if (!cancel && cli) setSelClient(adaptClient(cli));
+          } catch { /* fallthrough */ }
+        }
+
+        // 3. orderLines mapeadas desde data.lines
+        const ls = Array.isArray(data.lines)
+          ? data.lines.map((l) => ({
+              tmpId:         l.id,
+              sku:           l.sku,
+              talla:         l.talla,
+              cantidad:      Number(l.qty || 0),
+              producto_id:   l.producto_id,
+              product_label: l.product_label || l.sku,
+              is_assigned:   true,
+            }))
+          : [];
+        if (!cancel) {
+          setOrderLines(ls);
+          // Snapshot inicial inmutable para diffing.
+          initialLinesRef.current = ls.map((l) => ({ ...l }));
+        }
+
+        // 4. payment terms
+        if (data.payment_days != null) setPaymentDays(Number(data.payment_days));
+        if (data.forma_pago) setPaymentMethod(data.forma_pago);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[wizard editMode] precarga fallida:', err);
+      }
+    })();
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditMode, editExp, editSap]);
+
   // ── Validación de step ──
   const canAdvance = useMemo(() => {
     if (step === 0) return operatingMode === 'mwt' || operatingMode === 'client';
@@ -347,6 +421,81 @@ export default function CreateExpedienteWizardLite() {
     if (saving) return;
     setSaving(true); setError(null);
     try {
+      // ── Sprint 2026-05-07 · branch EDIT MODE ────────────────────
+      // En lugar de POST /expedientes/, computamos diffs vs el snapshot
+      // inicial y mandamos PATCH /expedientes/{exp}/sap/{sap}/.
+      if (isEditMode) {
+        const initial = initialLinesRef.current || [];
+        const initialIds = new Set(initial.map((l) => l.tmpId).filter(Boolean));
+        const currentIds = new Set(orderLines.map((l) => l.tmpId).filter(Boolean));
+
+        const lines_added = orderLines
+          .filter((l) => !l.tmpId || !initialIds.has(l.tmpId))
+          .map((l) => ({
+            producto_id: l.producto_id || null,
+            sku:         l.sku,
+            talla:       l.talla || null,
+            qty:         Number(l.cantidad) || 0,
+          }));
+
+        const lines_removed = [...initialIds].filter((id) => !currentIds.has(id));
+
+        const lines_updated = orderLines
+          .filter((l) => l.tmpId && initialIds.has(l.tmpId))
+          .filter((l) => {
+            const orig = initial.find((o) => o.tmpId === l.tmpId);
+            return orig && Number(orig.cantidad) !== Number(l.cantidad);
+          })
+          .map((l) => ({ id: l.tmpId, qty: Number(l.cantidad) || 0 }));
+
+        const body = {
+          operating_company_id: operatingCompanyId,
+          forma_pago:           paymentMethod || 'CREDITO',
+          payment_days:         Number(paymentDays) || 0,
+          lines_added,
+          lines_removed,
+          lines_updated,
+        };
+        // Solo incluir client_id si el usuario lo cambió (backend devuelve 422 hoy).
+        if (initialClientIdRef.current
+            && selClient?.id
+            && selClient.id !== initialClientIdRef.current) {
+          body.client_id = selClient.id;
+        }
+
+        const token = getToken();
+        const url = `/api/expedientes/${encodeURIComponent(editExp)}/sap/${encodeURIComponent(editSap)}/`;
+        const resp = await fetch(url, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(body),
+        });
+        if (!resp.ok) {
+          let detail = `HTTP ${resp.status}`;
+          try {
+            const errBody = await resp.json();
+            detail = errBody?.detail || JSON.stringify(errBody);
+          } catch { /* fallthrough */ }
+          throw new Error(detail);
+        }
+
+        // OK → resolver oc_id del expediente y navegar al detalle.
+        let ocId = 'none';
+        try {
+          const exp = await expedientesApi.get(editExp);
+          ocId = exp?.oc_id || exp?.oc?.id || 'none';
+        } catch { /* fallthrough */ }
+        setToast({
+          kind: 'ok',
+          msg: lang === 'es' ? 'Cambios guardados.' : 'Changes saved.',
+        });
+        navigate(`/expedientes/${encodeURIComponent(ocId)}/exp/${encodeURIComponent(editExp)}`);
+        return;
+      }
+
       // Agrupar líneas por (sku, talla) duplicadas — sumar cantidades.
       const grouped = {};
       orderLines.forEach((l) => {
@@ -393,12 +542,16 @@ export default function CreateExpedienteWizardLite() {
         navigate("/expedientes");
       }
     } catch (e) {
-      const msg = e?.body?.detail || e?.message || "Error al crear el expediente";
+      const fallback = isEditMode
+        ? (lang === 'es' ? 'Error al guardar los cambios' : 'Error saving changes')
+        : (lang === 'es' ? 'Error al crear el expediente' : 'Error creating file');
+      const msg = e?.body?.detail || e?.message || fallback;
       setError(msg);
     } finally {
       setSaving(false);
     }
-  }, [saving, orderLines, selClient, operatingCompanyId, paymentDays, paymentMethod, navigate]);
+  }, [saving, orderLines, selClient, operatingCompanyId, paymentDays, paymentMethod, navigate,
+      isEditMode, editExp, editSap, lang]);
 
   return (
     <div className="page" style={{ paddingBottom: 96 }}>
@@ -412,12 +565,18 @@ export default function CreateExpedienteWizardLite() {
             {lang === "es" ? "EXPEDIENTES · INGRESO DE PEDIDO" : "FILES · ORDER INTAKE"}
           </div>
           <h1 className="page-title">
-            {lang === "es" ? "Nuevo expediente" : "New file"}
+            {isEditMode
+              ? (lang === "es" ? `Editar SAP ${editSap}` : `Edit SAP ${editSap}`)
+              : (lang === "es" ? "Nuevo expediente" : "New file")}
           </h1>
           <div className="page-subtitle">
-            {lang === "es"
-              ? "Ingreso puro de pedido. Datos comerciales y logísticos se completan después en el detalle."
-              : "Pure order intake. Commercial/logistics data is filled later in the detail view."}
+            {isEditMode
+              ? (lang === "es"
+                  ? "Editás los datos de este SAP. Los cambios afectan solo a este SAP, no al expediente entero."
+                  : "Editing this SAP. Changes affect only this SAP, not the entire file.")
+              : (lang === "es"
+                  ? "Ingreso puro de pedido. Datos comerciales y logísticos se completan después en el detalle."
+                  : "Pure order intake. Commercial/logistics data is filled later in the detail view.")}
           </div>
         </div>
       </div>
@@ -521,8 +680,18 @@ export default function CreateExpedienteWizardLite() {
                 borderColor: "var(--btn-primary, #00B286)",
               }}>
               {saving
-                ? (lang === "es" ? "Creando…" : "Creating…")
-                : <>{lang === "es" ? "Crear expediente" : "Create file"} <IconCheck size={12}/></>
+                ? (isEditMode
+                    ? (lang === "es" ? "Guardando…" : "Saving…")
+                    : (lang === "es" ? "Creando…" : "Creating…"))
+                : (
+                  <>
+                    {isEditMode
+                      ? (lang === "es" ? "Guardar cambios" : "Save changes")
+                      : (lang === "es" ? "Crear expediente" : "Create file")}
+                    {' '}
+                    <IconCheck size={12}/>
+                  </>
+                )
               }
             </button>
           )}
@@ -1869,3 +2038,7 @@ function Toast({ kind = "ok", msg, onClose }) {
     }}>{msg}</div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────
+// EOF · CreateExpedienteWizardLite
+// ─────────────────────────────────────────────────────────────

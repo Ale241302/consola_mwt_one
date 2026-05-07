@@ -1349,8 +1349,12 @@ class ExpedienteViewSet(viewsets.ViewSet):
     # ══════════════════════════════════════════════════════
 
     # ══════════════════════════════════════════════════════════
-    # PATCH /api/expedientes/{exp_id}/sap/{sap_id}/
+    # GET / PATCH /api/expedientes/{exp_id}/sap/{sap_id}/
     # Sprint 2026-05-06 · Editor SAP-level (Fase 2.B MVP).
+    # Sprint 2026-05-07 · Fase 2.D/2.E — extensión:
+    #   · GET: precarga del wizard (líneas + metadata por SAP).
+    #   · PATCH: además de metadata, soporta lines_added /
+    #     lines_removed / lines_updated.
     #
     # Permite cambiar metadata del SAP individual:
     #   · operating_company_id  (cambia operador → recálculo crédito)
@@ -1358,15 +1362,21 @@ class ExpedienteViewSet(viewsets.ViewSet):
     #   · payment_days
     #
     # NO cubre todavía:
-    #   · cambio de cliente con split del expediente (Fase 2.D)
-    #   · agregar/quitar productos del SAP (Fase 2.E)
+    #   · cambio de cliente con split del expediente (Fase 2.F)
     # ══════════════════════════════════════════════════════════
     @action(
         detail=True,
-        methods=["patch"],
+        methods=["get", "patch"],
         url_path=r"sap/(?P<sap_id>[^/.]+)",
     )
     def patch_sap(self, request, pk=None, sap_id=None):
+        # ── Branch GET ─────────────────────────────────────
+        # GET es read-only; lo permitimos a Admin y a CLIENT_*
+        # con scope (la guard de listado ya filtra por client).
+        # Para CLIENT_* ocultamos `unit_price_mwt`.
+        if request.method.upper() == "GET":
+            return self._get_sap(request, pk=pk, sap_id=sap_id)
+
         denied = _deny_client_mutation(request, action_label="expediente.patch_sap")
         if denied is not None:
             return denied
@@ -1428,11 +1438,63 @@ class ExpedienteViewSet(viewsets.ViewSet):
             if new_pd_val < 0:
                 return Response({"detail": "payment_days no puede ser negativo"}, status=400)
 
+        # ── Sprint 2026-05-07 · Fase 2.E ─ líneas dentro del SAP ──
+        # Aceptamos tres arrays opcionales:
+        #   · lines_added   = [{producto_id, sku, talla, qty}]
+        #   · lines_removed = [linea_id, ...]      (soft-delete)
+        #   · lines_updated = [{id, qty}]          (recalcula total_price)
+        lines_added   = payload.get("lines_added")
+        lines_removed = payload.get("lines_removed")
+        lines_updated = payload.get("lines_updated")
+        # Tolerancia a JSON crudo (form-encoded) por si llega como string.
+        for _name in ("lines_added", "lines_removed", "lines_updated"):
+            _val = locals()[_name]
+            if isinstance(_val, str):
+                try:
+                    parsed = json.loads(_val) if _val.strip() else None
+                except json.JSONDecodeError:
+                    return Response(
+                        {"detail": f"{_name} no es JSON válido"}, status=400
+                    )
+                if _name == "lines_added":
+                    lines_added = parsed
+                elif _name == "lines_removed":
+                    lines_removed = parsed
+                else:
+                    lines_updated = parsed
+        if lines_added is not None and not isinstance(lines_added, list):
+            return Response({"detail": "lines_added debe ser array"}, status=400)
+        if lines_removed is not None and not isinstance(lines_removed, list):
+            return Response({"detail": "lines_removed debe ser array"}, status=400)
+        if lines_updated is not None and not isinstance(lines_updated, list):
+            return Response({"detail": "lines_updated debe ser array"}, status=400)
+
+        has_line_ops = bool(
+            (lines_added and len(lines_added) > 0)
+            or (lines_removed and len(lines_removed) > 0)
+            or (lines_updated and len(lines_updated) > 0)
+        )
+
+        # ── Cambio de cliente: aún no soportado (split de expediente) ──
+        new_client_id = payload.get("client_id")
+        if new_client_id and str(new_client_id) != str(getattr(exp, "client_id", "") or ""):
+            return Response(
+                {
+                    "detail": "client_change_not_supported_yet",
+                    "hint":   "El cambio de cliente con split de expediente se entrega en F2.F",
+                },
+                status=422,
+            )
+
         # Si nada vino, 400
-        if new_op is None and new_fp is None and new_pd_val is None:
-            return Response({"detail": "Sin cambios — incluí al menos uno de operating_company_id, forma_pago, payment_days"}, status=400)
+        if (new_op is None and new_fp is None and new_pd_val is None
+                and not has_line_ops):
+            return Response({"detail": "Sin cambios — incluí al menos uno de operating_company_id, forma_pago, payment_days, lines_added, lines_removed, lines_updated"}, status=400)
 
         # Aplicar cambios atómicamente
+        added_ids:   list = []
+        removed_ids: list = []
+        updated_ids: list = []
         try:
             with transaction.atomic():
                 with connection.cursor() as c:
@@ -1447,58 +1509,119 @@ class ExpedienteViewSet(viewsets.ViewSet):
                     if new_pd_val is not None:
                         sets.append("payment_days = %s")
                         args.append(new_pd_val)
-                    sets.append("updated_at = NOW()")
-                    args.append(str(ai_id))
-                    c.execute(
-                        "UPDATE expedientes.artifact_instances SET "
-                        + ", ".join(sets)
-                        + " WHERE id = %s",
-                        args,
+                    if sets:
+                        sets.append("updated_at = NOW()")
+                        args.append(str(ai_id))
+                        c.execute(
+                            "UPDATE expedientes.artifact_instances SET "
+                            + ", ".join(sets)
+                            + " WHERE id = %s",
+                            args,
+                        )
+
+                    # ── Operaciones sobre líneas ──────────────────
+                    # operating_company resolved (efectivo después del UPDATE)
+                    eff_op = (
+                        str(new_op) if new_op is not None
+                        else (str(cur_op) if cur_op else None)
                     )
+                    if has_line_ops:
+                        added_ids, removed_ids, updated_ids = self._apply_sap_line_ops(
+                            cursor=c,
+                            exp=exp,
+                            sap_id=sap_id,
+                            operating_company_id=eff_op,
+                            lines_added=lines_added or [],
+                            lines_removed=lines_removed or [],
+                            lines_updated=lines_updated or [],
+                        )
 
                     # ── Auditoría: pipeline.event_log (schema real)
                     #    Columnas: event_type, aggregate_type, aggregate_id,
                     #    payload (jsonb), emitted_by_id, emitted_by_role,
                     #    correlation_id, is_active.
-                    try:
-                        emitter_id = getattr(request.user, "id", None)
-                        c.execute("""
-                            INSERT INTO pipeline.event_log
-                              (id, correlation_id,
-                               event_type, aggregate_type, aggregate_id,
-                               payload,
-                               emitted_by_id, emitted_by_role,
-                               is_active, created_at, updated_at)
-                            VALUES
-                              (%s, %s,
-                               'sap.metadata_patched', 'sap_metadata', %s::uuid,
-                               %s::jsonb,
-                               %s, %s,
-                               TRUE, NOW(), NOW())
-                        """, [
-                            str(uuid.uuid4()),
-                            str(uuid.uuid4()),
-                            str(ai_id),
-                            json.dumps({
-                                "expediente_id": str(exp.id),
-                                "sap_id": sap_id,
-                                "before": {
-                                    "operating_company_id": str(cur_op) if cur_op else None,
-                                    "forma_pago": cur_fp,
-                                    "payment_days": cur_pd,
-                                },
-                                "after": {
-                                    "operating_company_id": str(new_op) if new_op else (str(cur_op) if cur_op else None),
-                                    "forma_pago": new_fp or cur_fp,
-                                    "payment_days": new_pd_val if new_pd_val is not None else cur_pd,
-                                },
-                            }),
-                            str(emitter_id) if emitter_id else None,
-                            (getattr(request.user, "role_default", None) or
-                             getattr(request.user, "role", None) or "unknown"),
-                        ])
-                    except Exception as ev_err:
-                        log.warning("[patch_sap] event_log insert failed: %s", ev_err)
+                    emitter_id = getattr(request.user, "id", None)
+                    emitter_role = (
+                        getattr(request.user, "role_default", None)
+                        or getattr(request.user, "role", None)
+                        or "unknown"
+                    )
+
+                    metadata_changed = (
+                        new_op is not None
+                        or new_fp is not None
+                        or new_pd_val is not None
+                    )
+                    if metadata_changed:
+                        try:
+                            c.execute("""
+                                INSERT INTO pipeline.event_log
+                                  (id, correlation_id,
+                                   event_type, aggregate_type, aggregate_id,
+                                   payload,
+                                   emitted_by_id, emitted_by_role,
+                                   is_active, created_at, updated_at)
+                                VALUES
+                                  (%s, %s,
+                                   'sap.metadata_patched', 'sap_metadata', %s::uuid,
+                                   %s::jsonb,
+                                   %s, %s,
+                                   TRUE, NOW(), NOW())
+                            """, [
+                                str(uuid.uuid4()),
+                                str(uuid.uuid4()),
+                                str(ai_id),
+                                json.dumps({
+                                    "expediente_id": str(exp.id),
+                                    "sap_id": sap_id,
+                                    "before": {
+                                        "operating_company_id": str(cur_op) if cur_op else None,
+                                        "forma_pago": cur_fp,
+                                        "payment_days": cur_pd,
+                                    },
+                                    "after": {
+                                        "operating_company_id": str(new_op) if new_op else (str(cur_op) if cur_op else None),
+                                        "forma_pago": new_fp or cur_fp,
+                                        "payment_days": new_pd_val if new_pd_val is not None else cur_pd,
+                                    },
+                                }),
+                                str(emitter_id) if emitter_id else None,
+                                emitter_role,
+                            ])
+                        except Exception as ev_err:
+                            log.warning("[patch_sap] event_log metadata insert failed: %s", ev_err)
+
+                    if has_line_ops:
+                        try:
+                            c.execute("""
+                                INSERT INTO pipeline.event_log
+                                  (id, correlation_id,
+                                   event_type, aggregate_type, aggregate_id,
+                                   payload,
+                                   emitted_by_id, emitted_by_role,
+                                   is_active, created_at, updated_at)
+                                VALUES
+                                  (%s, %s,
+                                   'sap.lines_modified', 'sap_metadata', %s::uuid,
+                                   %s::jsonb,
+                                   %s, %s,
+                                   TRUE, NOW(), NOW())
+                            """, [
+                                str(uuid.uuid4()),
+                                str(uuid.uuid4()),
+                                str(ai_id),
+                                json.dumps({
+                                    "expediente_id": str(exp.id),
+                                    "sap_id": sap_id,
+                                    "added":   added_ids,
+                                    "removed": removed_ids,
+                                    "updated": updated_ids,
+                                }),
+                                str(emitter_id) if emitter_id else None,
+                                emitter_role,
+                            ])
+                        except Exception as ev_err:
+                            log.warning("[patch_sap] event_log lines insert failed: %s", ev_err)
         except Exception as e:
             log.exception("[patch_sap] update failed: %s", e)
             return Response({"detail": "update_failed", "error": str(e)[:300]}, status=500)
@@ -1511,7 +1634,428 @@ class ExpedienteViewSet(viewsets.ViewSet):
             "operating_company_id": str(new_op) if new_op else (str(cur_op) if cur_op else None),
             "forma_pago": new_fp or cur_fp,
             "payment_days": new_pd_val if new_pd_val is not None else cur_pd,
+            "lines_added":   added_ids,
+            "lines_removed": removed_ids,
+            "lines_updated": updated_ids,
         }, status=200)
+
+    # ══════════════════════════════════════════════════════════
+    # GET helper · /api/expedientes/{exp_id}/sap/{sap_id}/
+    # Sprint 2026-05-07 · Fase 2.D — precarga del wizard editor.
+    # ══════════════════════════════════════════════════════════
+    def _get_sap(self, request, pk=None, sap_id=None):
+        if not sap_id:
+            return Response({"detail": "sap_id requerido"}, status=400)
+
+        # Lookup tolerante: pk puede ser UUID o codigo (mismo patrón
+        # que retrieve()).
+        exp = None
+        try:
+            exp = Expediente.objects.get(pk=pk, is_active=True)
+        except Expediente.DoesNotExist:
+            exp = None
+        except (ValueError, TypeError):
+            exp = None
+        if exp is None:
+            try:
+                exp = Expediente.objects.get(codigo=pk, is_active=True)
+            except Expediente.DoesNotExist:
+                return Response({"detail": "Expediente no existe"}, status=404)
+
+        is_client = _is_client_viewer(request)
+
+        # Visibilidad CLIENT_*: el expediente debe pertenecer a su pool
+        # (consistente con list()).
+        if is_client:
+            user_companies = list(getattr(request.user, "legal_entity_ids", None) or [])
+            if not user_companies:
+                return Response({"detail": "forbidden"}, status=403)
+            client_ok = str(getattr(exp, "client_id", "") or "") in {str(c) for c in user_companies}
+            op_ok     = str(getattr(exp, "operating_company_id", "") or "") in {str(c) for c in user_companies}
+            if not (client_ok or op_ok):
+                return Response({"detail": "forbidden"}, status=403)
+
+        # 1) Lookup ART-04 metadata (puede no existir si el SAP fue
+        #    creado vía OCR sin artifact_instance — degradamos a NULLs).
+        ai_op = None
+        ai_fp = None
+        ai_pd = None
+        try:
+            with connection.cursor() as c:
+                c.execute("""
+                    SELECT operating_company_id, forma_pago, payment_days
+                      FROM expedientes.artifact_instances
+                     WHERE expediente_id = %s::uuid
+                       AND artifact_code = 'ART-04'
+                       AND codigo = %s
+                       AND is_active = TRUE
+                     LIMIT 1
+                """, [str(exp.id), sap_id])
+                row = c.fetchone()
+                if row:
+                    ai_op, ai_fp, ai_pd = row
+        except Exception as e:
+            log.warning("[get_sap] ART-04 lookup failed exp=%s sap=%s: %s",
+                        exp.id, sap_id, e)
+
+        # 2) Líneas activas con ese SAP en el expediente.
+        lines_out: list = []
+        sap_value_mwt    = Decimal("0")
+        sap_value_client = Decimal("0")
+        try:
+            with connection.cursor() as c:
+                c.execute("""
+                    SELECT l.id::text,
+                           l.producto_id::text,
+                           l.sku,
+                           l.size,
+                           l.qty,
+                           l.unit_price,
+                           l.unit_price_mwt,
+                           l.unit_price_client
+                      FROM expedientes.linea l
+                     WHERE l.expediente_id = %s::uuid
+                       AND l.sap = %s
+                       AND l.is_active = TRUE
+                     ORDER BY l.created_at ASC, l.id ASC
+                """, [str(exp.id), sap_id])
+                rows = c.fetchall()
+        except Exception as e:
+            log.exception("[get_sap] lineas lookup failed: %s", e)
+            return Response({"detail": "lookup_failed", "error": str(e)[:200]}, status=500)
+
+        if not rows:
+            return Response(
+                {"detail": f"No existen líneas activas para sap={sap_id}"},
+                status=404,
+            )
+
+        # 3) Resolver labels de productos (best-effort).
+        product_labels: dict = {}
+        try:
+            pids = [r[1] for r in rows if r[1]]
+            unique_pids = list({p for p in pids if p})
+            if unique_pids:
+                with connection.cursor() as c:
+                    placeholders = ",".join(["%s::uuid"] * len(unique_pids))
+                    c.execute(
+                        f"""
+                        SELECT id::text, nombre
+                          FROM productos.producto
+                         WHERE id IN ({placeholders})
+                        """,
+                        unique_pids,
+                    )
+                    for pid, nombre in c.fetchall():
+                        product_labels[pid] = nombre
+        except Exception as e:
+            log.warning("[get_sap] product label lookup failed: %s", e)
+
+        # 4) Resolver client_label (best-effort).
+        client_label = None
+        client_id_val = getattr(exp, "client_id", None)
+        if client_id_val:
+            try:
+                with connection.cursor() as c:
+                    c.execute(
+                        """
+                        SELECT COALESCE(razon_social, nombre)
+                          FROM clientes.cliente
+                         WHERE id = %s::uuid
+                         LIMIT 1
+                        """,
+                        [str(client_id_val)],
+                    )
+                    cr = c.fetchone()
+                    if cr:
+                        client_label = cr[0]
+            except Exception as e:
+                log.warning("[get_sap] client label lookup failed: %s", e)
+
+        # 5) Construir respuesta + sumas.
+        for r in rows:
+            (lid, pid, sku, size, qty, up_legacy, up_mwt, up_cli) = r
+            try:
+                qty_d  = Decimal(str(qty or 0))
+                upm_d  = Decimal(str(up_mwt or 0))
+                upc_d  = Decimal(str(up_cli or 0))
+            except (TypeError, ValueError, ArithmeticError):
+                qty_d, upm_d, upc_d = Decimal("0"), Decimal("0"), Decimal("0")
+            sap_value_mwt    += (qty_d * upm_d)
+            sap_value_client += (qty_d * upc_d)
+
+            line_obj = {
+                "id":                str(lid),
+                "producto_id":       str(pid) if pid else None,
+                "sku":               sku,
+                "talla":             size,
+                "qty":               int(qty_d) if qty_d == qty_d.to_integral_value() else float(qty_d),
+                "unit_price_mwt":    None if is_client else float(upm_d),
+                "unit_price_client": float(upc_d),
+                "product_label":     product_labels.get(str(pid)) if pid else None,
+            }
+            lines_out.append(line_obj)
+
+        # Fallback de metadata: si el ART-04 NO trae operator/forma/days,
+        # usar los del expediente padre.
+        eff_op = ai_op if ai_op else getattr(exp, "operating_company_id", None)
+        eff_fp = ai_fp if ai_fp else getattr(exp, "forma_pago", None)
+        eff_pd = ai_pd if ai_pd is not None else getattr(exp, "credit_days", None)
+
+        return Response({
+            "expediente_id":        str(exp.id),
+            "expediente_codigo":    getattr(exp, "codigo", None),
+            "sap_id":               sap_id,
+            "client_id":            str(client_id_val) if client_id_val else None,
+            "client_label":         client_label,
+            "operating_company_id": str(eff_op) if eff_op else None,
+            "forma_pago":           eff_fp,
+            "payment_days":         eff_pd,
+            "sap_value_mwt":        None if is_client else float(sap_value_mwt.quantize(Decimal("0.01"))),
+            "sap_value_client":     float(sap_value_client.quantize(Decimal("0.01"))),
+            "lines":                lines_out,
+        }, status=200)
+
+    # ══════════════════════════════════════════════════════════
+    # Helper · aplicar operaciones de líneas dentro de un SAP.
+    # Devuelve (added_ids, removed_ids, updated_ids).
+    # ══════════════════════════════════════════════════════════
+    def _apply_sap_line_ops(
+        self, *, cursor, exp, sap_id, operating_company_id,
+        lines_added, lines_removed, lines_updated,
+    ):
+        added_ids:   list = []
+        removed_ids: list = []
+        updated_ids: list = []
+
+        # ── lines_removed (soft-delete) ─────────────────────────
+        for raw_id in lines_removed:
+            try:
+                lid = str(raw_id).strip()
+            except (TypeError, ValueError):
+                continue
+            if not lid:
+                continue
+            try:
+                cursor.execute(
+                    """
+                    UPDATE expedientes.linea
+                       SET is_active = FALSE,
+                           updated_at = NOW()
+                     WHERE id = %s::uuid
+                       AND expediente_id = %s::uuid
+                       AND sap = %s
+                       AND is_active = TRUE
+                    """,
+                    [lid, str(exp.id), sap_id],
+                )
+                if cursor.rowcount and cursor.rowcount > 0:
+                    removed_ids.append(lid)
+            except Exception as e:
+                log.warning("[patch_sap] remove linea %s falló: %s", lid, e)
+
+        # ── lines_updated (qty + recalc total_price) ────────────
+        for ln in lines_updated:
+            if not isinstance(ln, dict):
+                continue
+            lid = (ln.get("id") or "").strip() if isinstance(ln.get("id"), str) else str(ln.get("id") or "")
+            if not lid:
+                continue
+            qraw = ln.get("qty")
+            try:
+                new_qty = int(qraw)
+            except (TypeError, ValueError):
+                log.warning("[patch_sap] qty inválido en lines_updated id=%s val=%r", lid, qraw)
+                continue
+            if new_qty <= 0:
+                log.warning("[patch_sap] qty <=0 en lines_updated id=%s; ignorado", lid)
+                continue
+            try:
+                cursor.execute(
+                    """
+                    UPDATE expedientes.linea
+                       SET qty = %s,
+                           total_price = ROUND(%s::numeric * unit_price, 2),
+                           updated_at = NOW()
+                     WHERE id = %s::uuid
+                       AND expediente_id = %s::uuid
+                       AND sap = %s
+                       AND is_active = TRUE
+                    """,
+                    [new_qty, new_qty, lid, str(exp.id), sap_id],
+                )
+                if cursor.rowcount and cursor.rowcount > 0:
+                    updated_ids.append({"id": lid, "qty": new_qty})
+            except Exception as e:
+                log.warning("[patch_sap] update linea %s falló: %s", lid, e)
+
+        # ── lines_added (insert con snapshot dual de precios) ────
+        if lines_added:
+            from apps.commercial.views import compute_client_price  # noqa: PLC0415
+
+            client_id_val = getattr(exp, "client_id", None)
+            oc_id_val     = getattr(exp, "oc_id", None)
+
+            unique_pids = []
+            for ln in lines_added:
+                if not isinstance(ln, dict):
+                    continue
+                pid = ln.get("producto_id")
+                if isinstance(pid, str) and len(pid) == 36:
+                    unique_pids.append(pid)
+            unique_pids = list(set(unique_pids))
+
+            price_map_mwt:    dict = {}
+            price_map_client: dict = {}
+            if unique_pids:
+                try:
+                    placeholders = ",".join(["%s::uuid"] * len(unique_pids))
+                    cursor.execute(
+                        f"""
+                        SELECT id::text,
+                               sku,
+                               marca_id::text,
+                               precio_lista,
+                               precio_mwt,
+                               COALESCE(especificaciones->'client_prices', '{{}}'::jsonb) AS client_prices
+                          FROM productos.producto
+                         WHERE id IN ({placeholders})
+                        """,
+                        unique_pids,
+                    )
+
+                    def _to_decimal(v):
+                        try:
+                            d = Decimal(str(v))
+                            return d if d > 0 else None
+                        except (TypeError, ValueError, ArithmeticError):
+                            return None
+
+                    for pid, sku_db, brand_id, pl, p_mwt_override, cp_json in cursor.fetchall():
+                        cp_map = cp_json or {}
+                        if isinstance(cp_map, str):
+                            try:
+                                cp_map = json.loads(cp_map)
+                            except (TypeError, ValueError):
+                                cp_map = {}
+
+                        # Precio MWT (operador interno)
+                        p_mwt = _to_decimal(
+                            cp_map.get(MWT_OPERATING_CLIENT_ID)
+                            or cp_map.get(str(MWT_OPERATING_CLIENT_ID))
+                        )
+                        if p_mwt is None:
+                            p_mwt = _to_decimal(p_mwt_override)
+                        if p_mwt is None and brand_id and sku_db:
+                            try:
+                                p_mwt = compute_client_price(
+                                    client_id=MWT_OPERATING_CLIENT_ID,
+                                    brand_id=brand_id,
+                                    product_sku=sku_db,
+                                    days_req=0,
+                                )
+                            except (TypeError, ValueError, ArithmeticError) as e:
+                                log.warning("[patch_sap] waterfall MWT pid=%s: %s", pid, e)
+                                p_mwt = None
+                        if p_mwt is not None and p_mwt > 0:
+                            price_map_mwt[pid] = p_mwt
+                        else:
+                            try:
+                                price_map_mwt[pid] = Decimal(str(pl or 0))
+                            except (TypeError, ValueError, ArithmeticError):
+                                price_map_mwt[pid] = Decimal("0")
+
+                        # Precio cliente final
+                        p_cli = None
+                        if client_id_val:
+                            p_cli = _to_decimal(
+                                cp_map.get(str(client_id_val))
+                                or cp_map.get(client_id_val)
+                            )
+                        if p_cli is None and client_id_val and brand_id and sku_db:
+                            try:
+                                p_cli = compute_client_price(
+                                    client_id=client_id_val,
+                                    brand_id=brand_id,
+                                    product_sku=sku_db,
+                                    days_req=0,
+                                )
+                            except (TypeError, ValueError, ArithmeticError) as e:
+                                log.warning("[patch_sap] waterfall CLIENT pid=%s: %s", pid, e)
+                                p_cli = None
+                        if p_cli is not None and p_cli > 0:
+                            price_map_client[pid] = p_cli
+                        else:
+                            price_map_client[pid] = price_map_mwt[pid]
+                except Exception as e:
+                    log.exception("[patch_sap] price_map fetch failed: %s", e)
+                    price_map_mwt    = {}
+                    price_map_client = {}
+
+            # Insertar líneas nuevas
+            for ln in lines_added:
+                if not isinstance(ln, dict):
+                    continue
+                sku = (ln.get("sku") or "").strip().upper()[:64]
+                if not sku:
+                    continue
+                talla = (ln.get("talla") or ln.get("size") or "")
+                talla = (str(talla).strip().upper()[:16] or None) if talla else None
+                cantidad = ln.get("cantidad") or ln.get("qty") or 0
+                try:
+                    cantidad = int(cantidad)
+                except (TypeError, ValueError):
+                    cantidad = 0
+                if cantidad <= 0:
+                    continue
+                pid = ln.get("producto_id")
+                pid = str(pid) if pid else None
+                unit_price_mwt    = (price_map_mwt.get(pid, Decimal("0"))
+                                     if pid else Decimal("0"))
+                unit_price_client = (price_map_client.get(pid, Decimal("0"))
+                                     if pid else Decimal("0"))
+                # unit_price = el precio del operador (legacy).
+                unit_price = (unit_price_mwt
+                              if str(operating_company_id) == MWT_OPERATING_CLIENT_ID
+                              else unit_price_client)
+                total_price = (unit_price * Decimal(cantidad)).quantize(Decimal("0.01"))
+
+                new_line_id = uuid.uuid4()
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO expedientes.linea (
+                            id, oc_id, expediente_id, producto_id,
+                            sku, size, qty,
+                            unit_price, unit_price_mwt, unit_price_client,
+                            total_price,
+                            sap,
+                            estado, is_active, created_at, updated_at
+                        ) VALUES (
+                            %s, %s, %s, %s,
+                            %s, %s, %s,
+                            %s, %s, %s,
+                            %s,
+                            %s,
+                            'PENDIENTE_SAP', TRUE, NOW(), NOW()
+                        )
+                        """,
+                        [
+                            str(new_line_id),
+                            str(oc_id_val) if oc_id_val else None,
+                            str(exp.id),
+                            pid,
+                            sku, talla, cantidad,
+                            unit_price, unit_price_mwt, unit_price_client,
+                            total_price,
+                            sap_id,
+                        ],
+                    )
+                    added_ids.append(str(new_line_id))
+                except Exception as e:
+                    log.warning("[patch_sap] insert linea sku=%s falló: %s", sku, e)
+
+        return added_ids, removed_ids, updated_ids
 
     @action(
         detail=True,
