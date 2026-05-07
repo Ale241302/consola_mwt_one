@@ -1456,18 +1456,27 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         args,
                     )
 
-                    # ── Auditoría: pipeline.event_log
+                    # ── Auditoría: pipeline.event_log (schema real)
+                    #    Columnas: event_type, aggregate_type, aggregate_id,
+                    #    payload (jsonb), emitted_by_id, emitted_by_role,
+                    #    correlation_id, is_active.
                     try:
+                        emitter_id = getattr(request.user, "id", None)
                         c.execute("""
                             INSERT INTO pipeline.event_log
-                              (id, aggregate_type, aggregate_id, action,
-                               payload, emitter_id, emitter_role,
-                               correlation_id, is_active, created_at)
+                              (id, correlation_id,
+                               event_type, aggregate_type, aggregate_id,
+                               payload,
+                               emitted_by_id, emitted_by_role,
+                               is_active, created_at, updated_at)
                             VALUES
-                              (%s, 'sap_metadata', %s::uuid, 'PATCH',
-                               %s::jsonb, %s, %s,
-                               %s, TRUE, NOW())
+                              (%s, %s,
+                               'sap.metadata_patched', 'sap_metadata', %s::uuid,
+                               %s::jsonb,
+                               %s, %s,
+                               TRUE, NOW(), NOW())
                         """, [
+                            str(uuid.uuid4()),
                             str(uuid.uuid4()),
                             str(ai_id),
                             json.dumps({
@@ -1484,10 +1493,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                     "payment_days": new_pd_val if new_pd_val is not None else cur_pd,
                                 },
                             }),
-                            str(getattr(request.user, "id", "")) or None,
+                            str(emitter_id) if emitter_id else None,
                             (getattr(request.user, "role_default", None) or
                              getattr(request.user, "role", None) or "unknown"),
-                            str(uuid.uuid4()),
                         ])
                     except Exception as ev_err:
                         log.warning("[patch_sap] event_log insert failed: %s", ev_err)

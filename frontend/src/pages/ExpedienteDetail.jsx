@@ -585,7 +585,7 @@ export default function ScreenExpedienteDetail() {
   );
 }
 
-function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifactsTab, cpaPriceMap, productoNombreMap }) {
+function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifactsTab, cpaPriceMap, productoNombreMap, isClient = false }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
       {/* Sprint 2026-05-01: el card "Detalles" mostraba modo/flete/ETA/
