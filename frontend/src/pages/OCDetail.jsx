@@ -308,8 +308,19 @@ export default function ScreenOCDetail() {
       // live como mejor esfuerzo de backfill visual.
       // Sprint 2026-05-06 · backend devuelve unit_price_for_viewer
       // resuelto por rol: Admin/MWT → unit_price_mwt, CLIENT_* →
-      // unit_price_client. Si no llegó (compat) caemos a unit_price.
-      const persistedPrice = Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
+      // unit_price_client. Pero cuando Admin togglea Tweaks → "Cliente
+      // (B2B)" para simular vista, queremos `unit_price_client` aunque
+      // el backend (que ve JWT admin) haya devuelto `unit_price_mwt`.
+      // Por eso preferimos el snapshot dual cuando isClient está
+      // simulado y el campo crudo está disponible.
+      let persistedPrice;
+      if (isClient && l.unit_price_client != null && Number(l.unit_price_client) > 0) {
+        persistedPrice = Number(l.unit_price_client);
+      } else if (!isClient && l.unit_price_mwt != null && Number(l.unit_price_mwt) > 0) {
+        persistedPrice = Number(l.unit_price_mwt);
+      } else {
+        persistedPrice = Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
+      }
       const livePrice      = l.producto_id ? Number(cpaPriceMap[l.producto_id] || 0) : 0;
       const unit = persistedPrice > 0 ? persistedPrice : livePrice;
       // Sprint 2026-05-02 (AG-03): para el campo "Nombre" priorizamos
@@ -1585,7 +1596,15 @@ export default function ScreenOCDetail() {
                 {lang === 'es' ? 'Aún no hay documentos.' : 'No documents yet.'}
               </div>
             )}
-            {oc.docs.map(d => {
+            {oc.docs.filter(d => {
+              // Sprint 2026-05-06 · simular vista por rol cuando Admin
+              // togglea Tweaks→Cliente (B2B). El backend ya filtra
+              // ADMIN_ONLY/MWT_INTERNAL para CLIENT_* reales; aquí
+              // replicamos el filtro para la simulación frontend.
+              const aud = String(d.audience || 'CLIENT').toUpperCase();
+              if (isClient) return aud === 'CLIENT';
+              return true;
+            }).map(d => {
               // Defensivo: cualquier campo faltante cae a un valor seguro
               // para no romper la UI con docs legacy o shape inesperado.
               const ext = String(d.ext || 'file').toLowerCase();
