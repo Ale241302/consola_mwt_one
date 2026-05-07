@@ -461,7 +461,7 @@ export default function ScreenExpedienteDetail() {
                            onOpenArtifactsTab={() => setTab('artifacts')}/>
             </>
           )}
-          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap} exp={exp} onLineAdded={() => setLinesReload(n => n + 1)}/>}
+          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap} exp={exp} isClient={isClient} onLineAdded={() => setLinesReload(n => n + 1)}/>}
           {tab === 'artifacts' && (
             <div>
               {/* Toolbar de artifacts: solo visible para CEO/admin.
@@ -649,10 +649,19 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifacts
               // (Decimal serializado). Sin Number(), `qty * unit_price` hace
               // string concat y `(margin*100)` es NaN%.
               const qty   = Number(l.qty || 0);
-              // Sprint 2026-05-06 · backend resuelve `unit_price_for_viewer`
-              // según el rol del consumidor (CLIENT_* → cliente, MWT/Admin
-              // → mwt). Si el campo no llega (compat), caemos a unit_price.
-              let unit    = Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
+              // Sprint 2026-05-06 · cuando Admin togglea Tweaks->Cliente
+              // queremos ver unit_price_client aunque el backend (que ve
+              // JWT admin) haya devuelto unit_price_mwt en
+              // unit_price_for_viewer. Por eso preferimos los campos
+              // crudos snapshot dual cuando estan disponibles.
+              let unit;
+              if (isClient && l.unit_price_client != null && Number(l.unit_price_client) > 0) {
+                unit = Number(l.unit_price_client);
+              } else if (!isClient && l.unit_price_mwt != null && Number(l.unit_price_mwt) > 0) {
+                unit = Number(l.unit_price_mwt);
+              } else {
+                unit = Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
+              }
               // Fallback: cuando la linea trae unit_price=0 leemos el
               // precio del catalogo de productos (cpaPriceMap),
               // indexado por producto_id. Mismo enfoque que OCDetail.
@@ -712,11 +721,20 @@ function DetailRow({ label, value }) {
   );
 }
 
-function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, onLineAdded }) {
+function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient = false, onLineAdded }) {
   // Sprint 2026-05-01: total con fallback al catalogo de productos
-  // Sprint 2026-05-06 · prefer unit_price_for_viewer (resuelto por rol).
+  // Sprint 2026-05-06 · prefer snapshot dual segun isClient (Tweaks-aware).
+  const _resolvePrice = (l) => {
+    if (isClient && l.unit_price_client != null && Number(l.unit_price_client) > 0) {
+      return Number(l.unit_price_client);
+    }
+    if (!isClient && l.unit_price_mwt != null && Number(l.unit_price_mwt) > 0) {
+      return Number(l.unit_price_mwt);
+    }
+    return Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
+  };
   const total = lines.reduce((a, l) => {
-    let unit = Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
+    let unit = _resolvePrice(l);
     if (unit === 0 && cpaPriceMap && l.producto_id) {
       const fb = Number(cpaPriceMap[l.producto_id] || 0);
       if (fb > 0) unit = fb;
@@ -799,8 +817,8 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, onLineAdde
         <tbody>
           {lines.map(l => {
             // Fallback al catalogo de productos si la linea trae 0
-            // Sprint 2026-05-06 · prefer unit_price_for_viewer (rol-aware)
-            let _unit = Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
+            // Sprint 2026-05-06 · usa snapshot dual (Tweaks-aware via _resolvePrice).
+            let _unit = _resolvePrice(l);
             let _total = Number(l.total_price || 0);
             if (_unit === 0 && cpaPriceMap && l.producto_id) {
               const fb = Number(cpaPriceMap[l.producto_id] || 0);

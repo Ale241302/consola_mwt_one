@@ -37,6 +37,7 @@ import {
   OCS, CLIENTS, BRANDS, EXPEDIENTES, PRODUCTS, HERO_OC_ID,
 } from "../data/mockData.js";
 import AddSAPConfirmationDrawer from "../components/expedientes/AddSAPConfirmationDrawer.jsx";
+import EditSapDrawer from "../components/expedientes/EditSapDrawer.jsx";
 import UploadDocumentModal from "../components/expedientes/UploadDocumentModal.jsx";
 import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmakerWizard.jsx";
 import AddOCProductModal from "../components/expedientes/AddOCProductModal.jsx";
@@ -158,6 +159,9 @@ export default function ScreenOCDetail() {
   const [openSap, setOpenSap]                     = useState(null);
   const [showAddProduct, setShowAddProduct]       = useState(false);
   const [sapDrawerOpen, setSapDrawerOpen]         = useState(false);
+  // Sprint 2026-05-06 (Fase 2.C) · Editor SAP-level metadata.
+  // editingSap = { expedienteId, sapId, current: {operating_company_id, forma_pago, payment_days}, clientId, clientName }
+  const [editingSap, setEditingSap]               = useState(null);
   const [sapDrawerExp, setSapDrawerExp]           = useState(null);
   // Sprint 2026-05-01: si se esta editando un SAP existente, este state
   // contiene los datos pre-poblados para el drawer. Si null, el drawer
@@ -890,6 +894,32 @@ export default function ScreenOCDetail() {
 
       {/* Modal compacto Editar SAP eliminado (sprint 2026-05-01).
           Editar SAP ahora abre el AddSAPConfirmationDrawer en modo edit. */}
+
+      {/* Sprint 2026-05-06 (F2.C) · Editor SAP-level (operador, forma_pago, días).
+          Solo Admin. Al guardar refresca el listado de líneas para que los
+          chips reflejen el nuevo operador. */}
+      {editingSap && isAdmin && (
+        <EditSapDrawer
+          open={!!editingSap}
+          onClose={() => setEditingSap(null)}
+          onSaved={() => {
+            setEditingSap(null);
+            // best-effort: recargar líneas del API para que el chip refleje
+            // el cambio. La fuente original de l.operating_company_id
+            // viene del payload del expediente (no de la línea), así que
+            // forzamos un re-fetch del expediente.
+            if (typeof window !== 'undefined' && window.location) {
+              setTimeout(() => window.location.reload(), 200);
+            }
+          }}
+          lang={lang}
+          expedienteId={editingSap.expedienteId}
+          sapId={editingSap.sapId}
+          current={editingSap.current}
+          clientId={editingSap.clientId}
+          clientName={editingSap.clientName}
+        />
+      )}
 
       {/* Modal subir documento comercial (OC, Proforma, etc.)
           Sprint 2026-05-02: si kind=OC y hay expediente vinculado, el modal
@@ -1796,9 +1826,37 @@ export default function ScreenOCDetail() {
                   <td className="td-money">{fmtMoney(l.qty * l.unit_price)}</td>
                   <td>
                     {l.sap ? (
-                      <a className="sap-link sap-link-inline" onClick={()=>l.exp_id && onOpenExpediente(l.exp_id)} title={tr(lang,'open_expediente')}>
-                        <IconFolder size={11}/> {l.sap}
-                      </a>
+                      <span style={{display:'inline-flex', alignItems:'center', gap:4}}>
+                        <a className="sap-link sap-link-inline" onClick={()=>l.exp_id && onOpenExpediente(l.exp_id)} title={tr(lang,'open_expediente')}>
+                          <IconFolder size={11}/> {l.sap}
+                        </a>
+                        {/* Sprint 2026-05-06 (F2.C) · botón Admin para
+                            editar metadata del SAP (operador/forma_pago/days). */}
+                        {isAdmin && l.exp_id && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-xs"
+                            style={{padding:'2px 6px', fontSize:11}}
+                            onClick={(ev)=>{
+                              ev.stopPropagation();
+                              setEditingSap({
+                                expedienteId: l.exp_id,
+                                sapId: l.sap,
+                                current: {
+                                  operating_company_id: l.operating_company_id || null,
+                                  forma_pago:           l.forma_pago || 'CREDITO',
+                                  payment_days:         Number(l.payment_days || 0),
+                                },
+                                clientId:   apiOcClient?.id || oc.client_id || null,
+                                clientName: apiOcClient?.razon_social || apiOcClient?.nombre || oc.client || null,
+                              });
+                            }}
+                            title={lang==='es'?'Editar SAP (operador, forma de pago)':'Edit SAP (operator, payment terms)'}
+                          >
+                            ✎
+                          </button>
+                        )}
+                      </span>
                     ) : (
                       <span className="caption" style={{color:'var(--warning)', display:'inline-flex', alignItems:'center', gap:4}}>
                         <IconAlert size={11}/> {tr(lang,'line_status_orphan')}

@@ -1347,6 +1347,164 @@ class ExpedienteViewSet(viewsets.ViewSet):
     #     (reemplaza el PDF si llega uno nuevo). Si no existe,
     #     crea uno nuevo (caso "agregar SAP adicional").
     # ══════════════════════════════════════════════════════
+
+    # ══════════════════════════════════════════════════════════
+    # PATCH /api/expedientes/{exp_id}/sap/{sap_id}/
+    # Sprint 2026-05-06 · Editor SAP-level (Fase 2.B MVP).
+    #
+    # Permite cambiar metadata del SAP individual:
+    #   · operating_company_id  (cambia operador → recálculo crédito)
+    #   · forma_pago            ('CREDITO' | 'CONTADO')
+    #   · payment_days
+    #
+    # NO cubre todavía:
+    #   · cambio de cliente con split del expediente (Fase 2.D)
+    #   · agregar/quitar productos del SAP (Fase 2.E)
+    # ══════════════════════════════════════════════════════════
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path=r"sap/(?P<sap_id>[^/.]+)",
+    )
+    def patch_sap(self, request, pk=None, sap_id=None):
+        denied = _deny_client_mutation(request, action_label="expediente.patch_sap")
+        if denied is not None:
+            return denied
+
+        if not sap_id:
+            return Response({"detail": "sap_id requerido"}, status=400)
+
+        try:
+            exp = Expediente.objects.get(pk=pk, is_active=True)
+        except Expediente.DoesNotExist:
+            return Response({"detail": "Expediente no existe"}, status=404)
+
+        # Cargar el ART-04 activo de ese SAP
+        try:
+            with connection.cursor() as c:
+                c.execute("""
+                    SELECT id, operating_company_id, forma_pago, payment_days
+                      FROM expedientes.artifact_instances
+                     WHERE expediente_id = %s::uuid
+                       AND artifact_code = 'ART-04'
+                       AND codigo = %s
+                       AND is_active = TRUE
+                     LIMIT 1
+                """, [str(exp.id), sap_id])
+                row = c.fetchone()
+        except Exception as e:
+            log.exception("[patch_sap] lookup ART-04 failed: %s", e)
+            return Response({"detail": "lookup_failed", "error": str(e)[:200]}, status=500)
+
+        if not row:
+            return Response(
+                {"detail": f"No existe ART-04 activo para sap={sap_id} en este expediente."},
+                status=404,
+            )
+        ai_id, cur_op, cur_fp, cur_pd = row
+
+        payload = dict(request.data) if hasattr(request.data, "items") else {}
+        try:
+            payload = {k: request.data.get(k) for k in request.data.keys()}
+        except Exception:
+            payload = dict(request.data)
+
+        # Normalizar inputs (todos opcionales)
+        new_op = payload.get("operating_company_id")
+        if new_op == "":
+            new_op = None
+        new_fp = (payload.get("forma_pago") or "").strip().upper() or None
+        if new_fp and new_fp not in ("CREDITO", "CONTADO"):
+            return Response({"detail": "forma_pago inválida"}, status=400)
+
+        new_pd = payload.get("payment_days")
+        if new_pd in ("", None):
+            new_pd_val = None
+        else:
+            try:
+                new_pd_val = int(new_pd)
+            except (TypeError, ValueError):
+                return Response({"detail": "payment_days inválido"}, status=400)
+            if new_pd_val < 0:
+                return Response({"detail": "payment_days no puede ser negativo"}, status=400)
+
+        # Si nada vino, 400
+        if new_op is None and new_fp is None and new_pd_val is None:
+            return Response({"detail": "Sin cambios — incluí al menos uno de operating_company_id, forma_pago, payment_days"}, status=400)
+
+        # Aplicar cambios atómicamente
+        try:
+            with transaction.atomic():
+                with connection.cursor() as c:
+                    sets = []
+                    args = []
+                    if new_op is not None:
+                        sets.append("operating_company_id = %s::uuid")
+                        args.append(str(new_op))
+                    if new_fp is not None:
+                        sets.append("forma_pago = %s")
+                        args.append(new_fp)
+                    if new_pd_val is not None:
+                        sets.append("payment_days = %s")
+                        args.append(new_pd_val)
+                    sets.append("updated_at = NOW()")
+                    args.append(str(ai_id))
+                    c.execute(
+                        "UPDATE expedientes.artifact_instances SET "
+                        + ", ".join(sets)
+                        + " WHERE id = %s",
+                        args,
+                    )
+
+                    # ── Auditoría: pipeline.event_log
+                    try:
+                        c.execute("""
+                            INSERT INTO pipeline.event_log
+                              (id, aggregate_type, aggregate_id, action,
+                               payload, emitter_id, emitter_role,
+                               correlation_id, is_active, created_at)
+                            VALUES
+                              (%s, 'sap_metadata', %s::uuid, 'PATCH',
+                               %s::jsonb, %s, %s,
+                               %s, TRUE, NOW())
+                        """, [
+                            str(uuid.uuid4()),
+                            str(ai_id),
+                            json.dumps({
+                                "expediente_id": str(exp.id),
+                                "sap_id": sap_id,
+                                "before": {
+                                    "operating_company_id": str(cur_op) if cur_op else None,
+                                    "forma_pago": cur_fp,
+                                    "payment_days": cur_pd,
+                                },
+                                "after": {
+                                    "operating_company_id": str(new_op) if new_op else (str(cur_op) if cur_op else None),
+                                    "forma_pago": new_fp or cur_fp,
+                                    "payment_days": new_pd_val if new_pd_val is not None else cur_pd,
+                                },
+                            }),
+                            str(getattr(request.user, "id", "")) or None,
+                            (getattr(request.user, "role_default", None) or
+                             getattr(request.user, "role", None) or "unknown"),
+                            str(uuid.uuid4()),
+                        ])
+                    except Exception as ev_err:
+                        log.warning("[patch_sap] event_log insert failed: %s", ev_err)
+        except Exception as e:
+            log.exception("[patch_sap] update failed: %s", e)
+            return Response({"detail": "update_failed", "error": str(e)[:300]}, status=500)
+
+        return Response({
+            "ok": True,
+            "expediente_id": str(exp.id),
+            "sap_id": sap_id,
+            "artifact_id": str(ai_id),
+            "operating_company_id": str(new_op) if new_op else (str(cur_op) if cur_op else None),
+            "forma_pago": new_fp or cur_fp,
+            "payment_days": new_pd_val if new_pd_val is not None else cur_pd,
+        }, status=200)
+
     @action(
         detail=True,
         methods=["post"],
