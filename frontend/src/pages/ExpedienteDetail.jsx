@@ -348,6 +348,35 @@ export default function ScreenExpedienteDetail() {
                   : `Operated by ${MWT_OPERATOR_NAME}`}
               </span>
             )}
+            {/* Sprint 2026-05-06 (F2 UX) · Botón Editar SAP — solo Admin.
+                Navega al wizard /portal/nueva-oc?editExp={id}&editSap={sap}
+                que entrará en modo edición pre-poblado en el siguiente
+                sprint. Hoy entrega el botón en su lugar correcto. */}
+            {!isClient && exp.id && exp.sap && (
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `/portal/nueva-oc?editExp=${encodeURIComponent(exp.id)}`
+                            + `&editSap=${encodeURIComponent(exp.sap)}`;
+                  navigate(url);
+                }}
+                style={{
+                  marginLeft: 8,
+                  padding: '3px 12px',
+                  borderRadius: 999,
+                  background: 'rgba(255,255,255,0.10)',
+                  color: '#fff', fontSize: 11, fontWeight: 700,
+                  letterSpacing: 0.4,
+                  border: '1px solid rgba(255,255,255,0.40)',
+                  cursor: 'pointer',
+                }}
+                title={lang === 'es'
+                  ? 'Editar este SAP — operador, cliente, productos, términos de pago'
+                  : 'Edit this SAP — operator, client, products, payment terms'}
+              >
+                {lang === 'es' ? '✎ Editar' : '✎ Edit'}
+              </button>
+            )}
             {exp.is_blocked && (
               <span style={{ marginLeft: !isClient ? 8 : 'auto' }}>
                 <Badge kind="critical" dot>{lang==='es' ? 'BLOQUEADO · Crédito' : 'BLOCKED · Credit'}</Badge>
