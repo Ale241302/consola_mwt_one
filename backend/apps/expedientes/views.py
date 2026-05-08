@@ -1576,8 +1576,11 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         c.execute(
                             """
                             UPDATE expedientes.linea
-                               SET expediente_id = %s::uuid,
-                                   updated_at   = NOW()
+                               SET expediente_id   = %s::uuid,
+                                   sap             = NULL,
+                                   production_date = NULL,
+                                   estado          = 'PENDIENTE_SAP',
+                                   updated_at      = NOW()
                              WHERE expediente_id = %s::uuid
                                AND sap = %s
                                AND is_active = TRUE
@@ -1586,33 +1589,70 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         )
                         lines_moved_count = c.rowcount or 0
 
-                        # Migrar artifact_instance del SAP.
+                        # Sprint 2026-05-08 · NO migramos artifact_instance
+                        # ni documento ART-04 al nuevo expediente. El nuevo
+                        # nace SIN SAP — el user va a subir uno nuevo. Los
+                        # del expediente original quedan en el viejo (que
+                        # se soft-borra en Caso A o queda como huerfano en
+                        # Caso B; en B los soft-deletamos abajo igual).
+                        # Recolectar storage_url del documento ART-04
+                        # antes de marcarlo inactivo (para borrar en MinIO).
                         c.execute(
                             """
-                            UPDATE expedientes.artifact_instances
-                               SET expediente_id = %s::uuid,
-                                   updated_at   = NOW()
-                             WHERE expediente_id = %s::uuid
-                               AND artifact_code = 'ART-04'
-                               AND codigo = %s
-                               AND is_active = TRUE
-                            """,
-                            [new_exp_id, str(exp.id), sap_id],
-                        )
-
-                        # Migrar documentos ART-04 del SAP.
-                        c.execute(
-                            """
-                            UPDATE expedientes.documento
-                               SET expediente_id = %s::uuid,
-                                   updated_at   = NOW()
+                            SELECT id, storage_url FROM expedientes.documento
                              WHERE expediente_id = %s::uuid
                                AND kind = 'ART-04'
                                AND codigo LIKE %s
                                AND is_active = TRUE
                             """,
-                            [new_exp_id, str(exp.id), f"ART-04 · {sap_id}%"],
+                            [str(exp.id), f"ART-04 · {sap_id}%"],
                         )
+                        _moved_sap_doc_keys = []
+                        for _did, _surl in (c.fetchall() or []):
+                            if _surl and not str(_surl).startswith("dynamic://"):
+                                _moved_sap_doc_keys.append(str(_surl))
+
+                        # Soft-delete del artifact_instance ART-04 del SAP.
+                        c.execute(
+                            """
+                            UPDATE expedientes.artifact_instances
+                               SET is_active = FALSE,
+                                   updated_at = NOW()
+                             WHERE expediente_id = %s::uuid
+                               AND artifact_code = 'ART-04'
+                               AND codigo = %s
+                               AND is_active = TRUE
+                            """,
+                            [str(exp.id), sap_id],
+                        )
+
+                        # Soft-delete documento ART-04 del SAP (en el exp
+                        # original; en Caso A el cleanup posterior lo
+                        # cubre, en Caso B lo borramos acá).
+                        c.execute(
+                            """
+                            UPDATE expedientes.documento
+                               SET is_active = FALSE,
+                                   updated_at = NOW()
+                             WHERE expediente_id = %s::uuid
+                               AND kind = 'ART-04'
+                               AND codigo LIKE %s
+                               AND is_active = TRUE
+                            """,
+                            [str(exp.id), f"ART-04 · {sap_id}%"],
+                        )
+
+                        # Schedule borrado en MinIO post-commit del XLSX SAP.
+                        if _moved_sap_doc_keys:
+                            try:
+                                from apps.storage.services import delete_object as _del_obj  # noqa: PLC0415
+                            except (ImportError, ModuleNotFoundError):
+                                _del_obj = None
+                            if _del_obj is not None:
+                                for _k in _moved_sap_doc_keys:
+                                    transaction.on_commit(
+                                        lambda k=_k: _del_obj(key=k)
+                                    )
 
                         # Recalcular total_cost del expediente original
                         # con las líneas activas restantes (qty * unit_price).
@@ -1774,6 +1814,30 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                 """,
                                 [str(exp.id)],
                             )
+
+                            # Sprint 2026-05-08 · si la OC compartida no
+                            # tiene más expedientes activos, su client_id
+                            # debe pasar al nuevo cliente (la OC ahora es
+                            # exclusiva del nuevo expediente).
+                            if exp.oc_id:
+                                c.execute(
+                                    """
+                                    SELECT COUNT(*) FROM expedientes.expediente
+                                     WHERE oc_id = %s::uuid AND is_active = TRUE
+                                    """,
+                                    [str(exp.oc_id)],
+                                )
+                                others = (c.fetchone() or [0])[0]
+                                if int(others or 0) <= 1:
+                                    c.execute(
+                                        """
+                                        UPDATE expedientes.oc
+                                           SET client_id = %s::uuid,
+                                               updated_at = NOW()
+                                         WHERE id = %s::uuid
+                                        """,
+                                        [str(new_client_id), str(exp.oc_id)],
+                                    )
 
                             # Borrado en MinIO post-commit (best-effort).
                             if old_doc_keys:
