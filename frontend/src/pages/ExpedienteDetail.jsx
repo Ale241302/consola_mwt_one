@@ -4,7 +4,7 @@ import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtMoneyDetail, fmtDate, relativeTime } from "../lib/i18n.js";
 import {
   expedientesApi, clientesApi, marcasApi, lineasApi, productosApi,
-  financePaymentsApi,
+  financePaymentsApi, storageApi, apiFetch, getToken,
 } from "../lib/api.js";
 import {
   Badge, StatusBadge, Progress, StateTimeline, CreditBar, CountryFlag,
@@ -254,6 +254,52 @@ export default function ScreenExpedienteDetail() {
   // solo visualiza los artefactos publicados.
   const [showMatchmaker, setShowMatchmaker] = useState(false);
 
+  // Sprint 2026-05-07 — Generar Proforma (vista cliente).
+  //   POST /api/expedientes/{id}/generate-proforma/
+  // Solo Admin (botón oculto para CLIENT_*). Toast de éxito + reload
+  // del listado de docs del expediente vía bump del counter.
+  const [genProformaLoading, setGenProformaLoading] = useState(false);
+  const [genProformaToast, setGenProformaToast] = useState(null); // {kind:'success'|'error', text}
+  const [docsReload, setDocsReload] = useState(0);
+
+  const handleGenerateProforma = async () => {
+    if (genProformaLoading || !exp?.id) return;
+    setGenProformaLoading(true);
+    setGenProformaToast(null);
+    try {
+      const res = await apiFetch(
+        `/expedientes/${encodeURIComponent(exp.id)}/generate-proforma/`,
+        { method: 'POST', token: getToken() },
+      );
+      const codigo = res?.codigo || res?.documento?.codigo || '';
+      setGenProformaToast({
+        kind: 'success',
+        text: lang === 'es'
+          ? `Proforma generada: ${codigo}`
+          : `Proforma generated: ${codigo}`,
+      });
+      // Refrescar listado de documentos en caliente (consume DocsReload).
+      setDocsReload(n => n + 1);
+      // Best-effort: abrir el doc recién creado en otra pestaña.
+      const url = res?.signed_url?.url;
+      if (url && typeof window !== 'undefined') {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[ExpedienteDetail] generate-proforma fallo:', e);
+      setGenProformaToast({
+        kind: 'error',
+        text: lang === 'es'
+          ? `No se pudo generar la proforma: ${e?.message || 'error'}`
+          : `Couldn't generate proforma: ${e?.message || 'error'}`,
+      });
+    } finally {
+      setGenProformaLoading(false);
+      setTimeout(() => setGenProformaToast(null), 5500);
+    }
+  };
+
   // Only use rich HERO data if this is the hero expediente
   const isHero = exp.id === HERO_ID;
   // Líneas reales desde API si existe el expediente en BD; HERO_LINES
@@ -425,11 +471,49 @@ export default function ScreenExpedienteDetail() {
                 <IconPlus size={14}/> {tr(lang,'add_cost')}
               </button>
               <button className="btn btn-ghost"><IconPaperclip size={14}/>{tr(lang,'add_document')}</button>
+              {/* Sprint 2026-05-07 · Generar Proforma (vista cliente).
+                  Renderea HTML SONDEL, sube a MinIO y persiste documento
+                  PROFORMA con audience='CLIENT'. Solo Admin. */}
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleGenerateProforma}
+                disabled={genProformaLoading || !exp?.id}
+                title={lang==='es'
+                  ? 'Generar proforma (vista cliente) en HTML'
+                  : 'Generate proforma (client view) as HTML'}
+              >
+                <IconSparkle size={14}/>
+                {genProformaLoading
+                  ? (lang==='es' ? 'Generando…' : 'Generating…')
+                  : (lang==='es' ? 'Generar Proforma' : 'Generate Proforma')}
+              </button>
             </div>
             <div className="flex gap-2">
               <button className="btn btn-ghost btn-sm"><IconMail size={13}/>{lang==='es' ? 'Enviar portal' : 'Send portal'}</button>
               <button className="icon-btn" style={{ width: 32, height: 32 }}><IconMore size={15}/></button>
             </div>
+          </div>
+        )}
+        {/* Sprint 2026-05-07 · Toast de feedback para Generar Proforma.
+            Visible solo para Admin (el botón es admin-only). */}
+        {!isClient && genProformaToast && (
+          <div
+            role="status"
+            style={{
+              padding: '10px 24px',
+              background: genProformaToast.kind === 'success'
+                ? 'var(--success-bg, #F0FAF6)'
+                : 'var(--critical-bg, #FEF2F2)',
+              color: genProformaToast.kind === 'success'
+                ? 'var(--success, #0E8A6D)'
+                : 'var(--critical, #DC2626)',
+              fontSize: 12,
+              fontWeight: 600,
+              borderTop: '1px solid var(--divider)',
+            }}
+          >
+            {genProformaToast.text}
           </div>
         )}
         {isClient && (

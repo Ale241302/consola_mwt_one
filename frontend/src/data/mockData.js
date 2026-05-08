@@ -3022,7 +3022,7 @@ export const MOCK_AI_MESSAGES_BY_THREAD = {
       'Sí, generala con datos de Goliath SRL como importador.',
       { at: _ago(60 * 24 * 1.2), tin: 24, tout: 0 }),
     _msg('m-com-5', 'mock-th-compliance-ce', 'ASSISTANT',
-      'Generada. La dejé en `Documentos / Compliance / Goliath / DoC-S3-SRC-2026.pdf`. Faltan dos campos: **lote** y **fecha de fabricación** — los completás vos antes de imprimir.',
+      'Generada. La dejé en `Documentos / Compliance / Goliath / DoC-S3-SRC-2026.pdf`. Faltan dos campos: **lote** y **fecha de registro** — los completás vos antes de imprimir.',
       { at: _ago(60 * 24 * 1), agent: 'mock-ag-compliance', tin: 50, tout: 88,
         cost: 0.0017, attachments: ['mock-att-doc-s3-srz'] }),
   ],

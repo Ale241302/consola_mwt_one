@@ -18,6 +18,7 @@ from .views_builder_artifacts import (
     BuilderArtifactsListCreateView, BuilderArtifactDetailView,
     builder_templates_list, builder_template_detail,
 )
+from .views_proforma import generate_proforma
 
 router = DefaultRouter()
 router.register(r"ocs",             OcViewSet,           basename="ocs")
@@ -92,4 +93,10 @@ urlpatterns = [
          name="builder-templates-list"),
     path("builder/templates/<int:template_id>/", builder_template_detail,
          name="builder-template-detail"),
+
+    # Sprint 2026-05-07 · Generador de Proforma (vista cliente — tab SONDEL).
+    # Renderea HTML, sube a MinIO, persiste documento PROFORMA con
+    # audience='CLIENT'. Solo Admin (CLIENT_* recibe 403).
+    path("expedientes/<uuid:expediente_id>/generate-proforma/",
+         generate_proforma, name="expedientes-generate-proforma"),
 ] + router.urls

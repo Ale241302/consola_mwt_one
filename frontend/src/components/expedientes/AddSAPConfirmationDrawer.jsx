@@ -418,7 +418,7 @@ export default function AddSAPConfirmationDrawer({
       if (!isEditMode && res?.sap_id && !sapId.trim()) {
         setSapId(String(res.sap_id));
       }
-      // Sprint 2026-05-06 · Auto-fill fecha de fabricación leída del Excel
+      // Sprint 2026-05-06 · Auto-fill fecha de registro leída del Excel
       // (col H "Data do documento"). Si el archivo la trae, sobreescribimos
       // el todayISO() default para que el usuario no tenga que tocarla.
       if (!isEditMode && res?.fecha_fabricacion) {
@@ -749,8 +749,8 @@ export default function AddSAPConfirmationDrawer({
                   </div>
                   <div className="caption">
                     {lang === "es"
-                      ? "Sube el Excel/PDF de Marluvas — el sistema extrae automáticamente número SAP y fecha de fabricación."
-                      : "Upload the Marluvas Excel/PDF — the system auto-extracts SAP number and manufacturing date."}
+                      ? "Sube el Excel/PDF de Marluvas — el sistema extrae automáticamente número SAP y fecha de registro."
+                      : "Upload the Marluvas Excel/PDF — the system auto-extracts SAP number and registration date."}
                   </div>
                 </div>
               </div>
@@ -779,7 +779,7 @@ export default function AddSAPConfirmationDrawer({
                   {analysis.fecha_fabricacion && (
                     <div className="sap-field">
                       <span className="sap-label">
-                        {lang === "es" ? "Fecha de Fabricación detectada" : "Detected manufacturing date"}
+                        {lang === "es" ? "Fecha de Registro detectada" : "Detected registration date"}
                       </span>
                       <div className="input tabular-nums" style={{
                         background: 'var(--surface-alt, #F1F4F8)',
@@ -798,7 +798,7 @@ export default function AddSAPConfirmationDrawer({
                   {!analysis.fecha_fabricacion && (
                     <div className="sap-field">
                       <span className="sap-label" style={{ color: 'var(--warning, #B45309)' }}>
-                        {lang === "es" ? "Fecha de Fabricación (manual)" : "Manufacturing Date (manual)"}
+                        {lang === "es" ? "Fecha de Registro (manual)" : "Registration Date (manual)"}
                         <span className="sap-req">*</span>
                       </span>
                       <input
@@ -834,7 +834,7 @@ export default function AddSAPConfirmationDrawer({
                   </label>
                   <label className="sap-field">
                     <span className="sap-label">
-                      {lang === "es" ? "Fecha de Fabricación" : "Manufacturing Date"}
+                      {lang === "es" ? "Fecha de Registro" : "Registration Date"}
                       <span className="sap-req">*</span>
                     </span>
                     <input
