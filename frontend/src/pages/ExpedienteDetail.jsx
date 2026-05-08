@@ -759,6 +759,121 @@ function DetailRow({ label, value }) {
   );
 }
 
+// ── Inputs editables admin-only para LinesTab ──────────────────────
+// Sprint 2026-05-08 · El admin puede editar Cantidad y Precio cliente
+// directamente desde la tabla del expediente. Patch via PATCH /api/lineas/{id}/.
+// Mismos estilos del sistema (tokens MWT, tabular-nums); commit on blur o Enter.
+function EditableQtyInput({ lineId, value, onSaved }) {
+  const [v, setV] = useState(String(value ?? 0));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(false);
+  useEffect(() => { setV(String(value ?? 0)); }, [value]);
+  const commit = async () => {
+    const newVal = Number(v);
+    if (!Number.isFinite(newVal) || newVal < 0) {
+      setV(String(value ?? 0));
+      return;
+    }
+    if (newVal === Number(value ?? 0)) return;
+    setSaving(true); setErr(false);
+    try {
+      await lineasApi.update(lineId, { qty: newVal });
+      if (typeof onSaved === 'function') onSaved();
+    } catch (e) {
+      setErr(true);
+      setV(String(value ?? 0));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <input
+      type="number"
+      min="0"
+      step="1"
+      className="tabular-nums"
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+        if (e.key === 'Escape') { setV(String(value ?? 0)); e.target.blur(); }
+      }}
+      disabled={saving}
+      style={{
+        width: 72,
+        textAlign: 'right',
+        padding: '4px 8px',
+        background: saving ? 'var(--bg-alt)' : 'var(--surface)',
+        border: `1px solid ${err ? 'var(--critical)' : 'var(--border-subtle)'}`,
+        borderRadius: 6,
+        color: 'var(--text-primary)',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 13,
+        outline: 'none',
+      }}
+      title={lang_qty_title()}
+    />
+  );
+}
+
+function EditableClientPriceInput({ lineId, value, onSaved }) {
+  const [v, setV] = useState(String(value ?? 0));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(false);
+  useEffect(() => { setV(String(value ?? 0)); }, [value]);
+  const commit = async () => {
+    const newVal = Number(v);
+    if (!Number.isFinite(newVal) || newVal < 0) {
+      setV(String(value ?? 0));
+      return;
+    }
+    if (newVal === Number(value ?? 0)) return;
+    setSaving(true); setErr(false);
+    try {
+      await lineasApi.update(lineId, { unit_price_client: newVal });
+      if (typeof onSaved === 'function') onSaved();
+    } catch (e) {
+      setErr(true);
+      setV(String(value ?? 0));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <input
+      type="number"
+      min="0"
+      step="0.01"
+      className="tabular-nums"
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+        if (e.key === 'Escape') { setV(String(value ?? 0)); e.target.blur(); }
+      }}
+      disabled={saving}
+      style={{
+        width: 96,
+        textAlign: 'right',
+        padding: '4px 8px',
+        background: saving ? 'var(--bg-alt)' : 'var(--surface)',
+        border: `1px solid ${err ? 'var(--critical)' : 'var(--border-subtle)'}`,
+        borderRadius: 6,
+        color: 'var(--text-primary)',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 13,
+        outline: 'none',
+      }}
+      title="Precio cliente (snapshot)"
+    />
+  );
+}
+
+// helper de tooltip i18n-light (no podemos usar tr() aquí sin lang prop)
+function lang_qty_title() { return "Cantidad"; }
+
 function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient = false, onLineAdded }) {
   // Sprint 2026-05-01: total con fallback al catalogo de productos
   // Sprint 2026-05-06 · prefer snapshot dual segun isClient (Tweaks-aware).
@@ -850,6 +965,13 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Cant.' : 'Qty'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Precio unit.' : 'Unit price'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Subtotal' : 'Subtotal'}</th>
+          {/* Sprint 2026-05-08 · Columna admin-only para editar precio
+              cliente (unit_price_client). Tras Subtotal. */}
+          {!isClient && (
+            <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent, #00B286) 6%, transparent)'}}>
+              {lang==='es' ? 'Precio cliente' : 'Client price'}
+            </th>
+          )}
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Margen' : 'Margin'}</th>
         </tr></thead>
         <tbody>
@@ -868,9 +990,28 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
             <tr key={l.id}>
               <td><span className="mono-sm" style={{ fontWeight: 600, color:'var(--interactive)' }}>{l.sku}</span></td>
               <td>{l.name || l.product_label || l.descripcion || (productoNombreMap && productoNombreMap[l.producto_id]) || '—'}</td>
-              <td className="td-num tabular">{l.qty}</td>
+              {!isClient ? (
+                <td className="td-num tabular">
+                  <EditableQtyInput
+                    lineId={l.id}
+                    value={l.qty}
+                    onSaved={onLineAdded}
+                  />
+                </td>
+              ) : (
+                <td className="td-num tabular">{l.qty}</td>
+              )}
               <td className="td-money">{fmtMoneyDetail(_unit)}</td>
               <td className="td-money">{fmtMoney(_total)}</td>
+              {!isClient && (
+                <td className="td-money" style={{background:'color-mix(in oklab, var(--brand-accent, #00B286) 4%, transparent)'}}>
+                  <EditableClientPriceInput
+                    lineId={l.id}
+                    value={l.unit_price_client ?? l.unit_price ?? 0}
+                    onSaved={onLineAdded}
+                  />
+                </td>
+              )}
               <td className="td-num">{Number(l.margin || 0) > 0
                 ? <Badge kind="mint">{(Number(l.margin)*100).toFixed(1)}%</Badge>
                 : <span className="caption" style={{color:'var(--text-tertiary)'}}>—</span>}</td>
@@ -883,6 +1024,7 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
               {lang==='es' ? 'Total' : 'Total'}
             </td>
             <td className="td-money" style={{ padding: 14, fontSize: 15, fontFamily: 'var(--font-mono)' }}>{fmtMoney(total)}</td>
+            {!isClient && <td/>}
             <td/>
           </tr>
         </tfoot>

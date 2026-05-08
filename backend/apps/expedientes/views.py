@@ -2816,7 +2816,53 @@ class LineaViewSet(viewsets.ViewSet):
             return Response({"detail": "Línea no existe"}, status=404)
         s = LineaSerializer(l, data=request.data, partial=True)
         s.is_valid(raise_exception=True)
-        s.save()
+        obj = s.save()
+
+        # Sprint 2026-05-08 · Recalcular total_price si cambió qty o
+        # cualquiera de los precios. Mantenemos `unit_price` (legacy)
+        # alineado con el precio del operador del expediente: si el
+        # admin cambió `unit_price_client` y el operador es CLIENTE,
+        # también propagamos a unit_price para consistencia con vistas
+        # legacy que leen unit_price.
+        try:
+            qty_v   = Decimal(str(obj.qty or 0))
+            up_mwt  = Decimal(str(obj.unit_price_mwt or 0))
+            up_cli  = Decimal(str(obj.unit_price_client or 0))
+            up_leg  = Decimal(str(obj.unit_price or 0))
+            # Detectar operador del expediente para propagar correctamente.
+            op_id = None
+            try:
+                with connection.cursor() as c:
+                    c.execute(
+                        "SELECT operating_company_id FROM expedientes.expediente "
+                        "WHERE id = %s::uuid LIMIT 1",
+                        [str(obj.expediente_id)],
+                    )
+                    row = c.fetchone()
+                    op_id = (row[0] if row else None)
+            except (TypeError, ValueError):
+                op_id = None
+            is_mwt_op = (
+                op_id is not None and
+                str(op_id).lower() == MWT_OPERATING_CLIENT_ID.lower()
+            )
+            # Si el admin pasó unit_price_client en el payload, alinear
+            # unit_price legacy con el lado del operador.
+            new_legacy = up_mwt if is_mwt_op else up_cli
+            new_total  = (qty_v * new_legacy).quantize(Decimal("0.01"))
+            with connection.cursor() as c:
+                c.execute("""
+                    UPDATE expedientes.linea
+                       SET unit_price  = %s,
+                           total_price = %s,
+                           updated_at  = NOW()
+                     WHERE id = %s::uuid
+                """, [str(new_legacy), str(new_total), str(obj.id)])
+            obj.refresh_from_db()
+            s = LineaSerializer(obj)
+        except (TypeError, ValueError, ArithmeticError) as recalc_err:
+            log.warning("[linea.update] recalc total_price fallo: %s", recalc_err)
+
         return Response(s.data)
     partial_update = update
 
