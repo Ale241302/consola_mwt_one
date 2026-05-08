@@ -18,7 +18,7 @@ from .views_builder_artifacts import (
     BuilderArtifactsListCreateView, BuilderArtifactDetailView,
     builder_templates_list, builder_template_detail,
 )
-from .views_proforma import generate_proforma
+from .views_proforma import generate_proforma, proforma_html_dynamic
 
 router = DefaultRouter()
 router.register(r"ocs",             OcViewSet,           basename="ocs")
@@ -99,4 +99,9 @@ urlpatterns = [
     # audience='CLIENT'. Solo Admin (CLIENT_* recibe 403).
     path("expedientes/<uuid:expediente_id>/generate-proforma/",
          generate_proforma, name="expedientes-generate-proforma"),
+
+    # Sprint 2026-05-08 · Render dinámico de Proforma. Devuelve text/html
+    # con la data fresca del expediente en cada request (sin tocar MinIO).
+    path("expedientes/<uuid:expediente_id>/proforma-html/",
+         proforma_html_dynamic, name="expedientes-proforma-html-dynamic"),
 ] + router.urls

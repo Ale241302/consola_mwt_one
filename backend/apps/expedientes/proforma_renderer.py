@@ -185,13 +185,15 @@ def _forma_pago_label(forma_pago) -> str:
 
 
 def _plazo_label(forma_pago, credit_days) -> str:
-    fp = (forma_pago or "").strip().upper()
-    if fp == "CONTADO":
-        return "Contado"
+    """Plazo de pago = días de crédito del cliente.
+    Sprint 2026-05-08: independiente de forma_pago. Aunque la operación
+    sea Contado, el plazo de crédito asignado al cliente sigue mostrándose
+    (es metadata del cliente, no del flujo de pago de este expediente).
+    """
     days = int(credit_days or 0)
     if days <= 0:
         return "—"
-    return f"CXC {days} días"
+    return f"{days} días"
 
 
 def _build_pronto_pago_html(price_base: Decimal, total_pares: int,
@@ -497,8 +499,6 @@ table.ct .trow td{{border-top:2px solid var(--navy);}}
       <div class="card-b">
         <div class="sr"><span class="k">Proforma</span><span class="v" style="font-family:'JetBrains Mono';font-size:11px;">{_esc(codigo)}</span></div>
         <div class="sr"><span class="k">PO Referencia</span><span class="v" style="font-family:'JetBrains Mono';font-size:11px;">{_esc(po_codigo)}</span></div>
-        <div class="sr"><span class="k">Fecha PO</span><span class="v" style="font-size:11px;">{_esc(po_fecha)}</span></div>
-        <div class="sr"><span class="k">Fecha Proforma</span><span class="v" style="font-size:11px;">{_esc(_fmt_date_es(today))}</span></div>
         <div class="sr"><span class="k">Total pares</span><span class="v">{_fmt_int(total_pares)}</span></div>
         <div class="sr big"><span class="k" style="font-weight:700;">Total</span><span class="v" style="color:var(--navy);">{_fmt_money(total_value)}</span></div>
       </div>

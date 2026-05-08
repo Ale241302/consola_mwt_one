@@ -2799,97 +2799,83 @@ class DocumentoViewSet(viewsets.ViewSet):
                 # documento (audience='CLIENT') con código secuencial
                 # PF-YYYY-NNNN. Best-effort: si falla, no bloquea el
                 # upload original — solo log warning.
-                # Sprint 2026-05-07 · regenerar HTML cuando se sube
-                # PROFORMA (con codigo_override = lo que tipeó el user)
-                # o cuando se sube OC (para refrescar PO Referencia).
-                _regen_kinds = ("PROFORMA", "OC")
-                if kind in _regen_kinds and exp_id:
+                # Sprint 2026-05-08 · DOCUMENTO DINÁMICO.
+                # Cuando se sube PROFORMA, creamos UN registro Documento
+                # con storage_url='dynamic://proforma?codigo=PF-xxxx'.
+                # NO subimos archivo a MinIO. El render se hace al vuelo
+                # cada vez que el usuario abre el HTML, vía endpoint
+                # GET /api/expedientes/{id}/proforma-html/?codigo=...
+                # Cuando se sube OC, NO regeneramos el doc PROFORMA — el
+                # endpoint dinámico ya leerá la nueva PO ref de la BD.
+                if kind == "PROFORMA" and exp_id:
                     try:
+                        # Validar que el render funcionará sin lanzar
+                        # excepción (best-effort). Si hay líneas, cliente,
+                        # etc. está OK. No usamos el HTML — solo verificamos.
                         from .proforma_renderer import render_proforma_html
-                        # Si es PROFORMA, usar el codigo que tipeó el user;
-                        # si es OC, no override (el user-typed codigo es el PO).
-                        codigo_override = None
-                        if kind == "PROFORMA":
-                            codigo_override = (codigo or "").strip() or None
-                        html_str, meta = render_proforma_html(
+                        codigo_pf = (codigo or "").strip() or None
+                        _html_str, meta = render_proforma_html(
                             expediente_id=exp_id,
                             request_user=request.user,
-                            codigo_override=codigo_override,
+                            codigo_override=codigo_pf,
                         )
-                        if html_str and meta:
-                            html_bytes = html_str.encode("utf-8")
-                            html_uuid = uuid.uuid4()
-                            html_filename = (meta.get("filename")
-                                             or f"{meta.get('codigo','PF')}.html")
-                            html_key = f"documento/{html_uuid}/{html_filename}"
-                            html_size = len(html_bytes)
-                            html_up = put_object_stream(
-                                key=html_key,
-                                file_stream=io.BytesIO(html_bytes),
-                                content_type="text/html; charset=utf-8",
-                                length=html_size,
-                            )
-                            if html_up.get("ok"):
-                                # Idempotente: si ya existe un PROFORMA HTML
-                                # para este expediente lo actualizamos en lugar
-                                # de crear duplicado (caso: OC subida tras
-                                # PROFORMA, o re-upload de PROFORMA).
-                                with connection.cursor() as c2:
+                        if meta:
+                            doc_codigo_pf = meta.get("codigo") or codigo_pf or "PF"
+                            # storage_url = marker dinámico (se interpreta
+                            # en signed_url para redirigir al endpoint de
+                            # render on-demand, sin tocar MinIO).
+                            dyn_url = f"dynamic://proforma?codigo={doc_codigo_pf}"
+                            with connection.cursor() as c2:
+                                c2.execute("""
+                                    SELECT id FROM expedientes.documento
+                                     WHERE expediente_id = %s::uuid
+                                       AND kind = 'PROFORMA'
+                                       AND file_ext = 'html'
+                                       AND is_active = TRUE
+                                     LIMIT 1
+                                """, [exp_id])
+                                existing = c2.fetchone()
+                                if existing:
+                                    # Existe — actualizamos solo el codigo
+                                    # (lo nuevo es lo que el user tipeó).
                                     c2.execute("""
-                                        SELECT id FROM expedientes.documento
-                                         WHERE expediente_id = %s::uuid
-                                           AND kind = 'PROFORMA'
-                                           AND file_ext = 'html'
-                                           AND is_active = TRUE
-                                         LIMIT 1
-                                    """, [exp_id])
-                                    existing = c2.fetchone()
-                                    if existing:
-                                        c2.execute("""
-                                            UPDATE expedientes.documento
-                                               SET storage_url = %s,
-                                                   file_size_bytes = %s,
-                                                   codigo = %s,
-                                                   audience = 'CLIENT',
-                                                   updated_at = now()
-                                             WHERE id = %s
-                                        """, [
-                                            html_key, html_size,
-                                            meta.get("codigo") or f"PF-{html_uuid}",
-                                            str(existing[0]),
-                                        ])
-                                        log.info("[documento.create] auto-Proforma HTML actualizada: %s",
-                                                 meta.get("codigo"))
-                                    else:
-                                        c2.execute("""
-                                            INSERT INTO expedientes.documento (
-                                                id, oc_id, expediente_id,
-                                                kind, audience, codigo,
-                                                file_ext, file_size_bytes, storage_url,
-                                                author, fecha,
-                                                is_active, created_at, updated_at
-                                            ) VALUES (
-                                                %s, %s, %s,
-                                                'PROFORMA', 'CLIENT', %s,
-                                                'html', %s, %s,
-                                                %s, CURRENT_DATE,
-                                                TRUE, now(), now()
-                                            )
-                                        """, [
-                                            str(html_uuid),
-                                            oc_id if oc_id else None,
-                                            exp_id,
-                                            meta.get("codigo") or f"PF-{html_uuid}",
-                                            html_size, html_key,
-                                            (getattr(request.user, "email", None)
-                                             or getattr(request.user, "username", None)
-                                             or "system"),
-                                        ])
-                                        log.info("[documento.create] auto-Proforma HTML generada: %s",
-                                                 meta.get("codigo"))
-                            else:
-                                log.warning("[documento.create] auto-Proforma upload MinIO fallo: %s",
-                                            html_up.get("error"))
+                                        UPDATE expedientes.documento
+                                           SET storage_url = %s,
+                                               codigo = %s,
+                                               audience = 'CLIENT',
+                                               file_size_bytes = 0,
+                                               updated_at = now()
+                                         WHERE id = %s
+                                    """, [dyn_url, doc_codigo_pf, str(existing[0])])
+                                    log.info("[documento.create] auto-Proforma HTML (dinámico) actualizada: %s",
+                                             doc_codigo_pf)
+                                else:
+                                    new_uuid = uuid.uuid4()
+                                    c2.execute("""
+                                        INSERT INTO expedientes.documento (
+                                            id, oc_id, expediente_id,
+                                            kind, audience, codigo,
+                                            file_ext, file_size_bytes, storage_url,
+                                            author, fecha,
+                                            is_active, created_at, updated_at
+                                        ) VALUES (
+                                            %s, %s, %s,
+                                            'PROFORMA', 'CLIENT', %s,
+                                            'html', 0, %s,
+                                            %s, CURRENT_DATE,
+                                            TRUE, now(), now()
+                                        )
+                                    """, [
+                                        str(new_uuid),
+                                        oc_id if oc_id else None,
+                                        exp_id,
+                                        doc_codigo_pf, dyn_url,
+                                        (getattr(request.user, "email", None)
+                                         or getattr(request.user, "username", None)
+                                         or "system"),
+                                    ])
+                                    log.info("[documento.create] auto-Proforma HTML (dinámico) creada: %s",
+                                             doc_codigo_pf)
                     except Exception as auto_err:
                         log.warning("[documento.create] auto-Proforma HTML fallo (ignorado): %s",
                                     auto_err)
@@ -2979,10 +2965,36 @@ class DocumentoViewSet(viewsets.ViewSet):
         except Documento.DoesNotExist:
             return Response({"detail": "Documento no existe"}, status=404)
 
+        # Sprint 2026-05-08 · DOCUMENTO DINÁMICO. Si el storage_url tiene
+        # marcador `dynamic://...`, devolvemos la URL del endpoint que
+        # renderiza on-demand (no toca MinIO).
+        storage_url_raw = getattr(d, "storage_url", "") or ""
+        if storage_url_raw.startswith("dynamic://proforma"):
+            # Parseo simple del codigo del marker.
+            from urllib.parse import urlparse, parse_qs
+            try:
+                parsed = urlparse(storage_url_raw)
+                qs = parse_qs(parsed.query)
+                codigo_param = (qs.get("codigo") or [d.codigo or ""])[0]
+            except Exception:
+                codigo_param = d.codigo or ""
+            from urllib.parse import urlencode
+            qs_str = urlencode({"codigo": codigo_param}) if codigo_param else ""
+            dyn_path = f"/api/expedientes/{d.expediente_id}/proforma-html/"
+            if qs_str:
+                dyn_path += f"?{qs_str}"
+            return Response({
+                "url": dyn_path,
+                "available": True,
+                "dynamic": True,
+                "documento_id": str(d.id),
+                "expediente_id": str(d.expediente_id) if d.expediente_id else None,
+            })
+
         # Prioridad: storage_url persistido en el upload (forma canónica
         # vigente), luego bucket_key (compat futura), luego fallback legacy.
         key = (
-            getattr(d, "storage_url", None)
+            storage_url_raw
             or getattr(d, "bucket_key", None)
             or f"expedientes/{d.expediente_id}/{d.id}"
         )

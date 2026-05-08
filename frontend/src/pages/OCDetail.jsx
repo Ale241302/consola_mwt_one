@@ -916,11 +916,24 @@ export default function ScreenOCDetail() {
               setApiOcDocs(prev => [doc, ...prev]);
             }
             setUploadDocOpen(false);
-            // Sólo recargamos si NO hay flujo IA pendiente (la IA dispara
-            // su propia ruta vía onAiAnalysisReady → wizard → onApplied).
+            // Sprint 2026-05-07 · refetch del listado de documentos
+            // tras 700ms — necesario para capturar el HTML autogenerado
+            // por el hook del backend cuando kind=PROFORMA o kind=OC
+            // (DocumentoViewSet.create hace render_proforma_html y
+            // crea/actualiza un segundo documento).
+            if (apiOc?.id) {
+              setTimeout(() => {
+                documentosApi.list({ oc: apiOc.id })
+                  .then(r => {
+                    const arr = Array.isArray(r) ? r : (r?.results || []);
+                    setApiOcDocs(arr);
+                  })
+                  .catch(() => {});
+              }, 700);
+            }
+            // Sólo recargamos líneas si NO hay flujo IA pendiente (la IA
+            // dispara su propia ruta vía onAiAnalysisReady → wizard).
             if (!aiReview) {
-              // refetch ligero de líneas — por si el backend creó algo
-              // (en general al subir doc no, pero defensivo).
               if (apiOc?.id) {
                 lineasApi.list({ oc: apiOc.id })
                   .then(r => setApiOcLines(Array.isArray(r) ? r : (r?.results || [])))
@@ -938,6 +951,18 @@ export default function ScreenOCDetail() {
             }
             setUploadDocOpen(false);
             setAiReview({ result, file, documentType });
+            // Sprint 2026-05-07 · refetch tras 700ms para capturar el
+            // HTML autogenerado por el backend (kind=PROFORMA o kind=OC).
+            if (apiOc?.id) {
+              setTimeout(() => {
+                documentosApi.list({ oc: apiOc.id })
+                  .then(r => {
+                    const arr = Array.isArray(r) ? r : (r?.results || []);
+                    setApiOcDocs(arr);
+                  })
+                  .catch(() => {});
+              }, 700);
+            }
           }}
         />
       )}

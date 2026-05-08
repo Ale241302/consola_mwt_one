@@ -168,3 +168,58 @@ def generate_proforma(request, expediente_id):
         "signed_url":      signed,
     }
     return Response(payload, status=201)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# GET /api/expedientes/{expediente_id}/proforma-html/
+# Sprint 2026-05-08 · Render dinámico de Proforma.
+#
+# A diferencia de generate-proforma (que sube archivo a MinIO), este
+# endpoint renderiza el HTML AL VUELO con la data actual del expediente
+# en cada request. Esto permite que el documento "PROFORMA HTML" sea
+# siempre fresh — refleja cambios en líneas, precios, forma_pago,
+# pronto_pago, cliente, etc., sin necesidad de regenerar archivos.
+#
+# Query params:
+#   ?codigo=PF-2417-2026 (opcional · override del código mostrado)
+# ═════════════════════════════════════════════════════════════════════
+from django.http import HttpResponse  # noqa: E402
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def proforma_html_dynamic(request, expediente_id):
+    """GET /api/expedientes/{id}/proforma-html/ — render dinámico.
+
+    Devuelve text/html con la proforma actualizada en cada request.
+    Visible para Admin, MWT staff y CLIENT_* (audience=CLIENT) si el
+    documento marker existe y le corresponde.
+    """
+    try:
+        uuid.UUID(str(expediente_id))
+    except (TypeError, ValueError):
+        return Response({"detail": "expediente_id inválido"}, status=400)
+
+    codigo_override = request.query_params.get("codigo") or None
+
+    try:
+        html_str, _meta = render_proforma_html(
+            expediente_id,
+            request_user=request.user,
+            codigo_override=codigo_override,
+        )
+    except Expediente.DoesNotExist:
+        return Response({"detail": "Expediente no encontrado"}, status=404)
+    except ValueError as ve:
+        return Response(
+            {"detail": "no se puede renderizar la proforma", "error": str(ve)},
+            status=422,
+        )
+    except Exception as exc:
+        log.exception("proforma_html_dynamic render failed: %s", exc)
+        return Response(
+            {"detail": "render_failed", "error": str(exc)[:200]},
+            status=500,
+        )
+
+    return HttpResponse(html_str, content_type="text/html; charset=utf-8")
