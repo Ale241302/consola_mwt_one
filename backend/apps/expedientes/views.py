@@ -1698,6 +1698,133 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         # los UPDATEs siguientes sigan apuntando bien.
                         eff_exp_id = new_exp_id
 
+                        # Sprint 2026-05-08 · Cleanup post-split.
+                        # Si el expediente original quedó SIN líneas activas
+                        # tras mover las líneas del SAP, lo soft-eliminamos
+                        # junto con sus documentos comerciales (Proforma,
+                        # OC, Factura, etc.) y limpiamos los archivos en
+                        # MinIO. Caso B (otras líneas/SAPs presentes): no
+                        # tocar el expediente, solo se movió este SAP.
+                        c.execute(
+                            """
+                            SELECT COUNT(*) FROM expedientes.linea
+                             WHERE expediente_id = %s::uuid
+                               AND is_active = TRUE
+                            """,
+                            [str(exp.id)],
+                        )
+                        remaining_lines = (c.fetchone() or [0])[0]
+                        old_exp_emptied = bool(remaining_lines == 0)
+                        if old_exp_emptied:
+                            # Recolectar storage_url de los docs activos
+                            # del exp original para borrarlos de MinIO
+                            # tras commit (transaction.on_commit).
+                            c.execute(
+                                """
+                                SELECT id, storage_url FROM expedientes.documento
+                                 WHERE expediente_id = %s::uuid
+                                   AND is_active = TRUE
+                                """,
+                                [str(exp.id)],
+                            )
+                            old_docs_rows = c.fetchall() or []
+                            old_doc_keys = []
+                            for _doc_id, _storage_url in old_docs_rows:
+                                if not _storage_url:
+                                    continue
+                                # Saltamos los markers dynamic:// (no son
+                                # objetos reales en MinIO).
+                                if str(_storage_url).startswith("dynamic://"):
+                                    continue
+                                old_doc_keys.append(str(_storage_url))
+
+                            # Soft-delete documentos del exp original.
+                            c.execute(
+                                """
+                                UPDATE expedientes.documento
+                                   SET is_active = FALSE,
+                                       updated_at = NOW()
+                                 WHERE expediente_id = %s::uuid
+                                   AND is_active = TRUE
+                                """,
+                                [str(exp.id)],
+                            )
+
+                            # Soft-delete artifact_instances residuales
+                            # (no debería haber, las del SAP ya se movieron).
+                            c.execute(
+                                """
+                                UPDATE expedientes.artifact_instances
+                                   SET is_active = FALSE,
+                                       updated_at = NOW()
+                                 WHERE expediente_id = %s::uuid
+                                   AND is_active = TRUE
+                                """,
+                                [str(exp.id)],
+                            )
+
+                            # Soft-delete del expediente original.
+                            c.execute(
+                                """
+                                UPDATE expedientes.expediente
+                                   SET is_active = FALSE,
+                                       estado    = 'CANCELADO',
+                                       updated_at = NOW()
+                                 WHERE id = %s::uuid
+                                """,
+                                [str(exp.id)],
+                            )
+
+                            # Borrado en MinIO post-commit (best-effort).
+                            if old_doc_keys:
+                                try:
+                                    from apps.storage.services import delete_object  # noqa: PLC0415
+                                except (ImportError, ModuleNotFoundError):
+                                    delete_object = None
+                                if delete_object is not None:
+                                    for _key in old_doc_keys:
+                                        transaction.on_commit(
+                                            lambda k=_key: delete_object(key=k)
+                                        )
+
+                            # Audit cleanup.
+                            try:
+                                c.execute(
+                                    """
+                                    INSERT INTO pipeline.event_log
+                                      (id, correlation_id,
+                                       event_type, aggregate_type, aggregate_id,
+                                       payload,
+                                       emitted_by_id, emitted_by_role,
+                                       is_active, created_at, updated_at)
+                                    VALUES
+                                      (%s, %s,
+                                       'sap.split_old_expediente_emptied', 'expediente', %s::uuid,
+                                       %s::jsonb,
+                                       %s, %s,
+                                       TRUE, NOW(), NOW())
+                                    """,
+                                    [
+                                        str(uuid.uuid4()),
+                                        str(uuid.uuid4()),
+                                        str(exp.id),
+                                        json.dumps({
+                                            "old_expediente_id": str(exp.id),
+                                            "new_expediente_id": new_exp_id,
+                                            "sap_id":            sap_id,
+                                            "docs_soft_deleted": len(old_docs_rows),
+                                            "minio_keys_to_remove": len(old_doc_keys),
+                                        }),
+                                        str(emitter_id_split) if emitter_id_split else None,
+                                        emitter_role_split,
+                                    ],
+                                )
+                            except (ValueError, TypeError) as ev_err:
+                                log.warning(
+                                    "[patch_sap] event_log split-cleanup insert failed: %s",
+                                    ev_err,
+                                )
+
                     sets = []
                     args = []
                     if new_op is not None:
@@ -1867,6 +1994,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 "new_expediente_id":     new_exp_id,
                 "new_expediente_codigo": new_exp_codigo,
                 "lines_moved_count":     lines_moved_count,
+                # Sprint 2026-05-08 · cleanup: True si el original quedó
+                # vacío y fue soft-deleted junto con sus documentos.
+                "old_expediente_emptied": bool(locals().get("old_exp_emptied", False)),
             })
         return Response(resp_body, status=200)
 
