@@ -153,22 +153,32 @@ export default function CreateExpedienteWizardLite() {
 
   // Sprint 2026-05-06 · cuando el usuario elige un cliente,
   // pre-llenamos paymentDays con su dias_credito por defecto.
+  // Sprint 2026-05-07 · en EDIT mode no reseteamos a defaults cuando
+  // selClient se limpia momentáneamente (clear+pick) — el usuario ya
+  // eligió forma_pago/payment_days y no queremos pisarlos.
   useEffect(() => {
     if (selClient && Number(selClient.dias_credito) > 0) {
       setPaymentDays(Number(selClient.dias_credito));
-    } else if (!selClient) {
+    } else if (!selClient && !isEditMode) {
       setPaymentDays(0);
       setPaymentMethod("CREDITO");
     }
-  }, [selClient]);
+  }, [selClient, isEditMode]);
 
+  // Reset existingClientUsage cuando cambia el cliente (siempre).
   useEffect(() => {
-    // Reset cuando cambia el cliente o el operador: el override de
-    // precio depende del client_id usado para resolver, asi que no
-    // podemos reusar el map anterior.
-    setPriceMap({});
     setExistingClientUsage(0);
-  }, [selClient?.id, pricingClientId]);
+  }, [selClient?.id]);
+
+  // Sprint 2026-05-07 · BUG FIX: el priceMap solo debe limpiarse cuando
+  // cambia `pricingClientId` (el cliente cuyas tarifas mostramos). Si
+  // solo cambia selClient pero el operador sigue siendo el mismo (ej.
+  // MWT operando), las tarifas son las mismas — limpiarlas dejaba
+  // valor del pedido en $0 hasta que el fetcher re-disparase, lo que
+  // no ocurría porque su dep `[pricingClientId]` no había cambiado.
+  useEffect(() => {
+    setPriceMap({});
+  }, [pricingClientId]);
 
   // Sprint 2026-05-01: calcular credito usado proyectado desde
   // expedientes existentes del cliente.
