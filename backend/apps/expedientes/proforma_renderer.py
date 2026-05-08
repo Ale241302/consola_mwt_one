@@ -96,6 +96,19 @@ def _esc(s) -> str:
     return _html.escape(str(s))
 
 
+def _esc_email(s) -> str:
+    """Escapa un email evitando que Cloudflare lo detecte y reemplace
+    con su email-obfuscation script ([email protected]).
+
+    Reemplaza '@' por &#64; y '.' por &#46; — el browser los renderiza
+    como caracteres normales pero el regex de Cloudflare no los matchea.
+    """
+    if s is None:
+        return ""
+    safe = _html.escape(str(s))
+    return safe.replace("@", "&#64;").replace(".", "&#46;")
+
+
 def _fetch_cliente(client_id):
     """Lee razon_social, cedula_juridica, contacto_*, pais, ciudad."""
     if not client_id:
@@ -480,7 +493,7 @@ table.ct .trow td{{border-top:2px solid var(--navy);}}
         <div class="sr"><span class="k">Contacto</span><span class="v">{_esc(cliente['contacto_nombre'] or '—')}</span></div>
         <div class="sr"><span class="k">País</span><span class="v">{_esc(cliente['pais'] or '—')}</span></div>
         <div class="sr"><span class="k">Teléfono</span><span class="v" style="font-size:11px;">{_esc(cliente['contacto_tel'] or '—')}</span></div>
-        <div class="sr"><span class="k">Email</span><span class="v" style="font-size:10px;">{_esc(cliente['contacto_email'] or '—')}</span></div>
+        <div class="sr"><span class="k">Email</span><span class="v" style="font-size:10px;" data-cfemail="">{_esc_email(cliente['contacto_email'] or '—')}</span></div>
       </div>
     </div>
     <div class="card">
