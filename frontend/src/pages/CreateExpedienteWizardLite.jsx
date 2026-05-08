@@ -533,7 +533,16 @@ export default function CreateExpedienteWizardLite() {
                 : `Expediente split. New: ${respData?.new_expediente_codigo || ''}`)
             : (lang === 'es' ? 'Cambios guardados.' : 'Changes saved.'),
         });
-        navigate(`/expedientes/${encodeURIComponent(ocId)}/exp/${encodeURIComponent(targetExpId)}`);
+        // Sprint 2026-05-07 · al guardar cambios (editMode), aterrizar
+        // en la vista de la OC padre (/expedientes/{ocId}) en lugar
+        // del detalle del expediente (mismo criterio que CREATE).
+        // Si por algún motivo no hay ocId resuelto, fallback al
+        // detalle del expediente.
+        if (ocId && ocId !== 'none') {
+          navigate(`/expedientes/${encodeURIComponent(ocId)}`);
+        } else {
+          navigate(`/expedientes/none/exp/${encodeURIComponent(targetExpId)}`);
+        }
         return;
       }
 
@@ -571,14 +580,18 @@ export default function CreateExpedienteWizardLite() {
       };
 
       const resp = await expedientesApi.create(payload);
-      // Redirect al detalle del expediente recién creado.
-      // La ruta canónica es /expedientes/<oc_id_or_none>/exp/<expediente_uuid>.
-      // Como el wizard simplificado no crea OC, usamos "none" como placeholder
-      // (ExpedienteDetail tolera ese valor — solo usa expedienteId).
+      // Sprint 2026-05-07 · al crear un expediente nuevo, el CEO prefiere
+      // aterrizar en la vista de la OC padre (/expedientes/{oc_id}) que
+      // ya muestra el grupo de SAPs + el nuevo expediente al fondo.
+      // Si por algún motivo no hay oc_id en la response, caemos al
+      // listado de expedientes.
       const expId = resp?.id;
-      const ocId  = resp?.oc_id || resp?.oc?.id || "none";
-      if (expId) {
-        navigate(`/expedientes/${encodeURIComponent(ocId)}/exp/${encodeURIComponent(expId)}`);
+      const ocId  = resp?.oc_id || resp?.oc?.id || null;
+      if (ocId) {
+        navigate(`/expedientes/${encodeURIComponent(ocId)}`);
+      } else if (expId) {
+        // Fallback raro: sin oc_id, vamos al detalle del expediente.
+        navigate(`/expedientes/none/exp/${encodeURIComponent(expId)}`);
       } else {
         navigate("/expedientes");
       }
