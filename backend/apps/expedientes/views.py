@@ -1105,7 +1105,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                    AND codigo LIKE %s
                                    AND is_active = TRUE
                                  LIMIT 1
-                            """, [str(exp.id), f"ART-04 · {sap_id}%"])
+                            """, [str(exp.id), sap_id])
                             row_doc = c.fetchone()
                             if row_doc:
                                 c.execute("""
@@ -1140,7 +1140,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                     str(uuid.uuid4()),
                                     str(exp.oc_id) if exp.oc_id else None,
                                     str(exp.id),
-                                    f"ART-04 · {sap_id}",
+                                    sap_id,
                                     file_ext, file_size_bytes, storage_url,
                                     (getattr(request.user, "email", None)
                                      or getattr(request.user, "username", None)
@@ -1295,28 +1295,12 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         emitter_id, 'admin',
                     ])
 
-                    # 5. Sombra legacy en expedientes.documento para compat
-                    #    con el historial ya existente (la UI de documentos
-                    #    legacy lee de allí).
-                    c.execute("""
-                        INSERT INTO expedientes.documento (
-                            id, oc_id, expediente_id, kind, codigo,
-                            file_ext, file_size_bytes, storage_url,
-                            author, fecha, is_active
-                        ) VALUES (
-                            %s, %s, %s, 'Confirmación SAP', %s,
-                            %s, %s, %s,
-                            %s, %s, TRUE
-                        )
-                    """, [
-                        str(uuid.uuid4()),
-                        str(exp.oc_id) if exp.oc_id else None,
-                        str(exp.id),
-                        sap_id,
-                        file_ext, file_size_bytes, storage_url,
-                        (getattr(request.user, "email", None) or "system"),
-                        fabricacion_dt,
-                    ])
+                    # Sprint 2026-05-08 · Eliminado el INSERT "sombra"
+                    # legacy que creaba un segundo registro Documento
+                    # con kind='Confirmación SAP'. Causaba duplicado en
+                    # "Documentos comerciales". El UPSERT idempotente de
+                    # arriba (kind='ART-04', audience='ADMIN_ONLY') es el
+                    # único registro válido del SAP a partir de ahora.
 
         except Exception as e:
             log.exception("confirm_sap atomic tx falló: %s", e)
@@ -1605,7 +1589,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                AND codigo LIKE %s
                                AND is_active = TRUE
                             """,
-                            [str(exp.id), f"ART-04 · {sap_id}%"],
+                            [str(exp.id), sap_id],
                         )
                         _moved_sap_doc_keys = []
                         for _did, _surl in (c.fetchall() or []):
@@ -1639,7 +1623,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                AND codigo LIKE %s
                                AND is_active = TRUE
                             """,
-                            [str(exp.id), f"ART-04 · {sap_id}%"],
+                            [str(exp.id), sap_id],
                         )
 
                         # Schedule borrado en MinIO post-commit del XLSX SAP.
@@ -2669,7 +2653,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                    AND codigo LIKE %s
                                    AND is_active = TRUE
                                  LIMIT 1
-                            """, [str(exp.id), f"ART-04 · {sap_id}%"])
+                            """, [str(exp.id), sap_id])
                             row_doc = c.fetchone()
                             if row_doc:
                                 c.execute("""
@@ -2704,7 +2688,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                     str(uuid.uuid4()),
                                     str(exp.oc_id) if exp.oc_id else None,
                                     str(exp.id),
-                                    f"ART-04 · {sap_id}",
+                                    sap_id,
                                     new_file_ext, new_file_size, new_storage_url,
                                     (getattr(request.user, "email", None) or "system"),
                                     fabricacion_dt,
