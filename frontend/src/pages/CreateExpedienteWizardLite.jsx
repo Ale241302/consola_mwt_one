@@ -359,6 +359,11 @@ export default function CreateExpedienteWizardLite() {
   // el submit (lines_added / lines_removed / lines_updated).
   const initialLinesRef = useRef([]);
   const initialClientIdRef = useRef(null);
+  // Sprint 2026-05-07 · Modal de confirmación split.
+  // pendingSplitBodyRef contiene el body listo para PATCH cuando el
+  // usuario confirma; showSplitConfirm controla el modal.
+  const pendingSplitBodyRef = useRef(null);
+  const [showSplitConfirm, setShowSplitConfirm] = useState(false);
   useEffect(() => {
     if (!isEditMode) return;
     let cancel = false;
@@ -466,22 +471,27 @@ export default function CreateExpedienteWizardLite() {
           lines_removed,
           lines_updated,
         };
-        // Si el usuario cambió de cliente, pedir confirmación: split.
+        // Si el usuario cambió de cliente, abrir modal de confirmación
+        // (split). Diferimos el PATCH hasta que el usuario apruebe.
         const clientChanged = !!(
           initialClientIdRef.current
           && selClient?.id
           && selClient.id !== initialClientIdRef.current
         );
-        if (clientChanged) {
-          const confirmMsg = lang === 'es'
-            ? 'Cambiar el cliente creará un nuevo expediente con este SAP, separándolo del actual. ¿Continuar?'
-            : 'Changing the client will create a new expediente with this SAP, splitting it from the current one. Continue?';
-          // eslint-disable-next-line no-alert
-          if (!window.confirm(confirmMsg)) {
-            setSaving(false);
-            return;
-          }
+        if (clientChanged && !pendingSplitBodyRef.current) {
           body.client_id = selClient.id;
+          // Guardamos el body en el ref + abrimos el modal. El handler
+          // de confirmación re-disparará submit() poniendo el ref pre-aprobado.
+          pendingSplitBodyRef.current = body;
+          setShowSplitConfirm(true);
+          setSaving(false);
+          return;
+        }
+        if (clientChanged) {
+          // pendingSplitBodyRef ya contiene el body aprobado; usamos ese
+          // y limpiamos el ref para futuros envíos.
+          Object.assign(body, pendingSplitBodyRef.current || {});
+          pendingSplitBodyRef.current = null;
         }
 
         const token = getToken();
@@ -728,6 +738,89 @@ export default function CreateExpedienteWizardLite() {
           )}
         </div>
       </div>
+
+      {/* ── Modal de confirmación: split por cambio de cliente ── */}
+      {showSplitConfirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowSplitConfirm(false);
+              pendingSplitBodyRef.current = null;
+            }
+          }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 100,
+            background: 'rgba(11,30,58,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div style={{
+            width: 'min(480px, 100%)',
+            background: 'var(--surface-raised, #fff)',
+            borderRadius: 14,
+            boxShadow: '0 30px 80px rgba(11,30,58,0.40)',
+            padding: '22px 24px 18px',
+          }}>
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: 10,
+              padding: '4px 10px', borderRadius: 999,
+              background: 'color-mix(in oklab, var(--warning, #B45309) 12%, transparent)',
+              color: 'var(--warning, #B45309)',
+              fontSize: 11, fontWeight: 800, letterSpacing: 0.6,
+              marginBottom: 14,
+            }}>
+              {lang === 'es' ? 'CAMBIAR CLIENTE DEL SAP' : 'CHANGE SAP CLIENT'}
+            </div>
+            <div style={{
+              fontSize: 17, fontWeight: 800, color: 'var(--text-primary, #0B1E3A)',
+              marginBottom: 8,
+            }}>
+              {lang === 'es'
+                ? '¿Crear un nuevo expediente con este SAP?'
+                : 'Create a new expediente with this SAP?'}
+            </div>
+            <div style={{
+              fontSize: 13, color: 'var(--text-secondary, #4A5773)',
+              lineHeight: 1.5,
+            }}>
+              {lang === 'es'
+                ? 'Las líneas con este SAP se moverán del expediente actual a un nuevo expediente con el cliente que elegiste. El crédito del cliente nuevo absorberá el valor del SAP.'
+                : 'Lines with this SAP will move from the current expediente to a new one with the selected client. The new client\'s credit will absorb the SAP value.'}
+            </div>
+            <div style={{
+              display: 'flex', justifyContent: 'flex-end', gap: 10,
+              marginTop: 22,
+            }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  setShowSplitConfirm(false);
+                  pendingSplitBodyRef.current = null;
+                }}
+              >
+                {lang === 'es' ? 'Cancelar' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-accent"
+                style={{ minWidth: 160, fontWeight: 700 }}
+                onClick={() => {
+                  setShowSplitConfirm(false);
+                  // Re-disparamos submit; el ref ya tiene el body
+                  // aprobado y la rama del clientChanged lo va a usar.
+                  submit();
+                }}
+              >
+                {lang === 'es' ? 'Sí, dividir expediente' : 'Yes, split expediente'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Diálogo solicitud asignación ── */}
       {reqDialog && (
