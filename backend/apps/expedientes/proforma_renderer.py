@@ -280,23 +280,22 @@ def _build_lineas_html(lineas, prod_map):
     return rows_html, total_qty_int, total_value_q
 
 
-def render_proforma_html(expediente_id, request_user=None):
+def render_proforma_html(expediente_id, request_user=None,
+                         codigo_override=None):
     """Renderea el HTML de la proforma (tab SONDEL — vista cliente).
+
+    Args:
+        expediente_id: UUID del expediente.
+        request_user: opcional, usuario que dispara la generación.
+        codigo_override: si viene, se usa como código de la proforma
+            (ej. "PF-2417-2026" — lo que tipeó el usuario en el input
+            'Numero / Codigo' al subir el PDF). Si es None o vacío,
+            cae al secuencial PF-YYYY-NNNN.
 
     Returns:
         (html_string, metadata_dict)
 
-    metadata = {
-        "codigo": "PF-2026-0001",
-        "filename": "PF-2026-0001_<client>_<date>.html",
-        "client_id": "...",
-        "total_pares": 260,
-        "total_value_usd": Decimal("12412.40"),
-    }
-
-    Lanza:
-        Expediente.DoesNotExist si no existe / no está activo.
-        ValueError si el expediente no tiene client_id.
+    Lanza ValueError si el expediente no tiene cliente o líneas.
     """
     expediente = Expediente.objects.get(id=expediente_id, is_active=True)
     if not expediente.client_id:
@@ -323,17 +322,40 @@ def render_proforma_html(expediente_id, request_user=None):
     producto_ids = list({l.producto_id for l in lineas if l.producto_id})
     prod_map = _fetch_producto_map(producto_ids)
 
-    # Numero de proforma
+    # Numero de proforma — si el usuario tipeó algo, lo usamos.
     today = timezone.now().date()
-    codigo = _next_proforma_codigo(today.year)
+    if codigo_override and str(codigo_override).strip():
+        codigo = str(codigo_override).strip()
+    else:
+        codigo = _next_proforma_codigo(today.year)
 
     # Operador / forma de pago
     operador = _operator_name(expediente, cliente)
     forma_pago = _forma_pago_label(expediente.forma_pago)
     plazo = _plazo_label(expediente.forma_pago, expediente.credit_days)
 
-    # PO Cliente — preferir oc.codigo
-    po_codigo = oc.codigo if oc else (expediente.codigo or "")
+    # PO Cliente · prioridad:
+    #   1) Documento kind='OC' más reciente del expediente — el codigo
+    #      lo tipea el usuario al subir la OC ("Numero/Codigo" del modal).
+    #   2) oc.codigo (entidad OC del expediente).
+    #   3) expediente.codigo como último fallback.
+    po_codigo = None
+    try:
+        from .models import Documento
+        latest_oc_doc = (
+            Documento.objects
+            .filter(expediente_id=expediente.id, kind='OC', is_active=True)
+            .exclude(codigo__isnull=True)
+            .exclude(codigo__exact='')
+            .order_by('-created_at')
+            .first()
+        )
+        if latest_oc_doc and latest_oc_doc.codigo:
+            po_codigo = latest_oc_doc.codigo.strip()
+    except Exception:
+        po_codigo = None
+    if not po_codigo:
+        po_codigo = (oc.codigo if oc else (expediente.codigo or ""))
     po_fecha = _fmt_date_es(oc.issued_at) if oc and oc.issued_at else "—"
 
     # Líneas + totales
@@ -442,8 +464,7 @@ table.ct .trow td{{border-top:2px solid var(--navy);}}
     <div>
       <h2>PROFORMA {_esc(codigo)} &middot; <span style="color:var(--info);">PO {_esc(po_codigo)}</span></h2>
       <div class="meta"><strong>Emisor:</strong> {_esc(operador)} &middot; Costa Rica<br>
-        <strong>Cliente:</strong> {_esc(cliente['razon_social'] or '—')} &middot; {('Cédula Jurídica ' + _esc(cliente['cedula_juridica'])) if cliente['cedula_juridica'] else ''} &middot; {_esc(pais_label)}<br>
-        <strong>OC Cliente:</strong> <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--info);">{_esc(po_codigo)}</span> &middot; <strong>Fecha OC:</strong> {_esc(po_fecha)} &middot; <strong>Fecha Proforma:</strong> {_esc(_fmt_date_es(today))}</div>
+        <strong>Cliente:</strong> {_esc(cliente['razon_social'] or '—')} &middot; {('Cédula Jurídica ' + _esc(cliente['cedula_juridica'])) if cliente['cedula_juridica'] else ''} &middot; {_esc(pais_label)}</div>
     </div>
     <span class="badge" style="background:rgba(0,160,221,.1);color:#0077A8;">VISTA CLIENTE</span>
   </div>

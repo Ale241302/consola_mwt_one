@@ -2799,12 +2799,22 @@ class DocumentoViewSet(viewsets.ViewSet):
                 # documento (audience='CLIENT') con código secuencial
                 # PF-YYYY-NNNN. Best-effort: si falla, no bloquea el
                 # upload original — solo log warning.
-                if kind == "PROFORMA" and exp_id:
+                # Sprint 2026-05-07 · regenerar HTML cuando se sube
+                # PROFORMA (con codigo_override = lo que tipeó el user)
+                # o cuando se sube OC (para refrescar PO Referencia).
+                _regen_kinds = ("PROFORMA", "OC")
+                if kind in _regen_kinds and exp_id:
                     try:
                         from .proforma_renderer import render_proforma_html
+                        # Si es PROFORMA, usar el codigo que tipeó el user;
+                        # si es OC, no override (el user-typed codigo es el PO).
+                        codigo_override = None
+                        if kind == "PROFORMA":
+                            codigo_override = (codigo or "").strip() or None
                         html_str, meta = render_proforma_html(
                             expediente_id=exp_id,
                             request_user=request.user,
+                            codigo_override=codigo_override,
                         )
                         if html_str and meta:
                             html_bytes = html_str.encode("utf-8")
@@ -2820,33 +2830,63 @@ class DocumentoViewSet(viewsets.ViewSet):
                                 length=html_size,
                             )
                             if html_up.get("ok"):
+                                # Idempotente: si ya existe un PROFORMA HTML
+                                # para este expediente lo actualizamos en lugar
+                                # de crear duplicado (caso: OC subida tras
+                                # PROFORMA, o re-upload de PROFORMA).
                                 with connection.cursor() as c2:
                                     c2.execute("""
-                                        INSERT INTO expedientes.documento (
-                                            id, oc_id, expediente_id,
-                                            kind, audience, codigo,
-                                            file_ext, file_size_bytes, storage_url,
-                                            author, fecha,
-                                            is_active, created_at, updated_at
-                                        ) VALUES (
-                                            %s, %s, %s,
-                                            'PROFORMA', 'CLIENT', %s,
-                                            'html', %s, %s,
-                                            %s, CURRENT_DATE,
-                                            TRUE, now(), now()
-                                        )
-                                    """, [
-                                        str(html_uuid),
-                                        oc_id if oc_id else None,
-                                        exp_id,
-                                        meta.get("codigo") or f"PF-{html_uuid}",
-                                        html_size, html_key,
-                                        (getattr(request.user, "email", None)
-                                         or getattr(request.user, "username", None)
-                                         or "system"),
-                                    ])
-                                log.info("[documento.create] auto-Proforma HTML generada: %s",
-                                         meta.get("codigo"))
+                                        SELECT id FROM expedientes.documento
+                                         WHERE expediente_id = %s::uuid
+                                           AND kind = 'PROFORMA'
+                                           AND file_ext = 'html'
+                                           AND is_active = TRUE
+                                         LIMIT 1
+                                    """, [exp_id])
+                                    existing = c2.fetchone()
+                                    if existing:
+                                        c2.execute("""
+                                            UPDATE expedientes.documento
+                                               SET storage_url = %s,
+                                                   file_size_bytes = %s,
+                                                   codigo = %s,
+                                                   audience = 'CLIENT',
+                                                   updated_at = now()
+                                             WHERE id = %s
+                                        """, [
+                                            html_key, html_size,
+                                            meta.get("codigo") or f"PF-{html_uuid}",
+                                            str(existing[0]),
+                                        ])
+                                        log.info("[documento.create] auto-Proforma HTML actualizada: %s",
+                                                 meta.get("codigo"))
+                                    else:
+                                        c2.execute("""
+                                            INSERT INTO expedientes.documento (
+                                                id, oc_id, expediente_id,
+                                                kind, audience, codigo,
+                                                file_ext, file_size_bytes, storage_url,
+                                                author, fecha,
+                                                is_active, created_at, updated_at
+                                            ) VALUES (
+                                                %s, %s, %s,
+                                                'PROFORMA', 'CLIENT', %s,
+                                                'html', %s, %s,
+                                                %s, CURRENT_DATE,
+                                                TRUE, now(), now()
+                                            )
+                                        """, [
+                                            str(html_uuid),
+                                            oc_id if oc_id else None,
+                                            exp_id,
+                                            meta.get("codigo") or f"PF-{html_uuid}",
+                                            html_size, html_key,
+                                            (getattr(request.user, "email", None)
+                                             or getattr(request.user, "username", None)
+                                             or "system"),
+                                        ])
+                                        log.info("[documento.create] auto-Proforma HTML generada: %s",
+                                                 meta.get("codigo"))
                             else:
                                 log.warning("[documento.create] auto-Proforma upload MinIO fallo: %s",
                                             html_up.get("error"))
