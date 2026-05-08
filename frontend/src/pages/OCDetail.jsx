@@ -42,7 +42,7 @@ import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmak
 import AddOCProductModal from "../components/expedientes/AddOCProductModal.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
-         productosApi, documentosApi, storageApi } from "../lib/api.js";
+         productosApi, documentosApi, storageApi, getToken } from "../lib/api.js";
 import {
   MWT_OPERATING_CLIENT_ID, MWT_OPERATOR_NAME, isMwtOperated, isClientRole,
 } from "../lib/operatingCompany.js";
@@ -610,6 +610,32 @@ export default function ScreenOCDetail() {
       const url = resp?.url;
       if (!url) {
         throw new Error(resp?.error || 'URL no disponible');
+      }
+      // Sprint 2026-05-08 · documentos DINÁMICOS (Proforma HTML).
+      // Backend devuelve { url:"/api/expedientes/.../proforma-html/...", dynamic:true }.
+      // window.open no envía el JWT del usuario → 401. Hacemos fetch
+      // con Authorization, recibimos text/html, lo convertimos a Blob
+      // URL y lo abrimos con window.open. El token nunca está en la URL.
+      if (resp?.dynamic === true) {
+        const apiBase = (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || '/api';
+        // url puede venir como "/api/expedientes/..." absoluto desde la
+        // raíz; respetar tal cual.
+        const fullUrl = url.startsWith('/') ? url : `${apiBase}${url}`;
+        const token = getToken() || '';
+        const r = await fetch(fullUrl, {
+          method: 'GET',
+          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        });
+        if (!r.ok) {
+          throw new Error(`HTTP ${r.status} al renderizar proforma`);
+        }
+        const html = await r.text();
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+        const blobUrl = URL.createObjectURL(blob);
+        window.open(blobUrl, '_blank', 'noopener,noreferrer');
+        // Liberar la URL después de un rato (el tab ya tiene el HTML cargado).
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+        return;
       }
       // Sprint 2026-05-06 · si el archivo es Excel/CSV/Word/Zip → forzar
       // download (esos formatos no se renderean inline en el browser y
