@@ -65,6 +65,7 @@ const _DOC_KIND_LABEL_ES = {
   FACTURA: 'Factura comercial',
   CONTRATO: 'Contrato',
   OTRO: 'Otro documento',
+  'ART-04': 'Confirmación SAP',
 };
 const _DOC_KIND_LABEL_EN = {
   OC: 'Client PO',
@@ -72,6 +73,7 @@ const _DOC_KIND_LABEL_EN = {
   FACTURA: 'Commercial invoice',
   CONTRATO: 'Contract',
   OTRO: 'Other document',
+  'ART-04': 'SAP Confirmation',
 };
 function _docKindLabel(kind, lang) {
   const k = String(kind || 'OTRO').toUpperCase();
@@ -1653,7 +1655,15 @@ export default function ScreenOCDetail() {
               // ADMIN_ONLY/MWT_INTERNAL para CLIENT_* reales; aquí
               // replicamos el filtro para la simulación frontend.
               const aud = String(d.audience || 'CLIENT').toUpperCase();
-              if (isClient) return aud === 'CLIENT';
+              // Sprint 2026-05-08 · ART-04 (Confirmación SAP) SIEMPRE
+              // se oculta del lado cliente, aunque el campo audience
+              // venga mal seteado en docs legacy. Defensa en profundidad.
+              const rawKind = String((d._raw && d._raw.kind) || '').toUpperCase();
+              const isArt04 = rawKind === 'ART-04';
+              if (isClient) {
+                if (isArt04) return false;
+                return aud === 'CLIENT';
+              }
               return true;
             }).map(d => {
               // Defensivo: cualquier campo faltante cae a un valor seguro
