@@ -2792,6 +2792,68 @@ class DocumentoViewSet(viewsets.ViewSet):
                          or "system"),
                     ])
                 d = Documento.objects.get(pk=doc_uuid)
+
+                # Sprint 2026-05-07 · Auto-generar Proforma HTML cuando el
+                # documento subido es kind='PROFORMA' y hay expediente
+                # asociado. La Proforma HTML se persiste como segundo
+                # documento (audience='CLIENT') con código secuencial
+                # PF-YYYY-NNNN. Best-effort: si falla, no bloquea el
+                # upload original — solo log warning.
+                if kind == "PROFORMA" and exp_id:
+                    try:
+                        from .proforma_renderer import render_proforma_html
+                        html_str, meta = render_proforma_html(
+                            expediente_id=exp_id,
+                            request_user=request.user,
+                        )
+                        if html_str and meta:
+                            html_bytes = html_str.encode("utf-8")
+                            html_uuid = uuid.uuid4()
+                            html_filename = (meta.get("filename")
+                                             or f"{meta.get('codigo','PF')}.html")
+                            html_key = f"documento/{html_uuid}/{html_filename}"
+                            html_size = len(html_bytes)
+                            html_up = put_object_stream(
+                                key=html_key,
+                                file_stream=io.BytesIO(html_bytes),
+                                content_type="text/html; charset=utf-8",
+                                length=html_size,
+                            )
+                            if html_up.get("ok"):
+                                with connection.cursor() as c2:
+                                    c2.execute("""
+                                        INSERT INTO expedientes.documento (
+                                            id, oc_id, expediente_id,
+                                            kind, audience, codigo,
+                                            file_ext, file_size_bytes, storage_url,
+                                            author, fecha,
+                                            is_active, created_at, updated_at
+                                        ) VALUES (
+                                            %s, %s, %s,
+                                            'PROFORMA', 'CLIENT', %s,
+                                            'html', %s, %s,
+                                            %s, CURRENT_DATE,
+                                            TRUE, now(), now()
+                                        )
+                                    """, [
+                                        str(html_uuid),
+                                        oc_id if oc_id else None,
+                                        exp_id,
+                                        meta.get("codigo") or f"PF-{html_uuid}",
+                                        html_size, html_key,
+                                        (getattr(request.user, "email", None)
+                                         or getattr(request.user, "username", None)
+                                         or "system"),
+                                    ])
+                                log.info("[documento.create] auto-Proforma HTML generada: %s",
+                                         meta.get("codigo"))
+                            else:
+                                log.warning("[documento.create] auto-Proforma upload MinIO fallo: %s",
+                                            html_up.get("error"))
+                    except Exception as auto_err:
+                        log.warning("[documento.create] auto-Proforma HTML fallo (ignorado): %s",
+                                    auto_err)
+
                 return Response(DocumentoSerializer(d).data, status=201)
             except Exception as e:
                 log.exception("documento.create multipart fallo: %s", e)
