@@ -4,21 +4,19 @@
 -- Sprint: 2026-05-10 · Decisión del CEO (Alejandro)
 --
 -- Propósito:
---   Borrar TODA la data operativa y los seeds demo del sistema.
---   Tras correr esto la consola arranca como una instancia limpia,
---   sin clientes, sin expedientes, sin OCs, sin cobros, sin pagos,
---   sin inventario, sin transferencias y sin catálogos sembrados
---   (brands/productos/proveedores/nodos).
+--   Borrar la data OPERATIVA del sistema (clientes, expedientes y
+--   todo lo que cuelga de ellos) más los logs/historial. Los catálogos
+--   maestros (productos, marcas, proveedores, nodos) se PRESERVAN: el
+--   CEO los mantiene como fuente de verdad y los puebla via UI/import.
 --
 -- Lo que SÍ se preserva:
 --   · Schemas y tablas (estructura intacta).
 --   · core.users, core.roles, core.user_roles (autenticación).
---   · TODOS los catálogos *_cat (estado_cat, segmento_cat, tipo_cat,
---     incoterm_cat, modo_operacion_cat, motivo_cat, etc.).
---   · email_templates.template + email_templates.version
---     (los textos los cuida el negocio; no son demo).
---   · Tablas de configuración como expedientes.forma_pago_cat,
---     pipeline.transicion_cat, transfers.legal_context_cat, etc.
+--   · TODOS los catálogos *_cat.
+--   · email_templates.template + email_templates.version.
+--   · brands.marca, productos.producto, proveedores.proveedor,
+--     nodos.nodo y todas sus tablas extensión (precios, variantes,
+--     evaluaciones ISO, jerarquía de nodos, etc.).
 --
 -- Lo que se BORRA (TRUNCATE — TODO):
 --   · clientes.cliente
@@ -44,14 +42,12 @@
 --   · ai.thread, .message, .attachment, .thread_context, .usage_log
 --   · email_templates.render_preview_log
 --
--- Lo que se BORRA (TRUNCATE — catálogos demo del seed 99_seed.sql):
---   · brands.marca
---   · productos.producto, .variante, .talla_matriz, .precio_history,
---     .imports_log
---   · proveedores.proveedor, .supplier_promo_code, .supplier_audit_event,
---     .supplier_certificacion, .supplier_import_log,
---     .suppliers_product_assignments, .suppliers_iso_evaluations
---   · nodos.nodo, .nodo_jerarquia
+-- IMPORTANTE — corrección 2026-05-10 (post-incidente):
+--   La versión inicial truncaba también brands.marca, productos.*,
+--   proveedores.*, nodos.*. Esto borró catálogo real del CEO. La
+--   versión actual NO los toca. Si una nueva instalación necesita
+--   datos seed para esas tablas, deben sembrarse explícitamente
+--   por separado (no como parte de esta purga).
 --
 -- Idempotencia:
 --   El runner del entrypoint (backend/docker-entrypoint.sh) marca este
@@ -149,25 +145,11 @@ DECLARE
         'ai.thread_context',
         'ai.thread',
         -- ── Email templates · solo logs de preview ──
-        'email_templates.render_preview_log',
-        -- ── Catálogos demo (sembrados por 99_seed.sql) ──
-        'brands.brand_discount_code',
-        'brands.brand_import_log',
-        'brands.marca',
-        'productos.precio_history',
-        'productos.imports_log',
-        'productos.variante',
-        'productos.talla_matriz',
-        'productos.producto',
-        'proveedores.suppliers_iso_evaluations',
-        'proveedores.suppliers_product_assignments',
-        'proveedores.supplier_promo_code',
-        'proveedores.supplier_certificacion',
-        'proveedores.supplier_audit_event',
-        'proveedores.supplier_import_log',
-        'proveedores.proveedor',
-        'nodos.nodo_jerarquia',
-        'nodos.nodo'
+        'email_templates.render_preview_log'
+        -- 2026-05-10 · POST-INCIDENTE:
+        -- INTENCIONALMENTE NO se incluyen catálogos maestros aquí.
+        -- brands.marca, productos.producto, proveedores.proveedor,
+        -- nodos.nodo y sus extensiones son data del CEO, NO mocks.
     ];
 BEGIN
     FOREACH target_name IN ARRAY targets LOOP
