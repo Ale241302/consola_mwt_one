@@ -189,6 +189,9 @@ export default function CreateExpedienteWizardLite() {
 
   // Sprint 2026-05-01: calcular credito usado proyectado desde
   // expedientes existentes del cliente.
+  // Sprint 2026-05-10 · FIX: solo expedientes con forma_pago != CONTADO
+  // consumen credito. Los CONTADO se cobran al confirmar la factura, no
+  // entran en el pool de credito del cliente.
   useEffect(() => {
     if (!selClient?.id) return;
     let cancel = false;
@@ -198,7 +201,14 @@ export default function CreateExpedienteWizardLite() {
         const expRaw = await expedientesApi.list({ client: selClient.id });
         const exps = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
         if (cancel) return;
-        if (exps.length === 0) {
+        // FIX 2026-05-10: filtrar CONTADO antes de proyectar credito.
+        const creditoExps = exps.filter((e) => {
+          const fp = String(e?.forma_pago || '').trim().toUpperCase();
+          // Si forma_pago es null/vacio en data legacy, lo tratamos como
+          // CREDITO (comportamiento previo). Solo CONTADO se excluye.
+          return fp !== 'CONTADO';
+        });
+        if (creditoExps.length === 0) {
           setExistingClientUsage(0);
           return;
         }
@@ -207,7 +217,7 @@ export default function CreateExpedienteWizardLite() {
         const lnRaw = await lineasApi.list({ is_active: true });
         const lns = Array.isArray(lnRaw) ? lnRaw : (lnRaw?.results || []);
         if (cancel) return;
-        const expIds = new Set(exps.map(e => e.id));
+        const expIds = new Set(creditoExps.map(e => e.id));
         const clientLines = lns.filter(l => expIds.has(l.expediente_id));
 
         // 3. Resolver precios via catalogo (igual que en otras vistas).
@@ -301,6 +311,8 @@ export default function CreateExpedienteWizardLite() {
   // Proyeccion de credito post-pedido sobre el OPERADOR del expediente.
   // Sprint 2026-05-06 · si operatingMode === 'mwt', el credito relevante
   // es el de Muito Work Limitada. Si 'client', el del cliente final.
+  // Sprint 2026-05-10 · FIX: si el pedido en curso es CONTADO, NO debe
+  // sumarse al `afterUsed` (no afecta credito).
   const creditProjection = useMemo(() => {
     const isMwt = operatingMode === 'mwt';
     const source = isMwt ? mwtOperator : selClient;
@@ -317,13 +329,18 @@ export default function CreateExpedienteWizardLite() {
       ? persistedUsed
       : Math.max(persistedUsed, Number(existingClientUsage || 0));
     const available = Math.max(0, limit - used);
-    const afterUsed = used + orderTotalValue;
+    // Si el pedido actual es CONTADO, no impacta credito → contributedOrder = 0.
+    const isContadoNow = String(paymentMethod || '').trim().toUpperCase() === 'CONTADO';
+    const contributedOrder = isContadoNow ? 0 : orderTotalValue;
+    const afterUsed = used + contributedOrder;
     const afterAvailable = limit - afterUsed;
     const exceedsLimit = limit > 0 && afterUsed > limit;
     const utilPctAfter = limit > 0 ? Math.round((afterUsed / limit) * 100) : 0;
     return {
       limit, used, available,
-      orderValue:  orderTotalValue,
+      orderValue:       orderTotalValue,
+      orderImpactCredit: contributedOrder,
+      paymentMethod:    isContadoNow ? 'CONTADO' : 'CREDITO',
       afterUsed,
       afterAvailable,
       exceedsLimit,
@@ -335,7 +352,7 @@ export default function CreateExpedienteWizardLite() {
         ? MWT_OPERATOR_NAME
         : (selClient?.label || ''),
     };
-  }, [selClient, mwtOperator, operatingMode, orderTotalValue, existingClientUsage]);
+  }, [selClient, mwtOperator, operatingMode, orderTotalValue, existingClientUsage, paymentMethod]);
 
   // ── Cargar catálogos ──
   useEffect(() => {
