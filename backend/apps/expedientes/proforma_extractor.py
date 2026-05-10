@@ -832,6 +832,369 @@ def _parse_proforma_horizontal(file_bytes: bytes) -> Optional[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Sprint 2026-05-10 · Detector de formato + parser Tipo B (MWT)
+#
+# Existen dos layouts radicalmente distintos de proforma en el flujo MWT:
+#
+#   · Tipo A "MARLUVAS" — proforma del proveedor Marluvas a Muito Work,
+#     formato matriz horizontal (Referencia BRA / EU / USA + columnas
+#     33-47 + fila qty). Los parsers `_parse_proforma_horizontal` y
+#     `_parse_proforma_deterministic` lo cubren.
+#
+#   · Tipo B "MWT" — proforma generada por la consola MWT (template
+#     consola.mwt.one) que MWT emite a sus clientes. NO tiene matriz
+#     horizontal — usa una tabla compacta + bloque "DESGLOSE POR TALLA"
+#     con chips visuales (talla arriba / qty abajo) por SKU. Los
+#     parsers Tipo A devuelven None en este formato porque buscan
+#     "Referencia BRA" que no existe.
+#
+# Estrategia: detectar formato por texto plano, rutear al parser
+# correcto. Si Tipo B falla, NO caemos a Tipo A (devolverían None igual)
+# — vamos directo a AI fallback.
+# ─────────────────────────────────────────────────────────────────────
+
+def _detect_proforma_format(file_bytes: bytes) -> str:
+    """Devuelve 'MARLUVAS' (Tipo A), 'MWT' (Tipo B) o 'UNKNOWN'.
+
+    Señales:
+      · Tipo A → presencia de "Referencia BRA" o "Referencia EU"
+        (etiquetas de la matriz horizontal de Marluvas).
+      · Tipo B → presencia de "DESGLOSE POR TALLA", header
+        "PF NNNN-YYYY" o "MUITO WORK ·" (template de la consola).
+    """
+    try:
+        import fitz
+        import re as _re
+    except ImportError:
+        return "UNKNOWN"
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+    except Exception as e:
+        log.warning("[proforma_detect] fitz open error: %s", e)
+        return "UNKNOWN"
+
+    text = ""
+    try:
+        for page in doc:
+            text += page.get_text("text") + "\n"
+    finally:
+        doc.close()
+
+    # Tipo A primero: si el documento es claramente Marluvas no nos
+    # confundimos aunque incluya el código "PF" en algún lado.
+    if "Referencia BRA" in text or "Referencia EU" in text:
+        return "MARLUVAS"
+
+    # Tipo B
+    if (
+        "DESGLOSE POR TALLA" in text
+        or _re.search(r"\bPF\s*\d{4}\s*-\s*\d{4}\b", text)
+        or "MUITO WORK ·" in text
+        or "MUITO WORK ·" in text  # middle dot literal
+    ):
+        return "MWT"
+
+    return "UNKNOWN"
+
+
+def _parse_proforma_mwt_format(file_bytes: bytes) -> Optional[dict]:
+    """Parser DETERMINÍSTICO para proformas formato consola MWT (Tipo B).
+
+    Layout esperado (ver PF 2453-2026 PO 504983 Sondel.pdf como ejemplo):
+
+        MUITO WORK · PF 2453-2026
+        Cliente: <RAZON_SOCIAL>
+        Total pares: <N>
+
+        LÍNEAS DE PRODUCTO — MARCA <BRAND>
+        # CÓDIGO DESCRIPCIÓN COLOR CANTIDAD PRECIO USD TOTAL USD
+        1 701809 50B22-V-E-CPAP-CP / Bota... Negro 280 $18.23 $5,104.40
+        ...
+
+        DESGLOSE POR TALLA
+        701809 · 50B22-V-E-CPAP-CP · 280 PARES
+        ┌──┐ ┌──┐ ┌──┐ ┌──┐
+        │37│ │38│ │39│ │40│
+        │40│ │50│ │80│ │110│
+        └──┘ └──┘ └──┘ └──┘
+        ...
+
+    Algoritmo:
+      1. Extraer texto plano para detectar header (PF nº, total pares,
+         precios unitarios por SKU desde la tabla LÍNEAS DE PRODUCTO).
+      2. Por página, localizar "DESGLOSE POR TALLA" → procesar todo lo
+         que sigue como bloques de SKU.
+      3. Cada bloque de SKU: header "<sku> · <ref> · <qty> PARES"
+         seguido de chips visuales con talla arriba (Y bajo, fila 1)
+         y qty abajo (Y mayor, fila 2). Agrupar por Y-bucket, parear
+         talla-qty por proximidad X.
+      4. Validar: suma de qty del bloque == qty declarado del header.
+      5. Validar global: suma total == "Total pares" del documento.
+
+    Returns: dict con shape igual a `extract_proforma()` o None si
+    el parsing falla / formato no es Tipo B (caller cae a AI).
+    """
+    try:
+        import fitz
+        import re as _re
+        from collections import defaultdict
+    except ImportError:
+        return None
+
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+    except Exception as e:
+        log.warning("[proforma_mwt] fitz open error: %s", e)
+        return None
+
+    re_sku       = _re.compile(r"^\d{5,7}$")
+    re_supref    = _re.compile(r"^[A-Z0-9][A-Z0-9\-]+$")
+    re_int_small = _re.compile(r"^\d{1,4}$")
+
+    # ── Texto plano para header + tabla de precios ─────────────────
+    flat_text_all = ""
+    try:
+        for page in doc:
+            flat_text_all += page.get_text("text") + "\n"
+    except Exception as e:
+        log.warning("[proforma_mwt] get_text error: %s", e)
+        doc.close()
+        return None
+
+    if "DESGLOSE POR TALLA" not in flat_text_all:
+        # No es Tipo B — caller decidirá qué hacer.
+        doc.close()
+        return None
+
+    # Header: "PF NNNN-YYYY" — el código de proforma
+    proforma_number = None
+    m_pf = _re.search(r"PF\s*(\d{4}\s*-\s*\d{4})", flat_text_all)
+    if m_pf:
+        proforma_number = m_pf.group(1).replace(" ", "")
+
+    # Total pares declarado
+    total_pares = None
+    m_tp = _re.search(r"Total\s*pares\s*[:\s]\s*(\d{1,5})", flat_text_all, _re.IGNORECASE)
+    if m_tp:
+        try:
+            total_pares = int(m_tp.group(1))
+        except ValueError:
+            total_pares = None
+
+    # Precio unitario por SKU desde la tabla de líneas. Layout en texto
+    # plano: cada celda llega como token separado. Tomamos el primer
+    # número con dos decimales que aparece después del SKU y antes del
+    # siguiente SKU — ese es el precio unitario USD.
+    sku_unit_price = {}
+    tokens = flat_text_all.split()
+    for idx, tok in enumerate(tokens):
+        if not re_sku.match(tok):
+            continue
+        # Buscar precio dentro de los próximos ~20 tokens, hasta el
+        # próximo SKU o el inicio de DESGLOSE.
+        for j in range(idx + 1, min(idx + 25, len(tokens))):
+            tt = tokens[j]
+            if tt.upper().startswith("DESGLOSE"):
+                break
+            if re_sku.match(tt) and tt != tok:
+                break
+            m_price = _re.match(r"^\$?([\d,]+\.\d{2})$", tt)
+            if m_price:
+                try:
+                    val = float(m_price.group(1).replace(",", ""))
+                except ValueError:
+                    continue
+                # plausible unit price (no es total de línea)
+                if 0.01 < val < 5000.0 and tok not in sku_unit_price:
+                    sku_unit_price[tok] = val
+                    break
+
+    # ── Procesar DESGLOSE POR TALLA por página con coordenadas ─────
+    slot_lines = []
+
+    try:
+        for page_idx, page in enumerate(doc):
+            words = page.get_text("words")
+            if not words:
+                continue
+
+            # Localizar la palabra "DESGLOSE" para acotar la sección
+            desglose_y = None
+            for w in words:
+                if w[4].upper() == "DESGLOSE":
+                    desglose_y = w[1]
+                    break
+            if desglose_y is None:
+                continue
+
+            section_words = [w for w in words if w[1] >= desglose_y]
+
+            # ── Identificar bloques de SKU dentro de la sección ────
+            # Header de bloque: <sku> · <ref> · <qty> PARES (4 tokens
+            # útiles, separados por · que también vienen como tokens).
+            sku_blocks = []
+            si = 0
+            while si < len(section_words):
+                w = section_words[si]
+                if not re_sku.match(w[4]):
+                    si += 1
+                    continue
+                # Recolectar los próximos 4 tokens útiles (skip ·)
+                useful = []
+                jj = si
+                while jj < len(section_words) and len(useful) < 4:
+                    tt = section_words[jj][4]
+                    if tt in ("·", "•", "-", "–", "—"):
+                        jj += 1
+                        continue
+                    useful.append((jj, tt, section_words[jj]))
+                    jj += 1
+                if (len(useful) >= 4
+                        and re_supref.match(useful[1][1])
+                        and re_int_small.match(useful[2][1])
+                        and useful[3][1].upper() == "PARES"):
+                    try:
+                        total_qty_block = int(useful[2][1])
+                    except ValueError:
+                        si += 1
+                        continue
+                    sku_blocks.append({
+                        "sku":          useful[0][1],
+                        "supplier_ref": useful[1][1],
+                        "total_qty":    total_qty_block,
+                        "header_y_top": w[1],
+                        "header_y_bot": w[3],
+                        "after_idx":    useful[3][0] + 1,
+                    })
+                    si = useful[3][0] + 1
+                else:
+                    si += 1
+
+            # ── Parsear chips de cada bloque ───────────────────────
+            for bi, block in enumerate(sku_blocks):
+                next_y = (
+                    sku_blocks[bi + 1]["header_y_top"] - 4
+                    if bi + 1 < len(sku_blocks)
+                    else 99999
+                )
+                # Palabras numéricas dentro del rango Y del bloque
+                chip_words = [
+                    w for w in section_words
+                    if w[1] > block["header_y_bot"] + 0.5
+                    and w[3] < next_y
+                    and re_int_small.match(w[4])
+                ]
+                if not chip_words:
+                    continue
+
+                # Agrupar por filas (buckets de 5pt). Tolerante a
+                # micro-desalineamientos del PDF generado por la consola.
+                buckets = defaultdict(list)
+                for w in chip_words:
+                    cy = round((w[1] + w[3]) / 2.0 / 5.0) * 5
+                    buckets[cy].append(w)
+
+                sorted_rows = sorted(buckets.items(), key=lambda kv: kv[0])
+                if len(sorted_rows) < 2:
+                    continue
+
+                # Fila superior = tallas (30-50). Fila siguiente = qtys.
+                # Si la primera fila no son tallas válidas, intentamos
+                # con la siguiente (PDFs con paddings raros).
+                size_row, qty_row = None, None
+                for ri in range(len(sorted_rows) - 1):
+                    cand_sizes = [
+                        w for w in sorted_rows[ri][1]
+                        if 30 <= int(w[4]) <= 50
+                    ]
+                    if cand_sizes and len(cand_sizes) >= 1:
+                        size_row = sorted(cand_sizes, key=lambda w: w[0])
+                        qty_row = sorted(sorted_rows[ri + 1][1], key=lambda w: w[0])
+                        break
+                if not size_row or not qty_row:
+                    continue
+
+                block_lines = []
+                for sw in size_row:
+                    sx = (sw[0] + sw[2]) / 2.0
+                    closest_q = min(
+                        qty_row,
+                        key=lambda w: abs(((w[0] + w[2]) / 2.0) - sx),
+                    )
+                    cx = (closest_q[0] + closest_q[2]) / 2.0
+                    if abs(cx - sx) > 14.0:
+                        continue
+                    try:
+                        qty_val = int(closest_q[4])
+                    except ValueError:
+                        continue
+                    if qty_val < 1 or qty_val > 9999:
+                        continue
+                    block_lines.append({
+                        "sku":            block["sku"],
+                        "supplier_ref":   block["supplier_ref"],
+                        "talla":          sw[4],
+                        "qty":            qty_val,
+                        "product_label":  "",
+                        "unit_price":     sku_unit_price.get(block["sku"]),
+                        "confidence":     99.0,
+                        "match_strategy": "DETERMINISTIC_MWT_FORMAT",
+                        "match_score":    99,
+                        "matched_producto_id": None,
+                        "client_part_number":  None,
+                        "base_code":      None,
+                        "qty_confirmed":  None,
+                        "qty_open":       None,
+                    })
+
+                # Validar suma del bloque vs total declarado en el header.
+                actual_block = sum(l["qty"] for l in block_lines)
+                if abs(actual_block - block["total_qty"]) > 1:
+                    log.warning(
+                        "[proforma_mwt] SKU %s suma=%d != header=%d → descarto bloque",
+                        block["sku"], actual_block, block["total_qty"],
+                    )
+                    continue
+                slot_lines.extend(block_lines)
+    finally:
+        doc.close()
+
+    if not slot_lines:
+        log.info("[proforma_mwt] no extraje líneas (parser cayó)")
+        return None
+
+    # Validación global vs Total pares declarado en el header.
+    if total_pares:
+        total_extraido = sum(l["qty"] for l in slot_lines)
+        if abs(total_extraido - total_pares) > 2:
+            log.warning(
+                "[proforma_mwt] suma global=%d != Total pares declarado=%d → descarto",
+                total_extraido, total_pares,
+            )
+            return None
+
+    log.info(
+        "[proforma_mwt] extraje %d líneas (Tipo B), nº=%s, total_pares=%s ✓",
+        len(slot_lines), proforma_number, total_pares,
+    )
+
+    return {
+        "document_kind":   "PROFORMA",
+        "proforma_number": proforma_number,
+        "raw_text":        flat_text_all[:2000],
+        "model":           "deterministic-pymupdf-mwt-v1",
+        "error":           None,
+        "groups": [{
+            "sap_number":    None,
+            "po_reference":  None,
+            "delivery_date": None,
+            "lines":         slot_lines,
+        }],
+        "lines": [],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Punto de entrada
 # ─────────────────────────────────────────────────────────────────────
 def extract_proforma(file_bytes: bytes, filename: str, content_type: str,
@@ -865,12 +1228,52 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str,
             "Si tu proforma es imagen o Excel, usá 'Otro documento'."
         )
 
+    # ── PATH 0: detectar formato (MARLUVAS vs MWT vs UNKNOWN) ──────
+    # Sprint 2026-05-10: existen dos layouts radicalmente distintos
+    # de proforma. Si detectamos Tipo B (consola MWT), intentamos
+    # el parser determinístico Tipo B. Si esa rama no aplica (Tipo A
+    # o desconocido), seguimos el flujo legacy (horizontal → vertical
+    # → AI).
+    fmt = _detect_proforma_format(file_bytes)
+    log.info("[proforma_extractor] formato detectado: %s", fmt)
+
+    if fmt == "MWT":
+        mwt_result = _parse_proforma_mwt_format(file_bytes)
+        if mwt_result and mwt_result.get("groups") and any(
+            g.get("lines") for g in mwt_result["groups"]
+        ):
+            log.info("[proforma_extractor] parser MWT (Tipo B) OK — saltando AI")
+            for g in mwt_result["groups"]:
+                for ln in g["lines"]:
+                    if ln.get("talla"):
+                        ln["talla"] = _convert_talla_to_br(ln["talla"])
+            return mwt_result
+        # Si el parser Tipo B falla, los parsers Tipo A van a fallar
+        # también (buscan "Referencia BRA" que NO existe en Tipo B).
+        # Saltamos directo al AI fallback con un tag visible en el log
+        # para que sea fácil debuggear si vemos casos raros.
+        log.info(
+            "[proforma_extractor] parser MWT (Tipo B) falló — saltando parsers "
+            "Tipo A y yendo directo al AI fallback (gpt-4o lee Tipo B nativamente)",
+        )
+        # No `return` aquí: dejamos que el flujo caiga al AI más abajo,
+        # pero brincamos los parsers Tipo A.
+        skip_type_a_parsers = True
+    else:
+        skip_type_a_parsers = False
+
     # ── PATH PRIMARIO-A: parser HORIZONTAL (Marluvas / Excel-export) ──
     # Sprint 2026-05-03: la matriz típica de Marluvas es HORIZONTAL
     # (BRA en una fila, EU debajo, USA debajo, QTY debajo). Si este
     # parser extrae líneas y la suma cuadra con "Total de Pares", lo
     # usamos directo. Cero llamadas a OpenAI.
-    det_result = _parse_proforma_horizontal(file_bytes)
+    # Sprint 2026-05-10: si el detector identificó Tipo B y el parser
+    # determinístico falló, saltamos los parsers Tipo A (van a fallar
+    # también) y vamos directo al AI.
+    if skip_type_a_parsers:
+        det_result = None
+    else:
+        det_result = _parse_proforma_horizontal(file_bytes)
     if det_result and det_result.get("groups") and any(
         g.get("lines") for g in det_result["groups"]
     ):
@@ -886,7 +1289,11 @@ def extract_proforma(file_bytes: bytes, filename: str, content_type: str,
     # Probamos primero un parser determinístico que lee posiciones (X,Y)
     # reales del PDF — sin AI, sin alucinación. Si funciona (devuelve
     # líneas), saltamos toda la llamada a OpenAI.
-    det_result = _parse_proforma_deterministic(file_bytes)
+    # Sprint 2026-05-10: misma guardia que arriba — si era Tipo B, saltamos.
+    if skip_type_a_parsers:
+        det_result = None
+    else:
+        det_result = _parse_proforma_deterministic(file_bytes)
     if det_result and det_result.get("groups") and any(
         g.get("lines") for g in det_result["groups"]
     ):
