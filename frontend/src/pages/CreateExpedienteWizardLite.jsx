@@ -1783,7 +1783,16 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
             {lang === "es" ? "TÉRMINOS DE PAGO" : "PAYMENT TERMS"}
           </div>
 
-          {/* ── Fila superior: Días crédito (cliente) + Forma de pago ── */}
+          {/* ── Fila superior: Plazo de pago del expediente + Forma de pago ── */}
+          {/* Sprint 2026-05-10 · FIX: este campo debe reflejar el plazo
+              SELECCIONADO en las cards de pronto pago (paymentDays), NO
+              el dias_credito default del cliente. El cliente trae un
+              dias_credito por defecto que se usa solo como sugerencia
+              inicial al elegir cliente — una vez que el ADMIN clickea
+              otra card de pronto pago, este campo debe seguir esa
+              selección. Etiqueta cambiada de 'Días crédito (cliente)'
+              a 'Plazo de pago' para reflejar la semántica del campo
+              (es el plazo de ESTE expediente, no el del cliente). */}
           <div style={{
             display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14,
           }}>
@@ -1792,12 +1801,23 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
                 letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4,
               }}>
-                {lang === "es" ? "Días crédito (cliente)" : "Client credit days"}
+                {lang === "es" ? "Plazo de pago" : "Payment terms"}
               </div>
               <div className="tabular-nums" style={{
                 fontSize: 16, fontWeight: 700, color: "#0B1E3A", padding: "8px 0",
               }}>
-                {Number(client.dias_credito || 0)} {lang === "es" ? "días" : "days"}
+                {Number(paymentDays || 0)} {lang === "es" ? "días" : "days"}
+                {Number(client?.dias_credito || 0) > 0
+                 && Number(paymentDays || 0) !== Number(client.dias_credito || 0) && (
+                  <span style={{
+                    marginLeft: 8, fontSize: 11, fontWeight: 500,
+                    color: "var(--text-tertiary)",
+                  }}>
+                    · {lang === "es"
+                        ? `cliente: ${Number(client.dias_credito)}d default`
+                        : `client: ${Number(client.dias_credito)}d default`}
+                  </span>
+                )}
               </div>
             </div>
             <div>
