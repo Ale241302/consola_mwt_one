@@ -51,7 +51,11 @@ function mapExpedienteFromApi(r) {
     oc_client: '',                     // se resuelve desde la OC cuando exista
     oc_id: r.oc_id || null,
     sap:  r.sap || null,
-    proforma: '',
+    // Sprint 2026-05-10 · proforma_codigo viene del backend list
+    // serializer — es el código que tipea el admin al subir el PDF en el
+    // modal "Agregar documento" (kind=PROFORMA). Se muestra debajo del
+    // EXP code en el listado.
+    proforma: r.proforma_codigo || '',
     client: '', client_country: '', client_id: r.client_id || null,
     brand:  '', brand_id:  r.brand_id  || null,
     status: r.estado || 'REGISTRO',
@@ -834,6 +838,20 @@ export default function ScreenExpedientes() {
                         {e.is_blocked && <IconLock size={13} style={{ color:'var(--critical)'}}/>}
                         <span className="td-ref">{e.ref}</span>
                       </div>
+                      {/* Sprint 2026-05-10 · proforma_codigo debajo del EXP code.
+                          Solo aparece si el admin subió una proforma con código
+                          tipeado en el modal (kind=PROFORMA). Estilo mono-sm en
+                          violeta para distinguirlo de OC/SAP. */}
+                      {e.proforma && (
+                        <div className="caption mono-sm" style={{
+                          marginTop: 2,
+                          color: 'var(--brand-accent-2, #481EE3)',
+                          fontWeight: 600,
+                          letterSpacing: 0.2,
+                        }}>
+                          {e.proforma}
+                        </div>
+                      )}
                       <div className="caption oc-code-cell" style={{ marginTop: 2 }}>
                         <span
                           className="oc-code-link"

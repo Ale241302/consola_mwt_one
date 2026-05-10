@@ -26,6 +26,31 @@ class OcSerializer(serializers.ModelSerializer):
 
 
 class ExpedienteListSerializer(serializers.ModelSerializer):
+    # Sprint 2026-05-10 · código de la proforma más reciente del expediente
+    # (el que el admin tipea en el modal "Numero / Codigo" al subir el PDF).
+    # Se muestra debajo del EXP-YYYY-NNNN en el listado /expedientes.
+    proforma_codigo = serializers.SerializerMethodField()
+
+    def get_proforma_codigo(self, obj):
+        try:
+            doc = (
+                Documento.objects
+                .filter(expediente_id=obj.id, kind="PROFORMA", is_active=True)
+                .exclude(codigo__isnull=True)
+                .exclude(codigo__exact="")
+                # Preferimos PDFs (subidos por el admin con un codigo
+                # tipeado). El HTML auto-generado (file_ext='html', marker
+                # dynamic://) tambien tiene codigo pero suele venir del
+                # mismo string, asi que cualquiera sirve — el orden por
+                # created_at desc deja arriba el más reciente.
+                .order_by("-created_at")
+                .values_list("codigo", flat=True)
+                .first()
+            )
+            return doc or None
+        except Exception:
+            return None
+
     class Meta:
         model  = Expediente
         fields = (
@@ -45,6 +70,8 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             "is_blocked", "block_reason", "block_cause", "factory_delay",
             "phase_ratio", "phase_signal",
             "is_active", "updated_at",
+            # Sprint 2026-05-10 · proforma_codigo (computed)
+            "proforma_codigo",
         )
 
 
