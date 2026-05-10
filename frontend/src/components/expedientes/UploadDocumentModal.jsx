@@ -206,6 +206,62 @@ export default function UploadDocumentModal({
           const ai = await documentMatchmakerApi.upload(
             expedienteId, file, kindObj.aiPipeline,
           );
+
+          // Sprint 2026-05-10 · si la IA extrajo líneas de una Proforma,
+          // aplicar el tier de pronto pago a `unit_price_client` de las
+          // líneas matched. Best-effort: no rompe el flujo si falla
+          // (el doc ya está subido y el matchmaker wizard sigue abriéndose).
+          if (kind === "PROFORMA" && !viewerIsClient && expedienteId
+              && Number(paymentDays) > 0) {
+            try {
+              const groups = (ai?.ai_payload?.groups) || (ai?.mismatch_payload?.groups) || [];
+              const pairsMap = new Map();
+              for (const g of groups) {
+                const lines = g?.lines || [];
+                for (const ln of lines) {
+                  const sku = String(ln?.sku || "").trim().toUpperCase();
+                  const sizeRaw = ln?.talla ?? ln?.size ?? null;
+                  const size = sizeRaw != null && sizeRaw !== ""
+                    ? String(sizeRaw).trim().toUpperCase()
+                    : null;
+                  if (!sku) continue;
+                  pairsMap.set(`${sku}|${size || ""}`, { sku, size });
+                }
+              }
+              const coveredPairs = Array.from(pairsMap.values());
+
+              if (coveredPairs.length > 0) {
+                const token2 = getToken();
+                const url = `${API_BASE}/expedientes/${encodeURIComponent(expedienteId)}/apply-pronto-pago/`;
+                const respPP = await fetch(url, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...(token2 ? { Authorization: `Bearer ${token2}` } : {}),
+                  },
+                  body: JSON.stringify({
+                    plazo_days:    Number(paymentDays),
+                    covered_pairs: coveredPairs,
+                  }),
+                });
+                if (!respPP.ok) {
+                  const errText = await respPP.text().catch(() => "");
+                  // eslint-disable-next-line no-console
+                  console.warn("[UploadDocumentModal] apply-pronto-pago falló:",
+                               respPP.status, errText);
+                } else {
+                  const ppData = await respPP.json().catch(() => null);
+                  // eslint-disable-next-line no-console
+                  console.info("[UploadDocumentModal] apply-pronto-pago OK:",
+                               `${ppData?.lines_updated || 0} líneas a ${paymentDays}d tier ${ppData?.tier_pct || 0}%`);
+                }
+              }
+            } catch (ppErr) {
+              // eslint-disable-next-line no-console
+              console.warn("[UploadDocumentModal] apply-pronto-pago error:", ppErr);
+            }
+          }
+
           // Pasamos `data` al padre para que pueda hidratar el listado de
           // documentos sin esperar la recarga (mejor UX).
           onAiAnalysisReady?.(ai, file, kindObj.aiPipeline, data);
@@ -539,8 +595,8 @@ export default function UploadDocumentModal({
                 lineHeight: 1.4,
               }}>
                 {lang === "es"
-                  ? "Cambia el plazo del expediente. El bloque 'Propuesta — descuento por pronto pago' del HTML cliente marcará este plazo como actual. El total del pedido se queda en base — el descuento es referencial."
-                  : "Updates the expediente's payment terms. The 'Early payment discount' block in the client HTML marks this term as current. Order total stays at base — discount is informational."}
+                  ? "Cambia el plazo del expediente y aplica el descuento/recargo a unit_price_client de los productos detectados en la proforma. Solo el precio del cliente cambia — el precio MWT queda intacto. Productos no presentes en la proforma no se modifican."
+                  : "Updates the expediente's payment terms and applies the discount/surcharge to unit_price_client of products detected in the proforma. Only the client's price changes — MWT's price is preserved. Products not in the proforma stay unchanged."}
               </div>
             </div>
           )}

@@ -19,6 +19,7 @@ from .views_builder_artifacts import (
     builder_templates_list, builder_template_detail,
 )
 from .views_proforma import generate_proforma, proforma_html_dynamic
+from .views_pronto_pago import apply_pronto_pago
 
 router = DefaultRouter()
 router.register(r"ocs",             OcViewSet,           basename="ocs")
@@ -104,4 +105,10 @@ urlpatterns = [
     # con la data fresca del expediente en cada request (sin tocar MinIO).
     path("expedientes/<uuid:expediente_id>/proforma-html/",
          proforma_html_dynamic, name="expedientes-proforma-html-dynamic"),
+
+    # Sprint 2026-05-10 · Aplica tier de pronto pago a unit_price_client
+    # de las líneas matched (SKU+talla viene del extractor IA de proforma).
+    # NO toca unit_price_mwt. Líneas no-matched quedan sin cambios.
+    path("expedientes/<uuid:expediente_id>/apply-pronto-pago/",
+         apply_pronto_pago, name="expedientes-apply-pronto-pago"),
 ] + router.urls
