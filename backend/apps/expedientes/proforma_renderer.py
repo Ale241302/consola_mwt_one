@@ -261,21 +261,49 @@ def _build_pronto_pago_html(price_base: Decimal, total_pares: int,
     return "".join(cards)
 
 
-def _build_lineas_html(lineas, prod_map):
+def _resolve_tier_pct(credit_days) -> Decimal:
+    """Devuelve el delta_pct del tier de PRONTO_PAGO_TIERS cuyo `days`
+    matchea exacto con credit_days. Si no matchea ninguno (ej. 45 días
+    custom), devuelve 0 (base). Sprint 2026-05-10."""
+    days = int(credit_days or 0)
+    for tier_days, delta_pct, _label in PRONTO_PAGO_TIERS:
+        if tier_days == days:
+            return delta_pct
+    return Decimal("0")
+
+
+def _build_lineas_html(lineas, prod_map, credit_days=90):
     """Genera <tr> de la tabla de líneas. Cada línea muestra:
-    # / SKU / Descripción / Color / Talla / Qty / Precio / Subtotal."""
+    # / SKU / Descripción / Color / Talla / Qty / Precio / Subtotal.
+
+    Sprint 2026-05-10 · El precio almacenado en `unit_price_client` es
+    el BASE (90 días). La tabla muestra el precio CON el descuento /
+    recargo de pronto pago aplicado según `expediente.credit_days`. La
+    base se conserva en `total_value_base` para que el bloque de tier
+    comparison (cards 8/30/60/90/120) pueda derivar los 5 precios.
+
+    Returns:
+        (rows_html, total_qty_int, total_value_tier, total_value_base)
+    """
+    tier_pct   = _resolve_tier_pct(credit_days)
+    multiplier = Decimal("1") + tier_pct
+
     rows = []
-    total_qty = Decimal(0)
-    total_value = Decimal(0)
+    total_qty        = Decimal(0)
+    total_value_base = Decimal(0)
+    total_value_tier = Decimal(0)
     for idx, l in enumerate(lineas, start=1):
         prod = prod_map.get(str(l.producto_id or ""), {})
         nombre = prod.get("nombre") or l.sku or "—"
         color = prod.get("color") or "—"
         qty = Decimal(l.qty or 0)
-        unit = _resolve_unit_price(l)
-        sub = (unit * qty).quantize(Decimal("0.01"))
-        total_qty += qty
-        total_value += sub
+        base_unit = _resolve_unit_price(l)
+        unit_eff  = (base_unit * multiplier).quantize(Decimal("0.01"))
+        sub_base  = (base_unit * qty).quantize(Decimal("0.01"))
+        sub_eff   = (unit_eff * qty).quantize(Decimal("0.01"))
+        total_qty        += qty
+        total_value_base += sub_base
+        total_value_tier += sub_eff
         rows.append(f"""
         <tr>
           <td>{idx}</td>
@@ -284,15 +312,16 @@ def _build_lineas_html(lineas, prod_map):
           <td>{_esc(color)}</td>
           <td class="r">{_esc(l.size or "—")}</td>
           <td class="r">{_fmt_int(qty)}</td>
-          <td class="r">{_fmt_money(unit)}</td>
-          <td class="r">{_fmt_money(sub)}</td>
+          <td class="r">{_fmt_money(unit_eff)}</td>
+          <td class="r">{_fmt_money(sub_eff)}</td>
         </tr>""")
     rows_html = "".join(rows)
-    total_qty_int = int(total_qty)
-    total_value_q = total_value.quantize(Decimal("0.01"))
+    total_qty_int      = int(total_qty)
+    total_value_tier_q = total_value_tier.quantize(Decimal("0.01"))
+    total_value_base_q = total_value_base.quantize(Decimal("0.01"))
     rows_html += f"""
-        <tr class="trow"><td colspan="5"><strong>TOTAL</strong></td><td class="r"><strong>{_fmt_int(total_qty_int)}</strong></td><td></td><td class="r"><strong>{_fmt_money(total_value_q)}</strong></td></tr>"""
-    return rows_html, total_qty_int, total_value_q
+        <tr class="trow"><td colspan="5"><strong>TOTAL</strong></td><td class="r"><strong>{_fmt_int(total_qty_int)}</strong></td><td></td><td class="r"><strong>{_fmt_money(total_value_tier_q)}</strong></td></tr>"""
+    return rows_html, total_qty_int, total_value_tier_q, total_value_base_q
 
 
 def render_proforma_html(expediente_id, request_user=None,
@@ -373,19 +402,27 @@ def render_proforma_html(expediente_id, request_user=None,
         po_codigo = (oc.codigo if oc else (expediente.codigo or ""))
     po_fecha = _fmt_date_es(oc.issued_at) if oc and oc.issued_at else "—"
 
-    # Líneas + totales
-    rows_html, total_pares, total_value = _build_lineas_html(lineas, prod_map)
+    # Líneas + totales.
+    # Sprint 2026-05-10 · ahora la tabla aplica el tier de pronto pago
+    # (basado en expediente.credit_days) a cada línea. total_value es el
+    # total CON el descuento aplicado; total_value_base es el base SIN
+    # tier (necesario para que los cards de pronto pago deriven los 5
+    # precios correctamente).
+    credit_days_int = int(expediente.credit_days or 0)
+    rows_html, total_pares, total_value, total_value_base = _build_lineas_html(
+        lineas, prod_map, credit_days=credit_days_int,
+    )
 
-    # Precio "promedio" para los cards de pronto pago — usamos el
-    # mayor unit_price_client visto (todas las líneas suelen tener el
-    # mismo precio por par; tomamos el max por seguridad).
+    # Precio "promedio" BASE (sin tier) para los cards de pronto pago.
+    # Usamos el base para que el card "90 días base" muestre el precio
+    # base original y los otros tiers se deriven correctamente.
     if total_pares > 0:
-        price_avg = (total_value / Decimal(total_pares)).quantize(Decimal("0.01"))
+        price_avg = (total_value_base / Decimal(total_pares)).quantize(Decimal("0.01"))
     else:
         price_avg = Decimal("0.00")
 
     pronto_pago_html = _build_pronto_pago_html(
-        price_avg, total_pares, int(expediente.credit_days or 0),
+        price_avg, total_pares, credit_days_int,
     )
 
     # Filename amigable
