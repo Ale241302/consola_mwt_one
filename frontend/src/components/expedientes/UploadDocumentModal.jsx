@@ -539,8 +539,8 @@ export default function UploadDocumentModal({
                 lineHeight: 1.4,
               }}>
                 {lang === "es"
-                  ? "Cambia el plazo del expediente. El HTML cliente auto-generado aplicará el descuento/recargo a las líneas y al total. Las líneas en BD siguen guardando el precio base."
-                  : "Updates the expediente's payment terms. The auto-generated client HTML applies the discount/surcharge to lines and total. Stored line prices stay at base."}
+                  ? "Cambia el plazo del expediente. El bloque 'Propuesta — descuento por pronto pago' del HTML cliente marcará este plazo como actual. El total del pedido se queda en base — el descuento es referencial."
+                  : "Updates the expediente's payment terms. The 'Early payment discount' block in the client HTML marks this term as current. Order total stays at base — discount is informational."}
               </div>
             </div>
           )}
