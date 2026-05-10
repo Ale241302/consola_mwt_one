@@ -144,12 +144,14 @@ export default function CreateExpedienteWizardLite() {
   }, [operatingMode, selClient]);
 
   // Cliente cuyo precio mostramos en pantalla.
-  // Sprint 2026-05-06 · si el operador es MWT, el ADMIN ve el precio
-  // MWT (precio_lista). Si es operada por el cliente, el override de
-  // ese cliente. CLIENT_* siempre ve su precio.
-  const pricingClientId = operatingMode === 'mwt'
-    ? MWT_OPERATING_CLIENT_ID
-    : (selClient?.id || null);
+  // Sprint 2026-05-10 · FIX: el precio que ve el ADMIN y que se congela
+  // en el snapshot SIEMPRE es el del cliente final (override por cliente).
+  // El operatingMode (MWT vs cliente) solo afecta credito/exposure, no
+  // el precio facturado al cliente. Antes este derivaba a
+  // MWT_OPERATING_CLIENT_ID cuando operaba MWT, lo que provocaba que el
+  // lookup en client_prices fallara y cayera a precio_lista — el cliente
+  // terminaba viendo precio_lista en lugar de su override negociado.
+  const pricingClientId = selClient?.id || null;
 
   // Sprint 2026-05-06 · cuando el usuario elige un cliente,
   // pre-llenamos paymentDays con su dias_credito por defecto.
