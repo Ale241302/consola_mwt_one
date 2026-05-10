@@ -11,7 +11,13 @@
 // `unit_price_for_viewer` resuelto según el rol del consumidor del API.
 // =====================================================================
 
-export const MWT_OPERATING_CLIENT_ID = "61a3763d-75fb-461d-af4c-e17cbea880f0";
+// Sprint 2026-05-10 · FIX produccion: el UUID anterior
+// 61a3763d-75fb-461d-af4c-e17cbea880f0 era un placeholder que NO existia
+// como fila en clientes.cliente. Por eso el lookup en
+// producto.especificaciones.client_prices siempre fallaba y caia a
+// precio_lista. El UUID real (creado por UI) es el de abajo. Mantener
+// en sync con backend/apps/core/constants.py.
+export const MWT_OPERATING_CLIENT_ID = "5525986c-3b09-4d13-bf8f-43ccaa2deae3";
 export const MWT_OPERATOR_NAME       = "Muito Work Limitada";
 export const MWT_OPERATOR_RUC        = "MWT-Operador";
 
