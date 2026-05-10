@@ -36,6 +36,11 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             "shipment_date", "eta",
             "moneda", "total_cost", "total_invoiced", "total_paid", "balance",
             "projected_margin", "real_margin", "margin_drift",
+            # Sprint 2026-05-10 · `forma_pago` necesario para que el
+            # frontend filtre expedientes CONTADO al proyectar uso
+            # de credito (CreateExpedienteWizardLite). `payment_days` no
+            # existe en el modelo (se usa credit_days).
+            "forma_pago",
             "credit_days", "credit_band",
             "is_blocked", "block_reason", "block_cause", "factory_delay",
             "phase_ratio", "phase_signal",
