@@ -234,8 +234,10 @@ export default function ScreenExpedientes() {
 
   useEffect(() => { load(); }, [load]);
 
-  const EXPEDIENTES = !loading && apiExpedientes.length > 0 ? apiExpedientes : MOCK_EXPEDIENTES;
-  const OCS         = !loading && apiOcs.length > 0         ? apiOcs         : MOCK_OCS;
+  // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
+  // Si el backend devuelve [] mostramos estado vacío real, no demo.
+  const EXPEDIENTES = apiExpedientes;
+  const OCS         = apiOcs;
 
   const onNavigate = (key) => {
     const map = { wizard: '/wizard' };

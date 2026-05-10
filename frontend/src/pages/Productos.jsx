@@ -93,13 +93,9 @@ export default function ScreenProductos() {
 
   useEffect(() => { load(); }, [load]);
 
-  const BRAND_PRODUCTS = !loading && apiProductos.length > 0
-    ? apiProductos
-    : MOCK_BRAND_PRODUCTS;
-
-  // Mock fallback: cuando no hay datos reales, las acciones (toggle/duplicate/delete)
-  // se deshabilitan porque el mock no responde a /api/productos.
-  const usingMock = !loading && apiProductos.length === 0;
+  // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
+  const BRAND_PRODUCTS = apiProductos;
+  const usingMock = false;
 
   // ── Maps de referencia ────────
   const brandMap = useMemo(() => {

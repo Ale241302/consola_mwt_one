@@ -219,22 +219,21 @@ export default function ScreenPortal() {
   const apiExpedientes = (apiExpedientesRaw || []).map(mapApiExpedienteToPortalExp);
   const apiOcs         = (apiOcsRaw || []).map(r => mapApiOcToPortalOc(r, apiExpedientesRaw));
 
-  // Resolución CLIENTS / OCS / EXPEDIENTES — si el backend tiene data, úsala;
-  // si no, cae al mock para mantener viva la demo.
-  const CLIENTS = MOCK_CLIENTS;
-  const OCS         = (!loadingPortal && apiOcs.length > 0)         ? apiOcs         : MOCK_OCS;
-  const EXPEDIENTES = (!loadingPortal && apiExpedientes.length > 0) ? apiExpedientes : MOCK_EXPEDIENTES;
+  // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
+  // Sin demo: cliente desconocido → portal vacío. OCS / EXPEDIENTES → []
+  const CLIENTS     = [];
+  const OCS         = apiOcs;
+  const EXPEDIENTES = apiExpedientes;
 
-  // Client "c1" — scoped data
+  // Cliente del portal — viene del JWT (me). Sin /me o sin claim válido,
+  // queda null y la UI muestra estado vacío.
   const client = (me && me.id) ? {
     id: me.id, name: me.nombre || 'Cliente', contact: me.contacto || '',
     email: me.email || '', phone: me.telefono || '',
-  } : CLIENTS.find(c => c.id === portalClientId);
+  } : null;
 
-  // Orders = OCs belonging to this client
-  const myOCs = (!loadingPortal && apiOcs.length > 0)
-    ? apiOcs
-    : OCS.filter(o => o.client_id === portalClientId).slice(0, 10);
+  // Orders = OCs belonging to this client (siempre desde API).
+  const myOCs = apiOcs;
   // Featured (most recent / most active)
   const featured = myOCs[0];
 

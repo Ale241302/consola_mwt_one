@@ -112,10 +112,9 @@ export default function ScreenNodos() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Fuente efectiva: backend si hay data, mock como fallback visual.
-  const NODES = (apiNodes.length > 0 || !err) && !loading
-    ? (apiNodes.length > 0 ? apiNodes : MOCK_NODES)
-    : MOCK_NODES;
+  // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
+  // Si la API devuelve [] mostramos estado vacío real, no demo.
+  const NODES = apiNodes;
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();

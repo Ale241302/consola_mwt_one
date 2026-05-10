@@ -127,7 +127,9 @@ export default function ScreenOCDetail() {
   // ─────────────────────────────────────────────────────────────
 
   // Lookup en mocks primero (HERO scenario). Si no está, fetch al API.
-  const ocFromMock = OCS.find(o => o.id === ocId);
+  // Sprint 2026-05-10 · CEO ordenó eliminar mocks. La OC siempre se
+  // pide al backend; si no existe, ocNotFound dispara la vista 404.
+  const ocFromMock = null;
   const [apiOc,         setApiOc]         = useState(null);
   const [apiOcClient,   setApiOcClient]   = useState(null);
   const [apiOcBrand,    setApiOcBrand]    = useState(null);

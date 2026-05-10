@@ -119,7 +119,9 @@ export default function ScreenClientes() {
 
   useEffect(() => { load(); }, [load]);
 
-  const CLIENTS = !loading && apiClients.length > 0 ? apiClients : MOCK_CLIENTS;
+  // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
+  // Si la API devuelve [] mostramos estado vacío real, no demo.
+  const CLIENTS = apiClients;
 
   // Países únicos para filtro
   const countries = useMemo(() => {

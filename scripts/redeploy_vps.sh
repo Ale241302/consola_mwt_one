@@ -20,6 +20,31 @@ docker compose up -d --build --remove-orphans
 docker image prune -f >/dev/null
 docker compose ps
 
+# ── Purge de demo data (D0_purge_demo_data.sql) ────────────────────
+# El entrypoint del backend aplica /sql-modules/*.sql una sola vez
+# (rastreado en public._applied_sql). Cuando un nuevo archivo aparece
+# en backend/sql/, se ejecuta automáticamente al reiniciar el
+# contenedor django y queda marcado como aplicado.
+#
+# Sprint 2026-05-10 (CEO): D0_purge_demo_data.sql vacía clientes,
+# expedientes, OCs, líneas, documentos, cobros, finance, inventario,
+# transfers, notifications, dashboard, portal, tickets, ai y todos
+# los catálogos sembrados por 99_seed.sql (brands/productos/proveedores
+# /nodos). Conserva schemas, *_cat, core.users, core.roles y
+# email_templates.template.
+#
+# Verificamos en logs de django si el purge se aplicó en este deploy.
+echo "==> verificando ejecución de D0_purge_demo_data.sql en logs"
+sleep 3
+if docker compose logs --since=2m django 2>/dev/null | grep -qE "D0_purge_demo_data\.sql"; then
+    echo "[OK] D0_purge_demo_data.sql se ejecutó en este arranque."
+    docker compose logs --since=2m django 2>/dev/null \
+        | grep -E "D0_purge|filas borradas|Purga completada" \
+        | head -40 || true
+else
+    echo "[INFO] D0_purge_demo_data.sql ya estaba aplicado (idempotente)."
+fi
+
 # ── Ensamblar routing de consola.mwt.one en mwt-nginx ─────────────
 # Monta infra/nginx/consola.conf en el contenedor mwt-nginx del stack
 # vecino y conecta ese nginx a la red consola-mwt-one-net.

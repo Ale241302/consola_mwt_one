@@ -56,12 +56,17 @@ export default function ScreenDashboard() {
     else navigate('/expedientes');
   };
 
-  // ── Backend real (con fallback a MOCK_DASHBOARD) ─────
+  // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
+  // Si el backend no devuelve KPIs, mostramos cero — no demo.
   const { kpis: apiKpis, loading: loadingKpis } = useDashboardKpis();
-  const apiDash = mapDashboardFromApi(apiKpis);
-  const DASHBOARD = (!loadingKpis && apiDash && apiDash.kpi.active > 0)
-    ? apiDash
-    : MOCK_DASHBOARD;
+  const EMPTY_DASHBOARD = {
+    kpi: { active: 0, total_cost: 0, total_invoiced: 0, total_paid: 0, receivables: 0, margin_pct: 0 },
+    by_status: [],
+    by_brand: [],
+    urgent: [],
+    cash_90: [],
+  };
+  const DASHBOARD = mapDashboardFromApi(apiKpis) || EMPTY_DASHBOARD;
 
   const k = DASHBOARD.kpi;
   const spark = [12,18,15,22,19,24,21,28,25,32,30,34];

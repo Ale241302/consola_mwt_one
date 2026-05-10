@@ -110,7 +110,8 @@ export default function ScreenBrands() {
 
   useEffect(() => { load(); }, [load]);
 
-  const BRANDS = !loading && apiBrands.length > 0 ? apiBrands : MOCK_BRANDS;
+  // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
+  const BRANDS = apiBrands;
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();

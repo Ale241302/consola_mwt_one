@@ -135,7 +135,8 @@ export default function ScreenProveedores() {
 
   useEffect(() => { load(); }, [load]);
 
-  const SUPPLIERS = !loading && apiSuppliers.length > 0 ? apiSuppliers : MOCK_SUPPLIERS;
+  // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
+  const SUPPLIERS = apiSuppliers;
 
   // ── KPIs agregados ────────
   const kpis = useMemo(() => {

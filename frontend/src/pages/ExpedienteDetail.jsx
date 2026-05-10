@@ -49,11 +49,10 @@ export default function ScreenExpedienteDetail() {
     if (map[key]) navigate(map[key]);
   };
 
-  // ── Datos: mocks (HERO) o fetch real desde API ─────────────────
-  // El expediente recién creado por el wizard simplificado vive en BD,
-  // no en EXPEDIENTES (mock). Hacemos fetch al API; mientras carga,
-  // usamos el mock fallback solo si el id coincide con HERO_ID.
-  const isHeroOrMock = EXPEDIENTES.some(e => e.id === expedienteId);
+  // ── Datos: SIEMPRE desde el backend ─────────────────────────────
+  // Sprint 2026-05-10 · CEO ordenó eliminar los hero/mocks legacy:
+  // un expediente que no exista en BD se renderiza como "no encontrado".
+  const isHeroOrMock = false;
   const [apiExp,    setApiExp]    = useState(null);
   const [apiClient, setApiClient] = useState(null);
   const [apiBrand,  setApiBrand]  = useState(null);
