@@ -10,12 +10,23 @@
 // wizard de revisión para que el usuario confirme las líneas a insertar
 // en "Productos OC".
 // =====================================================================
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   IconUpload, IconX, IconFileText, IconCheck, IconAlert, IconSparkle, IconLock,
 } from "../../lib/icons.jsx";
-import { documentosApi, getToken, documentMatchmakerApi } from "../../lib/api.js";
+import { documentosApi, expedientesApi, getToken, documentMatchmakerApi } from "../../lib/api.js";
 import { useRole } from "../../context/RoleContext.jsx";
+
+// Sprint 2026-05-10 · Tiers de pronto pago (en sync con
+// proforma_renderer.PRONTO_PAGO_TIERS y CreateExpedienteWizardLite).
+// Cambiar aqui REQUIERE actualizar los otros dos archivos tambien.
+const PRONTO_PAGO_TIERS = [
+  { days: 8,   pct: -2.75, label: "−2.75%" },
+  { days: 30,  pct: -1.75, label: "−1.75%" },
+  { days: 60,  pct: -1.00, label: "−1.00%" },
+  { days: 90,  pct:  0.00, label: "base"   },
+  { days: 120, pct: +1.00, label: "+1.00%" },
+];
 
 const API_BASE = (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || "/api";
 
@@ -57,6 +68,11 @@ export default function UploadDocumentModal({
   ocId,
   expedienteId,
   contextLabel,
+  // Sprint 2026-05-10 · `expedienteCreditDays` permite que cuando se
+  // sube una Proforma, el admin pueda elegir el plazo de pronto pago
+  // y se PATCHee el expediente antes del upload — así el HTML cliente
+  // auto-generado refleja el descuento aplicado.
+  expedienteCreditDays = 90,
 }) {
   const [kind,    setKind]    = useState("OC");
   const [codigo,  setCodigo]  = useState("");
@@ -68,6 +84,15 @@ export default function UploadDocumentModal({
   // Sprint 2026-05-06 · audiencia del documento. CLIENT siempre. ADMIN
   // puede elegir CLIENT (default) o MWT_INTERNAL para Proforma/Factura.
   const [audience, setAudience] = useState("CLIENT");
+  // Sprint 2026-05-10 · plazo de pago seleccionado para esta proforma.
+  // Default al credit_days actual del expediente. Si el admin lo
+  // cambia, hacemos PATCH al expediente antes del upload.
+  const [paymentDays, setPaymentDays] = useState(Number(expedienteCreditDays) || 90);
+  // Cuando cambia el expediente o se abre el modal, resetear paymentDays
+  // al valor actual del expediente (no al last-seen del modal previo).
+  useEffect(() => {
+    setPaymentDays(Number(expedienteCreditDays) || 90);
+  }, [expedienteCreditDays, open]);
   const inputRef = useRef(null);
 
   // El selector de audiencia solo aplica a ADMIN/MWT y a Proforma/Factura.
@@ -110,6 +135,34 @@ export default function UploadDocumentModal({
     if (!kind) { setError(lang === "es" ? "Elige el tipo" : "Pick a type"); return; }
     setUploading(true); setError(null); setAiPhase("uploading");
     try {
+      // Sprint 2026-05-10 · si el admin cambió el plazo de pronto pago
+      // para esta Proforma, PATCHear el expediente ANTES del upload.
+      // Asi cuando el backend auto-genere el HTML cliente (render_proforma_html
+      // dinamico), usa el nuevo credit_days y aplica el tier correcto.
+      const shouldPatchPlazo = (
+        kind === "PROFORMA"
+        && expedienteId
+        && !viewerIsClient
+        && Number(paymentDays) > 0
+        && Number(paymentDays) !== Number(expedienteCreditDays)
+      );
+      if (shouldPatchPlazo) {
+        try {
+          await expedientesApi.update(expedienteId, {
+            credit_days: Number(paymentDays),
+          });
+        } catch (patchErr) {
+          // No bloquea el upload del PDF — solo avisa.
+          // eslint-disable-next-line no-console
+          console.warn("[UploadDocumentModal] PATCH credit_days falló:", patchErr);
+          setError(
+            lang === "es"
+              ? `No pude actualizar el plazo de pago a ${paymentDays}d. El PDF se va a subir pero el HTML cliente puede mostrar el plazo viejo.`
+              : `Could not update payment terms to ${paymentDays}d. PDF will upload but client HTML may show old terms.`
+          );
+        }
+      }
+
       // 1) Persistir el documento en /api/documentos/ (siempre).
       const fd = new FormData();
       fd.append("kind", kind);
@@ -436,6 +489,58 @@ export default function UploadDocumentModal({
                     </button>
                   );
                 })}
+              </div>
+            </div>
+          )}
+
+          {/* Sprint 2026-05-10 · PLAZO DE PAGO (pronto pago). Solo se
+              muestra cuando el admin/MWT sube una PROFORMA con expediente
+              vinculado. Cambia el credit_days del expediente y por ende
+              afecta el HTML cliente auto-generado (descuento aplicado). */}
+          {kind === "PROFORMA" && expedienteId && !viewerIsClient && (
+            <div>
+              <div className="micro" style={{
+                fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                color: "var(--text-tertiary)", textTransform: "uppercase",
+                marginBottom: 6,
+              }}>
+                {lang === "es" ? "Plazo de pago (pronto pago)" : "Payment terms (early payment)"}
+              </div>
+              <select
+                className="input"
+                value={paymentDays}
+                disabled={uploading}
+                onChange={(e) => setPaymentDays(Number(e.target.value))}
+                style={{
+                  width: "100%", fontSize: 13, padding: "10px 12px",
+                  border: "1px solid var(--border)", borderRadius: 8,
+                  fontWeight: 700, fontFamily: "inherit",
+                  background: "var(--surface-raised, #fff)",
+                }}
+              >
+                {PRONTO_PAGO_TIERS.map((tier) => {
+                  const isBase = tier.days === 90;
+                  const sign = tier.pct < 0 ? "−" : tier.pct > 0 ? "+" : "";
+                  const pctText = isBase
+                    ? (lang === "es" ? "base" : "base")
+                    : `${sign}${Math.abs(tier.pct).toFixed(2)}%`;
+                  return (
+                    <option key={tier.days} value={tier.days}>
+                      {tier.days} {lang === "es" ? "días" : "days"} · {pctText}
+                      {Number(expedienteCreditDays) === tier.days
+                        ? (lang === "es" ? " · actual" : " · current")
+                        : ""}
+                    </option>
+                  );
+                })}
+              </select>
+              <div className="caption" style={{
+                marginTop: 6, fontSize: 11, color: "var(--text-tertiary)",
+                lineHeight: 1.4,
+              }}>
+                {lang === "es"
+                  ? "Cambia el plazo del expediente. El HTML cliente auto-generado aplicará el descuento/recargo a las líneas y al total. Las líneas en BD siguen guardando el precio base."
+                  : "Updates the expediente's payment terms. The auto-generated client HTML applies the discount/surcharge to lines and total. Stored line prices stay at base."}
               </div>
             </div>
           )}

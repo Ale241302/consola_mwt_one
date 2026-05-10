@@ -937,6 +937,12 @@ export default function ScreenOCDetail() {
             || (Array.isArray(oc?.expedientes) && oc.expedientes[0])
             || null
           }
+          /* Sprint 2026-05-10 · plazo de pago actual del expediente para
+             pre-seleccionar en el select de pronto pago del modal. */
+          expedienteCreditDays={
+            (Array.isArray(apiOcExpedientes) && apiOcExpedientes[0]?.credit_days)
+            || 90
+          }
           contextLabel={oc?.code || oc?.codigo}
           onUploaded={(doc) => {
             // BUG FIX 2026-05-02 (AG-03): hidratamos el listado de
