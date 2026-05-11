@@ -313,6 +313,13 @@ export default function CreateExpedienteWizardLite() {
   // es el de Muito Work Limitada. Si 'client', el del cliente final.
   // Sprint 2026-05-10 · FIX: si el pedido en curso es CONTADO, NO debe
   // sumarse al `afterUsed` (no afecta credito).
+  // Sprint 2026-05-10 v2 · FIX: el "usado" sale del campo persistido
+  // del cliente (cliente.credito_used) — fuente de verdad alineada
+  // con /clientes. Antes hacíamos Math.max(persistedUsed, existingClientUsage)
+  // pero existingClientUsage sumaba qty*unit_price de TODOS los expedientes
+  // activos del cliente (incluso los que están en REGISTRO sin facturar),
+  // lo cual inflaba el bar (ej. Sondel con 0% usado en /clientes pero
+  // 108% proyectado en el wizard).
   const creditProjection = useMemo(() => {
     const isMwt = operatingMode === 'mwt';
     const source = isMwt ? mwtOperator : selClient;
@@ -323,11 +330,10 @@ export default function CreateExpedienteWizardLite() {
     const persistedUsed = isMwt
       ? Number(source.credito_usado || 0)
       : Number(source.credito_used || 0);
-    // Para MWT no proyectamos uso desde otros expedientes (ya esta
-    // consolidado en credito_usado por el backend).
-    const used  = isMwt
-      ? persistedUsed
-      : Math.max(persistedUsed, Number(existingClientUsage || 0));
+    // Usado = persistido. El campo lo mantiene el backend coherente con
+    // facturas emitidas. No proyectamos desde expedientes — eso era una
+    // sobre-estimación que confundía al admin.
+    const used = persistedUsed;
     const available = Math.max(0, limit - used);
     // Si el pedido actual es CONTADO, no impacta credito → contributedOrder = 0.
     const isContadoNow = String(paymentMethod || '').trim().toUpperCase() === 'CONTADO';
@@ -1249,10 +1255,13 @@ function MwtOperatorCard({ lang }) {
  */
 /** @param {SelectedClientCardProps} props */
 function SelectedClientCard({ client, onClear, lang, existingUsage = 0, locked = false }) {
-  // Sprint 2026-05-01: el "usado" toma el max entre el campo persistido
-  // y el proyectado desde expedientes existentes del cliente.
+  // Sprint 2026-05-10 v2 · usamos `cliente.credito_used` directo (fuente
+  // de verdad, alineada con /clientes). Antes Math.max(persistedUsed,
+  // existingUsage) inflaba el bar contando expedientes en REGISTRO que
+  // todavía no facturan. existingUsage queda como prop por compat pero
+  // ya no se usa.
   const persistedUsed = Number(client.credito_used || 0);
-  const used = Math.max(persistedUsed, Number(existingUsage || 0));
+  const used = persistedUsed;
   const limit = Number(client.credito_limit || 0);
   const utilPct = limit > 0 ? Math.round((used / limit) * 100) : 0;
   const disponible = Math.max(0, limit - used);
@@ -1284,11 +1293,11 @@ function SelectedClientCard({ client, onClear, lang, existingUsage = 0, locked =
                             fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>
                 <span>
                   {lang === "es" ? "Crédito disponible (pool)" : "Available credit (pool)"}
-                  {Number(existingUsage || 0) > persistedUsed && (
-                    <span style={{ color: "#92400E", fontWeight: 700, marginLeft: 6 }}>
-                      · {lang === "es" ? "proyectado" : "projected"}
-                    </span>
-                  )}
+                  {/* Sprint 2026-05-10 v2 · badge "proyectado" removido.
+                      El bar usa cliente.credito_used directo (alineado
+                      con /clientes). Si en el futuro queremos mostrar
+                      "pendiente de facturar" como hint separado, va con
+                      otro estilo y no debe afectar el cálculo del bar. */}
                 </span>
                 <span className="tabular-nums" style={{ fontWeight: 700, color: "#0B1E3A" }}>
                   ${disponible.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
