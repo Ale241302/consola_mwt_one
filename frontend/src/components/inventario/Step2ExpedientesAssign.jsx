@@ -259,9 +259,14 @@ export default function Step2ExpedientesAssign({
                     {/* Sprint 2026-05-11 fix · CEO prefiere ver la
                         proforma antes que el SAP — la proforma está más
                         a mano en la operación diaria. Caemos a SAP solo
-                        si el expediente todavía no tiene proforma asignada. */}
-                    {(e.proforma || e.sap) && (
-                      <span style={{ opacity: 0.7 }}>· {e.proforma || e.sap}</span>
+                        si el expediente todavía no tiene proforma asignada.
+                        El backend serializa el campo como `proforma_codigo`
+                        (no `proforma`) — viene de un JOIN al endpoint de
+                        proformas. Mantenemos los dos alias por compat. */}
+                    {(e.proforma_codigo || e.proforma || e.sap) && (
+                      <span style={{ opacity: 0.7 }}>
+                        · {e.proforma_codigo || e.proforma || e.sap}
+                      </span>
                     )}
                   </button>
                 );
