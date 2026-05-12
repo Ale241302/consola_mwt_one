@@ -909,54 +909,81 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
     # nodo: una fila por expediente con cliente, operador (operating_
     # company), SAP, proforma, código de OC, fecha de registro, y total
     # de unidades asignadas al nodo desde ese expediente.
+    #
+    # Robustez (fix 2026-05-11 v2):
+    #   - clientes.cliente usa razon_social/nombre_comercial/tax_id
+    #     (NO `nombre`, NO `codigo`, NO `rut`). La versión previa rompía
+    #     con 500 al referenciar columnas inexistentes.
+    #   - Hacemos el JOIN a expedientes.oc opcional usando WITH (CTE)
+    #     para no perder filas si la OC fue borrada.
+    #   - El conteo de líneas se hace por separado para mantener el
+    #     SELECT principal sin GROUP BY pesado.
     @action(detail=False, methods=["get"],
             url_path=r"nodos/(?P<nodo_id>[^/.]+)/expedientes-asignados")
     def expedientes_asignados(self, request, nodo_id=None):
-        with connection.cursor() as c:
-            c.execute(
-                """
+        sql = """
+            WITH agg AS (
                 SELECT
-                    e.id                                          AS expediente_id,
-                    e.codigo                                      AS expediente_codigo,
-                    e.sap                                         AS expediente_sap,
-                    e.proforma                                    AS expediente_proforma,
-                    e.estado                                      AS expediente_estado,
-                    e.created_at                                  AS fecha_registro,
-                    e.oc_id,
-                    oc.codigo                                     AS oc_codigo,
-                    oc.sap                                        AS oc_sap,
-                    oc.proforma                                   AS oc_proforma,
-                    e.client_id,
-                    COALESCE(cl.razon_social, cl.nombre,
-                             cl.codigo, cl.rut, '—')              AS client_nombre,
-                    e.operating_company_id,
-                    COALESCE(op.razon_social, op.nombre,
-                             op.codigo, op.rut, '—')              AS operating_company_nombre,
-                    SUM(a.qty_asignada)::int                      AS qty_total_asignada,
-                    -- Concat-based DISTINCT count para evitar row constructor
-                    -- (sintaxis `(a, b)` falla en algunas versiones de PG).
-                    COUNT(DISTINCT (
-                        a.producto_id::text || '::' || COALESCE(a.talla, '')
-                    ))::int                                       AS lines_count
+                    a.expediente_id,
+                    SUM(a.qty_asignada)::int AS qty_total_asignada,
+                    COUNT(DISTINCT
+                          a.producto_id::text || '::' || COALESCE(a.talla, '')
+                    )::int AS lines_count
                 FROM inventario.expediente_nodo_assignment a
-                LEFT JOIN expedientes.expediente e   ON e.id  = a.expediente_id
-                LEFT JOIN expedientes.oc         oc  ON oc.id = e.oc_id
-                LEFT JOIN clientes.cliente       cl  ON cl.id = e.client_id
-                LEFT JOIN clientes.cliente       op  ON op.id = e.operating_company_id
                 WHERE a.nodo_id = %(nodo_id)s::uuid
                   AND a.is_active = TRUE
-                GROUP BY
-                    e.id, e.codigo, e.sap, e.proforma, e.estado, e.created_at,
-                    e.oc_id, oc.codigo, oc.sap, oc.proforma,
-                    e.client_id, cl.razon_social, cl.nombre, cl.codigo, cl.rut,
-                    e.operating_company_id, op.razon_social, op.nombre, op.codigo, op.rut
+                GROUP BY a.expediente_id
                 HAVING SUM(a.qty_asignada) > 0
-                ORDER BY e.codigo
-                """,
-                {"nodo_id": nodo_id},
             )
-            cols = [d[0] for d in c.description]
-            rows = [dict(zip(cols, r)) for r in c.fetchall()]
+            SELECT
+                e.id                                          AS expediente_id,
+                e.codigo                                      AS expediente_codigo,
+                e.sap                                         AS expediente_sap,
+                -- expedientes.expediente NO tiene columna proforma.
+                -- La proforma vive en expedientes.documento (kind='PROFORMA').
+                -- Tomamos el código del documento más reciente con código no
+                -- vacío. LATERAL es seguro: si no hay matches, devuelve NULL.
+                pf.codigo                                     AS proforma_codigo,
+                e.estado                                      AS expediente_estado,
+                e.created_at                                  AS fecha_registro,
+                e.oc_id                                       AS oc_id,
+                oc.codigo                                     AS oc_codigo,
+                oc.sap                                        AS oc_sap,
+                oc.proforma                                   AS oc_proforma,
+                e.client_id                                   AS client_id,
+                COALESCE(cl.razon_social, cl.nombre_comercial,
+                         cl.tax_id, '—')                      AS client_nombre,
+                e.operating_company_id                        AS operating_company_id,
+                COALESCE(op.razon_social, op.nombre_comercial,
+                         op.tax_id, '—')                      AS operating_company_nombre,
+                agg.qty_total_asignada,
+                agg.lines_count
+            FROM agg
+            LEFT JOIN expedientes.expediente e  ON e.id  = agg.expediente_id
+            LEFT JOIN expedientes.oc         oc ON oc.id = e.oc_id
+            LEFT JOIN clientes.cliente       cl ON cl.id = e.client_id
+            LEFT JOIN clientes.cliente       op ON op.id = e.operating_company_id
+            LEFT JOIN LATERAL (
+                SELECT d.codigo
+                FROM expedientes.documento d
+                WHERE d.expediente_id = e.id
+                  AND d.kind = 'PROFORMA'
+                  AND d.is_active = TRUE
+                  AND d.codigo IS NOT NULL
+                  AND d.codigo <> ''
+                ORDER BY d.created_at DESC
+                LIMIT 1
+            ) pf ON TRUE
+            ORDER BY e.codigo NULLS LAST
+        """
+        try:
+            with connection.cursor() as c:
+                c.execute(sql, {"nodo_id": nodo_id})
+                cols = [d[0] for d in c.description]
+                rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        except Exception as exc:
+            log.exception("expedientes_asignados SQL failed")
+            return Response({"detail": f"SQL error: {exc}"}, status=500)
         return Response(rows)
 
     # ── 3) Inventario asignado de un nodo (con expediente_codigo) ──

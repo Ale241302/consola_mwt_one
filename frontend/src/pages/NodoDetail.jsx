@@ -558,12 +558,15 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
   const [savingKey, setSavingKey] = useState(null);  // celda en flight
   const [draftQty, setDraftQty]   = useState({});    // ediciones pendientes
   // Sprint 2026-05-11 fix · modal de confirmación (reemplaza window.confirm).
-  // `pendingDelete` guarda la fila a borrar mientras el modal está abierto.
+  // `pendingDelete` guarda la fila (o array de filas) a borrar mientras el
+  // modal está abierto. Si es un array, es un bulk delete.
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleteBusy,    setDeleteBusy]    = useState(false);
   const [deleteError,   setDeleteError]   = useState(null);
   // Error inline para el editor de cantidad (reemplaza alert()).
   const [rowError, setRowError] = useState({}); // { key: 'mensaje' }
+  // Sprint 2026-05-11 fix · selección masiva con checkboxes.
+  const [selected, setSelected] = useState(new Set());
 
   const load = useCallback(() => {
     if (!nodeId) { setAllocated([]); return; }
@@ -624,18 +627,24 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
   };
   const confirmDelete = async () => {
     if (!pendingDelete || deleteBusy) return;
-    const r = pendingDelete;
+    const rows = Array.isArray(pendingDelete) ? pendingDelete : [pendingDelete];
     setDeleteBusy(true);
     setDeleteError(null);
     try {
-      await nodoAssignmentsApi.adjust({
-        expedienteId: r.expediente_id,
-        productoId:   r.producto_id,
-        talla:        r.talla || '',
-        nodoId:       nodeId,
-        newQty:       0,
-      });
+      // Sprint 2026-05-11 fix · bulk delete = N llamadas secuenciales al
+      // endpoint adjust (no rompemos atomicity porque cada fila ya es
+      // atómica del lado backend; si una falla, paramos y reportamos).
+      for (const r of rows) {
+        await nodoAssignmentsApi.adjust({
+          expedienteId: r.expediente_id,
+          productoId:   r.producto_id,
+          talla:        r.talla || '',
+          nodoId:       nodeId,
+          newQty:       0,
+        });
+      }
       setPendingDelete(null);
+      setSelected(new Set());
       load();
     } catch (e) {
       setDeleteError(e?.body?.detail || e?.message
@@ -645,11 +654,35 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
     }
   };
 
+  // Sprint 2026-05-11 fix · helpers de selección masiva.
+  const requestDeleteSelected = () => {
+    if (!allocated) return;
+    const rows = allocated.filter((r) => selected.has(keyOf(r)));
+    if (rows.length === 0) return;
+    setDeleteError(null);
+    setPendingDelete(rows);
+  };
+  const toggleSelectAll = (on) => {
+    if (!allocated) return;
+    if (on) setSelected(new Set(allocated.map(keyOf)));
+    else    setSelected(new Set());
+  };
+  const toggleRow = (key, on) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(key); else next.delete(key);
+      return next;
+    });
+  };
+
   // Decidimos cuál fuente renderizar.
   const useAllocated = Array.isArray(allocated) && allocated.length > 0;
 
   if (useAllocated) {
     const totalUnits = allocated.reduce((a, r) => a + Number(r.qty || 0), 0);
+    const allChecked = allocated.length > 0
+      && allocated.every((r) => selected.has(keyOf(r)));
+    const someChecked = !allChecked && allocated.some((r) => selected.has(keyOf(r)));
     return (
       <div className="card" style={{ marginTop: 12 }}>
         <div className="card-head">
@@ -665,10 +698,39 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
                 : 'Edit qty or remove the line inline.'}
             </div>
           </div>
+          {selected.size > 0 && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={requestDeleteSelected}
+              style={{
+                background: 'var(--critical)',
+                borderColor: 'var(--critical)',
+                color: '#fff', fontWeight: 700,
+              }}
+              title={lang === 'es'
+                ? 'Eliminar todas las líneas seleccionadas'
+                : 'Remove all selected lines'}
+            >
+              <IconX size={13}/>
+              {lang === 'es'
+                ? `Eliminar ${selected.size} seleccionada${selected.size === 1 ? '' : 's'}`
+                : `Remove ${selected.size} selected`}
+            </button>
+          )}
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table className="table">
             <thead><tr>
+              <th style={{ width: 36, textAlign: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={allChecked}
+                  ref={(el) => { if (el) el.indeterminate = someChecked; }}
+                  onChange={(e) => toggleSelectAll(e.target.checked)}
+                  title={lang === 'es' ? 'Seleccionar todo' : 'Select all'}
+                />
+              </th>
               <th>SKU</th>
               <th>{lang === 'es' ? 'Nombre' : 'Name'}</th>
               <th style={{ textAlign: 'center', width: 80 }}>
@@ -688,8 +750,21 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
                 const draft = draftQty[k];
                 const value = draft !== undefined ? draft : Number(r.qty || 0);
                 const busy = savingKey === k;
+                const isSelected = selected.has(k);
                 return (
-                  <tr key={`${r.producto_id}-${r.talla || ''}-${r.expediente_id}-${i}`}>
+                  <tr
+                    key={`${r.producto_id}-${r.talla || ''}-${r.expediente_id}-${i}`}
+                    style={isSelected ? {
+                      background: 'color-mix(in oklab, var(--critical) 5%, transparent)',
+                    } : undefined}
+                  >
+                    <td style={{ textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => toggleRow(k, e.target.checked)}
+                      />
+                    </td>
                     <td style={{ font: '600 12.5px/1.2 var(--font-mono)',
                                  color: 'var(--interactive)' }}>{r.sku || '—'}</td>
                     <td>{r.nombre || '—'}</td>
@@ -769,40 +844,63 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
           </table>
         </div>
 
-        {/* Modal MWT para confirmar el delete (reemplaza window.confirm) */}
+        {/* Modal MWT para confirmar el delete (reemplaza window.confirm).
+            Soporta single delete (objeto) y bulk delete (array). */}
         {pendingDelete && createPortal(
-          <ConfirmModal
-            eyebrow={lang === 'es' ? 'ACCIÓN DESTRUCTIVA' : 'DESTRUCTIVE ACTION'}
-            title={lang === 'es'
-              ? '¿Eliminar esta asignación?'
-              : 'Remove this allocation?'}
-            body={
-              <>
-                {lang === 'es'
-                  ? 'Se desasignarán '
-                  : 'Will unassign '}
-                <strong>{Number(pendingDelete.qty || 0).toLocaleString()} u</strong>
-                {lang === 'es' ? ' de talla ' : ' of size '}
-                <strong>{pendingDelete.talla || '—'}</strong>
-                {lang === 'es'
-                  ? ' del expediente '
-                  : ' from expediente '}
-                <strong style={{ color: 'var(--brand-primary)' }}>
-                  {pendingDelete.expediente_codigo || '—'}
-                </strong>
-                {lang === 'es'
-                  ? '. Las unidades vuelven a quedar disponibles para asignar a otros nodos.'
-                  : '. The units become available to assign to other nodes.'}
-              </>
-            }
-            actionLabel={lang === 'es' ? 'Sí, eliminar' : 'Yes, remove'}
-            actionColor="#DC2626"
-            cancelLabel={lang === 'es' ? 'Cancelar' : 'Cancel'}
-            busy={deleteBusy}
-            error={deleteError}
-            onCancel={cancelDelete}
-            onConfirm={confirmDelete}
-          />,
+          (() => {
+            const isBulk = Array.isArray(pendingDelete);
+            const count  = isBulk ? pendingDelete.length : 1;
+            const units  = isBulk
+              ? pendingDelete.reduce((a, r) => a + Number(r.qty || 0), 0)
+              : Number(pendingDelete.qty || 0);
+            const r      = isBulk ? null : pendingDelete;
+            return (
+              <ConfirmModal
+                eyebrow={lang === 'es' ? 'ACCIÓN DESTRUCTIVA' : 'DESTRUCTIVE ACTION'}
+                title={isBulk
+                  ? (lang === 'es'
+                      ? `¿Eliminar ${count} asignaciones?`
+                      : `Remove ${count} allocations?`)
+                  : (lang === 'es'
+                      ? '¿Eliminar esta asignación?'
+                      : 'Remove this allocation?')}
+                body={isBulk ? (
+                  <>
+                    {lang === 'es' ? 'Se desasignarán ' : 'Will unassign '}
+                    <strong>{units.toLocaleString()} u</strong>
+                    {lang === 'es'
+                      ? ` repartidas en ${count} línea(s) del nodo.`
+                      : ` across ${count} line(s) of the node.`}
+                    {' '}
+                    {lang === 'es'
+                      ? 'Las unidades vuelven al pool del expediente y quedan disponibles para asignar a otros nodos.'
+                      : 'The units return to the expediente pool and become available for other nodes.'}
+                  </>
+                ) : (
+                  <>
+                    {lang === 'es' ? 'Se desasignarán ' : 'Will unassign '}
+                    <strong>{units.toLocaleString()} u</strong>
+                    {lang === 'es' ? ' de talla ' : ' of size '}
+                    <strong>{r.talla || '—'}</strong>
+                    {lang === 'es' ? ' del expediente ' : ' from expediente '}
+                    <strong style={{ color: 'var(--brand-primary)' }}>
+                      {r.expediente_codigo || '—'}
+                    </strong>
+                    {lang === 'es'
+                      ? '. Las unidades vuelven a quedar disponibles para asignar a otros nodos.'
+                      : '. The units become available to assign to other nodes.'}
+                  </>
+                )}
+                actionLabel={lang === 'es' ? 'Sí, eliminar' : 'Yes, remove'}
+                actionColor="#DC2626"
+                cancelLabel={lang === 'es' ? 'Cancelar' : 'Cancel'}
+                busy={deleteBusy}
+                error={deleteError}
+                onCancel={cancelDelete}
+                onConfirm={confirmDelete}
+              />
+            );
+          })(),
           document.body,
         )}
       </div>
@@ -1404,7 +1502,11 @@ function FilesTab({ files, lang, navigate, nodeId }) {
                     {r.expediente_sap || r.oc_sap || '—'}
                   </td>
                   <td className="mono-sm" style={{ color: 'var(--text-secondary)' }}>
-                    {r.expediente_proforma || r.oc_proforma || '—'}
+                    {/* Sprint 2026-05-11 fix · proforma_codigo es el field
+                        real (viene de expedientes.documento via LATERAL).
+                        oc_proforma queda como último fallback. */}
+                    {r.proforma_codigo || r.expediente_proforma
+                      || r.oc_proforma || '—'}
                   </td>
                   <td className="mono-sm" style={{ color: 'var(--text-secondary)' }}>
                     {r.oc_codigo || '—'}
