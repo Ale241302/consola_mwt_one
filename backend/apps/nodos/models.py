@@ -83,3 +83,33 @@ class NodoJerarquia(models.Model):
         managed  = False
         db_table = 'nodos\".\"nodo_jerarquia'
         ordering = ('nivel', 'created_at')
+
+
+# ─────────────────────────────────────────────────────────────────
+# Sprint 2026-05-11 · Fase 2 del paquete Nodos.
+# Tabla `nodos.artefacto` creada por SQL 11b_nodos_artefactos.sql.
+# Permite asociar archivos arbitrarios a un nodo (proformas, contratos
+# 3PL, fotos de bodega, certificados). El mismo tipo puede repetirse
+# y el estado es texto libre — la BD no restringe el enum.
+# ─────────────────────────────────────────────────────────────────
+class NodoArtefacto(models.Model):
+    id              = models.UUIDField(primary_key=True)
+    nodo_id         = models.UUIDField()                                # ⛔ sin FK
+    tipo            = models.CharField(max_length=48)
+    nombre          = models.CharField(max_length=160)
+    estado          = models.CharField(max_length=32, default='PUBLICADO')
+    descripcion     = models.TextField(null=True, blank=True)
+    archivo_url     = models.TextField(null=True, blank=True)
+    archivo_nombre  = models.CharField(max_length=255, null=True, blank=True)
+    archivo_size    = models.BigIntegerField(null=True, blank=True)
+    archivo_mime    = models.CharField(max_length=96,  null=True, blank=True)
+    metadata        = models.JSONField(default=dict, blank=True)
+    uploaded_by_id  = models.UUIDField(null=True, blank=True)           # ⛔ sin FK
+    is_active       = models.BooleanField(default=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+    updated_at      = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'nodos\".\"artefacto'
+        ordering = ('-created_at',)

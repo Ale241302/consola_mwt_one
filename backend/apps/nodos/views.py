@@ -7,9 +7,10 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import Nodo, TipoCat, StatusCat, NodoJerarquia
+from .models import Nodo, TipoCat, StatusCat, NodoJerarquia, NodoArtefacto
 from .serializers import (
     NodoSerializer, NodoListSerializer, NodoJerarquiaSerializer,
+    NodoArtefactoSerializer,
 )
 
 
@@ -154,3 +155,85 @@ class NodoViewSet(viewsets.ViewSet):
             is_active=True, path_uuid__icontains=str(pk)
         ).order_by("nivel", "created_at")
         return Response(NodoJerarquiaSerializer(rels, many=True).data)
+
+
+# =====================================================================
+# Sprint 2026-05-11 · Fase 2 — Artefactos por Nodo.
+#
+# Rutas (montadas como nested bajo /api/nodos/{nodo_pk}/artifacts/ desde
+# apps.nodos.urls):
+#   GET     /api/nodos/{nodo_pk}/artifacts/          → list
+#   POST    /api/nodos/{nodo_pk}/artifacts/          → create
+#   GET     /api/nodos/{nodo_pk}/artifacts/{id}/     → retrieve
+#   PATCH   /api/nodos/{nodo_pk}/artifacts/{id}/     → update parcial
+#   DELETE  /api/nodos/{nodo_pk}/artifacts/{id}/     → soft-delete (is_active=FALSE)
+#
+# Notas:
+#   - El cliente sube el archivo primero a /api/storage/upload-proxy/
+#     (endpoint existente), obtiene `archivo_url` y luego POSTea aquí
+#     la metadata.
+#   - Mismo `tipo` puede repetirse (no hay UNIQUE en BD).
+#   - `estado` es texto libre — no validamos contra un enum.
+# =====================================================================
+class NodoArtefactoViewSet(viewsets.ViewSet):
+    """CRUD de artefactos nested bajo /api/nodos/{nodo_pk}/."""
+
+    def _qs(self, nodo_pk):
+        return (NodoArtefacto.objects
+                .filter(nodo_id=nodo_pk, is_active=True)
+                .order_by("-created_at"))
+
+    def list(self, request, nodo_pk=None):
+        qs = self._qs(nodo_pk)
+        tipo   = request.query_params.get("tipo")
+        estado = request.query_params.get("estado")
+        q      = request.query_params.get("q")
+        if tipo:   qs = qs.filter(tipo=tipo)
+        if estado: qs = qs.filter(estado=estado)
+        if q:      qs = qs.filter(nombre__icontains=q)
+        return Response(NodoArtefactoSerializer(qs, many=True).data)
+
+    def retrieve(self, request, nodo_pk=None, pk=None):
+        try:
+            a = NodoArtefacto.objects.get(pk=pk, nodo_id=nodo_pk, is_active=True)
+        except NodoArtefacto.DoesNotExist:
+            return Response({"detail": "Artefacto no existe"}, status=404)
+        return Response(NodoArtefactoSerializer(a).data)
+
+    def create(self, request, nodo_pk=None):
+        # Validar que el nodo existe y está activo (defensa, NO es FK física).
+        if not Nodo.objects.filter(pk=nodo_pk, is_active=True).exists():
+            return Response({"detail": "Nodo destino no existe"}, status=404)
+        s = NodoArtefactoSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        uploader = getattr(request.user, "id", None) if request.user else None
+        # Igual que NodoViewSet.create: inyectamos id por save(**kwargs)
+        # porque `id` es read_only y `nodo_id`/`uploaded_by_id` no vienen
+        # del cliente.
+        s.save(
+            id=uuid.uuid4(),
+            nodo_id=nodo_pk,
+            uploaded_by_id=uploader if isinstance(uploader, uuid.UUID) else None,
+        )
+        return Response(s.data, status=201)
+
+    def partial_update(self, request, nodo_pk=None, pk=None):
+        try:
+            a = NodoArtefacto.objects.get(pk=pk, nodo_id=nodo_pk, is_active=True)
+        except NodoArtefacto.DoesNotExist:
+            return Response({"detail": "Artefacto no existe"}, status=404)
+        s = NodoArtefactoSerializer(a, data=request.data, partial=True)
+        s.is_valid(raise_exception=True)
+        s.save()
+        return Response(s.data)
+
+    def destroy(self, request, nodo_pk=None, pk=None):
+        try:
+            a = NodoArtefacto.objects.get(pk=pk, nodo_id=nodo_pk, is_active=True)
+        except NodoArtefacto.DoesNotExist:
+            return Response({"detail": "Artefacto no existe"}, status=404)
+        # Soft-delete: la convención MWT es marcar is_active=FALSE,
+        # no borrar físicamente — preserva trazabilidad para auditoría.
+        a.is_active = False
+        a.save(update_fields=["is_active", "updated_at"])
+        return Response(status=204)

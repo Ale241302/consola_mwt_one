@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Nodo, NodoJerarquia
+from .models import Nodo, NodoJerarquia, NodoArtefacto
 
 
 class NodoSerializer(serializers.ModelSerializer):
@@ -34,3 +34,28 @@ class NodoJerarquiaSerializer(serializers.ModelSerializer):
         model = NodoJerarquia
         fields = "__all__"
         read_only_fields = ("id", "created_at", "updated_at")
+
+
+# ─────────────────────────────────────────────────────────────────
+# Sprint 2026-05-11 · Artefactos por nodo.
+# El FE manda metadata + archivo_url (obtenida previamente desde
+# /api/storage/upload-proxy/). El campo `metadata` es JSONField libre.
+# Sólo `tipo` y `nombre` son requeridos — el resto es opcional para
+# soportar artefactos "marcadores" sin archivo (ej: nota interna).
+# ─────────────────────────────────────────────────────────────────
+class NodoArtefactoSerializer(serializers.ModelSerializer):
+    descripcion    = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    archivo_url    = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    archivo_nombre = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    archivo_size   = serializers.IntegerField(required=False, allow_null=True)
+    archivo_mime   = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    metadata       = serializers.JSONField(required=False)
+    estado         = serializers.CharField(required=False, allow_blank=True,
+                                           allow_null=True, max_length=32)
+
+    class Meta:
+        model  = NodoArtefacto
+        fields = "__all__"
+        # nodo_id y uploaded_by_id los inyecta el ViewSet (no vienen del cliente).
+        read_only_fields = ("id", "nodo_id", "uploaded_by_id",
+                            "created_at", "updated_at")

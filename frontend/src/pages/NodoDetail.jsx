@@ -47,7 +47,9 @@ const STATUS_OPTIONS = [
   { k:'RETIRED',  l:'Retirado'  },
 ];
 import { tr, fmtMoney } from "../lib/i18n.js";
-import { nodosApi, stockApi, transferenciasApi } from "../lib/api.js";
+import { nodosApi, stockApi, transferenciasApi, nodoArtefactosApi } from "../lib/api.js";
+// Sprint 2026-05-11 · Fase 2 · tab Artefactos.
+import NodoArtifactsTab from "../components/nodos/NodoArtifactsTab.jsx";
 import {
   NODES, NODE_INVENTORY, NODE_TRANSFERS, NODE_AUTOMATIONS,
   LEGAL_ENTITIES, OPERATORS, PRODUCTS, EXPEDIENTES, OCS,
@@ -150,6 +152,10 @@ const TABS = [
   { k: 'transfers',   l: 'Transferencias' },
   { k: 'automations', l: 'Automatizaciones' },
   { k: 'files',       l: 'Expedientes' },
+  // Sprint 2026-05-11 · Fase 2 · tab "Artefactos" — archivos arbitrarios
+  // asociados al nodo (proformas, contratos 3PL, fotos de bodega, etc.).
+  // Permite mismo tipo repetido y cualquier estado libre.
+  { k: 'artefactos',  l: 'Artefactos' },
 ];
 
 export default function ScreenNodoDetail() {
@@ -393,6 +399,10 @@ export default function ScreenNodoDetail() {
             {tab === 'transfers'   && <TransfersTab transfers={transfers} nodeId={nodeId} lang={lang}/>}
             {tab === 'automations' && <AutomationsTab autos={autos} lang={lang}/>}
             {tab === 'files'       && <FilesTab files={files} lang={lang} navigate={navigate}/>}
+            {/* Sprint 2026-05-11 · Fase 2 · Artefactos por nodo.
+                Lista, agrega, edita y archiva archivos arbitrarios
+                asociados al nodo. Soporta mismo tipo repetido y estado libre. */}
+            {tab === 'artefactos'  && <NodoArtifactsTab nodeId={nodeId} lang={lang}/>}
           </motion.div>
         </AnimatePresence>
       </div>
