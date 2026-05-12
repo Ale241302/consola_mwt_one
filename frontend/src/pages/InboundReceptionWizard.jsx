@@ -23,6 +23,9 @@ import {
   IconArrow, IconCheck, IconX, IconUpload, IconWarehouse, IconAlert,
   IconSparkle, IconFileText, IconPackage, IconTruck, IconRefresh,
   IconTrash,
+  // Sprint 2026-05-11 fase 4+ · usado por Step1NodeArtifactsBlock
+  // para el botón "+ Agregar artefacto" del paso 1.
+  IconPlus,
 } from "../lib/icons.jsx";
 import {
   nodosApi, proveedoresApi, transferenciasApi, productosApi,
