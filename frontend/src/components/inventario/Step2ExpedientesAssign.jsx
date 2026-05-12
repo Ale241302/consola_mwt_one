@@ -125,6 +125,11 @@ export default function Step2ExpedientesAssign({
   useEffect(() => { reloadSaldos(); }, [reloadSaldos]);
 
   // ── Cuando cambian rowState/saldos, recalcular items+validity ──
+  // Reportamos items **enriquecidos** (sku, nombre, expediente_codigo)
+  // para que el paso 3 del wizard pueda renderizar un resumen humano sin
+  // tener que volver al backend. El submit del wizard se encarga de
+  // descartar esos campos extra antes de mandar el payload limpio al
+  // endpoint /nodo-assignments/bulk/.
   useEffect(() => {
     const items = saldos
       .filter((r) => rowState[keyOf(r)]?.include)
@@ -135,11 +140,16 @@ export default function Step2ExpedientesAssign({
           Math.min(Number(rowState[k]?.qty || 0), Number(r.qty_pendiente || 0)),
         );
         return {
+          // Campos canónicos para el backend.
           expediente_id: r.expediente_id,
           producto_id:   r.producto_id,
           talla:         r.talla || null,
           nodo_id:       destinationNode?.id,
-          qty_asignada: qty,
+          qty_asignada:  qty,
+          // ── Metadata para UI (paso 3 del wizard) ──
+          _expediente_codigo: r.expediente_codigo,
+          _sku:               r.sku,
+          _nombre:            r.nombre,
         };
       })
       .filter((it) => it.qty_asignada > 0);

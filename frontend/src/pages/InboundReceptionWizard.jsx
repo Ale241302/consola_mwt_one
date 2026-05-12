@@ -349,13 +349,20 @@ export default function InboundReceptionWizard() {
     setSubmitError(null);
     try {
       if (isExpedienteAssign) {
+        // Limpiamos los campos `_*` (metadata UI) antes de mandar al
+        // backend — el serializer los rechazaría con 400.
+        const cleanItems = assignItems.map(({
+          expediente_id, producto_id, talla, nodo_id, qty_asignada,
+        }) => ({
+          expediente_id, producto_id, talla, nodo_id, qty_asignada,
+        }));
         await nodoAssignmentsApi.bulkCreate({
           // recepcion_id queda null — esta recepción no genera un row en
           // inventario.recepcion (no hay líneas físicas, sólo asignaciones).
           // Si en el futuro queremos vincularlas, creamos primero el
           // recepcion via inboundApi.receive y pasamos su id aquí.
           recepcion_id: null,
-          items: assignItems,
+          items: cleanItems,
         });
         navigate("/inventario", { state: {
           assigned: true,
@@ -498,6 +505,12 @@ export default function InboundReceptionWizard() {
               submitting={submitting}
               submitError={submitError}
               onConfirm={submit}
+              /* Sprint 2026-05-11 · Fase 3 — vista alternativa para
+                 EXPEDIENTE_ASSIGN. Pasa los items enriquecidos del
+                 paso 2 nuevo para que Step3Confirm pueda mostrar
+                 expedientes, productos, tallas y cantidades. */
+              isExpedienteAssign={isExpedienteAssign}
+              assignItems={assignItems}
             />
           </motion.div>
         )}
@@ -1044,18 +1057,40 @@ function ProductAutocomplete({ lang, value, label, productos, onPick }) {
 
 // =====================================================================
 // PASO 3 — Confirmación
+// Sprint 2026-05-11 · Fase 3 — Cuando `isExpedienteAssign=true`, el
+// componente lee `assignItems` (items enriquecidos del paso 2 nuevo) en
+// vez de `lines` (flow legacy), y agrega una tarjeta extra con los
+// expedientes implicados. La sección "Valorización por moneda" se omite
+// — esta recepción asigna inventario existente, no captura costos.
 // =====================================================================
 function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
-                       totals, submitting, submitError, onConfirm }) {
+                       totals, submitting, submitError, onConfirm,
+                       isExpedienteAssign = false, assignItems = [] }) {
   const sType = SOURCE_TYPES.find((s) => s.v === sourceType);
 
+  // Para el flow EXPEDIENTE_ASSIGN convertimos los items en un shape
+  // compatible con `lines` (los mismos campos que byProduct espera).
+  // Así no duplicamos lógica de agrupación.
+  const effectiveLines = useMemo(() => {
+    if (!isExpedienteAssign) return lines;
+    return (assignItems || []).map((it) => ({
+      producto_id:   it.producto_id,
+      product_sku:   it._sku || "",
+      product_label: it._nombre || "",
+      talla:         it.talla || "",
+      qty:           Number(it.qty_asignada || 0),
+      received_qty:  Number(it.qty_asignada || 0),
+      unit_cost:     0,        // no se captura costo en este flow
+      currency:      null,     // tampoco moneda
+      _expediente_codigo: it._expediente_codigo,
+      _expediente_id:     it.expediente_id,
+    }));
+  }, [isExpedienteAssign, assignItems, lines]);
+
   // ── Agrupación por producto + breakdown por talla y por moneda ──
-  // Sprint Inbound v3: el resumen muestra exactamente qué llega:
-  //   · Cada producto con sus tallas (cantidad por talla)
-  //   · Total por moneda (no asume USD)
   const byProduct = useMemo(() => {
     const map = new Map();
-    for (const l of lines) {
+    for (const l of effectiveLines) {
       const key = l.producto_id || l.product_sku || "—";
       const prev = map.get(key) || {
         producto_id:   l.producto_id || null,
@@ -1071,11 +1106,14 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
       map.set(key, prev);
     }
     return Array.from(map.values());
-  }, [lines]);
+  }, [effectiveLines]);
 
   const byCurrency = useMemo(() => {
+    // En el flow EXPEDIENTE_ASSIGN no hay costos — omitimos la tarjeta
+    // entera. Mantenemos el cálculo intacto para el flow legacy.
+    if (isExpedienteAssign) return [];
     const map = new Map();
-    for (const l of lines) {
+    for (const l of effectiveLines) {
       const cur = (l.currency || "USD").toUpperCase();
       const cost = Number(l.unit_cost ?? l.unit_cost_usd ?? 0);
       const qty  = Number(l.qty || l.received_qty || 0);
@@ -1085,7 +1123,36 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
       map.set(cur, prev);
     }
     return Array.from(map.values());
-  }, [lines]);
+  }, [effectiveLines, isExpedienteAssign]);
+
+  // Fase 3 · resumen por expediente para la nueva Card.
+  const byExpediente = useMemo(() => {
+    if (!isExpedienteAssign) return [];
+    const map = new Map();
+    for (const it of assignItems || []) {
+      const key = it.expediente_id;
+      const prev = map.get(key) || {
+        expediente_id:     it.expediente_id,
+        expediente_codigo: it._expediente_codigo || "—",
+        lines_count: 0,
+        total_qty: 0,
+      };
+      prev.lines_count += 1;
+      prev.total_qty += Number(it.qty_asignada || 0);
+      map.set(key, prev);
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      String(a.expediente_codigo).localeCompare(String(b.expediente_codigo)));
+  }, [isExpedienteAssign, assignItems]);
+
+  // Totales para los Tiles cuando estamos en EXPEDIENTE_ASSIGN.
+  const totalsForTiles = useMemo(() => {
+    if (!isExpedienteAssign) return totals;
+    const totalUnits = (assignItems || []).reduce(
+      (a, it) => a + Number(it.qty_asignada || 0), 0,
+    );
+    return { ...totals, received: totalUnits, value_usd: 0 };
+  }, [isExpedienteAssign, assignItems, totals]);
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -1095,12 +1162,17 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
         color: "white", borderRadius: 16, padding: 24,
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 18,
       }}>
-        <Tile label={lang === "es" ? "Líneas" : "Lines"} value={lines.length}/>
+        <Tile label={lang === "es" ? "Líneas" : "Lines"}
+              value={isExpedienteAssign ? (assignItems?.length || 0) : lines.length}/>
         <Tile label={lang === "es" ? "Productos" : "Products"} value={byProduct.length}/>
         <Tile label={lang === "es" ? "Unidades totales" : "Total units"}
-              value={totals.received.toLocaleString()}
+              value={(totalsForTiles?.received || 0).toLocaleString()}
               accent="#86EFAC"/>
-        <Tile label={lang === "es" ? "Monedas" : "Currencies"} value={byCurrency.length}/>
+        {/* En EXPEDIENTE_ASSIGN reemplazamos "Monedas" por "Expedientes" — más útil */}
+        <Tile label={isExpedienteAssign
+                      ? (lang === "es" ? "Expedientes" : "Expedientes")
+                      : (lang === "es" ? "Monedas" : "Currencies")}
+              value={isExpedienteAssign ? byExpediente.length : byCurrency.length}/>
       </div>
 
       {/* Contexto */}
@@ -1113,6 +1185,52 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
           <Row k={lang === "es" ? "Referencia" : "Reference"} v={reference.label}/>
         )}
       </Card>
+
+      {/* Sprint 2026-05-11 · Fase 3 — Expedientes asignados.
+          Sólo visible cuando el operador elige "Desde expediente(s)". */}
+      {isExpedienteAssign && (
+        <Card title={lang === "es" ? "Expedientes asignados" : "Assigned expedientes"}
+              subtitle={lang === "es"
+                ? "Códigos de los expedientes de origen y cuánto se asigna desde cada uno."
+                : "Source expediente codes and quantity assigned from each."}>
+          {byExpediente.length === 0 ? (
+            <div className="caption" style={{ padding: 12, color: "var(--text-tertiary)" }}>
+              {lang === "es" ? "Sin expedientes seleccionados." : "No expedientes selected."}
+            </div>
+          ) : (
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: 10,
+            }}>
+              {byExpediente.map((e) => (
+                <div key={e.expediente_id} style={{
+                  padding: "12px 14px", borderRadius: 10,
+                  border: "1px solid var(--border-subtle)",
+                  background: "white",
+                  display: "flex", flexDirection: "column", gap: 4,
+                }}>
+                  <span className="mono-sm" style={{
+                    fontWeight: 800, color: "var(--brand-primary, #0B1E3A)",
+                    fontSize: 13,
+                  }}>
+                    {e.expediente_codigo}
+                  </span>
+                  <span className="caption tabular-nums" style={{
+                    color: "var(--text-secondary)", fontSize: 12,
+                  }}>
+                    {e.lines_count} {lang === "es" ? "líneas" : "lines"}
+                    {" · "}
+                    <strong style={{ color: "var(--brand-accent, #0E8A6D)" }}>
+                      {e.total_qty.toLocaleString()} u
+                    </strong>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* Productos con desglose por talla */}
       <Card title={lang === "es" ? "Productos por talla" : "Products by size"}
@@ -1177,7 +1295,9 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
         </div>
       </Card>
 
-      {/* Valorización por moneda */}
+      {/* Valorización por moneda — oculta en EXPEDIENTE_ASSIGN
+          (este flow no captura costos, sólo asigna inventario existente). */}
+      {!isExpedienteAssign && (
       <Card title={lang === "es" ? "Valorización por moneda" : "Value by currency"}
             subtitle={lang === "es"
               ? "Suma del costo unitario × cantidad para cada moneda capturada."
@@ -1217,16 +1337,20 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
             ))}
           </div>
         )}
-
-        {submitError && (
-          <div style={{
-            marginTop: 14, padding: "10px 14px", borderRadius: 8,
-            background: "#FEE2E2", color: "#991B1B", border: "1px solid #FCA5A5", fontSize: 13,
-          }}>
-            <IconAlert size={11} style={{ verticalAlign: -1, marginRight: 6 }}/> {submitError}
-          </div>
-        )}
       </Card>
+      )}
+
+      {/* submitError vive fuera de la Card "Valorización por moneda" para
+          que también sea visible cuando el flow EXPEDIENTE_ASSIGN oculta
+          esa Card. */}
+      {submitError && (
+        <div style={{
+          marginTop: 0, padding: "10px 14px", borderRadius: 8,
+          background: "#FEE2E2", color: "#991B1B", border: "1px solid #FCA5A5", fontSize: 13,
+        }}>
+          <IconAlert size={11} style={{ verticalAlign: -1, marginRight: 6 }}/> {submitError}
+        </div>
+      )}
 
       {/* Botón masivo */}
       <button
