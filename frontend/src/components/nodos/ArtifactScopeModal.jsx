@@ -42,6 +42,11 @@ export default function ArtifactScopeModal({
   excludeInstanceId    = null,    // UUID de la instancia que se edita
   initialLines         = [],      // [{expediente_id, producto_id, talla, qty}]
   initialExpedienteIds = [],
+  // Sprint 2026-05-11 fase 5 (wizard) · cuando este modal se abre desde
+  // el paso 3 del wizard de recepción, sólo deben aparecer los
+  // expedientes que el operador eligió en el paso 2. Si viene, filtra
+  // los chips a este set.
+  restrictExpedienteIds = null,   // array | null
   lang                 = "es",
   onCancel,
   onSubmit,             // (payload) => void
@@ -79,7 +84,14 @@ export default function ArtifactScopeModal({
     })
       .then((data) => {
         if (cancel) return;
-        const arr = Array.isArray(data) ? data : (data?.results || []);
+        let arr = Array.isArray(data) ? data : (data?.results || []);
+        // Sprint 2026-05-11 fase 5 (wizard) · si recibimos restrictExpedienteIds
+        // filtramos la lista para que solo aparezcan los chips de los
+        // expedientes elegidos en el paso 2 del wizard.
+        if (Array.isArray(restrictExpedienteIds) && restrictExpedienteIds.length) {
+          const allowed = new Set(restrictExpedienteIds.map(String));
+          arr = arr.filter((e) => allowed.has(String(e.expediente_id)));
+        }
         setExpedientes(arr);
       })
       .catch((e) => {
@@ -89,7 +101,11 @@ export default function ArtifactScopeModal({
       })
       .finally(() => { if (!cancel) setExpLoading(false); });
     return () => { cancel = true; };
-  }, [nodeId, templateId, excludeInstanceId, lang]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeId, templateId, excludeInstanceId, lang,
+      // Para que el filtro `restrict` se recalcule si el wizard
+      // cambia el set después de abrir el modal.
+      JSON.stringify(restrictExpedienteIds || [])]);
 
   // ── 2) Cargar líneas disponibles cuando cambia la selección ───
   const reloadLines = useCallback(() => {

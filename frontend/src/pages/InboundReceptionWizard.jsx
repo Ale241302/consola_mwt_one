@@ -41,6 +41,9 @@ import Step2ExpedientesAssign from "../components/inventario/Step2ExpedientesAss
 // de expedientes (mismos componentes que la tab Artefactos del nodo).
 import ArtifactPickerModal from "../components/expedientes/builderArtifacts/ArtifactPickerModal.jsx";
 import ArtifactFillModal   from "../components/expedientes/builderArtifacts/ArtifactFillModal.jsx";
+// Sprint 2026-05-11 (iteración) · modal de alcance — paso 3 del wizard
+// filtra los expedientes a los del paso 2.
+import ArtifactScopeModal  from "../components/nodos/ArtifactScopeModal.jsx";
 
 // ─── Tipos de origen del inbound (alineado con SQL source_type_cat) ─
 // Sprint 2026-05-11 · Fase 3 · Se agrega EXPEDIENTE_ASSIGN: el operador
@@ -131,6 +134,13 @@ export default function InboundReceptionWizard() {
   // ── Estado paso 3 / submit ────────────────────────────────────
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  // Sprint 2026-05-11 (iteración) · Artefactos pendientes capturados
+  // en el paso 3 antes de confirmar. Cada item:
+  //   { id (local), template_id, template_title, structure_snapshot,
+  //     data, lines: [{expediente_id, producto_id, talla, qty, _sku, _nombre, _expediente_codigo}] }
+  // Al confirmar, primero hacemos bulk-create de allocations y luego
+  // POST de cada artefacto.
+  const [pendingArtifacts, setPendingArtifacts] = useState([]);
 
   // ── Catálogos cargados ─────────────────────────────────────────
   const [nodos, setNodos] = useState([]);
@@ -369,14 +379,31 @@ export default function InboundReceptionWizard() {
         await nodoAssignmentsApi.bulkCreate({
           // recepcion_id queda null — esta recepción no genera un row en
           // inventario.recepcion (no hay líneas físicas, sólo asignaciones).
-          // Si en el futuro queremos vincularlas, creamos primero el
-          // recepcion via inboundApi.receive y pasamos su id aquí.
           recepcion_id: null,
           items: cleanItems,
         });
+
+        // Sprint 2026-05-11 (iteración) · Crear los artefactos pendientes
+        // del paso 3 — uno por uno, después de que las allocations
+        // existan en BD (orden importa porque cada artefacto consume
+        // qty de las allocations).
+        for (const art of pendingArtifacts) {
+          const cleanLines = (art.lines || []).map(({
+            expediente_id, producto_id, talla, qty,
+          }) => ({ expediente_id, producto_id, talla, qty }));
+          await nodoBuilderArtifactsApi.create(destinationNode.id, {
+            template_id:        art.template_id,
+            template_title:     art.template_title,
+            data:               art.data || {},
+            structure_snapshot: art.structure_snapshot || { sections: [] },
+            lines:              cleanLines,
+          });
+        }
+
         navigate("/inventario", { state: {
           assigned: true,
           count: assignItems.length,
+          artifactsCount: pendingArtifacts.length,
           nodeId: destinationNode?.id,
         }});
         return;
@@ -521,6 +548,11 @@ export default function InboundReceptionWizard() {
                  expedientes, productos, tallas y cantidades. */
               isExpedienteAssign={isExpedienteAssign}
               assignItems={assignItems}
+              /* Sprint 2026-05-11 (iteración) · Artefactos pendientes
+                 del paso 3. El bloque se muestra dentro de Step3Confirm
+                 cuando isExpedienteAssign=true. */
+              pendingArtifacts={pendingArtifacts}
+              setPendingArtifacts={setPendingArtifacts}
             />
           </motion.div>
         )}
@@ -682,30 +714,10 @@ function Step1Context({
         )}
       </Card>
 
-      {/* Sprint 2026-05-11 fase 4+ · CEO pidió reemplazar el dropzone
-          OCR del paso 1 por el mismo flow de Builder artifacts que ya
-          existe en la tab Artefactos del nodo: el operador agrega
-          plantillas (Packing List, Factura, AWB/BL, etc.) desde el
-          Builder externo y rellena el formulario dinámico. Los
-          artefactos quedan asociados al nodo destino seleccionado en
-          este mismo paso.
-
-          El dropzone OCR + supportFile + ocrPayload se preservan en
-          estado y `submit` para compat, pero ya no hay UI que dispare
-          el upload. Se puede reactivar el OCR en un sprint posterior
-          si se decide reintegrarlo. */}
-      <Card title={lang === "es" ? "3. Artefactos del nodo" : "3. Node artifacts"}
-            subtitle={lang === "es"
-              ? "Conecta proformas, packing lists, BL, facturas — plantillas dinámicas desde el Builder externo."
-              : "Connect proformas, packing lists, BL, invoices — dynamic templates from the external Builder."}>
-        <Step1NodeArtifactsBlock
-          nodeId={destinationNode?.id}
-          nodeLabel={destinationNode
-            ? `${destinationNode.codigo} · ${destinationNode.nombre}`
-            : null}
-          lang={lang}
-        />
-      </Card>
+      {/* Sprint 2026-05-11 (iteración) · El bloque "Artefactos del
+          nodo" se movió al paso 3 (Confirmar). Allí el modal de
+          alcance se abre filtrando los expedientes a los que el
+          operador eligió en el paso 2. */}
     </div>
   );
 }
@@ -1007,7 +1019,9 @@ function ProductAutocomplete({ lang, value, label, productos, onPick }) {
 // =====================================================================
 function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
                        totals, submitting, submitError, onConfirm,
-                       isExpedienteAssign = false, assignItems = [] }) {
+                       isExpedienteAssign = false, assignItems = [],
+                       // Sprint 2026-05-11 (iteración) · artefactos pendientes
+                       pendingArtifacts = [], setPendingArtifacts = () => {} }) {
   const sType = SOURCE_TYPES.find((s) => s.v === sourceType);
 
   // Para el flow EXPEDIENTE_ASSIGN convertimos los items en un shape
@@ -1172,6 +1186,20 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
             </div>
           )}
         </Card>
+      )}
+
+      {/* Sprint 2026-05-11 (iteración) · Bloque de artefactos del paso 3.
+          Sólo en flow EXPEDIENTE_ASSIGN porque depende de assignItems
+          (necesita saber los expedientes/líneas del paso 2). */}
+      {isExpedienteAssign && (
+        <Step3ArtifactsBlock
+          lang={lang}
+          destinationNode={destinationNode}
+          assignItems={assignItems}
+          pendingArtifacts={pendingArtifacts}
+          setPendingArtifacts={setPendingArtifacts}
+          disabled={submitting}
+        />
       )}
 
       {/* Productos con desglose por talla */}
@@ -1374,20 +1402,208 @@ const th = {
 const td = { padding: "10px 12px", verticalAlign: "top" };
 
 // =====================================================================
-// Sprint 2026-05-11 fase 4+ · Step1NodeArtifactsBlock
+// Sprint 2026-05-11 (iteración) · Step3ArtifactsBlock
 //
-// Componente reusado en el paso 1 del wizard de recepción. Reemplaza el
-// antiguo dropzone OCR por el flow Builder:
-//   · Lista los artefactos del nodo destino (read-only mini).
-//   · Botón "+ Agregar artefacto" → abre ArtifactPickerModal (templates
-//     del Builder externo).
-//   · Selección → abre ArtifactFillModal con el form dinámico.
-//   · Guarda en nodos.builder_artifact_instance via nodoBuilderArtifactsApi.
+// Componente del paso 3 del wizard. Permite al operador adjuntar
+// artefactos del Builder (proforma, BL, factura, etc.) a la recepción
+// ANTES de confirmar. Los artefactos se guardan en memoria
+// (`pendingArtifacts`) y se persisten al hacer click en
+// "Confirmar Recepción de Inventario".
 //
-// Se activa cuando `nodeId` está disponible. Si todavía no hay nodo
-// destino (paso 1 en blanco), muestra hint.
+// Flow:
+//   + Agregar artefacto → ArtifactScopeModal (filtrado por los
+//     expedientes del paso 2) → ArtifactPickerModal → ArtifactFillModal
+//     → push al array de pendingArtifacts.
+//
+// El backend recibe las allocations + artefactos en el mismo submit
+// (lockstep: primero allocations, después artefactos uno por uno).
 // =====================================================================
-function Step1NodeArtifactsBlock({ nodeId, nodeLabel, lang = "es" }) {
+function Step3ArtifactsBlock({
+  lang, destinationNode, assignItems = [],
+  pendingArtifacts, setPendingArtifacts, disabled,
+}) {
+  const [scopeOpen,    setScopeOpen]    = useState(false);
+  const [scopePayload, setScopePayload] = useState(null);
+  const [showPicker,   setShowPicker]   = useState(false);
+  const [creating,     setCreating]     = useState(null);
+
+  // Set de expediente_ids seleccionados en paso 2 (con expediente_id
+  // únicos derivados de assignItems).
+  const expedienteIdsFromStep2 = useMemo(
+    () => Array.from(new Set((assignItems || []).map((it) => it.expediente_id))),
+    [assignItems],
+  );
+
+  const handleScopeSubmit = (payload) => {
+    setScopePayload(payload);
+    setScopeOpen(false);
+    setShowPicker(true);
+  };
+
+  const handlePickTemplate = async (tpl) => {
+    let fresh = tpl;
+    try { fresh = await builderTemplatesApi.get(tpl.id); } catch {}
+    setCreating({ template: fresh });
+    setShowPicker(false);
+  };
+
+  const handleCreateSubmit = (data) => {
+    if (!creating || !scopePayload) return;
+    // Persistencia en memoria (no llama al backend aún).
+    setPendingArtifacts((prev) => [...prev, {
+      id:                 `pend-${Date.now()}-${Math.random()}`,
+      template_id:        creating.template.id,
+      template_title:     creating.template.title,
+      structure_snapshot: creating.template.structure_json || { sections: [] },
+      data:               data,
+      lines:              scopePayload.lines,
+    }]);
+    setCreating(null);
+    setScopePayload(null);
+  };
+
+  const removeArt = (id) =>
+    setPendingArtifacts((prev) => prev.filter((a) => a.id !== id));
+
+  const noExpedientesYet = expedienteIdsFromStep2.length === 0;
+
+  return (
+    <Card
+      title={lang === "es" ? "Artefactos" : "Artifacts"}
+      subtitle={lang === "es"
+        ? "Conecta proformas, BL, facturas u otros documentos del Builder a esta recepción. Cada artefacto se vincula a expedientes/líneas elegidas en el paso 2."
+        : "Connect proformas, BL, invoices or other Builder documents to this reception. Each artifact is linked to expedientes/lines from step 2."}
+    >
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        marginBottom: 10,
+      }}>
+        <span className="caption" style={{ color: "var(--text-secondary)" }}>
+          {pendingArtifacts.length}{" "}
+          {lang === "es" ? "artefacto(s) pendientes de guardar" : "pending artifact(s)"}
+        </span>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          onClick={() => setScopeOpen(true)}
+          disabled={disabled || noExpedientesYet || !destinationNode?.id}
+          title={noExpedientesYet
+            ? (lang === "es" ? "Selecciona expedientes en el paso 2 primero" : "Pick expedientes in step 2 first")
+            : (lang === "es" ? "Agregar artefacto" : "Add artifact")}
+        >
+          <IconPlus size={13}/>
+          {lang === "es" ? "Agregar artefacto" : "Add artifact"}
+        </button>
+      </div>
+
+      {pendingArtifacts.length === 0 ? (
+        <div style={{
+          padding: "20px 18px", textAlign: "center",
+          border: "1px dashed var(--border-subtle)", borderRadius: 10,
+          color: "var(--text-tertiary)", fontSize: 13,
+        }}>
+          {noExpedientesYet
+            ? (lang === "es"
+                ? "Aún no has seleccionado expedientes en el paso 2."
+                : "No expedientes selected in step 2 yet.")
+            : (lang === "es"
+                ? "Sin artefactos. Opcional — puedes confirmar la recepción sin artefactos."
+                : "No artifacts. Optional — you can confirm the reception without artifacts.")}
+        </div>
+      ) : (
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+          gap: 10,
+        }}>
+          {pendingArtifacts.map((a) => {
+            const totalQty = (a.lines || []).reduce((s, l) => s + Number(l.qty || 0), 0);
+            return (
+              <div key={a.id} style={{
+                border: "1px solid var(--border-subtle)",
+                borderRadius: 10, padding: "10px 12px",
+                background: "white",
+                display: "flex", flexDirection: "column", gap: 4,
+              }}>
+                <div style={{ display: "flex", alignItems: "flex-start",
+                              justifyContent: "space-between", gap: 6 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <span className="mono-sm" style={{
+                      fontWeight: 700, color: "#0B1E3A", fontSize: 12.5,
+                      display: "block",
+                      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    }}>
+                      {a.template_title}
+                    </span>
+                    <span className="caption" style={{
+                      color: "var(--text-tertiary)", fontSize: 11,
+                    }}>
+                      #{a.template_id} · {(a.lines || []).length}{" "}
+                      {lang === "es" ? "línea(s) · " : "line(s) · "}
+                      {totalQty.toLocaleString()} u
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => removeArt(a.id)}
+                    disabled={disabled}
+                    title={lang === "es" ? "Quitar" : "Remove"}
+                    style={{ width: 24, height: 24, color: "var(--critical)" }}
+                  >
+                    <IconX size={11}/>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modales encadenados scope → picker → fill */}
+      {scopeOpen && (
+        <ArtifactScopeModal
+          nodeId={destinationNode?.id}
+          lang={lang}
+          restrictExpedienteIds={expedienteIdsFromStep2}
+          onCancel={() => setScopeOpen(false)}
+          onSubmit={handleScopeSubmit}
+          submitLabel={lang === "es"
+            ? "Siguiente — elegir plantilla"
+            : "Next — pick template"}
+        />
+      )}
+      {showPicker && (
+        <ArtifactPickerModal
+          lang={lang}
+          onPick={handlePickTemplate}
+          onClose={() => { setShowPicker(false); setScopePayload(null); }}
+        />
+      )}
+      {creating && (
+        <ArtifactFillModal
+          mode="create"
+          templateTitle={creating.template.title}
+          structure={creating.template.structure_json || { sections: [] }}
+          lang={lang}
+          saving={false}
+          onCancel={() => setCreating(null)}
+          onSubmit={handleCreateSubmit}
+        />
+      )}
+    </Card>
+  );
+}
+
+// =====================================================================
+// Sprint 2026-05-11 fase 4+ · Step1NodeArtifactsBlock (LEGACY · sin uso)
+//
+// Componente que se usaba cuando el bloque de artefactos vivía en el
+// paso 1. La iteración del 2026-05-11 lo movió a Step3ArtifactsBlock
+// (arriba). Se mantiene aquí por compat hacia atrás (puede reactivarse
+// si algún día queremos volver al flow viejo) pero NO se renderiza.
+// =====================================================================
+function Step1NodeArtifactsBlock({ nodeId, nodeLabel, lang = "es" }) {  // eslint-disable-line no-unused-vars
   const [items, setItems]     = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
