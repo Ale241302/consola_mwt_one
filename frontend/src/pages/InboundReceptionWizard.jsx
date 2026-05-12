@@ -597,6 +597,12 @@ export default function InboundReceptionWizard() {
                  cuando isExpedienteAssign=true. */
               pendingArtifacts={pendingArtifacts}
               setPendingArtifacts={setPendingArtifacts}
+              /* Sprint 2026-05-11 (iteración fix) · Step3Confirm es una
+                 función hermana, no anidada — necesita recibir los
+                 arrays in-memory como props para descenderlos al
+                 Step3ArtifactsBlock. */
+              inMemoryExpedientes={inMemoryExpedientes}
+              inMemoryLines={inMemoryLinesNoTemplate}
             />
           </motion.div>
         )}
@@ -1065,7 +1071,11 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
                        totals, submitting, submitError, onConfirm,
                        isExpedienteAssign = false, assignItems = [],
                        // Sprint 2026-05-11 (iteración) · artefactos pendientes
-                       pendingArtifacts = [], setPendingArtifacts = () => {} }) {
+                       pendingArtifacts = [], setPendingArtifacts = () => {},
+                       // Sprint 2026-05-11 (iteración fix) · arrays in-memory
+                       // calculados en el padre, descendidos al Step3ArtifactsBlock.
+                       inMemoryExpedientes = null,
+                       inMemoryLines = null }) {
   const sType = SOURCE_TYPES.find((s) => s.v === sourceType);
 
   // Para el flow EXPEDIENTE_ASSIGN convertimos los items en un shape
@@ -1242,8 +1252,11 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
           lang={lang}
           destinationNode={destinationNode}
           assignItems={assignItems}
+          /* Dentro de Step3Confirm el prop recibido se llama
+             `inMemoryLines` (no `inMemoryLinesNoTemplate` como en el
+             padre). El nombre adentro es el del parámetro. */
           inMemoryExpedientes={inMemoryExpedientes}
-          inMemoryLines={inMemoryLinesNoTemplate}
+          inMemoryLines={inMemoryLines}
           pendingArtifacts={pendingArtifacts}
           setPendingArtifacts={setPendingArtifacts}
           disabled={submitting}
