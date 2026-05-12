@@ -26,11 +26,19 @@ import {
 } from "../lib/icons.jsx";
 import {
   nodosApi, proveedoresApi, transferenciasApi, productosApi,
-  inboundApi, tallasApi, currencyCatApi,
+  inboundApi, tallasApi, currencyCatApi, nodoAssignmentsApi,
 } from "../lib/api.js";
+// Sprint 2026-05-11 · Fase 3 · sourceType="EXPEDIENTE_ASSIGN" usa este
+// paso 2 alternativo en vez del Step2Reconcile legacy.
+import Step2ExpedientesAssign from "../components/inventario/Step2ExpedientesAssign.jsx";
 
 // ─── Tipos de origen del inbound (alineado con SQL source_type_cat) ─
+// Sprint 2026-05-11 · Fase 3 · Se agrega EXPEDIENTE_ASSIGN: el operador
+// asigna líneas (producto, talla, qty) de uno o más expedientes al nodo
+// destino. Activa un paso 2 distinto al legacy (Step2ExpedientesAssign).
 const SOURCE_TYPES = [
+  { v: "EXPEDIENTE_ASSIGN", l_es: "Desde expediente(s)",
+                            l_en: "From expediente(s)",         color: "#0E8A6D" },
   { v: "SUPPLIER_PO",   l_es: "Orden de compra a proveedor",
                         l_en: "Supplier PO",                color: "#3083FE" },
   { v: "TRANSFER_IN",   l_es: "Transferencia entrante",
@@ -104,6 +112,11 @@ export default function InboundReceptionWizard() {
 
   // ── Estado paso 2: líneas ──────────────────────────────────────
   const [lines, setLines] = useState([]);
+  // Sprint 2026-05-11 · Fase 3 · sourceType="EXPEDIENTE_ASSIGN".
+  // El paso 2 alternativo (Step2ExpedientesAssign) reporta su array de
+  // items listos para bulk-insert en `inventario.expediente_nodo_assignment`.
+  const [assignItems, setAssignItems] = useState([]);
+  const [assignValid, setAssignValid] = useState(false);
 
   // ── Estado paso 3 / submit ────────────────────────────────────
   const [submitting, setSubmitting] = useState(false);
@@ -280,6 +293,9 @@ export default function InboundReceptionWizard() {
   // tiene la info a mano. El selector de proveedor sigue visible — sólo
   // dejó de bloquear el avance al paso 2.
   const step1Valid = !!destinationNode && !!sourceType;
+  // Para el nuevo flow EXPEDIENTE_ASSIGN la validez del paso 2 viene del
+  // sub-componente (basta con que haya >=1 item con qty>0).
+  const isExpedienteAssign = sourceType === "EXPEDIENTE_ASSIGN";
   const linesWithGap = lines.filter((l) =>
     Number(l.received_qty || 0) < Number(l.expected_qty || 0)
   );
@@ -318,11 +334,36 @@ export default function InboundReceptionWizard() {
   }, [lines, linesWithGap.length]);
 
   // ── Submit final ──────────────────────────────────────────────
+  // Sprint 2026-05-11 · Fase 3 · Si sourceType=EXPEDIENTE_ASSIGN
+  // mandamos un bulk-create a /api/inventario/nodo-assignments/bulk/
+  // — un POST atómico que valida over-assignment del lado backend.
+  // En cualquier otro caso seguimos el flow legacy de inboundApi.receive.
   const submit = async () => {
-    if (!step2Valid || submitting) return;
+    if (submitting) return;
+    if (isExpedienteAssign) {
+      if (!assignValid) return;
+    } else {
+      if (!step2Valid) return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     try {
+      if (isExpedienteAssign) {
+        await nodoAssignmentsApi.bulkCreate({
+          // recepcion_id queda null — esta recepción no genera un row en
+          // inventario.recepcion (no hay líneas físicas, sólo asignaciones).
+          // Si en el futuro queremos vincularlas, creamos primero el
+          // recepcion via inboundApi.receive y pasamos su id aquí.
+          recepcion_id: null,
+          items: assignItems,
+        });
+        navigate("/inventario", { state: {
+          assigned: true,
+          count: assignItems.length,
+          nodeId: destinationNode?.id,
+        }});
+        return;
+      }
       const payload = {
         destination_node_id:    destinationNode?.id,
         destination_node_label: destinationNode?.codigo || destinationNode?.nombre || "",
@@ -416,17 +457,31 @@ export default function InboundReceptionWizard() {
         {step === 2 && (
           <motion.div key="step2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.22 }}>
-            <Step2Reconcile
-              tallasByProducto={tallasByProducto}
-              resolveProductSizes={resolveProductSizes}
-              currencies={currencies}
-              lang={lang}
-              lines={lines}
-              productos={productos}
-              onUpdate={updateLine}
-              onRemove={removeLine}
-              onAdd={addBlankLine}
-            />
+            {/* Sprint 2026-05-11 · Fase 3 · Si el operador eligió
+                "Desde expediente(s)" en el paso 1, mostramos el nuevo
+                selector multi-expediente con tabla por talla. En cualquier
+                otro caso seguimos el Step2Reconcile legacy (grid editable
+                manual + OCR), que también soporta talla. */}
+            {isExpedienteAssign ? (
+              <Step2ExpedientesAssign
+                lang={lang}
+                destinationNode={destinationNode}
+                onItemsChange={setAssignItems}
+                onValidityChange={setAssignValid}
+              />
+            ) : (
+              <Step2Reconcile
+                tallasByProducto={tallasByProducto}
+                resolveProductSizes={resolveProductSizes}
+                currencies={currencies}
+                lang={lang}
+                lines={lines}
+                productos={productos}
+                onUpdate={updateLine}
+                onRemove={removeLine}
+                onAdd={addBlankLine}
+              />
+            )}
           </motion.div>
         )}
 
@@ -459,14 +514,21 @@ export default function InboundReceptionWizard() {
         {step < 3 ? (
           <button
             className="btn btn-accent"
-            disabled={(step === 1 && !step1Valid) || (step === 2 && !step2Valid)}
+            disabled={
+              (step === 1 && !step1Valid) ||
+              (step === 2 && !(isExpedienteAssign ? assignValid : step2Valid))
+            }
             onClick={() => setStep((s) => s + 1)}
             style={{
               minWidth: 200, fontWeight: 700,
-              background: ((step === 1 && step1Valid) || (step === 2 && step2Valid))
-                ? "#00B286" : "#94A3B8",
-              borderColor: ((step === 1 && step1Valid) || (step === 2 && step2Valid))
-                ? "#00B286" : "#94A3B8",
+              background:
+                ((step === 1 && step1Valid) ||
+                 (step === 2 && (isExpedienteAssign ? assignValid : step2Valid)))
+                  ? "#00B286" : "#94A3B8",
+              borderColor:
+                ((step === 1 && step1Valid) ||
+                 (step === 2 && (isExpedienteAssign ? assignValid : step2Valid)))
+                  ? "#00B286" : "#94A3B8",
             }}
           >
             {lang === "es" ? "Siguiente" : "Next"} <IconArrow size={12}/>

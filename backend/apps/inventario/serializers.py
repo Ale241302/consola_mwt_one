@@ -94,3 +94,26 @@ class InventoryImportLogSerializer(serializers.ModelSerializer):
     class Meta:
         model  = InventoryImportLog
         fields = "__all__"
+
+
+# ─────────────────────────────────────────────────────────────────
+# Sprint 2026-05-11 · Fase 3 · Asignación de (expediente, producto,
+# talla) a nodo.
+# ─────────────────────────────────────────────────────────────────
+from .models import ExpedienteNodoAssignment  # noqa: E402
+
+
+class ExpedienteNodoAssignmentSerializer(serializers.ModelSerializer):
+    """Serializer canónico para CRUD individual y bulk."""
+    qty_asignada = serializers.IntegerField(min_value=1)
+    talla        = serializers.CharField(max_length=16, required=False,
+                                         allow_blank=True, allow_null=True)
+    notas        = serializers.CharField(required=False, allow_blank=True,
+                                         allow_null=True)
+    recepcion_id = serializers.UUIDField(required=False, allow_null=True)
+
+    class Meta:
+        model  = ExpedienteNodoAssignment
+        fields = "__all__"
+        read_only_fields = ("id", "created_by_id",
+                            "created_at", "updated_at")

@@ -13,10 +13,12 @@ from .models import (
     Stock, Movimiento, TipoMovimientoCat, MotivoCat,
     ContextoMovimientoCat,
     StockSnapshot, StockUbicacion, InventoryImportLog,
+    ExpedienteNodoAssignment,
 )
 from .serializers import (
     StockSerializer, StockListSerializer, MovimientoSerializer,
     StockSnapshotSerializer, StockUbicacionSerializer, InventoryImportLogSerializer,
+    ExpedienteNodoAssignmentSerializer,
 )
 
 
@@ -545,3 +547,227 @@ class MovimientoViewSet(viewsets.ViewSet):
              "needs_approval": c.needs_approval}
             for c in ContextoMovimientoCat.objects.filter(is_active=True)
         ])
+
+
+# =====================================================================
+# Sprint 2026-05-11 · Fase 3 — Asignaciones expediente → nodo.
+#
+# Endpoints (montados por inventario/urls.py):
+#
+#   GET /api/inventario/saldos-por-expediente/?expediente_ids=A,B,C&nodo_id=X
+#       Devuelve, para cada (expediente, producto, talla), el saldo
+#       pendiente de asignar (qty_total - SUM(asignaciones_activas)) y
+#       cuánto ya hay asignado a este nodo. El FE filtra del lado del
+#       wizard las filas con `qty_pendiente == 0`.
+#       Estructura de respuesta:
+#         [{
+#           expediente_id, expediente_codigo,
+#           producto_id, sku, nombre,
+#           talla, qty_total,
+#           qty_asignada_total, qty_asignada_a_este_nodo,
+#           qty_pendiente
+#         }, ...]
+#
+#   POST /api/inventario/nodo-assignments/bulk/
+#       Body: { recepcion_id?, items: [
+#         { expediente_id, producto_id, talla, nodo_id, qty_asignada },
+#       ] }
+#       Crea N filas append-only en `inventario.expediente_nodo_assignment`.
+#       Antes de insertar, valida que cada (expediente, producto, talla)
+#       tenga qty_pendiente >= qty_asignada (no permitir over-assign).
+#
+#   GET /api/nodos/{nodo_id}/inventory-allocated/
+#       Inventario "asignado" del nodo, agregado por (producto, talla,
+#       expediente). Devuelve sku, nombre y código del expediente para que
+#       la tab Inventario del nodo muestre la columna Expediente.
+# =====================================================================
+class NodoAssignmentViewSet(viewsets.ViewSet):
+    """Endpoints custom para asignación expediente→nodo. NO usa router CRUD."""
+
+    # ── 1) Saldos pendientes por (expediente, producto, talla) ──
+    @action(detail=False, methods=["get"], url_path="saldos-por-expediente")
+    def saldos(self, request):
+        raw_ids = (request.query_params.get("expediente_ids") or "").strip()
+        if not raw_ids:
+            return Response(
+                {"detail": "expediente_ids es requerido (csv de UUIDs)"},
+                status=400,
+            )
+        exp_ids = [s.strip() for s in raw_ids.split(",") if s.strip()]
+        nodo_id = request.query_params.get("nodo_id")  # opcional
+
+        # Una sola query SQL — más performante que armar joins ORM con FKs
+        # lógicos. Hacemos LEFT JOIN para que productos sin nombre no
+        # rompan el listado.
+        with connection.cursor() as c:
+            c.execute(
+                """
+                WITH lineas AS (
+                    SELECT
+                        l.expediente_id,
+                        e.codigo                                       AS expediente_codigo,
+                        l.producto_id,
+                        l.sku,
+                        COALESCE(p.nombre, p.descripcion, l.sku, '—')  AS nombre,
+                        l.size                                         AS talla,
+                        SUM(l.qty)::int                                AS qty_total
+                    FROM expedientes.linea l
+                    LEFT JOIN expedientes.expediente e ON e.id = l.expediente_id
+                    LEFT JOIN productos.producto     p ON p.id = l.producto_id
+                    WHERE l.expediente_id = ANY(%(exp_ids)s::uuid[])
+                      AND l.is_active = TRUE
+                      AND l.qty > 0
+                    GROUP BY l.expediente_id, e.codigo, l.producto_id, l.sku,
+                             p.nombre, p.descripcion, l.size
+                ),
+                asignado AS (
+                    SELECT
+                        expediente_id, producto_id, talla,
+                        SUM(qty_asignada)::int                         AS qty_asignada_total,
+                        SUM(qty_asignada) FILTER (WHERE nodo_id = %(nodo_id)s::uuid)::int
+                                                                       AS qty_asignada_a_este_nodo
+                    FROM inventario.expediente_nodo_assignment
+                    WHERE expediente_id = ANY(%(exp_ids)s::uuid[])
+                      AND is_active = TRUE
+                    GROUP BY expediente_id, producto_id, talla
+                )
+                SELECT
+                    l.expediente_id, l.expediente_codigo,
+                    l.producto_id, l.sku, l.nombre, l.talla,
+                    l.qty_total,
+                    COALESCE(a.qty_asignada_total, 0)        AS qty_asignada_total,
+                    COALESCE(a.qty_asignada_a_este_nodo, 0)  AS qty_asignada_a_este_nodo,
+                    (l.qty_total - COALESCE(a.qty_asignada_total, 0))::int
+                                                             AS qty_pendiente
+                FROM lineas l
+                LEFT JOIN asignado a
+                  ON a.expediente_id = l.expediente_id
+                 AND a.producto_id   = l.producto_id
+                 AND COALESCE(a.talla,'') = COALESCE(l.talla,'')
+                ORDER BY l.expediente_codigo, l.sku, l.talla
+                """,
+                {"exp_ids": exp_ids, "nodo_id": nodo_id},
+            )
+            cols = [d[0] for d in c.description]
+            rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        return Response(rows)
+
+    # ── 2) Bulk insert de asignaciones ──
+    @action(detail=False, methods=["post"], url_path="nodo-assignments/bulk")
+    def bulk_create(self, request):
+        items = request.data.get("items") or []
+        recepcion_id = request.data.get("recepcion_id")
+        if not isinstance(items, list) or len(items) == 0:
+            return Response({"detail": "items debe ser una lista no vacía"}, status=400)
+
+        # Validar over-assign antes de insertar. Agrupamos por (exp, prod,
+        # talla) para sumar las cantidades pedidas en este batch y
+        # compararlas contra el pendiente actual.
+        from collections import defaultdict
+        pedidos = defaultdict(int)
+        for it in items:
+            try:
+                key = (str(it["expediente_id"]), str(it["producto_id"]),
+                       (it.get("talla") or ""))
+                pedidos[key] += int(it["qty_asignada"])
+            except (KeyError, ValueError, TypeError) as e:
+                return Response(
+                    {"detail": f"Item inválido: {e}"}, status=400,
+                )
+
+        # Calcular pendientes actuales con la misma query del endpoint de
+        # saldos (sin filtro por nodo).
+        exp_ids = list({k[0] for k in pedidos.keys()})
+        with connection.cursor() as c:
+            c.execute(
+                """
+                SELECT l.expediente_id, l.producto_id, COALESCE(l.size,'') AS talla,
+                       SUM(l.qty)::int AS qty_total,
+                       COALESCE(SUM(a.qty_asignada)::int, 0) AS qty_asignada_total
+                FROM expedientes.linea l
+                LEFT JOIN inventario.expediente_nodo_assignment a
+                  ON a.expediente_id = l.expediente_id
+                 AND a.producto_id   = l.producto_id
+                 AND COALESCE(a.talla,'') = COALESCE(l.size,'')
+                 AND a.is_active = TRUE
+                WHERE l.expediente_id = ANY(%(exp_ids)s::uuid[])
+                  AND l.is_active = TRUE
+                GROUP BY l.expediente_id, l.producto_id, l.size
+                """,
+                {"exp_ids": exp_ids},
+            )
+            pendientes = {
+                (str(r[0]), str(r[1]), r[2]): (r[3] or 0) - (r[4] or 0)
+                for r in c.fetchall()
+            }
+
+        # Validar
+        for key, qty_pedida in pedidos.items():
+            disp = pendientes.get(key, 0)
+            if qty_pedida > disp:
+                return Response({
+                    "detail": "Over-assignment detectado",
+                    "expediente_id": key[0], "producto_id": key[1],
+                    "talla": key[2], "qty_pedida": qty_pedida,
+                    "qty_disponible": disp,
+                }, status=400)
+
+        uploader = getattr(request.user, "id", None) if request.user else None
+        if not isinstance(uploader, uuid.UUID):
+            uploader = None
+
+        created = []
+        with transaction.atomic():
+            for it in items:
+                row = ExpedienteNodoAssignment.objects.create(
+                    id=uuid.uuid4(),
+                    expediente_id=it["expediente_id"],
+                    producto_id=it["producto_id"],
+                    talla=(it.get("talla") or None),
+                    nodo_id=it["nodo_id"],
+                    qty_asignada=int(it["qty_asignada"]),
+                    recepcion_id=recepcion_id or None,
+                    notas=it.get("notas") or None,
+                    created_by_id=uploader,
+                    is_active=True,
+                )
+                created.append(row)
+
+        return Response(
+            ExpedienteNodoAssignmentSerializer(created, many=True).data,
+            status=201,
+        )
+
+    # ── 3) Inventario asignado de un nodo (con expediente_codigo) ──
+    @action(detail=False, methods=["get"], url_path=r"nodos/(?P<nodo_id>[^/.]+)/inventory-allocated")
+    def inventory_allocated(self, request, nodo_id=None):
+        with connection.cursor() as c:
+            c.execute(
+                """
+                SELECT
+                    l.producto_id,
+                    l.sku,
+                    COALESCE(p.nombre, p.descripcion, l.sku, '—')  AS nombre,
+                    a.talla,
+                    a.expediente_id,
+                    e.codigo                                       AS expediente_codigo,
+                    SUM(a.qty_asignada)::int                       AS qty
+                FROM inventario.expediente_nodo_assignment a
+                JOIN expedientes.linea l
+                  ON l.expediente_id = a.expediente_id
+                 AND l.producto_id   = a.producto_id
+                 AND COALESCE(l.size,'') = COALESCE(a.talla,'')
+                LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
+                LEFT JOIN productos.producto     p ON p.id = a.producto_id
+                WHERE a.nodo_id = %(nodo_id)s::uuid
+                  AND a.is_active = TRUE
+                GROUP BY l.producto_id, l.sku, p.nombre, p.descripcion,
+                         a.talla, a.expediente_id, e.codigo
+                HAVING SUM(a.qty_asignada) > 0
+                ORDER BY e.codigo, l.sku, a.talla
+                """,
+                {"nodo_id": nodo_id},
+            )
+            cols = [d[0] for d in c.description]
+            rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        return Response(rows)

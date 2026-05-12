@@ -47,7 +47,10 @@ const STATUS_OPTIONS = [
   { k:'RETIRED',  l:'Retirado'  },
 ];
 import { tr, fmtMoney } from "../lib/i18n.js";
-import { nodosApi, stockApi, transferenciasApi, nodoArtefactosApi } from "../lib/api.js";
+import {
+  nodosApi, stockApi, transferenciasApi,
+  nodoArtefactosApi, nodoAssignmentsApi,
+} from "../lib/api.js";
 // Sprint 2026-05-11 · Fase 2 · tab Artefactos.
 import NodoArtifactsTab from "../components/nodos/NodoArtifactsTab.jsx";
 import {
@@ -393,6 +396,7 @@ export default function ScreenNodoDetail() {
               <InventoryTab
                 inventory={inventory}
                 lang={lang}
+                nodeId={nodeId}
                 onProductClick={(r) => r.producto_id && navigate(`/productos/${r.producto_id}`)}
               />
             )}
@@ -540,7 +544,94 @@ function OverviewTab({ node, inventory, transfers, lang }) {
 }
 
 /* ─────────────── Tab: Inventario (semáforo días stock) ─────────────── */
-function InventoryTab({ inventory, lang, onProductClick }) {
+function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
+  // Sprint 2026-05-11 · Fase 3 · Si hay registros en
+  // `inventario.expediente_nodo_assignment` para este nodo, preferimos
+  // mostrar ESE inventario (incluye columna Expediente). Si la consulta
+  // vuelve vacía o falla, caemos al inventario legacy (Stock).
+  const [allocated, setAllocated] = useState(null);  // null=loading · []=fetched
+  useEffect(() => {
+    let cancel = false;
+    if (!nodeId) { setAllocated([]); return; }
+    nodoAssignmentsApi.inventoryAllocated(nodeId)
+      .then((data) => {
+        if (cancel) return;
+        const arr = Array.isArray(data) ? data : (data?.results || []);
+        setAllocated(arr);
+      })
+      .catch(() => { if (!cancel) setAllocated([]); });
+    return () => { cancel = true; };
+  }, [nodeId]);
+
+  // Decidimos cuál fuente renderizar.
+  const useAllocated = Array.isArray(allocated) && allocated.length > 0;
+
+  if (useAllocated) {
+    const totalUnits = allocated.reduce((a, r) => a + Number(r.qty || 0), 0);
+    return (
+      <div className="card" style={{ marginTop: 12 }}>
+        <div className="card-head">
+          <div>
+            <div className="card-title">
+              {lang === 'es' ? 'Inventario asignado por expediente' : 'Inventory allocated by expediente'}
+            </div>
+            <div className="card-subtitle">
+              {allocated.length} {lang === 'es' ? 'líneas' : 'lines'} · {totalUnits.toLocaleString()} u.
+            </div>
+          </div>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="table">
+            <thead><tr>
+              <th>SKU</th>
+              <th>{lang === 'es' ? 'Nombre' : 'Name'}</th>
+              <th style={{ textAlign: 'center', width: 80 }}>
+                {lang === 'es' ? 'Talla' : 'Size'}
+              </th>
+              <th style={{ textAlign: 'right', width: 100 }}>
+                {lang === 'es' ? 'Cant.' : 'Qty'}
+              </th>
+              <th style={{ width: 140 }}>
+                {lang === 'es' ? 'Expediente' : 'Expediente'}
+              </th>
+            </tr></thead>
+            <tbody>
+              {allocated.map((r, i) => (
+                <tr key={`${r.producto_id}-${r.talla || ''}-${r.expediente_id}-${i}`}>
+                  <td style={{ font: '600 12.5px/1.2 var(--font-mono)',
+                               color: 'var(--interactive)' }}>{r.sku || '—'}</td>
+                  <td>{r.nombre || '—'}</td>
+                  <td style={{ textAlign: 'center' }}>
+                    {r.talla
+                      ? <span style={{
+                          display: 'inline-block', padding: '2px 10px',
+                          borderRadius: 999,
+                          background: 'color-mix(in oklab, var(--brand-primary, #481EE3) 12%, transparent)',
+                          color: 'var(--brand-primary, #481EE3)',
+                          fontSize: 11, fontWeight: 700,
+                          fontFamily: 'var(--font-mono)',
+                        }}>{r.talla}</span>
+                      : <span style={{ color: 'var(--text-tertiary)' }}>—</span>}
+                  </td>
+                  <td className="td-num tabular-nums">
+                    {Number(r.qty || 0).toLocaleString()}
+                  </td>
+                  <td>
+                    <span className="mono-sm" style={{ fontWeight: 600,
+                                                       color: 'var(--brand-primary)' }}>
+                      {r.expediente_codigo || '—'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Fallback legacy: Stock por nodo (no tiene columna Expediente) ──
   const totalValue = inventory.reduce((a,r)=>a+(r.value||0), 0);
   const totalUnits = inventory.reduce((a,r)=>a+(r.qty||0),  0);
   return (

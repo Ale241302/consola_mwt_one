@@ -211,3 +211,31 @@ class InventoryImportLog(models.Model):
         managed  = False
         db_table = 'inventario"."inventory_import_log'
         ordering = ("-created_at",)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Sprint 2026-05-11 · Fase 3 del paquete Nodos + Recepción.
+# Tabla `inventario.expediente_nodo_assignment` creada por SQL
+# 65b_expediente_nodo_assignment.sql.
+#
+# Modelo append-only: cada confirmación del wizard de recepción inserta
+# una o más filas. Los saldos se calculan por SUM(qty_asignada).
+# ─────────────────────────────────────────────────────────────────
+class ExpedienteNodoAssignment(models.Model):
+    id             = models.UUIDField(primary_key=True)
+    expediente_id  = models.UUIDField()                                 # ⛔ sin FK
+    producto_id    = models.UUIDField()                                 # ⛔ sin FK
+    talla          = models.CharField(max_length=16, null=True, blank=True)
+    nodo_id        = models.UUIDField()                                 # ⛔ sin FK
+    qty_asignada   = models.IntegerField()                              # CHECK > 0 en BD
+    recepcion_id   = models.UUIDField(null=True, blank=True)            # ⛔ sin FK
+    notas          = models.TextField(null=True, blank=True)
+    created_by_id  = models.UUIDField(null=True, blank=True)            # ⛔ sin FK
+    is_active      = models.BooleanField(default=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
+    updated_at     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'inventario"."expediente_nodo_assignment'
+        ordering = ("-created_at",)

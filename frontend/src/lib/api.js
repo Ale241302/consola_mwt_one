@@ -455,6 +455,40 @@ export const nodoArtefactosApi = {
 };
 
 // ---------------------------------------------------------------------
+// Sprint 2026-05-11 · Fase 3 · Asignaciones expediente→nodo.
+//
+// Rutas backend:
+//   GET  /api/inventario/saldos-por-expediente/?expediente_ids=A,B,C&nodo_id=X
+//   POST /api/inventario/nodo-assignments/bulk/
+//   GET  /api/inventario/nodos/{nodoId}/inventory-allocated/
+//
+// Flujo del wizard de recepción (paso 2 nuevo):
+//   1. Usuario elige un nodo destino en paso 1.
+//   2. Usuario selecciona uno o más expedientes en el paso 2.
+//   3. FE llama saldos.list(exp_ids, nodo_id) para conocer cuánto queda
+//      por asignar de cada (producto, talla).
+//   4. Usuario marca/edita cantidades.
+//   5. Al confirmar (paso 3), FE llama assignments.bulkCreate({items}).
+// ---------------------------------------------------------------------
+export const nodoAssignmentsApi = {
+  saldosPorExpediente: ({ expedienteIds = [], nodoId } = {}) => {
+    const params = new URLSearchParams();
+    if (expedienteIds.length) params.set("expediente_ids", expedienteIds.join(","));
+    if (nodoId)               params.set("nodo_id", nodoId);
+    return apiFetch(
+      `/inventario/saldos-por-expediente/?${params.toString()}`,
+      { token: getToken() },
+    );
+  },
+  bulkCreate: (payload) =>
+    apiFetch(`/inventario/nodo-assignments/bulk/`,
+             { method: "POST", body: payload, token: getToken() }),
+  inventoryAllocated: (nodoId) =>
+    apiFetch(`/inventario/nodos/${nodoId}/inventory-allocated/`,
+             { token: getToken() }),
+};
+
+// ---------------------------------------------------------------------
 // Finance v2.0 · "Registrar Pago" con validación IA del comprobante
 //   POST /api/finance/payments/                  (multipart · drawer)
 //   GET  /api/finance/payments/                  (lista + filtros)
