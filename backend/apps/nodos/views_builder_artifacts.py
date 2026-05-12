@@ -314,13 +314,17 @@ class NodoBuilderArtifactAvailableLinesView(APIView):
         except (TypeError, ValueError):
             return Response({"detail": "nodo_id inválido"}, status=400)
 
+        # Sprint 2026-05-11 fase 5 fix · template_id es OPCIONAL.
+        # En modo create del scope todavía no hay template — devolvemos
+        # qty_base sin descuento. Cuando se pasa template_id se aplica
+        # el descuento por uso previo del mismo template.
         template_id = request.query_params.get("template_id")
-        if not template_id:
-            return Response({"detail": "template_id requerido"}, status=400)
-        try:
-            template_id_int = int(template_id)
-        except (TypeError, ValueError):
-            return Response({"detail": "template_id debe ser entero"}, status=400)
+        template_id_int = None
+        if template_id:
+            try:
+                template_id_int = int(template_id)
+            except (TypeError, ValueError):
+                return Response({"detail": "template_id debe ser entero"}, status=400)
 
         raw_exp_ids = (request.query_params.get("expediente_ids") or "").strip()
         exp_ids = [s.strip() for s in raw_exp_ids.split(",") if s.strip()]
@@ -334,6 +338,8 @@ class NodoBuilderArtifactAvailableLinesView(APIView):
         #    instancias están activas, pertenecen al nodo y al template;
         #    se excluye `exclude_instance_id` (caso edit).
         # 3) saldo = base - usado.
+        # Si NO hay template_id, el CTE `usado` queda vacío (filtro
+        # imposible) y qty_disponible == qty_base.
         sql = """
             WITH base AS (
                 SELECT
@@ -368,6 +374,9 @@ class NodoBuilderArtifactAvailableLinesView(APIView):
                     ln.sku, p.nombre, p.descripcion
             ),
             usado AS (
+                -- Si NO hay template_id, este CTE queda vacío
+                -- (la condición %(template_id)s IS NULL se cumple
+                -- antes del filtro real y no hay rows).
                 SELECT
                     bal.expediente_id,
                     bal.producto_id,
@@ -379,7 +388,8 @@ class NodoBuilderArtifactAvailableLinesView(APIView):
                 WHERE bal.nodo_id      = %(nodo_id)s::uuid
                   AND bal.is_active    = TRUE
                   AND bai.is_active    = TRUE
-                  AND bai.template_id  = %(template_id)s
+                  AND %(template_id)s::int IS NOT NULL
+                  AND bai.template_id  = %(template_id)s::int
                   AND (
                        %(exclude_iid)s::uuid IS NULL
                     OR bai.id <> %(exclude_iid)s::uuid
@@ -408,7 +418,7 @@ class NodoBuilderArtifactAvailableLinesView(APIView):
             with connection.cursor() as c:
                 c.execute(sql, {
                     "nodo_id":        nodo_id,
-                    "template_id":    template_id_int,
+                    "template_id":    template_id_int,   # puede ser None
                     "has_exp_filter": bool(exp_ids),
                     "exp_ids":        exp_ids,
                     "exclude_iid":    exclude_instance_id,
