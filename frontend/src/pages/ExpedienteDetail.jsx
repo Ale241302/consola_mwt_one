@@ -9,10 +9,14 @@ import {
 import {
   Badge, StatusBadge, Progress, StateTimeline, CreditBar, CountryFlag,
 } from "../components/ui/primitives.jsx";
-import { ArtifactsBoard } from "../components/ArtifactsBoard.jsx";
-import BuilderArtifactsBoard from "../components/expedientes/builderArtifacts/BuilderArtifactsBoard.jsx";
-import ArtifactsSummaryCard from "../components/expedientes/builderArtifacts/ArtifactsSummaryCard.jsx";
-import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmakerWizard.jsx";
+// Sprint 2026-05-11 · CEO desconectó la tab "Documentos" del expediente:
+// los artefactos (Proforma, BL, etc.) se gestionan ahora desde el Builder
+// externo (https://builder.muito.work) y no se renderizan aquí. Imports
+// preservados como comentario para referencia rápida si hay que restaurar:
+//   import { ArtifactsBoard } from "../components/ArtifactsBoard.jsx";
+//   import BuilderArtifactsBoard from "../components/expedientes/builderArtifacts/BuilderArtifactsBoard.jsx";
+//   import ArtifactsSummaryCard from "../components/expedientes/builderArtifacts/ArtifactsSummaryCard.jsx";
+//   import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmakerWizard.jsx";
 import CommercialDataHardStop from "../components/expedientes/CommercialDataHardStop.jsx";
 import { ManualLinePanel } from "../components/expedientes/ManualLineModal.jsx";
 import {
@@ -24,7 +28,9 @@ import {
 } from "../lib/icons.jsx";
 import {
   EXPEDIENTES, CLIENTS, BRANDS, OCS, HERO_ID, HERO_LINES, HERO_COSTS,
-  HERO_PAGOS, HERO_ARTIFACTS, HERO_ACTIVITY,
+  HERO_PAGOS, HERO_ACTIVITY,
+  // Sprint 2026-05-11 · HERO_ARTIFACTS desimportado al desconectar
+  // la tab Documentos. Reincluir si se restaura el board de artefactos.
 } from "../data/mockData.js";
 import { useRole } from "../context/RoleContext.jsx";
 import {
@@ -248,10 +254,9 @@ export default function ScreenExpedienteDetail() {
   const [showAdvance, setShowAdvance] = useState(false);
   const [showCostDrawer, setShowCostDrawer] = useState(false);
   const [showPaymentDrawer, setShowPaymentDrawer] = useState(false);
-  // Sprint Document Matchmaker (2026-04-29) — wizard de auditoría IA.
-  // Solo CEO/admin puede cruzar documentos contra la BD; el cliente B2B
-  // solo visualiza los artefactos publicados.
-  const [showMatchmaker, setShowMatchmaker] = useState(false);
+  // Sprint 2026-05-11 · El wizard de auditoría documental (Document
+  // Matchmaker) se desacopló junto con la tab Documentos. Si vuelve, se
+  // re-instancia el state `showMatchmaker` y el <DocumentMatchmakerWizard/>.
 
   // Sprint 2026-05-07 · La Proforma HTML se autogenera en el backend
   // cuando el usuario sube un documento kind='PROFORMA' (hookeado en
@@ -264,7 +269,9 @@ export default function ScreenExpedienteDetail() {
   const lines = isHero ? HERO_LINES : (apiLines.length ? apiLines : []);
   const costs = isHero ? HERO_COSTS : [];
   const pagos = isHero ? HERO_PAGOS : [];
-  const artifacts = isHero ? HERO_ARTIFACTS : [];
+  // Sprint 2026-05-11 · `artifacts` ya no se usa en el render (tab
+  // "Documentos" desconectada del expediente). El import de HERO_ARTIFACTS
+  // queda disponible para reactivar si se reintegra el board.
   const activity = isHero ? HERO_ACTIVITY : [];
 
   // Loading / not-found para expedientes reales que aún no llegan del API
@@ -469,12 +476,14 @@ export default function ScreenExpedienteDetail() {
           {/* Tabs. Para CLIENT B2B escondemos:
                 · 'costs'     → composición interna de costos (CEO-ONLY)
                 · 'activity'  → logs de state machine (INTERNAL)
-              El cliente sólo ve: resumen, productos, documentos, pagos. */}
+              Sprint 2026-05-11 · Se elimina la tab 'artifacts' / Documentos:
+              los artefactos viven en el Builder externo y se gestionan desde
+              fuera de este expediente. El cliente sólo ve: resumen, productos,
+              pagos. CEO/Admin además ve: costos, actividad. */}
           <div className="tabs" style={{ marginBottom: 16 }}>
             {[
               ['overview', tr(lang,'tab_overview'), null,                true],
               ['lines',    tr(lang,'tab_lines'),    lines.length,        true],
-              ['artifacts',tr(lang,'tab_artifacts'),artifacts.length,    true],
               ['costs',    tr(lang,'tab_costs'),    costs.length,        !isClient],
               ['payments', tr(lang,'tab_payments'), pagos.length,        true],
               ['activity', tr(lang,'tab_activity'), activity.length,     !isClient],
@@ -494,70 +503,17 @@ export default function ScreenExpedienteDetail() {
               <OverviewTab exp={exp} lang={lang} lines={lines}
                            activity={activity} isClient={isClient}
                            isHeroOrMock={isHeroOrMock}
-                           cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap}
-                           onOpenArtifactsTab={() => setTab('artifacts')}/>
+                           cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap}/>
             </>
           )}
           {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap} exp={exp} isClient={isClient} onLineAdded={() => setLinesReload(n => n + 1)}/>}
-          {tab === 'artifacts' && (
-            <div>
-              {/* Toolbar de artifacts: solo visible para CEO/admin.
-                  El botón "Auditar documento con IA" abre el wizard
-                  Document Matchmaker (cruce IA gpt-5-nano vs BD). */}
-              {!isClient && (
-                <div style={{
-                  display: "flex", justifyContent: "space-between", alignItems: "center",
-                  marginBottom: 14, padding: "10px 14px", borderRadius: 10,
-                  background: "linear-gradient(135deg, rgba(72,30,227,0.05), rgba(0,178,134,0.04))",
-                  border: "1px solid rgba(72,30,227,0.18)",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <IconSparkle size={14} style={{ color: "#481EE3" }}/>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: "#0B1E3A" }}>
-                        {lang === "es"
-                          ? "Auditoría documental con IA"
-                          : "AI Document Audit"}
-                      </div>
-                      <div className="caption" style={{ color: "var(--text-secondary)", fontSize: 11 }}>
-                        {lang === "es"
-                          ? "Sube OC / Proforma / Confirmación SAP y cruza contra la BD con gpt-5-nano."
-                          : "Upload PO / Proforma / SAP confirmation and cross-check the DB with gpt-5-nano."}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowMatchmaker(true)}
-                    className="btn btn-accent"
-                    style={{
-                      fontWeight: 700, background: "#481EE3", borderColor: "#481EE3",
-                      letterSpacing: 0.3,
-                    }}>
-                    <IconUpload size={12}/>{" "}
-                    {lang === "es" ? "Auditar documento" : "Audit document"}
-                  </button>
-                </div>
-              )}
-              {/* Sprint 2026-05-01: el board legacy mock-only se reemplaza
-                  por el nuevo board dinámico que consume:
-                    · Builder externo (templates) vía /api/builder/templates/
-                    · Backend Consola (instancias) vía
-                      /api/expedientes/{id}/artifacts/
-                  Se mantiene el legacy <ArtifactsBoard> SÓLO para el HERO
-                  demo (mock data) mientras VITE_USE_MOCKS=1. */}
-              {isHeroOrMock ? (
-                <ArtifactsBoard expedienteId={exp.id} lang={lang} readOnly={isClient}/>
-              ) : (
-                <BuilderArtifactsBoard
-                  expedienteId={exp.id}
-                  currentStage={(exp.estado || "REGISTRO").toUpperCase()}
-                  lang={lang}
-                  readOnly={isClient}
-                />
-              )}
-            </div>
-          )}
+          {/* Sprint 2026-05-11 · Bloque `{tab === 'artifacts' && (...)}`
+              removido. Los artefactos (Proforma, BL, Packing List, etc.) se
+              gestionan en el Builder externo (https://builder.muito.work) y
+              ya no se renderizan ni se consultan desde esta vista. La API
+              `/api/expedientes/{id}/artifacts/` + `/api/builder/templates/`
+              sigue disponible en `lib/api.js` (builderArtifactsApi /
+              builderTemplatesApi) por si se vuelve a montar el board. */}
           {tab === 'costs'     && !isClient && <CostsTab costs={costs} lang={lang} onAdd={() => setShowCostDrawer(true)}/>}
           {tab === 'payments'  && <PaymentsTab pagos={pagos} lang={lang} exp={exp}
                                                onAdd={isClient ? null : () => setShowPaymentDrawer(true)}
@@ -604,32 +560,22 @@ export default function ScreenExpedienteDetail() {
       )}
       {showCostDrawer  && <CostDrawer lang={lang} exp={exp} onClose={() => setShowCostDrawer(false)}/>}
       {showPaymentDrawer && <PaymentDrawer lang={lang} exp={exp} onClose={() => setShowPaymentDrawer(false)}/>}
-      {showMatchmaker && (
-        <DocumentMatchmakerWizard
-          expedienteId={exp.id}
-          clientId={exp.client_id}
-          lang={lang}
-          onClose={() => setShowMatchmaker(false)}
-          onApplied={() => {
-            // Después de aplicar resoluciones, refrescar la página para
-            // que las líneas del expediente reflejen los cambios.
-            // navigate(0) hace un soft-reload manteniendo el JWT.
-            setTimeout(() => navigate(0), 800);
-          }}
-        />
-      )}
+      {/* Sprint 2026-05-11 · <DocumentMatchmakerWizard/> desmontado. Se
+          reactiva junto con la tab Documentos en un sprint posterior si
+          se decide reintegrar el cruce IA gpt-5-nano contra los artefactos. */}
     </div>
   );
 }
 
-function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifactsTab, cpaPriceMap, productoNombreMap, isClient = false }) {
+function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, productoNombreMap, isClient = false }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
-      {/* Sprint 2026-05-01: el card "Detalles" mostraba modo/flete/ETA/
-          contenedores/origen/destino que viven en los artefactos del
-          expediente. Lo reemplazamos por un resumen real del board de
-          artefactos. Mantenemos el legacy SOLO para HERO mock. */}
-      {isHeroOrMock ? (
+      {/* Sprint 2026-05-11 · Se elimina el <ArtifactsSummaryCard/> que
+          consumía /api/expedientes/{id}/artifacts/ — los artefactos viven
+          ahora en el Builder externo. Para HERO mock dejamos el card
+          legacy "Detalles" porque no depende del Builder. Para expedientes
+          reales el Overview muestra solo Notas + Productos + Actividad. */}
+      {isHeroOrMock && (
         <div className="card">
           <div className="card-head">
             <div className="card-title">{tr(lang,'details')}</div>
@@ -650,13 +596,6 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, onOpenArtifacts
             <DetailRow label={lang==='es'?'Moneda':'Currency'} value={exp.currency}/>
           </div>
         </div>
-      ) : (
-        <ArtifactsSummaryCard
-          expedienteId={exp.id}
-          currentStage={(exp.estado || "REGISTRO").toUpperCase()}
-          lang={lang}
-          onOpenTab={onOpenArtifactsTab}
-        />
       )}
 
       {exp.notes && (
@@ -1042,47 +981,10 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
   );
 }
 
-function ArtifactsTab({ artifacts, lang }) {
-  return (
-    <div className="card">
-      <div className="card-head">
-        <div className="card-title">{lang==='es' ? 'Documentos del expediente' : 'File documents'}</div>
-        <button className="btn btn-primary btn-sm"><IconUpload size={13}/>{tr(lang,'upload')}</button>
-      </div>
-      <div style={{ padding: 12 }}>
-        {artifacts.map(a => {
-          const icon = { issued:<IconCheck size={14}/>, pending:<IconClock size={14}/>, future:<IconFileText size={14}/> }[a.status];
-          const color = { issued:'var(--success)', pending:'var(--warning)', future:'var(--text-tertiary)' }[a.status];
-          const bg = { issued:'var(--success-bg)', pending:'var(--warning-bg)', future:'var(--bg-alt)' }[a.status];
-          return (
-            <div key={a.id} style={{ display:'flex', gap:12, alignItems:'center', padding:'12px 12px', borderBottom:'1px solid var(--divider)' }}>
-              <div style={{ width:36, height:36, background: bg, color, borderRadius: 8, display:'grid', placeItems:'center', flexShrink:0 }}>
-                {icon}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="flex ai-center gap-2">
-                  <span className="heading-sm" style={{ color:'var(--text-primary)' }}>{a.kind}</span>
-                  {a.code && <span className="mono-sm text-ter">· {a.code}</span>}
-                </div>
-                <div className="caption" style={{ marginTop: 2 }}>
-                  {a.status === 'issued' && `${tr(lang,'doc_status_issued')} · ${fmtDate(a.date, lang)} · ${a.author}`}
-                  {a.status === 'pending' && (lang==='es' ? 'Esperando emisión del proveedor' : 'Awaiting supplier issuance')}
-                  {a.status === 'future' && (lang==='es' ? 'Se emitirá al arribar a destino' : 'Will be issued on arrival')}
-                </div>
-              </div>
-              <Badge kind={a.status==='issued'?'success':a.status==='pending'?'warning':'neutral'}>{tr(lang,'doc_status_'+a.status)}</Badge>
-              {a.status === 'issued' ? (
-                <button className="btn btn-ghost btn-sm"><IconDownload size={13}/>PDF</button>
-              ) : a.status === 'pending' ? (
-                <button className="btn btn-secondary btn-sm"><IconUpload size={13}/>{tr(lang,'upload')}</button>
-              ) : <button className="btn btn-ghost btn-sm" disabled>—</button>}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+// Sprint 2026-05-11 · La función legacy `ArtifactsTab` (mock HERO viewer)
+// se removió junto con la tab Documentos. Se preservan los componentes
+// reales (BuilderArtifactsBoard / ArtifactsSummaryCard) en
+// components/expedientes/builderArtifacts/ por si la tab se reintegra.
 
 function CostsTab({ costs, lang, onAdd }) {
   const total = costs.reduce((a,c) => a+c.amount, 0);
