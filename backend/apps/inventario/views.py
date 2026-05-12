@@ -796,6 +796,166 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             rows = [dict(zip(cols, r)) for r in c.fetchall()]
         return Response(rows)
 
+    # ── 5) Ajuste de cantidad asignada (editar/eliminar in-line) ──
+    # Sprint 2026-05-11 fix · El usuario abre la tab Inventario del nodo
+    # (que muestra el resultado AGREGADO por (producto, talla, expediente))
+    # y quiere poder cambiar la cantidad o eliminar la línea sin entrar al
+    # wizard. Como la tabla `expediente_nodo_assignment` es append-only,
+    # implementamos "ajuste" así:
+    #   1. Soft-deletea (is_active=FALSE) todas las rows activas que
+    #      matchean (nodo_id, expediente_id, producto_id, talla).
+    #   2. Si new_qty > 0: inserta una sola fila nueva con esa cantidad.
+    #   3. Atómico (transaction.atomic) — si algo falla, revierte todo.
+    # Esto preserva auditoría (las rows viejas con is_active=FALSE quedan)
+    # y deja la suma agregada en el valor deseado.
+    @action(detail=False, methods=["post"], url_path="nodo-assignments/adjust")
+    def adjust(self, request):
+        try:
+            expediente_id = request.data["expediente_id"]
+            producto_id   = request.data["producto_id"]
+            nodo_id       = request.data["nodo_id"]
+            new_qty       = int(request.data["new_qty"])
+        except (KeyError, ValueError, TypeError) as e:
+            return Response({"detail": f"Payload inválido: {e}"}, status=400)
+        talla = request.data.get("talla") or ""
+        if new_qty < 0:
+            return Response({"detail": "new_qty no puede ser negativo"}, status=400)
+
+        # Si la nueva cantidad es > 0, validar over-assign contra el saldo
+        # del expediente excluyendo lo que ya tiene ESTE nodo (que vamos a
+        # reemplazar). qty_pendiente_efectiva = qty_total
+        #   - (qty_asignada_total - qty_asignada_a_este_nodo)
+        if new_qty > 0:
+            with connection.cursor() as c:
+                c.execute(
+                    """
+                    SELECT
+                        SUM(l.qty)::int                              AS qty_total,
+                        COALESCE(SUM(a.qty_asignada)::int, 0)        AS qty_total_asig,
+                        COALESCE(SUM(a.qty_asignada)
+                                 FILTER (WHERE a.nodo_id = %(nodo_id)s::uuid)::int, 0)
+                                                                     AS qty_este_nodo
+                    FROM expedientes.linea l
+                    LEFT JOIN inventario.expediente_nodo_assignment a
+                      ON a.expediente_id = l.expediente_id
+                     AND a.producto_id   = l.producto_id
+                     AND COALESCE(a.talla,'') = COALESCE(l.size,'')
+                     AND a.is_active = TRUE
+                    WHERE l.expediente_id = %(exp_id)s::uuid
+                      AND l.producto_id   = %(prod_id)s::uuid
+                      AND COALESCE(l.size,'') = %(talla)s
+                      AND l.is_active = TRUE
+                    """,
+                    {
+                        "exp_id": expediente_id, "prod_id": producto_id,
+                        "talla": talla, "nodo_id": nodo_id,
+                    },
+                )
+                row = c.fetchone() or (0, 0, 0)
+                qty_total = row[0] or 0
+                qty_total_asig = row[1] or 0
+                qty_este_nodo = row[2] or 0
+                disponible = qty_total - (qty_total_asig - qty_este_nodo)
+                if new_qty > disponible:
+                    return Response({
+                        "detail": "Over-assignment al ajustar",
+                        "new_qty": new_qty, "qty_disponible": disponible,
+                    }, status=400)
+
+        # Aplicar el cambio en una transacción
+        uploader = getattr(request.user, "id", None) if request.user else None
+        if not isinstance(uploader, uuid.UUID):
+            uploader = None
+
+        with transaction.atomic():
+            # 1) soft-delete de las rows activas que matchean
+            qs = ExpedienteNodoAssignment.objects.filter(
+                is_active=True,
+                nodo_id=nodo_id,
+                expediente_id=expediente_id,
+                producto_id=producto_id,
+            )
+            # talla puede ser NULL — usamos OR para matchear ambas formas
+            if talla in ("", None):
+                qs = qs.filter(talla__isnull=True) | qs.filter(talla="")
+            else:
+                qs = qs.filter(talla=talla)
+            qs.update(is_active=False)
+
+            # 2) Insertar nueva si new_qty > 0
+            new_row = None
+            if new_qty > 0:
+                new_row = ExpedienteNodoAssignment.objects.create(
+                    id=uuid.uuid4(),
+                    expediente_id=expediente_id,
+                    producto_id=producto_id,
+                    talla=(talla or None),
+                    nodo_id=nodo_id,
+                    qty_asignada=new_qty,
+                    recepcion_id=None,
+                    notas="adjust",
+                    created_by_id=uploader,
+                    is_active=True,
+                )
+
+        return Response({
+            "ok": True,
+            "new_qty": new_qty,
+            "row_id": str(new_row.id) if new_row else None,
+        })
+
+    # ── 6) Expedientes asignados a un nodo (vista enriquecida) ──
+    # Sprint 2026-05-11 fix · Para la tab "Expedientes" del detalle de
+    # nodo: una fila por expediente con cliente, operador (operating_
+    # company), SAP, proforma, código de OC, fecha de registro, y total
+    # de unidades asignadas al nodo desde ese expediente.
+    @action(detail=False, methods=["get"],
+            url_path=r"nodos/(?P<nodo_id>[^/.]+)/expedientes-asignados")
+    def expedientes_asignados(self, request, nodo_id=None):
+        with connection.cursor() as c:
+            c.execute(
+                """
+                SELECT
+                    e.id                                          AS expediente_id,
+                    e.codigo                                      AS expediente_codigo,
+                    e.sap                                         AS expediente_sap,
+                    e.proforma                                    AS expediente_proforma,
+                    e.estado                                      AS expediente_estado,
+                    e.created_at                                  AS fecha_registro,
+                    e.oc_id,
+                    oc.codigo                                     AS oc_codigo,
+                    oc.sap                                        AS oc_sap,
+                    oc.proforma                                   AS oc_proforma,
+                    e.client_id,
+                    COALESCE(cl.razon_social, cl.nombre,
+                             cl.codigo, cl.rut, '—')              AS client_nombre,
+                    e.operating_company_id,
+                    COALESCE(op.razon_social, op.nombre,
+                             op.codigo, op.rut, '—')              AS operating_company_nombre,
+                    SUM(a.qty_asignada)::int                      AS qty_total_asignada,
+                    COUNT(DISTINCT (a.producto_id, COALESCE(a.talla,'')))::int
+                                                                  AS lines_count
+                FROM inventario.expediente_nodo_assignment a
+                LEFT JOIN expedientes.expediente e   ON e.id  = a.expediente_id
+                LEFT JOIN expedientes.oc         oc  ON oc.id = e.oc_id
+                LEFT JOIN clientes.cliente       cl  ON cl.id = e.client_id
+                LEFT JOIN clientes.cliente       op  ON op.id = e.operating_company_id
+                WHERE a.nodo_id = %(nodo_id)s::uuid
+                  AND a.is_active = TRUE
+                GROUP BY
+                    e.id, e.codigo, e.sap, e.proforma, e.estado, e.created_at,
+                    e.oc_id, oc.codigo, oc.sap, oc.proforma,
+                    e.client_id, cl.razon_social, cl.nombre, cl.codigo, cl.rut,
+                    e.operating_company_id, op.razon_social, op.nombre, op.codigo, op.rut
+                HAVING SUM(a.qty_asignada) > 0
+                ORDER BY e.codigo
+                """,
+                {"nodo_id": nodo_id},
+            )
+            cols = [d[0] for d in c.description]
+            rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        return Response(rows)
+
     # ── 3) Inventario asignado de un nodo (con expediente_codigo) ──
     @action(detail=False, methods=["get"], url_path=r"nodos/(?P<nodo_id>[^/.]+)/inventory-allocated")
     def inventory_allocated(self, request, nodo_id=None):

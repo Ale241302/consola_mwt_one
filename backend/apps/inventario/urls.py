@@ -22,6 +22,9 @@ saldos_view              = NodoAssignmentViewSet.as_view({"get":  "saldos"})
 bulk_create_view         = NodoAssignmentViewSet.as_view({"post": "bulk_create"})
 inventory_allocated_view = NodoAssignmentViewSet.as_view({"get":  "inventory_allocated"})
 overview_view            = NodoAssignmentViewSet.as_view({"get":  "allocations_overview"})
+# Sprint 2026-05-11 fix · adjust (editar/eliminar) + expedientes-asignados.
+adjust_view              = NodoAssignmentViewSet.as_view({"post": "adjust"})
+exp_asignados_view       = NodoAssignmentViewSet.as_view({"get":  "expedientes_asignados"})
 
 urlpatterns = router.urls + [
     # Inbound Engine v1 (sprint 2026-04-29)
@@ -39,4 +42,12 @@ urlpatterns = router.urls + [
     path("inventario/allocations-overview/",
          overview_view,
          name="ena-allocations-overview"),
+    # Sprint 2026-05-11 fix · ajuste in-line de qty asignada.
+    path("inventario/nodo-assignments/adjust/",
+         adjust_view,
+         name="ena-adjust"),
+    # Sprint 2026-05-11 fix · resumen de expedientes asignados a un nodo.
+    path("inventario/nodos/<uuid:nodo_id>/expedientes-asignados/",
+         exp_asignados_view,
+         name="ena-expedientes-asignados"),
 ]

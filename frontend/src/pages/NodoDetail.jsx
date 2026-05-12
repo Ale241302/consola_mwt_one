@@ -5,7 +5,7 @@
 // Tabs: Resumen (KPIs) · Inventario · Transferencias ·
 //       Automatizaciones · Expedientes vinculados
 // ─────────────────────────────────────────────────────────────
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -402,7 +402,7 @@ export default function ScreenNodoDetail() {
             )}
             {tab === 'transfers'   && <TransfersTab transfers={transfers} nodeId={nodeId} lang={lang}/>}
             {tab === 'automations' && <AutomationsTab autos={autos} lang={lang}/>}
-            {tab === 'files'       && <FilesTab files={files} lang={lang} navigate={navigate}/>}
+            {tab === 'files'       && <FilesTab files={files} lang={lang} navigate={navigate} nodeId={nodeId}/>}
             {/* Sprint 2026-05-11 · Fase 2 · Artefactos por nodo.
                 Lista, agrega, edita y archiva archivos arbitrarios
                 asociados al nodo. Soporta mismo tipo repetido y estado libre. */}
@@ -549,19 +549,74 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
   // `inventario.expediente_nodo_assignment` para este nodo, preferimos
   // mostrar ESE inventario (incluye columna Expediente). Si la consulta
   // vuelve vacía o falla, caemos al inventario legacy (Stock).
+  // Sprint 2026-05-11 fix · cantidad editable + delete in-line.
   const [allocated, setAllocated] = useState(null);  // null=loading · []=fetched
-  useEffect(() => {
-    let cancel = false;
+  const [savingKey, setSavingKey] = useState(null);  // celda en flight
+  const [draftQty, setDraftQty]   = useState({});    // ediciones pendientes
+
+  const load = useCallback(() => {
     if (!nodeId) { setAllocated([]); return; }
     nodoAssignmentsApi.inventoryAllocated(nodeId)
       .then((data) => {
-        if (cancel) return;
         const arr = Array.isArray(data) ? data : (data?.results || []);
         setAllocated(arr);
       })
-      .catch(() => { if (!cancel) setAllocated([]); });
-    return () => { cancel = true; };
+      .catch(() => setAllocated([]));
   }, [nodeId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const keyOf = (r) => `${r.expediente_id}::${r.producto_id}::${r.talla || ''}`;
+
+  const handleSave = async (r, rawValue) => {
+    const k = keyOf(r);
+    const newQty = Math.max(0, Math.floor(Number(rawValue) || 0));
+    if (newQty === Number(r.qty || 0)) {
+      // sin cambio — limpiar draft
+      setDraftQty((p) => { const n = { ...p }; delete n[k]; return n; });
+      return;
+    }
+    setSavingKey(k);
+    try {
+      await nodoAssignmentsApi.adjust({
+        expedienteId: r.expediente_id,
+        productoId:   r.producto_id,
+        talla:        r.talla || '',
+        nodoId:       nodeId,
+        newQty,
+      });
+      setDraftQty((p) => { const n = { ...p }; delete n[k]; return n; });
+      load();
+    } catch (e) {
+      const msg = e?.body?.detail || e?.message || (lang === 'es' ? 'Error al guardar' : 'Save error');
+      alert(msg);
+      // mantener draft para que el usuario corrija
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  const handleDelete = async (r) => {
+    if (!window.confirm(lang === 'es'
+      ? `¿Eliminar la asignación de ${r.qty} u (talla ${r.talla || '—'}) del expediente ${r.expediente_codigo || '—'}?`
+      : `Remove allocation of ${r.qty} u (size ${r.talla || '—'}) from expediente ${r.expediente_codigo || '—'}?`)) return;
+    const k = keyOf(r);
+    setSavingKey(k);
+    try {
+      await nodoAssignmentsApi.adjust({
+        expedienteId: r.expediente_id,
+        productoId:   r.producto_id,
+        talla:        r.talla || '',
+        nodoId:       nodeId,
+        newQty:       0,
+      });
+      load();
+    } catch (e) {
+      alert(e?.body?.detail || e?.message || (lang === 'es' ? 'Error al eliminar' : 'Delete error'));
+    } finally {
+      setSavingKey(null);
+    }
+  };
 
   // Decidimos cuál fuente renderizar.
   const useAllocated = Array.isArray(allocated) && allocated.length > 0;
@@ -577,6 +632,10 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
             </div>
             <div className="card-subtitle">
               {allocated.length} {lang === 'es' ? 'líneas' : 'lines'} · {totalUnits.toLocaleString()} u.
+              {' · '}
+              {lang === 'es'
+                ? 'Edita la cantidad o elimina la línea directamente.'
+                : 'Edit qty or remove the line inline.'}
             </div>
           </div>
         </div>
@@ -588,42 +647,85 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
               <th style={{ textAlign: 'center', width: 80 }}>
                 {lang === 'es' ? 'Talla' : 'Size'}
               </th>
-              <th style={{ textAlign: 'right', width: 100 }}>
+              <th style={{ textAlign: 'right', width: 130 }}>
                 {lang === 'es' ? 'Cant.' : 'Qty'}
               </th>
               <th style={{ width: 140 }}>
                 {lang === 'es' ? 'Expediente' : 'Expediente'}
               </th>
+              <th style={{ width: 56, textAlign: 'center' }}></th>
             </tr></thead>
             <tbody>
-              {allocated.map((r, i) => (
-                <tr key={`${r.producto_id}-${r.talla || ''}-${r.expediente_id}-${i}`}>
-                  <td style={{ font: '600 12.5px/1.2 var(--font-mono)',
-                               color: 'var(--interactive)' }}>{r.sku || '—'}</td>
-                  <td>{r.nombre || '—'}</td>
-                  <td style={{ textAlign: 'center' }}>
-                    {r.talla
-                      ? <span style={{
-                          display: 'inline-block', padding: '2px 10px',
-                          borderRadius: 999,
-                          background: 'color-mix(in oklab, var(--brand-primary, #481EE3) 12%, transparent)',
-                          color: 'var(--brand-primary, #481EE3)',
-                          fontSize: 11, fontWeight: 700,
-                          fontFamily: 'var(--font-mono)',
-                        }}>{r.talla}</span>
-                      : <span style={{ color: 'var(--text-tertiary)' }}>—</span>}
-                  </td>
-                  <td className="td-num tabular-nums">
-                    {Number(r.qty || 0).toLocaleString()}
-                  </td>
-                  <td>
-                    <span className="mono-sm" style={{ fontWeight: 600,
-                                                       color: 'var(--brand-primary)' }}>
-                      {r.expediente_codigo || '—'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {allocated.map((r, i) => {
+                const k = keyOf(r);
+                const draft = draftQty[k];
+                const value = draft !== undefined ? draft : Number(r.qty || 0);
+                const busy = savingKey === k;
+                return (
+                  <tr key={`${r.producto_id}-${r.talla || ''}-${r.expediente_id}-${i}`}>
+                    <td style={{ font: '600 12.5px/1.2 var(--font-mono)',
+                                 color: 'var(--interactive)' }}>{r.sku || '—'}</td>
+                    <td>{r.nombre || '—'}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      {r.talla
+                        ? <span style={{
+                            display: 'inline-block', padding: '2px 10px',
+                            borderRadius: 999,
+                            background: 'color-mix(in oklab, var(--brand-primary, #481EE3) 12%, transparent)',
+                            color: 'var(--brand-primary, #481EE3)',
+                            fontSize: 11, fontWeight: 700,
+                            fontFamily: 'var(--font-mono)',
+                          }}>{r.talla}</span>
+                        : <span style={{ color: 'var(--text-tertiary)' }}>—</span>}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <input
+                        type="number"
+                        className="input"
+                        min={0}
+                        step={1}
+                        value={value}
+                        disabled={busy}
+                        onChange={(e) => setDraftQty((p) => ({ ...p, [k]: e.target.value }))}
+                        onBlur={(e) => handleSave(r, e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.currentTarget.blur();
+                          if (e.key === 'Escape') {
+                            setDraftQty((p) => { const n = { ...p }; delete n[k]; return n; });
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        style={{
+                          width: 90, textAlign: 'right',
+                          fontVariantNumeric: 'tabular-nums',
+                          opacity: busy ? 0.5 : 1,
+                        }}
+                        title={lang === 'es'
+                          ? 'Edita la cantidad y presiona Enter/Tab para guardar'
+                          : 'Edit qty and press Enter/Tab to save'}
+                      />
+                    </td>
+                    <td>
+                      <span className="mono-sm" style={{ fontWeight: 600,
+                                                         color: 'var(--brand-primary)' }}>
+                        {r.expediente_codigo || '—'}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        disabled={busy}
+                        onClick={() => handleDelete(r)}
+                        title={lang === 'es' ? 'Eliminar línea' : 'Remove line'}
+                        style={{ color: 'var(--critical)', padding: '4px 8px' }}
+                      >
+                        <IconX size={13}/>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1116,7 +1218,109 @@ function EditNodeDrawer({ raw, lang, onClose, onSaved }) {
 }
 
 /* ─────────────── Tab: Expedientes ─────────────── */
-function FilesTab({ files, lang, navigate }) {
+function FilesTab({ files, lang, navigate, nodeId }) {
+  // Sprint 2026-05-11 fix · La fuente preferida son los expedientes
+  // realmente asignados al nodo via `expediente_nodo_assignment`.
+  // Si no hay assignments para este nodo, caemos al cálculo legacy
+  // (por destino geográfico — mismo `files` que se pasaba antes).
+  const [assigned, setAssigned] = useState(null);  // null=loading · []=done
+  useEffect(() => {
+    let cancel = false;
+    if (!nodeId) { setAssigned([]); return; }
+    nodoAssignmentsApi.expedientesAsignados(nodeId)
+      .then((data) => {
+        if (cancel) return;
+        const arr = Array.isArray(data) ? data : (data?.results || []);
+        setAssigned(arr);
+      })
+      .catch(() => { if (!cancel) setAssigned([]); });
+    return () => { cancel = true; };
+  }, [nodeId]);
+
+  const useAssigned = Array.isArray(assigned) && assigned.length > 0;
+
+  const fmtFecha = (iso) => {
+    if (!iso) return '—';
+    try {
+      return new Date(iso).toLocaleDateString(
+        lang === 'es' ? 'es-ES' : 'en-US',
+        { year: 'numeric', month: 'short', day: '2-digit' });
+    } catch { return iso; }
+  };
+
+  if (useAssigned) {
+    return (
+      <div className="card" style={{ marginTop: 12 }}>
+        <div className="card-head">
+          <div>
+            <div className="card-title">
+              {lang === 'es' ? 'Expedientes asignados' : 'Assigned expedientes'}
+            </div>
+            <div className="card-subtitle">
+              {assigned.length} {lang === 'es' ? 'expediente(s)' : 'expediente(s)'}
+              {' · '}
+              {lang === 'es'
+                ? 'Origen del inventario que vive en este nodo.'
+                : 'Source of the inventory at this node.'}
+            </div>
+          </div>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="table">
+            <thead><tr>
+              <th>{lang === 'es' ? 'Expediente' : 'Expediente'}</th>
+              <th>{lang === 'es' ? 'Cliente' : 'Client'}</th>
+              <th>{lang === 'es' ? 'Operador' : 'Operator'}</th>
+              <th style={{ width: 130 }}>SAP</th>
+              <th style={{ width: 130 }}>{lang === 'es' ? 'Proforma' : 'Proforma'}</th>
+              <th style={{ width: 140 }}>{lang === 'es' ? 'OC' : 'PO'}</th>
+              <th style={{ width: 130 }}>{lang === 'es' ? 'Fecha de registro' : 'Registered'}</th>
+              <th style={{ textAlign: 'right', width: 100 }}>
+                {lang === 'es' ? 'Unidades' : 'Units'}
+              </th>
+              <th style={{ width: 36 }}/>
+            </tr></thead>
+            <tbody>
+              {assigned.map((r) => (
+                <tr
+                  key={r.expediente_id}
+                  onClick={() => r.expediente_id
+                    && navigate(`/expedientes/${r.oc_id || 'none'}/exp/${r.expediente_id}`)}
+                  style={{ cursor: 'pointer' }}
+                  title={lang === 'es' ? 'Abrir expediente' : 'Open expediente'}
+                >
+                  <td className="mono-sm" style={{ fontWeight: 700,
+                                                    color: 'var(--brand-primary)' }}>
+                    {r.expediente_codigo || '—'}
+                  </td>
+                  <td>{r.client_nombre || '—'}</td>
+                  <td>{r.operating_company_nombre || '—'}</td>
+                  <td className="mono-sm" style={{ color: 'var(--text-secondary)' }}>
+                    {r.expediente_sap || r.oc_sap || '—'}
+                  </td>
+                  <td className="mono-sm" style={{ color: 'var(--text-secondary)' }}>
+                    {r.expediente_proforma || r.oc_proforma || '—'}
+                  </td>
+                  <td className="mono-sm" style={{ color: 'var(--text-secondary)' }}>
+                    {r.oc_codigo || '—'}
+                  </td>
+                  <td className="caption tabular-nums">{fmtFecha(r.fecha_registro)}</td>
+                  <td className="td-num tabular-nums" style={{ fontWeight: 600 }}>
+                    {Number(r.qty_total_asignada || 0).toLocaleString()}
+                  </td>
+                  <td>
+                    <IconArrow size={14} style={{ color: 'var(--text-tertiary)' }}/>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  // Fallback legacy: cálculo por destino geográfico.
   const openExp = (eid) => {
     const oc = OCS.find(o => o.expedientes.includes(eid));
     if (oc) navigate(`/expedientes/${oc.id}/exp/${eid}`);

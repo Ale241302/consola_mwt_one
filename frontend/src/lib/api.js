@@ -499,6 +499,27 @@ export const nodoAssignmentsApi = {
       { token: getToken() },
     );
   },
+  // Sprint 2026-05-11 fix · ajustar cantidad asignada (editar/eliminar)
+  // sobre el agregado (nodo, expediente, producto, talla).
+  // new_qty === 0 → elimina (soft-delete) la línea entera.
+  // new_qty > 0   → reemplaza el agregado por una sola fila nueva.
+  adjust: ({ expedienteId, productoId, talla, nodoId, newQty }) =>
+    apiFetch(`/inventario/nodo-assignments/adjust/`, {
+      method: "POST",
+      body: {
+        expediente_id: expedienteId,
+        producto_id:   productoId,
+        talla:         talla || "",
+        nodo_id:       nodoId,
+        new_qty:       Number(newQty),
+      },
+      token: getToken(),
+    }),
+  // Sprint 2026-05-11 fix · expedientes asignados a un nodo, enriquecidos
+  // con cliente, operating_company, sap, proforma, codigo OC, fecha.
+  expedientesAsignados: (nodoId) =>
+    apiFetch(`/inventario/nodos/${nodoId}/expedientes-asignados/`,
+             { token: getToken() }),
 };
 
 // ---------------------------------------------------------------------
