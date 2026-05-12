@@ -738,6 +738,64 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             status=201,
         )
 
+    # ── 4) Overview global: TODAS las asignaciones en la red ──
+    # Sprint 2026-05-11 fix · Esta vista alimenta /inventario (la pantalla
+    # global). Devuelve una fila por (nodo, producto, talla, expediente)
+    # con SUM(qty_asignada). Soporta filtros opcionales por nodo_id,
+    # expediente_id o búsqueda textual.
+    @action(detail=False, methods=["get"], url_path="allocations-overview")
+    def allocations_overview(self, request):
+        nodo_id       = request.query_params.get("nodo_id")
+        expediente_id = request.query_params.get("expediente_id")
+        q             = (request.query_params.get("q") or "").strip()
+
+        sql = """
+            SELECT
+                a.nodo_id,
+                n.codigo                                       AS nodo_codigo,
+                n.nombre                                       AS nodo_nombre,
+                a.producto_id,
+                l.sku,
+                COALESCE(p.nombre, p.descripcion, l.sku, '—')  AS nombre,
+                a.talla,
+                a.expediente_id,
+                e.codigo                                       AS expediente_codigo,
+                SUM(a.qty_asignada)::int                       AS qty
+            FROM inventario.expediente_nodo_assignment a
+            JOIN expedientes.linea l
+              ON l.expediente_id = a.expediente_id
+             AND l.producto_id   = a.producto_id
+             AND COALESCE(l.size,'') = COALESCE(a.talla,'')
+            LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
+            LEFT JOIN nodos.nodo            n ON n.id = a.nodo_id
+            LEFT JOIN productos.producto    p ON p.id = a.producto_id
+            WHERE a.is_active = TRUE
+              AND (%(nodo_id)s::uuid IS NULL OR a.nodo_id       = %(nodo_id)s::uuid)
+              AND (%(exp_id)s::uuid  IS NULL OR a.expediente_id = %(exp_id)s::uuid)
+              AND (
+                   %(q)s = ''
+                OR l.sku            ILIKE '%%' || %(q)s || '%%'
+                OR COALESCE(p.nombre, p.descripcion, '') ILIKE '%%' || %(q)s || '%%'
+                OR e.codigo         ILIKE '%%' || %(q)s || '%%'
+                OR n.codigo         ILIKE '%%' || %(q)s || '%%'
+                OR n.nombre         ILIKE '%%' || %(q)s || '%%'
+              )
+            GROUP BY a.nodo_id, n.codigo, n.nombre,
+                     a.producto_id, l.sku, p.nombre, p.descripcion,
+                     a.talla, a.expediente_id, e.codigo
+            HAVING SUM(a.qty_asignada) > 0
+            ORDER BY n.codigo, e.codigo, l.sku, a.talla
+        """
+        with connection.cursor() as c:
+            c.execute(sql, {
+                "nodo_id": nodo_id or None,
+                "exp_id":  expediente_id or None,
+                "q":       q,
+            })
+            cols = [d[0] for d in c.description]
+            rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        return Response(rows)
+
     # ── 3) Inventario asignado de un nodo (con expediente_codigo) ──
     @action(detail=False, methods=["get"], url_path=r"nodos/(?P<nodo_id>[^/.]+)/inventory-allocated")
     def inventory_allocated(self, request, nodo_id=None):

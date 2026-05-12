@@ -24,7 +24,7 @@ import { TRANSFERS_IN_TRANSIT } from "../data/mockData.js";
 import ReceiveBatchModal      from "../components/inventario/ReceiveBatchModal.jsx";
 import StockMovementsDrawer   from "../components/inventario/StockMovementsDrawer.jsx";
 import { createPortal } from "react-dom";
-import { stockApi, nodosApi } from "../lib/api.js";
+import { stockApi, nodosApi, nodoAssignmentsApi } from "../lib/api.js";
 
 // ── Helpers backend → UI ────────
 // El backend ahora enriquece el payload con producto_sku, producto_nombre,
@@ -45,7 +45,32 @@ function mapStockFromApi(r) {
     reserved,
     vendidos:  0,
     received:  (r.last_movement_at || r.updated_at || '').slice(0, 10),
+    expediente: '',                                  // legacy stock no tiene exp
+    _source:   'stock',
     _raw: r,
+  };
+}
+
+// Sprint 2026-05-11 fix · Mapper para filas del overview de asignaciones
+// (inventario.expediente_nodo_assignment). Se renderiza en la MISMA tabla
+// que `mapStockFromApi`, distinguiéndose por la columna "Expediente".
+function mapAllocationToInventoryRow(r) {
+  return {
+    sku:       r.sku || '—',
+    product:   r.nombre || '—',
+    node:      r.nodo_nombre || r.nodo_codigo || '—',
+    nodeId:    r.nodo_id || null,
+    productId: r.producto_id || null,
+    size:      r.talla || '',
+    lot:       '—',                                  // assignments no usan lote
+    qty:       Number(r.qty || 0),
+    reserved:  0,                                    // assignments no reservan
+    vendidos:  0,
+    received:  '',
+    expediente: r.expediente_codigo || '',
+    expedienteId: r.expediente_id || null,
+    _source:   'allocation',
+    _raw:      r,
   };
 }
 
@@ -69,23 +94,29 @@ export default function ScreenInventario() {
   const [movDrawerRow, setMovDrawerRow] = useState(null);
 
   // ── Data desde API (fallback a mock) ────────
-  const [apiStock,    setApiStock]    = useState([]);
-  const [apiNodes,    setApiNodes]    = useState([]);
-  const [loading,     setLoading]     = useState(true);
+  const [apiStock,       setApiStock]       = useState([]);
+  // Sprint 2026-05-11 fix · Filas que vienen de las asignaciones
+  // (inventario.expediente_nodo_assignment) — incluyen expediente.
+  const [apiAllocations, setApiAllocations] = useState([]);
+  const [apiNodes,       setApiNodes]       = useState([]);
+  const [loading,        setLoading]        = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       // El backend ahora enriquece /api/stock/ con sku/nombre/nodo —
       // una sola llamada sin N+1 en el FE.
-      const [stockRaw, nodoRaw] = await Promise.all([
+      const [stockRaw, allocRaw, nodoRaw] = await Promise.all([
         stockApi.list().catch(() => []),
+        nodoAssignmentsApi.allocationsOverview().catch(() => []),
         nodosApi.list().catch(() => []),
       ]);
       const stockItems = Array.isArray(stockRaw) ? stockRaw : (stockRaw?.results || []);
+      const allocItems = Array.isArray(allocRaw) ? allocRaw : (allocRaw?.results || []);
       const nodoItems  = Array.isArray(nodoRaw)  ? nodoRaw  : (nodoRaw?.results  || []);
 
       setApiStock(stockItems.map(mapStockFromApi));
+      setApiAllocations(allocItems.map(mapAllocationToInventoryRow));
       setApiNodes(nodoItems.map(n => ({
         node_id: n.id,
         name:    n.nombre || n.codigo || '—',
@@ -95,6 +126,7 @@ export default function ScreenInventario() {
       })));
     } catch {
       setApiStock([]);
+      setApiAllocations([]);
       setApiNodes([]);
     } finally {
       setLoading(false);
@@ -106,7 +138,12 @@ export default function ScreenInventario() {
   // Sin fallback a mock: si el backend no devuelve nada, mostramos
   // la UI con arrays vacíos (la tabla / cards muestran "Sin datos"
   // y el usuario sabe que tiene que cargar stock real).
-  const INVENTORY = apiStock;
+  // Sprint 2026-05-11 fix · INVENTORY = stock legacy + allocations
+  // (cada allocation se pinta como una fila con columna Expediente llena).
+  const INVENTORY = useMemo(
+    () => [...apiAllocations, ...apiStock],
+    [apiAllocations, apiStock],
+  );
   const NODES     = apiNodes;
 
   // ── KPIs ────────
@@ -140,7 +177,9 @@ export default function ScreenInventario() {
     return INVENTORY.filter(i => {
       if (nodeFilter !== 'ALL' && i.node !== nodeFilter) return false;
       if (!needle) return true;
-      return [i.sku, i.product, i.lot].join(' ').toLowerCase().includes(needle);
+      // Sprint 2026-05-11 fix · expediente también participa en la búsqueda.
+      return [i.sku, i.product, i.lot, i.expediente]
+        .filter(Boolean).join(' ').toLowerCase().includes(needle);
     });
   }, [q, nodeFilter, INVENTORY]);
 
@@ -313,13 +352,21 @@ export default function ScreenInventario() {
               {/* Recibido: click → drawer con detalle del movimiento que
                   generó esta fila (RECEPCION del nodo / TRANSFER origen→destino) */}
               <th>{lang==='es'?'Recibido':'Received'}</th>
+              {/* Sprint 2026-05-11 fix · columna Expediente.
+                  Solo se rellena para filas que vienen del overview de
+                  asignaciones (expediente_nodo_assignment). El stock
+                  legacy muestra "—". */}
+              <th>{lang==='es'?'Expediente':'Expediente'}</th>
             </tr>
           </thead>
           <tbody>
             <AnimatePresence mode="popLayout">
               {rows.map((i, idx) => {
                 const available = i.qty - i.reserved;
-                const key = `${i.sku}-${i.node}-${i.lot}`;
+                // Sprint 2026-05-11 fix · expediente y talla suman a la
+                // unicidad — sin esto colapsan filas distintas del mismo
+                // SKU+nodo en diferentes (talla, expediente).
+                const key = `${i._source}-${i.sku}-${i.node}-${i.lot}-${i.size || ''}-${i.expediente || ''}-${idx}`;
                 return (
                   <motion.tr
                     key={key}
@@ -397,6 +444,16 @@ export default function ScreenInventario() {
                           <circle cx="8" cy="8" r="1.8" fill="currentColor"/>
                         </svg>
                       </button>
+                    </td>
+                    {/* Sprint 2026-05-11 fix · expediente_codigo
+                        (sólo filas con _source='allocation' lo traen). */}
+                    <td className="mono-sm" style={{
+                      color: i.expediente
+                        ? 'var(--brand-primary, #481EE3)'
+                        : 'var(--text-tertiary)',
+                      fontWeight: i.expediente ? 600 : 400,
+                    }}>
+                      {i.expediente || '—'}
                     </td>
                   </motion.tr>
                 );

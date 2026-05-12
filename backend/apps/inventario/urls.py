@@ -21,6 +21,7 @@ router.register(r"inventario-recepciones", RecepcionViewSet,   basename="recepci
 saldos_view              = NodoAssignmentViewSet.as_view({"get":  "saldos"})
 bulk_create_view         = NodoAssignmentViewSet.as_view({"post": "bulk_create"})
 inventory_allocated_view = NodoAssignmentViewSet.as_view({"get":  "inventory_allocated"})
+overview_view            = NodoAssignmentViewSet.as_view({"get":  "allocations_overview"})
 
 urlpatterns = router.urls + [
     # Inbound Engine v1 (sprint 2026-04-29)
@@ -34,4 +35,8 @@ urlpatterns = router.urls + [
     path("inventario/nodos/<uuid:nodo_id>/inventory-allocated/",
          inventory_allocated_view,
          name="ena-inventory-allocated"),
+    # Sprint 2026-05-11 fix · overview global para /inventario page.
+    path("inventario/allocations-overview/",
+         overview_view,
+         name="ena-allocations-overview"),
 ]

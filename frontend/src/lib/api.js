@@ -486,6 +486,19 @@ export const nodoAssignmentsApi = {
   inventoryAllocated: (nodoId) =>
     apiFetch(`/inventario/nodos/${nodoId}/inventory-allocated/`,
              { token: getToken() }),
+  // Sprint 2026-05-11 fix · overview global de TODAS las asignaciones.
+  // Soporta filtros opcionales por nodo_id, expediente_id, q (búsqueda).
+  allocationsOverview: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.nodoId)       qs.set("nodo_id", params.nodoId);
+    if (params.expedienteId) qs.set("expediente_id", params.expedienteId);
+    if (params.q)            qs.set("q", params.q);
+    const tail = qs.toString();
+    return apiFetch(
+      `/inventario/allocations-overview/${tail ? `?${tail}` : ""}`,
+      { token: getToken() },
+    );
+  },
 };
 
 // ---------------------------------------------------------------------
