@@ -43,7 +43,13 @@ export default function ArtifactPickerModal({ stage, lang = "es", onPick, onClos
     );
   }, [templates, q]);
 
-  const stageTxt = stageLabel(lang, stage);
+  // Sprint 2026-05-11 fase 4 · `stage` es opcional. En nodos no aplica:
+  // el picker se usa para escoger una plantilla sin contexto de etapa.
+  // Si `stage` viene, mostramos su label; si no, mostramos un texto
+  // genérico ("Selecciona") para evitar que stageLabel rompa con null.
+  const stageTxt = stage
+    ? stageLabel(lang, stage)
+    : (lang === "es" ? "Selecciona" : "Select");
 
   return (
     <div className="mdl-backdrop" onClick={(e) => {

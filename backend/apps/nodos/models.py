@@ -113,3 +113,33 @@ class NodoArtefacto(models.Model):
         managed  = False
         db_table = 'nodos\".\"artefacto'
         ordering = ('-created_at',)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Sprint 2026-05-11 · Fase 4 — Builder artifacts en nodos.
+# Tabla `nodos.builder_artifact_instance` (creada por SQL B1).
+# Reemplaza el flujo simple de NodoArtefacto (que queda como tabla
+# legacy sin uso en UI) por integración real con el Builder externo
+# (https://builder.muito.work).
+# ─────────────────────────────────────────────────────────────────
+class NodoBuilderArtifactInstance(models.Model):
+    id                  = models.UUIDField(primary_key=True)
+    nodo_id             = models.UUIDField()                            # ⛔ sin FK
+    template_id         = models.IntegerField()                          # builder.artefactos.id
+    template_title      = models.TextField()
+    data                = models.JSONField(default=dict)
+    structure_snapshot  = models.JSONField(default=dict)
+
+    created_by_id       = models.UUIDField(null=True, blank=True)
+    created_by_name     = models.CharField(max_length=128, null=True, blank=True)
+    updated_by_id       = models.UUIDField(null=True, blank=True)
+    updated_by_name     = models.CharField(max_length=128, null=True, blank=True)
+
+    is_active           = models.BooleanField(default=True)
+    created_at          = models.DateTimeField(auto_now_add=True)
+    updated_at          = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'nodos\".\"builder_artifact_instance'
+        ordering = ('-created_at',)

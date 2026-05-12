@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Nodo, NodoJerarquia, NodoArtefacto
+from .models import Nodo, NodoJerarquia, NodoArtefacto, NodoBuilderArtifactInstance
 
 
 class NodoSerializer(serializers.ModelSerializer):
@@ -59,3 +59,41 @@ class NodoArtefactoSerializer(serializers.ModelSerializer):
         # nodo_id y uploaded_by_id los inyecta el ViewSet (no vienen del cliente).
         read_only_fields = ("id", "nodo_id", "uploaded_by_id",
                             "created_at", "updated_at")
+
+
+# ─────────────────────────────────────────────────────────────────
+# Sprint 2026-05-11 · Fase 4 · Builder artifacts en nodos.
+# Espejo del BuilderArtifactInstanceSerializer del lado expediente,
+# pero sin `stage` (los nodos no tienen máquina de estados).
+# ─────────────────────────────────────────────────────────────────
+class NodoBuilderArtifactInstanceSerializer(serializers.ModelSerializer):
+    """Serializer canónico para crear/leer/editar instancias del
+    Builder asociadas a un nodo. nodo_id y created_by_* los inyecta
+    la View; el cliente solo manda template_id, template_title, data
+    y structure_snapshot."""
+
+    data               = serializers.JSONField(required=False)
+    structure_snapshot = serializers.JSONField(required=False)
+
+    class Meta:
+        model  = NodoBuilderArtifactInstance
+        fields = "__all__"
+        read_only_fields = (
+            "id", "nodo_id",
+            "created_by_id", "created_by_name",
+            "updated_by_id", "updated_by_name",
+            "created_at", "updated_at",
+        )
+
+
+class NodoBuilderArtifactInstanceUpdateSerializer(serializers.ModelSerializer):
+    """Serializer para PATCH — sólo permite cambiar `data` y, opcionalmente,
+    el snapshot de estructura. El template no se puede 're-elegir' una vez
+    creada la instancia."""
+
+    data               = serializers.JSONField(required=False)
+    structure_snapshot = serializers.JSONField(required=False)
+
+    class Meta:
+        model  = NodoBuilderArtifactInstance
+        fields = ("data", "structure_snapshot")

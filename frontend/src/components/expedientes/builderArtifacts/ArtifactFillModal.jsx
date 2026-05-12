@@ -77,8 +77,16 @@ export default function ArtifactFillModal({
                 : (lang === "es" ? "Editar artefacto" : "Edit artifact")}
             </div>
             <div className="mdl-subtitle">
-              {templateTitle} · {lang === "es" ? "Etapa" : "Stage"}{" "}
-              {stageLabel(lang, stage)}
+              {templateTitle}
+              {/* Sprint 2026-05-11 fase 4 · `stage` es opcional. En el
+                  caso de nodos no aplica concepto de etapa, así que sólo
+                  mostramos el título de la plantilla. */}
+              {stage && (
+                <>
+                  {" "}· {lang === "es" ? "Etapa" : "Stage"}{" "}
+                  {stageLabel(lang, stage)}
+                </>
+              )}
             </div>
           </div>
           <button

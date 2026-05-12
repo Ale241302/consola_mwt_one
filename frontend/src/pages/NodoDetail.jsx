@@ -52,8 +52,10 @@ const STATUS_OPTIONS = [
 ];
 import { tr, fmtMoney } from "../lib/i18n.js";
 import {
-  nodosApi, stockApi, transferenciasApi,
-  nodoArtefactosApi, nodoAssignmentsApi,
+  nodosApi, stockApi, transferenciasApi, nodoAssignmentsApi,
+  // Sprint 2026-05-11 fase 4 · nodoArtefactosApi (legacy de fase 2)
+  // ya no se usa en esta page — el nuevo NodoArtifactsTab consume
+  // nodoBuilderArtifactsApi internamente.
 } from "../lib/api.js";
 // Sprint 2026-05-11 · Fase 2 · tab Artefactos.
 import NodoArtifactsTab from "../components/nodos/NodoArtifactsTab.jsx";
@@ -170,6 +172,14 @@ export default function ScreenNodoDetail() {
   const { nodeId } = useParams();
   const { lang } = useOutletContext();
   const [tab, setTab] = useState('overview');
+  // Sprint 2026-05-11 fix · contador para forzar refetch cross-tab.
+  // InventoryTab lo incrementa después de adjust/delete; FilesTab lo
+  // observa en su useEffect para re-fetch de expedientes-asignados,
+  // así si el usuario borra TODAS las líneas de un expediente desde
+  // Inventario, al cambiar (o incluso sin cambiar) a Expedientes ya
+  // está sin esa fila.
+  const [nodeRefreshKey, setNodeRefreshKey] = useState(0);
+  const bumpRefresh = useCallback(() => setNodeRefreshKey((k) => k + 1), []);
   const [showEdit, setShowEdit] = useState(false);
 
   // ── Fetch real al backend (antes leía NODES de mockData.js,
@@ -401,12 +411,14 @@ export default function ScreenNodoDetail() {
                 inventory={inventory}
                 lang={lang}
                 nodeId={nodeId}
+                refreshKey={nodeRefreshKey}
+                onChanged={bumpRefresh}
                 onProductClick={(r) => r.producto_id && navigate(`/productos/${r.producto_id}`)}
               />
             )}
             {tab === 'transfers'   && <TransfersTab transfers={transfers} nodeId={nodeId} lang={lang}/>}
             {tab === 'automations' && <AutomationsTab autos={autos} lang={lang}/>}
-            {tab === 'files'       && <FilesTab files={files} lang={lang} navigate={navigate} nodeId={nodeId}/>}
+            {tab === 'files'       && <FilesTab files={files} lang={lang} navigate={navigate} nodeId={nodeId} refreshKey={nodeRefreshKey}/>}
             {/* Sprint 2026-05-11 · Fase 2 · Artefactos por nodo.
                 Lista, agrega, edita y archiva archivos arbitrarios
                 asociados al nodo. Soporta mismo tipo repetido y estado libre. */}
@@ -548,7 +560,8 @@ function OverviewTab({ node, inventory, transfers, lang }) {
 }
 
 /* ─────────────── Tab: Inventario (semáforo días stock) ─────────────── */
-function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
+function InventoryTab({ inventory, lang, onProductClick, nodeId,
+                        refreshKey, onChanged }) {
   // Sprint 2026-05-11 · Fase 3 · Si hay registros en
   // `inventario.expediente_nodo_assignment` para este nodo, preferimos
   // mostrar ESE inventario (incluye columna Expediente). Si la consulta
@@ -578,7 +591,7 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
       .catch(() => setAllocated([]));
   }, [nodeId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   const keyOf = (r) => `${r.expediente_id}::${r.producto_id}::${r.talla || ''}`;
 
@@ -603,6 +616,9 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
       });
       setDraftQty((p) => { const n = { ...p }; delete n[k]; return n; });
       load();
+      // Notifica al padre para que FilesTab también refetche (si el
+      // ajuste deja qty=0 efectivo, el expediente se desvincula).
+      onChanged?.();
     } catch (e) {
       const msg = e?.body?.detail || e?.message
         || (lang === 'es' ? 'Error al guardar' : 'Save error');
@@ -646,6 +662,9 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
       setPendingDelete(null);
       setSelected(new Set());
       load();
+      // Notifica al padre — crítico para que FilesTab se entere de que
+      // un expediente puede haber quedado sin allocations y desaparezca.
+      onChanged?.();
     } catch (e) {
       setDeleteError(e?.body?.detail || e?.message
         || (lang === 'es' ? 'Error al eliminar' : 'Delete error'));
@@ -1392,7 +1411,7 @@ function EditNodeDrawer({ raw, lang, onClose, onSaved }) {
 }
 
 /* ─────────────── Tab: Expedientes ─────────────── */
-function FilesTab({ files, lang, navigate, nodeId }) {
+function FilesTab({ files, lang, navigate, nodeId, refreshKey }) {
   // Sprint 2026-05-11 fix · La fuente preferida son los expedientes
   // realmente asignados al nodo via `expediente_nodo_assignment`.
   // Si no hay assignments para este nodo, caemos al cálculo legacy
@@ -1419,7 +1438,7 @@ function FilesTab({ files, lang, navigate, nodeId }) {
         setAssigned([]);
       });
     return () => { cancel = true; };
-  }, [nodeId, lang]);
+  }, [nodeId, lang, refreshKey]);
 
   const useAssigned = Array.isArray(assigned) && assigned.length > 0;
 
@@ -1487,10 +1506,13 @@ function FilesTab({ files, lang, navigate, nodeId }) {
               {assigned.map((r) => (
                 <tr
                   key={r.expediente_id}
-                  onClick={() => r.expediente_id
-                    && navigate(`/expedientes/${r.oc_id || 'none'}/exp/${r.expediente_id}`)}
-                  style={{ cursor: 'pointer' }}
-                  title={lang === 'es' ? 'Abrir expediente' : 'Open expediente'}
+                  /* Sprint 2026-05-11 fix · El click navega a la OC
+                     (vista que agrupa todos los SAPs de esa orden), no
+                     al expediente individual — el CEO quiere ver el
+                     contexto completo de la OC al hacer drill-down. */
+                  onClick={() => r.oc_id && navigate(`/expedientes/${r.oc_id}`)}
+                  style={{ cursor: r.oc_id ? 'pointer' : 'default' }}
+                  title={lang === 'es' ? 'Abrir OC' : 'Open PO'}
                 >
                   <td className="mono-sm" style={{ fontWeight: 700,
                                                     color: 'var(--brand-primary)' }}>

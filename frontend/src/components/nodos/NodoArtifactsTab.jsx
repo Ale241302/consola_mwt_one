@@ -1,119 +1,155 @@
 // ─────────────────────────────────────────────────────────────
 // NodoArtifactsTab — tab "Artefactos" del detalle de un nodo
-// Sprint 2026-05-11 · Fase 2 del paquete Nodos.
+// Sprint 2026-05-11 · Fase 4 — integración Builder externo.
 // Agente responsable: [AG-FRONTEND]
 //
+// Reemplaza la versión legacy (Fase 2) que solo guardaba metadata + URL
+// libre. Ahora usa el mismo Builder (https://builder.muito.work) que ya
+// teníamos en expedientes:
+//
+//   1. Click "+ Agregar artefacto" → ArtifactPickerModal lista templates.
+//   2. Usuario elige uno → cierra picker, abre ArtifactFillModal con la
+//      estructura del template (secciones, labels, tipos de campo,
+//      opciones de select, drag-drop de archivos).
+//   3. Guardar → POST /api/nodos/{id}/builder-artifacts/. Los datos
+//      persisten en nodos.builder_artifact_instance (JSONB).
+//   4. Click en una card → re-abre el ArtifactFillModal en modo `edit`
+//      con la data ya cargada.
+//   5. Eliminar → soft-delete con ConfirmModal MWT.
+//
+// La subida real de archivos la maneja DynamicField (componente reusado
+// del lado expediente), que sube al storage (MinIO via storage-proxy) y
+// guarda la URL en el JSONB del data.
+//
 // Reglas:
-//   R1 · Cero hex hardcodeados — usa tokens CSS de MWT.
-//   R3 · Aislamiento por rol — la tab existe igual para todos; los
-//        botones de mutación (Agregar / Eliminar) se ocultan si role
-//        es CLIENT (B2B no toca artefactos del nodo).
-//   R5 · tabular-nums para tamaños de archivo y fechas.
-//
-// API consumida (definida en lib/api.js):
-//   nodoArtefactosApi.list / create / update / remove
-//
-// Diferencia con BuilderArtifactsBoard (expedientes):
-//   - NO usa templates del Builder externo.
-//   - Cualquier `tipo` (string libre) y cualquier `estado` (string libre).
-//   - El mismo `tipo` puede aparecer repetido — la tabla no des-duplica.
+//   R1 · sin hex hardcodeados (vars CSS MWT).
+//   R3 · CLIENT_* no ve botones de mutación (readOnly=true).
+//   R5 · tabular-nums donde aplica.
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useState, useCallback } from "react";
-import { motion } from "framer-motion";
+import { createPortal } from "react-dom";
 import {
-  IconPlus, IconX, IconUpload, IconDownload, IconFileText, IconTrash,
+  IconPlus, IconFileText, IconPencil, IconTrash,
 } from "../../lib/icons.jsx";
-import { nodoArtefactosApi } from "../../lib/api.js";
+import {
+  nodoBuilderArtifactsApi, builderTemplatesApi,
+} from "../../lib/api.js";
 import { useRole } from "../../context/RoleContext.jsx";
 
-// Tipos sugeridos en el dropdown del drawer "Agregar". El input es
-// editable (datalist), así que el operador puede tipear uno nuevo si lo
-// necesita — el BE acepta cualquier string hasta 48 chars.
-const TIPOS_SUGERIDOS = [
-  "PROFORMA", "BL", "PACKING_LIST", "FACTURA", "COTIZACION",
-  "CONTRATO_3PL", "FOTO_BODEGA", "CERTIFICADO", "PERMISO", "OTRO",
-];
-
-// Estados sugeridos. Igual que los tipos, el campo es libre — el FE solo
-// pinta el chip con un color basado en el string (sin enum estricto).
-const ESTADOS_SUGERIDOS = ["PUBLICADO", "BORRADOR", "REVISION", "VENCIDO"];
-
-function fmtBytes(n) {
-  if (!n || n < 0) return "—";
-  const u = ["B", "KB", "MB", "GB"];
-  let i = 0; let v = n;
-  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
-  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
-}
-
-function fmtDate(iso) {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString("es-ES", {
-      year: "numeric", month: "short", day: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
-
-// Pill de estado con color derivado del string (no hardcodeado al enum).
-function EstadoChip({ estado }) {
-  const s = (estado || "").toUpperCase();
-  let color = "var(--text-secondary)";
-  let bg    = "var(--surface-alt)";
-  if (s === "PUBLICADO")          { color = "var(--success)"; bg = "color-mix(in oklab, var(--success) 12%, transparent)"; }
-  else if (s === "BORRADOR")      { color = "var(--text-tertiary)"; bg = "var(--surface-alt)"; }
-  else if (s === "REVISION")      { color = "var(--warning)"; bg = "color-mix(in oklab, var(--warning) 12%, transparent)"; }
-  else if (s === "VENCIDO")       { color = "var(--critical)"; bg = "color-mix(in oklab, var(--critical) 12%, transparent)"; }
-  return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 4,
-      padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700,
-      letterSpacing: 0.3, color, background: bg,
-      border: `1px solid color-mix(in oklab, ${color} 30%, transparent)`,
-    }}>
-      ● {estado || "—"}
-    </span>
-  );
-}
+// Reusamos los modales del módulo expediente — funcionan idénticos.
+// ArtifactPickerModal y ArtifactFillModal ya soportan `stage` opcional
+// (sprint 2026-05-11 fase 4 — ambos verifican null).
+import ArtifactPickerModal from "../expedientes/builderArtifacts/ArtifactPickerModal.jsx";
+import ArtifactFillModal   from "../expedientes/builderArtifacts/ArtifactFillModal.jsx";
+import ConfirmModal        from "../common/ConfirmModal.jsx";
 
 export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
   const { isClient } = useRole();
-  const [items, setItems] = useState([]);
+  const [items, setItems]     = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [showAdd, setShowAdd] = useState(false);
+  const [error, setError]     = useState(null);
+
+  // Estados de los modales
+  const [showPicker, setShowPicker] = useState(false);
+  const [creating,   setCreating]   = useState(null);  // {template}
+  const [editing,    setEditing]    = useState(null);  // instance
+  const [saving,     setSaving]     = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleteBusy,    setDeleteBusy]    = useState(false);
+  const [deleteError,   setDeleteError]   = useState(null);
 
   const reload = useCallback(() => {
     if (!nodeId) return;
-    setLoading(true);
-    setError(null);
-    nodoArtefactosApi.list(nodeId)
+    setLoading(true); setError(null);
+    nodoBuilderArtifactsApi.list(nodeId)
       .then((data) => {
         const arr = Array.isArray(data) ? data : (data?.results || []);
         setItems(arr);
       })
-      .catch((e) => setError(e?.message || "Error cargando artefactos"))
+      .catch((e) => setError(e?.body?.detail || e?.message
+        || (lang === "es" ? "Error cargando artefactos" : "Error loading artifacts")))
       .finally(() => setLoading(false));
-  }, [nodeId]);
+  }, [nodeId, lang]);
 
   useEffect(() => { reload(); }, [reload]);
 
-  const handleRemove = async (artId) => {
-    if (!window.confirm(lang === "es"
-      ? "¿Archivar este artefacto? No se borra físicamente; quedará oculto."
-      : "Archive this artifact? Not physically deleted; stays hidden.")) return;
+  // ── Picker → Fill ──────────────────────────────────────────
+  const handlePickTemplate = async (tpl) => {
+    // Re-fetcheamos el template completo (con structure_json) por si
+    // la lista trae shape ligero.
+    let fresh = tpl;
     try {
-      await nodoArtefactosApi.remove(nodeId, artId);
+      fresh = await builderTemplatesApi.get(tpl.id);
+    } catch {
+      // best-effort — usamos el de la lista.
+    }
+    setCreating({ template: fresh });
+    setShowPicker(false);
+  };
+
+  // ── Crear ──────────────────────────────────────────────────
+  const handleCreateSubmit = async (data) => {
+    if (!creating) return;
+    setSaving(true);
+    try {
+      await nodoBuilderArtifactsApi.create(nodeId, {
+        template_id:        creating.template.id,
+        template_title:     creating.template.title,
+        data,
+        structure_snapshot: creating.template.structure_json || { sections: [] },
+      });
+      setCreating(null);
       reload();
     } catch (e) {
-      alert((lang === "es" ? "Error al archivar: " : "Archive error: ") + (e?.message || e));
+      alert((lang === "es" ? "Error al crear: " : "Create error: ") +
+            (e?.body?.detail || e?.message || ""));
+    } finally {
+      setSaving(false);
     }
   };
 
-  // ── Render ──────────────────────────────────────────────────
+  // ── Editar ─────────────────────────────────────────────────
+  const handleEditSubmit = async (data) => {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      await nodoBuilderArtifactsApi.update(nodeId, editing.id, { data });
+      setEditing(null);
+      reload();
+    } catch (e) {
+      alert((lang === "es" ? "Error al guardar: " : "Save error: ") +
+            (e?.body?.detail || e?.message || ""));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── Eliminar (con ConfirmModal MWT) ────────────────────────
+  const requestDelete = (it) => {
+    setDeleteError(null);
+    setPendingDelete(it);
+  };
+  const cancelDelete = () => {
+    if (deleteBusy) return;
+    setPendingDelete(null);
+    setDeleteError(null);
+  };
+  const confirmDelete = async () => {
+    if (!pendingDelete || deleteBusy) return;
+    setDeleteBusy(true); setDeleteError(null);
+    try {
+      await nodoBuilderArtifactsApi.remove(nodeId, pendingDelete.id);
+      setPendingDelete(null);
+      reload();
+    } catch (e) {
+      setDeleteError(e?.body?.detail || e?.message
+        || (lang === "es" ? "Error al eliminar" : "Delete error"));
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  // ── Render ────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="card card-pad-lg">
@@ -127,9 +163,7 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
   if (error) {
     return (
       <div className="card card-pad-lg">
-        <div className="body-sm" style={{ color: "var(--critical)" }}>
-          {error}
-        </div>
+        <div className="body-sm" style={{ color: "var(--critical)" }}>{error}</div>
         <button className="btn btn-secondary btn-sm" onClick={reload}
                 style={{ marginTop: 10 }}>
           {lang === "es" ? "Reintentar" : "Retry"}
@@ -140,7 +174,6 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
 
   return (
     <div className="card">
-      {/* ── Header ────────────────────────────────────── */}
       <div className="card-head"
            style={{ display: "flex", alignItems: "center",
                     justifyContent: "space-between" }}>
@@ -152,15 +185,15 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
             {items.length} {lang === "es" ? "registrados" : "registered"}
             {" · "}
             {lang === "es"
-              ? "tipos repetibles, estado libre"
-              : "repeatable types, free-form state"}
+              ? "plantillas dinámicas desde el Builder externo"
+              : "dynamic templates from external Builder"}
           </div>
         </div>
         {!isClient && (
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => setShowAdd(true)}
+            onClick={() => setShowPicker(true)}
             disabled={!nodeId}
           >
             <IconPlus size={14}/>
@@ -169,7 +202,7 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
         )}
       </div>
 
-      {/* ── Tabla / Empty ─────────────────────────────── */}
+      {/* Grid de cards de instancias */}
       {items.length === 0 ? (
         <div style={{ padding: "48px 24px", textAlign: "center" }}>
           <IconFileText size={28}
@@ -184,311 +217,178 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
           </div>
         </div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 140 }}>{lang === "es" ? "Tipo" : "Type"}</th>
-                <th>{lang === "es" ? "Nombre" : "Name"}</th>
-                <th style={{ width: 110 }}>{lang === "es" ? "Estado" : "State"}</th>
-                <th style={{ width: 110, textAlign: "right" }}>
-                  {lang === "es" ? "Tamaño" : "Size"}
-                </th>
-                <th style={{ width: 130 }}>{lang === "es" ? "Subido" : "Uploaded"}</th>
-                <th style={{ width: 110, textAlign: "right" }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((a) => (
-                <tr key={a.id}>
-                  <td>
-                    <span className="mono-sm" style={{ fontWeight: 600 }}>
-                      {a.tipo}
-                    </span>
-                  </td>
-                  <td>
-                    <div className="body-sm" style={{ fontWeight: 500 }}>
-                      {a.nombre}
-                    </div>
-                    {a.descripcion && (
-                      <div className="caption" style={{
-                        color: "var(--text-tertiary)", marginTop: 2,
-                        maxWidth: 420, overflow: "hidden",
-                        textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      }}>
-                        {a.descripcion}
-                      </div>
-                    )}
-                  </td>
-                  <td><EstadoChip estado={a.estado}/></td>
-                  <td className="td-num tabular-nums"
-                      style={{ color: "var(--text-secondary)" }}>
-                    {fmtBytes(a.archivo_size)}
-                  </td>
-                  <td className="caption tabular-nums">
-                    {fmtDate(a.created_at)}
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    <div style={{ display: "inline-flex", gap: 6,
-                                  justifyContent: "flex-end" }}>
-                      {a.archivo_url && (
-                        <a href={a.archivo_url} target="_blank" rel="noreferrer"
-                           className="btn btn-ghost btn-sm"
-                           title={lang === "es" ? "Descargar" : "Download"}>
-                          <IconDownload size={13}/>
-                        </a>
-                      )}
-                      {!isClient && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => handleRemove(a.id)}
-                          title={lang === "es" ? "Archivar" : "Archive"}
-                          style={{ color: "var(--critical)" }}
-                        >
-                          <IconTrash size={13}/>
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+          gap: 14,
+          padding: 16,
+        }}>
+          {items.map((it) => (
+            <ArtifactCard
+              key={it.id}
+              instance={it}
+              readOnly={isClient}
+              lang={lang}
+              onEdit={() => setEditing(it)}
+              onDelete={() => requestDelete(it)}
+            />
+          ))}
         </div>
       )}
 
-      {/* ── Drawer Agregar ───────────────────────────── */}
-      {showAdd && (
-        <AddArtifactDrawer
-          nodeId={nodeId}
+      {/* ── Modal 1 · Picker de templates ────────────── */}
+      {showPicker && (
+        <ArtifactPickerModal
+          /* stage queda undefined — el picker ya soporta nodos */
           lang={lang}
-          onClose={() => setShowAdd(false)}
-          onCreated={() => { setShowAdd(false); reload(); }}
+          onPick={handlePickTemplate}
+          onClose={() => setShowPicker(false)}
         />
+      )}
+
+      {/* ── Modal 2a · Fill (crear) ───────────────────── */}
+      {creating && (
+        <ArtifactFillModal
+          mode="create"
+          templateTitle={creating.template.title}
+          structure={creating.template.structure_json || { sections: [] }}
+          /* stage undefined intencionalmente */
+          lang={lang}
+          saving={saving}
+          onCancel={() => (saving ? null : setCreating(null))}
+          onSubmit={handleCreateSubmit}
+        />
+      )}
+
+      {/* ── Modal 2b · Fill (editar) ──────────────────── */}
+      {editing && (
+        <ArtifactFillModal
+          mode="edit"
+          templateTitle={editing.template_title}
+          structure={editing.structure_snapshot || { sections: [] }}
+          initialData={editing.data || {}}
+          lang={lang}
+          saving={saving}
+          onCancel={() => (saving ? null : setEditing(null))}
+          onSubmit={handleEditSubmit}
+        />
+      )}
+
+      {/* ── ConfirmModal de delete ────────────────────── */}
+      {pendingDelete && createPortal(
+        <ConfirmModal
+          eyebrow={lang === "es" ? "ACCIÓN DESTRUCTIVA" : "DESTRUCTIVE ACTION"}
+          title={lang === "es"
+            ? `¿Eliminar artefacto "${pendingDelete.template_title}"?`
+            : `Delete artifact "${pendingDelete.template_title}"?`}
+          body={
+            <>
+              {lang === "es"
+                ? 'Se archiva con is_active=FALSE — preservamos historial para auditoría. Para restaurarlo necesitas tocar BD directamente.'
+                : 'Marked is_active=FALSE — history preserved for audit. Restore requires direct DB action.'}
+            </>
+          }
+          actionLabel={lang === "es" ? "Sí, eliminar" : "Yes, delete"}
+          actionColor="#DC2626"
+          cancelLabel={lang === "es" ? "Cancelar" : "Cancel"}
+          busy={deleteBusy}
+          error={deleteError}
+          onCancel={cancelDelete}
+          onConfirm={confirmDelete}
+        />,
+        document.body,
       )}
     </div>
   );
 }
 
 // ────────────────────────────────────────────────────────
-// Drawer "Agregar artefacto"
-//
-// Por simplicidad de Fase 2, este drawer NO sube físicamente el archivo
-// al storage en este sprint. Solo guarda metadata + una URL ya conocida
-// (que el usuario puede pegar — útil si el archivo ya vive en S3/GDrive
-// del cliente). En un sprint posterior conectamos esto a /api/storage/
-// upload-proxy/ para subir directo desde el drag-and-drop.
+// Card individual
 // ────────────────────────────────────────────────────────
-function AddArtifactDrawer({ nodeId, lang, onClose, onCreated }) {
-  const [form, setForm] = useState({
-    tipo: "PROFORMA",
-    nombre: "",
-    estado: "PUBLICADO",
-    descripcion: "",
-    archivo_url: "",
-    archivo_nombre: "",
-  });
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-
-  const upd = (k, v) => setForm((p) => ({ ...p, [k]: v }));
-
-  const canSubmit = !!form.tipo && !!form.nombre && !busy;
-
-  const submit = async (e) => {
-    e?.preventDefault();
-    if (!canSubmit) return;
-    setBusy(true); setErr(null);
+function ArtifactCard({ instance, readOnly, lang, onEdit, onDelete }) {
+  const dataKeys = Object.keys(instance.data || {});
+  const fmt = (iso) => {
+    if (!iso) return "—";
     try {
-      await nodoArtefactosApi.create(nodeId, {
-        tipo:           form.tipo.trim(),
-        nombre:         form.nombre.trim(),
-        estado:         (form.estado || "PUBLICADO").trim(),
-        descripcion:    form.descripcion?.trim() || null,
-        archivo_url:    form.archivo_url?.trim() || null,
-        archivo_nombre: form.archivo_nombre?.trim() || null,
-      });
-      onCreated();
-    } catch (e2) {
-      setErr(e2?.message || "Error al crear");
-      setBusy(false);
-    }
+      return new Date(iso).toLocaleDateString(
+        lang === "es" ? "es-ES" : "en-US",
+        { year: "numeric", month: "short", day: "2-digit" });
+    } catch { return iso; }
   };
-
   return (
-    <div
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{
-        position: "fixed", inset: 0, zIndex: 9999,
-        background: "rgba(11,30,58,0.40)", backdropFilter: "blur(2px)",
-        display: "flex", justifyContent: "flex-end",
-      }}
-    >
-      <motion.div
-        initial={{ x: 40, opacity: 0 }}
-        animate={{ x: 0, opacity: 1, transition: { duration: 0.22 } }}
-        style={{
-          width: 460, maxWidth: "92vw", height: "100vh",
-          background: "var(--surface)", boxShadow: "var(--shadow-lg)",
-          display: "flex", flexDirection: "column",
-        }}
-      >
-        <div style={{
-          padding: "18px 22px",
-          borderBottom: "1px solid var(--border-subtle)",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-        }}>
-          <div>
-            <div className="micro" style={{ color: "var(--text-tertiary)" }}>
-              {lang === "es" ? "AGREGAR" : "ADD"}
-            </div>
-            <div className="heading-sm">
-              {lang === "es" ? "Nuevo artefacto del nodo" : "New node artifact"}
-            </div>
+    <div style={{
+      border: "1px solid var(--border-subtle)",
+      borderRadius: 12,
+      padding: 14,
+      background: "var(--surface, white)",
+      display: "flex", flexDirection: "column", gap: 8,
+      cursor: readOnly ? "default" : "pointer",
+      transition: "all 0.15s",
+    }}
+    onClick={readOnly ? undefined : onEdit}
+    onMouseEnter={(e) => {
+      if (readOnly) return;
+      e.currentTarget.style.borderColor = "var(--brand-primary)";
+      e.currentTarget.style.boxShadow = "0 4px 12px -4px rgba(72,30,227,0.15)";
+    }}
+    onMouseLeave={(e) => {
+      e.currentTarget.style.borderColor = "var(--border-subtle)";
+      e.currentTarget.style.boxShadow = "none";
+    }}>
+      <div style={{ display: "flex", alignItems: "flex-start",
+                    justifyContent: "space-between", gap: 8 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="heading-sm" style={{
+            color: "var(--text-primary)",
+            overflow: "hidden", textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}>
+            {instance.template_title}
           </div>
-          <button type="button" className="icon-btn" onClick={onClose}>
-            <IconX size={14}/>
-          </button>
+          <div className="caption" style={{
+            color: "var(--text-tertiary)", marginTop: 2,
+          }}>
+            #{instance.template_id} · {dataKeys.length} {lang === "es" ? "campos" : "fields"}
+          </div>
         </div>
-
-        <form onSubmit={submit}
-              style={{ flex: 1, overflowY: "auto", padding: "18px 22px",
-                       display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <label className="micro" htmlFor="tipo">
-              {lang === "es" ? "TIPO" : "TYPE"} *
-            </label>
-            <input
-              id="tipo"
-              className="input"
-              list="tipos-sugeridos"
-              value={form.tipo}
-              onChange={(e) => upd("tipo", e.target.value.toUpperCase())}
-              required
-              maxLength={48}
-              placeholder={lang === "es"
-                ? "Ej. PROFORMA, BL, CONTRATO_3PL…"
-                : "e.g. PROFORMA, BL, 3PL_CONTRACT…"}
-            />
-            <datalist id="tipos-sugeridos">
-              {TIPOS_SUGERIDOS.map((t) => <option key={t} value={t}/>)}
-            </datalist>
-            <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
-              {lang === "es"
-                ? "El mismo tipo puede repetirse en el nodo."
-                : "Same type can repeat for the node."}
-            </div>
+        {!readOnly && (
+          <div style={{ display: "flex", gap: 4 }}>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={(e) => { e.stopPropagation(); onEdit(); }}
+              title={lang === "es" ? "Editar" : "Edit"}
+              style={{ width: 28, height: 28 }}
+            >
+              <IconPencil size={12}/>
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              title={lang === "es" ? "Eliminar" : "Delete"}
+              style={{ width: 28, height: 28, color: "var(--critical)" }}
+            >
+              <IconTrash size={12}/>
+            </button>
           </div>
-
-          <div>
-            <label className="micro" htmlFor="nombre">
-              {lang === "es" ? "NOMBRE" : "NAME"} *
-            </label>
-            <input
-              id="nombre"
-              className="input"
-              value={form.nombre}
-              onChange={(e) => upd("nombre", e.target.value)}
-              required
-              maxLength={160}
-              placeholder={lang === "es"
-                ? "Ej. Proforma 2026-01 / contrato anual 3PL"
-                : "e.g. Proforma 2026-01 / annual 3PL contract"}
-            />
-          </div>
-
-          <div>
-            <label className="micro" htmlFor="estado">
-              {lang === "es" ? "ESTADO" : "STATE"}
-            </label>
-            <input
-              id="estado"
-              className="input"
-              list="estados-sugeridos"
-              value={form.estado}
-              onChange={(e) => upd("estado", e.target.value.toUpperCase())}
-              maxLength={32}
-            />
-            <datalist id="estados-sugeridos">
-              {ESTADOS_SUGERIDOS.map((s) => <option key={s} value={s}/>)}
-            </datalist>
-          </div>
-
-          <div>
-            <label className="micro" htmlFor="descripcion">
-              {lang === "es" ? "DESCRIPCIÓN" : "DESCRIPTION"}
-            </label>
-            <textarea
-              id="descripcion"
-              className="input"
-              rows={3}
-              value={form.descripcion}
-              onChange={(e) => upd("descripcion", e.target.value)}
-              placeholder={lang === "es"
-                ? "Notas internas, contexto, número de documento…"
-                : "Internal notes, context, document number…"}
-            />
-          </div>
-
-          <div>
-            <label className="micro" htmlFor="archivo_url">
-              {lang === "es" ? "URL DEL ARCHIVO" : "FILE URL"}
-            </label>
-            <input
-              id="archivo_url"
-              className="input"
-              value={form.archivo_url}
-              onChange={(e) => upd("archivo_url", e.target.value)}
-              placeholder="https://…"
-              type="url"
-            />
-            <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
-              {lang === "es"
-                ? "Pega la URL del archivo (S3, Drive, Paperless). Upload directo llega en próximo sprint."
-                : "Paste the file URL (S3, Drive, Paperless). Direct upload coming next sprint."}
-            </div>
-          </div>
-
-          <div>
-            <label className="micro" htmlFor="archivo_nombre">
-              {lang === "es" ? "NOMBRE DEL ARCHIVO" : "FILE NAME"}
-            </label>
-            <input
-              id="archivo_nombre"
-              className="input"
-              value={form.archivo_nombre}
-              onChange={(e) => upd("archivo_nombre", e.target.value)}
-              placeholder="proforma_2026_01.pdf"
-              maxLength={255}
-            />
-          </div>
-
-          {err && (
-            <div className="body-sm" style={{ color: "var(--critical)" }}>
-              {err}
-            </div>
-          )}
-        </form>
-
-        <div style={{
-          padding: "14px 22px",
-          borderTop: "1px solid var(--border-subtle)",
-          display: "flex", justifyContent: "flex-end", gap: 8,
-        }}>
-          <button type="button" className="btn btn-ghost"
-                  onClick={onClose} disabled={busy}>
-            {lang === "es" ? "Cancelar" : "Cancel"}
-          </button>
-          <button type="button" className="btn btn-primary"
-                  onClick={submit} disabled={!canSubmit}>
-            <IconUpload size={13}/>
-            {busy
-              ? (lang === "es" ? "Guardando…" : "Saving…")
-              : (lang === "es" ? "Crear artefacto" : "Create artifact")}
-          </button>
-        </div>
-      </motion.div>
+        )}
+      </div>
+      <div className="caption tabular-nums" style={{
+        color: "var(--text-tertiary)", fontSize: 11,
+        borderTop: "1px solid var(--divider, var(--border-subtle))",
+        paddingTop: 8, marginTop: 4,
+      }}>
+        {instance.created_by_name || "—"} · {fmt(instance.created_at)}
+        {instance.updated_at !== instance.created_at && (
+          <>
+            {" · "}
+            <span style={{ color: "var(--text-secondary)" }}>
+              {lang === "es" ? "editado" : "edited"} {fmt(instance.updated_at)}
+            </span>
+          </>
+        )}
+      </div>
     </div>
   );
 }

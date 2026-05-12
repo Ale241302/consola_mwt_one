@@ -10,6 +10,11 @@ Sprint 2026-05-11 · Fase 2:
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 from .views import NodoViewSet, NodoArtefactoViewSet
+# Sprint 2026-05-11 · Fase 4 — Builder artifacts en nodos.
+from .views_builder_artifacts import (
+    NodoBuilderArtifactsListCreateView,
+    NodoBuilderArtifactDetailView,
+)
 
 router = DefaultRouter()
 router.register(r"nodos", NodoViewSet, basename="nodos")
@@ -28,6 +33,8 @@ artifact_detail = NodoArtefactoViewSet.as_view({
 })
 
 urlpatterns = router.urls + [
+    # Legacy (Fase 2) — artefactos simples (URL + metadata). Se mantienen
+    # las rutas para compat hacia atrás aunque la UI ya no las use.
     path(
         "nodos/<uuid:nodo_pk>/artifacts/",
         artifact_list,
@@ -37,5 +44,17 @@ urlpatterns = router.urls + [
         "nodos/<uuid:nodo_pk>/artifacts/<uuid:pk>/",
         artifact_detail,
         name="nodos-artifacts-detail",
+    ),
+    # Sprint 2026-05-11 · Fase 4 — Builder artifacts (templates dinámicos
+    # desde builder.muito.work, persistidos en nodos.builder_artifact_instance).
+    path(
+        "nodos/<uuid:nodo_id>/builder-artifacts/",
+        NodoBuilderArtifactsListCreateView.as_view(),
+        name="nodos-builder-artifacts-list-create",
+    ),
+    path(
+        "nodos/<uuid:nodo_id>/builder-artifacts/<uuid:artifact_id>/",
+        NodoBuilderArtifactDetailView.as_view(),
+        name="nodos-builder-artifact-detail",
     ),
 ]

@@ -523,6 +523,43 @@ export const nodoAssignmentsApi = {
 };
 
 // ---------------------------------------------------------------------
+// Sprint 2026-05-11 · Fase 4 · Builder artifacts en nodos.
+// Espejo de builderArtifactsApi (expedientes) — usa el mismo Builder
+// externo, pero las instancias se persisten en
+// `nodos.builder_artifact_instance` (no en expedientes.…).
+//
+// Rutas (proxied por backend):
+//   GET    /api/nodos/{nodoId}/builder-artifacts/
+//   POST   /api/nodos/{nodoId}/builder-artifacts/
+//   GET    /api/nodos/{nodoId}/builder-artifacts/{artId}/
+//   PATCH  /api/nodos/{nodoId}/builder-artifacts/{artId}/
+//   DELETE /api/nodos/{nodoId}/builder-artifacts/{artId}/
+//
+// El catálogo de plantillas sigue siendo el mismo del lado expediente:
+//   GET /api/builder/templates/        (ya existe en builderTemplatesApi)
+//   GET /api/builder/templates/{id}/
+// ---------------------------------------------------------------------
+export const nodoBuilderArtifactsApi = {
+  list: (nodoId, params) =>
+    apiFetch(
+      `/nodos/${nodoId}/builder-artifacts/${params ? `?${new URLSearchParams(params)}` : ""}`,
+      { token: getToken() },
+    ),
+  get: (nodoId, artId) =>
+    apiFetch(`/nodos/${nodoId}/builder-artifacts/${artId}/`,
+             { token: getToken() }),
+  create: (nodoId, payload) =>
+    apiFetch(`/nodos/${nodoId}/builder-artifacts/`,
+             { method: "POST", body: payload, token: getToken() }),
+  update: (nodoId, artId, payload) =>
+    apiFetch(`/nodos/${nodoId}/builder-artifacts/${artId}/`,
+             { method: "PATCH", body: payload, token: getToken() }),
+  remove: (nodoId, artId) =>
+    apiFetch(`/nodos/${nodoId}/builder-artifacts/${artId}/`,
+             { method: "DELETE", token: getToken() }),
+};
+
+// ---------------------------------------------------------------------
 // Finance v2.0 · "Registrar Pago" con validación IA del comprobante
 //   POST /api/finance/payments/                  (multipart · drawer)
 //   GET  /api/finance/payments/                  (lista + filtros)
