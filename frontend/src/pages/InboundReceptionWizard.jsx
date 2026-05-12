@@ -142,6 +142,50 @@ export default function InboundReceptionWizard() {
   // POST de cada artefacto.
   const [pendingArtifacts, setPendingArtifacts] = useState([]);
 
+  // Sprint 2026-05-11 (iteración fix) · Las allocations del paso 2
+  // todavía no están en BD cuando el modal de alcance se abre desde
+  // el paso 3. Construimos EN MEMORIA los expedientes y las líneas
+  // para que ArtifactScopeModal las use sin tocar el backend.
+  const inMemoryExpedientes = useMemo(() => {
+    const map = new Map();
+    for (const it of (assignItems || [])) {
+      if (!map.has(it.expediente_id)) {
+        map.set(it.expediente_id, {
+          expediente_id:    it.expediente_id,
+          expediente_codigo: it._expediente_codigo || "—",
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [assignItems]);
+
+  // Líneas en memoria, sin descuento por template (el scope corre
+  // antes del picker). El descuento entre artefactos del mismo
+  // template ya aplica vía endpoint /available-lines/ cuando el
+  // operador vuelve a abrir la tab del nodo después de confirmar.
+  const inMemoryLinesNoTemplate = useMemo(() => {
+    const baseMap = new Map();
+    for (const it of (assignItems || [])) {
+      const k = `${it.expediente_id}::${it.producto_id}::${it.talla || ""}`;
+      const prev = baseMap.get(k) || {
+        expediente_id:     it.expediente_id,
+        expediente_codigo: it._expediente_codigo || "—",
+        producto_id:       it.producto_id,
+        sku:               it._sku || "—",
+        nombre:            it._nombre || "—",
+        talla:             it.talla || null,
+        qty_base:          0,
+      };
+      prev.qty_base += Number(it.qty_asignada || 0);
+      baseMap.set(k, prev);
+    }
+    return Array.from(baseMap.values()).map((r) => ({
+      ...r,
+      qty_usado:      0,
+      qty_disponible: r.qty_base,
+    }));
+  }, [assignItems]);
+
   // ── Catálogos cargados ─────────────────────────────────────────
   const [nodos, setNodos] = useState([]);
   const [proveedores, setProveedores] = useState([]);
@@ -1442,80 +1486,9 @@ function Step3ArtifactsBlock({
     [assignItems],
   );
 
-  // Sprint 2026-05-11 (iteración fix) · Las allocations del paso 2
-  // todavía no están en BD cuando este modal se abre. Construimos
-  // EN MEMORIA los expedientes y las líneas para que ArtifactScopeModal
-  // las use directamente sin tocar el backend.
-  // Además, descontamos lo que ya está consumido por los artefactos
-  // pendientes del MISMO template (regla del CEO: "agregar el mismo
-  // artefacto descuenta, otro template no").
-  const inMemoryExpedientes = useMemo(() => {
-    const map = new Map();
-    for (const it of (assignItems || [])) {
-      if (!map.has(it.expediente_id)) {
-        map.set(it.expediente_id, {
-          expediente_id:    it.expediente_id,
-          expediente_codigo: it._expediente_codigo || "—",
-          // El wizard no tiene proforma/sap del expediente a mano;
-          // los chips muestran solo el código.
-        });
-      }
-    }
-    return Array.from(map.values());
-  }, [assignItems]);
-
-  // Función generadora del array de líneas en memoria. Recibe el
-  // template_id porque el descuento es por template (regla del CEO).
-  // Si template_id es null (caso create antes del picker), no descuenta.
-  const buildInMemoryLines = useCallback((templateId) => {
-    // Agrupamos assignItems por (expediente, producto, talla) y
-    // tomamos qty_asignada como qty_base.
-    const baseMap = new Map();
-    for (const it of (assignItems || [])) {
-      const k = `${it.expediente_id}::${it.producto_id}::${it.talla || ""}`;
-      const prev = baseMap.get(k) || {
-        expediente_id:     it.expediente_id,
-        expediente_codigo: it._expediente_codigo || "—",
-        producto_id:       it.producto_id,
-        sku:               it._sku || "—",
-        nombre:            it._nombre || "—",
-        talla:             it.talla || null,
-        qty_base:          0,
-      };
-      prev.qty_base += Number(it.qty_asignada || 0);
-      baseMap.set(k, prev);
-    }
-    // Descontamos lo ya pre-consumido por los pendingArtifacts del
-    // MISMO template (regla CEO). Otro template no descuenta.
-    const usadoMap = new Map();
-    if (templateId != null) {
-      for (const a of (pendingArtifacts || [])) {
-        if (a.template_id !== templateId) continue;
-        for (const l of (a.lines || [])) {
-          const k = `${l.expediente_id}::${l.producto_id}::${l.talla || ""}`;
-          usadoMap.set(k, (usadoMap.get(k) || 0) + Number(l.qty || 0));
-        }
-      }
-    }
-    return Array.from(baseMap.values()).map((r) => {
-      const k = `${r.expediente_id}::${r.producto_id}::${r.talla || ""}`;
-      const usado = usadoMap.get(k) || 0;
-      return {
-        ...r,
-        qty_usado:       usado,
-        qty_disponible:  Math.max(0, r.qty_base - usado),
-      };
-    });
-  }, [assignItems, pendingArtifacts]);
-
-  // Para el modal de scope que se abre ANTES de elegir template,
-  // pasamos las líneas sin descuento (templateId=null). El descuento
-  // entre artefactos del mismo template se aplica naturalmente al
-  // abrir un SEGUNDO artefacto del mismo tipo (rebuild de inMemory).
-  const inMemoryLinesNoTemplate = useMemo(
-    () => buildInMemoryLines(null),
-    [buildInMemoryLines],
-  );
+  // Sprint 2026-05-11 (iteración fix) · `inMemoryExpedientes` y
+  // `inMemoryLines` se computan en el padre (ScreenInboundReception)
+  // y se descienden vía props. Aquí solo los usamos.
 
   const handleScopeSubmit = (payload) => {
     setScopePayload(payload);
