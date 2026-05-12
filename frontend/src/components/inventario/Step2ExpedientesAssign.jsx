@@ -256,7 +256,13 @@ export default function Step2ExpedientesAssign({
                   >
                     {on && <IconCheck size={11}/>}
                     <span className="mono-sm">{e.codigo}</span>
-                    {e.sap && <span style={{ opacity: 0.7 }}>· {e.sap}</span>}
+                    {/* Sprint 2026-05-11 fix · CEO prefiere ver la
+                        proforma antes que el SAP — la proforma está más
+                        a mano en la operación diaria. Caemos a SAP solo
+                        si el expediente todavía no tiene proforma asignada. */}
+                    {(e.proforma || e.sap) && (
+                      <span style={{ opacity: 0.7 }}>· {e.proforma || e.sap}</span>
+                    )}
                   </button>
                 );
               })}

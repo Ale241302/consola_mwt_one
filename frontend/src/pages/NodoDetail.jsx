@@ -6,6 +6,10 @@
 //       Automatizaciones · Expedientes vinculados
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
+// Sprint 2026-05-11 fix · modal MWT para reemplazar window.confirm nativo
+// en el delete de allocations de la tab Inventario.
+import ConfirmModal from "../components/common/ConfirmModal.jsx";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -553,6 +557,13 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
   const [allocated, setAllocated] = useState(null);  // null=loading · []=fetched
   const [savingKey, setSavingKey] = useState(null);  // celda en flight
   const [draftQty, setDraftQty]   = useState({});    // ediciones pendientes
+  // Sprint 2026-05-11 fix · modal de confirmación (reemplaza window.confirm).
+  // `pendingDelete` guarda la fila a borrar mientras el modal está abierto.
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleteBusy,    setDeleteBusy]    = useState(false);
+  const [deleteError,   setDeleteError]   = useState(null);
+  // Error inline para el editor de cantidad (reemplaza alert()).
+  const [rowError, setRowError] = useState({}); // { key: 'mensaje' }
 
   const load = useCallback(() => {
     if (!nodeId) { setAllocated([]); return; }
@@ -571,6 +582,8 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
   const handleSave = async (r, rawValue) => {
     const k = keyOf(r);
     const newQty = Math.max(0, Math.floor(Number(rawValue) || 0));
+    // Limpiar error previo de esta fila al intentar guardar de nuevo.
+    setRowError((p) => { const n = { ...p }; delete n[k]; return n; });
     if (newQty === Number(r.qty || 0)) {
       // sin cambio — limpiar draft
       setDraftQty((p) => { const n = { ...p }; delete n[k]; return n; });
@@ -588,20 +601,32 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
       setDraftQty((p) => { const n = { ...p }; delete n[k]; return n; });
       load();
     } catch (e) {
-      const msg = e?.body?.detail || e?.message || (lang === 'es' ? 'Error al guardar' : 'Save error');
-      alert(msg);
-      // mantener draft para que el usuario corrija
+      const msg = e?.body?.detail || e?.message
+        || (lang === 'es' ? 'Error al guardar' : 'Save error');
+      // Reemplaza alert() — error inline justo debajo del input.
+      setRowError((p) => ({ ...p, [k]: msg }));
     } finally {
       setSavingKey(null);
     }
   };
 
-  const handleDelete = async (r) => {
-    if (!window.confirm(lang === 'es'
-      ? `¿Eliminar la asignación de ${r.qty} u (talla ${r.talla || '—'}) del expediente ${r.expediente_codigo || '—'}?`
-      : `Remove allocation of ${r.qty} u (size ${r.talla || '—'}) from expediente ${r.expediente_codigo || '—'}?`)) return;
-    const k = keyOf(r);
-    setSavingKey(k);
+  // Sprint 2026-05-11 fix · ConfirmModal en vez de window.confirm.
+  // Click en X abre el modal. Confirmar dispara la mutación; en error,
+  // el modal se queda abierto mostrando el mensaje en `deleteError`.
+  const requestDelete = (r) => {
+    setDeleteError(null);
+    setPendingDelete(r);
+  };
+  const cancelDelete = () => {
+    if (deleteBusy) return;
+    setPendingDelete(null);
+    setDeleteError(null);
+  };
+  const confirmDelete = async () => {
+    if (!pendingDelete || deleteBusy) return;
+    const r = pendingDelete;
+    setDeleteBusy(true);
+    setDeleteError(null);
     try {
       await nodoAssignmentsApi.adjust({
         expedienteId: r.expediente_id,
@@ -610,11 +635,13 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
         nodoId:       nodeId,
         newQty:       0,
       });
+      setPendingDelete(null);
       load();
     } catch (e) {
-      alert(e?.body?.detail || e?.message || (lang === 'es' ? 'Error al eliminar' : 'Delete error'));
+      setDeleteError(e?.body?.detail || e?.message
+        || (lang === 'es' ? 'Error al eliminar' : 'Delete error'));
     } finally {
-      setSavingKey(null);
+      setDeleteBusy(false);
     }
   };
 
@@ -692,6 +719,7 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
                           if (e.key === 'Enter') e.currentTarget.blur();
                           if (e.key === 'Escape') {
                             setDraftQty((p) => { const n = { ...p }; delete n[k]; return n; });
+                            setRowError((p) => { const n = { ...p }; delete n[k]; return n; });
                             e.currentTarget.blur();
                           }
                         }}
@@ -699,11 +727,22 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
                           width: 90, textAlign: 'right',
                           fontVariantNumeric: 'tabular-nums',
                           opacity: busy ? 0.5 : 1,
+                          borderColor: rowError[k] ? 'var(--critical)' : undefined,
                         }}
                         title={lang === 'es'
                           ? 'Edita la cantidad y presiona Enter/Tab para guardar'
                           : 'Edit qty and press Enter/Tab to save'}
                       />
+                      {/* Error inline (reemplaza alert) */}
+                      {rowError[k] && (
+                        <div className="caption" style={{
+                          color: 'var(--critical)',
+                          marginTop: 4, textAlign: 'right',
+                          maxWidth: 180, marginLeft: 'auto',
+                        }}>
+                          {rowError[k]}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <span className="mono-sm" style={{ fontWeight: 600,
@@ -716,7 +755,7 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
                         type="button"
                         className="btn btn-ghost btn-sm"
                         disabled={busy}
-                        onClick={() => handleDelete(r)}
+                        onClick={() => requestDelete(r)}
                         title={lang === 'es' ? 'Eliminar línea' : 'Remove line'}
                         style={{ color: 'var(--critical)', padding: '4px 8px' }}
                       >
@@ -729,6 +768,43 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId }) {
             </tbody>
           </table>
         </div>
+
+        {/* Modal MWT para confirmar el delete (reemplaza window.confirm) */}
+        {pendingDelete && createPortal(
+          <ConfirmModal
+            eyebrow={lang === 'es' ? 'ACCIÓN DESTRUCTIVA' : 'DESTRUCTIVE ACTION'}
+            title={lang === 'es'
+              ? '¿Eliminar esta asignación?'
+              : 'Remove this allocation?'}
+            body={
+              <>
+                {lang === 'es'
+                  ? 'Se desasignarán '
+                  : 'Will unassign '}
+                <strong>{Number(pendingDelete.qty || 0).toLocaleString()} u</strong>
+                {lang === 'es' ? ' de talla ' : ' of size '}
+                <strong>{pendingDelete.talla || '—'}</strong>
+                {lang === 'es'
+                  ? ' del expediente '
+                  : ' from expediente '}
+                <strong style={{ color: 'var(--brand-primary)' }}>
+                  {pendingDelete.expediente_codigo || '—'}
+                </strong>
+                {lang === 'es'
+                  ? '. Las unidades vuelven a quedar disponibles para asignar a otros nodos.'
+                  : '. The units become available to assign to other nodes.'}
+              </>
+            }
+            actionLabel={lang === 'es' ? 'Sí, eliminar' : 'Yes, remove'}
+            actionColor="#DC2626"
+            cancelLabel={lang === 'es' ? 'Cancelar' : 'Cancel'}
+            busy={deleteBusy}
+            error={deleteError}
+            onCancel={cancelDelete}
+            onConfirm={confirmDelete}
+          />,
+          document.body,
+        )}
       </div>
     );
   }
