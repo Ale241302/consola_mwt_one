@@ -413,47 +413,88 @@ export default function ScreenInventario() {
                       <span className="inv-sold-pill">{i.vendidos.toLocaleString()}</span>
                     </td>
                     {/* Recibido — clickable: abre drawer con movimientos
-                        del lote (RECEPCION del nodo · TRANSFER origen→destino) */}
+                        del lote (RECEPCION del nodo · TRANSFER origen→destino).
+                        Sprint 2026-05-11 fix · Para filas que vienen del
+                        overview de asignaciones (_source='allocation') NO
+                        existe `inventario.movimiento` asociado, así que
+                        el drawer mostraba un mensaje confuso. Aquí, sólo
+                        renderizamos texto plano (no botón). */}
                     <td>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setMovDrawerRow(i); }}
-                        title={lang==='es' ? 'Ver detalle del lote' : 'View lot detail'}
-                        style={{
-                          display:'inline-flex', alignItems:'center', gap:6,
-                          background:'transparent', border:'1px solid transparent',
-                          borderRadius: 6, padding:'2px 8px',
-                          fontFamily:'var(--font-mono)', fontSize:11.5,
-                          color:'var(--brand-purple, #481EE3)', fontWeight:600,
-                          cursor:'pointer',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = 'rgba(72,30,227,0.06)';
-                          e.currentTarget.style.borderColor = 'rgba(72,30,227,0.20)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = 'transparent';
-                          e.currentTarget.style.borderColor = 'transparent';
-                        }}
-                      >
-                        <span>{i.received || '—'}</span>
-                        <svg width="11" height="11" viewBox="0 0 16 16" fill="none"
-                             style={{ opacity: 0.65 }}>
-                          <path d="M2 8s2.5-4.5 6-4.5S14 8 14 8s-2.5 4.5-6 4.5S2 8 2 8z"
-                                stroke="currentColor" strokeWidth="1.4"/>
-                          <circle cx="8" cy="8" r="1.8" fill="currentColor"/>
-                        </svg>
-                      </button>
+                      {i._source === 'allocation' ? (
+                        <span className="caption" style={{
+                          color: 'var(--text-tertiary)',
+                          fontFamily: 'var(--font-mono)', fontSize: 11.5,
+                        }}>—</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setMovDrawerRow(i); }}
+                          title={lang==='es' ? 'Ver detalle del lote' : 'View lot detail'}
+                          style={{
+                            display:'inline-flex', alignItems:'center', gap:6,
+                            background:'transparent', border:'1px solid transparent',
+                            borderRadius: 6, padding:'2px 8px',
+                            fontFamily:'var(--font-mono)', fontSize:11.5,
+                            color:'var(--brand-purple, #481EE3)', fontWeight:600,
+                            cursor:'pointer',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(72,30,227,0.06)';
+                            e.currentTarget.style.borderColor = 'rgba(72,30,227,0.20)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                            e.currentTarget.style.borderColor = 'transparent';
+                          }}
+                        >
+                          <span>{i.received || '—'}</span>
+                          <svg width="11" height="11" viewBox="0 0 16 16" fill="none"
+                               style={{ opacity: 0.65 }}>
+                            <path d="M2 8s2.5-4.5 6-4.5S14 8 14 8s-2.5 4.5-6 4.5S2 8 2 8z"
+                                  stroke="currentColor" strokeWidth="1.4"/>
+                            <circle cx="8" cy="8" r="1.8" fill="currentColor"/>
+                          </svg>
+                        </button>
+                      )}
                     </td>
                     {/* Sprint 2026-05-11 fix · expediente_codigo
-                        (sólo filas con _source='allocation' lo traen). */}
-                    <td className="mono-sm" style={{
-                      color: i.expediente
-                        ? 'var(--brand-primary, #481EE3)'
-                        : 'var(--text-tertiary)',
-                      fontWeight: i.expediente ? 600 : 400,
-                    }}>
-                      {i.expediente || '—'}
+                        (sólo filas con _source='allocation' lo traen).
+                        Click → navega al detalle del expediente
+                        /expedientes/none/exp/{expedienteId}. */}
+                    <td>
+                      {i.expediente && i.expedienteId ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/expedientes/none/exp/${i.expedienteId}`);
+                          }}
+                          title={lang==='es'
+                            ? 'Ver detalle del expediente'
+                            : 'View expediente detail'}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            background: 'transparent',
+                            border: '1px solid transparent',
+                            borderRadius: 6, padding: '2px 8px',
+                            fontFamily: 'var(--font-mono)', fontSize: 11.5,
+                            color: 'var(--brand-primary, #481EE3)', fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(72,30,227,0.06)';
+                            e.currentTarget.style.borderColor = 'rgba(72,30,227,0.20)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                            e.currentTarget.style.borderColor = 'transparent';
+                          }}
+                        >
+                          {i.expediente}
+                        </button>
+                      ) : (
+                        <span style={{ color: 'var(--text-tertiary)' }}>—</span>
+                      )}
                     </td>
                   </motion.tr>
                 );
