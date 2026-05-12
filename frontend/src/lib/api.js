@@ -563,6 +563,30 @@ export const nodoBuilderArtifactsApi = {
   remove: (nodoId, artId) =>
     apiFetch(`/nodos/${nodoId}/builder-artifacts/${artId}/`,
              { method: "DELETE", token: getToken() }),
+  // Sprint 2026-05-11 · Fase 5 · saldo disponible de líneas para
+  // un template (con descuento por uso previo del mismo template).
+  availableLines: (nodoId, { templateId, expedienteIds = [], excludeInstanceId } = {}) => {
+    const qs = new URLSearchParams();
+    if (templateId)         qs.set("template_id", String(templateId));
+    if (expedienteIds.length) qs.set("expediente_ids", expedienteIds.join(","));
+    if (excludeInstanceId)  qs.set("exclude_instance_id", excludeInstanceId);
+    return apiFetch(
+      `/nodos/${nodoId}/builder-artifacts/available-lines/?${qs.toString()}`,
+      { token: getToken() },
+    );
+  },
+  // Lista de expedientes del nodo (chips para el Modal 1 del scope).
+  // Si se pasa templateId aplica el descuento por template.
+  expedientes: (nodoId, { templateId, excludeInstanceId } = {}) => {
+    const qs = new URLSearchParams();
+    if (templateId)        qs.set("template_id", String(templateId));
+    if (excludeInstanceId) qs.set("exclude_instance_id", excludeInstanceId);
+    const tail = qs.toString();
+    return apiFetch(
+      `/nodos/${nodoId}/builder-artifacts/expedientes/${tail ? `?${tail}` : ""}`,
+      { token: getToken() },
+    );
+  },
 };
 
 // ---------------------------------------------------------------------

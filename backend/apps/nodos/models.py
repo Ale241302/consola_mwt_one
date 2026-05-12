@@ -143,3 +143,27 @@ class NodoBuilderArtifactInstance(models.Model):
         managed  = False
         db_table = 'nodos\".\"builder_artifact_instance'
         ordering = ('-created_at',)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Sprint 2026-05-11 · Fase 5 — Líneas asociadas a un artefacto del nodo.
+# Tabla creada por SQL B2_nodos_builder_artifact_lines.sql. Append-only.
+# ─────────────────────────────────────────────────────────────────
+class NodoBuilderArtifactLine(models.Model):
+    id                            = models.UUIDField(primary_key=True)
+    builder_artifact_instance_id  = models.UUIDField()                  # ⛔ sin FK
+    nodo_id                       = models.UUIDField()
+    expediente_id                 = models.UUIDField()
+    producto_id                   = models.UUIDField()
+    talla                         = models.CharField(max_length=16, null=True, blank=True)
+    qty                           = models.IntegerField()
+    notas                         = models.TextField(null=True, blank=True)
+    created_by_id                 = models.UUIDField(null=True, blank=True)
+    is_active                     = models.BooleanField(default=True)
+    created_at                    = models.DateTimeField(auto_now_add=True)
+    updated_at                    = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'nodos\".\"builder_artifact_line'
+        ordering = ('-created_at',)

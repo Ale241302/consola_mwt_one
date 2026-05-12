@@ -42,6 +42,8 @@ import { useRole } from "../../context/RoleContext.jsx";
 import ArtifactPickerModal from "../expedientes/builderArtifacts/ArtifactPickerModal.jsx";
 import ArtifactFillModal   from "../expedientes/builderArtifacts/ArtifactFillModal.jsx";
 import ConfirmModal        from "../common/ConfirmModal.jsx";
+// Sprint 2026-05-11 · Fase 5 · captura del alcance ANTES del template.
+import ArtifactScopeModal  from "./ArtifactScopeModal.jsx";
 
 export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
   const { isClient } = useRole();
@@ -49,10 +51,17 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
 
-  // Estados de los modales
+  // Estados de los modales — flow: scope → picker → fill
+  // Sprint 2026-05-11 · Fase 5
+  //   - scopeMode: null | 'create' | 'edit' | 'edit-scope-only'
+  //   - scopePayload: { expediente_ids, lines }   (paso intermedio)
+  //   - editingInstance: instancia activa cuando se edita
+  const [scopeMode,      setScopeMode]      = useState(null);
+  const [scopePayload,   setScopePayload]   = useState(null);
+  const [editingInstance, setEditingInstance] = useState(null);
   const [showPicker, setShowPicker] = useState(false);
   const [creating,   setCreating]   = useState(null);  // {template}
-  const [editing,    setEditing]    = useState(null);  // instance
+  const [editing,    setEditing]    = useState(null);  // instance (fill modal)
   const [saving,     setSaving]     = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleteBusy,    setDeleteBusy]    = useState(false);
@@ -73,7 +82,19 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
 
   useEffect(() => { reload(); }, [reload]);
 
-  // ── Picker → Fill ──────────────────────────────────────────
+  // ── Flow create: scope → picker → fill ─────────────────────
+  // Sprint 2026-05-11 · Fase 5
+  // 1) Click "+ Agregar artefacto" → abre ArtifactScopeModal.
+  // 2) Usuario elige expedientes + líneas → handleScopeCreateSubmit.
+  // 3) Abrimos ArtifactPickerModal con scopePayload guardado.
+  // 4) Elige template → handlePickTemplate → abrimos ArtifactFillModal.
+  // 5) Submit del fill → llamamos create con data + lines del scope.
+  const handleScopeCreateSubmit = (payload) => {
+    setScopePayload(payload);
+    setScopeMode(null);
+    setShowPicker(true);
+  };
+
   const handlePickTemplate = async (tpl) => {
     // Re-fetcheamos el template completo (con structure_json) por si
     // la lista trae shape ligero.
@@ -97,8 +118,11 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
         template_title:     creating.template.title,
         data,
         structure_snapshot: creating.template.structure_json || { sections: [] },
+        // Sprint 2026-05-11 · Fase 5 · líneas capturadas en el scope.
+        lines: scopePayload?.lines || [],
       });
       setCreating(null);
+      setScopePayload(null);
       reload();
     } catch (e) {
       alert((lang === "es" ? "Error al crear: " : "Create error: ") +
@@ -109,6 +133,9 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
   };
 
   // ── Editar ─────────────────────────────────────────────────
+  // El flow de edit conserva sus líneas existentes a menos que el
+  // usuario abra el botón "Editar alcance" (scope edit). Si solo edita
+  // el form, mandamos `data` sin tocar `lines`.
   const handleEditSubmit = async (data) => {
     if (!editing) return;
     setSaving(true);
@@ -121,6 +148,38 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
             (e?.body?.detail || e?.message || ""));
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Edit del alcance (líneas) de una instancia ya creada.
+  const handleEditScopeSubmit = async (payload) => {
+    if (!editingInstance) return;
+    setSaving(true);
+    try {
+      await nodoBuilderArtifactsApi.update(nodeId, editingInstance.id, {
+        lines: payload.lines,
+      });
+      setScopeMode(null);
+      setEditingInstance(null);
+      reload();
+    } catch (e) {
+      alert((lang === "es" ? "Error al guardar alcance: " : "Scope save error: ") +
+            (e?.body?.detail || e?.message || ""));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Abre el modal de edición de un artefacto. Fetcheamos el detail
+  // para traer las `lines` actuales (el listado las trae solo en
+  // resumen con lines_count/total_qty, no las líneas individuales).
+  const openEdit = async (it) => {
+    try {
+      const full = await nodoBuilderArtifactsApi.get(nodeId, it.id);
+      setEditing(full);
+    } catch {
+      // best-effort: si falla el get, usamos el item del listado.
+      setEditing(it);
     }
   };
 
@@ -193,7 +252,10 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => setShowPicker(true)}
+            /* Sprint 2026-05-11 · Fase 5 — abrimos primero el modal
+               de ALCANCE (expedientes + líneas), después el picker
+               de template y por último el fill form. */
+            onClick={() => { setScopePayload(null); setScopeMode("create"); }}
             disabled={!nodeId}
           >
             <IconPlus size={14}/>
@@ -229,11 +291,54 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
               instance={it}
               readOnly={isClient}
               lang={lang}
-              onEdit={() => setEditing(it)}
+              /* Sprint 2026-05-11 · Fase 5 — openEdit hace fetch del
+                 detail para traer las `lines` antes de abrir el modal. */
+              onEdit={() => openEdit(it)}
+              onEditScope={async () => {
+                try {
+                  const full = await nodoBuilderArtifactsApi.get(nodeId, it.id);
+                  setEditingInstance(full);
+                  setScopeMode("edit-scope-only");
+                } catch (e) {
+                  alert((lang === "es" ? "Error: " : "Error: ")
+                        + (e?.body?.detail || e?.message || ""));
+                }
+              }}
               onDelete={() => requestDelete(it)}
             />
           ))}
         </div>
+      )}
+
+      {/* ── Modal 0 · Scope (Fase 5) — expedientes + líneas ─── */}
+      {scopeMode === "create" && (
+        <ArtifactScopeModal
+          nodeId={nodeId}
+          lang={lang}
+          onCancel={() => setScopeMode(null)}
+          onSubmit={handleScopeCreateSubmit}
+          submitLabel={lang === "es"
+            ? "Siguiente — elegir plantilla"
+            : "Next — pick template"}
+        />
+      )}
+      {scopeMode === "edit-scope-only" && editingInstance && (
+        <ArtifactScopeModal
+          nodeId={nodeId}
+          templateId={editingInstance.template_id}
+          templateTitle={editingInstance.template_title}
+          excludeInstanceId={editingInstance.id}
+          initialLines={editingInstance.lines || []}
+          initialExpedienteIds={
+            // Reconstruir la lista de expedientes a partir de las líneas.
+            Array.from(new Set((editingInstance.lines || [])
+              .map((l) => l.expediente_id)))
+          }
+          lang={lang}
+          onCancel={() => { setScopeMode(null); setEditingInstance(null); }}
+          onSubmit={handleEditScopeSubmit}
+          submitLabel={lang === "es" ? "Guardar alcance" : "Save scope"}
+        />
       )}
 
       {/* ── Modal 1 · Picker de templates ────────────── */}
@@ -242,7 +347,12 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
           /* stage queda undefined — el picker ya soporta nodos */
           lang={lang}
           onPick={handlePickTemplate}
-          onClose={() => setShowPicker(false)}
+          onClose={() => {
+            setShowPicker(false);
+            // Si el usuario cancela el picker después del scope,
+            // descartamos el scope payload — no tiene sentido sin template.
+            setScopePayload(null);
+          }}
         />
       )}
 
@@ -305,8 +415,10 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
 // ────────────────────────────────────────────────────────
 // Card individual
 // ────────────────────────────────────────────────────────
-function ArtifactCard({ instance, readOnly, lang, onEdit, onDelete }) {
+function ArtifactCard({ instance, readOnly, lang, onEdit, onEditScope, onDelete }) {
   const dataKeys = Object.keys(instance.data || {});
+  const linesCount = Number(instance.lines_count || 0);
+  const totalQty   = Number(instance.total_qty   || 0);
   const fmt = (iso) => {
     if (!iso) return "—";
     try {
@@ -350,14 +462,35 @@ function ArtifactCard({ instance, readOnly, lang, onEdit, onDelete }) {
           }}>
             #{instance.template_id} · {dataKeys.length} {lang === "es" ? "campos" : "fields"}
           </div>
+          {/* Sprint 2026-05-11 · Fase 5 · alcance del artefacto */}
+          {linesCount > 0 && (
+            <div className="caption tabular-nums" style={{
+              color: "var(--brand-accent, #0E8A6D)",
+              fontWeight: 600, marginTop: 4, fontSize: 11,
+            }}>
+              {linesCount} {lang === "es" ? "línea(s) · " : "line(s) · "}
+              {totalQty.toLocaleString()} u
+            </div>
+          )}
         </div>
         {!readOnly && (
           <div style={{ display: "flex", gap: 4 }}>
+            {onEditScope && (
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={(e) => { e.stopPropagation(); onEditScope(); }}
+                title={lang === "es" ? "Editar alcance (expedientes / líneas)" : "Edit scope"}
+                style={{ width: 28, height: 28 }}
+              >
+                <IconFileText size={12}/>
+              </button>
+            )}
             <button
               type="button"
               className="icon-btn"
               onClick={(e) => { e.stopPropagation(); onEdit(); }}
-              title={lang === "es" ? "Editar" : "Edit"}
+              title={lang === "es" ? "Editar campos del artefacto" : "Edit artifact fields"}
               style={{ width: 28, height: 28 }}
             >
               <IconPencil size={12}/>

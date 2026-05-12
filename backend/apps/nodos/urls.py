@@ -14,6 +14,10 @@ from .views import NodoViewSet, NodoArtefactoViewSet
 from .views_builder_artifacts import (
     NodoBuilderArtifactsListCreateView,
     NodoBuilderArtifactDetailView,
+    # Sprint 2026-05-11 · Fase 5 — saldo disponible por template +
+    # expedientes con líneas pendientes para un template.
+    NodoBuilderArtifactAvailableLinesView,
+    NodoBuilderArtifactExpedientesView,
 )
 
 router = DefaultRouter()
@@ -56,5 +60,16 @@ urlpatterns = router.urls + [
         "nodos/<uuid:nodo_id>/builder-artifacts/<uuid:artifact_id>/",
         NodoBuilderArtifactDetailView.as_view(),
         name="nodos-builder-artifact-detail",
+    ),
+    # Sprint 2026-05-11 · Fase 5 — endpoints de alcance del artefacto.
+    path(
+        "nodos/<uuid:nodo_id>/builder-artifacts/available-lines/",
+        NodoBuilderArtifactAvailableLinesView.as_view(),
+        name="nodos-builder-artifact-available-lines",
+    ),
+    path(
+        "nodos/<uuid:nodo_id>/builder-artifacts/expedientes/",
+        NodoBuilderArtifactExpedientesView.as_view(),
+        name="nodos-builder-artifact-expedientes",
     ),
 ]
