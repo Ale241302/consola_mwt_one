@@ -1190,12 +1190,16 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
 
       {/* Sprint 2026-05-11 (iteración) · Bloque de artefactos del paso 3.
           Sólo en flow EXPEDIENTE_ASSIGN porque depende de assignItems
-          (necesita saber los expedientes/líneas del paso 2). */}
+          (necesita saber los expedientes/líneas del paso 2).
+          inMemoryExpedientes / inMemoryLines se calculan en el padre
+          (ScreenInboundReception) y se descienden hasta aquí. */}
       {isExpedienteAssign && (
         <Step3ArtifactsBlock
           lang={lang}
           destinationNode={destinationNode}
           assignItems={assignItems}
+          inMemoryExpedientes={inMemoryExpedientes}
+          inMemoryLines={inMemoryLinesNoTemplate}
           pendingArtifacts={pendingArtifacts}
           setPendingArtifacts={setPendingArtifacts}
           disabled={submitting}
@@ -1420,6 +1424,10 @@ const td = { padding: "10px 12px", verticalAlign: "top" };
 // =====================================================================
 function Step3ArtifactsBlock({
   lang, destinationNode, assignItems = [],
+  // Sprint 2026-05-11 (iteración fix) · datos en memoria del paso 2
+  // que el ArtifactScopeModal usa sin tocar el backend.
+  inMemoryExpedientes = null,
+  inMemoryLines = null,
   pendingArtifacts, setPendingArtifacts, disabled,
 }) {
   const [scopeOpen,    setScopeOpen]    = useState(false);
@@ -1432,6 +1440,81 @@ function Step3ArtifactsBlock({
   const expedienteIdsFromStep2 = useMemo(
     () => Array.from(new Set((assignItems || []).map((it) => it.expediente_id))),
     [assignItems],
+  );
+
+  // Sprint 2026-05-11 (iteración fix) · Las allocations del paso 2
+  // todavía no están en BD cuando este modal se abre. Construimos
+  // EN MEMORIA los expedientes y las líneas para que ArtifactScopeModal
+  // las use directamente sin tocar el backend.
+  // Además, descontamos lo que ya está consumido por los artefactos
+  // pendientes del MISMO template (regla del CEO: "agregar el mismo
+  // artefacto descuenta, otro template no").
+  const inMemoryExpedientes = useMemo(() => {
+    const map = new Map();
+    for (const it of (assignItems || [])) {
+      if (!map.has(it.expediente_id)) {
+        map.set(it.expediente_id, {
+          expediente_id:    it.expediente_id,
+          expediente_codigo: it._expediente_codigo || "—",
+          // El wizard no tiene proforma/sap del expediente a mano;
+          // los chips muestran solo el código.
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [assignItems]);
+
+  // Función generadora del array de líneas en memoria. Recibe el
+  // template_id porque el descuento es por template (regla del CEO).
+  // Si template_id es null (caso create antes del picker), no descuenta.
+  const buildInMemoryLines = useCallback((templateId) => {
+    // Agrupamos assignItems por (expediente, producto, talla) y
+    // tomamos qty_asignada como qty_base.
+    const baseMap = new Map();
+    for (const it of (assignItems || [])) {
+      const k = `${it.expediente_id}::${it.producto_id}::${it.talla || ""}`;
+      const prev = baseMap.get(k) || {
+        expediente_id:     it.expediente_id,
+        expediente_codigo: it._expediente_codigo || "—",
+        producto_id:       it.producto_id,
+        sku:               it._sku || "—",
+        nombre:            it._nombre || "—",
+        talla:             it.talla || null,
+        qty_base:          0,
+      };
+      prev.qty_base += Number(it.qty_asignada || 0);
+      baseMap.set(k, prev);
+    }
+    // Descontamos lo ya pre-consumido por los pendingArtifacts del
+    // MISMO template (regla CEO). Otro template no descuenta.
+    const usadoMap = new Map();
+    if (templateId != null) {
+      for (const a of (pendingArtifacts || [])) {
+        if (a.template_id !== templateId) continue;
+        for (const l of (a.lines || [])) {
+          const k = `${l.expediente_id}::${l.producto_id}::${l.talla || ""}`;
+          usadoMap.set(k, (usadoMap.get(k) || 0) + Number(l.qty || 0));
+        }
+      }
+    }
+    return Array.from(baseMap.values()).map((r) => {
+      const k = `${r.expediente_id}::${r.producto_id}::${r.talla || ""}`;
+      const usado = usadoMap.get(k) || 0;
+      return {
+        ...r,
+        qty_usado:       usado,
+        qty_disponible:  Math.max(0, r.qty_base - usado),
+      };
+    });
+  }, [assignItems, pendingArtifacts]);
+
+  // Para el modal de scope que se abre ANTES de elegir template,
+  // pasamos las líneas sin descuento (templateId=null). El descuento
+  // entre artefactos del mismo template se aplica naturalmente al
+  // abrir un SEGUNDO artefacto del mismo tipo (rebuild de inMemory).
+  const inMemoryLinesNoTemplate = useMemo(
+    () => buildInMemoryLines(null),
+    [buildInMemoryLines],
   );
 
   const handleScopeSubmit = (payload) => {
@@ -1560,12 +1643,16 @@ function Step3ArtifactsBlock({
         </div>
       )}
 
-      {/* Modales encadenados scope → picker → fill */}
+      {/* Modales encadenados scope → picker → fill.
+          inMemoryExpedientes/Lines son obligatorios aquí porque las
+          allocations del paso 2 todavía NO están en BD. */}
       {scopeOpen && (
         <ArtifactScopeModal
           nodeId={destinationNode?.id}
           lang={lang}
           restrictExpedienteIds={expedienteIdsFromStep2}
+          inMemoryExpedientes={inMemoryExpedientes}
+          inMemoryLines={inMemoryLines}
           onCancel={() => setScopeOpen(false)}
           onSubmit={handleScopeSubmit}
           submitLabel={lang === "es"

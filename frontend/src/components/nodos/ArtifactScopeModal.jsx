@@ -47,6 +47,16 @@ export default function ArtifactScopeModal({
   // expedientes que el operador eligió en el paso 2. Si viene, filtra
   // los chips a este set.
   restrictExpedienteIds = null,   // array | null
+  // Sprint 2026-05-11 (iteración) · Si las allocations todavía están
+  // en memoria (caso wizard paso 3, antes de confirmar) el backend no
+  // las ve. Estos dos props permiten alimentar el modal directamente.
+  // Cuando NO vienen, el modal hace fetch normal a la API.
+  //   inMemoryExpedientes: [{expediente_id, expediente_codigo,
+  //                          proforma_codigo?, sap?}, ...]
+  //   inMemoryLines:       [{expediente_id, producto_id, sku, nombre,
+  //                          talla, qty_disponible}, ...]
+  inMemoryExpedientes  = null,
+  inMemoryLines        = null,
   lang                 = "es",
   onCancel,
   onSubmit,             // (payload) => void
@@ -77,6 +87,17 @@ export default function ArtifactScopeModal({
 
   // ── 1) Cargar expedientes del nodo ────────────────────────────
   useEffect(() => {
+    // Sprint 2026-05-11 (iteración) · Si el wizard pasó la lista en
+    // memoria, la usamos directamente sin fetchear. Esto es necesario
+    // porque las allocations del paso 2 aún no están persistidas en
+    // BD cuando el operador abre este modal desde el paso 3.
+    if (Array.isArray(inMemoryExpedientes)) {
+      setExpedientes(inMemoryExpedientes);
+      setExpLoading(false);
+      setExpError(null);
+      return;
+    }
+
     let cancel = false;
     setExpLoading(true); setExpError(null);
     nodoBuilderArtifactsApi.expedientes(nodeId, {
@@ -105,7 +126,8 @@ export default function ArtifactScopeModal({
   }, [nodeId, templateId, excludeInstanceId, lang,
       // Para que el filtro `restrict` se recalcule si el wizard
       // cambia el set después de abrir el modal.
-      JSON.stringify(restrictExpedienteIds || [])]);
+      JSON.stringify(restrictExpedienteIds || []),
+      JSON.stringify(inMemoryExpedientes || null)]);
 
   // ── 2) Cargar líneas disponibles cuando cambia la selección ───
   const reloadLines = useCallback(() => {
@@ -113,6 +135,21 @@ export default function ArtifactScopeModal({
       setAvailableLines([]);
       return;
     }
+
+    // Sprint 2026-05-11 (iteración) · Si tenemos las líneas en memoria
+    // las usamos directamente filtrando por expedientes seleccionados.
+    if (Array.isArray(inMemoryLines)) {
+      const allowedExp = new Set(selectedExpIds.map(String));
+      const filtered = inMemoryLines
+        .filter((r) => allowedExp.has(String(r.expediente_id)))
+        .filter((r) => Number(r.qty_disponible || 0) > 0
+          || rowState[keyOf(r)]?.include);
+      setAvailableLines(filtered);
+      setLinesLoading(false);
+      setLinesError(null);
+      return;
+    }
+
     setLinesLoading(true); setLinesError(null);
     nodoBuilderArtifactsApi.availableLines(nodeId, {
       templateId,
@@ -130,7 +167,8 @@ export default function ArtifactScopeModal({
         || (lang === "es" ? "Error cargando líneas" : "Error loading lines")))
       .finally(() => setLinesLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodeId, templateId, excludeInstanceId, selectedExpIds, lang]);
+  }, [nodeId, templateId, excludeInstanceId, selectedExpIds, lang,
+      JSON.stringify(inMemoryLines || null)]);
 
   useEffect(() => { reloadLines(); }, [reloadLines]);
 
