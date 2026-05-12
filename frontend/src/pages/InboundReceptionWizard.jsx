@@ -271,8 +271,15 @@ export default function InboundReceptionWizard() {
   };
 
   // ── Validaciones ──────────────────────────────────────────────
-  const step1Valid = !!destinationNode && !!sourceType
-                     && (sourceType === "BLIND_RECEIPT" || !!reference || sourceType === "RETURN");
+  // Sprint 2026-05-11 · CEO pide que el proveedor / referencia NO sea
+  // obligatorio en el paso 1. Antes la regla era:
+  //   (sourceType === "BLIND_RECEIPT" || !!reference || sourceType === "RETURN")
+  // que forzaba a elegir proveedor en SUPPLIER_PO o transferencia en
+  // TRANSFER_IN. Ahora el paso 1 sólo exige nodo destino + tipo de origen;
+  // la referencia queda como input opcional que se rellena si el operador
+  // tiene la info a mano. El selector de proveedor sigue visible — sólo
+  // dejó de bloquear el avance al paso 2.
+  const step1Valid = !!destinationNode && !!sourceType;
   const linesWithGap = lines.filter((l) =>
     Number(l.received_qty || 0) < Number(l.expected_qty || 0)
   );

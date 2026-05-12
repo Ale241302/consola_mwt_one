@@ -524,6 +524,10 @@ export const LEGAL_ENTITIES = [
   { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e006', name: 'MWT Brasil Ltda.',           short: 'MWT BR',      country: 'BR' },
   { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e007', name: 'MWT USA LLC',                short: 'MWT US',      country: 'US' },
   { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e008', name: 'MWT Shanghai Trading Co.',   short: 'MWT CN',      country: 'CN' },
+  // Sprint 2026-05-11 · CEO pide alta de Costa Rica como entidad legal dueña
+  // de inventario (nodos fiscales / 3PL en CR). UUID determinístico para que
+  // el FK en BD (legal_entity_owner_id) no rote entre deploys.
+  { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e009', name: 'MWT Costa Rica S.A.',        short: 'MWT CR',      country: 'CR' },
 ];
 
 export const OPERATORS = [
@@ -534,6 +538,11 @@ export const OPERATORS = [
   { id: '7c2ab401-aeb1-42f1-b1c0-111111110005', name: 'APM Terminals',   kind: 'port'       },
   { id: '7c2ab401-aeb1-42f1-b1c0-111111110006', name: 'Cliente directo', kind: 'client'     },
   { id: '7c2ab401-aeb1-42f1-b1c0-111111110007', name: 'Fábrica Asia',    kind: 'factory'    },
+  // Sprint 2026-05-11 · CEO pide alta de Marluvas como operador del espacio
+  // (es la marca brasileña pero también opera sus propios CDs / showrooms).
+  // kind='brand_ops' diferencia este caso (operador = dueño de la marca) de
+  // un 3PL puro. UUID determinístico para sincronía con BD.
+  { id: '7c2ab401-aeb1-42f1-b1c0-111111110008', name: 'Marluvas',        kind: 'brand_ops'  },
 ];
 
 // ─────────────────────────────────────────────────────────
