@@ -27,10 +27,17 @@ import {
 import {
   nodosApi, proveedoresApi, transferenciasApi, productosApi,
   inboundApi, tallasApi, currencyCatApi, nodoAssignmentsApi,
+  // Sprint 2026-05-11 fase 4+ · paso 1 ahora muestra artefactos del nodo
+  // (Builder) en vez del dropzone OCR.
+  nodoBuilderArtifactsApi, builderTemplatesApi,
 } from "../lib/api.js";
 // Sprint 2026-05-11 · Fase 3 · sourceType="EXPEDIENTE_ASSIGN" usa este
 // paso 2 alternativo en vez del Step2Reconcile legacy.
 import Step2ExpedientesAssign from "../components/inventario/Step2ExpedientesAssign.jsx";
+// Sprint 2026-05-11 fase 4+ · modales Builder reusados desde el módulo
+// de expedientes (mismos componentes que la tab Artefactos del nodo).
+import ArtifactPickerModal from "../components/expedientes/builderArtifacts/ArtifactPickerModal.jsx";
+import ArtifactFillModal   from "../components/expedientes/builderArtifacts/ArtifactFillModal.jsx";
 
 // ─── Tipos de origen del inbound (alineado con SQL source_type_cat) ─
 // Sprint 2026-05-11 · Fase 3 · Se agrega EXPEDIENTE_ASSIGN: el operador
@@ -672,97 +679,29 @@ function Step1Context({
         )}
       </Card>
 
-      <Card title={lang === "es" ? "3. Documento de soporte (Packing List · Factura)" : "3. Supporting document (Packing List · Invoice)"}
-            subtitle={lang === "es"
-              ? "PDF / Excel. La IA detectará SKUs, lotes, cantidades y costos."
-              : "PDF / Excel. AI will extract SKUs, lots, quantities and costs."}>
-        {!supportFile ? (
-          <div
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={onDrop}
-            onClick={() => fileRef.current?.click()}
-            style={{
-              border: dragOver ? "2px dashed #00B286" : "2px dashed var(--border-subtle)",
-              background: dragOver ? "rgba(0,178,134,0.05)" : "rgba(11,30,58,0.02)",
-              borderRadius: 14, padding: "32px 24px", textAlign: "center", cursor: "pointer",
-              transition: "all 0.18s",
-            }}
-          >
-            <input ref={fileRef} type="file" hidden
-                   accept=".pdf,.xlsx,.xls,.csv,image/*"
-                   onChange={(e) => onFileSelected(e.target.files?.[0])}/>
-            <IconUpload size={28} style={{ color: "#00B286", marginBottom: 8 }}/>
-            <div style={{ fontWeight: 700, color: "#0B1E3A", fontSize: 15, marginBottom: 2 }}>
-              {lang === "es" ? "Arrastra el documento o haz clic" : "Drag the document or click"}
-            </div>
-            <div className="caption" style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
-              {lang === "es"
-                ? "Formatos: PDF · Excel · CSV · Imagen · max 25 MB"
-                : "Formats: PDF · Excel · CSV · Image · max 25 MB"}
-            </div>
-          </div>
-        ) : (
-          <div style={{
-            border: "1px solid var(--border-subtle)", borderRadius: 12,
-            padding: 14, display: "flex", alignItems: "center", gap: 12,
-            background: "white",
-          }}>
-            <IconFileText size={18} style={{ color: "#00B286" }}/>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: "#0B1E3A",
-                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {supportFile.name}
-              </div>
-              <div className="caption" style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
-                {(supportFile.size / 1024).toFixed(1)} KB
-              </div>
-            </div>
-            <button className="btn" onClick={onRemoveFile}><IconX size={11}/></button>
-          </div>
-        )}
+      {/* Sprint 2026-05-11 fase 4+ · CEO pidió reemplazar el dropzone
+          OCR del paso 1 por el mismo flow de Builder artifacts que ya
+          existe en la tab Artefactos del nodo: el operador agrega
+          plantillas (Packing List, Factura, AWB/BL, etc.) desde el
+          Builder externo y rellena el formulario dinámico. Los
+          artefactos quedan asociados al nodo destino seleccionado en
+          este mismo paso.
 
-        {/* Estado OCR */}
-        {ocrLoading && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-            style={{
-              marginTop: 14, padding: "12px 14px", borderRadius: 10,
-              background: "linear-gradient(90deg, rgba(72,30,227,0.08), rgba(0,178,134,0.06))",
-              border: "1px solid rgba(72,30,227,0.20)",
-              display: "flex", alignItems: "center", gap: 10,
-            }}>
-            <motion.div animate={{ rotate: 360 }}
-                        transition={{ repeat: Infinity, duration: 1.6, ease: "linear" }}>
-              <IconSparkle size={14} style={{ color: "#481EE3" }}/>
-            </motion.div>
-            <div style={{ fontSize: 13, color: "#0B1E3A", fontWeight: 600 }}>
-              {lang === "es" ? "Analizando con IA…" : "Analyzing with AI…"}
-            </div>
-          </motion.div>
-        )}
-        {ocrError && (
-          <div style={{
-            marginTop: 14, padding: "10px 14px", borderRadius: 8,
-            background: "#FEE2E2", color: "#991B1B", border: "1px solid #FCA5A5", fontSize: 13,
-          }}>
-            <IconAlert size={11} style={{ verticalAlign: -1, marginRight: 6 }}/> {ocrError}
-          </div>
-        )}
-        {ocrPayload && !ocrLoading && (
-          <div style={{
-            marginTop: 14, padding: "12px 14px", borderRadius: 10,
-            background: "rgba(0,178,134,0.06)", border: "1px solid rgba(0,178,134,0.20)",
-            display: "flex", alignItems: "center", gap: 10,
-          }}>
-            <IconCheck size={14} style={{ color: "#00B286" }}/>
-            <div style={{ fontSize: 13, color: "#065F46", fontWeight: 600 }}>
-              {lang === "es"
-                ? `IA detectó ${ocrPayload.lines?.length || 0} líneas. Continúa para reconciliar.`
-                : `AI detected ${ocrPayload.lines?.length || 0} lines. Continue to reconcile.`}
-            </div>
-          </div>
-        )}
+          El dropzone OCR + supportFile + ocrPayload se preservan en
+          estado y `submit` para compat, pero ya no hay UI que dispare
+          el upload. Se puede reactivar el OCR en un sprint posterior
+          si se decide reintegrarlo. */}
+      <Card title={lang === "es" ? "3. Artefactos del nodo" : "3. Node artifacts"}
+            subtitle={lang === "es"
+              ? "Conecta proformas, packing lists, BL, facturas — plantillas dinámicas desde el Builder externo."
+              : "Connect proformas, packing lists, BL, invoices — dynamic templates from the external Builder."}>
+        <Step1NodeArtifactsBlock
+          nodeId={destinationNode?.id}
+          nodeLabel={destinationNode
+            ? `${destinationNode.codigo} · ${destinationNode.nombre}`
+            : null}
+          lang={lang}
+        />
       </Card>
     </div>
   );
@@ -1430,3 +1369,222 @@ const th = {
   color: "var(--text-tertiary)",
 };
 const td = { padding: "10px 12px", verticalAlign: "top" };
+
+// =====================================================================
+// Sprint 2026-05-11 fase 4+ · Step1NodeArtifactsBlock
+//
+// Componente reusado en el paso 1 del wizard de recepción. Reemplaza el
+// antiguo dropzone OCR por el flow Builder:
+//   · Lista los artefactos del nodo destino (read-only mini).
+//   · Botón "+ Agregar artefacto" → abre ArtifactPickerModal (templates
+//     del Builder externo).
+//   · Selección → abre ArtifactFillModal con el form dinámico.
+//   · Guarda en nodos.builder_artifact_instance via nodoBuilderArtifactsApi.
+//
+// Se activa cuando `nodeId` está disponible. Si todavía no hay nodo
+// destino (paso 1 en blanco), muestra hint.
+// =====================================================================
+function Step1NodeArtifactsBlock({ nodeId, nodeLabel, lang = "es" }) {
+  const [items, setItems]     = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState(null);
+  const [showPicker, setShowPicker] = useState(false);
+  const [creating, setCreating]     = useState(null);
+  const [editing,  setEditing]      = useState(null);
+  const [saving,   setSaving]       = useState(false);
+
+  const reload = useCallback(() => {
+    if (!nodeId) { setItems([]); return; }
+    setLoading(true); setError(null);
+    nodoBuilderArtifactsApi.list(nodeId)
+      .then((data) => {
+        const arr = Array.isArray(data) ? data : (data?.results || []);
+        setItems(arr);
+      })
+      .catch((e) => setError(e?.body?.detail || e?.message
+        || (lang === "es" ? "Error cargando artefactos" : "Error loading artifacts")))
+      .finally(() => setLoading(false));
+  }, [nodeId, lang]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const handlePickTemplate = async (tpl) => {
+    let fresh = tpl;
+    try { fresh = await builderTemplatesApi.get(tpl.id); } catch { /* best-effort */ }
+    setCreating({ template: fresh });
+    setShowPicker(false);
+  };
+
+  const handleCreateSubmit = async (data) => {
+    if (!creating || !nodeId) return;
+    setSaving(true);
+    try {
+      await nodoBuilderArtifactsApi.create(nodeId, {
+        template_id:        creating.template.id,
+        template_title:     creating.template.title,
+        data,
+        structure_snapshot: creating.template.structure_json || { sections: [] },
+      });
+      setCreating(null);
+      reload();
+    } catch (e) {
+      alert((lang === "es" ? "Error al crear: " : "Create error: ") +
+            (e?.body?.detail || e?.message || ""));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditSubmit = async (data) => {
+    if (!editing || !nodeId) return;
+    setSaving(true);
+    try {
+      await nodoBuilderArtifactsApi.update(nodeId, editing.id, { data });
+      setEditing(null);
+      reload();
+    } catch (e) {
+      alert((lang === "es" ? "Error al guardar: " : "Save error: ") +
+            (e?.body?.detail || e?.message || ""));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── Empty state si todavía no hay nodo destino ──────────────
+  if (!nodeId) {
+    return (
+      <div style={{
+        padding: "28px 18px", textAlign: "center",
+        border: "1px dashed var(--border-subtle)", borderRadius: 12,
+        background: "rgba(11,30,58,0.02)",
+        color: "var(--text-tertiary)", fontSize: 13,
+      }}>
+        {lang === "es"
+          ? "Selecciona primero un nodo destino arriba para poder agregar artefactos."
+          : "Pick a destination node first to add artifacts."}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{
+        display: "flex", justifyContent: "space-between",
+        alignItems: "center", marginBottom: 12,
+      }}>
+        <div className="caption" style={{ color: "var(--text-secondary)", fontSize: 12 }}>
+          {nodeLabel}
+          {" · "}
+          {loading
+            ? (lang === "es" ? "cargando…" : "loading…")
+            : `${items.length} ${lang === "es" ? "artefacto(s)" : "artifact(s)"}`}
+        </div>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          onClick={() => setShowPicker(true)}
+        >
+          <IconPlus size={13}/>
+          {lang === "es" ? "Agregar artefacto" : "Add artifact"}
+        </button>
+      </div>
+
+      {error && (
+        <div style={{
+          padding: "10px 12px", borderRadius: 8,
+          background: "#FEE2E2", color: "#991B1B",
+          border: "1px solid #FCA5A5", fontSize: 12, marginBottom: 10,
+        }}>
+          {error}
+        </div>
+      )}
+
+      {!loading && items.length === 0 && !error && (
+        <div style={{
+          padding: "20px 18px", textAlign: "center",
+          border: "1px dashed var(--border-subtle)", borderRadius: 12,
+          color: "var(--text-tertiary)", fontSize: 13,
+        }}>
+          {lang === "es"
+            ? "Sin artefactos. Haz clic en \"Agregar artefacto\" para conectar el primero."
+            : "No artifacts yet. Click \"Add artifact\" to connect the first one."}
+        </div>
+      )}
+
+      {items.length > 0 && (
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+          gap: 10,
+        }}>
+          {items.map((it) => (
+            <button
+              type="button"
+              key={it.id}
+              onClick={() => setEditing(it)}
+              style={{
+                textAlign: "left",
+                border: "1px solid var(--border-subtle)",
+                borderRadius: 10, padding: "10px 12px",
+                background: "white", cursor: "pointer",
+                display: "flex", flexDirection: "column", gap: 2,
+                transition: "all 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = "var(--brand-primary)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "var(--border-subtle)";
+              }}
+              title={lang === "es" ? "Editar artefacto" : "Edit artifact"}
+            >
+              <span className="mono-sm" style={{
+                fontWeight: 700, color: "#0B1E3A", fontSize: 12.5,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}>
+                {it.template_title}
+              </span>
+              <span className="caption" style={{
+                color: "var(--text-tertiary)", fontSize: 11,
+              }}>
+                #{it.template_id} · {Object.keys(it.data || {}).length} {lang === "es" ? "campos" : "fields"}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Modales reusados de Fase 4 — mismo flow que la tab Artefactos del nodo */}
+      {showPicker && (
+        <ArtifactPickerModal
+          lang={lang}
+          onPick={handlePickTemplate}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
+      {creating && (
+        <ArtifactFillModal
+          mode="create"
+          templateTitle={creating.template.title}
+          structure={creating.template.structure_json || { sections: [] }}
+          lang={lang}
+          saving={saving}
+          onCancel={() => (saving ? null : setCreating(null))}
+          onSubmit={handleCreateSubmit}
+        />
+      )}
+      {editing && (
+        <ArtifactFillModal
+          mode="edit"
+          templateTitle={editing.template_title}
+          structure={editing.structure_snapshot || { sections: [] }}
+          initialData={editing.data || {}}
+          lang={lang}
+          saving={saving}
+          onCancel={() => (saving ? null : setEditing(null))}
+          onSubmit={handleEditSubmit}
+        />
+      )}
+    </div>
+  );
+}
