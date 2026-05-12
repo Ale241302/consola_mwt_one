@@ -68,7 +68,12 @@ export default function ArtifactFillModal({
         if (e.target.classList.contains("mdl-backdrop") && !saving) onCancel?.();
       }}
     >
-      <div className="mdl-panel" data-wide>
+      {/* Sprint 2026-05-11 fase 4 fix · El panel data-wide tiene
+          max-width 720px definido en app.css, que aprieta secciones
+          con 2+ columnas. Sobreescribimos a 980px aquí para que las
+          cards de secciones del Builder respiren. */}
+      <div className="mdl-panel" data-wide
+           style={{ maxWidth: "min(980px, 96vw)" }}>
         <div className="mdl-head">
           <div>
             <div className="mdl-title">
@@ -100,37 +105,88 @@ export default function ArtifactFillModal({
         </div>
 
         <div className="mdl-body">
-          <div className="mdl-form">
-            {(structure?.sections || []).map((sec) => {
+          {/* Sprint 2026-05-11 fase 4 fix · Render fiel al Builder.
+              Cada sección es una card MWT con borde + encabezado tipo
+              "● Sección N". Las secciones se apilan verticalmente
+              (flex-column) para garantizar que el grid interno de
+              columnas no las pegue horizontalmente, sin importar lo
+              que haga .mdl-form en CSS global. */}
+          <div
+            className="mdl-form"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+            }}
+          >
+            {(structure?.sections || []).map((sec, secIdx) => {
               const cols = sec.columns || [];
+              const sectionTitle = (sec.title && String(sec.title).trim())
+                || `${lang === "es" ? "Sección" : "Section"} ${secIdx + 1}`;
               return (
-                <section key={sec.id} style={{ marginBottom: 18 }}>
-                  {sec.title && (
-                    <div
-                      className="micro"
-                      style={{ marginBottom: 10, color: "var(--text-secondary)" }}
-                    >
-                      {sec.title}
-                    </div>
-                  )}
+                <section
+                  key={sec.id ?? `sec-${secIdx}`}
+                  style={{
+                    border: "1px solid var(--border-subtle)",
+                    borderRadius: 12,
+                    background: "var(--surface-alt, rgba(11,30,58,0.02))",
+                    padding: "18px 20px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 14,
+                  }}
+                >
+                  {/* Encabezado tipo Builder: dot verde + título */}
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    paddingBottom: 10,
+                    borderBottom: "1px solid var(--divider, var(--border-subtle))",
+                  }}>
+                    <span style={{
+                      width: 8, height: 8, borderRadius: "50%",
+                      background: "var(--brand-accent, #0E8A6D)",
+                      flexShrink: 0,
+                    }}/>
+                    <span className="micro" style={{
+                      letterSpacing: "0.12em",
+                      textTransform: "uppercase",
+                      fontWeight: 700,
+                      color: "var(--text-secondary)",
+                    }}>
+                      {sectionTitle}
+                    </span>
+                  </div>
+
+                  {/* Grid de columnas internas. Respeta el número de
+                      columns que mande el Builder (1, 2 o más). */}
                   <div
                     style={{
                       display: "grid",
-                      gap: 14,
+                      gap: 18,
                       gridTemplateColumns:
-                        cols.length > 1 ? "repeat(2, minmax(0, 1fr))" : "1fr",
+                        cols.length > 1
+                          ? `repeat(${cols.length}, minmax(0, 1fr))`
+                          : "1fr",
                     }}
                   >
-                    {cols.map((col) => (
+                    {cols.map((col, colIdx) => (
                       <div
-                        key={col.id}
+                        key={col.id ?? `col-${secIdx}-${colIdx}`}
                         style={{ display: "flex", flexDirection: "column", gap: 14 }}
                       >
                         {(col.fields || []).map((f) => {
                           const showError = touched[f.id] && missing.includes(f.id);
                           return (
                             <div key={f.id} className="mdl-field">
-                              <label>
+                              <label style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                letterSpacing: "0.08em",
+                                textTransform: "uppercase",
+                                color: "var(--text-secondary)",
+                                marginBottom: 6,
+                                display: "block",
+                              }}>
                                 {f.label}
                                 {f.required && (
                                   <span style={{
