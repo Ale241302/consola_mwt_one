@@ -738,6 +738,46 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             status=201,
         )
 
+    # ── 7) Set de expedientes con al menos una línea pendiente ──
+    # Sprint 2026-05-11 fix · El paso 2 del wizard ofrecía expedientes ya
+    # 100% asignados, generando picks vacíos. Este endpoint devuelve el
+    # conjunto de IDs que SÍ tienen al menos una (producto, talla) con
+    # qty_pendiente > 0 — el frontend filtra los chips usando esa lista.
+    @action(detail=False, methods=["get"], url_path="expedientes-with-pending")
+    def expedientes_with_pending(self, request):
+        sql = """
+            WITH per_line AS (
+                SELECT
+                    l.expediente_id,
+                    l.producto_id,
+                    COALESCE(l.size, '')       AS talla,
+                    SUM(l.qty)::int            AS qty_total,
+                    COALESCE(SUM(a.qty_asignada)::int, 0)
+                                               AS qty_asignada_total
+                FROM expedientes.linea l
+                LEFT JOIN inventario.expediente_nodo_assignment a
+                  ON a.expediente_id = l.expediente_id
+                 AND a.producto_id   = l.producto_id
+                 AND COALESCE(a.talla, '') = COALESCE(l.size, '')
+                 AND a.is_active = TRUE
+                WHERE l.is_active = TRUE
+                  AND l.qty > 0
+                  AND l.expediente_id IS NOT NULL
+                GROUP BY l.expediente_id, l.producto_id, l.size
+            )
+            SELECT DISTINCT expediente_id::text
+            FROM per_line
+            WHERE qty_total - qty_asignada_total > 0
+        """
+        try:
+            with connection.cursor() as c:
+                c.execute(sql)
+                rows = [r[0] for r in c.fetchall()]
+        except Exception as exc:
+            log.exception("expedientes_with_pending SQL failed")
+            return Response({"detail": f"SQL error: {exc}"}, status=500)
+        return Response({"expediente_ids": rows})
+
     # ── 4) Overview global: TODAS las asignaciones en la red ──
     # Sprint 2026-05-11 fix · Esta vista alimenta /inventario (la pantalla
     # global). Devuelve una fila por (nodo, producto, talla, expediente)

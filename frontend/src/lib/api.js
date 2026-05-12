@@ -520,6 +520,12 @@ export const nodoAssignmentsApi = {
   expedientesAsignados: (nodoId) =>
     apiFetch(`/inventario/nodos/${nodoId}/expedientes-asignados/`,
              { token: getToken() }),
+  // Sprint 2026-05-11 fix · IDs de expedientes que aún tienen al menos
+  // una (producto, talla) con qty_pendiente > 0. Para filtrar la lista
+  // de chips en el paso 2 del wizard de recepción.
+  expedientesWithPending: () =>
+    apiFetch(`/inventario/expedientes-with-pending/`,
+             { token: getToken() }),
 };
 
 // ---------------------------------------------------------------------

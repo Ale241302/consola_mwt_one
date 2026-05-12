@@ -29,6 +29,14 @@ import { IconCheck, IconX, IconRefresh } from "../../lib/icons.jsx";
 import { nodoAssignmentsApi, expedientesApi } from "../../lib/api.js";
 
 /**
+ * Sprint 2026-05-11 fix · El paso 2 ofrecía expedientes que ya estaban
+ * 100% repartidos entre nodos (qty_pendiente = 0 en cada línea). Click
+ * en esos chips abría una tabla vacía. Fix: cruzar la lista de
+ * expedientes con el set de IDs que devuelve
+ * /inventario/expedientes-with-pending/ y filtrar los que NO aparecen.
+ */
+
+/**
  * @typedef {Object} SaldoRow
  * @property {string} expediente_id
  * @property {string} expediente_codigo
@@ -67,15 +75,36 @@ export default function Step2ExpedientesAssign({
   const [rowState, setRowState] = useState({});
 
   // ── Fetch lista de expedientes ────────────────────────────────
+  // Sprint 2026-05-11 fix · combinamos dos endpoints:
+  //   1. expedientesApi.list — todos los activos.
+  //   2. nodoAssignmentsApi.expedientesWithPending — set de IDs que aún
+  //      tienen alguna (producto, talla) con qty_pendiente > 0.
+  // Mostramos sólo la intersección. Si el endpoint de filtro falla
+  // (caso degradado), caemos a mostrar todos (más permisivo que ocultar).
   useEffect(() => {
     let cancel = false;
     setExpLoading(true); setExpError(null);
-    expedientesApi.list({ is_active: true })
-      .then((data) => {
+    Promise.all([
+      expedientesApi.list({ is_active: true }),
+      nodoAssignmentsApi.expedientesWithPending().catch(() => null),
+    ])
+      .then(([listData, pendingData]) => {
         if (cancel) return;
-        const arr = Array.isArray(data) ? data : (data?.results || []);
+        const arr = Array.isArray(listData)
+          ? listData
+          : (listData?.results || []);
         // Solo expedientes con código no nulo (ignoramos OCs huérfanas).
-        const filtered = arr.filter((e) => e?.codigo);
+        let filtered = arr.filter((e) => e?.codigo);
+
+        // Aplicamos el filtro de pendiente si el endpoint respondió OK.
+        if (pendingData && Array.isArray(pendingData.expediente_ids)) {
+          const pendingSet = new Set(pendingData.expediente_ids);
+          // Caso edge: si el endpoint devuelve [] (todos asignados) y la
+          // lista de expedientes tiene varios, ocultamos todos. Eso es
+          // intencional — no hay nada que asignar a este nodo.
+          filtered = filtered.filter((e) => pendingSet.has(String(e.id)));
+        }
+
         // Orden DESC por updated_at o created_at para que aparezca primero
         // el más reciente — el operador rara vez asigna expedientes viejos.
         filtered.sort((a, b) =>

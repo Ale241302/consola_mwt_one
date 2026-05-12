@@ -25,6 +25,8 @@ overview_view            = NodoAssignmentViewSet.as_view({"get":  "allocations_o
 # Sprint 2026-05-11 fix · adjust (editar/eliminar) + expedientes-asignados.
 adjust_view              = NodoAssignmentViewSet.as_view({"post": "adjust"})
 exp_asignados_view       = NodoAssignmentViewSet.as_view({"get":  "expedientes_asignados"})
+# Sprint 2026-05-11 fix · filtra expedientes con qty_pendiente > 0 para el wizard.
+exp_with_pending_view    = NodoAssignmentViewSet.as_view({"get":  "expedientes_with_pending"})
 
 urlpatterns = router.urls + [
     # Inbound Engine v1 (sprint 2026-04-29)
@@ -50,4 +52,9 @@ urlpatterns = router.urls + [
     path("inventario/nodos/<uuid:nodo_id>/expedientes-asignados/",
          exp_asignados_view,
          name="ena-expedientes-asignados"),
+    # Sprint 2026-05-11 fix · set de IDs de expedientes con pendiente > 0
+    # (alimenta el filtro de chips del paso 2 del wizard de recepción).
+    path("inventario/expedientes-with-pending/",
+         exp_with_pending_view,
+         name="ena-expedientes-with-pending"),
 ]
