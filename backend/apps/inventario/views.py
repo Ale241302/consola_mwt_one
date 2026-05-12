@@ -933,8 +933,11 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                     COALESCE(op.razon_social, op.nombre,
                              op.codigo, op.rut, '—')              AS operating_company_nombre,
                     SUM(a.qty_asignada)::int                      AS qty_total_asignada,
-                    COUNT(DISTINCT (a.producto_id, COALESCE(a.talla,'')))::int
-                                                                  AS lines_count
+                    -- Concat-based DISTINCT count para evitar row constructor
+                    -- (sintaxis `(a, b)` falla en algunas versiones de PG).
+                    COUNT(DISTINCT (
+                        a.producto_id::text || '::' || COALESCE(a.talla, '')
+                    ))::int                                       AS lines_count
                 FROM inventario.expediente_nodo_assignment a
                 LEFT JOIN expedientes.expediente e   ON e.id  = a.expediente_id
                 LEFT JOIN expedientes.oc         oc  ON oc.id = e.oc_id

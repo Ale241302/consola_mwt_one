@@ -1300,20 +1300,49 @@ function FilesTab({ files, lang, navigate, nodeId }) {
   // Si no hay assignments para este nodo, caemos al cálculo legacy
   // (por destino geográfico — mismo `files` que se pasaba antes).
   const [assigned, setAssigned] = useState(null);  // null=loading · []=done
+  const [assignedError, setAssignedError] = useState(null);
   useEffect(() => {
     let cancel = false;
     if (!nodeId) { setAssigned([]); return; }
+    setAssignedError(null);
     nodoAssignmentsApi.expedientesAsignados(nodeId)
       .then((data) => {
         if (cancel) return;
         const arr = Array.isArray(data) ? data : (data?.results || []);
         setAssigned(arr);
       })
-      .catch(() => { if (!cancel) setAssigned([]); });
+      .catch((e) => {
+        if (cancel) return;
+        // En vez de caer mudo al fallback (que oculta el problema),
+        // guardamos el error para mostrarlo al operador.
+        setAssignedError(e?.body?.detail || e?.message
+          || (lang === 'es' ? 'Error consultando expedientes asignados'
+                            : 'Error fetching assigned expedientes'));
+        setAssigned([]);
+      });
     return () => { cancel = true; };
-  }, [nodeId]);
+  }, [nodeId, lang]);
 
   const useAssigned = Array.isArray(assigned) && assigned.length > 0;
+
+  // Si el endpoint falla, mostramos el error en un banner antes del fallback.
+  if (assignedError) {
+    return (
+      <div className="card card-pad-lg" style={{ marginTop: 12 }}>
+        <div className="micro" style={{ color: 'var(--critical)', marginBottom: 6 }}>
+          {lang === 'es' ? 'ERROR' : 'ERROR'}
+        </div>
+        <div className="body-sm" style={{ color: 'var(--critical)' }}>
+          {assignedError}
+        </div>
+        <div className="caption" style={{ color: 'var(--text-tertiary)', marginTop: 8 }}>
+          {lang === 'es'
+            ? 'Endpoint: GET /api/inventario/nodos/{id}/expedientes-asignados/'
+            : 'Endpoint: GET /api/inventario/nodos/{id}/expedientes-asignados/'}
+        </div>
+      </div>
+    );
+  }
 
   const fmtFecha = (iso) => {
     if (!iso) return '—';
