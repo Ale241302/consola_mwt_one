@@ -26,6 +26,9 @@ import {
   // Sprint 2026-05-11 fase 4+ · usado por Step1NodeArtifactsBlock
   // para el botón "+ Agregar artefacto" del paso 1.
   IconPlus,
+  // Sprint 2026-05-11 fix · icono lápiz para editar artefactos
+  // pendientes en el paso 3 antes de confirmar la recepción.
+  IconPencil,
 } from "../lib/icons.jsx";
 import {
   nodosApi, proveedoresApi, transferenciasApi, productosApi,
@@ -1491,6 +1494,10 @@ function Step3ArtifactsBlock({
   const [scopePayload, setScopePayload] = useState(null);
   const [showPicker,   setShowPicker]   = useState(false);
   const [creating,     setCreating]     = useState(null);
+  // Sprint 2026-05-11 fix · edición in-place de un artefacto pendiente
+  // (antes de confirmar la recepción). Guarda el id del item en edición;
+  // al guardar, reemplaza el `data` del item en pendingArtifacts.
+  const [editingPending, setEditingPending] = useState(null); // pendingArtifact
 
   // Set de expediente_ids seleccionados en paso 2 (con expediente_id
   // únicos derivados de assignItems).
@@ -1533,6 +1540,18 @@ function Step3ArtifactsBlock({
 
   const removeArt = (id) =>
     setPendingArtifacts((prev) => prev.filter((a) => a.id !== id));
+
+  // Sprint 2026-05-11 fix · al editar un artefacto pendiente, abrimos
+  // ArtifactFillModal con la data/structure del item y, al guardar,
+  // reemplazamos solo el campo `data` (las lines del alcance no se
+  // tocan desde aquí — para eso queda el delete + re-agregar).
+  const handleEditPendingSubmit = (data) => {
+    if (!editingPending) return;
+    setPendingArtifacts((prev) =>
+      prev.map((a) => a.id === editingPending.id ? { ...a, data } : a)
+    );
+    setEditingPending(null);
+  };
 
   const noExpedientesYet = expedienteIdsFromStep2.length === 0;
 
@@ -1612,16 +1631,32 @@ function Step3ArtifactsBlock({
                       {totalQty.toLocaleString()} u
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() => removeArt(a.id)}
-                    disabled={disabled}
-                    title={lang === "es" ? "Quitar" : "Remove"}
-                    style={{ width: 24, height: 24, color: "var(--critical)" }}
-                  >
-                    <IconX size={11}/>
-                  </button>
+                  {/* Sprint 2026-05-11 fix · acciones: editar + eliminar.
+                      El lápiz reabre ArtifactFillModal en modo edit con
+                      la data ya guardada en memoria. El trash quita el
+                      pending sin tocar BD (todavía no se persistió). */}
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => setEditingPending(a)}
+                      disabled={disabled}
+                      title={lang === "es" ? "Editar artefacto" : "Edit artifact"}
+                      style={{ width: 24, height: 24 }}
+                    >
+                      <IconPencil size={11}/>
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => removeArt(a.id)}
+                      disabled={disabled}
+                      title={lang === "es" ? "Quitar" : "Remove"}
+                      style={{ width: 24, height: 24, color: "var(--critical)" }}
+                    >
+                      <IconTrash size={11}/>
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -1662,6 +1697,21 @@ function Step3ArtifactsBlock({
           saving={false}
           onCancel={() => setCreating(null)}
           onSubmit={handleCreateSubmit}
+        />
+      )}
+      {/* Sprint 2026-05-11 fix · edición in-place de un pendingArtifact.
+          Reusa ArtifactFillModal con mode="edit" pre-llenado con la
+          data y la structure_snapshot que guardamos al crearlo. */}
+      {editingPending && (
+        <ArtifactFillModal
+          mode="edit"
+          templateTitle={editingPending.template_title}
+          structure={editingPending.structure_snapshot || { sections: [] }}
+          initialData={editingPending.data || {}}
+          lang={lang}
+          saving={false}
+          onCancel={() => setEditingPending(null)}
+          onSubmit={handleEditPendingSubmit}
         />
       )}
     </Card>
