@@ -336,20 +336,18 @@ def _call_openai_vision(*, system: str, user_text: str, model: str,
 
     # ── Path PDF/desconocido sin texto extraíble ──
     # Sprint 2026-05-11 fix · El CEO fue explícito: "no conviertas PDF a
-    # imagen". `chat.completions` con `image_url` rechaza PDFs (400
-    # Invalid MIME type). La única alternativa es `responses.create`
-    # con `input_file`, pero solo está disponible en openai SDK ≥1.55.
-    # Hoy el VPS tiene openai==1.54 (pin por incompat httpx) → el
-    # método `responses` no existe. Devolvemos un mensaje legible para
-    # el operador en vez de un AttributeError críptico.
+    # imagen". `chat.completions` con `image_url` rechaza PDFs con
+    # "400 Invalid MIME type. Only image types are supported.". La
+    # única alternativa correcta es `responses.create` con `input_file`,
+    # que el modelo procesa nativamente como PDF.
+    # Disponible en openai SDK ≥1.55 (el VPS está pinneado a 1.66 desde
+    # este sprint). Si por algún motivo no está, devolvemos error
+    # legible para el operador en vez de un AttributeError críptico.
     if not hasattr(client, "responses"):
         raise RuntimeError(
-            "Este PDF no tiene texto extraíble por las librerías locales "
-            "(parece ser un PDF escaneado / 100% imagen). "
-            "Sugerencia: conviértelo a imagen (.png/.jpg) y vuelve a "
-            "subirlo — el extractor sí procesa imágenes. "
-            "(Nota técnica: el SDK openai del backend está en v1.54 que "
-            "no expone responses.create con input_file.)"
+            "El SDK openai del backend no expone responses.create con "
+            "input_file (necesario para procesar PDFs sin texto). "
+            "Actualizar openai a ≥1.55 en backend/requirements.txt."
         )
 
     pdf_filename = filename or "document.pdf"

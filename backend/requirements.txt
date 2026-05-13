@@ -19,15 +19,14 @@ gunicorn==23.0.0
 # AI Hub (apps.ai_hub)
 anthropic==0.39.0
 # OCR Aduanal del Motor de Transferencias (apps.transfers.ocr_customs · gpt-5-nano)
-openai==1.54.0
-# 2026-05-02 (AG-03): pin httpx<0.28 — openai 1.54 le pasa `proxies=None`
-# al constructor de httpx.Client(), pero httpx 0.28 removió ese kwarg.
-# Sin este pin, pip resuelve la última versión de httpx y rompe la
-# inicialización de OpenAI() con
-#   TypeError: Client.__init__() got an unexpected keyword argument 'proxies'
-# Cuando subamos a openai>=1.55.3 (que ya parchó el bug) podemos quitar
-# este pin. Ver https://github.com/openai/openai-python/pull/1839
-httpx<0.28
+# Sprint 2026-05-11 · subido a 1.66.0 para que client.responses.create
+# acepte input_file (PDF directo al LLM, sin convertir a imagen). Este
+# parche permite que apps.ai_hub.document_extractor procese PDFs
+# escaneados sin texto extraíble — el modelo ve el PDF como archivo
+# nativo. Ver https://platform.openai.com/docs/api-reference/responses
+# La versión 1.55.3+ ya parchó el TypeError proxies=None de httpx 0.28
+# (PR openai/openai-python#1839), así que se quita el pin de httpx<0.28.
+openai==1.66.0
 # 2026-05-02 (AG-03): pymupdf usado SOLO por apps.expedientes.proforma_extractor
 # para renderizar PDFs a PNG y mandar a vision API. Aislado de la OC: si
 # pymupdf falla o no está, el módulo proforma devuelve error sin afectar OC.
