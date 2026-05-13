@@ -27,6 +27,10 @@ adjust_view              = NodoAssignmentViewSet.as_view({"post": "adjust"})
 exp_asignados_view       = NodoAssignmentViewSet.as_view({"get":  "expedientes_asignados"})
 # Sprint 2026-05-11 fix · filtra expedientes con qty_pendiente > 0 para el wizard.
 exp_with_pending_view    = NodoAssignmentViewSet.as_view({"get":  "expedientes_with_pending"})
+# Sprint 2026-05-11 fase 6 · vistas para enriquecer las pages OCDetail y
+# ExpedienteDetail con la columna "Nodo" y la nueva tab Artefactos.
+nodos_por_linea_view     = NodoAssignmentViewSet.as_view({"get":  "nodos_por_linea_expediente"})
+artifacts_por_exp_view   = NodoAssignmentViewSet.as_view({"get":  "artifacts_por_expediente"})
 
 urlpatterns = router.urls + [
     # Inbound Engine v1 (sprint 2026-04-29)
@@ -57,4 +61,11 @@ urlpatterns = router.urls + [
     path("inventario/expedientes-with-pending/",
          exp_with_pending_view,
          name="ena-expedientes-with-pending"),
+    # Sprint 2026-05-11 fase 6 · enriquecimiento de OCDetail/ExpedienteDetail.
+    path("inventario/expedientes/<uuid:exp_id>/nodos-por-linea/",
+         nodos_por_linea_view,
+         name="ena-nodos-por-linea"),
+    path("inventario/expedientes/<uuid:exp_id>/artifacts/",
+         artifacts_por_exp_view,
+         name="ena-artifacts-por-expediente"),
 ]

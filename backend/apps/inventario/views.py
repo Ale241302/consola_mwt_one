@@ -738,6 +738,97 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             status=201,
         )
 
+    # ── 8) Nodos donde está asignado cada (producto, talla) del expediente ──
+    # Sprint 2026-05-11 fase 6 · OCDetail y ExpedienteDetail necesitan
+    # mostrar una columna "Nodo" en la tabla de productos. Este endpoint
+    # devuelve, para cada (producto_id, talla) del expediente, la lista
+    # de nodos donde se asignaron unidades (con qty agregada).
+    @action(detail=False, methods=["get"],
+            url_path=r"expedientes/(?P<exp_id>[^/.]+)/nodos-por-linea")
+    def nodos_por_linea_expediente(self, request, exp_id=None):
+        try:
+            uuid.UUID(str(exp_id))
+        except (TypeError, ValueError):
+            return Response({"detail": "exp_id inválido"}, status=400)
+
+        sql = """
+            SELECT
+                a.producto_id::text                          AS producto_id,
+                COALESCE(a.talla, '')                        AS talla,
+                a.nodo_id::text                              AS nodo_id,
+                n.codigo                                     AS nodo_codigo,
+                n.nombre                                     AS nodo_nombre,
+                SUM(a.qty_asignada)::int                     AS qty
+            FROM inventario.expediente_nodo_assignment a
+            LEFT JOIN nodos.nodo n ON n.id = a.nodo_id
+            WHERE a.expediente_id = %(exp_id)s::uuid
+              AND a.is_active = TRUE
+            GROUP BY a.producto_id, a.talla, a.nodo_id, n.codigo, n.nombre
+            HAVING SUM(a.qty_asignada) > 0
+            ORDER BY a.producto_id, a.talla, n.codigo
+        """
+        try:
+            with connection.cursor() as c:
+                c.execute(sql, {"exp_id": exp_id})
+                cols = [d[0] for d in c.description]
+                rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        except Exception as exc:
+            log.exception("nodos_por_linea_expediente SQL failed")
+            return Response({"detail": f"SQL error: {exc}"}, status=500)
+        return Response(rows)
+
+    # ── 9) Artefactos del Builder relacionados a un expediente ──
+    # Sprint 2026-05-11 fase 6 · La tab "Artefactos" del detalle de
+    # expediente lista todas las instancias de Builder (de cualquier
+    # nodo) que tienen al menos una línea apuntando a este expediente.
+    @action(detail=False, methods=["get"],
+            url_path=r"expedientes/(?P<exp_id>[^/.]+)/artifacts")
+    def artifacts_por_expediente(self, request, exp_id=None):
+        try:
+            uuid.UUID(str(exp_id))
+        except (TypeError, ValueError):
+            return Response({"detail": "exp_id inválido"}, status=400)
+
+        sql = """
+            WITH lines_agg AS (
+                SELECT
+                    bal.builder_artifact_instance_id                       AS iid,
+                    COUNT(*)::int                                          AS lines_count,
+                    COALESCE(SUM(bal.qty)::int, 0)                         AS total_qty
+                FROM nodos.builder_artifact_line bal
+                WHERE bal.expediente_id = %(exp_id)s::uuid
+                  AND bal.is_active = TRUE
+                GROUP BY bal.builder_artifact_instance_id
+            )
+            SELECT
+                bai.id::text                                AS id,
+                bai.template_id,
+                bai.template_title,
+                bai.created_at,
+                bai.updated_at,
+                bai.created_by_name,
+                bai.nodo_id::text                           AS nodo_id,
+                n.codigo                                    AS nodo_codigo,
+                n.nombre                                    AS nodo_nombre,
+                la.lines_count,
+                la.total_qty
+            FROM lines_agg la
+            JOIN nodos.builder_artifact_instance bai
+              ON bai.id = la.iid
+             AND bai.is_active = TRUE
+            LEFT JOIN nodos.nodo n ON n.id = bai.nodo_id
+            ORDER BY bai.created_at DESC
+        """
+        try:
+            with connection.cursor() as c:
+                c.execute(sql, {"exp_id": exp_id})
+                cols = [d[0] for d in c.description]
+                rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        except Exception as exc:
+            log.exception("artifacts_por_expediente SQL failed")
+            return Response({"detail": f"SQL error: {exc}"}, status=500)
+        return Response(rows)
+
     # ── 7) Set de expedientes con al menos una línea pendiente ──
     # Sprint 2026-05-11 fix · El paso 2 del wizard ofrecía expedientes ya
     # 100% asignados, generando picks vacíos. Este endpoint devuelve el

@@ -42,7 +42,8 @@ import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmak
 import AddOCProductModal from "../components/expedientes/AddOCProductModal.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
-         productosApi, documentosApi, storageApi, getToken } from "../lib/api.js";
+         productosApi, documentosApi, storageApi, getToken,
+         nodoAssignmentsApi } from "../lib/api.js";
 import {
   MWT_OPERATING_CLIENT_ID, MWT_OPERATOR_NAME, isMwtOperated, isClientRole,
 } from "../lib/operatingCompany.js";
@@ -505,6 +506,40 @@ export default function ScreenOCDetail() {
     const base = (oc?.lines || []).filter(l => !removedLineIds.has(l.id));
     return [...base, ...extraLines].map(readLine);
   }, [oc?.lines, extraLines, removedLineIds, lineEdits]);
+
+  // Sprint 2026-05-11 fase 6 · mapa (exp_id::prod_id::talla) → [nodos].
+  // Alimenta la columna "Nodo" de la tabla "Productos OC". Hace fetch
+  // por cada expediente único del OC y mergea los resultados.
+  const [nodoByLineKey, setNodoByLineKey] = useState({});
+  useEffect(() => {
+    if (!oc?.lines || oc.lines.length === 0) return;
+    const expIds = Array.from(new Set((oc.lines || [])
+      .map((l) => l.exp_id).filter(Boolean)));
+    if (expIds.length === 0) return;
+    let cancel = false;
+    Promise.all(expIds.map((eid) =>
+      nodoAssignmentsApi.nodosPorLineaExpediente(eid).catch(() => [])
+    )).then((results) => {
+      if (cancel) return;
+      const merged = {};
+      results.forEach((rows, idx) => {
+        const expId = expIds[idx];
+        const arr = Array.isArray(rows) ? rows : (rows?.results || []);
+        for (const r of arr) {
+          const k = `${expId}::${r.producto_id}::${r.talla || ""}`;
+          if (!merged[k]) merged[k] = [];
+          merged[k].push({
+            nodo_id:     r.nodo_id,
+            nodo_codigo: r.nodo_codigo,
+            nodo_nombre: r.nodo_nombre,
+            qty:         Number(r.qty || 0),
+          });
+        }
+      });
+      setNodoByLineKey(merged);
+    });
+    return () => { cancel = true; };
+  }, [oc?.id, oc?.lines]);
 
   // Sprint 2026-05-01: AddOCProductModal devuelve un array de rows con
   // { sku, talla, cantidad, producto_id, product_label, unit_price } —
@@ -1802,6 +1837,8 @@ export default function ScreenOCDetail() {
                 <th style={{width:140, textAlign:'right'}}>{lang==='es'?'Precio':'Price'}</th>
                 <th style={{width:120, textAlign:'right'}}>{lang==='es'?'Total':'Total'}</th>
                 <th style={{width:140}}>SAP</th>
+                {/* Sprint 2026-05-11 fase 6 · columna Nodo (read-only). */}
+                <th style={{width:160}}>{lang==='es'?'Nodo':'Node'}</th>
                 {/* Columnas deferred qty/price: CEO-ONLY. */}
                 {isAdmin && (
                   <th style={{width:90, textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
@@ -1873,6 +1910,38 @@ export default function ScreenOCDetail() {
                         <IconAlert size={11}/> {tr(lang,'line_status_orphan')}
                       </span>
                     )}
+                  </td>
+                  {/* Sprint 2026-05-11 fase 6 · celda Nodo. Muestra códigos
+                      de los nodos donde la línea está asignada (vía
+                      expediente_nodo_assignment). Si una línea está en
+                      varios nodos se muestran separados por coma. */}
+                  <td>
+                    {(() => {
+                      const k = `${l.exp_id || ''}::${l.producto_id || ''}::${l.size || ''}`;
+                      const nodos = nodoByLineKey[k] || [];
+                      if (nodos.length === 0) {
+                        return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
+                      }
+                      return (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {nodos.map((n) => (
+                            <span key={n.nodo_id}
+                                  title={`${n.nodo_nombre || ''} · ${n.qty} u`}
+                                  style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                                    padding: '2px 8px', borderRadius: 999,
+                                    background: 'color-mix(in oklab, var(--brand-accent, #0E8A6D) 12%, transparent)',
+                                    color: 'var(--brand-accent, #0E8A6D)',
+                                    fontSize: 11, fontWeight: 700,
+                                    fontFamily: 'var(--font-mono)',
+                                  }}>
+                              {n.nodo_codigo || '—'}
+                              <span style={{ opacity: 0.7 }}>· {n.qty}</span>
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </td>
                   {/* Inputs deferred qty / deferred price: CEO-ONLY. */}
                   {isAdmin && (

@@ -5,6 +5,8 @@ import { tr, fmtMoney, fmtMoneyDetail, fmtDate, relativeTime } from "../lib/i18n
 import {
   expedientesApi, clientesApi, marcasApi, lineasApi, productosApi,
   financePaymentsApi, storageApi, apiFetch, getToken,
+  // Sprint 2026-05-11 fase 6 · columna Nodo + tab Artefactos.
+  nodoAssignmentsApi,
 } from "../lib/api.js";
 import {
   Badge, StatusBadge, Progress, StateTimeline, CreditBar, CountryFlag,
@@ -63,6 +65,9 @@ export default function ScreenExpedienteDetail() {
   const [apiClient, setApiClient] = useState(null);
   const [apiBrand,  setApiBrand]  = useState(null);
   const [apiLines,  setApiLines]  = useState([]);
+  // Sprint 2026-05-11 fase 6 · mapa (producto_id::talla) → [nodos]
+  // para alimentar la columna "Nodo" en OverviewTab y LinesTab.
+  const [nodoByLineKey, setNodoByLineKey] = useState({});
   // Counter para forzar re-fetch de líneas tras crear una nueva
   // (LinesTab → onLineAdded → setLinesReload(n=>n+1)).
   const [linesReload, setLinesReload] = useState(0);
@@ -134,6 +139,35 @@ export default function ScreenExpedienteDetail() {
       .finally(() => { if (!cancel) setLoading(false); });
     return () => { cancel = true; };
   }, [expedienteId, isHeroOrMock, linesReload]);
+
+  // Sprint 2026-05-11 fase 6 · fetch del mapa (producto_id::talla) → nodos.
+  // Se dispara cuando apiExp.id está disponible (no antes — necesitamos
+  // el UUID canónico del expediente). Alimenta la columna "Nodo" en
+  // OverviewTab y LinesTab.
+  useEffect(() => {
+    const eid = apiExp?.id;
+    if (!eid || isHeroOrMock) return;
+    let cancel = false;
+    nodoAssignmentsApi.nodosPorLineaExpediente(eid)
+      .then((rows) => {
+        if (cancel) return;
+        const arr = Array.isArray(rows) ? rows : (rows?.results || []);
+        const merged = {};
+        for (const r of arr) {
+          const k = `${r.producto_id}::${r.talla || ""}`;
+          if (!merged[k]) merged[k] = [];
+          merged[k].push({
+            nodo_id:     r.nodo_id,
+            nodo_codigo: r.nodo_codigo,
+            nodo_nombre: r.nodo_nombre,
+            qty:         Number(r.qty || 0),
+          });
+        }
+        setNodoByLineKey(merged);
+      })
+      .catch(() => { if (!cancel) setNodoByLineKey({}); });
+    return () => { cancel = true; };
+  }, [apiExp?.id, isHeroOrMock, linesReload]);
 
   // Mapper: API → shape esperado por el UI viejo (mock-shape).
   // ⚠ NO hacemos spread de mockExp — eso filtraba defaults seed (CIF/SEA/
@@ -482,11 +516,14 @@ export default function ScreenExpedienteDetail() {
               pagos. CEO/Admin además ve: costos, actividad. */}
           <div className="tabs" style={{ marginBottom: 16 }}>
             {[
-              ['overview', tr(lang,'tab_overview'), null,                true],
-              ['lines',    tr(lang,'tab_lines'),    lines.length,        true],
-              ['costs',    tr(lang,'tab_costs'),    costs.length,        !isClient],
-              ['payments', tr(lang,'tab_payments'), pagos.length,        true],
-              ['activity', tr(lang,'tab_activity'), activity.length,     !isClient],
+              ['overview',  tr(lang,'tab_overview'), null,           true],
+              ['lines',     tr(lang,'tab_lines'),    lines.length,   true],
+              ['costs',     tr(lang,'tab_costs'),    costs.length,   !isClient],
+              ['payments',  tr(lang,'tab_payments'), pagos.length,   true],
+              ['activity',  tr(lang,'tab_activity'), activity.length,!isClient],
+              // Sprint 2026-05-11 fase 6 · tab Artefactos (lista los
+              // builder_artifact_instance con líneas en este expediente).
+              ['artifacts', lang==='es'?'Artefactos':'Artifacts', null, true],
             ].filter(([,,,visible]) => visible).map(([k,l,c]) => (
               <button key={k} className="tab" data-active={tab===k} onClick={() => setTab(k)}>
                 {l}{c != null && <span className="count">{c}</span>}
@@ -503,17 +540,15 @@ export default function ScreenExpedienteDetail() {
               <OverviewTab exp={exp} lang={lang} lines={lines}
                            activity={activity} isClient={isClient}
                            isHeroOrMock={isHeroOrMock}
-                           cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap}/>
+                           cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap}
+                           nodoByLineKey={nodoByLineKey}/>
             </>
           )}
-          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap} exp={exp} isClient={isClient} onLineAdded={() => setLinesReload(n => n + 1)}/>}
-          {/* Sprint 2026-05-11 · Bloque `{tab === 'artifacts' && (...)}`
-              removido. Los artefactos (Proforma, BL, Packing List, etc.) se
-              gestionan en el Builder externo (https://builder.muito.work) y
-              ya no se renderizan ni se consultan desde esta vista. La API
-              `/api/expedientes/{id}/artifacts/` + `/api/builder/templates/`
-              sigue disponible en `lib/api.js` (builderArtifactsApi /
-              builderTemplatesApi) por si se vuelve a montar el board. */}
+          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap} exp={exp} isClient={isClient} onLineAdded={() => setLinesReload(n => n + 1)} nodoByLineKey={nodoByLineKey}/>}
+          {/* Sprint 2026-05-11 fase 6 · Nueva tab Artefactos. Muestra
+              todas las instancias del Builder con al menos una línea
+              apuntando a este expediente, sin importar el nodo. */}
+          {tab === 'artifacts' && <ArtifactsByExpedienteTab expedienteId={exp.id} lang={lang} navigate={navigate}/>}
           {tab === 'costs'     && !isClient && <CostsTab costs={costs} lang={lang} onAdd={() => setShowCostDrawer(true)}/>}
           {tab === 'payments'  && <PaymentsTab pagos={pagos} lang={lang} exp={exp}
                                                onAdd={isClient ? null : () => setShowPaymentDrawer(true)}
@@ -567,7 +602,7 @@ export default function ScreenExpedienteDetail() {
   );
 }
 
-function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, productoNombreMap, isClient = false }) {
+function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, productoNombreMap, isClient = false, nodoByLineKey = {} }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
       {/* Sprint 2026-05-11 · Se elimina el <ArtifactsSummaryCard/> que
@@ -618,6 +653,8 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, pr
             <th style={{textAlign:'right'}}>{lang==='es' ? 'P. unitario' : 'Unit price'}</th>
             <th style={{textAlign:'right'}}>{lang==='es' ? 'Subtotal' : 'Subtotal'}</th>
             <th style={{textAlign:'right'}}>{lang==='es' ? 'Margen' : 'Margin'}</th>
+            {/* Sprint 2026-05-11 fase 6 · columna Nodo (read-only) */}
+            <th style={{ width: 160 }}>{lang==='es' ? 'Nodo' : 'Node'}</th>
           </tr></thead>
           <tbody>
             {lines.map(l => {
@@ -649,6 +686,8 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, pr
                                     ? l.total_price
                                     : qty * unit);
               const margin = Number(l.margin ?? 0);
+              const nodoKey = `${l.producto_id || ''}::${l.size || l.talla || ''}`;
+              const nodosForLine = nodoByLineKey[nodoKey] || [];
               return (
                 <tr key={l.id}>
                   <td><span className="mono-sm" style={{fontWeight:600, color:'var(--interactive)'}}>{l.sku}</span></td>
@@ -660,6 +699,29 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, pr
                     {margin > 0
                       ? <Badge kind="mint">{(margin*100).toFixed(1)}%</Badge>
                       : <span className="caption" style={{color:'var(--text-tertiary)'}}>—</span>}
+                  </td>
+                  <td>
+                    {nodosForLine.length === 0
+                      ? <span style={{ color: 'var(--text-tertiary)' }}>—</span>
+                      : (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {nodosForLine.map((n) => (
+                            <span key={n.nodo_id}
+                                  title={`${n.nodo_nombre || ''} · ${n.qty} u`}
+                                  style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                                    padding: '2px 8px', borderRadius: 999,
+                                    background: 'color-mix(in oklab, var(--brand-accent, #0E8A6D) 12%, transparent)',
+                                    color: 'var(--brand-accent, #0E8A6D)',
+                                    fontSize: 11, fontWeight: 700,
+                                    fontFamily: 'var(--font-mono)',
+                                  }}>
+                              {n.nodo_codigo || '—'}
+                              <span style={{ opacity: 0.7 }}>· {n.qty}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                   </td>
                 </tr>
               );
@@ -812,7 +874,7 @@ function EditableClientPriceInput({ lineId, value, onSaved }) {
 // helper de tooltip i18n-light (no podemos usar tr() aquí sin lang prop)
 function lang_qty_title() { return "Cantidad"; }
 
-function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient = false, onLineAdded }) {
+function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient = false, onLineAdded, nodoByLineKey = {} }) {
   // Sprint 2026-05-01: total con fallback al catalogo de productos
   // Sprint 2026-05-06 · prefer snapshot dual segun isClient (Tweaks-aware).
   const _resolvePrice = (l) => {
@@ -911,6 +973,8 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
             </th>
           )}
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Margen' : 'Margin'}</th>
+          {/* Sprint 2026-05-11 fase 6 · columna Nodo (read-only) */}
+          <th style={{ width: 160 }}>{lang==='es' ? 'Nodo' : 'Node'}</th>
         </tr></thead>
         <tbody>
           {lines.map(l => {
@@ -953,6 +1017,35 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
               <td className="td-num">{Number(l.margin || 0) > 0
                 ? <Badge kind="mint">{(Number(l.margin)*100).toFixed(1)}%</Badge>
                 : <span className="caption" style={{color:'var(--text-tertiary)'}}>—</span>}</td>
+              {/* Sprint 2026-05-11 fase 6 · celda Nodo (read-only). */}
+              <td>
+                {(() => {
+                  const k = `${l.producto_id || ''}::${l.talla || l.size || ''}`;
+                  const nodos = nodoByLineKey[k] || [];
+                  if (nodos.length === 0) {
+                    return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
+                  }
+                  return (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {nodos.map((n) => (
+                        <span key={n.nodo_id}
+                              title={`${n.nodo_nombre || ''} · ${n.qty} u`}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                padding: '2px 8px', borderRadius: 999,
+                                background: 'color-mix(in oklab, var(--brand-accent, #0E8A6D) 12%, transparent)',
+                                color: 'var(--brand-accent, #0E8A6D)',
+                                fontSize: 11, fontWeight: 700,
+                                fontFamily: 'var(--font-mono)',
+                              }}>
+                          {n.nodo_codigo || '—'}
+                          <span style={{ opacity: 0.7 }}>· {n.qty}</span>
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </td>
             </tr>
           );})}
         </tbody>
@@ -963,6 +1056,7 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
             </td>
             <td className="td-money" style={{ padding: 14, fontSize: 15, fontFamily: 'var(--font-mono)' }}>{fmtMoney(total)}</td>
             {!isClient && <td/>}
+            <td/>
             <td/>
           </tr>
         </tfoot>
@@ -985,6 +1079,153 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
 // se removió junto con la tab Documentos. Se preservan los componentes
 // reales (BuilderArtifactsBoard / ArtifactsSummaryCard) en
 // components/expedientes/builderArtifacts/ por si la tab se reintegra.
+
+// =====================================================================
+// Sprint 2026-05-11 fase 6 · ArtifactsByExpedienteTab
+//
+// Lista TODAS las instancias del Builder (de cualquier nodo) que tienen
+// al menos una línea apuntando a este expediente. Útil para ver al
+// vuelo qué documentos cubren las líneas del expediente actual.
+//
+// Fuente: GET /api/inventario/expedientes/{exp_id}/artifacts/
+// =====================================================================
+function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!expedienteId) return;
+    let cancel = false;
+    setLoading(true); setError(null);
+    nodoAssignmentsApi.artifactsPorExpediente(expedienteId)
+      .then((data) => {
+        if (cancel) return;
+        const arr = Array.isArray(data) ? data : (data?.results || []);
+        setItems(arr);
+      })
+      .catch((e) => {
+        if (cancel) return;
+        setError(e?.body?.detail || e?.message
+          || (lang === "es" ? "Error cargando artefactos" : "Error loading artifacts"));
+      })
+      .finally(() => { if (!cancel) setLoading(false); });
+    return () => { cancel = true; };
+  }, [expedienteId, lang]);
+
+  const fmt = (iso) => {
+    if (!iso) return "—";
+    try {
+      return new Date(iso).toLocaleDateString(
+        lang === "es" ? "es-ES" : "en-US",
+        { year: "numeric", month: "short", day: "2-digit" });
+    } catch { return iso; }
+  };
+
+  if (loading) {
+    return (
+      <div className="card card-pad-lg">
+        <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+          {lang === "es" ? "Cargando artefactos…" : "Loading artifacts…"}
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="card card-pad-lg">
+        <div className="body-sm" style={{ color: "var(--critical)" }}>{error}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <div className="card-title">
+            {lang === "es" ? "Artefactos vinculados" : "Linked artifacts"}
+          </div>
+          <div className="card-subtitle">
+            {items.length} {lang === "es"
+              ? "artefacto(s) con al menos una línea de este expediente"
+              : "artifact(s) with at least one line of this expediente"}
+          </div>
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <div style={{ padding: "32px 16px", textAlign: "center",
+                      color: "var(--text-tertiary)" }}>
+          {lang === "es"
+            ? "Sin artefactos. Se crearán al recibir un lote o al agregarlos desde la tab Artefactos del nodo."
+            : "No artifacts yet. They appear when receiving a lot or adding them from the node's Artifacts tab."}
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="table">
+            <thead><tr>
+              <th>{lang === "es" ? "Plantilla" : "Template"}</th>
+              <th style={{ width: 160 }}>{lang === "es" ? "Nodo" : "Node"}</th>
+              <th style={{ textAlign: "right", width: 110 }}>
+                {lang === "es" ? "Líneas" : "Lines"}
+              </th>
+              <th style={{ textAlign: "right", width: 110 }}>
+                {lang === "es" ? "Unidades" : "Units"}
+              </th>
+              <th style={{ width: 140 }}>{lang === "es" ? "Creado" : "Created"}</th>
+              <th style={{ width: 140 }}>{lang === "es" ? "Por" : "By"}</th>
+            </tr></thead>
+            <tbody>
+              {items.map((a) => (
+                <tr
+                  key={a.id}
+                  onClick={() => a.nodo_id && navigate?.(`/nodos/${a.nodo_id}`)}
+                  style={{ cursor: a.nodo_id ? "pointer" : "default" }}
+                  title={lang === "es" ? "Abrir nodo" : "Open node"}
+                >
+                  <td>
+                    <span className="mono-sm" style={{ fontWeight: 700,
+                                                       color: "var(--text-primary)" }}>
+                      {a.template_title}
+                    </span>
+                    <span className="caption" style={{
+                      color: "var(--text-tertiary)", marginLeft: 6,
+                    }}>
+                      #{a.template_id}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="mono-sm" style={{ fontWeight: 600,
+                                                       color: "var(--brand-primary)" }}>
+                      {a.nodo_codigo || "—"}
+                    </span>
+                    {a.nodo_nombre && (
+                      <div className="caption" style={{
+                        color: "var(--text-tertiary)", marginTop: 2,
+                      }}>
+                        {a.nodo_nombre}
+                      </div>
+                    )}
+                  </td>
+                  <td className="td-num tabular-nums">
+                    {Number(a.lines_count || 0).toLocaleString()}
+                  </td>
+                  <td className="td-num tabular-nums" style={{ fontWeight: 600 }}>
+                    {Number(a.total_qty || 0).toLocaleString()}
+                  </td>
+                  <td className="caption tabular-nums">{fmt(a.created_at)}</td>
+                  <td className="caption">{a.created_by_name || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function CostsTab({ costs, lang, onAdd }) {
   const total = costs.reduce((a,c) => a+c.amount, 0);

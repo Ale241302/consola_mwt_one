@@ -526,6 +526,16 @@ export const nodoAssignmentsApi = {
   expedientesWithPending: () =>
     apiFetch(`/inventario/expedientes-with-pending/`,
              { token: getToken() }),
+  // Sprint 2026-05-11 fase 6 · para cada (producto, talla) del expediente,
+  // los nodos donde está asignado (con qty). Alimenta columna "Nodo".
+  nodosPorLineaExpediente: (expedienteId) =>
+    apiFetch(`/inventario/expedientes/${expedienteId}/nodos-por-linea/`,
+             { token: getToken() }),
+  // Sprint 2026-05-11 fase 6 · artefactos del Builder con líneas en
+  // este expediente. Alimenta la nueva tab Artefactos del expediente.
+  artifactsPorExpediente: (expedienteId) =>
+    apiFetch(`/inventario/expedientes/${expedienteId}/artifacts/`,
+             { token: getToken() }),
 };
 
 // ---------------------------------------------------------------------
