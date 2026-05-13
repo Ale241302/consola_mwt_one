@@ -278,6 +278,47 @@ def _call_openai_text(*, system: str, user_text: str, model: str) -> str:
     return chat.choices[0].message.content or ""
 
 
+def _responses_create_json(*, client, model: str, instructions: str,
+                            input_blocks: list[dict]):
+    """Llama a `client.responses.create` forzando JSON.
+
+    Sprint 2026-05-12 fix · La API `responses.create` NO acepta el
+    parámetro `response_format=` (eso es de chat.completions). El
+    equivalente en la nueva API Responses es::
+
+        text={"format": {"type": "json_object"}}
+
+    Pero distintos modelos / versiones del SDK lo aceptan de manera
+    distinta. Probamos con la opción más nueva, y si el SDK no la acepta
+    (TypeError) caemos sin forzar formato — el SYSTEM_PROMPT ya obliga a
+    devolver JSON estricto sin markdown. El parser `_parse_strict_json`
+    aguanta envoltorios.
+    """
+    try:
+        return client.responses.create(
+            model        = model,
+            instructions = instructions,
+            input        = input_blocks,
+            text         = {"format": {"type": "json_object"}},
+        )
+    except TypeError as exc:
+        # SDK no acepta `text=` con ese shape. Reintentamos sin formato.
+        log.info("responses.create(text=...) no soportado (%s); reintento sin formato", exc)
+    except Exception as exc:
+        # Algunos modelos rechazan `text.format` con un BadRequestError —
+        # reintentamos sin formato para no perder la extracción.
+        msg = str(exc).lower()
+        if "format" in msg or "text" in msg or "unsupported" in msg or "unknown" in msg:
+            log.info("responses.create(text=...) rechazado por modelo (%s); reintento sin formato", exc)
+        else:
+            raise
+    return client.responses.create(
+        model        = model,
+        instructions = instructions,
+        input        = input_blocks,
+    )
+
+
 def _call_openai_vision(*, system: str, user_text: str, model: str,
                        file_bytes: bytes, content_type: str, filename: str,
                        is_image: bool) -> str:
@@ -304,17 +345,23 @@ def _call_openai_vision(*, system: str, user_text: str, model: str,
     # ── Path imagen real ────────────────────────────────
     if is_image:
         try:
-            resp = client.responses.create(
+            # Sprint 2026-05-12 fix · `responses.create` NO acepta
+            # `response_format=` (eso es de chat.completions). El equivalente
+            # en la nueva API Responses es `text={"format": {"type": "json_object"}}`.
+            # Usamos _responses_create_json() que probará la opción y caerá
+            # silenciosamente si el modelo/SDK no la acepta (el SYSTEM_PROMPT
+            # ya fuerza JSON estricto).
+            resp = _responses_create_json(
+                client       = client,
                 model        = model,
                 instructions = system,
-                input=[{
+                input_blocks = [{
                     "role": "user",
                     "content": [
                         {"type": "input_text",  "text": user_text},
                         {"type": "input_image", "image_url": data_url},
                     ],
                 }],
-                response_format={"type": "json_object"},
             )
             return resp.output_text or ""
         except Exception as exc:
@@ -353,10 +400,12 @@ def _call_openai_vision(*, system: str, user_text: str, model: str,
     pdf_filename = filename or "document.pdf"
     if not pdf_filename.lower().endswith(".pdf") and (content_type or "").lower() == "application/pdf":
         pdf_filename = pdf_filename + ".pdf"
-    resp = client.responses.create(
+    # Sprint 2026-05-12 fix · ver _responses_create_json() arriba.
+    resp = _responses_create_json(
+        client       = client,
         model        = model,
         instructions = system,
-        input=[{
+        input_blocks = [{
             "role": "user",
             "content": [
                 {"type": "input_text", "text": user_text},
@@ -367,7 +416,6 @@ def _call_openai_vision(*, system: str, user_text: str, model: str,
                 },
             ],
         }],
-        response_format={"type": "json_object"},
     )
     return resp.output_text or ""
 
