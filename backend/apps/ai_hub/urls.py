@@ -61,11 +61,25 @@ skill_routing_urlpatterns = [
          name="ai-skill-by-key"),
 ]
 
+# Sprint 2026-05-11 · Fase 7 · extractor genérico de documentos.
+# Lo aporta `document_extract_views.py` — recibe archivo + structure_json
+# del Builder y devuelve los campos autocompletados por IA.
+try:
+    from .document_extract_views import DocumentExtractView  # noqa: E402, WPS433
+    document_extract_urlpatterns = [
+        path("ai/document/extract/",
+             DocumentExtractView.as_view(),
+             name="ai-document-extract"),
+    ]
+except Exception:  # pragma: no cover — defensa por si SDK no está
+    document_extract_urlpatterns = []
+
 urlpatterns = [
     # ⚠ skill_routing_urlpatterns DEBE ir antes que el router
     # porque /api/ai/skills/<slug>/ colisionaría con el detail del
     # AiSkillViewSet (que matchea cualquier string como pk UUID).
     *skill_routing_urlpatterns,
     *chat_urlpatterns,
+    *document_extract_urlpatterns,
     path("", include(router.urls)),
 ]

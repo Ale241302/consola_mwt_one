@@ -539,6 +539,41 @@ export const nodoAssignmentsApi = {
 };
 
 // ---------------------------------------------------------------------
+// Sprint 2026-05-11 · Fase 7 · Document Extractor (IA)
+//
+// POST /api/ai/document/extract/   (multipart)
+//   - file: el documento (PDF / Excel / Word / txt)
+//   - structure: structure_json del template del Builder (string JSON)
+//   - model: opcional, override del modelo Anthropic
+// Devuelve { extracted: {fid: value, ...}, confidence: {...}, notes, _meta }.
+// El frontend hace merge de `extracted` al state del fill modal.
+// ---------------------------------------------------------------------
+export const aiDocumentExtractApi = {
+  extract: async ({ file, structure, model } = {}) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("structure", typeof structure === "string"
+      ? structure : JSON.stringify(structure || {}));
+    if (model) fd.append("model", String(model));
+    const resp = await fetch(`${API_BASE}/ai/document/extract/`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${getToken()}` },
+      body: fd,
+    });
+    let body = null;
+    try { body = await resp.json(); } catch { body = null; }
+    if (!resp.ok) {
+      const detail = body?.detail || resp.statusText || "Error";
+      const err = new Error(detail);
+      err.status = resp.status;
+      err.body   = body;
+      throw err;
+    }
+    return body || {};
+  },
+};
+
+// ---------------------------------------------------------------------
 // Sprint 2026-05-11 · Fase 4 · Builder artifacts en nodos.
 // Espejo de builderArtifactsApi (expedientes) — usa el mismo Builder
 // externo, pero las instancias se persisten en

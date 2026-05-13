@@ -4,10 +4,13 @@
 // crear / editar la instancia llenada. La estructura se toma del
 // `structure_snapshot` cuando se edita; o del template fresco al crear.
 // =====================================================================
-import React, { useMemo, useState } from "react";
-import { IconCheck, IconX } from "../../../lib/icons.jsx";
+import React, { useMemo, useRef, useState } from "react";
+import { IconCheck, IconX, IconUpload, IconSparkle } from "../../../lib/icons.jsx";
 import DynamicField from "./DynamicField.jsx";
 import { stageLabel } from "./stages.js";
+// Sprint 2026-05-11 · Fase 7 · IA · dropzone autorrellena los campos
+// del template a partir de un documento (PDF/Excel/Word/txt).
+import { aiDocumentExtractApi } from "../../../lib/api.js";
 
 export default function ArtifactFillModal({
   mode,           // "create" | "edit"
@@ -59,6 +62,65 @@ export default function ArtifactFillModal({
       return;
     }
     await onSubmit?.(data);
+  };
+
+  // ── Sprint 2026-05-11 fase 7 · Autorelleno por IA ──
+  // El operador sube un PDF/Excel/Word/txt; el backend llama a la API
+  // de Anthropic con el structure_json del template y devuelve los
+  // campos que pudo extraer. Hacemos merge: los campos ya tocados por
+  // el usuario NO se sobreescriben (preserva trabajo manual).
+  const fileRef = useRef(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError,   setAiError]   = useState(null);
+  const [aiResult,  setAiResult]  = useState(null);  // {fieldsExtracted, model, notes}
+  const [dragOver,  setDragOver]  = useState(false);
+
+  const handleAiFile = async (file) => {
+    if (!file) return;
+    setAiLoading(true);
+    setAiError(null);
+    setAiResult(null);
+    try {
+      const resp = await aiDocumentExtractApi.extract({
+        file,
+        structure,
+      });
+      const extracted = resp?.extracted || {};
+      // Merge respetando los campos que el usuario ya tocó.
+      setData((prev) => {
+        const next = { ...prev };
+        for (const [fid, val] of Object.entries(extracted)) {
+          if (touched[fid]) continue;       // preserva edición manual
+          if (val === null || val === undefined) continue;
+          next[fid] = val;
+        }
+        return next;
+      });
+      const meta = resp?._meta || {};
+      if (meta.error) {
+        setAiError(meta.error);
+      } else {
+        setAiResult({
+          fieldsExtracted: meta.fields_extracted ?? Object.keys(extracted).length,
+          fieldsTotal:     meta.fields_in_schema ?? allFields.length,
+          model:           meta.model || "—",
+          kind:            meta.kind  || "—",
+          notes:           resp?.notes || "",
+        });
+      }
+    } catch (e) {
+      setAiError(e?.body?.detail || e?.message
+        || (lang === "es" ? "Error al analizar" : "Analysis error"));
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer?.files?.[0];
+    if (f) handleAiFile(f);
   };
 
   return (
@@ -119,6 +181,112 @@ export default function ArtifactFillModal({
               gap: 16,
             }}
           >
+            {/* Sprint 2026-05-11 fase 7 · Dropzone IA — antes de la primera
+                sección. Acepta PDF/Excel/Word/txt/imágenes; al detectar
+                el archivo, llama al backend (Anthropic) y rellena los
+                campos del template. Los campos que el usuario ya tocó
+                NO se sobreescriben. */}
+            <div
+              role="button"
+              tabIndex={0}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              onClick={() => !aiLoading && fileRef.current?.click()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  if (!aiLoading) fileRef.current?.click();
+                }
+              }}
+              style={{
+                border: dragOver
+                  ? "2px dashed var(--brand-accent, #0E8A6D)"
+                  : "2px dashed var(--border-subtle)",
+                background: dragOver
+                  ? "color-mix(in oklab, var(--brand-accent, #0E8A6D) 6%, transparent)"
+                  : "var(--surface-alt, rgba(11,30,58,0.02))",
+                borderRadius: 12,
+                padding: "18px 16px",
+                textAlign: "center",
+                cursor: aiLoading ? "wait" : "pointer",
+                transition: "all 0.15s",
+              }}
+              title={lang === "es"
+                ? "Suelta un documento o haz click para autorellenar con IA"
+                : "Drop a document or click to autofill with AI"}
+            >
+              <input
+                ref={fileRef}
+                type="file"
+                hidden
+                accept=".pdf,.xlsx,.xlsm,.xls,.docx,.doc,.csv,.txt,.png,.jpg,.jpeg,.webp"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleAiFile(f);
+                  e.target.value = "";  // reset para permitir re-subir mismo file
+                }}
+              />
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: 8,
+                color: aiLoading
+                  ? "var(--text-tertiary)"
+                  : "var(--brand-accent, #0E8A6D)",
+              }}>
+                {aiLoading
+                  ? <IconSparkle size={16}/>
+                  : <IconUpload   size={16}/>}
+                <span style={{ font: "700 13px/1 var(--font-display)" }}>
+                  {aiLoading
+                    ? (lang === "es" ? "Analizando con IA…" : "Analyzing with AI…")
+                    : (lang === "es"
+                        ? "Suelta un documento o haz click para autorellenar"
+                        : "Drop a document or click to autofill")}
+                </span>
+              </div>
+              <div className="caption" style={{
+                color: "var(--text-tertiary)", marginTop: 4, fontSize: 11,
+              }}>
+                PDF · Excel · Word · TXT · Imagen
+                {" · max 25 MB · "}
+                {lang === "es"
+                  ? "los campos ya editados a mano no se sobreescriben"
+                  : "manually-edited fields are preserved"}
+              </div>
+            </div>
+
+            {/* Feedback post-extracción */}
+            {aiResult && (
+              <div style={{
+                padding: "10px 12px", borderRadius: 8,
+                background: "color-mix(in oklab, var(--brand-accent, #0E8A6D) 8%, transparent)",
+                color: "var(--brand-accent, #0E8A6D)",
+                fontSize: 12.5, fontWeight: 600,
+                display: "flex", alignItems: "center", gap: 8,
+              }}>
+                <IconCheck size={13}/>
+                {lang === "es"
+                  ? `IA llenó ${aiResult.fieldsExtracted}/${aiResult.fieldsTotal} campos · modelo ${aiResult.model} · entrada ${aiResult.kind}`
+                  : `AI filled ${aiResult.fieldsExtracted}/${aiResult.fieldsTotal} fields · model ${aiResult.model} · input ${aiResult.kind}`}
+                {aiResult.notes && (
+                  <span style={{ opacity: 0.85, fontWeight: 400,
+                                 marginLeft: 6 }}>
+                    · {aiResult.notes}
+                  </span>
+                )}
+              </div>
+            )}
+            {aiError && (
+              <div style={{
+                padding: "10px 12px", borderRadius: 8,
+                background: "#FEE2E2", color: "#991B1B",
+                border: "1px solid #FCA5A5",
+                fontSize: 12.5,
+              }}>
+                {aiError}
+              </div>
+            )}
+
             {(structure?.sections || []).map((sec, secIdx) => {
               const cols = sec.columns || [];
               const sectionTitle = (sec.title && String(sec.title).trim())
