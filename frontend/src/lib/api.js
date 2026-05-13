@@ -743,6 +743,32 @@ export const storageApi = {
   // Shortcut para resolver la URL firmada de un documento por id
   documentSignedUrl: (documentoId, ttl = 900) =>
     apiFetch(`/documentos/${documentoId}/signed_url/?ttl=${ttl}`, { token: getToken() }),
+  // Sprint 2026-05-11 fase 7++ · subida de archivo a MinIO via Django.
+  // Devuelve { ok, key, bucket, etag, content_type, size }.
+  uploadProxy: async ({ file, scope = "artifact-field", filename } = {}) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("scope", scope);
+    if (filename) fd.append("filename", filename);
+    const resp = await fetch(`${API_BASE}/storage/upload-proxy/`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${getToken()}` },
+      body: fd,
+    });
+    let body = null;
+    try { body = await resp.json(); } catch { body = null; }
+    if (!resp.ok || !body?.ok) {
+      const detail = body?.detail || body?.error || resp.statusText || "Upload error";
+      const err = new Error(detail);
+      err.status = resp.status;
+      err.body = body;
+      throw err;
+    }
+    return body;
+  },
+  // URL HTTPS para abrir/embed un archivo dado su key (server-side stream).
+  downloadUrl: (key) =>
+    `${API_BASE}/storage/download/?key=${encodeURIComponent(key)}`,
 };
 
 // ---------------------------------------------------------------------
