@@ -60,8 +60,40 @@ OPENAI_API_KEY   = (os.environ.get("OPENAI_API_KEY")
 # Extractores de texto por tipo de archivo
 # ────────────────────────────────────────────────────────────
 def _extract_text_pdf(file_bytes: bytes) -> str:
-    """Intenta extraer texto plano de un PDF text-native con pypdf.
-    Si el PDF es solo imagen (escaneado), devuelve ''."""
+    """Extrae texto de un PDF. Sprint 2026-05-11 fix · Primer intento
+    con PyMuPDF (fitz) que es muchísimo más robusto que pypdf —
+    extrae texto correctamente de formatos complejos (AWBs, facturas
+    con muchos rectángulos, etc.) donde pypdf devuelve vacío.
+    Fallback a pypdf si fitz no está disponible o falla.
+    """
+    text = ""
+
+    # 1) PyMuPDF / fitz — mejor extractor de PDFs en Python.
+    try:
+        import fitz  # type: ignore
+        with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+            chunks = []
+            for i, page in enumerate(doc):
+                if i >= 30:
+                    chunks.append(
+                        f"\n[... truncado: {doc.page_count - 30} páginas más ...]"
+                    )
+                    break
+                try:
+                    # "text" extrae preservando orden de lectura; los
+                    # AWBs y facturas con grids salen bien.
+                    chunks.append(page.get_text("text") or "")
+                except Exception:
+                    continue
+            text = "\n".join(c for c in chunks if c.strip())
+            if text.strip():
+                return text
+    except ImportError:
+        log.info("PyMuPDF (fitz) no disponible — fallback a pypdf")
+    except Exception as exc:
+        log.warning("fitz failed: %s — fallback a pypdf", exc)
+
+    # 2) Fallback: pypdf (text-native simple).
     try:
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(file_bytes))
@@ -302,11 +334,24 @@ def _call_openai_vision(*, system: str, user_text: str, model: str,
         )
         return chat.choices[0].message.content or ""
 
-    # ── Path PDF/desconocido: SIEMPRE responses.create input_file ──
-    # NO existe fallback porque chat.completions.image_url rechazaría
-    # el PDF. Si la API responses falla, dejamos que la excepción se
-    # propague para que extract_fields_from_document() la reporte
-    # como _meta.error legible.
+    # ── Path PDF/desconocido sin texto extraíble ──
+    # Sprint 2026-05-11 fix · El CEO fue explícito: "no conviertas PDF a
+    # imagen". `chat.completions` con `image_url` rechaza PDFs (400
+    # Invalid MIME type). La única alternativa es `responses.create`
+    # con `input_file`, pero solo está disponible en openai SDK ≥1.55.
+    # Hoy el VPS tiene openai==1.54 (pin por incompat httpx) → el
+    # método `responses` no existe. Devolvemos un mensaje legible para
+    # el operador en vez de un AttributeError críptico.
+    if not hasattr(client, "responses"):
+        raise RuntimeError(
+            "Este PDF no tiene texto extraíble por las librerías locales "
+            "(parece ser un PDF escaneado / 100% imagen). "
+            "Sugerencia: conviértelo a imagen (.png/.jpg) y vuelve a "
+            "subirlo — el extractor sí procesa imágenes. "
+            "(Nota técnica: el SDK openai del backend está en v1.54 que "
+            "no expone responses.create con input_file.)"
+        )
+
     pdf_filename = filename or "document.pdf"
     if not pdf_filename.lower().endswith(".pdf") and (content_type or "").lower() == "application/pdf":
         pdf_filename = pdf_filename + ".pdf"
