@@ -5,35 +5,24 @@ apps.ai_hub.document_extractor
 Sprint 2026-05-11 · Fase 7 — Extracción genérica de campos desde un
 documento usando IA.
 
+Sprint 2026-05-11 fix · Migrado de Anthropic Claude a OpenAI gpt-5-nano
+para alinearlo con el resto del proyecto (`document_matchmaker`,
+`inbound_ocr`, `ocr_customs` ya usan OPENAI_API_KEY en producción).
+Evita gestionar dos API keys distintas y consolida en un solo
+proveedor que ya está validado en VPS.
+
 Caso de uso (CEO): en `ArtifactFillModal` el operador sube un PDF/Excel/
 Word/txt y la IA llena automáticamente los campos del template del
-Builder (label, tipo, opciones de select/radio). El operador revisa,
-corrige y guarda.
+Builder. Este módulo es **agnóstico al dominio** — recibe los bytes y el
+`structure_json` y devuelve un dict `{field_id: value, ...}`.
 
-Este módulo es **agnóstico al dominio** — recibe:
-  - bytes del archivo + mime_type + filename
-  - el `structure_json` del template del Builder (sections → columns →
-    fields). Cada field tiene `id`, `type`, `label`, `options[]?`.
-
-y devuelve un dict `{ field_id: value, ... }` con los valores que la IA
-extrajo del documento. Si un campo no aparece en el documento, se omite
-del dict (el FE mantiene el valor previo).
-
-A diferencia de:
-  · `apps.inventario.inbound_ocr` (hardcodeado a packing list/factura)
-  · `apps.expedientes.document_matchmaker` (980 LoC, resuelve contra BD)
-  · `apps.transfers.ocr_customs` (DAI/IVA/aduanal)
-
-este extractor es **genérico** — el schema se pasa en tiempo de llamada,
-no hardcodeado. Heredamos pricing/timeouts de AI_HUB settings.
-
-Uso típico (desde una APIView):
-    extracted = extract_fields_from_document(
-        file_bytes=request.FILES["file"].read(),
-        mime_type=request.FILES["file"].content_type,
-        filename=request.FILES["file"].name,
-        structure_json=payload["structure"],
-    )
+Patrón implementado (copiado de `document_matchmaker.extract_document`):
+  · Text-native: pypdf / openpyxl / docx zip-XML / plain → chat.completions
+    con `response_format={"type":"json_object"}`. Más rápido (5-10s).
+  · Imagen / PDF escaneado: `responses.create()` con `input_file`
+    (binario PDF) o `input_image` (imagen). Fallback a `chat.completions`
+    con `image_url`.
+  · Timeout 90s, max_retries 1 — protege workers gunicorn (timeout 120s).
 """
 from __future__ import annotations
 
@@ -51,21 +40,20 @@ log = logging.getLogger(__name__)
 
 
 # ────────────────────────────────────────────────────────────
-# Helpers de configuración (reusa AI_HUB de settings.py)
+# Helpers de configuración
 # ────────────────────────────────────────────────────────────
 def _cfg(key: str, default: Any = None) -> Any:
     return getattr(settings, "AI_HUB", {}).get(key, default)
 
 
-# Modelo por defecto para extracción — Claude Sonnet 4.6 es fuerte en
-# tareas de extracción estructurada con razonamiento sobre layouts.
-EXTRACT_MODEL    = os.environ.get("AI_DOCEXTRACT_MODEL")  \
-                   or _cfg("DEFAULT_MODEL", "claude-sonnet-4-6")
-EXTRACT_TIMEOUT  = int(os.environ.get("AI_DOCEXTRACT_TIMEOUT", "90"))
-EXTRACT_MAXTOK   = int(os.environ.get("AI_DOCEXTRACT_MAX_TOKENS",
-                                       str(_cfg("MAX_TOKENS", 4096))))
-ANTHROPIC_KEY    = (_cfg("ANTHROPIC_API_KEY")
-                    or os.environ.get("ANTHROPIC_API_KEY", ""))
+# Modelo por defecto — mismo que el resto del proyecto (matchmaker etc.).
+EXTRACT_MODEL    = (os.environ.get("OPENAI_OCR_MODEL")
+                    or os.environ.get("AI_DOCEXTRACT_MODEL")
+                    or "gpt-5-nano")
+EXTRACT_TIMEOUT  = float(os.environ.get("AI_DOCEXTRACT_TIMEOUT", "90"))
+OPENAI_API_KEY   = (os.environ.get("OPENAI_API_KEY")
+                    or _cfg("OPENAI_API_KEY", "")
+                    or "")
 
 
 # ────────────────────────────────────────────────────────────
@@ -78,7 +66,6 @@ def _extract_text_pdf(file_bytes: bytes) -> str:
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(file_bytes))
         chunks = []
-        # Cap a 30 páginas — más allá explota el contexto.
         for i, page in enumerate(reader.pages):
             if i >= 30:
                 chunks.append(f"\n[... truncado: {len(reader.pages) - 30} páginas más ...]")
@@ -105,22 +92,19 @@ def _extract_text_xlsx(file_bytes: bytes) -> str:
                 line = "\t".join("" if v is None else str(v) for v in row).rstrip()
                 if line:
                     out.append(line)
-        return "\n".join(out)[:50000]  # cap defensive
+        return "\n".join(out)[:50000]
     except Exception as exc:
         log.warning("openpyxl failed: %s", exc)
         return ""
 
 
 def _extract_text_docx(file_bytes: bytes) -> str:
-    """Word .docx → texto. Sin python-docx instalado, parseamos el XML
-    interno del zip — los párrafos están en word/document.xml dentro
-    de elementos <w:t>. Es defensivo: si falla, devuelve ''."""
+    """Word .docx → texto. Parseamos el XML interno del zip."""
     try:
         import zipfile
         import re
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
             xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
-        # Concatena el contenido de los <w:t> (texto runs).
         parts = re.findall(r"<w:t[^>]*>([^<]*)</w:t>", xml)
         return "\n".join(parts)[:50000]
     except Exception as exc:
@@ -136,35 +120,31 @@ def _extract_text_plain(file_bytes: bytes) -> str:
         return ""
 
 
-def _to_text_payload(file_bytes: bytes, mime: str, filename: str) -> tuple[str, str]:
-    """Devuelve (text_extracted, kind_label). Si el archivo es una imagen
-    o un PDF escaneado, kind='image' y el texto será ''."""
+def _to_text_payload(file_bytes: bytes, mime: str, filename: str) -> tuple[str, str, bool]:
+    """Devuelve (text_extracted, kind_label, is_image)."""
     m = (mime or "").lower()
     name = (filename or "").lower()
 
     if m == "application/pdf" or name.endswith(".pdf"):
         text = _extract_text_pdf(file_bytes)
-        # Si el PDF text-extracted es muy corto, probablemente es scan.
-        return (text, "pdf-text" if len(text) > 100 else "pdf-image")
+        if len(text) > 100:
+            return (text, "pdf-text", False)
+        return ("", "pdf-image", False)  # PDF escaneado — fallback vision/file
     if "spreadsheetml" in m or name.endswith((".xlsx", ".xlsm")):
-        return (_extract_text_xlsx(file_bytes), "xlsx")
+        return (_extract_text_xlsx(file_bytes), "xlsx", False)
     if "wordprocessingml" in m or name.endswith(".docx"):
-        return (_extract_text_docx(file_bytes), "docx")
+        return (_extract_text_docx(file_bytes), "docx", False)
     if m.startswith("text/") or name.endswith((".txt", ".csv", ".tsv")):
-        return (_extract_text_plain(file_bytes), "plain")
+        return (_extract_text_plain(file_bytes), "plain", False)
     if m.startswith("image/") or name.endswith((".png", ".jpg", ".jpeg", ".webp")):
-        return ("", "image")
-    # Fallback: tratamos como texto.
-    return (_extract_text_plain(file_bytes), "unknown")
+        return ("", "image", True)
+    return (_extract_text_plain(file_bytes), "unknown", False)
 
 
 # ────────────────────────────────────────────────────────────
 # Construcción del prompt
 # ────────────────────────────────────────────────────────────
 def _flatten_fields(structure_json: dict) -> list[dict]:
-    """Devuelve [{id, label, type, options, required, helpText}] de cada
-    field del structure, en orden de aparición (sections → columns →
-    fields)."""
     out = []
     for sec in (structure_json.get("sections") or []):
         for col in (sec.get("columns") or []):
@@ -181,7 +161,6 @@ def _flatten_fields(structure_json: dict) -> list[dict]:
 
 
 def _build_schema_brief(fields: list[dict]) -> str:
-    """Construye una descripción tipo-LLM del esquema que la IA debe llenar."""
     lines = ["FIELDS (id · type · label · valid options if applicable):"]
     for f in fields:
         opts = ""
@@ -201,16 +180,17 @@ def _build_schema_brief(fields: list[dict]) -> str:
 
 SYSTEM_PROMPT = """You are an expert document data extractor for a B2B logistics platform.
 
-Your task: read a document (PDF / Excel / Word / plain text) and fill out
-the fields of a target form. The form schema includes the field id, type,
-label and (for select/radio/checkbox) the list of valid option labels.
+Your task: read a document (PDF / Excel / Word / plain text / image) and
+fill out the fields of a target form. The form schema includes the field
+id, type, label and (for select/radio/checkbox) the list of valid option
+labels.
 
 Rules:
-1. Return a JSON object {extracted: {field_id: value, ...}, confidence: {field_id: 0-100, ...}, notes: "..."}.
+1. Return STRICT JSON {"extracted": {field_id: value, ...}, "confidence": {field_id: 0-100, ...}, "notes": "..."}.
 2. Only include fields whose value you can support with evidence from the document. Omit unknown fields entirely.
-3. For "select" and "radio" fields, the value must be one of the option labels exactly (case-insensitive match, return the canonical label).
+3. For "select" and "radio" fields, the value MUST be one of the option labels exactly (case-insensitive match — return the canonical label as listed in options).
 4. For "checkbox" fields, return true or false.
-5. For "number" / "date" fields, return the value in canonical form (numbers as JSON numbers; dates as ISO YYYY-MM-DD).
+5. For "number" / "date" fields, return canonical form (numbers as JSON numbers; dates as ISO YYYY-MM-DD).
 6. For "text" / "textarea" / "code" fields, return a plain string.
 7. NEVER invent data. If unsure, omit the field.
 8. confidence: integer 0-100 per field (your subjective confidence).
@@ -219,53 +199,15 @@ Rules:
 Output STRICT JSON. No markdown, no commentary outside the JSON object."""
 
 
-# ────────────────────────────────────────────────────────────
-# Llamada al LLM (Anthropic)
-# ────────────────────────────────────────────────────────────
-def _call_anthropic(*, system: str, user_blocks: list[dict],
-                    model: str, max_tokens: int) -> str:
-    """Llama a la API de Anthropic. Devuelve el texto del primer bloque
-    de respuesta. Lanza RuntimeError en caso de error."""
-    if not ANTHROPIC_KEY:
-        raise RuntimeError("ANTHROPIC_API_KEY no está configurado")
-    try:
-        from anthropic import Anthropic
-    except ImportError as exc:
-        raise RuntimeError(f"anthropic SDK no disponible: {exc}")
-
-    client = Anthropic(api_key=ANTHROPIC_KEY, timeout=EXTRACT_TIMEOUT)
-    resp = client.messages.create(
-        model       = model,
-        max_tokens  = max_tokens,
-        temperature = 0.0,
-        system      = system,
-        messages    = [{"role": "user", "content": user_blocks}],
-    )
-    # Concatenamos todos los bloques de texto.
-    text_parts = []
-    for blk in (resp.content or []):
-        if getattr(blk, "type", None) == "text":
-            text_parts.append(blk.text or "")
-        elif isinstance(blk, dict) and blk.get("type") == "text":
-            text_parts.append(blk.get("text", ""))
-    return "".join(text_parts).strip()
-
-
 def _parse_strict_json(raw: str) -> dict:
-    """Parsea JSON. Si la respuesta viene con backticks o prefijo, los
-    elimina antes."""
-    s = raw.strip()
+    s = (raw or "").strip()
     if s.startswith("```"):
-        # ```json … ``` o ``` … ```
         s = s.lstrip("`")
-        # quitar prefijo "json\n" si quedó
         if s.lower().startswith("json"):
             s = s[4:].lstrip()
         if s.endswith("```"):
             s = s[:-3]
         s = s.strip()
-    # Si el modelo devolvió algo antes/después del JSON, intentamos
-    # quedarnos sólo con el primer objeto.
     if not s.startswith("{"):
         i = s.find("{")
         if i >= 0:
@@ -278,7 +220,77 @@ def _parse_strict_json(raw: str) -> dict:
 
 
 # ────────────────────────────────────────────────────────────
-# API pública del módulo
+# Llamada al LLM (OpenAI · mismo patrón que document_matchmaker)
+# ────────────────────────────────────────────────────────────
+def _call_openai_text(*, system: str, user_text: str, model: str) -> str:
+    """Path text-native: chat.completions con response_format JSON."""
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY, timeout=EXTRACT_TIMEOUT, max_retries=1)
+    chat = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": user_text},
+        ],
+        response_format={"type": "json_object"},
+    )
+    return chat.choices[0].message.content or ""
+
+
+def _call_openai_vision(*, system: str, user_text: str, model: str,
+                       file_bytes: bytes, content_type: str, filename: str,
+                       is_image: bool) -> str:
+    """Path vision / file: prueba `responses.create` (input_image /
+    input_file), si falla cae a `chat.completions` con image_url."""
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY, timeout=EXTRACT_TIMEOUT, max_retries=1)
+    b64 = base64.b64encode(file_bytes).decode("ascii")
+    data_url = f"data:{content_type or 'application/octet-stream'};base64,{b64}"
+
+    # 1) Intento moderno con responses.create (soporta input_file).
+    try:
+        if is_image:
+            content_block = {"type": "input_image", "image_url": data_url}
+        else:
+            content_block = {
+                "type":      "input_file",
+                "filename":  filename or "doc.pdf",
+                "file_data": data_url,
+            }
+        resp = client.responses.create(
+            model        = model,
+            instructions = system,
+            input        = [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": user_text},
+                    content_block,
+                ],
+            }],
+            response_format={"type": "json_object"},
+        )
+        return resp.output_text or ""
+    except Exception as exc:
+        log.warning("responses.create failed (%s); falling back to chat.completions", exc)
+
+    # 2) Fallback con chat.completions + image_url.
+    content_parts = [
+        {"type": "text",      "text": user_text},
+        {"type": "image_url", "image_url": {"url": data_url}},
+    ]
+    chat = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": content_parts},
+        ],
+        response_format={"type": "json_object"},
+    )
+    return chat.choices[0].message.content or ""
+
+
+# ────────────────────────────────────────────────────────────
+# API pública
 # ────────────────────────────────────────────────────────────
 def extract_fields_from_document(*,
                                  file_bytes: bytes,
@@ -287,26 +299,7 @@ def extract_fields_from_document(*,
                                  structure_json: dict,
                                  model: str | None = None,
                                  max_tokens: int | None = None) -> dict:
-    """Punto de entrada único.
-
-    Returns
-    -------
-    {
-      "extracted":  {field_id: value, ...},   # valores autocompletados
-      "confidence": {field_id: int, ...},     # 0-100 por field
-      "notes":      str,
-      "_meta": {
-        "model": str,
-        "kind":  "pdf-text"|"pdf-image"|"xlsx"|"docx"|"plain"|"image"|"unknown",
-        "fields_in_schema": int,
-        "fields_extracted": int,
-      },
-    }
-
-    Si la llamada falla (sin API key, sin SDK, timeout, JSON inválido),
-    devuelve `{"extracted": {}, "confidence": {}, "notes": "...", "_meta": {"error": "..."}}` —
-    el FE muestra el error pero no rompe el modal.
-    """
+    """Punto de entrada único. Ver docstring del módulo."""
     fields = _flatten_fields(structure_json or {})
     if not fields:
         return {
@@ -314,65 +307,54 @@ def extract_fields_from_document(*,
             "_meta": {"error": "no fields in schema"},
         }
 
-    text_payload, kind = _to_text_payload(file_bytes, mime_type, filename)
-
-    schema_brief = _build_schema_brief(fields)
-    used_model   = model or EXTRACT_MODEL
-    used_maxtok  = max_tokens or EXTRACT_MAXTOK
-
-    # Construir bloques user. Para PDF text-extracted y otros formatos
-    # con texto disponible, mandamos `text` puro (mucho más barato y
-    # confiable que vision). Para imágenes / PDF escaneados, mandamos
-    # un bloque `image` o `document` base64.
-    user_blocks: list[dict] = []
-
-    if kind in ("pdf-text", "xlsx", "docx", "plain", "unknown") and text_payload:
-        user_blocks.append({"type": "text", "text":
-            f"DOCUMENT (filename={filename!r}, kind={kind}):\n\n{text_payload}\n\n---\n{schema_brief}\n\n"
-            "Return strict JSON as instructed."
-        })
-    elif kind == "pdf-image" or kind == "image" or not text_payload:
-        # Anthropic acepta PDFs nativos como `document` block.
-        b64 = base64.standard_b64encode(file_bytes).decode("ascii")
-        if kind in ("pdf-image",) or (mime_type or "").lower() == "application/pdf":
-            user_blocks.append({
-                "type":   "document",
-                "source": {
-                    "type":       "base64",
-                    "media_type": "application/pdf",
-                    "data":       b64,
-                },
-            })
-        else:
-            media = mime_type or "image/png"
-            user_blocks.append({
-                "type":   "image",
-                "source": {"type": "base64", "media_type": media, "data": b64},
-            })
-        user_blocks.append({"type": "text", "text":
-            f"Document attached above (filename={filename!r}).\n\n{schema_brief}\n\n"
-            "Return strict JSON as instructed."
-        })
-    else:
-        # Defensa: si llegamos aquí, no hay nada que mandar.
-        return {
-            "extracted": {}, "confidence": {}, "notes": "archivo sin texto extraíble",
-            "_meta": {"error": "empty payload", "kind": kind},
-        }
-
-    # Llamada al LLM
-    try:
-        raw = _call_anthropic(
-            system     = SYSTEM_PROMPT,
-            user_blocks= user_blocks,
-            model      = used_model,
-            max_tokens = used_maxtok,
-        )
-    except Exception as exc:
-        log.exception("extract_fields_from_document · LLM call failed")
+    if not OPENAI_API_KEY:
         return {
             "extracted": {}, "confidence": {}, "notes": "",
-            "_meta": {"error": f"LLM error: {exc}", "kind": kind, "model": used_model},
+            "_meta": {"error": "OPENAI_API_KEY no configurado en el VPS"},
+        }
+    try:
+        from openai import OpenAI  # noqa: F401
+    except ImportError as exc:
+        return {
+            "extracted": {}, "confidence": {}, "notes": "",
+            "_meta": {"error": f"openai SDK no disponible: {exc}"},
+        }
+
+    text_payload, kind, is_image = _to_text_payload(file_bytes, mime_type, filename)
+    schema_brief = _build_schema_brief(fields)
+    used_model   = model or EXTRACT_MODEL
+
+    raw = ""
+    try:
+        if text_payload:
+            user_text = (
+                f"DOCUMENT (filename={filename!r}, kind={kind}):\n\n"
+                f"{text_payload}\n\n---\n{schema_brief}\n\n"
+                "Return strict JSON as instructed."
+            )
+            raw = _call_openai_text(system=SYSTEM_PROMPT, user_text=user_text,
+                                    model=used_model)
+        else:
+            # PDF escaneado, imagen, o tipo desconocido sin texto.
+            user_text = (
+                f"Document attached (filename={filename!r}). Read it and fill the schema.\n\n"
+                f"{schema_brief}\n\nReturn strict JSON as instructed."
+            )
+            raw = _call_openai_vision(
+                system     = SYSTEM_PROMPT,
+                user_text  = user_text,
+                model      = used_model,
+                file_bytes = file_bytes,
+                content_type = mime_type or ("image/png" if is_image else "application/pdf"),
+                filename   = filename,
+                is_image   = is_image,
+            )
+    except Exception as exc:
+        log.exception("extract_fields_from_document · OpenAI call failed")
+        return {
+            "extracted": {}, "confidence": {}, "notes": "",
+            "_meta": {"error": f"OpenAI error: {type(exc).__name__}: {exc}",
+                       "kind": kind, "model": used_model},
         }
 
     try:
@@ -382,14 +364,16 @@ def extract_fields_from_document(*,
                     exc, raw[:200])
         return {
             "extracted": {}, "confidence": {}, "notes": "",
-            "_meta": {"error": f"JSON parse failed: {exc}", "raw_preview": raw[:200]},
+            "_meta": {"error": f"JSON parse failed: {exc}",
+                       "raw_preview": (raw or "")[:200],
+                       "kind": kind, "model": used_model},
         }
 
-    extracted  = data.get("extracted") or {}
+    extracted  = data.get("extracted")  or {}
     confidence = data.get("confidence") or {}
-    notes      = data.get("notes") or ""
+    notes      = data.get("notes")      or ""
 
-    # Normalización defensiva: solo dejamos field_ids que existen en el schema.
+    # Normalización defensiva: sólo dejamos field_ids válidos del schema.
     valid_ids = {f["id"] for f in fields}
     extracted  = {k: v for k, v in extracted.items()  if k in valid_ids}
     confidence = {k: v for k, v in confidence.items() if k in valid_ids}
