@@ -121,15 +121,24 @@ def _extract_text_plain(file_bytes: bytes) -> str:
 
 
 def _to_text_payload(file_bytes: bytes, mime: str, filename: str) -> tuple[str, str, bool]:
-    """Devuelve (text_extracted, kind_label, is_image)."""
+    """Devuelve (text_extracted, kind_label, is_image).
+
+    Sprint 2026-05-11 fix · Umbral bajado de 100 → 20 caracteres.
+    Casos como AWB de courier (FedEx, DHL) tienen muy poco texto
+    embebido pero suficiente como para que el LLM razone — antes
+    caían al path "pdf-image" que es problemático con OpenAI.
+    Si pypdf extrae 0 caracteres, mandamos al menos los bytes como
+    `input_file` (responses.create) — NUNCA como `image_url` que
+    rechaza application/pdf con 400.
+    """
     m = (mime or "").lower()
     name = (filename or "").lower()
 
     if m == "application/pdf" or name.endswith(".pdf"):
         text = _extract_text_pdf(file_bytes)
-        if len(text) > 100:
+        if len((text or "").strip()) >= 20:
             return (text, "pdf-text", False)
-        return ("", "pdf-image", False)  # PDF escaneado — fallback vision/file
+        return ("", "pdf-image", False)  # PDF escaneado → responses.input_file
     if "spreadsheetml" in m or name.endswith((".xlsx", ".xlsm")):
         return (_extract_text_xlsx(file_bytes), "xlsx", False)
     if "wordprocessingml" in m or name.endswith(".docx"):
@@ -240,53 +249,84 @@ def _call_openai_text(*, system: str, user_text: str, model: str) -> str:
 def _call_openai_vision(*, system: str, user_text: str, model: str,
                        file_bytes: bytes, content_type: str, filename: str,
                        is_image: bool) -> str:
-    """Path vision / file: prueba `responses.create` (input_image /
-    input_file), si falla cae a `chat.completions` con image_url."""
+    """Path vision / file. Reglas estrictas:
+
+    Sprint 2026-05-11 fix · NO convertimos PDF a image_url. La API de
+    `chat.completions` con `image_url` rechaza application/pdf con
+    "Invalid MIME type. Only image types are supported." (400). El CEO
+    fue explícito: "no conviertas un pdf a imagen".
+
+    Comportamiento:
+      - PDF (escaneado o text-native sin texto extraído) → siempre
+        `responses.create` con `input_file`. Si falla, propagamos el
+        error tal cual.
+      - Imagen real (png/jpg/etc) → primero `responses.create` con
+        `input_image`. Si falla, fallback a `chat.completions` con
+        `image_url` (sí acepta imágenes).
+    """
     from openai import OpenAI
     client = OpenAI(api_key=OPENAI_API_KEY, timeout=EXTRACT_TIMEOUT, max_retries=1)
     b64 = base64.b64encode(file_bytes).decode("ascii")
     data_url = f"data:{content_type or 'application/octet-stream'};base64,{b64}"
 
-    # 1) Intento moderno con responses.create (soporta input_file).
-    try:
-        if is_image:
-            content_block = {"type": "input_image", "image_url": data_url}
-        else:
-            content_block = {
-                "type":      "input_file",
-                "filename":  filename or "doc.pdf",
-                "file_data": data_url,
-            }
-        resp = client.responses.create(
-            model        = model,
-            instructions = system,
-            input        = [{
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": user_text},
-                    content_block,
-                ],
-            }],
+    # ── Path imagen real ────────────────────────────────
+    if is_image:
+        try:
+            resp = client.responses.create(
+                model        = model,
+                instructions = system,
+                input=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text",  "text": user_text},
+                        {"type": "input_image", "image_url": data_url},
+                    ],
+                }],
+                response_format={"type": "json_object"},
+            )
+            return resp.output_text or ""
+        except Exception as exc:
+            log.warning("responses.create (image) failed (%s); fallback chat.completions", exc)
+        # Fallback solo válido para imágenes (no PDFs).
+        content_parts = [
+            {"type": "text",      "text": user_text},
+            {"type": "image_url", "image_url": {"url": data_url}},
+        ]
+        chat = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user",   "content": content_parts},
+            ],
             response_format={"type": "json_object"},
         )
-        return resp.output_text or ""
-    except Exception as exc:
-        log.warning("responses.create failed (%s); falling back to chat.completions", exc)
+        return chat.choices[0].message.content or ""
 
-    # 2) Fallback con chat.completions + image_url.
-    content_parts = [
-        {"type": "text",      "text": user_text},
-        {"type": "image_url", "image_url": {"url": data_url}},
-    ]
-    chat = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user",   "content": content_parts},
-        ],
+    # ── Path PDF/desconocido: SIEMPRE responses.create input_file ──
+    # NO existe fallback porque chat.completions.image_url rechazaría
+    # el PDF. Si la API responses falla, dejamos que la excepción se
+    # propague para que extract_fields_from_document() la reporte
+    # como _meta.error legible.
+    pdf_filename = filename or "document.pdf"
+    if not pdf_filename.lower().endswith(".pdf") and (content_type or "").lower() == "application/pdf":
+        pdf_filename = pdf_filename + ".pdf"
+    resp = client.responses.create(
+        model        = model,
+        instructions = system,
+        input=[{
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": user_text},
+                {
+                    "type":      "input_file",
+                    "filename":  pdf_filename,
+                    "file_data": data_url,
+                },
+            ],
+        }],
         response_format={"type": "json_object"},
     )
-    return chat.choices[0].message.content or ""
+    return resp.output_text or ""
 
 
 # ────────────────────────────────────────────────────────────
