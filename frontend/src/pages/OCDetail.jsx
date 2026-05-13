@@ -1924,20 +1924,40 @@ export default function ScreenOCDetail() {
                       }
                       return (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {/* Sprint 2026-05-11 fix · chips clickables que
+                              navegan al detalle del nodo. Una línea puede
+                              estar repartida entre múltiples nodos — cada
+                              chip lleva a su propio /nodos/{id}. */}
                           {nodos.map((n) => (
-                            <span key={n.nodo_id}
-                                  title={`${n.nodo_nombre || ''} · ${n.qty} u`}
-                                  style={{
-                                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                                    padding: '2px 8px', borderRadius: 999,
-                                    background: 'color-mix(in oklab, var(--brand-accent, #0E8A6D) 12%, transparent)',
-                                    color: 'var(--brand-accent, #0E8A6D)',
-                                    fontSize: 11, fontWeight: 700,
-                                    fontFamily: 'var(--font-mono)',
-                                  }}>
+                            <button
+                              key={n.nodo_id}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (n.nodo_id) navigate(`/nodos/${n.nodo_id}`);
+                              }}
+                              title={`${n.nodo_nombre || ''} · ${n.qty} u — ${lang === 'es' ? 'abrir nodo' : 'open node'}`}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                padding: '2px 8px', borderRadius: 999,
+                                background: 'color-mix(in oklab, var(--brand-accent, #0E8A6D) 12%, transparent)',
+                                color: 'var(--brand-accent, #0E8A6D)',
+                                fontSize: 11, fontWeight: 700,
+                                fontFamily: 'var(--font-mono)',
+                                border: '1px solid transparent',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s',
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.borderColor = 'var(--brand-accent, #0E8A6D)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.borderColor = 'transparent';
+                              }}
+                            >
                               {n.nodo_codigo || '—'}
                               <span style={{ opacity: 0.7 }}>· {n.qty}</span>
-                            </span>
+                            </button>
                           ))}
                         </div>
                       );

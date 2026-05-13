@@ -541,10 +541,11 @@ export default function ScreenExpedienteDetail() {
                            activity={activity} isClient={isClient}
                            isHeroOrMock={isHeroOrMock}
                            cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap}
-                           nodoByLineKey={nodoByLineKey}/>
+                           nodoByLineKey={nodoByLineKey}
+                           navigate={navigate}/>
             </>
           )}
-          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap} exp={exp} isClient={isClient} onLineAdded={() => setLinesReload(n => n + 1)} nodoByLineKey={nodoByLineKey}/>}
+          {tab === 'lines'     && <LinesTab lines={lines} lang={lang} cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap} exp={exp} isClient={isClient} onLineAdded={() => setLinesReload(n => n + 1)} nodoByLineKey={nodoByLineKey} navigate={navigate}/>}
           {/* Sprint 2026-05-11 fase 6 · Nueva tab Artefactos. Muestra
               todas las instancias del Builder con al menos una línea
               apuntando a este expediente, sin importar el nodo. */}
@@ -602,7 +603,7 @@ export default function ScreenExpedienteDetail() {
   );
 }
 
-function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, productoNombreMap, isClient = false, nodoByLineKey = {} }) {
+function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, productoNombreMap, isClient = false, nodoByLineKey = {}, navigate }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
       {/* Sprint 2026-05-11 · Se elimina el <ArtifactsSummaryCard/> que
@@ -705,20 +706,37 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, pr
                       ? <span style={{ color: 'var(--text-tertiary)' }}>—</span>
                       : (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {/* Sprint 2026-05-11 fix · chips clickables. */}
                           {nodosForLine.map((n) => (
-                            <span key={n.nodo_id}
-                                  title={`${n.nodo_nombre || ''} · ${n.qty} u`}
-                                  style={{
-                                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                                    padding: '2px 8px', borderRadius: 999,
-                                    background: 'color-mix(in oklab, var(--brand-accent, #0E8A6D) 12%, transparent)',
-                                    color: 'var(--brand-accent, #0E8A6D)',
-                                    fontSize: 11, fontWeight: 700,
-                                    fontFamily: 'var(--font-mono)',
-                                  }}>
+                            <button
+                              key={n.nodo_id}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (n.nodo_id && navigate) navigate(`/nodos/${n.nodo_id}`);
+                              }}
+                              title={`${n.nodo_nombre || ''} · ${n.qty} u`}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                padding: '2px 8px', borderRadius: 999,
+                                background: 'color-mix(in oklab, var(--brand-accent, #0E8A6D) 12%, transparent)',
+                                color: 'var(--brand-accent, #0E8A6D)',
+                                fontSize: 11, fontWeight: 700,
+                                fontFamily: 'var(--font-mono)',
+                                border: '1px solid transparent',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s',
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.borderColor = 'var(--brand-accent, #0E8A6D)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.borderColor = 'transparent';
+                              }}
+                            >
                               {n.nodo_codigo || '—'}
                               <span style={{ opacity: 0.7 }}>· {n.qty}</span>
-                            </span>
+                            </button>
                           ))}
                         </div>
                       )}
@@ -874,7 +892,7 @@ function EditableClientPriceInput({ lineId, value, onSaved }) {
 // helper de tooltip i18n-light (no podemos usar tr() aquí sin lang prop)
 function lang_qty_title() { return "Cantidad"; }
 
-function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient = false, onLineAdded, nodoByLineKey = {} }) {
+function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient = false, onLineAdded, nodoByLineKey = {}, navigate }) {
   // Sprint 2026-05-01: total con fallback al catalogo de productos
   // Sprint 2026-05-06 · prefer snapshot dual segun isClient (Tweaks-aware).
   const _resolvePrice = (l) => {
