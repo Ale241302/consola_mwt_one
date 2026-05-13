@@ -377,6 +377,11 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
           templateTitle={editing.template_title}
           structure={editing.structure_snapshot || { sections: [] }}
           initialData={editing.data || {}}
+          /* Sprint 2026-05-11 fase 7+ · líneas asociadas (read-only)
+             para mostrar al final del modal. openEdit hace fetch del
+             detail que incluye `lines: [...]` enriquecido por backend
+             con sku/nombre/expediente_codigo. */
+          linesScope={editing.lines || []}
           lang={lang}
           saving={saving}
           onCancel={() => (saving ? null : setEditing(null))}

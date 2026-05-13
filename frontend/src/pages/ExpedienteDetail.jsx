@@ -7,7 +7,13 @@ import {
   financePaymentsApi, storageApi, apiFetch, getToken,
   // Sprint 2026-05-11 fase 6 · columna Nodo + tab Artefactos.
   nodoAssignmentsApi,
+  // Sprint 2026-05-11 fase 7+ · fetch del detail de un artefacto del
+  // Builder para abrir el modal en mode=view.
+  nodoBuilderArtifactsApi,
 } from "../lib/api.js";
+
+// Sprint 2026-05-11 fase 7+ · modal read-only del artefacto.
+import ArtifactFillModal from "../components/expedientes/builderArtifacts/ArtifactFillModal.jsx";
 import {
   Badge, StatusBadge, Progress, StateTimeline, CreditBar, CountryFlag,
 } from "../components/ui/primitives.jsx";
@@ -1111,6 +1117,31 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Sprint 2026-05-11 fase 7+ · modal read-only al hacer click en fila.
+  // viewing = instancia completa (data + structure_snapshot + lines).
+  const [viewing,    setViewing]    = useState(null);
+  const [viewLoading, setViewLoading] = useState(false);
+
+  // Fetch detail + apertura del modal en modo view. Filtramos las
+  // líneas para mostrar SOLO las del expediente actual (las del modal
+  // de Artefactos en el detalle del expediente deben ser específicas).
+  const openView = async (row) => {
+    if (!row?.nodo_id || !row?.id) return;
+    setViewLoading(true);
+    try {
+      const full = await nodoBuilderArtifactsApi.get(row.nodo_id, row.id);
+      const allLines = Array.isArray(full?.lines) ? full.lines : [];
+      const filteredLines = allLines.filter(
+        (l) => String(l.expediente_id) === String(expedienteId),
+      );
+      setViewing({ ...full, _filteredLines: filteredLines });
+    } catch (e) {
+      alert(e?.body?.detail || e?.message
+        || (lang === "es" ? "Error al cargar artefacto" : "Error loading artifact"));
+    } finally {
+      setViewLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!expedienteId) return;
@@ -1199,9 +1230,12 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
               {items.map((a) => (
                 <tr
                   key={a.id}
-                  onClick={() => a.nodo_id && navigate?.(`/nodos/${a.nodo_id}`)}
-                  style={{ cursor: a.nodo_id ? "pointer" : "default" }}
-                  title={lang === "es" ? "Abrir nodo" : "Open node"}
+                  /* Sprint 2026-05-11 fase 7+ · click en fila abre el
+                     modal read-only del artefacto, con la tabla de
+                     productos asociados al final. */
+                  onClick={() => openView(a)}
+                  style={{ cursor: viewLoading ? "wait" : "pointer" }}
+                  title={lang === "es" ? "Ver artefacto" : "View artifact"}
                 >
                   <td>
                     <span className="mono-sm" style={{ fontWeight: 700,
@@ -1240,6 +1274,21 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Sprint 2026-05-11 fase 7+ · Modal read-only al click en fila.
+          Reusa ArtifactFillModal con mode="view" + linesScope filtrado
+          a las líneas del expediente actual. Sin dropzone IA. */}
+      {viewing && (
+        <ArtifactFillModal
+          mode="view"
+          templateTitle={viewing.template_title}
+          structure={viewing.structure_snapshot || { sections: [] }}
+          initialData={viewing.data || {}}
+          linesScope={viewing._filteredLines || []}
+          lang={lang}
+          onCancel={() => setViewing(null)}
+        />
       )}
     </div>
   );

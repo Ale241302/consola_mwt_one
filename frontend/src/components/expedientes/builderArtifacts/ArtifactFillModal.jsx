@@ -13,7 +13,7 @@ import { stageLabel } from "./stages.js";
 import { aiDocumentExtractApi } from "../../../lib/api.js";
 
 export default function ArtifactFillModal({
-  mode,           // "create" | "edit"
+  mode,           // "create" | "edit" | "view"   (view = read-only, sprint 2026-05-11 fase 7+)
   templateTitle,
   structure,      // structure_json: { sections: [{ id, title, columns:[{ id, fields:[...] }] }] }
   stage,
@@ -22,7 +22,12 @@ export default function ArtifactFillModal({
   lang = "es",
   onCancel,
   onSubmit,
+  // Sprint 2026-05-11 fase 7+ · Líneas asociadas al artefacto (read-only).
+  // Cuando viene poblado, se renderiza una tabla al final del modal con
+  // SKU / Nombre / Talla / Cantidad. Es informativo en cualquier modo.
+  linesScope = null,   // [{sku, nombre, talla, qty, expediente_codigo?, expediente_id?}]
 }) {
+  const isView = mode === "view";
   const [data, setData] = useState(initialData || {});
   const [touched, setTouched] = useState({});
 
@@ -141,7 +146,9 @@ export default function ArtifactFillModal({
             <div className="mdl-title">
               {mode === "create"
                 ? (lang === "es" ? "Nuevo artefacto" : "New artifact")
-                : (lang === "es" ? "Editar artefacto" : "Edit artifact")}
+                : mode === "view"
+                  ? (lang === "es" ? "Ver artefacto" : "View artifact")
+                  : (lang === "es" ? "Editar artefacto" : "Edit artifact")}
             </div>
             <div className="mdl-subtitle">
               {templateTitle}
@@ -185,7 +192,9 @@ export default function ArtifactFillModal({
                 sección. Acepta PDF/Excel/Word/txt/imágenes; al detectar
                 el archivo, llama al backend (Anthropic) y rellena los
                 campos del template. Los campos que el usuario ya tocó
-                NO se sobreescriben. */}
+                NO se sobreescriben.
+                Sprint 2026-05-11 fase 7+ · oculto en mode="view". */}
+            {!isView && (<>
             <div
               role="button"
               tabIndex={0}
@@ -286,6 +295,7 @@ export default function ArtifactFillModal({
                 {aiError}
               </div>
             )}
+            </>)}{/* fin del bloque dropzone IA (sólo visible si !isView) */}
 
             {(structure?.sections || []).map((sec, secIdx) => {
               const cols = sec.columns || [];
@@ -366,8 +376,11 @@ export default function ArtifactFillModal({
                               <DynamicField
                                 field={f}
                                 value={data[f.id] ?? null}
-                                onChange={(v) => setField(f.id, v)}
-                                disabled={saving}
+                                /* Sprint 2026-05-11 fase 7+ · en mode=view el
+                                   onChange queda como no-op para que React
+                                   no se queje de inputs sin handler. */
+                                onChange={isView ? () => {} : (v) => setField(f.id, v)}
+                                disabled={saving || isView}
                                 lang={lang}
                               />
                               {f.helpText && (
@@ -400,6 +413,111 @@ export default function ArtifactFillModal({
                 </section>
               );
             })}
+
+            {/* Sprint 2026-05-11 fase 7+ · Tabla read-only de líneas
+                asociadas al artefacto. Informativo en cualquier modo.
+                Aparece sólo si linesScope viene con datos. */}
+            {Array.isArray(linesScope) && linesScope.length > 0 && (
+              <section
+                style={{
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: 12,
+                  background: "var(--surface-alt, rgba(11,30,58,0.02))",
+                  padding: "18px 20px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  paddingBottom: 10,
+                  borderBottom: "1px solid var(--divider, var(--border-subtle))",
+                }}>
+                  <span style={{
+                    width: 8, height: 8, borderRadius: "50%",
+                    background: "var(--brand-primary, #481EE3)",
+                    flexShrink: 0,
+                  }}/>
+                  <span className="micro" style={{
+                    letterSpacing: "0.12em", textTransform: "uppercase",
+                    fontWeight: 700, color: "var(--text-secondary)",
+                  }}>
+                    {lang === "es"
+                      ? "Productos asociados al artefacto"
+                      : "Lines associated with this artifact"}
+                  </span>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="table" style={{ width: "100%" }}>
+                    <thead>
+                      <tr>
+                        {linesScope.some((l) => l.expediente_codigo) && (
+                          <th style={{ width: 140 }}>
+                            {lang === "es" ? "Expediente" : "Expediente"}
+                          </th>
+                        )}
+                        <th style={{ width: 130 }}>SKU</th>
+                        <th>{lang === "es" ? "Producto" : "Product"}</th>
+                        <th style={{ textAlign: "center", width: 80 }}>
+                          {lang === "es" ? "Talla" : "Size"}
+                        </th>
+                        <th style={{ textAlign: "right", width: 100 }}>
+                          {lang === "es" ? "Cantidad" : "Qty"}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {linesScope.map((l, i) => (
+                        <tr key={l.id || `${l.expediente_id || ""}-${l.producto_id || ""}-${l.talla || ""}-${i}`}>
+                          {linesScope.some((x) => x.expediente_codigo) && (
+                            <td>
+                              <span className="mono-sm" style={{
+                                fontWeight: 700, color: "var(--brand-primary)",
+                              }}>
+                                {l.expediente_codigo || "—"}
+                              </span>
+                            </td>
+                          )}
+                          <td>
+                            <span className="mono-sm" style={{ fontWeight: 600 }}>
+                              {l.sku || "—"}
+                            </span>
+                          </td>
+                          <td>{l.nombre || "—"}</td>
+                          <td style={{ textAlign: "center" }}>
+                            {l.talla
+                              ? <span className="size-chip">{l.talla}</span>
+                              : <span style={{ color: "var(--text-tertiary)" }}>—</span>}
+                          </td>
+                          <td className="td-num tabular-nums"
+                              style={{ fontWeight: 600 }}>
+                            {Number(l.qty || 0).toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colSpan={linesScope.some((x) => x.expediente_codigo) ? 4 : 3}
+                            style={{
+                              textAlign: "right", fontWeight: 700,
+                              color: "var(--text-secondary)",
+                              textTransform: "uppercase", fontSize: 11,
+                              letterSpacing: "0.08em", padding: "10px 12px",
+                            }}>
+                          {lang === "es" ? "Total" : "Total"}
+                        </td>
+                        <td className="td-num tabular-nums"
+                            style={{ fontWeight: 700, padding: "10px 12px" }}>
+                          {linesScope.reduce((a, l) => a + Number(l.qty || 0), 0).toLocaleString()}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </section>
+            )}
           </div>
         </div>
 
@@ -408,28 +526,52 @@ export default function ArtifactFillModal({
             className="caption tabular"
             style={{ color: "var(--text-tertiary)", marginRight: "auto" }}
           >
-            {allFields.length} {lang === "es" ? "campos" : "fields"} ·{" "}
-            {missing.length} {lang === "es" ? "pendientes" : "missing"}
+            {allFields.length} {lang === "es" ? "campos" : "fields"}
+            {!isView && (
+              <>
+                {" · "}
+                {missing.length} {lang === "es" ? "pendientes" : "missing"}
+              </>
+            )}
+            {Array.isArray(linesScope) && linesScope.length > 0 && (
+              <>
+                {" · "}{linesScope.length}{" "}
+                {lang === "es" ? "línea(s) vinculadas" : "linked line(s)"}
+              </>
+            )}
           </span>
-          <button
-            className="btn btn-ghost"
-            onClick={onCancel}
-            disabled={saving}
-          >
-            {lang === "es" ? "Cancelar" : "Cancel"}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleSubmit}
-            disabled={saving || missing.length > 0}
-          >
-            <IconCheck size={13}/>
-            {saving
-              ? (lang === "es" ? "Guardando…" : "Saving…")
-              : mode === "create"
-                ? (lang === "es" ? "Crear artefacto" : "Create artifact")
-                : (lang === "es" ? "Guardar cambios" : "Save changes")}
-          </button>
+          {/* Sprint 2026-05-11 fase 7+ · en mode=view sólo "Cerrar". */}
+          {isView ? (
+            <button
+              className="btn btn-primary"
+              onClick={onCancel}
+              type="button"
+            >
+              {lang === "es" ? "Cerrar" : "Close"}
+            </button>
+          ) : (
+            <>
+              <button
+                className="btn btn-ghost"
+                onClick={onCancel}
+                disabled={saving}
+              >
+                {lang === "es" ? "Cancelar" : "Cancel"}
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleSubmit}
+                disabled={saving || missing.length > 0}
+              >
+                <IconCheck size={13}/>
+                {saving
+                  ? (lang === "es" ? "Guardando…" : "Saving…")
+                  : mode === "create"
+                    ? (lang === "es" ? "Crear artefacto" : "Create artifact")
+                    : (lang === "es" ? "Guardar cambios" : "Save changes")}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
