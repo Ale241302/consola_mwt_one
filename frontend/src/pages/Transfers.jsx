@@ -13,12 +13,13 @@
 //   RECEIVED (verde claro) · RECONCILED (verde oscuro)
 // ─────────────────────────────────────────────────────────────
 import React, { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useOutletContext, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IconSwap, IconSearch, IconX, IconTruck, IconAlert, IconCheck,
   IconClipboard, IconChevDown, IconChevRight, IconFileText, IconEye,
-  IconClock,
+  IconClock, IconTrash,
 } from "../lib/icons.jsx";
 import {
   TRANSFERS as MOCK_TRANSFERS, TRANSFER_STATUS_META, LEGAL_CONTEXT_META, getTransferTotals,
@@ -26,6 +27,8 @@ import {
 import CreateTransferDrawer from "../components/inventario/CreateTransferDrawer.jsx";
 import { useTransfersData } from "../hooks/useTransfersData.js";
 import { transferenciasApi } from "../lib/api.js";
+import ConfirmModal from "../components/common/ConfirmModal.jsx";
+import { useRole } from "../context/RoleContext.jsx";
 
 // ── Adapter: backend ESTADO (UPPERCASE) → mock status (lowercase)
 const API_TO_MOCK_STATUS = {
@@ -99,6 +102,18 @@ export default function ScreenTransfers() {
   // Cache por id de transferencia.
   const [linesByTrfId, setLinesByTrfId] = useState({});   // { be_id: [lineas] }
   const [linesLoading, setLinesLoading] = useState(null); // be_id en curso
+
+  // Sprint 2026-05-14 · Fase 12 — bulk selección + delete + cancel modal.
+  //   - selected = Set<backendId>
+  //   - confirm = { type: 'cancel'|'delete'|'bulk-delete', target?, ids? }
+  // Solo admin/CEO ve el trash + bulk delete. La protección dura está en
+  // el backend (POL_VISIBILIDAD) pero ocultamos en UI para no confundir.
+  const { isAdmin, isClient } = useRole();
+  const canDelete = isAdmin && !isClient;
+  const [selected, setSelected]   = useState(new Set());
+  const [confirm, setConfirm]     = useState(null);
+  const [busy, setBusy]           = useState(false);
+  const [bulkError, setBulkError] = useState(null);
 
   // ── Backend data (fallback a mock si aún no hay data real) ────
   const { transfers: apiTransfers, kpis: apiKpis, loading: loadingBackend, reload: reloadTransfers } = useTransfersData();
@@ -191,6 +206,52 @@ export default function ScreenTransfers() {
       setTransitioning(null);
     }
   }
+
+  // ── Sprint 2026-05-14 · Fase 12 — Selección + Delete ──────────
+  const toggleSelect = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const allSelectableIds = useMemo(
+    () => filtered.filter((t) => t._backend_id).map((t) => t._backend_id),
+    [filtered],
+  );
+  const allChecked = allSelectableIds.length > 0
+    && allSelectableIds.every((id) => selected.has(id));
+  const someChecked = !allChecked && allSelectableIds.some((id) => selected.has(id));
+  const toggleSelectAll = () => {
+    setSelected(allChecked ? new Set() : new Set(allSelectableIds));
+  };
+
+  // Confirma · ejecuta la acción según confirm.type.
+  const doConfirm = async () => {
+    if (!confirm) return;
+    setBusy(true); setBulkError(null);
+    try {
+      if (confirm.type === 'cancel' && confirm.target?._backend_id) {
+        await transferenciasApi.action('cancel', confirm.target._backend_id, {});
+      } else if (confirm.type === 'delete' && confirm.target?._backend_id) {
+        await transferenciasApi.remove(confirm.target._backend_id);
+      } else if (confirm.type === 'bulk-delete' && Array.isArray(confirm.ids)) {
+        // Borrado secuencial — el endpoint hace soft-delete (is_active=FALSE)
+        // así que es idempotente. Si una falla, paramos y mostramos error
+        // con los que ya se borraron.
+        for (const id of confirm.ids) {
+          await transferenciasApi.remove(id);
+        }
+        setSelected(new Set());
+      }
+      await reloadTransfers?.();
+      setConfirm(null);
+    } catch (e) {
+      setBulkError(e?.message || (lang==='es'?'Error':'Error'));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="page">
@@ -289,9 +350,46 @@ export default function ScreenTransfers() {
         </div>
       </div>
 
+      {/* Sprint 2026-05-14 · Fase 12 — barra bulk-delete cuando hay seleccionados. */}
+      {canDelete && selected.size > 0 && (
+        <div className="card" style={{
+          marginTop: 16, padding: '10px 16px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          background: 'color-mix(in srgb, var(--brand-navy, #0B1E3A) 4%, #fff)',
+          border: '1.5px solid var(--brand-accent, #0E8A6D)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span className="micro" style={{ fontWeight: 700, color: 'var(--brand-primary)' }}>
+              {selected.size} {lang==='es'
+                ? (selected.size === 1 ? 'seleccionada' : 'seleccionadas')
+                : (selected.size === 1 ? 'selected' : 'selected')}
+            </span>
+            <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}>
+              {lang==='es'?'Limpiar':'Clear'}
+            </button>
+          </div>
+          <button className="btn btn-sm" style={{
+            background: '#DC2626', color: '#fff', border: '1px solid #DC2626',
+          }}
+            onClick={() => setConfirm({ type: 'bulk-delete', ids: Array.from(selected) })}>
+            <IconTrash size={12}/> {lang==='es'?'Eliminar seleccionadas':'Delete selected'}
+          </button>
+        </div>
+      )}
+
       {/* ── Trazabilidad ── */}
       <div className="card trf-table-card" style={{ marginTop:16 }}>
         <div className="trf-table-head">
+          {/* Sprint 2026-05-14 · Fase 12 — checkbox select-all */}
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            {canDelete && (
+              <input type="checkbox"
+                     checked={allChecked}
+                     ref={(el) => { if (el) el.indeterminate = someChecked; }}
+                     onChange={toggleSelectAll}
+                     title={lang==='es'?'Seleccionar todo':'Select all'}/>
+            )}
+          </div>
           <div className="trf-col-id">{lang==='es'?'ID':'ID'}</div>
           <div className="trf-col-date">{lang==='es'?'Fecha':'Date'}</div>
           <div className="trf-col-route">{lang==='es'?'Ruta':'Route'}</div>
@@ -299,6 +397,7 @@ export default function ScreenTransfers() {
           <div className="trf-col-units tabular-nums">{lang==='es'?'Unidades':'Units'}</div>
           <div className="trf-col-value tabular-nums">{lang==='es'?'Valor':'Value'}</div>
           <div className="trf-col-status">{lang==='es'?'Estado':'Status'}</div>
+          <div/>{/* slot trash */}
           <div className="trf-col-caret"/>
         </div>
 
@@ -341,6 +440,15 @@ export default function ScreenTransfers() {
                     }
                   }}
                 >
+                  {/* Sprint 2026-05-14 · Fase 12 — checkbox por fila. */}
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    {canDelete && t._backend_id && (
+                      <input type="checkbox"
+                             checked={selected.has(t._backend_id)}
+                             onClick={(e) => e.stopPropagation()}
+                             onChange={(e) => { e.stopPropagation(); toggleSelect(t._backend_id); }}/>
+                    )}
+                  </div>
                   <div className="trf-col-id mono">{t.id}</div>
                   <div className="trf-col-date">
                     <div className="trf-date-main">{fmtDate(t.created_at)}</div>
@@ -375,7 +483,23 @@ export default function ScreenTransfers() {
                   </div>
                   <div className="trf-col-value tabular-nums">{fmtUsd(t.value_usd)}</div>
                   <div className="trf-col-status">
-                    <StatusBadge status={t.status}/>
+                    {/* Sprint 2026-05-14 · Fase 12 — chip pintado desde
+                        TRANSFER_STATUS_META (ahora incluye 'cancelled' en rojo). */}
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '3px 10px', borderRadius: 999,
+                      fontSize: 11, fontWeight: 700, letterSpacing: 0.3,
+                      textTransform: 'uppercase',
+                      background: meta?.soft || 'rgba(107,114,128,0.12)',
+                      color: meta?.color || '#6B7280',
+                      border: `1px solid ${meta?.color || '#6B7280'}33`,
+                    }}>
+                      <span style={{
+                        width: 6, height: 6, borderRadius: 99,
+                        background: meta?.color || '#6B7280',
+                      }}/>
+                      {meta?.label || t.status}
+                    </span>
                     {t.status === 'planned' && t.needs_approval && (
                       <div className="trf-flag-approval">
                         <IconAlert size={10}/> {lang==='es'?'Aprobación CEO':'CEO sign-off'}
@@ -385,6 +509,28 @@ export default function ScreenTransfers() {
                       <div className="trf-flag-disc">
                         <IconAlert size={10}/> {lang==='es'?'Discrepancia':'Discrepancy'}
                       </div>
+                    )}
+                  </div>
+                  {/* Sprint 2026-05-14 · Fase 12 — trash solo en cancelled/reconciled (admin). */}
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    {canDelete && t._backend_id
+                       && (t.status === 'cancelled' || t.status === 'reconciled') && (
+                      <button type="button"
+                              className="icon-btn"
+                              title={lang==='es'?'Eliminar registro':'Delete record'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirm({ type: 'delete', target: t });
+                              }}
+                              style={{
+                                width: 26, height: 26,
+                                color: '#DC2626',
+                                background: 'transparent',
+                                border: 'none', cursor: 'pointer',
+                                borderRadius: 6,
+                              }}>
+                        <IconTrash size={13}/>
+                      </button>
                     )}
                   </div>
                   <div className="trf-col-caret">
@@ -544,13 +690,11 @@ export default function ScreenTransfers() {
                               <button
                                 className="btn btn-danger-soft btn-sm"
                                 disabled={transitioning === t._backend_id}
-                                title={lang==='es'?'Cancelar la transferencia (no se puede deshacer)':'Cancel the transfer (cannot be undone)'}
+                                title={lang==='es'?'Cancelar la transferencia (devuelve el inventario al origen)':'Cancel the transfer (returns stock to origin)'}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const confirmMsg = lang==='es'
-                                    ? `¿Rechazar transferencia ${t.id}? Esta acción es definitiva.`
-                                    : `Reject transfer ${t.id}? This action is final.`;
-                                  if (window.confirm(confirmMsg)) transition(t, 'cancel');
+                                  // Sprint 2026-05-14 · Fase 12 — modal en vez de alert.
+                                  setConfirm({ type: 'cancel', target: t });
                                 }}
                               >
                                 <IconX size={12}/> {lang==='es'?'Rechazar':'Reject'}
@@ -614,6 +758,54 @@ export default function ScreenTransfers() {
           />
         )}
       </AnimatePresence>
+
+      {/* Sprint 2026-05-14 · Fase 12 — ConfirmModal en portal para
+          cancel / delete / bulk-delete. Reemplaza window.confirm. */}
+      {confirm && createPortal(
+        <ConfirmModal
+          eyebrow={
+            confirm.type === 'cancel'
+              ? (lang==='es'?'CANCELAR TRANSFERENCIA':'CANCEL TRANSFER')
+              : (lang==='es'?'ACCIÓN DESTRUCTIVA':'DESTRUCTIVE ACTION')
+          }
+          title={
+            confirm.type === 'cancel'
+              ? (lang==='es'
+                  ? `¿Cancelar ${confirm.target?.id || ''}?`
+                  : `Cancel ${confirm.target?.id || ''}?`)
+              : confirm.type === 'bulk-delete'
+                ? (lang==='es'
+                    ? `¿Eliminar ${confirm.ids?.length || 0} transferencias?`
+                    : `Delete ${confirm.ids?.length || 0} transfers?`)
+                : (lang==='es'
+                    ? `¿Eliminar ${confirm.target?.id || ''}?`
+                    : `Delete ${confirm.target?.id || ''}?`)
+          }
+          body={
+            confirm.type === 'cancel' ? (
+              <>{lang==='es'
+                ? <>Esta acción es definitiva. El inventario asociado <strong>vuelve al nodo origen</strong> automáticamente.</>
+                : <>This action is final. Associated inventory <strong>returns to origin node</strong> automatically.</>}
+              </>
+            ) : (
+              <>{lang==='es'
+                ? <>El registro se marcará como inactivo (soft-delete). No se puede deshacer desde la UI.</>
+                : <>The record will be soft-deleted. Cannot be undone from the UI.</>}
+              </>
+            )
+          }
+          actionLabel={
+            confirm.type === 'cancel'
+              ? (lang==='es'?'Sí, cancelar':'Yes, cancel')
+              : (lang==='es'?'Sí, eliminar':'Yes, delete')
+          }
+          actionColor={confirm.type === 'cancel' ? '#B45309' : '#DC2626'}
+          cancelLabel={lang==='es'?'Cancelar':'Cancel'}
+          busy={busy}
+          error={bulkError}
+          onCancel={() => { if (!busy) { setConfirm(null); setBulkError(null); } }}
+          onConfirm={doConfirm}
+        />, document.body)}
     </div>
   );
 }

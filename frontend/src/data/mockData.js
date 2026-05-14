@@ -1297,6 +1297,9 @@ export const TRANSFER_STATUS_META = {
   in_transit: { label:'En tránsito',     sub:'Moving in the network',  color:'#B45309', soft:'rgba(180,83,9,0.12)'    },
   received:   { label:'Recibida',         sub:'Arrived at destination', color:'#1DE394', soft:'rgba(29,227,148,0.14)'  },
   reconciled: { label:'Reconciliada',     sub:'Closed — no variance',   color:'#0E8A6D', soft:'rgba(14,138,109,0.14)'  },
+  // Sprint 2026-05-14 · Fase 12 — chip cancelado en rojo.
+  cancelled:  { label:'Cancelada',        sub:'Reverted — stock back at origin',
+                color:'#DC2626', soft:'rgba(220,38,38,0.12)' },
 };
 
 export const LEGAL_CONTEXT_META = {
