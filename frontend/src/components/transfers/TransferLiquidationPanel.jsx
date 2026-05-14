@@ -181,6 +181,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         product_label:    l.product_label || l.product || "",
         size:             l.size || "",
         lote:             l.lote || l.lot || "",
+        // Sprint 2026-05-14 · Fase 11.2 — propagar expediente_codigo
+        // para mostrar la columna Expediente en la tabla del Landed Cost.
+        expediente_codigo: l.expediente_codigo || "",
         qty,
         unit_fob_usd:     uv,
         fob_total_usd:    lt,
@@ -607,6 +610,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             <table className="table">
               <thead>
                 <tr>
+                  {/* Sprint 2026-05-14 · Fase 11.2 — Expediente antes de SKU/Lote. */}
+                  <th>{lang === "es" ? "Expediente" : "Expediente"}</th>
                   <th>SKU / {lang === "es" ? "Lote" : "Lot"}</th>
                   <th>{lang === "es" ? "Producto" : "Product"}</th>
                   <th>{lang === "es" ? "Talla" : "Size"}</th>
@@ -634,6 +639,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     : Number(l.unit_fob_usd || 0).toFixed(4);
                   return (
                   <tr key={l.line_id}>
+                    <td className="mono-sm" style={{ color: "var(--brand-primary)", fontWeight: 700 }}>
+                      {l.expediente_codigo || "—"}
+                    </td>
                     <td className="mono-sm">
                       <div>{l.sku}</div>
                       {l.lote && <div className="caption">L: {l.lote}</div>}
@@ -690,7 +698,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   );
                 })}
                 <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
-                  <td colSpan={3} style={{ color: "#0B1E3A" }}>
+                  {/* +1 columna Expediente (Sprint Fase 11.2). */}
+                  <td colSpan={4} style={{ color: "#0B1E3A" }}>
                     {lang === "es" ? "TOTALES" : "TOTALS"}
                   </td>
                   <td className="tabular-nums" style={{ textAlign: "right" }}>{livePreview.unitsTotal}</td>

@@ -111,6 +111,12 @@ function mapApiDetailToTransfer(r) {
       // Landed cost ya persistido (si la transfer fue liquidada)
       cost_share_usd:  l.cost_share_usd  != null ? Number(l.cost_share_usd)  : null,
       landed_cost_usd: l.landed_cost_usd != null ? Number(l.landed_cost_usd) : null,
+      // Sprint 2026-05-14 · Fase 11.2 — el backend retrieve() enriquece
+      // cada linea con expediente_id/expediente_codigo (JOIN por
+      // transferencia_id+producto_id+talla). El mapper los dejaba caer
+      // → "—" en columna Expediente. Ahora se propagan al UI.
+      expediente_id:     l.expediente_id || null,
+      expediente_codigo: l.expediente_codigo || '',
     })),
     eventos: Array.isArray(r?.eventos) ? r.eventos : [],
   };
