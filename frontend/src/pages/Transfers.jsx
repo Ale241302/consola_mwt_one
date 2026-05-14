@@ -216,8 +216,8 @@ export default function ScreenTransfers() {
     });
   };
   const allSelectableIds = useMemo(
-    () => filtered.filter((t) => t._backend_id).map((t) => t._backend_id),
-    [filtered],
+    () => rows.filter((t) => t._backend_id).map((t) => t._backend_id),
+    [rows],
   );
   const allChecked = allSelectableIds.length > 0
     && allSelectableIds.every((id) => selected.has(id));
