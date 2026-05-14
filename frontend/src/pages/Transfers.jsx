@@ -92,6 +92,14 @@ export default function ScreenTransfers() {
   const [expanded, setExpanded] = useState(null); // transfer id
   const [transitioning, setTransitioning] = useState(null); // backend id while a transition POST is in-flight
 
+  // Sprint 2026-05-14 · Fase 11 — lazy-fetch del detalle al expandir un
+  // row. El list serializer sólo trae agregados (lines_count, totales);
+  // para mostrar SKU/producto/talla/expediente necesitamos el detalle
+  // completo (mismo endpoint retrieve() que enriquece expediente_codigo).
+  // Cache por id de transferencia.
+  const [linesByTrfId, setLinesByTrfId] = useState({});   // { be_id: [lineas] }
+  const [linesLoading, setLinesLoading] = useState(null); // be_id en curso
+
   // ── Backend data (fallback a mock si aún no hay data real) ────
   const { transfers: apiTransfers, kpis: apiKpis, loading: loadingBackend, reload: reloadTransfers } = useTransfersData();
   const TRANSFERS = useMemo(() => {
@@ -314,7 +322,24 @@ export default function ScreenTransfers() {
                 <button
                   type="button"
                   className="trf-row-main"
-                  onClick={() => setExpanded(isExp ? null : t.id)}
+                  onClick={() => {
+                    const nextId = isExp ? null : t.id;
+                    setExpanded(nextId);
+                    // Sprint 2026-05-14 · Fase 11 — lazy-fetch detalle.
+                    if (nextId && t._backend_id && !linesByTrfId[t._backend_id]
+                        && linesLoading !== t._backend_id) {
+                      setLinesLoading(t._backend_id);
+                      transferenciasApi.get(t._backend_id)
+                        .then((full) => {
+                          const arr = Array.isArray(full?.lineas) ? full.lineas : [];
+                          setLinesByTrfId((p) => ({ ...p, [t._backend_id]: arr }));
+                        })
+                        .catch(() => {
+                          setLinesByTrfId((p) => ({ ...p, [t._backend_id]: [] }));
+                        })
+                        .finally(() => setLinesLoading(null));
+                    }
+                  }}
                 >
                   <div className="trf-col-id mono">{t.id}</div>
                   <div className="trf-col-date">
@@ -388,44 +413,92 @@ export default function ScreenTransfers() {
                           <div className="trf-exp-title">
                             {lang==='es'?'Resumen de SKUs':'SKU summary'}
                           </div>
-                          <div className="trf-exp-lines">
-                            {t.lines.map((ln, i) => {
-                              const hasDelta = ln.qty_received != null && ln.qty_received !== ln.qty_transfer;
+                          {/* Sprint 2026-05-14 · Fase 11 — usamos las
+                              lineas reales del backend (lazy-fetched al
+                              expandir) en vez del stub agregado. Cada
+                              fila trae expediente_codigo, sku, product_label
+                              (o product), size, qty_transfer, qty_received. */}
+                          {(() => {
+                            const realLines = (t._backend_id && linesByTrfId[t._backend_id]) || null;
+                            const isLoading = linesLoading === t._backend_id;
+                            if (isLoading) {
                               return (
-                                <div key={i} className={`trf-exp-line ${hasDelta ? 'has-delta' : ''}`}>
-                                  <div className="trf-exp-line-sku mono">{ln.sku}</div>
-                                  <div className="trf-exp-line-name">{ln.product}</div>
-                                  <div className="trf-exp-line-qty tabular-nums">
-                                    <span className="trf-exp-lbl micro">
-                                      {lang==='es'?'Transf.':'Transf.'}
-                                    </span>
-                                    {fmtInt(ln.qty_transfer)}
-                                  </div>
-                                  {ln.qty_reserve > 0 && (
-                                    <div className="trf-exp-line-qty tabular-nums reserve">
-                                      <span className="trf-exp-lbl micro">
-                                        {lang==='es'?'Resv.':'Resv.'}
-                                      </span>
-                                      {fmtInt(ln.qty_reserve)}
-                                    </div>
-                                  )}
-                                  {ln.qty_received != null && (
-                                    <div className={`trf-exp-line-qty tabular-nums received ${hasDelta ? 'err' : ''}`}>
-                                      <span className="trf-exp-lbl micro">
-                                        {lang==='es'?'Recib.':'Recv.'}
-                                      </span>
-                                      {fmtInt(ln.qty_received)}
-                                      {hasDelta && (
-                                        <span className="trf-exp-delta">
-                                          Δ {ln.qty_received - ln.qty_transfer}
-                                        </span>
-                                      )}
-                                    </div>
-                                  )}
+                                <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '10px 0' }}>
+                                  {lang==='es'?'Cargando líneas…':'Loading lines…'}
                                 </div>
                               );
-                            })}
-                          </div>
+                            }
+                            const lines = realLines || t.lines || [];
+                            if (lines.length === 0) {
+                              return (
+                                <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '10px 0' }}>
+                                  {lang==='es'?'Sin líneas.':'No lines.'}
+                                </div>
+                              );
+                            }
+                            return (
+                              <div className="trf-exp-lines">
+                                {lines.map((ln, i) => {
+                                  const qtyT = Number(ln.qty_transfer || 0);
+                                  const qtyR = Number(ln.qty_reserve  || 0);
+                                  const qtyRecv = (ln.qty_received == null || ln.qty_received === '')
+                                    ? null : Number(ln.qty_received);
+                                  const hasDelta = qtyRecv != null && qtyRecv !== qtyT;
+                                  const sku = ln.sku || '—';
+                                  const productName = ln.product_label || ln.product || '—';
+                                  const size = ln.size || '';
+                                  return (
+                                    <div key={i} className={`trf-exp-line ${hasDelta ? 'has-delta' : ''}`}>
+                                      {/* Expediente · Sprint Fase 11. */}
+                                      <div className="trf-exp-line-name mono" style={{
+                                        color: 'var(--brand-primary)', fontWeight: 700, fontSize: 12,
+                                      }}>
+                                        {ln.expediente_codigo || '—'}
+                                      </div>
+                                      <div className="trf-exp-line-sku mono">{sku}</div>
+                                      <div className="trf-exp-line-name">
+                                        {productName}
+                                        {size && (
+                                          <span style={{
+                                            marginLeft: 8, padding: '2px 8px', borderRadius: 999,
+                                            background: 'rgba(72,30,227,0.10)', color: '#481EE3',
+                                            fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
+                                          }}>{size}</span>
+                                        )}
+                                      </div>
+                                      <div className="trf-exp-line-qty tabular-nums">
+                                        <span className="trf-exp-lbl micro">
+                                          {lang==='es'?'Transf.':'Transf.'}
+                                        </span>
+                                        {fmtInt(qtyT)}
+                                      </div>
+                                      {qtyR > 0 && (
+                                        <div className="trf-exp-line-qty tabular-nums reserve">
+                                          <span className="trf-exp-lbl micro">
+                                            {lang==='es'?'Resv.':'Resv.'}
+                                          </span>
+                                          {fmtInt(qtyR)}
+                                        </div>
+                                      )}
+                                      {qtyRecv != null && (
+                                        <div className={`trf-exp-line-qty tabular-nums received ${hasDelta ? 'err' : ''}`}>
+                                          <span className="trf-exp-lbl micro">
+                                            {lang==='es'?'Recib.':'Recv.'}
+                                          </span>
+                                          {fmtInt(qtyRecv)}
+                                          {hasDelta && (
+                                            <span className="trf-exp-delta">
+                                              Δ {qtyRecv - qtyT}
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         {t.notes && (

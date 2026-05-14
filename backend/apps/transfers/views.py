@@ -151,9 +151,17 @@ class TransferenciaViewSet(viewsets.ViewSet):
         # tiene cuando la fila fue creada por POST /transfer/. Mapeamos
         # por (producto_id, COALESCE(talla,'')) restringiendo al
         # transferencia_id en curso.
+        # Sprint 2026-05-14 · Fase 11 — el enrichment intenta primero
+        # con `transferencia_id` (filas creadas tras el deploy de 65c).
+        # Si no encuentra match (transferencias legacy con
+        # transferencia_id NULL), cae a un parse del campo `notas`
+        # ('transfer from {uuid}'). Si tampoco hay match, deja la fila
+        # con expediente = "—" en el FE.
         try:
             from django.db import connection as _conn
+            exp_map = {}
             with _conn.cursor() as c:
+                # 1) Path principal: por transferencia_id (post-65c).
                 c.execute(
                     """
                     SELECT a.producto_id,
@@ -168,15 +176,37 @@ class TransferenciaViewSet(viewsets.ViewSet):
                     """,
                     {"trf_id": str(t.id), "dest_id": str(t.destino_id)},
                 )
-                exp_map = {}
                 for r in c.fetchall():
                     key = (str(r[0]), r[1] or "")
-                    # Prefiere la primera ocurrencia; si hay duplicados
-                    # mantenemos el primero (poco común).
                     exp_map.setdefault(key, {
                         "expediente_id":     str(r[2]) if r[2] else None,
                         "expediente_codigo": r[3],
                     })
+                # 2) Fallback legacy: parse de `notas LIKE %transfer from
+                #    <uuid>%`. Sólo si el path 1 quedó vacío (o sea, las
+                #    rows de este destino no tienen transferencia_id).
+                if not exp_map:
+                    c.execute(
+                        """
+                        SELECT a.producto_id,
+                               COALESCE(a.talla,'')      AS talla_norm,
+                               a.expediente_id,
+                               e.codigo                  AS expediente_codigo
+                        FROM inventario.expediente_nodo_assignment a
+                        LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
+                        WHERE a.is_active = TRUE
+                          AND a.nodo_id   = %(dest_id)s::uuid
+                          AND a.notas ILIKE %(notas_pat)s
+                        """,
+                        {"dest_id": str(t.destino_id),
+                         "notas_pat": f"%transfer from {t.id}%"},
+                    )
+                    for r in c.fetchall():
+                        key = (str(r[0]), r[1] or "")
+                        exp_map.setdefault(key, {
+                            "expediente_id":     str(r[2]) if r[2] else None,
+                            "expediente_codigo": r[3],
+                        })
             for ln in lineas_data:
                 key = (str(ln.get("producto_id") or ""),
                        (ln.get("size") or ""))
@@ -1038,7 +1068,109 @@ class TransferenciaViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
-        return self._transition(request, pk, "CANCELLED", "Cancelada")
+        # Sprint 2026-05-14 · Fase 11 — al cancelar revertimos también
+        # las asignaciones de inventario que la transferencia movió. Si
+        # no se revierte, el stock queda fantasma en el nodo destino y
+        # el origen pierde unidades que nunca llegaron al destino.
+        # La reversión se ejecuta DESPUÉS del cambio de estado para que
+        # el evento de audit se cree primero. Si la reversión falla,
+        # logueamos pero NO rolleamos el cancel — el operador puede
+        # ajustar manualmente desde /nodos/{id}.
+        resp = self._transition(request, pk, "CANCELLED", "Cancelada")
+        if 200 <= resp.status_code < 300:
+            try:
+                self._revert_assignments_for_cancel(pk)
+            except Exception:
+                log.exception("cancel · revert assignments failed for trf=%s", pk)
+        return resp
+
+    def _revert_assignments_for_cancel(self, trf_id):
+        """Revierte las asignaciones creadas por POST /transfer/.
+
+        Estrategia:
+          1) Encontrar las filas activas en destino con transferencia_id
+             = trf_id. Cada una representa qty que se movió.
+          2) Encontrar las filas residuales activas en origen con la
+             misma transferencia_id (las que creamos cuando el split
+             era parcial). Estas representan lo que QUEDÓ en origen
+             después del split, no algo a revertir — pero su existencia
+             nos dice que hubo split.
+          3) Para cada (exp, prod, talla) movida:
+             a) soft-delete fila destino
+             b) si había residual en origen, soft-delete la residual
+             c) crear UNA fila en origen con qty_total = destino + residual
+                (= qty original antes de transferir)
+
+        Esto recompone el estado pre-transferencia atómicamente. El
+        audit trail queda intacto porque NO borramos físicamente — sólo
+        marcamos is_active=FALSE; los SUM() de saldo activo cuadran.
+        """
+        from django.db import transaction as _tx
+        from django.db.models import Q, Sum
+        from apps.inventario.models import ExpedienteNodoAssignment
+
+        try:
+            t = _resolve_trf(trf_id)
+        except Transferencia.DoesNotExist:
+            return
+        origen_id  = t.origen_id
+        destino_id = t.destino_id
+        if not origen_id or not destino_id:
+            return
+
+        with _tx.atomic():
+            # Filas creadas por esta transferencia, agrupadas por
+            # (exp, prod, talla) sumando qty por nodo (destino y origen
+            # residual).
+            destino_qs = ExpedienteNodoAssignment.objects.filter(
+                is_active=True,
+                transferencia_id=trf_id,
+                nodo_id=destino_id,
+            )
+            origen_residual_qs = ExpedienteNodoAssignment.objects.filter(
+                is_active=True,
+                transferencia_id=trf_id,
+                nodo_id=origen_id,
+            )
+            # Acumulamos qty por clave (exp, prod, talla) considerando
+            # destino + residual = qty original antes del split.
+            agg = {}  # key = (exp, prod, talla_norm) → int
+            for row in destino_qs.values(
+                "expediente_id", "producto_id", "talla", "qty_asignada"
+            ):
+                k = (row["expediente_id"], row["producto_id"],
+                     row["talla"] or "")
+                agg[k] = agg.get(k, 0) + int(row["qty_asignada"] or 0)
+            for row in origen_residual_qs.values(
+                "expediente_id", "producto_id", "talla", "qty_asignada"
+            ):
+                k = (row["expediente_id"], row["producto_id"],
+                     row["talla"] or "")
+                agg[k] = agg.get(k, 0) + int(row["qty_asignada"] or 0)
+
+            # Soft-delete TODAS las filas creadas por la transferencia
+            # (tanto destino como residual).
+            destino_qs.update(is_active=False)
+            origen_residual_qs.update(is_active=False)
+
+            # Re-crear en origen la cantidad original consolidada.
+            uploader = None
+            for (exp_id, prod_id, talla), qty in agg.items():
+                if qty <= 0:
+                    continue
+                ExpedienteNodoAssignment.objects.create(
+                    id=uuid.uuid4(),
+                    expediente_id=exp_id,
+                    producto_id=prod_id,
+                    talla=(talla or None),
+                    nodo_id=origen_id,
+                    qty_asignada=qty,
+                    recepcion_id=None,
+                    transferencia_id=trf_id,   # marca para audit
+                    notas=f"revert-cancel from {trf_id}",
+                    created_by_id=uploader,
+                    is_active=True,
+                )
 
     def _transition(self, request, pk, nuevo_estado, note):
         try:
