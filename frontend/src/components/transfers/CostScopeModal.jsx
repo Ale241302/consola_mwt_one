@@ -1,28 +1,36 @@
 // ─────────────────────────────────────────────────────────────
 // CostScopeModal — picker de alcance para una cost-line de
-// transferencia. Sprint 2026-05-13 · Fase 9.
+// transferencia. Sprint 2026-05-13 · Fase 9.1.
 //
-// CEO (textual): "cuando registre un costo me debe preguntar para qué
-// expediente o expedientes seleccionados en el paso de productos se le
-// va a registrar ese costo, o incluso puede ir asociado a algunos
-// productos seleccionados del expediente o a todos los productos."
+// CEO (textual): "cuando le de en + Agregar costo me debe preguntar
+// qué expediente o expedientes de los seleccionados en el paso 2 le
+// quiero agregar el costo, luego a qué producto o productos de cada
+// expediente, y allí sí el tipo, monto, moneda, valor. Es decir, solo
+// algunos expedientes y solo a líneas específicas son una única
+// opción no separadas — porque al seleccionar el expediente o
+// expedientes me muestra los productos que seleccioné en el paso 2."
 //
-// Estructura:
-//   1. Radio: "Aplicar a todos" vs "Restringir a..."
-//   2. Si restringir:
-//        a) Chips de expedientes (los que ya están en transferItems).
-//        b) Si el usuario selecciona "Solo algunas líneas", aparece la
-//           tabla de líneas filtradas a esos expedientes con checkboxes.
-//   3. Save → devuelve scope_json al padre via onSave(scope).
+// Estructura (Fase 9.1 — modos fusionados):
+//   1. Radio · 2 opciones:
+//        a) "Aplicar a TODA la transferencia"
+//        b) "Restringir a expedientes/líneas"
+//   2. Si restringir → chips de expedientes del paso 2.
+//      Al seleccionar al menos uno, aparece la tabla de líneas
+//      (filtradas a esos expedientes), TODAS marcadas por defecto.
+//      El usuario puede desmarcar las que no quiera.
+//   3. Save → onSave(scope_json).
 //
 // scope_json shape:
-//   null                                     → aplica a todo
-//   {"applies_to_all": true}                 → idem
-//   {"applies_to_all": false,
-//    "expediente_ids": ["uuid",...]}         → restringido a expedientes
-//   {"applies_to_all": false,
-//    "expediente_ids": [...],
-//    "lines": [{"expediente_id","producto_id","talla"}, ...]}  → líneas
+//   null                                                  → aplica a todo
+//   {"applies_to_all": false, "expediente_ids":[...]}     → todos los productos
+//                                                           de esos expedientes
+//   {"applies_to_all": false, "expediente_ids":[...],
+//    "lines":[{"expediente_id","producto_id","talla"}...]}→ solo esas líneas
+//
+// Si el usuario deja todas las líneas marcadas (no desmarca ninguna),
+// emitimos sólo expediente_ids — semánticamente equivalente a "todas
+// las líneas de estos expedientes". Si desmarca alguna, emitimos la
+// lista explícita de las que quedaron marcadas.
 //
 // Reglas MWT: R1 tokens, R5 tabular-nums.
 // ─────────────────────────────────────────────────────────────
@@ -46,45 +54,20 @@ export default function CostScopeModal({
   onClose,
   onSave,
   lang = "es",
-  /** Cost-line en edición — solo para el título. */
+  /** Texto a mostrar como subtitle (kind o label del costo). */
   costLabel = "",
   /** Items seleccionados en el paso 2 (Productos). */
   transferItems = [],
-  /** Scope actual del cost-line (puede ser null). */
+  /** Scope actual del cost-line (null si nuevo o "aplica a todo"). */
   initialScope = null,
 }) {
-  // ── Modo: 'all' | 'expedientes' | 'lines' ────────────────────
+  // ── Modo: 'all' | 'specific' ─────────────────────────────
   const [mode, setMode] = useState("all");
   const [selExpIds, setSelExpIds] = useState([]);
+  // selLineKeys: estado por línea (true = incluida).
   const [selLineKeys, setSelLineKeys] = useState({});
 
-  // ── Hidratar desde initialScope cuando se abre ───────────────
-  useEffect(() => {
-    if (!open) return;
-    if (!initialScope || initialScope.applies_to_all === true) {
-      setMode("all");
-      setSelExpIds([]);
-      setSelLineKeys({});
-      return;
-    }
-    const ids = Array.isArray(initialScope.expediente_ids)
-      ? initialScope.expediente_ids
-      : [];
-    setSelExpIds(ids);
-    if (Array.isArray(initialScope.lines) && initialScope.lines.length > 0) {
-      setMode("lines");
-      const k = {};
-      for (const l of initialScope.lines) {
-        k[lineKey(l)] = true;
-      }
-      setSelLineKeys(k);
-    } else {
-      setMode("expedientes");
-      setSelLineKeys({});
-    }
-  }, [open, initialScope]);
-
-  // ── Expedientes únicos derivados de transferItems ────────────
+  // ── Expedientes únicos derivados de transferItems ────────
   const expedientes = useMemo(() => {
     const map = new Map();
     for (const it of transferItems) {
@@ -102,14 +85,74 @@ export default function CostScopeModal({
       String(a.codigo || "").localeCompare(String(b.codigo || "")));
   }, [transferItems]);
 
-  // Líneas filtradas a los expedientes seleccionados (para el modo 'lines').
-  const lineasFiltradas = useMemo(() => {
-    if (mode !== "lines" || selExpIds.length === 0) return [];
-    const setIds = new Set(selExpIds);
-    return transferItems.filter((it) => setIds.has(it.expediente_id));
-  }, [transferItems, selExpIds, mode]);
+  // ── Hidratar desde initialScope cuando se abre ───────────
+  useEffect(() => {
+    if (!open) return;
+    if (!initialScope || initialScope.applies_to_all === true) {
+      setMode("all");
+      setSelExpIds([]);
+      // Por defecto, si el usuario cambia a "Específico", todas las
+      // líneas de los expedientes elegidos quedarán marcadas (lo
+      // gestiona el effect de auto-check más abajo).
+      setSelLineKeys({});
+      return;
+    }
+    const ids = Array.isArray(initialScope.expediente_ids)
+      ? initialScope.expediente_ids
+      : [];
+    setSelExpIds(ids);
+    setMode("specific");
+    if (Array.isArray(initialScope.lines) && initialScope.lines.length > 0) {
+      const k = {};
+      for (const l of initialScope.lines) {
+        k[lineKey(l)] = true;
+      }
+      setSelLineKeys(k);
+    } else {
+      // Sin lista explícita = "todas las líneas de estos expedientes"
+      // → marcamos todas en UI para que el usuario las vea checked
+      // y pueda desmarcar las que no quiera.
+      const k = {};
+      const setIds = new Set(ids);
+      for (const it of transferItems) {
+        if (setIds.has(it.expediente_id)) k[lineKey(it)] = true;
+      }
+      setSelLineKeys(k);
+    }
+  }, [open, initialScope, transferItems]);
 
-  // ── Helpers ─────────────────────────────────────────────────
+  // ── Auto-check de líneas cuando se selecciona un expediente ──
+  // Si el usuario marca un expediente nuevo, todas sus líneas se
+  // marcan automáticamente. Si lo desmarca, se "limpian" sus líneas.
+  useEffect(() => {
+    if (mode !== "specific") return;
+    setSelLineKeys((prev) => {
+      const next = { ...prev };
+      const setIds = new Set(selExpIds);
+      // 1) Marcar líneas de nuevos expedientes (las que aún no tienen
+      //    estado registrado).
+      for (const it of transferItems) {
+        const k = lineKey(it);
+        if (setIds.has(it.expediente_id) && next[k] === undefined) {
+          next[k] = true;
+        }
+      }
+      // 2) Limpiar líneas de expedientes que ya no están seleccionados.
+      for (const k of Object.keys(next)) {
+        const expId = k.split("::")[0];
+        if (!setIds.has(expId)) delete next[k];
+      }
+      return next;
+    });
+  }, [selExpIds, mode, transferItems]);
+
+  // ── Líneas filtradas a los expedientes seleccionados ─────
+  const expedientesSeleccionados = useMemo(
+    () => expedientes.filter((e) => selExpIds.includes(e.id)),
+    [expedientes, selExpIds],
+  );
+
+  // ── Helpers ─────────────────────────────────────────────
   const toggleExp = (id) => {
     setSelExpIds((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
   };
@@ -127,10 +170,28 @@ export default function CostScopeModal({
     });
   };
 
-  // ── Guardar ─────────────────────────────────────────────────
+  // ── Stats para el botón "Guardar" + chip resumen ────────
+  // total_lines_seleccionados = líneas check=true en expedientes seleccionados.
+  // total_lines_posibles      = líneas de los expedientes seleccionados.
+  const { totalLinesSel, totalLinesPosibles, allLinesChecked } = useMemo(() => {
+    const setIds = new Set(selExpIds);
+    let totalSel = 0, totalPos = 0;
+    for (const it of transferItems) {
+      if (!setIds.has(it.expediente_id)) continue;
+      totalPos += 1;
+      if (selLineKeys[lineKey(it)]) totalSel += 1;
+    }
+    return {
+      totalLinesSel:      totalSel,
+      totalLinesPosibles: totalPos,
+      allLinesChecked:    totalPos > 0 && totalSel === totalPos,
+    };
+  }, [selExpIds, selLineKeys, transferItems]);
+
+  // ── Guardar ─────────────────────────────────────────────
   const handleSave = () => {
     if (mode === "all") {
-      onSave?.(null);  // null = aplica a todo el batch
+      onSave?.(null);
       onClose?.();
       return;
     }
@@ -138,11 +199,14 @@ export default function CostScopeModal({
       applies_to_all: false,
       expediente_ids: selExpIds.slice(),
     };
-    if (mode === "lines") {
+    // Si NO están todas marcadas, emitimos la lista explícita.
+    // Si SÍ están todas marcadas, omitimos `lines` (semántica = "todas
+    // las líneas de estos expedientes").
+    if (!allLinesChecked) {
       const lines = [];
       for (const it of transferItems) {
-        const k = lineKey(it);
-        if (selLineKeys[k] && selExpIds.includes(it.expediente_id)) {
+        if (!selExpIds.includes(it.expediente_id)) continue;
+        if (selLineKeys[lineKey(it)]) {
           lines.push({
             expediente_id: it.expediente_id,
             producto_id:   it.producto_id,
@@ -156,6 +220,10 @@ export default function CostScopeModal({
     onClose?.();
   };
 
+  // ── canSave: validación del botón ───────────────────────
+  const canSave = mode === "all"
+    || (selExpIds.length > 0 && totalLinesSel > 0);
+
   if (!open) return null;
 
   return (
@@ -167,7 +235,7 @@ export default function CostScopeModal({
     }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} style={{
         background: "var(--surface, #fff)", borderRadius: 14,
-        width: "min(820px, 100%)", maxHeight: "88vh",
+        width: "min(880px, 100%)", maxHeight: "88vh",
         display: "flex", flexDirection: "column",
         boxShadow: "0 16px 40px rgba(0,0,0,0.18)",
       }}>
@@ -180,7 +248,7 @@ export default function CostScopeModal({
               {lang === "es" ? "ALCANCE DEL COSTO" : "COST SCOPE"}
             </div>
             <h3 className="heading-md" style={{ marginTop: 2 }}>
-              {costLabel || (lang === "es" ? "Aplicar costo a..." : "Apply cost to...")}
+              {costLabel || (lang === "es" ? "¿A qué se aplica este costo?" : "What does this cost apply to?")}
             </h3>
           </div>
           <button className="btn btn-ghost btn-sm" onClick={onClose}>
@@ -189,7 +257,7 @@ export default function CostScopeModal({
         </div>
 
         <div style={{ padding: "16px 22px", overflowY: "auto" }}>
-          {/* Modo */}
+          {/* Modo · 2 opciones (Fase 9.1 — fusionado) */}
           <ModeRadio
             value={mode} onChange={setMode}
             options={[
@@ -198,81 +266,98 @@ export default function CostScopeModal({
                 desc:  lang === "es"
                   ? "El costo se prorratea sobre todas las líneas del batch."
                   : "Cost is prorated across all lines in the batch." },
-              { id: "expedientes",
-                title: lang === "es" ? "Solo a algunos EXPEDIENTES" : "Only some EXPEDIENTES",
+              { id: "specific",
+                title: lang === "es"
+                  ? "Restringir a expedientes / líneas específicas"
+                  : "Restrict to specific expedientes / lines",
                 desc:  lang === "es"
-                  ? "El costo aplica solo a las líneas de los expedientes elegidos."
-                  : "Cost applies only to the chosen expedientes' lines." },
-              { id: "lines",
-                title: lang === "es" ? "Solo a LÍNEAS específicas" : "Only specific LINES",
-                desc:  lang === "es"
-                  ? "Marca SKU/talla precisos. Útil para fletes por producto."
-                  : "Pick exact SKU/size. Useful for per-product freight." },
+                  ? "Elige los expedientes; al seleccionarlos verás sus líneas y podrás desmarcar las que no apliquen."
+                  : "Pick the expedientes; lines appear so you can uncheck non-applicable ones." },
             ]}
           />
 
-          {mode !== "all" && (
-            <div style={{ marginTop: 16 }}>
-              <div className="micro" style={{ color: "var(--text-tertiary)", letterSpacing: 0.5, marginBottom: 8 }}>
-                {lang === "es" ? "EXPEDIENTES" : "EXPEDIENTES"}
-              </div>
-              {expedientes.length === 0 ? (
-                <div className="caption" style={{ color: "var(--text-tertiary)" }}>
-                  {lang === "es"
-                    ? "Sin expedientes seleccionados en el paso de productos."
-                    : "No expedientes selected in the products step."}
+          {mode === "specific" && (
+            <>
+              <div style={{ marginTop: 18 }}>
+                <div className="micro" style={{ color: "var(--text-tertiary)", letterSpacing: 0.5, marginBottom: 8 }}>
+                  {lang === "es" ? "1. EXPEDIENTES" : "1. EXPEDIENTES"}
                 </div>
-              ) : (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {expedientes.map((e) => {
-                    const on = selExpIds.includes(e.id);
-                    return (
-                      <button key={e.id} type="button"
-                              onClick={() => toggleExp(e.id)}
-                              style={{
-                                padding: "6px 12px", borderRadius: 999,
-                                border: on
-                                  ? "1.5px solid var(--brand-accent, #0E8A6D)"
-                                  : "1px solid var(--border-subtle)",
-                                background: on
-                                  ? "color-mix(in oklab, var(--brand-accent, #0E8A6D) 12%, transparent)"
-                                  : "var(--surface, white)",
-                                color: on ? "var(--brand-accent, #0E8A6D)" : "var(--text-primary)",
-                                fontSize: 12, fontWeight: 700, letterSpacing: 0.3,
-                                cursor: "pointer",
-                                display: "inline-flex", alignItems: "center", gap: 6,
-                              }}>
-                        {on && <IconCheck size={11}/>}
-                        <span className="mono-sm">{e.codigo}</span>
-                        {e.proforma_codigo && (
-                          <span style={{ opacity: 0.7 }}>· {e.proforma_codigo}</span>
-                        )}
-                      </button>
-                    );
-                  })}
+                {expedientes.length === 0 ? (
+                  <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+                    {lang === "es"
+                      ? "Sin expedientes seleccionados en el paso 2 (Productos)."
+                      : "No expedientes selected in step 2 (Products)."}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {expedientes.map((e) => {
+                      const on = selExpIds.includes(e.id);
+                      return (
+                        <button key={e.id} type="button"
+                                onClick={() => toggleExp(e.id)}
+                                style={{
+                                  padding: "6px 12px", borderRadius: 999,
+                                  border: on
+                                    ? "1.5px solid var(--brand-accent, #0E8A6D)"
+                                    : "1px solid var(--border-subtle)",
+                                  background: on
+                                    ? "color-mix(in oklab, var(--brand-accent, #0E8A6D) 12%, transparent)"
+                                    : "var(--surface, white)",
+                                  color: on ? "var(--brand-accent, #0E8A6D)" : "var(--text-primary)",
+                                  fontSize: 12, fontWeight: 700, letterSpacing: 0.3,
+                                  cursor: "pointer",
+                                  display: "inline-flex", alignItems: "center", gap: 6,
+                                }}>
+                          {on && <IconCheck size={11}/>}
+                          <span className="mono-sm">{e.codigo}</span>
+                          {e.proforma_codigo && (
+                            <span style={{ opacity: 0.7 }}>· {e.proforma_codigo}</span>
+                          )}
+                          <span style={{
+                            marginLeft: 4, opacity: 0.7, fontWeight: 600,
+                          }}>
+                            ({e.lines.length})
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Tabla de líneas — aparece sólo cuando hay ≥1 expediente seleccionado */}
+              {selExpIds.length > 0 && (
+                <div style={{ marginTop: 18 }}>
+                  <div className="micro" style={{
+                    color: "var(--text-tertiary)", letterSpacing: 0.5,
+                    marginBottom: 8,
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                  }}>
+                    <span>{lang === "es" ? "2. PRODUCTOS" : "2. PRODUCTS"}</span>
+                    <span className="caption" style={{
+                      color: allLinesChecked
+                        ? "var(--brand-accent, #0E8A6D)"
+                        : "var(--text-tertiary)",
+                      letterSpacing: 0.3, textTransform: "none",
+                    }}>
+                      {lang === "es"
+                        ? `${totalLinesSel} / ${totalLinesPosibles} líneas`
+                        : `${totalLinesSel} / ${totalLinesPosibles} lines`}
+                    </span>
+                  </div>
+                  {expedientesSeleccionados.map((e) => (
+                    <LinesBlock
+                      key={e.id}
+                      exp={e}
+                      selLineKeys={selLineKeys}
+                      toggleLine={toggleLine}
+                      onSelectAll={(on) => toggleAllExpLines(e.id, on)}
+                      lang={lang}
+                    />
+                  ))}
                 </div>
               )}
-            </div>
-          )}
-
-          {mode === "lines" && selExpIds.length > 0 && (
-            <div style={{ marginTop: 18 }}>
-              <div className="micro" style={{ color: "var(--text-tertiary)", letterSpacing: 0.5, marginBottom: 8 }}>
-                {lang === "es" ? "LÍNEAS" : "LINES"}
-              </div>
-              {expedientes
-                .filter((e) => selExpIds.includes(e.id))
-                .map((e) => (
-                  <LinesBlock
-                    key={e.id}
-                    exp={e}
-                    selLineKeys={selLineKeys}
-                    toggleLine={toggleLine}
-                    onSelectAll={(on) => toggleAllExpLines(e.id, on)}
-                    lang={lang}
-                  />
-                ))}
-            </div>
+            </>
           )}
         </div>
 
@@ -284,12 +369,7 @@ export default function CostScopeModal({
             {lang === "es" ? "Cancelar" : "Cancel"}
           </button>
           <button className="btn btn-accent" onClick={handleSave}
-                  disabled={
-                    (mode === "expedientes" && selExpIds.length === 0) ||
-                    (mode === "lines"
-                      && (selExpIds.length === 0
-                          || Object.values(selLineKeys).every((v) => !v)))
-                  }>
+                  disabled={!canSave}>
             <IconCheck size={12}/>
             {lang === "es" ? "Guardar alcance" : "Save scope"}
           </button>

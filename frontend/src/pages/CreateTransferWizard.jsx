@@ -327,7 +327,10 @@ export default function CreateTransferWizard() {
   };
 
   // ── Helpers de costos ──
-  const addCostLine = () => {
+  // Sprint 2026-05-13 · Fase 9.1 — addCostLine acepta un patch opcional
+  // para aplicar valores iniciales (típicamente {scope}) cuando la fila
+  // se crea desde el flow "+ Agregar costo → scope modal → guardar".
+  const addCostLine = (patch = {}) => {
     setCostLines((prev) => [...prev, {
       tmpId:    `c-${Date.now()}-${Math.random().toString(36).slice(2,5)}`,
       kind:     "OTRO",
@@ -336,10 +339,9 @@ export default function CreateTransferWizard() {
       currency: "USD",
       fx_to_usd: 1,
       source:   "MANUAL",
-      // Sprint 2026-05-13 · Fase 9 — scope opcional del costo.
-      // null = aplica a TODOS los expedientes/líneas seleccionados.
-      // shape {applies_to_all:false, expediente_ids:[...], lines:[...]}.
+      // Scope opcional · null = aplica a TODO.
       scope:    null,
+      ...patch,
     }]);
   };
   const updateCostLine = (tmpId, patch) => {
@@ -1348,16 +1350,42 @@ function Label({ children }) {
 // para que el operador no tenga que tipear UUIDs.
 // ═════════════════════════════════════════════════════════════
 function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, removeCostLine, totals, currencies = [], transferItems = [] }) {
-  // Sprint 2026-05-13 · Fase 9 — picker scope abierto por cost-line.
-  const [scopeOpenFor, setScopeOpenFor] = useState(null);  // tmpId | null
+  // Sprint 2026-05-13 · Fase 9.1 — el flow ahora es:
+  //   click "+ Agregar costo" → abre scope modal con creatingNew=true
+  //   → al guardar, se crea la fila ya con el scope persistido.
+  // Las filas existentes pueden re-editar su scope clickeando la celda
+  // "Aplicar a" (scopeOpenFor = tmpId).
+  const [scopeOpenFor, setScopeOpenFor] = useState(null);        // tmpId | null
+  const [creatingNewScope, setCreatingNewScope] = useState(false); // bool
   const openScope = costLines.find((c) => c.tmpId === scopeOpenFor) || null;
+  const modalOpen = creatingNewScope || !!openScope;
+  const modalInitialScope = creatingNewScope ? null : (openScope?.scope || null);
+  const modalCostLabel = creatingNewScope
+    ? (lang === "es" ? "Nuevo costo" : "New cost")
+    : (openScope?.label || (openScope ? labelForKind(costKinds, openScope.kind) : ""));
+
+  const handleScopeSave = (scope) => {
+    if (creatingNewScope) {
+      // Crea la fila Y le aplica el scope en el mismo tick. addCostLine
+      // empuja una fila default; luego buscamos su tmpId (la última)
+      // para aplicar el scope. Como setState es asíncrono, usamos el
+      // callback de updateCostLine vía un truco: addCostLine inserta
+      // con un tmpId predecible (timestamp) → pero más simple es
+      // generar el tmpId aquí y pasarlo al setter del wizard.
+      addCostLine({ scope });
+    } else if (openScope) {
+      updateCostLine(openScope.tmpId, { scope });
+    }
+  };
+
   return (
     <div className="card card-pad-lg">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <h2 className="heading-md">
           {lang === "es" ? "Paso 3 · Costos operativos" : "Step 3 · Operating costs"}
         </h2>
-        <button className="btn btn-ghost btn-sm" onClick={addCostLine}>
+        <button className="btn btn-ghost btn-sm"
+                onClick={() => setCreatingNewScope(true)}>
           <IconPlus size={11}/> {lang === "es" ? "Agregar costo" : "Add cost"}
         </button>
       </div>
@@ -1501,17 +1529,20 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
         </div>
       )}
 
-      {/* Sprint 2026-05-13 · Fase 9 — modal de scope por cost-line. */}
+      {/* Sprint 2026-05-13 · Fase 9.1 — modal de scope.
+          Doble uso:
+            - creatingNewScope=true → "+ Agregar costo": al guardar
+              crea la fila ya con el scope aplicado.
+            - scopeOpenFor=tmpId   → edición de una fila existente
+              vía el chip "Aplicar a" de la columna. */}
       <CostScopeModal
-        open={!!openScope}
+        open={modalOpen}
         lang={lang}
-        costLabel={openScope?.label || (openScope ? labelForKind(costKinds, openScope.kind) : "")}
-        initialScope={openScope?.scope || null}
+        costLabel={modalCostLabel}
+        initialScope={modalInitialScope}
         transferItems={transferItems}
-        onClose={() => setScopeOpenFor(null)}
-        onSave={(scope) => {
-          if (openScope) updateCostLine(openScope.tmpId, { scope });
-        }}
+        onClose={() => { setCreatingNewScope(false); setScopeOpenFor(null); }}
+        onSave={handleScopeSave}
       />
     </div>
   );
