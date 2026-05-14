@@ -304,6 +304,16 @@ class CostLine(models.Model):
 
     notes              = models.TextField(null=True, blank=True)
 
+    # Sprint 2026-05-13 · Fase 9 — scope del costo. JSON con shape:
+    #   NULL                       → costo aplica a TODO el batch.
+    #   {"applies_to_all": true}   → idem (forma explícita).
+    #   {"applies_to_all": false,
+    #    "expediente_ids":["uuid",...],
+    #    "lines":[{"expediente_id":"uuid","producto_id":"uuid","talla":"..."}, ...]}
+    # Si `lines` está presente, manda sobre `expediente_ids`.
+    # Persistido por SQL 91l_cost_line_scope.sql.
+    scope_json         = models.JSONField(null=True, blank=True)
+
     is_active          = models.BooleanField(default=True)
     created_at         = models.DateTimeField(auto_now_add=True)
     updated_at         = models.DateTimeField(auto_now=True)

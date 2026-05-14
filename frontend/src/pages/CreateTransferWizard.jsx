@@ -29,6 +29,7 @@ import {
 } from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
 import Step3TransferAssign from "../components/transfers/Step3TransferAssign.jsx";
+import CostScopeModal      from "../components/transfers/CostScopeModal.jsx";
 
 // ── Catálogo legal (espejo del backend transfers.legal_context_cat) ──
 const LEGAL_CONTEXT = [
@@ -57,10 +58,14 @@ const COST_KINDS_FALLBACK = [
   { codigo:"OTRO",          label:"Otro",                is_fiscal:false, color:"#64748B" },
 ];
 
+// Sprint 2026-05-13 · Fase 9 — Swap: Productos PRIMERO (paso 2), Costos
+// DESPUÉS (paso 3). El operador necesita ver qué expedientes/líneas va
+// a mover antes de poder asignar costos por scope (todos · alguno · solo
+// estas líneas). El paso 4 sigue siendo la validación final.
 const STEPS = [
   { id:1, label:"Contexto y nodos" },
-  { id:2, label:"Costos operativos" },
-  { id:3, label:"Productos" },
+  { id:2, label:"Productos" },
+  { id:3, label:"Costos operativos" },
   { id:4, label:"Validación y totales" },
 ];
 
@@ -228,11 +233,14 @@ export default function CreateTransferWizard() {
       }
       return true;
     }
-    if (step === 2) return true;  // costos son opcionales
-    if (step === 3) {
-      // Sprint 2026-05-13 · Fase 8 — el paso 3 ahora es Step3TransferAssign.
-      // Reporta su propia validez (al menos 1 item con qty > 0).
+    // Sprint 2026-05-13 · Fase 9 — Swap: paso 2 = Productos, paso 3 = Costos.
+    if (step === 2) {
+      // Productos primero — al menos un item con qty > 0.
       return transferItemsValid;
+    }
+    if (step === 3) {
+      // Costos son opcionales — siempre se puede avanzar.
+      return true;
     }
     return true;
   }, [step, origenId, destinoId, legalContext, docFile, costLines,
@@ -328,6 +336,10 @@ export default function CreateTransferWizard() {
       currency: "USD",
       fx_to_usd: 1,
       source:   "MANUAL",
+      // Sprint 2026-05-13 · Fase 9 — scope opcional del costo.
+      // null = aplica a TODOS los expedientes/líneas seleccionados.
+      // shape {applies_to_all:false, expediente_ids:[...], lines:[...]}.
+      scope:    null,
     }]);
   };
   const updateCostLine = (tmpId, patch) => {
@@ -397,6 +409,9 @@ export default function CreateTransferWizard() {
           fx_to_usd:      Number(c.fx_to_usd) || 1,
           source:         c.source || "MANUAL",
           ocr_confidence: c.ocr_confidence ?? null,
+          // Sprint 2026-05-13 · Fase 9 — scope opcional.
+          // null = aplica a todo el batch. Shape ya validado en el picker.
+          scope_json:     c.scope || null,
         })),
       };
       const created = await transferenciasApi.create(payload);
@@ -542,6 +557,24 @@ export default function CreateTransferWizard() {
           )}
 
           {step === 2 && (
+            // Sprint 2026-05-13 · Fase 9 — Swap: Productos primero.
+            // El paso 2 es ahora el picker multi-expediente (fase 8) para
+            // que el paso 3 pueda mostrar los costos con scope a esos
+            // expedientes/líneas ya seleccionados.
+            <Step3TransferAssign
+              lang={lang}
+              originNode={nodos.find((n) => n.id === origenId)}
+              destinationNode={nodos.find((n) => n.id === destinoId)}
+              onItemsChange={setTransferItems}
+              onValidityChange={setTransferItemsValid}
+            />
+          )}
+
+          {step === 3 && (
+            // Sprint 2026-05-13 · Fase 9 — Costos con scope a expedientes/líneas.
+            // Step2Costs recibe `transferItems` para que cada cost-line
+            // pueda restringir su aplicación a un subconjunto de los
+            // expedientes / líneas ya elegidos en el paso 2.
             <Step2Costs
               lang={lang}
               costKinds={costKinds}
@@ -551,22 +584,7 @@ export default function CreateTransferWizard() {
               removeCostLine={removeCostLine}
               totals={totals}
               currencies={currencies}
-            />
-          )}
-
-          {step === 3 && (
-            // Sprint 2026-05-13 · Fase 8 — paso 3 multi-expediente.
-            // Replica el patrón del wizard de recepción /inventario/recepcion:
-            //   1) chips de expedientes con stock en el nodo origen
-            //   2) tabla por expediente · SKU · talla · disp · a transferir
-            // El submit del wizard (botón "Registrar transferencia") llama
-            // a nodoAssignmentsApi.transfer() además de transferenciasApi.create.
-            <Step3TransferAssign
-              lang={lang}
-              originNode={nodos.find((n) => n.id === origenId)}
-              destinationNode={nodos.find((n) => n.id === destinoId)}
-              onItemsChange={setTransferItems}
-              onValidityChange={setTransferItemsValid}
+              transferItems={transferItems}
             />
           )}
 
@@ -1320,14 +1338,24 @@ function Label({ children }) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// STEP 2 · Costos Operativos
+// STEP 3 · Costos Operativos (Sprint 2026-05-13 · Fase 9 — antes era paso 2)
+//
+// Cada cost-line puede tener scope opcional:
+//   - null            → aplica a TODA la transferencia
+//   - {expediente_ids,lines?} → aplica solo a esos expedientes/líneas
+//
+// El picker (CostScopeModal) lee transferItems del paso 2 (Productos)
+// para que el operador no tenga que tipear UUIDs.
 // ═════════════════════════════════════════════════════════════
-function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, removeCostLine, totals, currencies = [] }) {
+function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, removeCostLine, totals, currencies = [], transferItems = [] }) {
+  // Sprint 2026-05-13 · Fase 9 — picker scope abierto por cost-line.
+  const [scopeOpenFor, setScopeOpenFor] = useState(null);  // tmpId | null
+  const openScope = costLines.find((c) => c.tmpId === scopeOpenFor) || null;
   return (
     <div className="card card-pad-lg">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <h2 className="heading-md">
-          {lang === "es" ? "Paso 2 · Costos operativos" : "Step 2 · Operating costs"}
+          {lang === "es" ? "Paso 3 · Costos operativos" : "Step 3 · Operating costs"}
         </h2>
         <button className="btn btn-ghost btn-sm" onClick={addCostLine}>
           <IconPlus size={11}/> {lang === "es" ? "Agregar costo" : "Add cost"}
@@ -1354,6 +1382,7 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
               <col style={{ width: 100 }}/>
               <col style={{ width: 110 }}/>
               <col style={{ width: 110 }}/>
+              <col style={{ width: 140 }}/>{/* Sprint 2026-05-13 fase 9: Aplicar a */}
               <col style={{ width: 50 }}/>
             </colgroup>
             <thead>
@@ -1365,6 +1394,9 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
                 <th style={{ textAlign: "right", paddingRight: 18 }}>FX→USD</th>
                 <th style={{ textAlign: "right", paddingRight: 18 }}>USD</th>
                 <th style={{ textAlign: "center" }}>{lang === "es" ? "Origen" : "Source"}</th>
+                <th style={{ textAlign: "center" }}>
+                  {lang === "es" ? "Aplicar a" : "Apply to"}
+                </th>
                 <th></th>
               </tr>
             </thead>
@@ -1440,6 +1472,11 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
                       )}
                     </td>
                     <td style={{ textAlign: "center" }}>
+                      <ScopeCell scope={c.scope} transferItems={transferItems}
+                                 onOpen={() => setScopeOpenFor(c.tmpId)}
+                                 lang={lang}/>
+                    </td>
+                    <td style={{ textAlign: "center" }}>
                       <button className="btn btn-ghost btn-sm"
                               onClick={() => removeCostLine(c.tmpId)}
                               title={lang === "es" ? "Quitar costo" : "Remove cost"}
@@ -1457,13 +1494,77 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
                 <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 15 }}>
                   ${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
                 </td>
-                <td colSpan={2}></td>
+                <td colSpan={3}></td>
               </tr>
             </tbody>
           </table>
         </div>
       )}
+
+      {/* Sprint 2026-05-13 · Fase 9 — modal de scope por cost-line. */}
+      <CostScopeModal
+        open={!!openScope}
+        lang={lang}
+        costLabel={openScope?.label || (openScope ? labelForKind(costKinds, openScope.kind) : "")}
+        initialScope={openScope?.scope || null}
+        transferItems={transferItems}
+        onClose={() => setScopeOpenFor(null)}
+        onSave={(scope) => {
+          if (openScope) updateCostLine(openScope.tmpId, { scope });
+        }}
+      />
     </div>
+  );
+}
+
+// ── Sprint 2026-05-13 · Fase 9 — celda "Aplicar a" de Step2Costs ───
+// Muestra el resumen del scope actual:
+//   - null / applies_to_all → "Todo"
+//   - solo expedientes      → "3 expedientes"
+//   - con lines             → "2 expedientes · 5 líneas"
+// Click → abre el CostScopeModal.
+function ScopeCell({ scope, transferItems, onOpen, lang }) {
+  let label = lang === "es" ? "Todo" : "All";
+  let restricted = false;
+  if (scope && scope.applies_to_all === false) {
+    restricted = true;
+    const n_exp = Array.isArray(scope.expediente_ids) ? scope.expediente_ids.length : 0;
+    const n_lines = Array.isArray(scope.lines) ? scope.lines.length : 0;
+    if (n_lines > 0) {
+      label = lang === "es"
+        ? `${n_exp} exp · ${n_lines} líneas`
+        : `${n_exp} exp · ${n_lines} lines`;
+    } else if (n_exp > 0) {
+      label = lang === "es"
+        ? `${n_exp} expediente${n_exp !== 1 ? "s" : ""}`
+        : `${n_exp} expediente${n_exp !== 1 ? "s" : ""}`;
+    }
+  }
+  const noItems = !transferItems || transferItems.length === 0;
+  return (
+    <button type="button"
+            onClick={onOpen}
+            disabled={noItems}
+            title={noItems
+              ? (lang === "es"
+                  ? "Selecciona productos primero (paso 2)"
+                  : "Pick products first (step 2)")
+              : (lang === "es" ? "Configurar alcance del costo" : "Set cost scope")}
+            style={{
+              padding: "4px 10px", borderRadius: 999,
+              border: restricted
+                ? "1.5px solid var(--brand-accent, #0E8A6D)"
+                : "1px solid var(--border-subtle)",
+              background: restricted
+                ? "color-mix(in oklab, var(--brand-accent, #0E8A6D) 10%, transparent)"
+                : "var(--surface, white)",
+              color: restricted ? "var(--brand-accent, #0E8A6D)" : "var(--text-secondary)",
+              fontSize: 11, fontWeight: 700, letterSpacing: 0.3,
+              cursor: noItems ? "not-allowed" : "pointer",
+              opacity: noItems ? 0.5 : 1,
+            }}>
+      {label}
+    </button>
   );
 }
 
