@@ -536,6 +536,38 @@ export const nodoAssignmentsApi = {
   artifactsPorExpediente: (expedienteId) =>
     apiFetch(`/inventario/expedientes/${expedienteId}/artifacts/`,
              { token: getToken() }),
+  // Sprint 2026-05-13 fase 8 · líneas con stock en un nodo. Para el
+  // wizard de transferencias paso 3. Filtro opcional por expediente_ids
+  // (CSV) — sin filtro devuelve todas las líneas del nodo.
+  lineasEnNodo: ({ nodoId, expedienteIds = [] } = {}) => {
+    const qs = new URLSearchParams();
+    if (expedienteIds.length) qs.set("expediente_ids", expedienteIds.join(","));
+    const tail = qs.toString();
+    return apiFetch(
+      `/inventario/nodos/${nodoId}/lineas-en-nodo/${tail ? `?${tail}` : ""}`,
+      { token: getToken() },
+    );
+  },
+  // Sprint 2026-05-13 fase 8 · transfer atómico de asignaciones de un
+  // nodo origen a uno destino. Soft-delete origen, crea destino y
+  // residual en una sola transacción. Si qty > disponible en origen,
+  // devuelve 400 con detalle del over-transfer (sin mover nada).
+  transfer: ({ originNodoId, destinationNodoId, items, transferenciaId } = {}) =>
+    apiFetch(`/inventario/nodo-assignments/transfer/`, {
+      method: "POST",
+      body: {
+        origin_nodo_id:      originNodoId,
+        destination_nodo_id: destinationNodoId,
+        transferencia_id:    transferenciaId || null,
+        items: (items || []).map((it) => ({
+          expediente_id: it.expediente_id,
+          producto_id:   it.producto_id,
+          talla:         it.talla || "",
+          qty:           Number(it.qty) || 0,
+        })),
+      },
+      token: getToken(),
+    }),
 };
 
 // ---------------------------------------------------------------------

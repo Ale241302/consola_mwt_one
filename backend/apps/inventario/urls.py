@@ -31,6 +31,9 @@ exp_with_pending_view    = NodoAssignmentViewSet.as_view({"get":  "expedientes_w
 # ExpedienteDetail con la columna "Nodo" y la nueva tab Artefactos.
 nodos_por_linea_view     = NodoAssignmentViewSet.as_view({"get":  "nodos_por_linea_expediente"})
 artifacts_por_exp_view   = NodoAssignmentViewSet.as_view({"get":  "artifacts_por_expediente"})
+# Sprint 2026-05-13 fase 8 · Transfer engine wiring.
+lineas_en_nodo_view      = NodoAssignmentViewSet.as_view({"get":  "lineas_en_nodo"})
+transfer_view            = NodoAssignmentViewSet.as_view({"post": "transfer"})
 
 urlpatterns = router.urls + [
     # Inbound Engine v1 (sprint 2026-04-29)
@@ -68,4 +71,12 @@ urlpatterns = router.urls + [
     path("inventario/expedientes/<uuid:exp_id>/artifacts/",
          artifacts_por_exp_view,
          name="ena-artifacts-por-expediente"),
+    # Sprint 2026-05-13 fase 8 · líneas con stock en un nodo y transfer
+    # atómico de asignaciones para el wizard /transferencias/nueva.
+    path("inventario/nodos/<uuid:nodo_id>/lineas-en-nodo/",
+         lineas_en_nodo_view,
+         name="ena-lineas-en-nodo"),
+    path("inventario/nodo-assignments/transfer/",
+         transfer_view,
+         name="ena-transfer"),
 ]

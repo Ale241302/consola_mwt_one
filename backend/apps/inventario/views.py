@@ -1117,6 +1117,185 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             return Response({"detail": f"SQL error: {exc}"}, status=500)
         return Response(rows)
 
+    # ── 7) Sprint 2026-05-13 · Fase 8 · líneas con stock en un nodo ──
+    # Para el wizard de transferencias paso 3: devuelve por cada
+    # (expediente, producto, talla) la qty actualmente asignada al nodo.
+    # Filtro opcional `expediente_ids` (CSV) para limitar la búsqueda a
+    # los expedientes que el operador ya seleccionó en el chip-picker.
+    #
+    # El frontend usa esto en dos momentos:
+    #   1. Sin `expediente_ids` → para construir la lista de expedientes
+    #      con stock en el nodo origen (agrupando por expediente).
+    #   2. Con `expediente_ids` → para listar las líneas concretas
+    #      (sku, nombre, talla, qty_disponible) de los expedientes
+    #      seleccionados.
+    @action(detail=False, methods=["get"],
+            url_path=r"nodos/(?P<nodo_id>[^/.]+)/lineas-en-nodo")
+    def lineas_en_nodo(self, request, nodo_id=None):
+        exp_ids_raw = (request.query_params.get("expediente_ids") or "").strip()
+        exp_ids = [s.strip() for s in exp_ids_raw.split(",") if s.strip()]
+        extra = ""
+        params = {"nodo_id": nodo_id}
+        if exp_ids:
+            extra = " AND a.expediente_id = ANY(%(exp_ids)s::uuid[]) "
+            params["exp_ids"] = exp_ids
+        sql = f"""
+            SELECT
+                a.expediente_id,
+                e.codigo                                       AS expediente_codigo,
+                pf.codigo                                      AS proforma_codigo,
+                a.producto_id,
+                l.sku,
+                COALESCE(p.nombre, p.descripcion, l.sku, '—')  AS nombre,
+                a.talla,
+                SUM(a.qty_asignada)::int                       AS qty_disponible
+            FROM inventario.expediente_nodo_assignment a
+            JOIN expedientes.linea l
+              ON l.expediente_id = a.expediente_id
+             AND l.producto_id   = a.producto_id
+             AND COALESCE(l.size,'') = COALESCE(a.talla,'')
+            LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
+            LEFT JOIN productos.producto     p ON p.id = a.producto_id
+            LEFT JOIN LATERAL (
+                SELECT d.codigo
+                FROM expedientes.documento d
+                WHERE d.expediente_id = e.id
+                  AND d.kind = 'PROFORMA'
+                  AND d.is_active = TRUE
+                  AND d.codigo IS NOT NULL AND d.codigo <> ''
+                ORDER BY d.created_at DESC LIMIT 1
+            ) pf ON TRUE
+            WHERE a.nodo_id = %(nodo_id)s::uuid
+              AND a.is_active = TRUE
+              {extra}
+            GROUP BY a.expediente_id, e.codigo, pf.codigo,
+                     a.producto_id, l.sku, p.nombre, p.descripcion, a.talla
+            HAVING SUM(a.qty_asignada) > 0
+            ORDER BY e.codigo, l.sku, a.talla
+        """
+        try:
+            with connection.cursor() as c:
+                c.execute(sql, params)
+                cols = [d[0] for d in c.description]
+                rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        except Exception as exc:
+            log.exception("lineas_en_nodo SQL failed")
+            return Response({"detail": f"SQL error: {exc}"}, status=500)
+        return Response(rows)
+
+    # ── 8) Sprint 2026-05-13 · Fase 8 · Transfer atómico de asignaciones ──
+    # Mueve qty de (exp, prod, talla) desde nodo_origen → nodo_destino.
+    # Modelo append-only: soft-delete las rows activas del origen, crea
+    # una row en destino con qty solicitada, y si quedaba residual en
+    # origen, crea row residual en origen. Todo en una sola transacción.
+    #
+    # Si TODO el qty de un (exp, prod, talla) se mueve al destino, el
+    # expediente automáticamente "desaparece" del origen (porque no
+    # quedan rows activas con ese exp_id en ese nodo). La tab Inventario
+    # de origen ya no lo verá. Si fue parcial, queda residual en origen.
+    #
+    # Payload:
+    #   { origin_nodo_id, destination_nodo_id, transferencia_id?,
+    #     items: [{expediente_id, producto_id, talla, qty}] }
+    @action(detail=False, methods=["post"],
+            url_path="nodo-assignments/transfer")
+    def transfer(self, request):
+        from django.db.models import Q, Sum
+        try:
+            origin_id = request.data["origin_nodo_id"]
+            dest_id   = request.data["destination_nodo_id"]
+            items     = request.data.get("items") or []
+        except (KeyError, TypeError) as e:
+            return Response({"detail": f"Payload inválido: {e}"}, status=400)
+        if not isinstance(items, list) or not items:
+            return Response({"detail": "items debe ser lista no vacía"}, status=400)
+        if str(origin_id) == str(dest_id):
+            return Response(
+                {"detail": "origen y destino deben ser distintos"}, status=400,
+            )
+        transferencia_id = request.data.get("transferencia_id") or None
+
+        uploader = getattr(request.user, "id", None) if request.user else None
+        if not isinstance(uploader, uuid.UUID):
+            uploader = None
+
+        created_dest = []
+        residuals    = []
+        try:
+            with transaction.atomic():
+                for it in items:
+                    try:
+                        exp_id  = it["expediente_id"]
+                        prod_id = it["producto_id"]
+                        qty     = int(it["qty"])
+                    except (KeyError, ValueError, TypeError) as e:
+                        return Response(
+                            {"detail": f"item inválido: {e}"}, status=400,
+                        )
+                    if qty <= 0:
+                        continue
+                    talla = it.get("talla") or ""
+
+                    qs_origin = ExpedienteNodoAssignment.objects.filter(
+                        is_active=True, nodo_id=origin_id,
+                        expediente_id=exp_id, producto_id=prod_id,
+                    )
+                    if talla in ("", None):
+                        qs_origin = qs_origin.filter(
+                            Q(talla__isnull=True) | Q(talla=""),
+                        )
+                    else:
+                        qs_origin = qs_origin.filter(talla=talla)
+                    qty_origin = int(qs_origin.aggregate(
+                        s=Sum("qty_asignada"))["s"] or 0)
+                    if qty > qty_origin:
+                        return Response({
+                            "detail": "Over-transfer: qty > disponible en origen",
+                            "expediente_id": str(exp_id),
+                            "producto_id":   str(prod_id),
+                            "talla":         talla,
+                            "qty_solicitada":         qty,
+                            "qty_disponible_origen":  qty_origin,
+                        }, status=400)
+                    # 1) soft-delete origen.
+                    qs_origin.update(is_active=False)
+                    # 2) insertar fila en destino.
+                    new_row = ExpedienteNodoAssignment.objects.create(
+                        id=uuid.uuid4(),
+                        expediente_id=exp_id, producto_id=prod_id,
+                        talla=(talla or None),
+                        nodo_id=dest_id, qty_asignada=qty,
+                        recepcion_id=None,
+                        notas=(
+                            f"transfer from {transferencia_id}"
+                            if transferencia_id else "transfer"
+                        ),
+                        created_by_id=uploader, is_active=True,
+                    )
+                    created_dest.append(str(new_row.id))
+                    # 3) si quedaba residual en origen, re-insertar.
+                    residual = qty_origin - qty
+                    if residual > 0:
+                        res_row = ExpedienteNodoAssignment.objects.create(
+                            id=uuid.uuid4(),
+                            expediente_id=exp_id, producto_id=prod_id,
+                            talla=(talla or None),
+                            nodo_id=origin_id, qty_asignada=residual,
+                            recepcion_id=None,
+                            notas="transfer-residual",
+                            created_by_id=uploader, is_active=True,
+                        )
+                        residuals.append(str(res_row.id))
+        except Exception as exc:
+            log.exception("transfer assignment failed")
+            return Response({"detail": f"Error en transferencia: {exc}"}, status=500)
+        return Response({
+            "ok": True,
+            "moved_items":          len(created_dest),
+            "destination_row_ids":  created_dest,
+            "residual_row_ids":     residuals,
+        })
+
     # ── 3) Inventario asignado de un nodo (con expediente_codigo) ──
     @action(detail=False, methods=["get"], url_path=r"nodos/(?P<nodo_id>[^/.]+)/inventory-allocated")
     def inventory_allocated(self, request, nodo_id=None):

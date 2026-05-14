@@ -25,8 +25,10 @@ import {
 import { fmtMoney } from "../lib/i18n.js";
 import {
   transferenciasApi, nodosApi, stockApi, apiFetch, currencyCatApi,
+  nodoAssignmentsApi,
 } from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
+import Step3TransferAssign from "../components/transfers/Step3TransferAssign.jsx";
 
 // ── Catálogo legal (espejo del backend transfers.legal_context_cat) ──
 const LEGAL_CONTEXT = [
@@ -92,6 +94,13 @@ export default function CreateTransferWizard() {
   const setLegalDoc = (k, file) => setLegalDocs(p => ({ ...p, [k]: file }));
   const [costLines,     setCostLines]     = useState([]);  // [{tmpId, kind, label, amount, currency, source, ocr_confidence}]
   const [productLines,  setProductLines]  = useState([]);  // [{tmpId, sku, producto_id, product_label, size, qty_transfer, qty_reserve, disponible}]
+  // Sprint 2026-05-13 · Fase 8 — el nuevo paso 3 emite items con
+  // expediente_id incluido (no son sólo SKUs sueltos sino asignaciones
+  // exp→nodo). Se mantienen en paralelo a productLines: el primer state
+  // alimenta el endpoint /nodo-assignments/transfer/, el segundo sigue
+  // alimentando el resumen Step4 + el legacy create() de la transferencia.
+  const [transferItems, setTransferItems] = useState([]);
+  const [transferItemsValid, setTransferItemsValid] = useState(false);
   const [docFile,       setDocFile]       = useState(null);
   const [ocrLoading,    setOcrLoading]    = useState(false);
   const [ocrResult,     setOcrResult]     = useState(null);
@@ -181,6 +190,29 @@ export default function CreateTransferWizard() {
   // ── Reset contextData al cambiar el motivo (campos pueden no aplicar) ──
   useEffect(() => { setContextData({}); }, [legalContext]);
 
+  // Sprint 2026-05-13 · Fase 8 — sync transferItems → productLines.
+  // Mantenemos productLines (legacy) para que el resumen del paso 4 y el
+  // payload de transferenciasApi.create() sigan funcionando. El paso 3
+  // nuevo es la fuente de verdad ahora — productLines es derivada.
+  useEffect(() => {
+    setProductLines(transferItems.map((it, i) => ({
+      tmpId:         `ti-${i}-${it.producto_id}-${it.talla || ""}`,
+      sku:           it._sku || "",
+      producto_id:   it.producto_id,
+      product_label: it._nombre || it._sku || "",
+      size:          it.talla || "",
+      lote:          "",
+      qty_transfer:  Number(it.qty) || 0,
+      qty_reserve:   0,
+      disponible:    Number(it._disponible_origen || 0),
+      unit_cost:     0,
+      unit_value:    0,
+      // Metadata para el bloque "Stock movido" del paso 4.
+      _expediente_codigo: it._expediente_codigo,
+      _proforma_codigo:   it._proforma_codigo,
+    })));
+  }, [transferItems]);
+
   // ── Filtrado dinámico de nodos por capacidad ──
   const nodosOrigen  = useMemo(() => nodos.filter((n) => hasCap(n, CAP_DISPATCH)), [nodos]);
   const nodosDestino = useMemo(() => nodos.filter((n) => hasCap(n, CAP_RECEIVE) && n.id !== origenId), [nodos, origenId]);
@@ -198,11 +230,13 @@ export default function CreateTransferWizard() {
     }
     if (step === 2) return true;  // costos son opcionales
     if (step === 3) {
-      return productLines.length > 0
-          && productLines.every((l) => l.qty_transfer > 0 && l.sku);
+      // Sprint 2026-05-13 · Fase 8 — el paso 3 ahora es Step3TransferAssign.
+      // Reporta su propia validez (al menos 1 item con qty > 0).
+      return transferItemsValid;
     }
     return true;
-  }, [step, origenId, destinoId, legalContext, docFile, costLines, productLines]);
+  }, [step, origenId, destinoId, legalContext, docFile, costLines,
+      productLines, transferItemsValid]);
 
   // ── OCR Aduanal ──
   const runOCR = useCallback(async (file) => {
@@ -366,6 +400,42 @@ export default function CreateTransferWizard() {
         })),
       };
       const created = await transferenciasApi.create(payload);
+
+      // Sprint 2026-05-13 · Fase 8 — además de persistir el registro
+      // de la transferencia (audit/legal), movemos atómicamente las
+      // asignaciones expediente→nodo. Esto es lo que hace que el
+      // inventario del nodo origen se vacíe (o quede residual) y el
+      // destino reciba el stock. El backend valida over-transfer y
+      // hace soft-delete + insert + residual en una sola transacción.
+      if (transferItems.length > 0) {
+        try {
+          await nodoAssignmentsApi.transfer({
+            originNodoId:      origenId,
+            destinationNodoId: destinoId,
+            transferenciaId:   created.id,
+            items: transferItems.map((it) => ({
+              expediente_id: it.expediente_id,
+              producto_id:   it.producto_id,
+              talla:         it.talla || "",
+              qty:           Number(it.qty) || 0,
+            })),
+          });
+        } catch (e2) {
+          // La transferencia ya fue creada para audit, pero el move
+          // falló. Mostramos el error específico (over-transfer suele
+          // pasar si otro operador movió stock en paralelo). El operador
+          // puede editar la transferencia o cancelarla.
+          setError(
+            (lang === "es"
+              ? "Transferencia creada, pero el movimiento de stock falló: "
+              : "Transfer created, but stock move failed: ") +
+            (e2?.body?.detail || e2?.message || "error desconocido"),
+          );
+          navigate(`/transferencias/${created.id}`);
+          return;
+        }
+      }
+
       navigate(`/transferencias/${created.id}`);
     } catch (e) {
       setError(e?.message || (lang === "es" ? "Error al crear la transferencia" : "Error creating transfer"));
@@ -485,14 +555,18 @@ export default function CreateTransferWizard() {
           )}
 
           {step === 3 && (
-            <Step3Products
+            // Sprint 2026-05-13 · Fase 8 — paso 3 multi-expediente.
+            // Replica el patrón del wizard de recepción /inventario/recepcion:
+            //   1) chips de expedientes con stock en el nodo origen
+            //   2) tabla por expediente · SKU · talla · disp · a transferir
+            // El submit del wizard (botón "Registrar transferencia") llama
+            // a nodoAssignmentsApi.transfer() además de transferenciasApi.create.
+            <Step3TransferAssign
               lang={lang}
-              origenLabel={nodos.find((n) => n.id === origenId)?.codigo || ""}
-              stockOrigen={stockOrigen}
-              productLines={productLines}
-              addProductLine={addProductLine}
-              updateProductLine={updateProductLine}
-              removeProductLine={removeProductLine}
+              originNode={nodos.find((n) => n.id === origenId)}
+              destinationNode={nodos.find((n) => n.id === destinoId)}
+              onItemsChange={setTransferItems}
+              onValidityChange={setTransferItemsValid}
             />
           )}
 
