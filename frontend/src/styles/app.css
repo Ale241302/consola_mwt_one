@@ -4488,12 +4488,15 @@ a { color: inherit; text-decoration: none; }
   flex-direction: column;
   gap: 4px;
 }
+/* Sprint 2026-05-14 · Fase 11.1 — grid de 6 columnas con Expediente
+   al inicio. Producto + talla viven en la misma columna como flex
+   inline (la talla no salta a otra línea). Padding más compacto. */
 .trf-exp-line {
   display: grid;
-  grid-template-columns: 140px minmax(200px, 1.5fr) repeat(3, minmax(80px, 110px));
+  grid-template-columns: 120px 110px minmax(220px, 1fr) repeat(3, minmax(90px, 110px));
   gap: 12px;
   align-items: center;
-  padding: 6px 10px;
+  padding: 8px 12px;
   background: var(--surface, #fff);
   border: 1px solid var(--border-subtle, #E5E7EB);
   border-radius: 8px;
@@ -4502,8 +4505,43 @@ a { color: inherit; text-decoration: none; }
   border-color: rgba(220,38,38,0.35);
   background: rgba(220,38,38,0.03);
 }
-.trf-exp-line-sku { font-size: 12px; }
-.trf-exp-line-name { font-size: 12.5px; color: var(--text-primary, #0B1E3A); }
+.trf-exp-line-exp {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--brand-primary, #0B1E3A);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.trf-exp-line-sku {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.trf-exp-line-name {
+  font-size: 12.5px;
+  color: var(--text-primary, #0B1E3A);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trf-exp-line-name > span.size-chip {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(72,30,227,0.10);
+  color: #481EE3;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
 .trf-exp-line-qty {
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;

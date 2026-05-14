@@ -449,22 +449,20 @@ export default function ScreenTransfers() {
                                   const size = ln.size || '';
                                   return (
                                     <div key={i} className={`trf-exp-line ${hasDelta ? 'has-delta' : ''}`}>
-                                      {/* Expediente · Sprint Fase 11. */}
-                                      <div className="trf-exp-line-name mono" style={{
-                                        color: 'var(--brand-primary)', fontWeight: 700, fontSize: 12,
-                                      }}>
+                                      {/* Sprint 2026-05-14 · Fase 11.1 — densidad alta,
+                                          producto + talla inline, expediente en mono compacto. */}
+                                      <div className="trf-exp-line-exp mono">
                                         {ln.expediente_codigo || '—'}
                                       </div>
                                       <div className="trf-exp-line-sku mono">{sku}</div>
-                                      <div className="trf-exp-line-name">
-                                        {productName}
-                                        {size && (
-                                          <span style={{
-                                            marginLeft: 8, padding: '2px 8px', borderRadius: 999,
-                                            background: 'rgba(72,30,227,0.10)', color: '#481EE3',
-                                            fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
-                                          }}>{size}</span>
-                                        )}
+                                      <div className="trf-exp-line-name" title={productName}>
+                                        <span style={{
+                                          overflow: 'hidden',
+                                          textOverflow: 'ellipsis',
+                                          whiteSpace: 'nowrap',
+                                          minWidth: 0,
+                                        }}>{productName}</span>
+                                        {size && <span className="size-chip">{size}</span>}
                                       </div>
                                       <div className="trf-exp-line-qty tabular-nums">
                                         <span className="trf-exp-lbl micro">
@@ -472,15 +470,15 @@ export default function ScreenTransfers() {
                                         </span>
                                         {fmtInt(qtyT)}
                                       </div>
-                                      {qtyR > 0 && (
+                                      {qtyR > 0 ? (
                                         <div className="trf-exp-line-qty tabular-nums reserve">
                                           <span className="trf-exp-lbl micro">
                                             {lang==='es'?'Resv.':'Resv.'}
                                           </span>
                                           {fmtInt(qtyR)}
                                         </div>
-                                      )}
-                                      {qtyRecv != null && (
+                                      ) : <div/>}
+                                      {qtyRecv != null ? (
                                         <div className={`trf-exp-line-qty tabular-nums received ${hasDelta ? 'err' : ''}`}>
                                           <span className="trf-exp-lbl micro">
                                             {lang==='es'?'Recib.':'Recv.'}
@@ -492,7 +490,7 @@ export default function ScreenTransfers() {
                                             </span>
                                           )}
                                         </div>
-                                      )}
+                                      ) : <div/>}
                                     </div>
                                   );
                                 })}
