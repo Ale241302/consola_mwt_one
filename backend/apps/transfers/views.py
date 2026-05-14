@@ -141,9 +141,54 @@ class TransferenciaViewSet(viewsets.ViewSet):
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
         data = TransferenciaSerializer(t).data
-        data["lineas"] = LineaSerializer(
+        lineas_data = LineaSerializer(
             Linea.objects.filter(transferencia_id=t.id, is_active=True), many=True
         ).data
+        # Sprint 2026-05-13 · Fase 10 — enriquecer cada linea con
+        # expediente_id/expediente_codigo. La tabla transfers.linea no
+        # tiene expediente_id (la transferencia es agnóstica al
+        # expediente), pero inventario.expediente_nodo_assignment sí lo
+        # tiene cuando la fila fue creada por POST /transfer/. Mapeamos
+        # por (producto_id, COALESCE(talla,'')) restringiendo al
+        # transferencia_id en curso.
+        try:
+            from django.db import connection as _conn
+            with _conn.cursor() as c:
+                c.execute(
+                    """
+                    SELECT a.producto_id,
+                           COALESCE(a.talla,'')      AS talla_norm,
+                           a.expediente_id,
+                           e.codigo                  AS expediente_codigo
+                    FROM inventario.expediente_nodo_assignment a
+                    LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
+                    WHERE a.transferencia_id = %(trf_id)s::uuid
+                      AND a.is_active = TRUE
+                      AND a.nodo_id   = %(dest_id)s::uuid
+                    """,
+                    {"trf_id": str(t.id), "dest_id": str(t.destino_id)},
+                )
+                exp_map = {}
+                for r in c.fetchall():
+                    key = (str(r[0]), r[1] or "")
+                    # Prefiere la primera ocurrencia; si hay duplicados
+                    # mantenemos el primero (poco común).
+                    exp_map.setdefault(key, {
+                        "expediente_id":     str(r[2]) if r[2] else None,
+                        "expediente_codigo": r[3],
+                    })
+            for ln in lineas_data:
+                key = (str(ln.get("producto_id") or ""),
+                       (ln.get("size") or ""))
+                m = exp_map.get(key)
+                if m:
+                    ln["expediente_id"]     = m["expediente_id"]
+                    ln["expediente_codigo"] = m["expediente_codigo"]
+        except Exception:
+            # Si falla el enriquecimiento, no rompemos el endpoint —
+            # la tabla del FE simplemente muestra "—" en la columna.
+            log.exception("retrieve · expediente enrichment failed")
+        data["lineas"] = lineas_data
         data["eventos"] = EventoSerializer(
             Evento.objects.filter(transferencia_id=t.id).order_by("-created_at"), many=True
         ).data

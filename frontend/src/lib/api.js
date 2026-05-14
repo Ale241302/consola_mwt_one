@@ -548,6 +548,16 @@ export const nodoAssignmentsApi = {
       { token: getToken() },
     );
   },
+  // Sprint 2026-05-13 fase 10 · costos de transferencias en las que
+  // participó este expediente (filtrado por scope_json).
+  transferenciaCostosPorExpediente: (expedienteId) =>
+    apiFetch(`/inventario/expedientes/${expedienteId}/transferencia-costos/`,
+             { token: getToken() }),
+  // Sprint 2026-05-13 fase 10 · agregado OC-level: todos los costos de
+  // transferencias que tocaron CUALQUIER expediente de esta OC.
+  transferenciaCostosPorOC: (ocId) =>
+    apiFetch(`/inventario/ocs/${ocId}/transferencia-costos/`,
+             { token: getToken() }),
   // Sprint 2026-05-13 fase 8 · transfer atómico de asignaciones de un
   // nodo origen a uno destino. Soft-delete origen, crea destino y
   // residual en una sola transacción. Si qty > disponible en origen,

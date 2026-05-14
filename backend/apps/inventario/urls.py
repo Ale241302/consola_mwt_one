@@ -34,6 +34,9 @@ artifacts_por_exp_view   = NodoAssignmentViewSet.as_view({"get":  "artifacts_por
 # Sprint 2026-05-13 fase 8 · Transfer engine wiring.
 lineas_en_nodo_view      = NodoAssignmentViewSet.as_view({"get":  "lineas_en_nodo"})
 transfer_view            = NodoAssignmentViewSet.as_view({"post": "transfer"})
+# Sprint 2026-05-13 fase 10 · costos de transferencias por expediente / OC.
+trf_costos_por_exp_view  = NodoAssignmentViewSet.as_view({"get":  "transferencia_costos_por_expediente"})
+trf_costos_por_oc_view   = NodoAssignmentViewSet.as_view({"get":  "transferencia_costos_por_oc"})
 
 urlpatterns = router.urls + [
     # Inbound Engine v1 (sprint 2026-04-29)
@@ -79,4 +82,11 @@ urlpatterns = router.urls + [
     path("inventario/nodo-assignments/transfer/",
          transfer_view,
          name="ena-transfer"),
+    # Sprint 2026-05-13 · Fase 10 · costos de transferencias por expediente.
+    path("inventario/expedientes/<uuid:exp_id>/transferencia-costos/",
+         trf_costos_por_exp_view,
+         name="ena-trf-costos-por-expediente"),
+    path("inventario/ocs/<uuid:oc_id>/transferencia-costos/",
+         trf_costos_por_oc_view,
+         name="ena-trf-costos-por-oc"),
 ]

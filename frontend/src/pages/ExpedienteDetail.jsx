@@ -288,7 +288,10 @@ export default function ScreenExpedienteDetail() {
   const [tab, setTab] = useState('overview');
   // Si el rol cambia en caliente y el tab activo ya no es visible al
   // cliente, lo re-anclamos a 'overview' en el próximo render.
-  if (isClient && (tab === 'costs' || tab === 'activity')) {
+  // Sprint 2026-05-13 · Fase 10 — la tab 'costs' ya no existe en
+  // ExpedienteDetail; vive en OCDetail. Si llega un deep-link viejo
+  // que la pide, lo redirigimos a 'overview'.
+  if (tab === 'costs' || (isClient && tab === 'activity')) {
     Promise.resolve().then(() => setTab('overview'));
   }
   const [showAdvance, setShowAdvance] = useState(false);
@@ -513,18 +516,19 @@ export default function ScreenExpedienteDetail() {
       {/* Body: main col + right rail */}
       <div className="grid gap-4" style={{ gridTemplateColumns: '2fr 1fr' }}>
         <div>
-          {/* Tabs. Para CLIENT B2B escondemos:
-                · 'costs'     → composición interna de costos (CEO-ONLY)
-                · 'activity'  → logs de state machine (INTERNAL)
-              Sprint 2026-05-11 · Se elimina la tab 'artifacts' / Documentos:
-              los artefactos viven en el Builder externo y se gestionan desde
-              fuera de este expediente. El cliente sólo ve: resumen, productos,
-              pagos. CEO/Admin además ve: costos, actividad. */}
+          {/* Tabs. Sprint 2026-05-13 · Fase 10 — se elimina la tab
+              'costs' de aquí (detalle del SAP / expediente interno):
+              los costos viven a nivel OC (página /expedientes/:ocId),
+              donde una sola tab "Costos" agrega TODAS las transferencias
+              que tocaron a cualquier expediente bajo esta OC.
+              Para CLIENT B2B escondemos también 'activity'.
+              Sprint 2026-05-11 · Se elimina la tab 'artifacts' / Documentos
+              (los artefactos viven en el Builder externo). El cliente sólo
+              ve: resumen, productos, pagos. */}
           <div className="tabs" style={{ marginBottom: 16 }}>
             {[
               ['overview',  tr(lang,'tab_overview'), null,           true],
               ['lines',     tr(lang,'tab_lines'),    lines.length,   true],
-              ['costs',     tr(lang,'tab_costs'),    costs.length,   !isClient],
               ['payments',  tr(lang,'tab_payments'), pagos.length,   true],
               ['activity',  tr(lang,'tab_activity'), activity.length,!isClient],
               // Sprint 2026-05-11 fase 6 · tab Artefactos (lista los

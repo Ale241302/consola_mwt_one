@@ -229,6 +229,9 @@ class ExpedienteNodoAssignment(models.Model):
     nodo_id        = models.UUIDField()                                 # ⛔ sin FK
     qty_asignada   = models.IntegerField()                              # CHECK > 0 en BD
     recepcion_id   = models.UUIDField(null=True, blank=True)            # ⛔ sin FK
+    # Sprint 2026-05-13 · Fase 10 — trazabilidad transferencia→assignment.
+    # Persistido por SQL 65c_assignment_transferencia_id.sql.
+    transferencia_id = models.UUIDField(null=True, blank=True)          # ⛔ sin FK
     notas          = models.TextField(null=True, blank=True)
     created_by_id  = models.UUIDField(null=True, blank=True)            # ⛔ sin FK
     is_active      = models.BooleanField(default=True)

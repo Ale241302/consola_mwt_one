@@ -1117,6 +1117,138 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             return Response({"detail": f"SQL error: {exc}"}, status=500)
         return Response(rows)
 
+    # ── 9) Sprint 2026-05-13 · Fase 10 · costos de transferencias que ──
+    #         tocan un expediente. Para la nueva tab "Costos" del OCDetail.
+    #
+    # Fuente de verdad:
+    #   1. Encontrar transferencias que tocaron al expediente: mirar
+    #      assignment rows con transferencia_id NOT NULL (creadas por
+    #      el endpoint /transfer/) que tengan ese expediente_id.
+    #   2. De esas transferencias, listar cost_line activas filtradas
+    #      por scope_json:
+    #        · scope_json IS NULL                      → aplica
+    #        · scope_json.applies_to_all = TRUE        → aplica
+    #        · scope_json.expediente_ids contiene exp  → aplica
+    #
+    # El payload incluye transferencia_id y transferencia_codigo para
+    # que el frontend pueda navegar al detalle al hacer click.
+    @action(detail=False, methods=["get"],
+            url_path=r"expedientes/(?P<exp_id>[^/.]+)/transferencia-costos")
+    def transferencia_costos_por_expediente(self, request, exp_id=None):
+        sql = """
+            WITH transferencias_del_exp AS (
+                SELECT DISTINCT transferencia_id
+                FROM inventario.expediente_nodo_assignment
+                WHERE expediente_id = %(exp_id)s::uuid
+                  AND transferencia_id IS NOT NULL
+                  AND is_active = TRUE
+            )
+            SELECT
+                cl.id                                              AS cost_line_id,
+                cl.transferencia_id,
+                t.codigo                                           AS transferencia_codigo,
+                t.legal_context,
+                t.created_at                                       AS transferencia_fecha,
+                cl.kind,
+                ck.label                                           AS kind_label,
+                cl.label,
+                cl.amount,
+                cl.currency,
+                cl.fx_to_usd,
+                cl.amount_usd,
+                cl.source,
+                cl.scope_json,
+                cl.created_at                                      AS cost_created_at
+            FROM transfers.cost_line cl
+            JOIN transfers.transferencia t ON t.id = cl.transferencia_id
+            LEFT JOIN transfers.cost_kind_cat ck ON ck.codigo = cl.kind
+            WHERE cl.transferencia_id IN (SELECT transferencia_id FROM transferencias_del_exp)
+              AND cl.is_active = TRUE
+              AND (
+                cl.scope_json IS NULL
+                OR (cl.scope_json->>'applies_to_all')::bool = TRUE
+                OR cl.scope_json->'expediente_ids' ? %(exp_id_text)s
+              )
+            ORDER BY cl.created_at DESC
+        """
+        try:
+            with connection.cursor() as c:
+                c.execute(sql, {"exp_id": exp_id, "exp_id_text": str(exp_id)})
+                cols = [d[0] for d in c.description]
+                rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        except Exception as exc:
+            log.exception("transferencia_costos_por_expediente SQL failed")
+            return Response({"detail": f"SQL error: {exc}"}, status=500)
+        return Response(rows)
+
+    # ── 10) Sprint 2026-05-13 · Fase 10 · costos de transferencias ──
+    #          agregados a nivel OC. La OC tiene N expedientes; cada
+    #          expediente puede haber participado en M transferencias;
+    #          cada transferencia tiene K cost_line. Esta vista agrega
+    #          todo para alimentar la card "Costos de transferencias"
+    #          de OCDetail (página /expedientes/:ocId).
+    #
+    # Devuelve filas con expediente_codigo asociado (cuál de las
+    # expedientes de la OC tocó esa transferencia) para que el FE
+    # pueda mostrar el contexto.
+    @action(detail=False, methods=["get"],
+            url_path=r"ocs/(?P<oc_id>[^/.]+)/transferencia-costos")
+    def transferencia_costos_por_oc(self, request, oc_id=None):
+        sql = """
+            WITH exp_de_oc AS (
+                SELECT id AS expediente_id, codigo AS expediente_codigo
+                FROM expedientes.expediente
+                WHERE oc_id = %(oc_id)s::uuid
+                  AND is_active = TRUE
+            ),
+            transferencias_de_oc AS (
+                SELECT DISTINCT a.transferencia_id, a.expediente_id
+                FROM inventario.expediente_nodo_assignment a
+                WHERE a.expediente_id IN (SELECT expediente_id FROM exp_de_oc)
+                  AND a.transferencia_id IS NOT NULL
+                  AND a.is_active = TRUE
+            )
+            SELECT
+                cl.id                                              AS cost_line_id,
+                cl.transferencia_id,
+                t.codigo                                           AS transferencia_codigo,
+                t.legal_context,
+                t.created_at                                       AS transferencia_fecha,
+                td.expediente_id,
+                eoc.expediente_codigo,
+                cl.kind,
+                ck.label                                           AS kind_label,
+                cl.label,
+                cl.amount,
+                cl.currency,
+                cl.fx_to_usd,
+                cl.amount_usd,
+                cl.source,
+                cl.scope_json,
+                cl.created_at                                      AS cost_created_at
+            FROM transfers.cost_line cl
+            JOIN transfers.transferencia t ON t.id = cl.transferencia_id
+            JOIN transferencias_de_oc td   ON td.transferencia_id = cl.transferencia_id
+            JOIN exp_de_oc eoc             ON eoc.expediente_id = td.expediente_id
+            LEFT JOIN transfers.cost_kind_cat ck ON ck.codigo = cl.kind
+            WHERE cl.is_active = TRUE
+              AND (
+                cl.scope_json IS NULL
+                OR (cl.scope_json->>'applies_to_all')::bool = TRUE
+                OR cl.scope_json->'expediente_ids' ? td.expediente_id::text
+              )
+            ORDER BY cl.created_at DESC, eoc.expediente_codigo
+        """
+        try:
+            with connection.cursor() as c:
+                c.execute(sql, {"oc_id": oc_id})
+                cols = [d[0] for d in c.description]
+                rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        except Exception as exc:
+            log.exception("transferencia_costos_por_oc SQL failed")
+            return Response({"detail": f"SQL error: {exc}"}, status=500)
+        return Response(rows)
+
     # ── 7) Sprint 2026-05-13 · Fase 8 · líneas con stock en un nodo ──
     # Para el wizard de transferencias paso 3: devuelve por cada
     # (expediente, producto, talla) la qty actualmente asignada al nodo.
@@ -1266,6 +1398,8 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                         talla=(talla or None),
                         nodo_id=dest_id, qty_asignada=qty,
                         recepcion_id=None,
+                        # Sprint 2026-05-13 · Fase 10 — trazabilidad.
+                        transferencia_id=transferencia_id or None,
                         notas=(
                             f"transfer from {transferencia_id}"
                             if transferencia_id else "transfer"
@@ -1282,6 +1416,8 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                             talla=(talla or None),
                             nodo_id=origin_id, qty_asignada=residual,
                             recepcion_id=None,
+                            # Sprint 2026-05-13 · Fase 10 — trazabilidad.
+                            transferencia_id=transferencia_id or None,
                             notas="transfer-residual",
                             created_by_id=uploader, is_active=True,
                         )

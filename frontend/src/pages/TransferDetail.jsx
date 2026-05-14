@@ -566,6 +566,9 @@ export default function ScreenTransferDetail() {
 
         <div className="trf-reco-table">
           <div className="trf-reco-thead">
+            {/* Sprint 2026-05-13 · Fase 10 — Expediente antes de SKU.
+                Backend enriquece linea con expediente_codigo. */}
+            <div>{lang==='es'?'Expediente':'Expediente'}</div>
             <div>SKU</div>
             <div>{lang==='es'?'Producto':'Product'}</div>
             <div className="ar">{lang==='es'?'Transferido':'Transferred'}</div>
@@ -579,6 +582,9 @@ export default function ScreenTransferDetail() {
                 key={idx}
                 className={`trf-reco-row ${ln.has_delta ? 'has-delta' : ''}`}
               >
+                <div className="mono" style={{ fontSize:12, color:'var(--brand-primary)', fontWeight:700 }}>
+                  {ln.expediente_codigo || '—'}
+                </div>
                 <div className="mono" style={{ fontSize:12 }}>{ln.sku}</div>
                 <div>{ln.product}</div>
                 <div className="ar tabular-nums">{fmtInt(ln.qty_transfer)}</div>

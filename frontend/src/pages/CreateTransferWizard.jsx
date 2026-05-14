@@ -2166,6 +2166,9 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
           <table className="table">
             <thead>
               <tr>
+                {/* Sprint 2026-05-13 · Fase 10 — Expediente antes del SKU.
+                    productLines._expediente_codigo se inyectó desde Step3TransferAssign. */}
+                <th style={{ width: 130 }}>{lang === "es" ? "Expediente" : "Expediente"}</th>
                 <th style={{ width: 100 }}>SKU</th>
                 <th>{lang === "es" ? "Producto" : "Product"}</th>
                 <th style={{ textAlign: "center", width: 70 }}>{lang === "es" ? "Talla" : "Size"}</th>
@@ -2186,6 +2189,14 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                 const landedUnit   = unitVal + costPerUnit;
                 return (
                   <tr key={l.tmpId}>
+                    <td className="mono-sm" style={{ color: "var(--brand-primary)", fontWeight: 700 }}>
+                      {l._expediente_codigo || "—"}
+                      {l._proforma_codigo && (
+                        <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
+                          {l._proforma_codigo}
+                        </div>
+                      )}
+                    </td>
                     <td className="mono-sm" style={{ color: "#481EE3", fontWeight: 600 }}>{l.sku}</td>
                     <td>{l.product_label}</td>
                     <td style={{ textAlign: "center" }}>
@@ -2218,7 +2229,8 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                 );
               })}
               <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
-                <td colSpan={4} style={{ color: "#0B1E3A" }}>{lang === "es" ? "Total" : "Total"}</td>
+                {/* +1 columna por Expediente (sprint fase 10). */}
+                <td colSpan={5} style={{ color: "#0B1E3A" }}>{lang === "es" ? "Total" : "Total"}</td>
                 <td className="tabular-nums" style={{ textAlign: "right" }}>{totals.totalUnits}</td>
                 <td></td>
                 <td className="tabular-nums" style={{ textAlign: "right", color: "#0B1E3A", fontSize: 13 }}>

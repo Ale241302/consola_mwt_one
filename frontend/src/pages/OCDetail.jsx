@@ -2038,6 +2038,15 @@ export default function ScreenOCDetail() {
         </div>
       </div>
 
+      {/* Sprint 2026-05-13 · Fase 10 — card "Costos de transferencias".
+          Listado de cost_lines de transferencias que tocaron a cualquier
+          expediente de esta OC. Click en fila → /transferencias/{id}.
+          Solo se renderiza para roles internos (CEO/Admin): el cliente
+          B2B no ve el costo interno de las transferencias. */}
+      {!isClient && (
+        <OCTransferCostsCard ocId={ocId} lang={lang} navigate={navigate} />
+      )}
+
       {/* Modal "Agregar producto" solo se monta si ADMIN puede agregar línea. */}
       {can('add_oc_line') && showAddProduct && (
         <AddOCProductModal
@@ -2052,6 +2061,126 @@ export default function ScreenOCDetail() {
           onPick={addProduct}
           onClose={()=>setShowAddProduct(false)}
         />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Sprint 2026-05-13 · Fase 10 — OCTransferCostsCard
+// Card al pie de OCDetail con la tabla de costos de transferencias
+// que tocaron a cualquier expediente bajo esta OC. Cada fila es
+// clickable y navega al detalle de la transferencia correspondiente.
+// ─────────────────────────────────────────────────────────────
+function OCTransferCostsCard({ ocId, lang, navigate }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!ocId) return;
+    let cancel = false;
+    setLoading(true); setError(null);
+    nodoAssignmentsApi.transferenciaCostosPorOC(ocId)
+      .then((data) => {
+        if (cancel) return;
+        const arr = Array.isArray(data) ? data : (data?.results || []);
+        setRows(arr);
+      })
+      .catch((e) => { if (!cancel) setError(e?.message || 'Error'); })
+      .finally(() => { if (!cancel) setLoading(false); });
+    return () => { cancel = true; };
+  }, [ocId]);
+
+  const total_usd = rows.reduce((a, r) => a + Number(r.amount_usd || 0), 0);
+
+  return (
+    <div className="card card-pad-lg" style={{ marginTop: 16 }}>
+      <div className="flex ai-center jc-between" style={{ marginBottom: 12 }}>
+        <div>
+          <h3 className="heading-md" style={{ margin: 0 }}>
+            {lang === 'es' ? 'Costos de transferencias' : 'Transfer costs'}
+          </h3>
+          <div className="caption" style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>
+            {lang === 'es'
+              ? 'Costos registrados en las transferencias que movieron stock de algún expediente de esta OC.'
+              : 'Costs recorded in transfers that moved stock from any expediente of this OC.'}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div className="micro" style={{ color: 'var(--text-tertiary)', letterSpacing: 0.5 }}>
+            {lang === 'es' ? 'TOTAL USD' : 'TOTAL USD'}
+          </div>
+          <div className="tabular-nums" style={{
+            fontSize: 18, fontWeight: 700,
+            color: 'var(--brand-accent, #0E8A6D)',
+          }}>
+            ${total_usd.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
+          {lang === 'es' ? 'Cargando…' : 'Loading…'}
+        </div>
+      ) : error ? (
+        <div className="body-sm" style={{ color: 'var(--critical)' }}>{error}</div>
+      ) : rows.length === 0 ? (
+        <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
+          {lang === 'es'
+            ? 'No hay costos de transferencias asociados a esta OC.'
+            : 'No transfer costs linked to this OC yet.'}
+        </div>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>{lang === 'es' ? 'Transferencia' : 'Transfer'}</th>
+              <th>{lang === 'es' ? 'Expediente' : 'Expediente'}</th>
+              <th>{lang === 'es' ? 'Tipo' : 'Kind'}</th>
+              <th>{lang === 'es' ? 'Detalle' : 'Label'}</th>
+              <th style={{ textAlign: 'right' }}>{lang === 'es' ? 'Monto' : 'Amount'}</th>
+              <th style={{ textAlign: 'center' }}>{lang === 'es' ? 'Mon.' : 'Curr.'}</th>
+              <th style={{ textAlign: 'right' }}>USD</th>
+              <th style={{ textAlign: 'center' }}>{lang === 'es' ? 'Origen' : 'Source'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.cost_line_id}
+                  onClick={() => navigate(`/transferencias/${r.transferencia_id}`)}
+                  style={{ cursor: 'pointer' }}
+                  title={lang === 'es' ? 'Ver detalle de la transferencia' : 'Open transfer detail'}>
+                <td className="mono-sm" style={{ color: 'var(--brand-accent, #0E8A6D)', fontWeight: 700 }}>
+                  {r.transferencia_codigo || '—'}
+                </td>
+                <td className="mono-sm" style={{ color: 'var(--brand-primary)', fontWeight: 600 }}>
+                  {r.expediente_codigo || '—'}
+                </td>
+                <td>{r.kind_label || r.kind}</td>
+                <td>{r.label || '—'}</td>
+                <td className="tabular-nums" style={{ textAlign: 'right' }}>
+                  {Number(r.amount || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                </td>
+                <td className="mono-sm" style={{ textAlign: 'center' }}>{r.currency}</td>
+                <td className="tabular-nums" style={{ textAlign: 'right', fontWeight: 700,
+                                                       color: 'var(--brand-accent, #0E8A6D)' }}>
+                  ${Number(r.amount_usd || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                </td>
+                <td style={{ textAlign: 'center' }}>
+                  <span style={{
+                    padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+                    background: r.source === 'OCR_DUA' ? 'rgba(0,178,134,0.12)' : '#F3F5F8',
+                    color: r.source === 'OCR_DUA' ? '#00B286' : '#64748B',
+                  }}>
+                    {r.source || 'MANUAL'}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );

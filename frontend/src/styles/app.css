@@ -4639,7 +4639,8 @@ a { color: inherit; text-decoration: none; }
 .trf-reco-thead,
 .trf-reco-row {
   display: grid;
-  grid-template-columns: 160px minmax(200px, 1.4fr) 110px 110px 130px 80px;
+  /* Sprint 2026-05-13 · Fase 10 — +1 columna Expediente al inicio. */
+  grid-template-columns: 130px 140px minmax(180px, 1.2fr) 100px 100px 120px 70px;
   gap: 12px;
   align-items: center;
   padding: 10px 14px;
@@ -4725,7 +4726,8 @@ a { color: inherit; text-decoration: none; }
   .trf-col-date, .trf-col-legal, .trf-col-value, .trf-col-units { display: none; }
   .trf-reco-thead,
   .trf-reco-row {
-    grid-template-columns: 120px minmax(140px,1fr) 80px 80px 90px 60px;
+    /* +1 columna Expediente al inicio (Sprint fase 10). */
+    grid-template-columns: 100px 110px minmax(120px,1fr) 70px 70px 80px 50px;
     font-size: 12px;
   }
 }
