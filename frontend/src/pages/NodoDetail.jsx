@@ -165,6 +165,9 @@ const TABS = [
   // asociados al nodo (proformas, contratos 3PL, fotos de bodega, etc.).
   // Permite mismo tipo repetido y cualquier estado libre.
   { k: 'artefactos',  l: 'Artefactos' },
+  // Sprint 2026-05-14 · Fase 13 · tab "Costos" — costos de transferencias
+  // que llegaron a este nodo, desglosados por expediente y producto.
+  { k: 'costos',      l: 'Costos' },
 ];
 
 export default function ScreenNodoDetail() {
@@ -423,6 +426,10 @@ export default function ScreenNodoDetail() {
                 Lista, agrega, edita y archiva archivos arbitrarios
                 asociados al nodo. Soporta mismo tipo repetido y estado libre. */}
             {tab === 'artefactos'  && <NodoArtifactsTab nodeId={nodeId} lang={lang}/>}
+            {/* Sprint 2026-05-14 · Fase 13 · Costos de transferencias
+                que llegaron a este nodo (filtrados por scope_json).
+                Click en transferencia → /transferencias/{id}. */}
+            {tab === 'costos'      && <NodoCostosTab nodeId={nodeId} lang={lang} navigate={navigate}/>}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -1083,6 +1090,264 @@ function TransferStatus({ status, lang }) {
   };
   const m = M[status] || M.planned;
   return <span className={`badge ${m.cls}`}><span className="dot"/>{m.l}</span>;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Sprint 2026-05-14 · Fase 13 · Tab Costos del NodoDetail.
+   Lista los costos de transferencias que llegaron a este nodo
+   (como destino), desglosados por expediente · producto · talla.
+   Cada fila es clickable y navega al detalle de la transferencia.
+   ───────────────────────────────────────────────────────────── */
+function NodoCostosTab({ nodeId, lang, navigate }) {
+  const [rows, setRows]       = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
+
+  useEffect(() => {
+    if (!nodeId) return;
+    let cancel = false;
+    setLoading(true); setError(null);
+    nodoAssignmentsApi.transferenciaCostosPorNodo(nodeId)
+      .then((data) => {
+        if (cancel) return;
+        const arr = Array.isArray(data) ? data : (data?.results || []);
+        setRows(arr);
+      })
+      .catch((e) => { if (!cancel) setError(e?.message || 'Error'); })
+      .finally(() => { if (!cancel) setLoading(false); });
+    return () => { cancel = true; };
+  }, [nodeId]);
+
+  // Agrupar por transferencia → expediente → líneas, para un render
+  // más legible. Una sola pasada O(n).
+  const grouped = useMemo(() => {
+    const byTrf = new Map();
+    for (const r of rows) {
+      const tk = r.transferencia_id;
+      if (!byTrf.has(tk)) {
+        byTrf.set(tk, {
+          transferencia_id:      r.transferencia_id,
+          transferencia_codigo:  r.transferencia_codigo,
+          transferencia_fecha:   r.transferencia_fecha,
+          costs:                 new Map(),     // cost_line_id → { meta, byExp:Map }
+        });
+      }
+      const trf = byTrf.get(tk);
+      const ck = r.cost_line_id;
+      if (!trf.costs.has(ck)) {
+        trf.costs.set(ck, {
+          cost_line_id:   r.cost_line_id,
+          kind:           r.kind,
+          kind_label:     r.kind_label,
+          label:          r.label,
+          amount:         r.amount,
+          currency:       r.currency,
+          fx_to_usd:      r.fx_to_usd,
+          amount_usd:     r.amount_usd,
+          source:         r.source,
+          byExp:          new Map(),    // expediente_id → { codigo, lines:[] }
+        });
+      }
+      const cost = trf.costs.get(ck);
+      const ek = r.expediente_id;
+      if (!cost.byExp.has(ek)) {
+        cost.byExp.set(ek, {
+          expediente_id:     r.expediente_id,
+          expediente_codigo: r.expediente_codigo,
+          lines:             [],
+        });
+      }
+      cost.byExp.get(ek).lines.push({
+        producto_id: r.producto_id,
+        sku:         r.sku,
+        nombre:      r.nombre,
+        talla:       r.talla,
+        qty:         r.qty,
+      });
+    }
+    return Array.from(byTrf.values()).map((trf) => ({
+      ...trf,
+      costs: Array.from(trf.costs.values()).map((c) => ({
+        ...c,
+        byExp: Array.from(c.byExp.values()),
+      })),
+    }));
+  }, [rows]);
+
+  const totalUsd = rows.reduce((a, r) => a + Number(r.amount_usd || 0), 0);
+
+  return (
+    <div className="card card-pad" style={{ marginTop: 12 }}>
+      <div className="flex ai-center jc-between" style={{ marginBottom: 12 }}>
+        <div>
+          <div className="card-title">
+            {lang === 'es' ? 'Costos de transferencias recibidas' : 'Received transfer costs'}
+          </div>
+          <div className="card-subtitle">
+            {lang === 'es'
+              ? 'Costos registrados en las transferencias que llegaron a este nodo, desglosados por expediente y producto.'
+              : 'Costs recorded in transfers that arrived at this node, broken down by expediente and product.'}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div className="micro" style={{ color: 'var(--text-tertiary)', letterSpacing: 0.5 }}>
+            {lang === 'es' ? 'TOTAL USD' : 'TOTAL USD'}
+          </div>
+          <div className="tabular-nums" style={{
+            fontSize: 20, fontWeight: 700,
+            color: 'var(--brand-accent, #0E8A6D)',
+          }}>
+            ${totalUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
+          {lang === 'es' ? 'Cargando costos…' : 'Loading costs…'}
+        </div>
+      ) : error ? (
+        <div className="body-sm" style={{ color: 'var(--critical)' }}>{error}</div>
+      ) : grouped.length === 0 ? (
+        <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
+          {lang === 'es'
+            ? 'Sin costos asociados a transferencias recibidas en este nodo.'
+            : 'No costs linked to transfers received at this node.'}
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 14 }}>
+          {grouped.map((trf) => (
+            <div key={trf.transferencia_id}
+                 style={{
+                   border: '1px solid var(--border-subtle)',
+                   borderRadius: 10, overflow: 'hidden',
+                 }}>
+              {/* Header de la transferencia · clickable */}
+              <button type="button"
+                      onClick={() => navigate(`/transferencias/${trf.transferencia_id}`)}
+                      style={{
+                        width: '100%', textAlign: 'left',
+                        padding: '10px 14px',
+                        background: 'var(--surface-alt, rgba(0,0,0,0.02))',
+                        border: 'none', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span className="mono-sm" style={{
+                    fontWeight: 700, color: 'var(--brand-accent, #0E8A6D)',
+                  }}>
+                    {trf.transferencia_codigo || '—'}
+                  </span>
+                  {trf.transferencia_fecha && (
+                    <span className="caption" style={{ color: 'var(--text-tertiary)' }}>
+                      · {new Date(trf.transferencia_fecha).toLocaleDateString(
+                          lang === 'es' ? 'es-PE' : 'en-US',
+                          { day: '2-digit', month: 'short', year: 'numeric' })}
+                    </span>
+                  )}
+                </div>
+                <span className="caption" style={{ color: 'var(--brand-accent, #0E8A6D)', fontWeight: 600 }}>
+                  {lang === 'es' ? 'Ver detalle →' : 'View detail →'}
+                </span>
+              </button>
+
+              {/* Por cada cost-line de la transferencia */}
+              {trf.costs.map((cost) => (
+                <div key={cost.cost_line_id}
+                     style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                  {/* Sub-header del costo */}
+                  <div style={{
+                    padding: '8px 14px',
+                    background: 'var(--surface, white)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    flexWrap: 'wrap', gap: 8,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{
+                        padding: '2px 9px', borderRadius: 999,
+                        background: 'color-mix(in oklab, var(--brand-primary) 8%, transparent)',
+                        color: 'var(--brand-primary)',
+                        fontSize: 11, fontWeight: 700, letterSpacing: 0.3,
+                      }}>
+                        {cost.kind_label || cost.kind}
+                      </span>
+                      <span className="body-sm" style={{ color: 'var(--text-primary)' }}>
+                        {cost.label || '—'}
+                      </span>
+                      <span style={{
+                        padding: '1px 7px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+                        background: cost.source === 'OCR_DUA'
+                          ? 'rgba(0,178,134,0.12)' : '#F3F5F8',
+                        color: cost.source === 'OCR_DUA' ? '#00B286' : '#64748B',
+                      }}>
+                        {cost.source || 'MANUAL'}
+                      </span>
+                    </div>
+                    <div className="tabular-nums" style={{
+                      fontWeight: 700, color: 'var(--brand-accent, #0E8A6D)',
+                    }}>
+                      ${Number(cost.amount_usd || 0).toLocaleString('en-US',
+                        { maximumFractionDigits: 2 })}
+                      <span style={{ color: 'var(--text-tertiary)', fontWeight: 400, marginLeft: 6 }}>
+                        ({Number(cost.amount || 0).toLocaleString('en-US',
+                          { maximumFractionDigits: 2 })} {cost.currency})
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Tabla de líneas afectadas por este costo, agrupadas por expediente */}
+                  <table className="table" style={{ width: '100%' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: 140 }}>
+                          {lang === 'es' ? 'Expediente' : 'Expediente'}
+                        </th>
+                        <th style={{ width: 120 }}>SKU</th>
+                        <th>{lang === 'es' ? 'Nombre' : 'Name'}</th>
+                        <th style={{ width: 80, textAlign: 'center' }}>
+                          {lang === 'es' ? 'Talla' : 'Size'}
+                        </th>
+                        <th style={{ width: 90, textAlign: 'right' }}>
+                          {lang === 'es' ? 'Cant.' : 'Qty'}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cost.byExp.map((exp) =>
+                        exp.lines.map((ln, idx) => (
+                          <tr key={`${exp.expediente_id}-${ln.producto_id}-${ln.talla || ''}`}>
+                            {idx === 0 ? (
+                              <td rowSpan={exp.lines.length}
+                                  className="mono-sm"
+                                  style={{
+                                    color: 'var(--brand-primary)',
+                                    fontWeight: 700,
+                                    verticalAlign: 'top',
+                                  }}>
+                                {exp.expediente_codigo || '—'}
+                              </td>
+                            ) : null}
+                            <td>
+                              <span className="mono-sm" style={{ fontWeight: 600 }}>{ln.sku}</span>
+                            </td>
+                            <td>{ln.nombre}</td>
+                            <td style={{ textAlign: 'center' }}>
+                              <span className="size-chip">{ln.talla || '—'}</span>
+                            </td>
+                            <td className="td-num tabular-nums">{ln.qty}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ─────────────── Tab: Automatizaciones ─────────────── */

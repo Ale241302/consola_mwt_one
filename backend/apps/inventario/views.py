@@ -1249,6 +1249,104 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             return Response({"detail": f"SQL error: {exc}"}, status=500)
         return Response(rows)
 
+    # ── 11) Sprint 2026-05-14 · Fase 13 · costos de transferencias que ──
+    #         llegaron a un nodo (como destino). Para la tab "Costos"
+    #         del detalle del nodo. Devuelve UNA fila por
+    #         (cost_line × expediente × producto × talla) — el UI
+    #         puede agrupar como prefiera. La qty es la cantidad
+    #         efectivamente asignada al nodo desde ese expediente,
+    #         filtrada por el `scope_json` de la cost_line.
+    @action(detail=False, methods=["get"],
+            url_path=r"nodos/(?P<nodo_id>[^/.]+)/transferencia-costos")
+    def transferencia_costos_por_nodo(self, request, nodo_id=None):
+        sql = """
+            WITH asignaciones_del_nodo AS (
+                -- Todas las (expediente, producto, talla) asignadas a
+                -- este nodo via transferencia (no recepción inicial),
+                -- agregadas por (trf, exp, prod, talla).
+                SELECT
+                    a.transferencia_id,
+                    a.expediente_id,
+                    a.producto_id,
+                    COALESCE(a.talla, '')         AS talla_norm,
+                    a.talla,
+                    SUM(a.qty_asignada)::int      AS qty_asignada
+                FROM inventario.expediente_nodo_assignment a
+                WHERE a.nodo_id = %(nodo_id)s::uuid
+                  AND a.transferencia_id IS NOT NULL
+                  AND a.is_active = TRUE
+                GROUP BY a.transferencia_id, a.expediente_id, a.producto_id, a.talla
+                HAVING SUM(a.qty_asignada) > 0
+            )
+            SELECT
+                cl.id                                              AS cost_line_id,
+                cl.transferencia_id,
+                t.codigo                                           AS transferencia_codigo,
+                t.legal_context,
+                t.created_at                                       AS transferencia_fecha,
+                a.expediente_id,
+                e.codigo                                           AS expediente_codigo,
+                a.producto_id,
+                l.sku,
+                COALESCE(p.nombre, p.descripcion, l.sku, '—')      AS nombre,
+                a.talla,
+                a.qty_asignada                                     AS qty,
+                cl.kind,
+                ck.label                                           AS kind_label,
+                cl.label,
+                cl.amount,
+                cl.currency,
+                cl.fx_to_usd,
+                cl.amount_usd,
+                cl.source,
+                cl.scope_json,
+                cl.created_at                                      AS cost_created_at
+            FROM asignaciones_del_nodo a
+            JOIN transfers.cost_line cl
+              ON cl.transferencia_id = a.transferencia_id
+             AND cl.is_active = TRUE
+            JOIN transfers.transferencia t        ON t.id = cl.transferencia_id
+            LEFT JOIN expedientes.linea l
+              ON l.expediente_id = a.expediente_id
+             AND l.producto_id   = a.producto_id
+             AND COALESCE(l.size,'') = a.talla_norm
+            LEFT JOIN expedientes.expediente e    ON e.id = a.expediente_id
+            LEFT JOIN productos.producto p        ON p.id = a.producto_id
+            LEFT JOIN transfers.cost_kind_cat ck  ON ck.codigo = cl.kind
+            WHERE (
+                -- scope null o applies_to_all → cost aplica a todo
+                cl.scope_json IS NULL
+                OR (cl.scope_json->>'applies_to_all')::bool = TRUE
+                OR (
+                    -- expediente_ids contiene este expediente
+                    cl.scope_json->'expediente_ids' ? a.expediente_id::text
+                    AND (
+                        -- y lines está vacío/ausente → todas las líneas
+                        cl.scope_json->'lines' IS NULL
+                        OR jsonb_typeof(cl.scope_json->'lines') <> 'array'
+                        OR jsonb_array_length(cl.scope_json->'lines') = 0
+                        -- o lines contiene esta (producto, talla)
+                        OR EXISTS (
+                            SELECT 1 FROM jsonb_array_elements(cl.scope_json->'lines') AS ln
+                            WHERE ln->>'expediente_id' = a.expediente_id::text
+                              AND ln->>'producto_id'   = a.producto_id::text
+                              AND COALESCE(ln->>'talla','') = a.talla_norm
+                        )
+                    )
+                )
+            )
+            ORDER BY t.created_at DESC, e.codigo, l.sku, a.talla
+        """
+        try:
+            with connection.cursor() as c:
+                c.execute(sql, {"nodo_id": nodo_id})
+                cols = [d[0] for d in c.description]
+                rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        except Exception as exc:
+            log.exception("transferencia_costos_por_nodo SQL failed")
+            return Response({"detail": f"SQL error: {exc}"}, status=500)
+        return Response(rows)
+
     # ── 7) Sprint 2026-05-13 · Fase 8 · líneas con stock en un nodo ──
     # Para el wizard de transferencias paso 3: devuelve por cada
     # (expediente, producto, talla) la qty actualmente asignada al nodo.

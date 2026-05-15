@@ -558,6 +558,12 @@ export const nodoAssignmentsApi = {
   transferenciaCostosPorOC: (ocId) =>
     apiFetch(`/inventario/ocs/${ocId}/transferencia-costos/`,
              { token: getToken() }),
+  // Sprint 2026-05-14 fase 13 · costos de transferencias que llegaron
+  // a este nodo (como destino). Devuelve filas por (cost × exp × prod ×
+  // talla) filtradas por scope_json. Para la tab Costos del NodoDetail.
+  transferenciaCostosPorNodo: (nodoId) =>
+    apiFetch(`/inventario/nodos/${nodoId}/transferencia-costos/`,
+             { token: getToken() }),
   // Sprint 2026-05-13 fase 8 · transfer atómico de asignaciones de un
   // nodo origen a uno destino. Soft-delete origen, crea destino y
   // residual en una sola transacción. Si qty > disponible en origen,
