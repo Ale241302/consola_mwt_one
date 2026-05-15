@@ -69,6 +69,7 @@ function mapApiDetailToTransfer(r) {
   const lineas = Array.isArray(r?.lineas) ? r.lineas : [];
   return {
     _backend_id:    r.id,
+    _raw:           r,  // Sprint Fase 15 · header editable necesita origen_id/destino_id crudos
     id:             r.codigo || r.id,
     status:         API_TO_MOCK_STATUS[r.estado] || 'planned',
     origen:         r.origen_label || '—',

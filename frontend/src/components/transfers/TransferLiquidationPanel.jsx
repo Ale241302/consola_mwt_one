@@ -28,7 +28,9 @@ import {
 } from "../../lib/icons.jsx";
 import {
   transferenciasApi, transferDetailApi, currencyCatApi, transferLineasApi,
+  nodosApi,
 } from "../../lib/api.js";
+import { useRole } from "../../context/RoleContext.jsx";
 
 // ── Catálogo fallback de tipos de costo (espejo del backend) ──
 const COST_KINDS_FALLBACK = [
@@ -44,6 +46,16 @@ const COST_KINDS_FALLBACK = [
 ];
 
 const CURRENCIES = ["USD", "PEN", "MXN", "COP", "CLP", "BRL", "ARS", "CRC", "EUR"];
+
+// Sprint 2026-05-14 · Fase 15 — catálogo de motivos legales para el
+// dropdown editable. Espejo de transfers.legal_context_cat.
+const LEGAL_CONTEXT_OPTIONS = [
+  { codigo: "INTERNAL",        label: { es: "Interno / Redistribución", en: "Internal / Redistribution" } },
+  { codigo: "NATIONALIZATION", label: { es: "Nacionalización",          en: "Nationalization" } },
+  { codigo: "EXPORT",          label: { es: "Reexportación",            en: "Re-export" } },
+  { codigo: "DISTRIBUTION",    label: { es: "Distribución",             en: "Distribution" } },
+  { codigo: "CONSIGNMENT",     label: { es: "Consignación",             en: "Consignment" } },
+];
 
 const fmt = (n) => Number(n || 0).toLocaleString("en-US", {
   minimumFractionDigits: 2, maximumFractionDigits: 2,
@@ -65,6 +77,42 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   //     primero; al guardar se inserta la fila con scope ya aplicado).
   const [scopeOpenFor, setScopeOpenFor]       = useState(null);
   const [creatingNewScope, setCreatingNewScope] = useState(false);
+
+  // Sprint 2026-05-14 · Fase 15 — header editable (admin only).
+  // El admin puede cambiar motivo, origen, destino, tracking,
+  // dispatched_at y ETA en cualquier momento. Backend ya tiene PATCH.
+  const { isAdmin, isClient } = useRole();
+  const canEdit = isAdmin && !isClient;
+  const [headerEdit, setHeaderEdit] = useState({});  // patch pendiente
+  const [headerSaving, setHeaderSaving] = useState(false);
+  const [headerError, setHeaderError] = useState(null);
+  const [nodos, setNodos] = useState([]);
+  useEffect(() => {
+    if (!canEdit) return;
+    nodosApi.list({ is_active: true })
+      .then((d) => setNodos(Array.isArray(d) ? d : (d?.results || [])))
+      .catch(() => setNodos([]));
+  }, [canEdit]);
+  const headerVal = (k, fallback) =>
+    headerEdit[k] !== undefined ? headerEdit[k] : (transfer?.[k] ?? fallback ?? "");
+  const setHV = (k, v) => setHeaderEdit((p) => ({ ...p, [k]: v }));
+  const persistHeader = async (patch) => {
+    if (!transferId) return;
+    setHeaderSaving(true); setHeaderError(null);
+    try {
+      await transferenciasApi.update(transferId, patch);
+      onLiquidated?.();   // re-fetch del padre
+      setHeaderEdit((p) => {
+        const next = { ...p };
+        for (const k of Object.keys(patch)) delete next[k];
+        return next;
+      });
+    } catch (e) {
+      setHeaderError(e?.message || (lang === "es" ? "Error al guardar" : "Save failed"));
+    } finally {
+      setHeaderSaving(false);
+    }
+  };
   const [report,     setReport]     = useState(null);
   const [loading,    setLoading]    = useState(false);
   const [saving,     setSaving]     = useState(false);
@@ -380,25 +428,193 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         }}>{success}</div>
       )}
 
-      {/* ── Sección 1 · Contexto y Documentos ───────── */}
+      {/* ── Sección 1 · Contexto y Documentos · Sprint Fase 15 editable ─── */}
       <div className="card card-pad-md" style={{ marginBottom: 14 }}>
-        <div className="micro" style={{ color: "#00B286", letterSpacing: 1, marginBottom: 10 }}>
-          {lang === "es" ? "1 · CONTEXTO Y DOCUMENTACIÓN LEGAL" : "1 · LEGAL CONTEXT & DOCUMENTS"}
+        <div style={{ display: "flex", justifyContent: "space-between",
+                      alignItems: "center", marginBottom: 10 }}>
+          <div className="micro" style={{ color: "#00B286", letterSpacing: 1 }}>
+            {lang === "es" ? "1 · CONTEXTO Y DOCUMENTACIÓN LEGAL" : "1 · LEGAL CONTEXT & DOCUMENTS"}
+          </div>
+          {canEdit && (
+            <span className="micro" style={{ color: "var(--text-tertiary)" }}>
+              {headerSaving
+                ? (lang === "es" ? "Guardando…" : "Saving…")
+                : (Object.keys(headerEdit).length > 0
+                    ? (lang === "es" ? "Cambios sin guardar" : "Unsaved changes")
+                    : (lang === "es" ? "Editable" : "Editable"))}
+            </span>
+          )}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
-          <Field label={lang === "es" ? "Motivo legal" : "Legal context"}
-                 value={<span style={{ fontWeight: 700 }}>{transfer?.legal_context || "INTERNAL"}</span>}/>
-          <Field label="Origen → Destino"
-                 value={<span><strong>{transfer?.origen}</strong> → <strong>{transfer?.destino}</strong></span>}/>
-          <Field label={lang === "es" ? "Tracking" : "Tracking"}
-                 value={<code className="mono-sm">{transfer?.ref_tracking || "—"}</code>}/>
+
+        {headerError && (
+          <div style={{
+            padding: "8px 12px", borderRadius: 6, fontSize: 12.5,
+            background: "rgba(220,38,38,0.08)", color: "#991B1B",
+            marginBottom: 10,
+          }}>
+            <IconAlert size={11} style={{ verticalAlign: -1, marginRight: 4 }}/>
+            {headerError}
+          </div>
+        )}
+
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          gap: 12,
+        }}>
+          {/* Motivo legal */}
+          <div>
+            <div className="caption" style={{ color: "var(--text-tertiary)", marginBottom: 4 }}>
+              {lang === "es" ? "Motivo legal" : "Legal context"}
+            </div>
+            {canEdit ? (
+              <select className="input"
+                      value={headerVal("legal_context", "INTERNAL")}
+                      disabled={headerSaving}
+                      onChange={(e) => setHV("legal_context", e.target.value)}
+                      onBlur={(e) => {
+                        if (headerEdit.legal_context !== undefined
+                            && headerEdit.legal_context !== transfer?.legal_context) {
+                          persistHeader({ legal_context: e.target.value });
+                        }
+                      }}>
+                {LEGAL_CONTEXT_OPTIONS.map((o) => (
+                  <option key={o.codigo} value={o.codigo}>
+                    {o.label[lang] || o.label.es}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span style={{ fontWeight: 700 }}>{transfer?.legal_context || "INTERNAL"}</span>
+            )}
+          </div>
+
+          {/* Origen */}
+          <div>
+            <div className="caption" style={{ color: "var(--text-tertiary)", marginBottom: 4 }}>
+              {lang === "es" ? "Nodo origen" : "Origin node"}
+            </div>
+            {canEdit ? (
+              <select className="input"
+                      value={headerVal("_raw_origen_id", transfer?._raw?.origen_id || "")}
+                      disabled={headerSaving}
+                      onChange={(e) => setHV("_raw_origen_id", e.target.value)}
+                      onBlur={(e) => {
+                        const cur = transfer?._raw?.origen_id || "";
+                        if (e.target.value && e.target.value !== cur) {
+                          persistHeader({ origen_id: e.target.value });
+                        }
+                      }}>
+                {nodos.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.codigo} · {n.nombre}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span><strong>{transfer?.origen}</strong></span>
+            )}
+          </div>
+
+          {/* Destino */}
+          <div>
+            <div className="caption" style={{ color: "var(--text-tertiary)", marginBottom: 4 }}>
+              {lang === "es" ? "Nodo destino" : "Destination node"}
+            </div>
+            {canEdit ? (
+              <select className="input"
+                      value={headerVal("_raw_destino_id", transfer?._raw?.destino_id || "")}
+                      disabled={headerSaving}
+                      onChange={(e) => setHV("_raw_destino_id", e.target.value)}
+                      onBlur={(e) => {
+                        const cur = transfer?._raw?.destino_id || "";
+                        if (e.target.value && e.target.value !== cur) {
+                          persistHeader({ destino_id: e.target.value });
+                        }
+                      }}>
+                {nodos.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.codigo} · {n.nombre}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span><strong>{transfer?.destino}</strong></span>
+            )}
+          </div>
+
+          {/* Tracking */}
+          <div>
+            <div className="caption" style={{ color: "var(--text-tertiary)", marginBottom: 4 }}>
+              {lang === "es" ? "Tracking (BL / AWB)" : "Tracking (BL / AWB)"}
+            </div>
+            {canEdit ? (
+              <input className="input mono-sm"
+                     value={headerVal("ref_tracking", transfer?.ref_tracking || "")}
+                     disabled={headerSaving}
+                     placeholder="BL / AWB / TRK"
+                     onChange={(e) => setHV("ref_tracking", e.target.value)}
+                     onBlur={(e) => {
+                       if (headerEdit.ref_tracking !== undefined
+                           && (headerEdit.ref_tracking || "") !== (transfer?.ref_tracking || "")) {
+                         persistHeader({ ref_tracking: e.target.value || null });
+                       }
+                     }}/>
+            ) : (
+              <code className="mono-sm">{transfer?.ref_tracking || "—"}</code>
+            )}
+          </div>
+
+          {/* Despachada · dispatched_at */}
+          <div>
+            <div className="caption" style={{ color: "var(--text-tertiary)", marginBottom: 4 }}>
+              {lang === "es" ? "Fecha despachada" : "Dispatched at"}
+            </div>
+            {canEdit ? (
+              <input className="input" type="date"
+                     value={(headerVal("dispatched_at", transfer?.dispatched_at || "") || "").slice(0,10)}
+                     disabled={headerSaving}
+                     onChange={(e) => setHV("dispatched_at", e.target.value)}
+                     onBlur={(e) => {
+                       const v = e.target.value || null;
+                       const cur = (transfer?.dispatched_at || "").slice(0,10);
+                       if ((v || "") !== cur) {
+                         persistHeader({ dispatched_at: v });
+                       }
+                     }}/>
+            ) : (
+              <code className="mono-sm">{transfer?.dispatched_at || "—"}</code>
+            )}
+          </div>
+
+          {/* ETA */}
+          <div>
+            <div className="caption" style={{ color: "var(--text-tertiary)", marginBottom: 4 }}>
+              {lang === "es" ? "ETA" : "ETA"}
+            </div>
+            {canEdit ? (
+              <input className="input" type="date"
+                     value={(headerVal("eta", transfer?.eta || "") || "").slice(0,10)}
+                     disabled={headerSaving}
+                     onChange={(e) => setHV("eta", e.target.value)}
+                     onBlur={(e) => {
+                       const v = e.target.value || null;
+                       const cur = (transfer?.eta || "").slice(0,10);
+                       if ((v || "") !== cur) {
+                         persistHeader({ eta: v });
+                       }
+                     }}/>
+            ) : (
+              <code className="mono-sm">{transfer?.eta || "—"}</code>
+            )}
+          </div>
         </div>
-        <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <DocChip doc={factura} fallbackLabel={lang === "es" ? "Factura comercial" : "Commercial invoice"} kind="FACTURA"/>
-          <DocChip doc={dua}     fallbackLabel="DUA"           kind="DUA"/>
-          <DocChip doc={bl}      fallbackLabel="BL / AWB"      kind="BL"/>
-          <DocChip doc={remision} fallbackLabel={lang === "es" ? "Remisión" : "Waybill"} kind="REMISION"/>
-        </div>
+
+        {/* Sprint 2026-05-14 · Fase 15 — los 4 chips estáticos
+            (Factura, DUA, BL/AWB, Remisión) se eliminaron porque NO se
+            podían editar y daban falsa sensación de upload. La gestión
+            documental ahora vive en el bloque Artefactos (sección 2.5
+            más abajo), con scope picker idéntico al wizard de recepción. */}
       </div>
 
       {/* ── Sección 2 · Registro de Costos Multidivisa ── */}
