@@ -21,6 +21,7 @@ import { motion } from "framer-motion";
 // (que tiene un summary preview específico). Este es el genérico de
 // destrucción que usa la sección de costos para "¿Eliminar este costo?".
 import GenericConfirmModal from "../common/ConfirmModal.jsx";
+import CostScopeModal from "./CostScopeModal.jsx";
 import {
   IconCheck, IconX, IconPlus, IconAlert, IconRefresh, IconFileText,
   IconDollar, IconLock, IconClipboard, IconUpload, IconTrash,
@@ -57,6 +58,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // Estado local de cost lines editables (espejo del backend)
   const [costLines,  setCostLines]  = useState([]);
   const [costKinds,  setCostKinds]  = useState(COST_KINDS_FALLBACK);
+  // Sprint 2026-05-14 · Fase 14 — scope picker para cost-lines del
+  // TransferDetail. Reutiliza CostScopeModal (mismo del wizard).
+  //   - scopeOpenFor: cost.id ó null
+  //   - creatingNewScope: bool (flow "+ Agregar costo" abre el modal
+  //     primero; al guardar se inserta la fila con scope ya aplicado).
+  const [scopeOpenFor, setScopeOpenFor]       = useState(null);
+  const [creatingNewScope, setCreatingNewScope] = useState(false);
   const [report,     setReport]     = useState(null);
   const [loading,    setLoading]    = useState(false);
   const [saving,     setSaving]     = useState(false);
@@ -156,6 +164,27 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
 
   const isLiquidated = !!transfer?._raw?.liquidated_at || !!report?.liquidated_at;
 
+  // Sprint 2026-05-14 · Fase 14 — items de la transferencia que el
+  // scope picker necesita. Backend ya enriquece cada linea con
+  // expediente_id/expediente_codigo en /transferencias/{id}/ retrieve()
+  // (Fase 11.2). Mapeamos al shape que CostScopeModal espera —
+  // mismo contrato que el wizard step 3 (Step3TransferAssign).
+  const transferItems = useMemo(() => {
+    const lineas = transfer?.lines || transfer?.lineas || [];
+    return lineas
+      .filter((l) => l.expediente_id)   // solo líneas con expediente real
+      .map((l) => ({
+        expediente_id:      l.expediente_id,
+        _expediente_codigo: l.expediente_codigo || "",
+        _proforma_codigo:   l.proforma_codigo   || "",
+        producto_id:        l._raw?.producto_id || l.producto_id || "",
+        _sku:               l.sku || "",
+        _nombre:            l.product_label || l.product || l.sku || "",
+        talla:              l.size || "",
+        qty:                Number(l.qty_transfer || 0),
+      }));
+  }, [transfer]);
+
   // ── Cálculo en vivo del preview (sin pegarle al backend cada keystroke) ──
   const livePreview = useMemo(() => {
     const lineas = transfer?.lines || transfer?.lineas || [];
@@ -203,12 +232,16 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   }, [transfer, costLines]);
 
   // ── Cost line CRUD (server-side persiste; trigger SQL actualiza total_cost_usd) ──
-  const addCost = async () => {
+  // Sprint 2026-05-14 · Fase 14 — addCost acepta { scope } para que el
+  // flow "+ Agregar costo" → modal → guardar scope cree la fila ya con
+  // scope_json aplicado, igual que el wizard.
+  const addCost = async (extra = {}) => {
     setSaving(true); setError(null);
     try {
       const created = await transferenciasApi.action("cost-lines", transferId, {
         kind: "OTRO", label: "", amount: 0, currency: "USD",
         fx_to_usd: 1, source: "MANUAL",
+        scope_json: extra.scope || null,
       });
       setCostLines((prev) => [...prev, created]);
     } catch (e) { setError(e?.message || "create_failed"); }
@@ -236,6 +269,10 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         fx_to_usd:      Number(c.fx_to_usd) || 1,
         source:         c.source || "MANUAL",
         ocr_confidence: c.ocr_confidence ?? null,
+        // Sprint 2026-05-14 · Fase 14 — persistir scope_json en el ciclo
+        // delete-then-create. Si el editor sólo cambió el alcance, se
+        // mantiene tipo/monto/moneda intactos.
+        scope_json:     c.scope_json || null,
       });
       setCostLines((prev) => prev.map((x) => x.id === c.id ? created : x));
     } catch (e) { setError(e?.message || "save_failed"); }
@@ -397,7 +434,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   ? (lang === "es" ? "Procesando…" : "Processing…")
                   : (lang === "es" ? "Subir documento (IA)" : "Upload doc (AI)")}
               </button>
-              <button className="btn btn-ghost btn-sm" onClick={addCost} disabled={saving}>
+              <button className="btn btn-ghost btn-sm"
+                      onClick={() => setCreatingNewScope(true)}
+                      disabled={saving || isLiquidated}>
                 <IconPlus size={11}/> {lang === "es" ? "Agregar costo" : "Add cost"}
               </button>
             </div>
@@ -478,6 +517,10 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   <th style={{ textAlign: "right" }}>FX→USD</th>
                   <th style={{ textAlign: "right" }}>USD</th>
                   <th>{lang === "es" ? "Origen" : "Source"}</th>
+                  {/* Sprint 2026-05-14 · Fase 14 — alcance por costo. */}
+                  <th style={{ textAlign: "center" }}>
+                    {lang === "es" ? "Aplicar a" : "Apply to"}
+                  </th>
                   <th></th>
                 </tr>
               </thead>
@@ -548,6 +591,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           </span>
                         )}
                       </td>
+                      <td style={{ textAlign: "center" }}>
+                        <ScopeChip scope={c.scope_json}
+                                   transferItems={transferItems}
+                                   disabled={isLiquidated || transferItems.length === 0}
+                                   onOpen={() => setScopeOpenFor(c.id)}
+                                   lang={lang}/>
+                      </td>
                       <td>
                         {!isLiquidated && (
                           <button className="btn btn-ghost btn-sm"
@@ -568,7 +618,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 15 }}>
                     ${fmt(livePreview.extraUsd)}
                   </td>
-                  <td colSpan={2}></td>
+                  {/* +1 columna Aplicar a (Sprint Fase 14). */}
+                  <td colSpan={3}></td>
                 </tr>
               </tbody>
             </table>
@@ -809,7 +860,91 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         />,
         document.body
       )}
+
+      {/* Sprint 2026-05-14 · Fase 14 — Scope picker para cost-lines.
+          Doble uso:
+            · creatingNewScope=true → "+ Agregar costo": al guardar
+              crea la fila ya con scope aplicado.
+            · scopeOpenFor=cost.id → edición del scope de una fila
+              existente vía chip "Aplicar a". */}
+      {(creatingNewScope || scopeOpenFor) && (() => {
+        const editing = scopeOpenFor
+          ? costLines.find((c) => c.id === scopeOpenFor) || null
+          : null;
+        const initialScope = creatingNewScope ? null : (editing?.scope_json || null);
+        const costLabel = creatingNewScope
+          ? (lang === "es" ? "Nuevo costo" : "New cost")
+          : (editing?.label
+              || (costKinds.find((k) => k.codigo === editing?.kind)?.label)
+              || "");
+        return (
+          <CostScopeModal
+            open={true}
+            lang={lang}
+            costLabel={costLabel}
+            initialScope={initialScope}
+            transferItems={transferItems}
+            onClose={() => { setCreatingNewScope(false); setScopeOpenFor(null); }}
+            onSave={(scope) => {
+              if (creatingNewScope) {
+                addCost({ scope });
+              } else if (editing) {
+                // Mutar localmente y persistir el cambio.
+                const next = { ...editing, scope_json: scope };
+                updateCost(editing.id, { scope_json: scope });
+                persistCost(next);
+              }
+            }}
+          />
+        );
+      })()}
     </div>
+  );
+}
+
+// ── Sprint 2026-05-14 · Fase 14 — chip resumen del scope ────
+// Muestra "Todo" si scope=null/applies_to_all, "N exp" o "N exp · M
+// líneas" si está restringido. Click → abre el modal de edición.
+function ScopeChip({ scope, transferItems, disabled, onOpen, lang }) {
+  let label = lang === "es" ? "Todo" : "All";
+  let restricted = false;
+  if (scope && scope.applies_to_all === false) {
+    restricted = true;
+    const nExp   = Array.isArray(scope.expediente_ids) ? scope.expediente_ids.length : 0;
+    const nLines = Array.isArray(scope.lines)          ? scope.lines.length          : 0;
+    if (nLines > 0) {
+      label = lang === "es" ? `${nExp} exp · ${nLines} líneas`
+                            : `${nExp} exp · ${nLines} lines`;
+    } else if (nExp > 0) {
+      label = `${nExp} ${lang === "es"
+        ? (nExp === 1 ? "expediente" : "expedientes")
+        : (nExp === 1 ? "expediente" : "expedientes")}`;
+    }
+  }
+  const noItems = !transferItems || transferItems.length === 0;
+  const realDisabled = !!disabled || noItems;
+  return (
+    <button type="button"
+            onClick={onOpen}
+            disabled={realDisabled}
+            title={noItems
+              ? (lang === "es" ? "No hay líneas en la transferencia" : "No transfer lines")
+              : (lang === "es" ? "Configurar alcance del costo" : "Set cost scope")}
+            style={{
+              padding: "4px 10px", borderRadius: 999,
+              border: restricted
+                ? "1.5px solid var(--brand-accent, #0E8A6D)"
+                : "1px solid var(--border-subtle, #E1E6ED)",
+              background: restricted
+                ? "color-mix(in oklab, var(--brand-accent, #0E8A6D) 10%, transparent)"
+                : "var(--surface, white)",
+              color: restricted ? "var(--brand-accent, #0E8A6D)" : "var(--text-secondary, #475467)",
+              fontSize: 11, fontWeight: 700, letterSpacing: 0.3,
+              cursor: realDisabled ? "not-allowed" : "pointer",
+              opacity: realDisabled ? 0.5 : 1,
+            }}>
+      {label}
+    </button>
   );
 }
 
