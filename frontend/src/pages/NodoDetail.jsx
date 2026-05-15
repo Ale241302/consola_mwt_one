@@ -1102,6 +1102,10 @@ function NodoCostosTab({ nodeId, lang, navigate }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
+  // Sprint 2026-05-14 · Fase 13.1 — colapsable por (cost_line, expediente).
+  // Key = `${cost_line_id}::${expediente_id}`. Default: todos colapsados.
+  const [expanded, setExpanded] = useState({});
+  const toggleExp = (k) => setExpanded((p) => ({ ...p, [k]: !p[k] }));
 
   useEffect(() => {
     if (!nodeId) return;
@@ -1295,51 +1299,112 @@ function NodoCostosTab({ nodeId, lang, navigate }) {
                     </div>
                   </div>
 
-                  {/* Tabla de líneas afectadas por este costo, agrupadas por expediente */}
-                  <table className="table" style={{ width: '100%' }}>
-                    <thead>
-                      <tr>
-                        <th style={{ width: 140 }}>
-                          {lang === 'es' ? 'Expediente' : 'Expediente'}
-                        </th>
-                        <th style={{ width: 120 }}>SKU</th>
-                        <th>{lang === 'es' ? 'Nombre' : 'Name'}</th>
-                        <th style={{ width: 80, textAlign: 'center' }}>
-                          {lang === 'es' ? 'Talla' : 'Size'}
-                        </th>
-                        <th style={{ width: 90, textAlign: 'right' }}>
-                          {lang === 'es' ? 'Cant.' : 'Qty'}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cost.byExp.map((exp) =>
-                        exp.lines.map((ln, idx) => (
-                          <tr key={`${exp.expediente_id}-${ln.producto_id}-${ln.talla || ''}`}>
-                            {idx === 0 ? (
-                              <td rowSpan={exp.lines.length}
-                                  className="mono-sm"
+                  {/* Sprint 2026-05-14 · Fase 13.1 — Lista colapsable por
+                      expediente. Por defecto solo se ve el código; click
+                      en la fila despliega los productos. */}
+                  <div>
+                    {cost.byExp.map((exp) => {
+                      const key   = `${cost.cost_line_id}::${exp.expediente_id}`;
+                      const open  = !!expanded[key];
+                      const nProd = exp.lines.length;
+                      const qTot  = exp.lines.reduce((a, ln) => a + Number(ln.qty || 0), 0);
+                      return (
+                        <div key={exp.expediente_id}
+                             style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                          {/* Fila plegable */}
+                          <button type="button"
+                                  onClick={() => toggleExp(key)}
                                   style={{
-                                    color: 'var(--brand-primary)',
-                                    fontWeight: 700,
-                                    verticalAlign: 'top',
+                                    width: '100%', textAlign: 'left',
+                                    padding: '10px 14px',
+                                    background: open
+                                      ? 'color-mix(in oklab, var(--brand-accent, #0E8A6D) 4%, transparent)'
+                                      : 'var(--surface, #fff)',
+                                    border: 'none', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', gap: 12,
+                                    transition: 'background 120ms ease',
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    if (!open) e.currentTarget.style.background = '#F7F9FC';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = open
+                                      ? 'color-mix(in oklab, var(--brand-accent, #0E8A6D) 4%, transparent)'
+                                      : 'var(--surface, #fff)';
                                   }}>
-                                {exp.expediente_codigo || '—'}
-                              </td>
-                            ) : null}
-                            <td>
-                              <span className="mono-sm" style={{ fontWeight: 600 }}>{ln.sku}</span>
-                            </td>
-                            <td>{ln.nombre}</td>
-                            <td style={{ textAlign: 'center' }}>
-                              <span className="size-chip">{ln.talla || '—'}</span>
-                            </td>
-                            <td className="td-num tabular-nums">{ln.qty}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                            <span style={{
+                              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                              width: 18, height: 18,
+                              transition: 'transform 180ms ease',
+                              transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+                              color: 'var(--text-tertiary)',
+                            }}>
+                              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                                <path d="M5 3l5 5-5 5" stroke="currentColor" strokeWidth="1.6"
+                                      strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            </span>
+                            <span className="mono-sm" style={{
+                              fontWeight: 700, color: 'var(--brand-primary)',
+                            }}>
+                              {exp.expediente_codigo || '—'}
+                            </span>
+                            <span className="caption" style={{
+                              color: 'var(--text-tertiary)',
+                            }}>
+                              {nProd} {lang === 'es'
+                                ? (nProd === 1 ? 'producto' : 'productos')
+                                : (nProd === 1 ? 'product' : 'products')}
+                            </span>
+                            <span className="caption tabular-nums" style={{
+                              marginLeft: 'auto', color: 'var(--text-secondary)',
+                              fontWeight: 600,
+                            }}>
+                              {qTot.toLocaleString('en-US')} u
+                            </span>
+                          </button>
+
+                          {/* Contenido desplegado */}
+                          {open && (
+                            <div style={{
+                              borderTop: '1px solid var(--border-subtle)',
+                              background: 'var(--surface-alt, rgba(0,0,0,0.015))',
+                            }}>
+                              <table className="table" style={{ width: '100%' }}>
+                                <thead>
+                                  <tr>
+                                    <th style={{ width: 140 }}>SKU</th>
+                                    <th>{lang === 'es' ? 'Nombre' : 'Name'}</th>
+                                    <th style={{ width: 80, textAlign: 'center' }}>
+                                      {lang === 'es' ? 'Talla' : 'Size'}
+                                    </th>
+                                    <th style={{ width: 90, textAlign: 'right' }}>
+                                      {lang === 'es' ? 'Cant.' : 'Qty'}
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {exp.lines.map((ln) => (
+                                    <tr key={`${ln.producto_id}-${ln.talla || ''}`}>
+                                      <td>
+                                        <span className="mono-sm"
+                                              style={{ fontWeight: 600 }}>{ln.sku}</span>
+                                      </td>
+                                      <td>{ln.nombre}</td>
+                                      <td style={{ textAlign: 'center' }}>
+                                        <span className="size-chip">{ln.talla || '—'}</span>
+                                      </td>
+                                      <td className="td-num tabular-nums">{ln.qty}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               ))}
             </div>
