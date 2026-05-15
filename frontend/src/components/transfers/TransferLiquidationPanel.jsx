@@ -204,6 +204,20 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
 
   useEffect(() => { load(); }, [load]);
 
+  // Sprint 2026-05-14 · Fase 16.1 — refrescar costLines + report cuando
+  // el padre nos pasa una transferencia con número distinto de líneas
+  // (típicamente: el admin acaba de "+ Agregar productos"). Sin esto
+  // la sección 3 "Landed Cost · Factura Interna" mostraba los nuevos
+  // productos (vía livePreview que se recomputa de transfer.lines)
+  // pero el `report` y el `extra_cost_total` quedaban stale.
+  const linesLen = (transfer?.lines || transfer?.lineas || []).length;
+  useEffect(() => {
+    // Saltamos la primera vez (load() ya corrió en el mount con load).
+    // Sólo reaccionamos a cambios de cantidad después del primer render.
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linesLen]);
+
   // Catálogo de tipos de costo
   useEffect(() => {
     transferenciasApi.action("select_cost_kinds")
