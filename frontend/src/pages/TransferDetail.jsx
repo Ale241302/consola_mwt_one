@@ -31,6 +31,11 @@ import { transferenciasApi, transferLineasApi } from "../lib/api.js";
 import TransferLiquidationPanel from "../components/transfers/TransferLiquidationPanel.jsx";
 import TransferStateStepper from "../components/transfers/TransferStateStepper.jsx";
 import TransferInvoicePrintView from "../components/transfers/TransferInvoicePrintView.jsx";
+// Sprint 2026-05-14 · Fase 15.2 — modal para agregar productos a la
+// transferencia ya creada. Mueve atómicamente stock origen → destino.
+import AddTransferItemsModal from "../components/transfers/AddTransferItemsModal.jsx";
+import { useRole } from "../context/RoleContext.jsx";
+import { IconPlus } from "../lib/icons.jsx";
 // Sprint 2026-04-30 — panel de notas (ledger JSONB). El panel de costos
 // editable + OCR auto-merge vive directamente dentro de TransferLiquidationPanel.
 import TransferNotesPanel  from "../components/transfers/TransferNotesPanel.jsx";
@@ -138,6 +143,10 @@ export default function ScreenTransferDetail() {
   const [loadingPdf, setLoadingPdf] = useState(false);
   // Notificación inline para errores transitorios (reemplaza alert()).
   const [notice, setNotice] = useState(null); // { kind: 'error'|'info', text }
+  // Sprint 2026-05-14 · Fase 15.2 — modal "+ Agregar productos".
+  const { isAdmin, isClient } = useRole();
+  const canEdit = isAdmin && !isClient;
+  const [addItemsOpen, setAddItemsOpen] = useState(false);
 
   const isUuid = typeof transferId === "string" && UUID_RE.test(transferId);
 
@@ -560,15 +569,28 @@ export default function ScreenTransferDetail() {
 
       {/* ── Reception table ── */}
       <div className="card trf-reco-card" style={{ marginTop:16 }}>
-        <div className="trf-reco-head">
+        <div className="trf-reco-head"
+             style={{ display: 'flex', alignItems: 'center', gap: 10,
+                      justifyContent: 'space-between' }}>
           <div className="heading-sm">
             {lang==='es'?'Recepción en destino':'Reception at destination'}
           </div>
-          {isActionable && (
-            <button className="btn btn-ghost btn-sm" onClick={autofillPerfect}>
-              <IconCheck size={12}/> {lang==='es'?'Recibir todo sin diferencia':'Receive all without variance'}
-            </button>
-          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            {/* Sprint 2026-05-14 · Fase 15.2 — admin agrega productos
+                en cualquier momento; afecta inventario del nodo origen. */}
+            {canEdit && transferBase && (
+              <button className="btn btn-accent btn-sm"
+                      onClick={() => setAddItemsOpen(true)}>
+                <IconPlus size={12}/>
+                {lang==='es'?'Agregar productos':'Add products'}
+              </button>
+            )}
+            {isActionable && (
+              <button className="btn btn-ghost btn-sm" onClick={autofillPerfect}>
+                <IconCheck size={12}/> {lang==='es'?'Recibir todo sin diferencia':'Receive all without variance'}
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="trf-reco-table">
@@ -711,6 +733,17 @@ export default function ScreenTransferDetail() {
           />
         </div>
       )}
+
+      {/* Sprint 2026-05-14 · Fase 15.2 — Modal "+ Agregar productos".
+          Reutiliza Step3TransferAssign para el picker. Al confirmar,
+          POST lineas + nodoAssignmentsApi.transfer() para mover stock. */}
+      <AddTransferItemsModal
+        open={addItemsOpen}
+        lang={lang}
+        transfer={transferBase}
+        onClose={() => setAddItemsOpen(false)}
+        onSaved={() => { setAddItemsOpen(false); loadBackend(); }}
+      />
     </div>
   );
 }
