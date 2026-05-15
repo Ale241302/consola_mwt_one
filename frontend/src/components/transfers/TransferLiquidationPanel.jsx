@@ -22,6 +22,7 @@ import { motion } from "framer-motion";
 // destrucción que usa la sección de costos para "¿Eliminar este costo?".
 import GenericConfirmModal from "../common/ConfirmModal.jsx";
 import CostScopeModal from "./CostScopeModal.jsx";
+import TransferBuilderArtifactsBlock from "./TransferBuilderArtifactsBlock.jsx";
 import {
   IconCheck, IconX, IconPlus, IconAlert, IconRefresh, IconFileText,
   IconDollar, IconLock, IconClipboard, IconUpload, IconTrash,
@@ -616,6 +617,12 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             documental ahora vive en el bloque Artefactos (sección 2.5
             más abajo), con scope picker idéntico al wizard de recepción. */}
       </div>
+
+      {/* ── Sección 1.5 · Artefactos vinculados (Sprint Fase 16) ──
+          Builder artifacts ligados a esta transferencia. Botón
+          "+ Agregar artefacto" abre el flow scope → picker → fill
+          con expedientes/líneas derivados de transfer.lineas (in-memory). */}
+      <TransferBuilderArtifactsBlock transfer={transfer} lang={lang}/>
 
       {/* ── Sección 2 · Registro de Costos Multidivisa ── */}
       <div className="card card-pad-md" style={{ marginBottom: 14 }}>

@@ -683,6 +683,61 @@ export const nodoBuilderArtifactsApi = {
 };
 
 // ---------------------------------------------------------------------
+// Sprint 2026-05-14 · Fase 16 — Builder artifacts asociados a una
+// transferencia inter-nodos. Espejo del nodoBuilderArtifactsApi pero
+// scope = transferencia (no nodo). Backend reutiliza la tabla existente
+// nodos.builder_artifact_instance ampliada con transferencia_id.
+//
+// Rutas:
+//   GET    /api/transferencias/{trf_id}/builder-artifacts/
+//   POST   /api/transferencias/{trf_id}/builder-artifacts/
+//   GET    /api/transferencias/{trf_id}/builder-artifacts/{art_id}/
+//   PATCH  /api/transferencias/{trf_id}/builder-artifacts/{art_id}/
+//   DELETE /api/transferencias/{trf_id}/builder-artifacts/{art_id}/
+//   GET    /api/transferencias/{trf_id}/builder-artifacts/available-lines/
+//   GET    /api/transferencias/{trf_id}/builder-artifacts/expedientes/
+// ---------------------------------------------------------------------
+export const transferBuilderArtifactsApi = {
+  list: (trfId, params) =>
+    apiFetch(
+      `/transferencias/${trfId}/builder-artifacts/${params ? `?${new URLSearchParams(params)}` : ""}`,
+      { token: getToken() },
+    ),
+  get: (trfId, artId) =>
+    apiFetch(`/transferencias/${trfId}/builder-artifacts/${artId}/`,
+             { token: getToken() }),
+  create: (trfId, payload) =>
+    apiFetch(`/transferencias/${trfId}/builder-artifacts/`,
+             { method: "POST", body: payload, token: getToken() }),
+  update: (trfId, artId, payload) =>
+    apiFetch(`/transferencias/${trfId}/builder-artifacts/${artId}/`,
+             { method: "PATCH", body: payload, token: getToken() }),
+  remove: (trfId, artId) =>
+    apiFetch(`/transferencias/${trfId}/builder-artifacts/${artId}/`,
+             { method: "DELETE", token: getToken() }),
+  availableLines: (trfId, { templateId, expedienteIds = [], excludeInstanceId } = {}) => {
+    const qs = new URLSearchParams();
+    if (templateId)         qs.set("template_id", String(templateId));
+    if (expedienteIds.length) qs.set("expediente_ids", expedienteIds.join(","));
+    if (excludeInstanceId)  qs.set("exclude_instance_id", excludeInstanceId);
+    return apiFetch(
+      `/transferencias/${trfId}/builder-artifacts/available-lines/?${qs.toString()}`,
+      { token: getToken() },
+    );
+  },
+  expedientes: (trfId, { templateId, excludeInstanceId } = {}) => {
+    const qs = new URLSearchParams();
+    if (templateId)        qs.set("template_id", String(templateId));
+    if (excludeInstanceId) qs.set("exclude_instance_id", excludeInstanceId);
+    const tail = qs.toString();
+    return apiFetch(
+      `/transferencias/${trfId}/builder-artifacts/expedientes/${tail ? `?${tail}` : ""}`,
+      { token: getToken() },
+    );
+  },
+};
+
+// ---------------------------------------------------------------------
 // Finance v2.0 · "Registrar Pago" con validación IA del comprobante
 //   POST /api/finance/payments/                  (multipart · drawer)
 //   GET  /api/finance/payments/                  (lista + filtros)

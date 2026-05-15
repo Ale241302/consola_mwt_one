@@ -130,6 +130,11 @@ class NodoBuilderArtifactInstance(models.Model):
     data                = models.JSONField(default=dict)
     structure_snapshot  = models.JSONField(default=dict)
 
+    # Sprint 2026-05-14 · Fase 16 — vínculo opcional a una transferencia.
+    # Cuando el artefacto se crea desde /transferencias/{id}/, este campo
+    # contiene el UUID de la transfer. Persistido por SQL B3.
+    transferencia_id    = models.UUIDField(null=True, blank=True)       # ⛔ sin FK
+
     created_by_id       = models.UUIDField(null=True, blank=True)
     created_by_name     = models.CharField(max_length=128, null=True, blank=True)
     updated_by_id       = models.UUIDField(null=True, blank=True)
