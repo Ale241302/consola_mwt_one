@@ -123,6 +123,10 @@ function mapApiDetailToTransfer(r) {
       // → "—" en columna Expediente. Ahora se propagan al UI.
       expediente_id:     l.expediente_id || null,
       expediente_codigo: l.expediente_codigo || '',
+      // Sprint 2026-05-17 · proforma_codigo (codigo de la PROFORMA mas
+      // reciente del expediente, kind='PROFORMA'). Se usa en la columna
+      // Expediente con fallback al EXP code.
+      proforma_codigo:   l.proforma_codigo || '',
     })),
     eventos: Array.isArray(r?.eventos) ? r.eventos : [],
   };

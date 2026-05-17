@@ -276,6 +276,10 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         // Sprint 2026-05-14 · Fase 11.2 — propagar expediente_codigo
         // para mostrar la columna Expediente en la tabla del Landed Cost.
         expediente_codigo: l.expediente_codigo || "",
+        // Sprint 2026-05-17 · proforma_codigo para que la celda EXPEDIENTE
+        // muestre la proforma (con fallback a EXP code). Sin esto, el panel
+        // dejaba caer el campo y la tabla mostraba EXP-YYYY-NNNN.
+        proforma_codigo:   l.proforma_codigo || "",
         qty,
         unit_fob_usd:     uv,
         fob_total_usd:    lt,
