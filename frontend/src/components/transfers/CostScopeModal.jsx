@@ -432,6 +432,12 @@ export default function CostScopeModal({
                       toggleLine={toggleLine}
                       onSelectAll={(on) => toggleAllExpLines(e.id, on)}
                       lang={lang}
+                      /* Sprint 2026-05-17 · precios duales + replicacion SKU */
+                      isMwtOpAny={isMwtOpAny}
+                      priceByLineaId={priceByLineaId}
+                      setPriceByLineaId={setPriceByLineaId}
+                      savingPrices={savingPrices}
+                      replicatePrice={replicatePrice}
                     />
                   ))}
                 </div>
@@ -498,7 +504,17 @@ function ModeRadio({ value, onChange, options }) {
 }
 
 // ── Subcomponente: tabla de líneas por expediente ─────────────
-function LinesBlock({ exp, selLineKeys, toggleLine, onSelectAll, lang }) {
+function LinesBlock({
+  exp, selLineKeys, toggleLine, onSelectAll, lang,
+  // Sprint 2026-05-17 · precios duales (MWT + Cliente) con replicacion
+  // por SKU dentro del expediente. Los datos y handlers viven en el
+  // componente padre (CostScopeModal); aqui solo los consumimos.
+  isMwtOpAny = false,
+  priceByLineaId = {},
+  setPriceByLineaId = () => {},
+  savingPrices = false,
+  replicatePrice = () => {},
+}) {
   const all = exp.lines.every((it) => selLineKeys[lineKey(it)]);
   const some = exp.lines.some((it) => selLineKeys[lineKey(it)]);
 
