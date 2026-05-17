@@ -53,15 +53,28 @@ function mapExpedienteForPipeline(r) {
     // client_id / brand_id se hidratan en load() con nombre + país.
     client: '', client_country: '', client_id: r.client_id || null,
     brand:  '', brand_id:  r.brand_id  || null,
+    // Sprint 2026-05-17 · Operador: operating_company_id (puede ser MWT
+    // o el cliente directo). El nombre se hidrata en load().
+    operator: '',
+    operating_company_id: r.operating_company_id || null,
     status: r.estado || 'REGISTRO',
     credit_days:   Number(r.credit_days) || 0,
     is_blocked:    !!r.is_blocked,
     block_reason:  r.block_reason || null,
     factory_delay: !!r.factory_delay,
+    // Modo de operación legacy — ya no se renderea como badge "C/B" en
+    // la card (Sprint 2026-05-17 CEO request), pero se conserva en el
+    // shape por si el detalle lo usa.
     op_mode:       r.modo_operacion === 'COMISION' ? 'B' : 'C',
+    // Sprint 2026-05-17 · arrays role-aware servidos por el backend.
+    //   ADMIN/CEO → proforma_codigos[] poblado, sap_codigos[] poblado.
+    //   CLIENT_*  → backend devuelve [] en proformas y saps.
+    //   oc_codigos[] llega a todos los roles.
+    proforma_codigos: Array.isArray(r.proforma_codigos) ? r.proforma_codigos : [],
+    oc_codigos:       Array.isArray(r.oc_codigos)       ? r.oc_codigos       : [],
     artifacts_done:  r.artifacts_done || 0,
     artifacts_total: r.artifacts_total || 6,
-    // SLA / fase: el card usa time_in_phase + baseline_days para el chip.
+    // SLA / fase (legacy — no se renderea en la card pero se conserva).
     time_in_phase: Number(r.time_in_phase) || 0,
     baseline_days: Number(r.baseline_days) || 10,
     phase_ratio:   Number(r.phase_ratio)   || 0,
@@ -115,10 +128,14 @@ export default function ScreenPipeline() {
         for (const p of arr) { if (p?.id) productMap[p.id] = p; }
       } catch { /* fallthrough — order_value queda en 0 */ }
 
-      // Clientes: 1 fetch por client_id único
-      const uniqueClientIds = Array.from(new Set(
-        mapped.map(e => e.client_id).filter(Boolean)
-      ));
+      // Clientes + operadores: fetch único por cada UUID (cliente final
+      // u operating company). Reusamos el mismo endpoint /api/clientes/
+      // — operating_company_id apunta a un cliente (puede ser MWT o el
+      // cliente directo).
+      const uniqueClientIds = Array.from(new Set([
+        ...mapped.map(e => e.client_id).filter(Boolean),
+        ...mapped.map(e => e.operating_company_id).filter(Boolean),
+      ]));
       let clientMap = {};
       if (uniqueClientIds.length > 0) {
         try {
@@ -165,6 +182,14 @@ export default function ScreenPipeline() {
           orderValue += qty * unit;
         }
 
+        // Operador: lookup en el mismo clientMap (operating_company_id
+        // es un cliente). Si coincide con client_id → expediente directo
+        // del cliente; si es distinto (MWT) → MWT lo opera.
+        const op = e.operating_company_id ? clientMap[e.operating_company_id] : null;
+        const operatorName = op
+          ? (op.razon_social || op.nombre_comercial || op.codigo || '')
+          : '';
+
         return {
           ...e,
           // Cliente
@@ -175,6 +200,8 @@ export default function ScreenPipeline() {
           credit_days:    Number(
             cli?.dias_credito ?? cli?.credit_days ?? cli?.credito_dias ?? e.credit_days ?? 0
           ),
+          // Operador (Sprint 2026-05-17)
+          operator: operatorName,
           // Marca
           brand: br ? (br.nombre || br.brand_code || br.slug || '') : e.brand,
           // Monto
@@ -386,34 +413,15 @@ export default function ScreenPipeline() {
   );
 }
 
-// ─── Rich pipeline card ────────────────────────
+// ─── Rich pipeline card (Sprint 2026-05-17 · CEO refactor) ─────────
 function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, onDragEnd, isClient, canDrag, showMoney }) {
-  // El BRANDS mock no siempre matchea el UUID real del backend; en ese
-  // caso usamos el nombre que load() ya hidrato en exp.brand. El "dot"
-  // de color sigue dependiendo de la entrada mock cuando exista.
-  const brand = BRANDS.find(b => b.id === exp.brand_id);
-  const brandName = brand?.name || exp.brand || '';
   // Monto efectivo: prefiere total_invoiced; cae a order_value cuando
   // todavía no hay facturación (mismo criterio que Expedientes.jsx).
   const effectiveAmount = exp.total_invoiced > 0
     ? exp.total_invoiced
     : (exp.order_value || 0);
-  const stateIdx = STATES.indexOf(currentState);
   // Track whether a real drag started, so mouseup-on-same-card still opens detail
   const dragStartedRef = useRef(false);
-
-  // Credit clock severity (oculto en CLIENT — info interna de operaciones)
-  const creditSeverity = isClient ? null : (
-    exp.credit_days > 75 ? 'critical' :
-    exp.credit_days > 60 ? 'warning'  : null
-  );
-
-  // SLA traffic light text
-  const slaLabel = exp.phase_signal === 'green'
-    ? (lang==='es'?'En plazo':'On SLA')
-    : exp.phase_signal === 'amber'
-    ? (lang==='es'?'Atención':'Watch')
-    : (lang==='es'?'Retrasado':'Delayed');
 
   // En CLIENT: sin draggable, sin handlers de drag, sin barra de drag-handle.
   const dragProps = canDrag ? {
@@ -422,9 +430,19 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, 
     onDragEnd:   (e) => { onDragEnd(e); setTimeout(() => { dragStartedRef.current = false; }, 50); },
   } : {};
 
+  // Sprint 2026-05-17 · Card rediseñada por CEO request:
+  //   · Out: badge "C" (op_mode), badge "90d" (credit clock), timeline de
+  //          artefactos, SLA chip "0d / 10d En plazo".
+  //   · In:  fila Operador, fila Proforma(s) (ADMIN) u OC(s) (CLIENT_*).
+  //   · Card más alta y ancha para que respire la información clave.
+  // POL_VISIBILIDAD (R3): los proforma_codigos[] vienen vacíos del backend
+  // para CLIENT_* — defense in depth, no se renderean igual.
+  const proformas = Array.isArray(exp.proforma_codigos) ? exp.proforma_codigos : [];
+  const ocs       = Array.isArray(exp.oc_codigos)       ? exp.oc_codigos       : [];
+
   return (
     <div
-      className="k-card-pro"
+      className="k-card-pro k-card-pipeline-v2"
       data-blocked={exp.is_blocked}
       data-dragging={dragging}
       data-readonly={!canDrag}
@@ -436,98 +454,105 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, 
         <div className="k-card-dragbar" title={lang==='es'?'Arrastra para mover':'Drag to move'}>⋮⋮</div>
       )}
 
-      {/* Row 1: Ref + operation mode + block/credit alerts */}
+      {/* Header: REF + lock (si bloqueado). Sin badge "C" ni "90d". */}
       <div className="k-card-row1">
         <span className="k-card-ref-mono" onClick={(e)=>{ e.stopPropagation(); onOpen(); }}>
           {exp.ref}
         </span>
-        <span className={`op-mode-badge op-${exp.op_mode}`} title={
-          exp.op_mode === 'B'
-            ? (lang==='es' ? 'Modo B · Comisión' : 'Mode B · Commission')
-            : (lang==='es' ? 'Modo C · FULL'     : 'Mode C · FULL')
-        }>
-          {exp.op_mode}
-        </span>
-        <div style={{marginLeft:'auto', display:'flex', gap:5, alignItems:'center'}}>
-          {exp.is_blocked && (
-            <span className="card-alert card-alert-critical" title={exp.block_reason || 'Bloqueado'}>
-              <IconLock size={10}/>
-            </span>
-          )}
-          {creditSeverity && (
-            <span className={`card-alert card-alert-${creditSeverity}`} title={
-              (lang==='es'?'Crédito ':'Credit ') + exp.credit_days + 'd'
-            }>
-              <IconClock size={10}/>{exp.credit_days}d
-            </span>
-          )}
-        </div>
+        {exp.is_blocked && (
+          <span className="card-alert card-alert-critical"
+                style={{ marginLeft: 'auto' }}
+                title={exp.block_reason || (lang==='es'?'Bloqueado':'Blocked')}>
+            <IconLock size={10}/>
+          </span>
+        )}
       </div>
 
-      {/* Row 2: Client + brand. Si load() aún no hidrata, mostramos un
-          placeholder en vez de una línea vacía (mejor UX que "—"). */}
-      <div className="k-card-row2">
-        <div className="k-card-client-pro" title={exp.client || ''}>
-          <CountryFlag country={exp.client_country}/>
+      {/* Cliente — fila destacada (la entidad más importante en la card). */}
+      <div className="k-card-field">
+        <div className="k-card-field-label">
+          {lang==='es' ? 'Cliente' : 'Client'}
+        </div>
+        <div className="k-card-field-value k-card-field-value--strong" title={exp.client || ''}>
+          {exp.client_country && <CountryFlag country={exp.client_country}/>}
           <span className="truncate">
             {exp.client || (
-              <span className="caption" style={{color:'var(--text-tertiary)'}}>
+              <span style={{color:'var(--text-tertiary)', fontWeight:400}}>
                 {lang==='es' ? 'Sin cliente' : 'No client'}
               </span>
             )}
           </span>
         </div>
-        <div className="k-card-brand-pro">
-          {brand?.color && (
-            <span className="brand-dot" style={{ background: brand.color }}/>
-          )}
-          <span className="truncate">{brandName}</span>
-          {exp.incoterm && exp.incoterm !== '—' && (
-            <>
-              <span className="caption" style={{color:'var(--text-tertiary)'}}>·</span>
-              <span className="mono caption">{exp.incoterm}</span>
-            </>
-          )}
-        </div>
       </div>
 
-      {/* Row 3: Mini artifact timeline */}
-      <div className="k-card-timeline" title={`${exp.artifacts_done}/${exp.artifacts_total} ${lang==='es'?'artefactos completos':'artifacts complete'}`}>
-        {Array.from({length: exp.artifacts_total}).map((_, i) => {
-          let s = 'future';
-          if (i < exp.artifacts_done) s = 'done';
-          else if (i === exp.artifacts_done) s = exp.is_blocked ? 'blocked' : 'active';
-          return (
-            <div key={i} className="timeline-segment">
-              <span className="timeline-dot" data-state={s}/>
-              {i < exp.artifacts_total - 1 && (
-                <span className="timeline-line" data-done={i < exp.artifacts_done - 1}/>
-              )}
+      {/* Operador — operating_company. Útil para distinguir
+          expedientes operados por MWT vs. operados directamente por
+          el cliente. */}
+      {exp.operator && (
+        <div className="k-card-field">
+          <div className="k-card-field-label">
+            {lang==='es' ? 'Operador' : 'Operator'}
+          </div>
+          <div className="k-card-field-value" title={exp.operator}>
+            <span className="truncate">{exp.operator}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Identificador comercial:
+            ADMIN/CEO → Proforma(s) si existen, fallback a OC(s)
+            CLIENT_*  → siempre OC(s) (su PO). */}
+      {isClient ? (
+        ocs.length > 0 && (
+          <div className="k-card-field">
+            <div className="k-card-field-label">
+              {lang==='es' ? 'OC' : 'PO'}
             </div>
-          );
-        })}
-      </div>
+            <div className="k-card-field-chips">
+              {ocs.map((c) => (
+                <span key={`oc-${c}`} className="ref-chip ref-chip--oc">
+                  <span className="ref-chip__value font-mono tabular-nums">{c}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      ) : (
+        (proformas.length > 0 || ocs.length > 0) && (
+          <div className="k-card-field">
+            <div className="k-card-field-label">
+              {proformas.length > 0
+                ? (lang==='es' ? 'Proforma' : 'Proforma')
+                : (lang==='es' ? 'OC' : 'PO')}
+            </div>
+            <div className="k-card-field-chips">
+              {proformas.length > 0
+                ? proformas.map((c) => (
+                    <span key={`pf-${c}`} className="ref-chip ref-chip--proforma">
+                      <span className="ref-chip__value font-mono tabular-nums">{c}</span>
+                    </span>
+                  ))
+                : ocs.map((c) => (
+                    <span key={`oc-${c}`} className="ref-chip ref-chip--oc">
+                      <span className="ref-chip__value font-mono tabular-nums">{c}</span>
+                    </span>
+                  ))}
+            </div>
+          </div>
+        )
+      )}
 
-      {/* Row 4: SLA + money (stacked). Money oculto en CLIENT. */}
-      <div className="k-card-row4">
-        <div className="sla-chip" data-signal={exp.phase_signal} title={
-          `${exp.time_in_phase}d / ${exp.baseline_days}d ${lang==='es'?'baseline':'baseline'} · ${slaLabel}`
-        }>
-          <span className="sla-dot" data-signal={exp.phase_signal}/>
-          <span className="sla-days">{exp.time_in_phase}<span className="sla-unit">d</span></span>
-          <span className="sla-sep">/</span>
-          <span className="sla-baseline">{exp.baseline_days}<span className="sla-unit">d</span></span>
-          <span className="sla-label">{slaLabel}</span>
-        </div>
-        {showMoney && (
+      {/* Footer: monto efectivo (sólo si showMoney — ADMIN). */}
+      {showMoney && effectiveAmount > 0 && (
+        <div className="k-card-foot">
           <span className="k-card-money-pro tabular-nums"
                 title={exp.total_invoiced > 0
                   ? (lang==='es'?'Facturado':'Invoiced')
                   : (lang==='es'?'Valor de la orden (sin facturar aún)':'Order value (not yet invoiced)')}>
             {fmtMoney(effectiveAmount)}
           </span>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

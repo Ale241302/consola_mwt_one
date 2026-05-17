@@ -758,9 +758,11 @@ a { color: inherit; text-decoration: none; }
 
 /* ── Pipeline kanban ──────────────────────────────────── */
 .kanban {
-  /* Responsivo: si no caben las 6 columnas, wrap a segunda fila. */
+  /* Responsivo: si no caben las 6 columnas, wrap a segunda fila.
+     Sprint 2026-05-17: bump min-width 220 → 260 para acomodar las
+     tarjetas más altas/anchas (CEO refactor del pipeline card). */
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 14px;
   padding-bottom: 6px;
 }
@@ -8263,5 +8265,78 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
 .ref-chip--link:hover {
   background: var(--surface-raised);
   border-color: var(--brand-primary);
+}
+
+/* =====================================================================
+   Sprint 2026-05-17 · Pipeline card v2 (CEO refactor)
+   Tarjeta más alta y respirable, sin badges crípticos (C/90d),
+   sin timeline ni SLA chip. Estructura por filas con label + value.
+   Hereda de .k-card-pro pero sobreescribe padding y gap.
+   ===================================================================== */
+.k-card-pipeline-v2 {
+  padding: 14px 14px 14px;
+  gap: 10px;
+  min-height: 140px;
+}
+.k-card-pipeline-v2 .k-card-row1 {
+  align-items: center;
+  gap: 8px;
+}
+.k-card-pipeline-v2 .k-card-ref-mono {
+  font: 700 13px/1 var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+/* Fila tipo label + value (Cliente / Operador / Proforma / OC) */
+.k-card-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.k-card-field-label {
+  font: 600 9.5px/1 var(--font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.k-card-field-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: var(--body-sm);
+  color: var(--text-primary);
+  min-width: 0;
+}
+.k-card-field-value .truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+/* Cliente recibe más jerarquía visual — es la entidad clave de la card. */
+.k-card-field-value--strong {
+  font: 700 14px/1.25 var(--font-body);
+  color: var(--text-primary);
+  letter-spacing: -0.005em;
+}
+/* Chips de proforma / OC dentro de una fila de field. */
+.k-card-field-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Footer con el monto: separador suave y alineado a la derecha. */
+.k-card-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding-top: 8px;
+  margin-top: 2px;
+  border-top: 1px dashed color-mix(in oklab, var(--border), transparent 30%);
+}
+.k-card-pipeline-v2 .k-card-money-pro {
+  font: 700 13.5px/1 var(--font-mono);
 }
 
