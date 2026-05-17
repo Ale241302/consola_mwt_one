@@ -158,6 +158,14 @@ export default function Step3TransferAssign({
           _sku:               r.sku,
           _nombre:            r.nombre,
           _disponible_origen: max,
+          // Sprint 2026-05-17 · campos para CostScopeModal precios duales.
+          // Vienen del endpoint /api/inventario/nodos/<id>/lineas-en-nodo/
+          // tras el sprint que agrego linea_id_expediente / unit_price_mwt /
+          // unit_price_client / operating_company_id al SELECT.
+          _operating_company_id: r.operating_company_id || null,
+          _linea_id_expediente:  r.linea_id_expediente || null,
+          _unit_price_mwt:       r.unit_price_mwt != null ? Number(r.unit_price_mwt) : null,
+          _unit_price_client:    r.unit_price_client != null ? Number(r.unit_price_client) : null,
         };
       })
       .filter((it) => it.qty > 0);

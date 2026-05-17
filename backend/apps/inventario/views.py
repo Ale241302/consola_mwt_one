@@ -1369,15 +1369,26 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
         if exp_ids:
             extra = " AND a.expediente_id = ANY(%(exp_ids)s::uuid[]) "
             params["exp_ids"] = exp_ids
+        # Sprint 2026-05-17 · Exponemos linea_id_expediente,
+        # unit_price_mwt/client y operating_company_id para que
+        # CostScopeModal pueda mostrar columnas "Precio MWT" / "Precio
+        # Cliente" editables y replicar via lineasApi.bulkUpdatePrices().
+        # NOTE: el JOIN a expedientes.linea ya existia (para sacar sku) —
+        # solo agregamos l.id, l.unit_price_mwt, l.unit_price_client al
+        # SELECT/GROUP BY y e.operating_company_id desde expediente.
         sql = f"""
             SELECT
                 a.expediente_id,
                 e.codigo                                       AS expediente_codigo,
                 pf.codigo                                      AS proforma_codigo,
+                e.operating_company_id                         AS operating_company_id,
                 a.producto_id,
+                l.id                                           AS linea_id_expediente,
                 l.sku,
                 COALESCE(p.nombre, p.descripcion, l.sku, '—')  AS nombre,
                 a.talla,
+                l.unit_price_mwt                               AS unit_price_mwt,
+                l.unit_price_client                            AS unit_price_client,
                 SUM(a.qty_asignada)::int                       AS qty_disponible
             FROM inventario.expediente_nodo_assignment a
             JOIN expedientes.linea l
@@ -1399,7 +1410,9 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
               AND a.is_active = TRUE
               {extra}
             GROUP BY a.expediente_id, e.codigo, pf.codigo,
-                     a.producto_id, l.sku, p.nombre, p.descripcion, a.talla
+                     e.operating_company_id,
+                     a.producto_id, l.id, l.sku, p.nombre, p.descripcion,
+                     a.talla, l.unit_price_mwt, l.unit_price_client
             HAVING SUM(a.qty_asignada) > 0
             ORDER BY e.codigo, l.sku, a.talla
         """
