@@ -551,6 +551,7 @@ export default function ScreenExpedienteDetail() {
                            activity={activity} isClient={isClient}
                            isHeroOrMock={isHeroOrMock}
                            cpaPriceMap={cpaPriceMap} productoNombreMap={productoNombreMap}
+                           onLineAdded={() => setLinesReload(n => n + 1)}
                            nodoByLineKey={nodoByLineKey}
                            navigate={navigate}/>
             </>
@@ -613,7 +614,10 @@ export default function ScreenExpedienteDetail() {
   );
 }
 
-function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, productoNombreMap, isClient = false, nodoByLineKey = {}, navigate }) {
+function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, productoNombreMap, isClient = false, onLineAdded, nodoByLineKey = {}, navigate }) {
+  // Sprint 2026-05-17 · isMwtOp para mostrar columna "Precio MWT" en
+  // la tabla de Productos del tab Resumen (mismo criterio que LinesTab).
+  const isMwtOp = !isClient && isMwtOperated(exp?.operating_company_id);
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
       {/* Sprint 2026-05-11 · Se elimina el <ArtifactsSummaryCard/> que
@@ -663,6 +667,19 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, pr
             <th style={{textAlign:'right'}}>{lang==='es' ? 'Cant.' : 'Qty'}</th>
             <th style={{textAlign:'right'}}>{lang==='es' ? 'P. unitario' : 'Unit price'}</th>
             <th style={{textAlign:'right'}}>{lang==='es' ? 'Subtotal' : 'Subtotal'}</th>
+            {/* Sprint 2026-05-17 · Columnas duales editables (MWT + Cliente).
+                Mismo criterio que tab Productos: si MWT opera → ambas;
+                si el cliente opera → solo Precio Cliente. */}
+            {isMwtOp && (
+              <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-primary) 6%, transparent)'}}>
+                {lang==='es' ? 'Precio MWT' : 'MWT price'}
+              </th>
+            )}
+            {!isClient && (
+              <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent, #00B286) 6%, transparent)'}}>
+                {lang==='es' ? 'Precio cliente' : 'Client price'}
+              </th>
+            )}
             <th style={{textAlign:'right'}}>{lang==='es' ? 'Margen' : 'Margin'}</th>
             {/* Sprint 2026-05-11 fase 6 · columna Nodo (read-only) */}
             <th style={{ width: 160 }}>{lang==='es' ? 'Nodo' : 'Node'}</th>
@@ -706,6 +723,26 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, pr
                   <td className="td-num tabular">{qty}</td>
                   <td className="td-money">{fmtMoneyDetail(unit)}</td>
                   <td className="td-money">{fmtMoney(sub)}</td>
+                  {/* Sprint 2026-05-17 · Precio MWT editable (admin + MWT op). */}
+                  {isMwtOp && (
+                    <td className="td-money" style={{background:'color-mix(in oklab, var(--brand-primary) 4%, transparent)'}}>
+                      <EditableMwtPriceInput
+                        lineId={l.id}
+                        value={l.unit_price_mwt ?? l.unit_price ?? 0}
+                        onSaved={onLineAdded}
+                      />
+                    </td>
+                  )}
+                  {/* Sprint 2026-05-17 · Precio Cliente editable (admin). */}
+                  {!isClient && (
+                    <td className="td-money" style={{background:'color-mix(in oklab, var(--brand-accent, #00B286) 4%, transparent)'}}>
+                      <EditableClientPriceInput
+                        lineId={l.id}
+                        value={l.unit_price_client ?? l.unit_price ?? 0}
+                        onSaved={onLineAdded}
+                      />
+                    </td>
+                  )}
                   <td className="td-num">
                     {margin > 0
                       ? <Badge kind="mint">{(margin*100).toFixed(1)}%</Badge>
@@ -899,10 +936,71 @@ function EditableClientPriceInput({ lineId, value, onSaved }) {
   );
 }
 
+// Sprint 2026-05-17 · Editor inline para unit_price_mwt — paralelo a
+// EditableClientPriceInput pero apunta al snapshot del precio MWT. Solo
+// se renderea cuando el expediente es operado por Muito Work Limitada.
+function EditableMwtPriceInput({ lineId, value, onSaved }) {
+  const [v, setV] = useState(String(value ?? 0));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(false);
+  useEffect(() => { setV(String(value ?? 0)); }, [value]);
+  const commit = async () => {
+    const newVal = Number(v);
+    if (!Number.isFinite(newVal) || newVal < 0) {
+      setV(String(value ?? 0));
+      return;
+    }
+    if (newVal === Number(value ?? 0)) return;
+    setSaving(true); setErr(false);
+    try {
+      await lineasApi.update(lineId, { unit_price_mwt: newVal });
+      if (typeof onSaved === 'function') onSaved();
+    } catch (e) {
+      setErr(true);
+      setV(String(value ?? 0));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <input
+      type="number"
+      min="0"
+      step="0.01"
+      className="tabular-nums"
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+        if (e.key === 'Escape') { setV(String(value ?? 0)); e.target.blur(); }
+      }}
+      disabled={saving}
+      style={{
+        width: 96,
+        textAlign: 'right',
+        padding: '4px 8px',
+        background: saving ? 'var(--bg-alt)' : 'var(--surface)',
+        border: `1px solid ${err ? 'var(--critical)' : 'var(--border-subtle)'}`,
+        borderRadius: 6,
+        color: 'var(--text-primary)',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 13,
+        outline: 'none',
+      }}
+      title="Precio MWT (snapshot)"
+    />
+  );
+}
+
 // helper de tooltip i18n-light (no podemos usar tr() aquí sin lang prop)
 function lang_qty_title() { return "Cantidad"; }
 
 function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient = false, onLineAdded, nodoByLineKey = {}, navigate }) {
+  // Sprint 2026-05-17 · ¿El expediente lo opera Muito Work? Si sí, la
+  // tabla muestra dos columnas editables (Precio MWT + Precio cliente).
+  // Si lo opera el cliente directamente, solo se muestra Precio cliente.
+  const isMwtOp = !isClient && isMwtOperated(exp?.operating_company_id);
   // Sprint 2026-05-01: total con fallback al catalogo de productos
   // Sprint 2026-05-06 · prefer snapshot dual segun isClient (Tweaks-aware).
   const _resolvePrice = (l) => {
@@ -993,8 +1091,16 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Cant.' : 'Qty'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Precio unit.' : 'Unit price'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Subtotal' : 'Subtotal'}</th>
+          {/* Sprint 2026-05-17 · Columna Precio MWT (snapshot operador).
+              Solo se renderea si el expediente lo opera Muito Work
+              Limitada. Si lo opera el cliente, la columna no aparece. */}
+          {isMwtOp && (
+            <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-primary) 6%, transparent)'}}>
+              {lang==='es' ? 'Precio MWT' : 'MWT price'}
+            </th>
+          )}
           {/* Sprint 2026-05-08 · Columna admin-only para editar precio
-              cliente (unit_price_client). Tras Subtotal. */}
+              cliente (unit_price_client). Tras Subtotal/Precio MWT. */}
           {!isClient && (
             <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent, #00B286) 6%, transparent)'}}>
               {lang==='es' ? 'Precio cliente' : 'Client price'}
@@ -1033,6 +1139,16 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
               )}
               <td className="td-money">{fmtMoneyDetail(_unit)}</td>
               <td className="td-money">{fmtMoney(_total)}</td>
+              {/* Sprint 2026-05-17 · Celda Precio MWT (editable admin). */}
+              {isMwtOp && (
+                <td className="td-money" style={{background:'color-mix(in oklab, var(--brand-primary) 4%, transparent)'}}>
+                  <EditableMwtPriceInput
+                    lineId={l.id}
+                    value={l.unit_price_mwt ?? l.unit_price ?? 0}
+                    onSaved={onLineAdded}
+                  />
+                </td>
+              )}
               {!isClient && (
                 <td className="td-money" style={{background:'color-mix(in oklab, var(--brand-accent, #00B286) 4%, transparent)'}}>
                   <EditableClientPriceInput

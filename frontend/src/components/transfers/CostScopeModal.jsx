@@ -36,6 +36,8 @@
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useState } from "react";
 import { IconCheck, IconX } from "../../lib/icons.jsx";
+import { lineasApi } from "../../lib/api.js";
+import { isMwtOperated } from "../../lib/operatingCompany.js";
 
 /**
  * @typedef {Object} TransferItem
@@ -47,6 +49,10 @@ import { IconCheck, IconX } from "../../lib/icons.jsx";
  * @property {string} _nombre
  * @property {string|null} talla
  * @property {number} qty
+ * @property {string|null} [_operating_company_id]
+ * @property {string|null} [_linea_id_expediente]
+ * @property {number|null} [_unit_price_mwt]
+ * @property {number|null} [_unit_price_client]
  */
 
 export default function CostScopeModal({
@@ -66,6 +72,79 @@ export default function CostScopeModal({
   const [selExpIds, setSelExpIds] = useState([]);
   // selLineKeys: estado por línea (true = incluida).
   const [selLineKeys, setSelLineKeys] = useState({});
+
+  // ── Sprint 2026-05-17 · State de precios editables. ──────
+  // Map por linea_id_expediente → {mwt, client}. Inicializa desde
+  // transferItems al abrir; persiste via lineasApi.bulkUpdatePrices
+  // con replicacion por SKU al onBlur.
+  const [priceByLineaId, setPriceByLineaId] = useState({});
+  const [savingPrices, setSavingPrices] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const seed = {};
+    for (const it of transferItems) {
+      if (it._linea_id_expediente) {
+        seed[it._linea_id_expediente] = {
+          mwt:    it._unit_price_mwt    != null ? Number(it._unit_price_mwt)    : 0,
+          client: it._unit_price_client != null ? Number(it._unit_price_client) : 0,
+        };
+      }
+    }
+    setPriceByLineaId(seed);
+  }, [open, transferItems]);
+
+  // ¿La transferencia tiene al menos un expediente operado por MWT?
+  // Determina si mostramos columna "Precio MWT" en el modal.
+  const isMwtOpAny = useMemo(
+    () => transferItems.some(it => isMwtOperated(it._operating_company_id)),
+    [transferItems],
+  );
+
+  /**
+   * Persiste un cambio de precio en TODAS las lineas del mismo SKU
+   * (mismo producto_id) dentro del mismo expediente_id. Estrategia:
+   *   1. Filtrar transferItems por (expediente_id, producto_id) del item.
+   *   2. Extraer linea_id_expediente de cada match.
+   *   3. POST /api/lineas/bulk-update-prices/ con {linea_id, mwt?/client?}.
+   *   4. Actualizar state local priceByLineaId tras 200 OK.
+   *
+   * @param {TransferItem} item — item editado
+   * @param {'mwt'|'client'} which — qué columna cambió
+   * @param {number} newPrice
+   */
+  const replicatePrice = async (item, which, newPrice) => {
+    if (!item?.expediente_id || !item?.producto_id) return;
+    // Encontrar todas las lineas del MISMO SKU dentro del MISMO expediente.
+    const siblings = transferItems.filter(
+      (s) => s.expediente_id === item.expediente_id
+          && s.producto_id   === item.producto_id
+          && s._linea_id_expediente
+    );
+    if (siblings.length === 0) return;
+    const field = which === "mwt" ? "unit_price_mwt" : "unit_price_client";
+    const updates = siblings.map((s) => ({
+      linea_id: s._linea_id_expediente,
+      [field]: newPrice,
+    }));
+    setSavingPrices(true);
+    try {
+      await lineasApi.bulkUpdatePrices(updates);
+      // Actualizar state local para feedback inmediato.
+      setPriceByLineaId((prev) => {
+        const next = { ...prev };
+        for (const s of siblings) {
+          const cur = next[s._linea_id_expediente] || { mwt: 0, client: 0 };
+          next[s._linea_id_expediente] = { ...cur, [which]: newPrice };
+        }
+        return next;
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[CostScopeModal] bulkUpdatePrices fallo:", err);
+    } finally {
+      setSavingPrices(false);
+    }
+  };
 
   // ── Expedientes únicos derivados de transferItems ────────
   const expedientes = useMemo(() => {
@@ -455,13 +534,28 @@ function LinesBlock({ exp, selLineKeys, toggleLine, onSelectAll, lang }) {
         <thead>
           <tr>
             <th style={{ width: 36 }}></th>
-            <th style={{ width: 140 }}>SKU</th>
+            <th style={{ width: 130 }}>SKU</th>
             <th>{lang === "es" ? "Nombre" : "Name"}</th>
-            <th style={{ width: 80, textAlign: "center" }}>
+            <th style={{ width: 70, textAlign: "center" }}>
               {lang === "es" ? "Talla" : "Size"}
             </th>
-            <th style={{ width: 80, textAlign: "right" }}>
+            <th style={{ width: 70, textAlign: "right" }}>
               {lang === "es" ? "Qty" : "Qty"}
+            </th>
+            {/* Sprint 2026-05-17 · Columnas de precio editables.
+                Si la transferencia tiene algun expediente operado por
+                MWT → mostramos Precio MWT + Precio Cliente.
+                Si todos los expedientes son operados por el cliente →
+                solo Precio Cliente. */}
+            {isMwtOpAny && (
+              <th style={{ width: 120, textAlign: "right",
+                           background: "color-mix(in oklab, var(--brand-primary) 6%, transparent)" }}>
+                {lang === "es" ? "Precio MWT" : "MWT price"}
+              </th>
+            )}
+            <th style={{ width: 120, textAlign: "right",
+                         background: "color-mix(in oklab, var(--brand-accent, #00B286) 6%, transparent)" }}>
+              {lang === "es" ? "Precio Cliente" : "Client price"}
             </th>
           </tr>
         </thead>
@@ -469,6 +563,9 @@ function LinesBlock({ exp, selLineKeys, toggleLine, onSelectAll, lang }) {
           {exp.lines.map((it) => {
             const k = lineKey(it);
             const on = !!selLineKeys[k];
+            const lid = it._linea_id_expediente;
+            const localPrices = (lid && priceByLineaId[lid]) || { mwt: 0, client: 0 };
+            const itemIsMwtOp = isMwtOperated(it._operating_company_id);
             return (
               <tr key={k} style={{
                 background: on
@@ -487,6 +584,61 @@ function LinesBlock({ exp, selLineKeys, toggleLine, onSelectAll, lang }) {
                   <span className="size-chip">{it.talla || "—"}</span>
                 </td>
                 <td className="td-num tabular-nums">{it.qty}</td>
+                {/* Sprint 2026-05-17 · celda Precio MWT.
+                    Si la transferencia tiene al menos un MWT-op expediente
+                    mostramos la columna; pero si ESTA linea pertenece a un
+                    expediente operado por cliente, mostramos '—' en gris. */}
+                {isMwtOpAny && (
+                  <td className="td-edit" style={{ textAlign: "right" }}>
+                    {itemIsMwtOp && lid ? (
+                      <input
+                        type="number" min={0} step="0.01"
+                        className="edit-input tabular-nums"
+                        value={localPrices.mwt ?? 0}
+                        disabled={savingPrices}
+                        onChange={(e) => {
+                          const v = +e.target.value;
+                          setPriceByLineaId((prev) => ({
+                            ...prev,
+                            [lid]: { ...(prev[lid] || { client: 0 }), mwt: v },
+                          }));
+                        }}
+                        onBlur={(e) => {
+                          const v = +e.target.value;
+                          replicatePrice(it, "mwt", v);
+                        }}
+                        style={{ width: 96, textAlign: "right" }}
+                      />
+                    ) : (
+                      <span style={{ color: "var(--text-tertiary)" }}>—</span>
+                    )}
+                  </td>
+                )}
+                {/* Celda Precio Cliente — siempre presente, editable. */}
+                <td className="td-edit" style={{ textAlign: "right" }}>
+                  {lid ? (
+                    <input
+                      type="number" min={0} step="0.01"
+                      className="edit-input tabular-nums"
+                      value={localPrices.client ?? 0}
+                      disabled={savingPrices}
+                      onChange={(e) => {
+                        const v = +e.target.value;
+                        setPriceByLineaId((prev) => ({
+                          ...prev,
+                          [lid]: { ...(prev[lid] || { mwt: 0 }), client: v },
+                        }));
+                      }}
+                      onBlur={(e) => {
+                        const v = +e.target.value;
+                        replicatePrice(it, "client", v);
+                      }}
+                      style={{ width: 96, textAlign: "right" }}
+                    />
+                  ) : (
+                    <span style={{ color: "var(--text-tertiary)" }}>—</span>
+                  )}
+                </td>
               </tr>
             );
           })}

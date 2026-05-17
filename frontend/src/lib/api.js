@@ -329,6 +329,14 @@ export const movimientosApi    = resource("movimientos");
 export const ocsApi            = resource("ocs");
 export const expedientesApi    = resource("expedientes");
 export const lineasApi         = resource("lineas");
+// Sprint 2026-05-17 · Bulk update de precios por SKU (CEO-only).
+//   Body: { updates: [{linea_id, unit_price_mwt?, unit_price_client?}, ...] }
+//   Response: { updated, errors, skipped, summary }
+// El backend recalcula total_price y mantiene unit_price (legacy) alineado
+// con el operador del expediente.
+lineasApi.bulkUpdatePrices = (updates) =>
+  apiFetch("/lineas/bulk-update-prices/",
+           { method: "POST", body: { updates }, token: getToken() });
 export const documentosApi     = resource("documentos");
 export const cobrosApi         = resource("cobros");
 

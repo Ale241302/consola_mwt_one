@@ -2947,6 +2947,133 @@ class LineaViewSet(viewsets.ViewSet):
         Linea.objects.filter(pk=pk).update(is_active=False)
         return Response(status=204)
 
+    # ── Sprint 2026-05-17 · Bulk update de precios por SKU ──────────
+    @action(detail=False, methods=["post"], url_path="bulk-update-prices")
+    def bulk_update_prices(self, request):
+        """Actualiza unit_price_mwt y/o unit_price_client en multiples
+        lineas de una sola pasada. Recalcula total_price y mantiene el
+        campo legacy `unit_price` alineado con el operador del expediente
+        (mismo criterio que `update()` individual).
+
+        Sirve dos casos de uso:
+          1. Replicacion por SKU: el FE busca todas las lineas del mismo
+             SKU dentro del scope (expediente / transferencia) y manda un
+             unico POST con N updates.
+          2. Edicion masiva desde el modal 'Alcance del costo': el usuario
+             cambia un precio y el FE lo propaga a todas las lineas
+             afectadas en una sola llamada.
+
+        Payload (JSON):
+          {
+            "updates": [
+              {"linea_id": "<uuid>",
+               "unit_price_mwt":    50.0,    // opcional
+               "unit_price_client": 65.0},   // opcional
+              ...
+            ]
+          }
+
+        Response:
+          {
+            "updated":  [<linea serializada>, ...],
+            "errors":   [{"linea_id": "...", "error": "..."}],
+            "skipped":  [{"linea_id": "...", "reason": "no_changes"}]
+          }
+
+        Role gating (R3): CEO-only via _deny_client_mutation. CLIENT_*
+        recibe 403 antes de procesar nada.
+        """
+        denied = _deny_client_mutation(request, action_label="linea.bulk_update_prices")
+        if denied is not None:
+            return denied
+
+        updates = request.data.get("updates") or []
+        if not isinstance(updates, list) or not updates:
+            return Response(
+                {"detail": "Payload invalido: falta 'updates' como array no vacio."},
+                status=400,
+            )
+
+        updated, errors, skipped = [], [], []
+
+        # Cache de operating_company_id por expediente_id (evita N queries
+        # cuando muchas lineas comparten expediente — caso comun en el
+        # flujo de replicacion por SKU dentro del mismo expediente).
+        op_cache: dict[str, str | None] = {}
+
+        def _get_op(exp_id):
+            key = str(exp_id) if exp_id else ""
+            if key in op_cache:
+                return op_cache[key]
+            try:
+                with connection.cursor() as c:
+                    c.execute(
+                        "SELECT operating_company_id FROM expedientes.expediente "
+                        "WHERE id = %s::uuid LIMIT 1",
+                        [key],
+                    )
+                    row = c.fetchone()
+                    op_cache[key] = (row[0] if row else None)
+            except (TypeError, ValueError):
+                op_cache[key] = None
+            return op_cache[key]
+
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            for upd in updates:
+                lid = upd.get("linea_id") or upd.get("id")
+                if not lid:
+                    errors.append({"linea_id": None, "error": "linea_id requerido"})
+                    continue
+                up_mwt = upd.get("unit_price_mwt", None)
+                up_cli = upd.get("unit_price_client", None)
+                if up_mwt is None and up_cli is None:
+                    skipped.append({"linea_id": lid, "reason": "no_changes"})
+                    continue
+                try:
+                    l = Linea.objects.get(pk=lid)
+                except Linea.DoesNotExist:
+                    errors.append({"linea_id": lid, "error": "linea no existe"})
+                    continue
+                try:
+                    if up_mwt is not None:
+                        l.unit_price_mwt = Decimal(str(up_mwt))
+                    if up_cli is not None:
+                        l.unit_price_client = Decimal(str(up_cli))
+                    # Recalcular legacy unit_price alineado con operador.
+                    op_id = _get_op(l.expediente_id)
+                    is_mwt_op = (
+                        op_id is not None and
+                        str(op_id).lower() == MWT_OPERATING_CLIENT_ID.lower()
+                    )
+                    qty_v   = Decimal(str(l.qty or 0))
+                    new_leg = (Decimal(str(l.unit_price_mwt or 0))
+                               if is_mwt_op
+                               else Decimal(str(l.unit_price_client or 0)))
+                    new_tot = (qty_v * new_leg).quantize(Decimal("0.01"))
+                    l.unit_price  = new_leg
+                    l.total_price = new_tot
+                    l.save(update_fields=[
+                        "unit_price_mwt", "unit_price_client",
+                        "unit_price", "total_price", "updated_at",
+                    ])
+                    updated.append(LineaSerializer(l).data)
+                except (TypeError, ValueError, ArithmeticError) as exc:
+                    errors.append({"linea_id": lid, "error": str(exc)})
+                    log.warning("[bulk_update_prices] linea=%s err=%s", lid, exc)
+
+        return Response({
+            "updated": updated,
+            "errors":  errors,
+            "skipped": skipped,
+            "summary": {
+                "requested": len(updates),
+                "updated":   len(updated),
+                "errors":    len(errors),
+                "skipped":   len(skipped),
+            },
+        })
+
 
 # ════════════════════════════════════════════════════════════
 # Documento

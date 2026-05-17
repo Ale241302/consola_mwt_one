@@ -176,6 +176,22 @@ class TransferenciaViewSet(viewsets.ViewSet):
                     LIMIT 1
                 ) pf ON TRUE
             """
+            # Sprint 2026-05-17 · LEFT JOIN LATERAL a expedientes.linea para
+            # exponer linea_id, unit_price_mwt, unit_price_client y el
+            # operating_company_id del expediente. El FE los necesita para:
+            #   · Mostrar columnas Precio MWT/Cliente en CostScopeModal.
+            #   · Replicar precio por SKU via lineasApi.bulkUpdatePrices().
+            _OP_JOIN = """
+                LEFT JOIN LATERAL (
+                    SELECT id, unit_price_mwt, unit_price_client
+                    FROM expedientes.linea
+                    WHERE expediente_id = a.expediente_id
+                      AND producto_id   = a.producto_id
+                      AND COALESCE(size, '') = COALESCE(a.talla, '')
+                      AND is_active = TRUE
+                    LIMIT 1
+                ) lx ON TRUE
+            """
             with _conn.cursor() as c:
                 # 1) Path principal: por transferencia_id (post-65c).
                 c.execute(
@@ -184,10 +200,15 @@ class TransferenciaViewSet(viewsets.ViewSet):
                            COALESCE(a.talla,'')      AS talla_norm,
                            a.expediente_id,
                            e.codigo                  AS expediente_codigo,
-                           pf.codigo                 AS proforma_codigo
+                           pf.codigo                 AS proforma_codigo,
+                           e.operating_company_id    AS operating_company_id,
+                           lx.id                     AS linea_id_expediente,
+                           lx.unit_price_mwt         AS unit_price_mwt,
+                           lx.unit_price_client      AS unit_price_client
                     FROM inventario.expediente_nodo_assignment a
                     LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
                     {_PF_JOIN}
+                    {_OP_JOIN}
                     WHERE a.transferencia_id = %(trf_id)s::uuid
                       AND a.is_active = TRUE
                       AND a.nodo_id   = %(dest_id)s::uuid
@@ -197,9 +218,13 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 for r in c.fetchall():
                     key = (str(r[0]), r[1] or "")
                     exp_map.setdefault(key, {
-                        "expediente_id":     str(r[2]) if r[2] else None,
-                        "expediente_codigo": r[3],
-                        "proforma_codigo":   r[4],
+                        "expediente_id":        str(r[2]) if r[2] else None,
+                        "expediente_codigo":    r[3],
+                        "proforma_codigo":      r[4],
+                        "operating_company_id": str(r[5]) if r[5] else None,
+                        "linea_id_expediente":  str(r[6]) if r[6] else None,
+                        "unit_price_mwt":       float(r[7]) if r[7] is not None else None,
+                        "unit_price_client":    float(r[8]) if r[8] is not None else None,
                     })
                 # 2) Fallback legacy: parse de `notas LIKE %transfer from
                 #    <uuid>%`. Sólo si el path 1 quedó vacío (o sea, las
@@ -211,10 +236,15 @@ class TransferenciaViewSet(viewsets.ViewSet):
                                COALESCE(a.talla,'')      AS talla_norm,
                                a.expediente_id,
                                e.codigo                  AS expediente_codigo,
-                               pf.codigo                 AS proforma_codigo
+                               pf.codigo                 AS proforma_codigo,
+                               e.operating_company_id    AS operating_company_id,
+                               lx.id                     AS linea_id_expediente,
+                               lx.unit_price_mwt         AS unit_price_mwt,
+                               lx.unit_price_client      AS unit_price_client
                         FROM inventario.expediente_nodo_assignment a
                         LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
                         {_PF_JOIN}
+                        {_OP_JOIN}
                         WHERE a.is_active = TRUE
                           AND a.nodo_id   = %(dest_id)s::uuid
                           AND a.notas ILIKE %(notas_pat)s
@@ -225,18 +255,26 @@ class TransferenciaViewSet(viewsets.ViewSet):
                     for r in c.fetchall():
                         key = (str(r[0]), r[1] or "")
                         exp_map.setdefault(key, {
-                            "expediente_id":     str(r[2]) if r[2] else None,
-                            "expediente_codigo": r[3],
-                            "proforma_codigo":   r[4],
+                            "expediente_id":        str(r[2]) if r[2] else None,
+                            "expediente_codigo":    r[3],
+                            "proforma_codigo":      r[4],
+                            "operating_company_id": str(r[5]) if r[5] else None,
+                            "linea_id_expediente":  str(r[6]) if r[6] else None,
+                            "unit_price_mwt":       float(r[7]) if r[7] is not None else None,
+                            "unit_price_client":    float(r[8]) if r[8] is not None else None,
                         })
             for ln in lineas_data:
                 key = (str(ln.get("producto_id") or ""),
                        (ln.get("size") or ""))
                 m = exp_map.get(key)
                 if m:
-                    ln["expediente_id"]     = m["expediente_id"]
-                    ln["expediente_codigo"] = m["expediente_codigo"]
-                    ln["proforma_codigo"]   = m["proforma_codigo"]
+                    ln["expediente_id"]        = m["expediente_id"]
+                    ln["expediente_codigo"]    = m["expediente_codigo"]
+                    ln["proforma_codigo"]      = m["proforma_codigo"]
+                    ln["operating_company_id"] = m["operating_company_id"]
+                    ln["linea_id_expediente"]  = m["linea_id_expediente"]
+                    ln["unit_price_mwt"]       = m["unit_price_mwt"]
+                    ln["unit_price_client"]    = m["unit_price_client"]
         except Exception:
             # Si falla el enriquecimiento, no rompemos el endpoint —
             # la tabla del FE simplemente muestra "—" en la columna.

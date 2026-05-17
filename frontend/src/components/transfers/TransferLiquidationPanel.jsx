@@ -245,6 +245,12 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         _nombre:            l.product_label || l.product || l.sku || "",
         talla:              l.size || "",
         qty:                Number(l.qty_transfer || 0),
+        // Sprint 2026-05-17 · campos para edicion de precios en
+        // CostScopeModal con replicacion por SKU + persistencia bulk.
+        _operating_company_id: l.operating_company_id || null,
+        _linea_id_expediente:  l.linea_id_expediente || null,
+        _unit_price_mwt:       l.unit_price_mwt != null ? Number(l.unit_price_mwt) : null,
+        _unit_price_client:    l.unit_price_client != null ? Number(l.unit_price_client) : null,
       }));
   }, [transfer]);
 

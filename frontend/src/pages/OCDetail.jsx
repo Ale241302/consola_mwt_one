@@ -345,6 +345,12 @@ export default function ScreenOCDetail() {
         product:        realName,
         producto_id:    l.producto_id || null,
         unit_price:     unit,
+        // Sprint 2026-05-17 · preservamos los precios duales raw para que
+        // la tabla pueda mostrar columnas separadas (Precio MWT vs Precio
+        // Cliente) cuando el operador es MWT. Sin esto, el snapshot dual
+        // se perdia en el render.
+        unit_price_mwt:    Number(l.unit_price_mwt    ?? 0),
+        unit_price_client: Number(l.unit_price_client ?? 0),
         total_price:    Number(l.total_price || (qty * unit)),
         sap:            l.sap || null,
         expediente_id:  l.expediente_id,
@@ -764,6 +770,13 @@ export default function ScreenOCDetail() {
   // Totals computed from edited lines
   const computedTotal = allLines.reduce((a, l) => a + (l.qty * l.unit_price), 0);
   const computedDeferred = allLines.reduce((a, l) => a + ((l.deferred_qty||0) * (l.deferred_unit_price||0)), 0);
+  // Sprint 2026-05-17 · ¿La OC tiene al menos un expediente operado por
+  // Muito Work Limitada? Si sí, mostramos columnas duales (Precio MWT +
+  // Precio Cliente). Si no (cliente opera directamente), mostramos solo
+  // Precio Cliente — el precio MWT no tiene sentido contractualmente.
+  const isMwtOp = (apiOcExpedientes || []).some(
+    (e) => isMwtOperated(e?.operating_company_id)
+  );
 
   // Group edited lines by SAP (null → orphan bucket)
   const sapGroups = useMemo(() => {
@@ -1834,7 +1847,20 @@ export default function ScreenOCDetail() {
                 <th>{lang==='es'?'Nombre':'Name'}</th>
                 <th style={{width:70, textAlign:'center'}}>{lang==='es'?'Talla':'Size'}</th>
                 <th style={{width:80, textAlign:'right'}}>{lang==='es'?'Cant.':'Qty'}</th>
-                <th style={{width:140, textAlign:'right'}}>{lang==='es'?'Precio':'Price'}</th>
+                {/* Sprint 2026-05-17 · Columnas de precio duales (MWT + Cliente)
+                    si la OC es operada por Muito Work. Si la opera el cliente
+                    directamente, solo se muestra "Precio Cliente". */}
+                {isMwtOp && (
+                  <th style={{width:130, textAlign:'right'}}>
+                    {lang==='es'?'Precio MWT':'MWT Price'}
+                  </th>
+                )}
+                <th style={{width:130, textAlign:'right',
+                            background: isMwtOp
+                              ? 'color-mix(in oklab, var(--brand-accent) 6%, transparent)'
+                              : undefined}}>
+                  {lang==='es'?'Precio Cliente':'Client Price'}
+                </th>
                 <th style={{width:120, textAlign:'right'}}>{lang==='es'?'Total':'Total'}</th>
                 <th style={{width:140}}>SAP</th>
                 {/* Sprint 2026-05-11 fase 6 · columna Nodo (read-only). */}
@@ -1874,20 +1900,76 @@ export default function ScreenOCDetail() {
                       {l.qty.toLocaleString()}
                     </td>
                   )}
-                  {/* Precio unitario editable → capability edit_oc_line_unit_price. */}
+                  {/* Sprint 2026-05-17 · Precios duales (MWT + Cliente).
+                      - Si la OC la opera MWT → 2 columnas editables.
+                      - Si la opera el cliente → solo Precio Cliente.
+                      onChange actualiza state local (feedback inmediato).
+                      onBlur persiste al backend via lineasApi.update — el
+                      backend recalcula total_price y mantiene `unit_price`
+                      legacy alineado con el operador. */}
+                  {isMwtOp && (
+                    can('edit_oc_line_unit_price') ? (
+                      <td className="td-edit" style={{textAlign:'right'}}>
+                        <div className="edit-input-money" style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          width: '100%', justifyContent: 'flex-end',
+                        }}>
+                          <span>$</span>
+                          <input className="edit-input tabular" type="number" min={0} step="0.01"
+                            value={l.unit_price_mwt ?? 0}
+                            onChange={e=>{
+                              const v = +e.target.value;
+                              updateLine(l.id, { unit_price_mwt: v, unit_price: v });
+                            }}
+                            onBlur={async (e) => {
+                              const v = +e.target.value;
+                              try {
+                                await lineasApi.update(l.id, { unit_price_mwt: v });
+                              } catch (err) {
+                                // eslint-disable-next-line no-console
+                                console.warn('[OCDetail] persistir unit_price_mwt fallo', err);
+                              }
+                            }}
+                            style={{
+                              width: '100%', minWidth: 80, maxWidth: 110,
+                              textAlign: 'right',
+                            }}/>
+                        </div>
+                      </td>
+                    ) : (
+                      <td className="td-num tabular-nums" style={{textAlign:'right', color:'var(--text-secondary)'}}>
+                        ${Number(l.unit_price_mwt || 0).toFixed(2)}
+                      </td>
+                    )
+                  )}
+                  {/* Columna Precio Cliente (siempre visible). */}
                   {can('edit_oc_line_unit_price') ? (
-                    <td className="td-edit" style={{textAlign:'right'}}>
+                    <td className="td-edit" style={{textAlign:'right',
+                          background: isMwtOp
+                            ? 'color-mix(in oklab, var(--brand-accent) 4%, transparent)'
+                            : undefined}}>
                       <div className="edit-input-money" style={{
-                        // Prevenir que el input se recorte: que ocupe todo
-                        // el ancho disponible de la celda y los dígitos no
-                        // queden cortados (síntoma reportado: "$ 14,9_").
                         display: 'inline-flex', alignItems: 'center', gap: 4,
                         width: '100%', justifyContent: 'flex-end',
                       }}>
                         <span>$</span>
                         <input className="edit-input tabular" type="number" min={0} step="0.01"
-                          value={l.unit_price}
-                          onChange={e=>updateLine(l.id, { unit_price: +e.target.value })}
+                          value={l.unit_price_client ?? 0}
+                          onChange={e=>{
+                            const v = +e.target.value;
+                            const patch = { unit_price_client: v };
+                            if (!isMwtOp) patch.unit_price = v;
+                            updateLine(l.id, patch);
+                          }}
+                          onBlur={async (e) => {
+                            const v = +e.target.value;
+                            try {
+                              await lineasApi.update(l.id, { unit_price_client: v });
+                            } catch (err) {
+                              // eslint-disable-next-line no-console
+                              console.warn('[OCDetail] persistir unit_price_client fallo', err);
+                            }
+                          }}
                           style={{
                             width: '100%', minWidth: 80, maxWidth: 110,
                             textAlign: 'right',
@@ -1895,8 +1977,11 @@ export default function ScreenOCDetail() {
                       </div>
                     </td>
                   ) : (
-                    <td className="td-num" style={{textAlign:'right', fontVariantNumeric:'tabular-nums', color:'var(--text-secondary)'}}>
-                      ${l.unit_price.toFixed(2)}
+                    <td className="td-num tabular-nums" style={{textAlign:'right', color:'var(--text-secondary)',
+                          background: isMwtOp
+                            ? 'color-mix(in oklab, var(--brand-accent) 4%, transparent)'
+                            : undefined}}>
+                      ${Number(l.unit_price_client || 0).toFixed(2)}
                     </td>
                   )}
                   <td className="td-money">{fmtMoney(l.qty * l.unit_price)}</td>
@@ -2002,7 +2087,7 @@ export default function ScreenOCDetail() {
                 </tr>
               ))}
               {allLines.length === 0 && (
-                <tr><td colSpan={isAdmin ? 10 : 7} style={{textAlign:'center', padding:'32px', color:'var(--text-tertiary)'}}>
+                <tr><td colSpan={(isAdmin ? 10 : 7) + (isMwtOp ? 1 : 0)} style={{textAlign:'center', padding:'32px', color:'var(--text-tertiary)'}}>
                   {lang==='es'
                     ? (isClient ? 'Sin productos en esta orden.' : 'Sin productos. Agrega el primero.')
                     : (isClient ? 'No products in this order.' : 'No products yet. Add your first.')}
@@ -2011,7 +2096,9 @@ export default function ScreenOCDetail() {
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={5} style={{textAlign:'right', fontWeight:600, padding:'14px 12px'}}>
+                {/* Sprint 2026-05-17 · colSpan condicional segun haya 1 o 2
+                    columnas de precio (depende de isMwtOp). */}
+                <td colSpan={isMwtOp ? 6 : 5} style={{textAlign:'right', fontWeight:600, padding:'14px 12px'}}>
                   {lang==='es'?'Total orden':'Order total'}
                 </td>
                 <td className="td-money" style={{fontSize:15, fontWeight:700}}>{fmtMoney(computedTotal)}</td>
