@@ -611,8 +611,9 @@ export default function ScreenTransferDetail() {
                 key={idx}
                 className={`trf-reco-row ${ln.has_delta ? 'has-delta' : ''}`}
               >
+                {/* Sprint 2026-05-17 · proforma con fallback al EXP code. */}
                 <div className="mono" style={{ fontSize:12, color:'var(--brand-primary)', fontWeight:700 }}>
-                  {ln.expediente_codigo || '—'}
+                  {ln.proforma_codigo || ln.expediente_codigo || '—'}
                 </div>
                 <div className="mono" style={{ fontSize:12 }}>{ln.sku}</div>
                 <div>{ln.product}</div>

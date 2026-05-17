@@ -679,42 +679,117 @@ class ExpedienteViewSet(viewsets.ViewSet):
     # ── KPIs ──────────────────────────────────────────
     @action(detail=False, methods=["get"])
     def kpis(self, request):
-        """KPIs globales del dashboard CEO."""
+        """KPIs del header de `/expedientes`.
+
+        Sprint 2026-05-17:
+          · Aísla por rol (R3): CLIENT_* ve solo expedientes de sus
+            legal_entity_ids.
+          · Agrega margen ponderado real vs proyectado y `payables` (lo que
+            falta por salir a fábricas/logística).
+          · Cada KPI puede ser NULL si no hay datos suficientes — el front
+            oculta la tarjeta cuando es NULL (no muestra 0 fake).
+        """
+        is_client = _is_client_viewer(request)
+
+        # Construcción del filtro WHERE
+        where = ["is_active = TRUE"]
+        params = []
+        if is_client:
+            scope = list(getattr(request.user, "legal_entity_ids", []) or [])
+            if not scope:
+                # CLIENT_* sin scope → todo NULL (no hay datos suyos)
+                return Response({
+                    "total": 0, "activos": 0, "bloqueados": 0,
+                    "total_invoiced": None, "total_paid": None,
+                    "receivables": None, "payables": None,
+                    "weighted_real_margin": None, "weighted_proj_margin": None,
+                    "margin_drift": None,
+                    "credit_60_75": 0, "credit_75_plus": 0,
+                    "factory_delayed": 0,
+                })
+            placeholders = ",".join(["%s"] * len(scope))
+            where.append(
+                f"(client_id IN ({placeholders}) "
+                f"OR operating_company_id IN ({placeholders}))"
+            )
+            params.extend(scope); params.extend(scope)
+
+        where_sql = " AND ".join(where)
+
         out = {
             "total": 0, "activos": 0, "bloqueados": 0,
-            "total_invoiced": 0.0, "total_paid": 0.0, "receivables": 0.0,
-            "credit_60_75": 0, "credit_75_plus": 0, "factory_delayed": 0,
+            "total_invoiced": None, "total_paid": None,
+            "receivables": None, "payables": None,
+            "weighted_real_margin": None, "weighted_proj_margin": None,
+            "margin_drift": None,
+            "credit_60_75": 0, "credit_75_plus": 0,
+            "factory_delayed": 0,
         }
         with connection.cursor() as c:
             try:
-                c.execute("""
+                c.execute(f"""
                     SELECT
                       COUNT(*),
-                      COUNT(*) FILTER (WHERE estado NOT IN ('CERRADO')),
+                      COUNT(*) FILTER (WHERE estado <> 'CERRADO'),
                       COUNT(*) FILTER (WHERE is_blocked = TRUE),
-                      COALESCE(SUM(total_invoiced),0),
-                      COALESCE(SUM(total_paid),0),
-                      COALESCE(SUM(balance),0),
+                      COALESCE(SUM(total_invoiced), 0),
+                      COALESCE(SUM(total_paid), 0),
+                      COALESCE(SUM(balance), 0),
+                      COALESCE(SUM(
+                        GREATEST(total_cost
+                                 - LEAST(total_cost,
+                                         COALESCE(pg_verified,0) + COALESCE(pg_released,0)),
+                                 0)
+                      ), 0),
                       COUNT(*) FILTER (WHERE credit_days > 60 AND credit_days <= 75),
                       COUNT(*) FILTER (WHERE credit_days > 75),
-                      COUNT(*) FILTER (WHERE factory_delay = TRUE)
+                      COUNT(*) FILTER (WHERE factory_delay = TRUE),
+                      COALESCE(
+                        SUM(real_margin * total_invoiced)
+                          / NULLIF(SUM(total_invoiced), 0),
+                        NULL
+                      ),
+                      COALESCE(
+                        SUM(projected_margin * total_invoiced)
+                          / NULLIF(SUM(total_invoiced), 0),
+                        NULL
+                      )
                     FROM expedientes.expediente
-                    WHERE is_active = TRUE
-                """)
+                    WHERE {where_sql}
+                """, params)
                 r = c.fetchone()
+                total      = int(r[0] or 0)
+                invoiced   = float(r[3]) if r[3] is not None else None
+                paid       = float(r[4]) if r[4] is not None else None
+                receiv     = float(r[5]) if r[5] is not None else None
+                payables   = float(r[6]) if r[6] is not None else None
+                wreal      = float(r[10]) if r[10] is not None else None
+                wproj      = float(r[11]) if r[11] is not None else None
+                drift      = (wreal - wproj) if (wreal is not None and wproj is not None) else None
+
                 out = {
-                    "total":            r[0],
-                    "activos":          r[1],
-                    "bloqueados":       r[2],
-                    "total_invoiced":   float(r[3]),
-                    "total_paid":       float(r[4]),
-                    "receivables":      float(r[5]),
-                    "credit_60_75":     r[6],
-                    "credit_75_plus":   r[7],
-                    "factory_delayed":  r[8],
+                    "total":               total,
+                    "activos":             int(r[1] or 0),
+                    "bloqueados":          int(r[2] or 0),
+                    # Si el total es 0 reportamos NULL para que el front oculte
+                    # las tarjetas (auto-hide cuando no hay datos).
+                    "total_invoiced":      invoiced if total > 0 else None,
+                    "total_paid":          paid     if total > 0 else None,
+                    "receivables":         receiv   if total > 0 else None,
+                    "payables":            payables if total > 0 else None,
+                    "weighted_real_margin": wreal,
+                    "weighted_proj_margin": wproj,
+                    "margin_drift":         drift,
+                    "credit_60_75":         int(r[7] or 0),
+                    "credit_75_plus":       int(r[8] or 0),
+                    "factory_delayed":      int(r[9] or 0),
                 }
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — log estructurado y degradar
+                import logging
+                logging.getLogger(__name__).warning(
+                    "kpis() failed for role=%s err=%s",
+                    "CLIENT" if is_client else "ADMIN", exc,
+                )
         return Response(out)
 
     # ── Líneas de un expediente ───────────────────────

@@ -8193,3 +8193,75 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   font-size: 12px;
 }
 
+/* =====================================================================
+   Sprint 2026-05-17 · Celda REF con chips role-aware
+   (frontend/src/components/expedientes/RefCell.jsx)
+   Tokens MWT exclusivamente (R1). Sin hex literales.
+   ===================================================================== */
+.tabular-nums { font-variant-numeric: tabular-nums; }
+.font-mono    { font-family: var(--font-mono); }
+
+.ref-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.ref-cell__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ref-cell__lock {
+  color: var(--critical);
+  font-size: 12px;
+  line-height: 1;
+}
+.ref-cell__code {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+.ref-cell__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  background: var(--bg-alt);
+  border: 1px solid var(--divider);
+  white-space: nowrap;
+  max-width: 100%;
+}
+.ref-chip__label {
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.ref-chip__value {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.ref-chip--proforma .ref-chip__label { color: var(--brand-accent-dark); }
+.ref-chip--oc       .ref-chip__label { color: var(--brand-primary); }
+.ref-chip--sap      .ref-chip__label { color: var(--text-secondary); }
+.ref-chip--link {
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.ref-chip--link:hover {
+  background: var(--surface-raised);
+  border-color: var(--brand-primary);
+}
+

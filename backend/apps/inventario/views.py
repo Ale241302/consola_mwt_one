@@ -1530,9 +1530,13 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             "residual_row_ids":     residuals,
         })
 
-    # ── 3) Inventario asignado de un nodo (con expediente_codigo) ──
+    # ── 3) Inventario asignado de un nodo (con expediente_codigo + proforma_codigo) ──
     @action(detail=False, methods=["get"], url_path=r"nodos/(?P<nodo_id>[^/.]+)/inventory-allocated")
     def inventory_allocated(self, request, nodo_id=None):
+        # Sprint 2026-05-17 · agrega `proforma_codigo` (PROFORMA mas reciente del
+        # expediente) para que el FE pueda mostrar el numero de proforma en la
+        # tabla "Inventario asignado por expediente" del detalle de nodo.
+        # El FE usa: proforma_codigo OR expediente_codigo OR '—'.
         with connection.cursor() as c:
             c.execute(
                 """
@@ -1543,6 +1547,7 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                     a.talla,
                     a.expediente_id,
                     e.codigo                                       AS expediente_codigo,
+                    pf.codigo                                      AS proforma_codigo,
                     SUM(a.qty_asignada)::int                       AS qty
                 FROM inventario.expediente_nodo_assignment a
                 JOIN expedientes.linea l
@@ -1551,10 +1556,21 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                  AND COALESCE(l.size,'') = COALESCE(a.talla,'')
                 LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
                 LEFT JOIN productos.producto     p ON p.id = a.producto_id
+                LEFT JOIN LATERAL (
+                    SELECT d.codigo
+                    FROM expedientes.documento d
+                    WHERE d.expediente_id = e.id
+                      AND d.kind          = 'PROFORMA'
+                      AND d.is_active     = TRUE
+                      AND d.codigo IS NOT NULL
+                      AND d.codigo <> ''
+                    ORDER BY d.created_at DESC
+                    LIMIT 1
+                ) pf ON TRUE
                 WHERE a.nodo_id = %(nodo_id)s::uuid
                   AND a.is_active = TRUE
                 GROUP BY l.producto_id, l.sku, p.nombre, p.descripcion,
-                         a.talla, a.expediente_id, e.codigo
+                         a.talla, a.expediente_id, e.codigo, pf.codigo
                 HAVING SUM(a.qty_asignada) > 0
                 ORDER BY e.codigo, l.sku, a.talla
                 """,

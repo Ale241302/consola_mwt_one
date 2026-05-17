@@ -846,9 +846,11 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId,
                       )}
                     </td>
                     <td>
+                      {/* Sprint 2026-05-17 · proforma con fallback al EXP code.
+                          Header de columna ("EXPEDIENTE") permanece intacto. */}
                       <span className="mono-sm" style={{ fontWeight: 600,
                                                          color: 'var(--brand-primary)' }}>
-                        {r.expediente_codigo || '—'}
+                        {r.proforma_codigo || r.expediente_codigo || '—'}
                       </span>
                     </td>
                     <td style={{ textAlign: 'center' }}>
@@ -1844,9 +1846,13 @@ function FilesTab({ files, lang, navigate, nodeId, refreshKey }) {
                   style={{ cursor: r.oc_id ? 'pointer' : 'default' }}
                   title={lang === 'es' ? 'Abrir OC' : 'Open PO'}
                 >
+                  {/* Sprint 2026-05-17 · columna EXPEDIENTE muestra proforma
+                      con fallback al EXP code. Esta tab YA tiene una columna
+                      separada "PROFORMA" — ambas pueden mostrar el mismo
+                      valor si el expediente solo tiene una proforma activa. */}
                   <td className="mono-sm" style={{ fontWeight: 700,
                                                     color: 'var(--brand-primary)' }}>
-                    {r.expediente_codigo || '—'}
+                    {r.proforma_codigo || r.expediente_codigo || '—'}
                   </td>
                   <td>{r.client_nombre || '—'}</td>
                   <td>{r.operating_company_nombre || '—'}</td>

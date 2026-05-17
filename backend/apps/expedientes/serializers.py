@@ -26,11 +26,46 @@ class OcSerializer(serializers.ModelSerializer):
 
 
 class ExpedienteListSerializer(serializers.ModelSerializer):
-    # Sprint 2026-05-10 · código de la proforma más reciente del expediente
-    # (el que el admin tipea en el modal "Numero / Codigo" al subir el PDF).
-    # Se muestra debajo del EXP-YYYY-NNNN en el listado /expedientes.
+    """
+    Serializer del listado de expedientes — `GET /api/expedientes/`.
+
+    Sprint 2026-05-17 (CEO request):
+      Soporta múltiples proformas/OCs/SAPs por expediente para la columna REF
+      de la pantalla `/expedientes`. POL_VISIBILIDAD (R3):
+        · ADMIN/CEO/staff → ve proformas[] + ocs[] + saps[]
+        · CLIENT_*        → ve solo ocs[] (sus propias OCs); proformas y saps
+                            devuelven listas vacías (no se filtra el endpoint
+                            entero por compat — el front aplica role gating).
+
+    Legacy: `proforma_codigo` (1 string) se conserva para compatibilidad con
+    consumidores antiguos. `sap` (legacy varchar) idem.
+    """
+    # Legacy — string único, compat hacia atrás (Sprint 2026-05-10).
     proforma_codigo = serializers.SerializerMethodField()
 
+    # Nuevos arrays role-aware (Sprint 2026-05-17).
+    proforma_codigos = serializers.SerializerMethodField()
+    oc_codigos       = serializers.SerializerMethodField()
+    sap_codigos      = serializers.SerializerMethodField()
+
+    # ── role helpers ───────────────────────────────────────────
+    def _viewer_role(self):
+        request = self.context.get("request") if hasattr(self, "context") else None
+        user    = getattr(request, "user", None) if request else None
+        if not user or not getattr(user, "is_authenticated", False):
+            return ""
+        role = (getattr(user, "role_default", "") or
+                getattr(user, "role", "") or "")
+        try:
+            return str(role).upper()
+        except (TypeError, ValueError):
+            return ""
+
+    def _is_client(self):
+        r = self._viewer_role()
+        return r.startswith("CLIENT_") or r in ("CLIENT", "CLIENTE", "CLIENT_B2B")
+
+    # ── legacy proforma_codigo (string único, el más reciente) ─
     def get_proforma_codigo(self, obj):
         try:
             doc = (
@@ -48,8 +83,83 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
                 .first()
             )
             return doc or None
-        except Exception:
+        except Exception:  # noqa: BLE001 — defensivo en serializer de listado
             return None
+
+    # ── proformas[] ────────────────────────────────────────────
+    def get_proforma_codigos(self, obj):
+        """Todas las proformas (kind=PROFORMA). CLIENT_* → []."""
+        if self._is_client():
+            return []
+        try:
+            codes = list(
+                Documento.objects
+                .filter(expediente_id=obj.id, kind="PROFORMA", is_active=True)
+                .exclude(codigo__isnull=True)
+                .exclude(codigo__exact="")
+                .order_by("-created_at")
+                .values_list("codigo", flat=True)
+            )
+            seen, out = set(), []
+            for c in codes:
+                if c and c not in seen:
+                    out.append(c); seen.add(c)
+            return out
+        except Exception:  # noqa: BLE001
+            return []
+
+    # ── ocs[] ──────────────────────────────────────────────────
+    def get_oc_codigos(self, obj):
+        """OCs del cliente. Visible a todos los roles."""
+        try:
+            # OC principal (FK directa al expediente) — codigo de la tabla oc
+            principal_codes = list(
+                Oc.objects.filter(id=obj.oc_id, is_active=True)
+                .exclude(codigo__isnull=True)
+                .exclude(codigo__exact="")
+                .values_list("codigo", flat=True)
+            ) if obj.oc_id else []
+
+            # OCs subidas como documentos (kind='OC Cliente')
+            doc_codes = list(
+                Documento.objects
+                .filter(expediente_id=obj.id, kind__iexact="OC Cliente",
+                        is_active=True)
+                .exclude(codigo__isnull=True)
+                .exclude(codigo__exact="")
+                .order_by("-created_at")
+                .values_list("codigo", flat=True)
+            )
+
+            seen, out = set(), []
+            for c in (principal_codes + doc_codes):
+                if c and c not in seen:
+                    out.append(c); seen.add(c)
+            return out
+        except Exception:  # noqa: BLE001
+            return []
+
+    # ── saps[] ─────────────────────────────────────────────────
+    def get_sap_codigos(self, obj):
+        """Todos los SAPs distintos de las líneas. CEO-ONLY (R3)."""
+        if self._is_client():
+            return []
+        try:
+            saps = list(
+                Linea.objects
+                .filter(expediente_id=obj.id, is_active=True)
+                .exclude(sap__isnull=True)
+                .exclude(sap__exact="")
+                .values_list("sap", flat=True)
+                .distinct()
+            )
+            # Fallback: si no hay sap por línea pero el expediente tiene
+            # el campo legacy `sap`, lo usamos como único elemento.
+            if not saps and obj.sap:
+                return [obj.sap]
+            return saps
+        except Exception:  # noqa: BLE001
+            return []
 
     class Meta:
         model  = Expediente
@@ -70,8 +180,10 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             "is_blocked", "block_reason", "block_cause", "factory_delay",
             "phase_ratio", "phase_signal",
             "is_active", "updated_at",
-            # Sprint 2026-05-10 · proforma_codigo (computed)
+            # Legacy compat (Sprint 2026-05-10)
             "proforma_codigo",
+            # Sprint 2026-05-17 · arrays role-aware
+            "proforma_codigos", "oc_codigos", "sap_codigos",
         )
 
 

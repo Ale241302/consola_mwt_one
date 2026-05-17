@@ -597,8 +597,12 @@ export default function ScreenTransfers() {
                                     <div key={i} className={`trf-exp-line ${hasDelta ? 'has-delta' : ''}`}>
                                       {/* Sprint 2026-05-14 · Fase 11.1 — densidad alta,
                                           producto + talla inline, expediente en mono compacto. */}
+                                      {/* Sprint 2026-05-17 · muestra proforma con
+                                          fallback al EXP code. CEO request: la
+                                          referencia comercial relevante es la
+                                          proforma; el EXP queda como backup. */}
                                       <div className="trf-exp-line-exp mono">
-                                        {ln.expediente_codigo || '—'}
+                                        {ln.proforma_codigo || ln.expediente_codigo || '—'}
                                       </div>
                                       <div className="trf-exp-line-sku mono">{sku}</div>
                                       <div className="trf-exp-line-name" title={productName}>

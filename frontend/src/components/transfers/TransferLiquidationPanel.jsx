@@ -927,8 +927,11 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     : Number(l.unit_fob_usd || 0).toFixed(4);
                   return (
                   <tr key={l.line_id}>
+                    {/* Sprint 2026-05-17 · muestra proforma_codigo con
+                        fallback al EXP code. Header de columna mantiene
+                        "Expediente" — el valor es la proforma cuando existe. */}
                     <td className="mono-sm" style={{ color: "var(--brand-primary)", fontWeight: 700 }}>
-                      {l.expediente_codigo || "—"}
+                      {l.proforma_codigo || l.expediente_codigo || "—"}
                     </td>
                     <td className="mono-sm">
                       <div>{l.sku}</div>

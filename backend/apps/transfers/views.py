@@ -160,16 +160,34 @@ class TransferenciaViewSet(viewsets.ViewSet):
         try:
             from django.db import connection as _conn
             exp_map = {}
+            # Sprint 2026-05-17 · LEFT JOIN LATERAL para extraer el codigo
+            # de la proforma mas reciente del expediente (kind='PROFORMA').
+            # El FE muestra `proforma_codigo` con fallback a `expediente_codigo`.
+            _PF_JOIN = """
+                LEFT JOIN LATERAL (
+                    SELECT d.codigo
+                    FROM expedientes.documento d
+                    WHERE d.expediente_id = e.id
+                      AND d.kind          = 'PROFORMA'
+                      AND d.is_active     = TRUE
+                      AND d.codigo IS NOT NULL
+                      AND d.codigo <> ''
+                    ORDER BY d.created_at DESC
+                    LIMIT 1
+                ) pf ON TRUE
+            """
             with _conn.cursor() as c:
                 # 1) Path principal: por transferencia_id (post-65c).
                 c.execute(
-                    """
+                    f"""
                     SELECT a.producto_id,
                            COALESCE(a.talla,'')      AS talla_norm,
                            a.expediente_id,
-                           e.codigo                  AS expediente_codigo
+                           e.codigo                  AS expediente_codigo,
+                           pf.codigo                 AS proforma_codigo
                     FROM inventario.expediente_nodo_assignment a
                     LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
+                    {_PF_JOIN}
                     WHERE a.transferencia_id = %(trf_id)s::uuid
                       AND a.is_active = TRUE
                       AND a.nodo_id   = %(dest_id)s::uuid
@@ -181,19 +199,22 @@ class TransferenciaViewSet(viewsets.ViewSet):
                     exp_map.setdefault(key, {
                         "expediente_id":     str(r[2]) if r[2] else None,
                         "expediente_codigo": r[3],
+                        "proforma_codigo":   r[4],
                     })
                 # 2) Fallback legacy: parse de `notas LIKE %transfer from
                 #    <uuid>%`. Sólo si el path 1 quedó vacío (o sea, las
                 #    rows de este destino no tienen transferencia_id).
                 if not exp_map:
                     c.execute(
-                        """
+                        f"""
                         SELECT a.producto_id,
                                COALESCE(a.talla,'')      AS talla_norm,
                                a.expediente_id,
-                               e.codigo                  AS expediente_codigo
+                               e.codigo                  AS expediente_codigo,
+                               pf.codigo                 AS proforma_codigo
                         FROM inventario.expediente_nodo_assignment a
                         LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
+                        {_PF_JOIN}
                         WHERE a.is_active = TRUE
                           AND a.nodo_id   = %(dest_id)s::uuid
                           AND a.notas ILIKE %(notas_pat)s
@@ -206,6 +227,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
                         exp_map.setdefault(key, {
                             "expediente_id":     str(r[2]) if r[2] else None,
                             "expediente_codigo": r[3],
+                            "proforma_codigo":   r[4],
                         })
             for ln in lineas_data:
                 key = (str(ln.get("producto_id") or ""),
@@ -214,6 +236,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 if m:
                     ln["expediente_id"]     = m["expediente_id"]
                     ln["expediente_codigo"] = m["expediente_codigo"]
+                    ln["proforma_codigo"]   = m["proforma_codigo"]
         except Exception:
             # Si falla el enriquecimiento, no rompemos el endpoint —
             # la tabla del FE simplemente muestra "—" en la columna.

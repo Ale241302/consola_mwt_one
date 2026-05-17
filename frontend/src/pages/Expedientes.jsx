@@ -39,6 +39,8 @@ import {
 } from "../data/mockData.js";
 import { expedientesApi, ocsApi, clientesApi, lineasApi, productosApi } from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
+// Sprint 2026-05-17 · Celda REF con chips role-aware (proforma / OC / SAP).
+import RefCell from "../components/expedientes/RefCell.jsx";
 
 // ── Mapeo backend → UI ──────── (Sprint 2026-05-03 v4)
 function mapExpedienteFromApi(r) {
@@ -56,6 +58,14 @@ function mapExpedienteFromApi(r) {
     // modal "Agregar documento" (kind=PROFORMA). Se muestra debajo del
     // EXP code en el listado.
     proforma: r.proforma_codigo || '',
+    // Sprint 2026-05-17 · arrays role-aware servidos por el backend.
+    //   ADMIN/CEO → proforma_codigos[] y sap_codigos[] llegan poblados.
+    //   CLIENT_*  → el serializer devuelve [] (los datos sensibles ni
+    //               siquiera viajan al cliente — defense in depth).
+    //   oc_codigos[] viaja a todos los roles (es la PO del cliente).
+    proforma_codigos: Array.isArray(r.proforma_codigos) ? r.proforma_codigos : [],
+    oc_codigos:       Array.isArray(r.oc_codigos)       ? r.oc_codigos       : [],
+    sap_codigos:      Array.isArray(r.sap_codigos)      ? r.sap_codigos      : [],
     client: '', client_country: '', client_id: r.client_id || null,
     brand:  '', brand_id:  r.brand_id  || null,
     status: r.estado || 'REGISTRO',
@@ -442,7 +452,7 @@ export default function ScreenExpedientes() {
         <div>
           {/* Micro-header "CEO Scope" SOLO para ADMIN. CLIENT no ve etiqueta interna. */}
           {isAdmin && (
-            <div className="micro" style={{marginBottom:6, color:'var(--brand-accent-dark, #0E8A6D)'}}>
+            <div className="micro" style={{marginBottom:6, color:'var(--brand-accent-dark)'}}>
               {tr(lang,'ceo_scope')}
             </div>
           )}
@@ -466,47 +476,74 @@ export default function ScreenExpedientes() {
           Ocultos cuando el viewport efectivo es CLIENT.
           ══════════════════════════════════════════════════════════════════ */}
       {isAdmin && <>
-      {/* ── Row 1: Rentabilidad en vivo ───── */}
+      {/* ── Row 1: KPIs — auto-hide cuando el campo es 0 (Sprint 2026-05-17).
+          R3: solo ADMIN renderea este bloque entero.
+          R1: cero hex hardcodeados — se usan tokens MWT.
+          Sin datos reales (todo 0) la grilla colapsa y no se muestran tarjetas
+          vacías que generen falsa sensación de información. */}
+      {(kpi.weighted_real_margin !== 0 ||
+        kpi.weighted_proj_margin !== 0 ||
+        kpi.receivables > 0 ||
+        kpi.payables > 0 ||
+        kpi.credit_60 > 0 ||
+        kpi.credit_75 > 0) && (
       <div className="grid col-4 gap-3 mb-4">
-        <div className="kpi-tile accent">
-          <div className="k-label">{tr(lang,'live_profitability')}</div>
-          <div className="k-value">{(kpi.weighted_real_margin*100).toFixed(1)}%</div>
-          <div className="k-sub">
-            <span className={`k-delta ${kpi.drift >= 0 ? 'up' : 'down'}`} style={{color: kpi.drift>=0 ? '#75CBB3':'#FF9B9B'}}>
-              {kpi.drift >= 0 ? '▲' : '▼'} {(Math.abs(kpi.drift)*100).toFixed(1)}pp
-            </span>
-            <span style={{opacity:0.7}}>{tr(lang,'vs_projected')} {(kpi.weighted_proj_margin*100).toFixed(1)}%</span>
+        {(kpi.weighted_real_margin !== 0 || kpi.weighted_proj_margin !== 0) && (
+          <div className="kpi-tile accent">
+            <div className="k-label">{tr(lang,'live_profitability')}</div>
+            <div className="k-value tabular-nums">{(kpi.weighted_real_margin*100).toFixed(1)}%</div>
+            <div className="k-sub">
+              <span className={`k-delta ${kpi.drift >= 0 ? 'up' : 'down'}`}
+                    style={{color: kpi.drift >= 0 ? 'var(--success)' : 'var(--critical)'}}>
+                {kpi.drift >= 0 ? '▲' : '▼'}{' '}
+                <span className="tabular-nums">{(Math.abs(kpi.drift)*100).toFixed(1)}pp</span>
+              </span>
+              <span style={{opacity:0.7}}>
+                {tr(lang,'vs_projected')}{' '}
+                <span className="tabular-nums">{(kpi.weighted_proj_margin*100).toFixed(1)}%</span>
+              </span>
+            </div>
           </div>
-        </div>
-        <div className="kpi-tile">
-          <div className="k-label">{tr(lang,'receivables_total')}</div>
-          <div className="k-value">{fmtMoney(kpi.receivables)}</div>
-          <div className="k-sub">
-            <IconCreditCard size={12}/>
-            {tr(lang,'credit_clock_sub')}
+        )}
+
+        {kpi.receivables > 0 && (
+          <div className="kpi-tile">
+            <div className="k-label">{tr(lang,'receivables_total')}</div>
+            <div className="k-value tabular-nums">{fmtMoney(kpi.receivables)}</div>
+            <div className="k-sub">
+              <IconCreditCard size={12}/>
+              {tr(lang,'credit_clock_sub')}
+            </div>
           </div>
-        </div>
-        <div className="kpi-tile">
-          <div className="k-label">{tr(lang,'payables_total')}</div>
-          <div className="k-value">{fmtMoney(kpi.payables)}</div>
-          <div className="k-sub">
-            <IconDollar size={12}/>
-            {lang==='es' ? 'Por salir a fábricas y logística' : 'To factories & logistics'}
+        )}
+
+        {kpi.payables > 0 && (
+          <div className="kpi-tile">
+            <div className="k-label">{tr(lang,'payables_total')}</div>
+            <div className="k-value tabular-nums">{fmtMoney(kpi.payables)}</div>
+            <div className="k-sub">
+              <IconDollar size={12}/>
+              {lang==='es' ? 'Por salir a fábricas y logística' : 'To factories & logistics'}
+            </div>
           </div>
-        </div>
-        <div className="kpi-tile">
-          <div className="k-label">{tr(lang,'credit_clock')}</div>
-          <div className="k-value" style={{display:'flex',alignItems:'baseline',gap:8}}>
-            <span style={{color:'var(--warning)'}}>{kpi.credit_60}</span>
-            <span className="caption" style={{color:'var(--text-tertiary)',fontSize:13}}>+</span>
-            <span style={{color:'var(--critical)'}}>{kpi.credit_75}</span>
+        )}
+
+        {(kpi.credit_60 > 0 || kpi.credit_75 > 0) && (
+          <div className="kpi-tile">
+            <div className="k-label">{tr(lang,'credit_clock')}</div>
+            <div className="k-value" style={{display:'flex',alignItems:'baseline',gap:8}}>
+              <span className="tabular-nums" style={{color:'var(--warning)'}}>{kpi.credit_60}</span>
+              <span className="caption" style={{color:'var(--text-tertiary)',fontSize:13}}>+</span>
+              <span className="tabular-nums" style={{color:'var(--critical)'}}>{kpi.credit_75}</span>
+            </div>
+            <div className="k-sub">
+              <span className="alert-chip amber">60d</span>
+              <span className="alert-chip red">75d</span>
+            </div>
           </div>
-          <div className="k-sub">
-            <span className="alert-chip amber">60d</span>
-            <span className="alert-chip red">75d</span>
-          </div>
-        </div>
+        )}
       </div>
+      )}
 
       {/* ── Row 2: Tiempos operativos & Calidad del proceso ───── */}
       <div className="grid gap-3 mb-4" style={{gridTemplateColumns:'1.5fr 1fr'}}>
@@ -834,32 +871,34 @@ export default function ScreenExpedientes() {
                       <IconChevDown size={14} style={{ color:'var(--text-tertiary)', transform: isOpen?'rotate(180deg)':'none', transition:'transform 160ms' }}/>
                     </td>
                     <td>
-                      <div className="flex ai-center gap-2">
-                        {e.is_blocked && <IconLock size={13} style={{ color:'var(--critical)'}}/>}
-                        <span className="td-ref">{e.ref}</span>
-                      </div>
-                      {/* Sprint 2026-05-10 · proforma_codigo debajo del EXP code.
-                          Solo aparece si el admin subió una proforma con código
-                          tipeado en el modal (kind=PROFORMA). Estilo mono-sm en
-                          violeta para distinguirlo de OC/SAP. */}
-                      {e.proforma && (
-                        <div className="caption mono-sm" style={{
-                          marginTop: 2,
-                          color: 'var(--brand-accent-2, #481EE3)',
-                          fontWeight: 600,
-                          letterSpacing: 0.2,
-                        }}>
-                          {e.proforma}
-                        </div>
-                      )}
-                      <div className="caption oc-code-cell" style={{ marginTop: 2 }}>
-                        <span
-                          className="oc-code-link"
-                          onClick={(ev)=>{ ev.stopPropagation(); const oc = OCS.find(o=>o.code===e.oc_client); if (oc && onOpenOC) onOpenOC(oc.id); }}
-                          title={tr(lang,'oc_detail')}
-                        >{e.oc_client}</span>
-                        {e.sap && <span style={{color:'var(--text-tertiary)'}}>· {e.sap}</span>}
-                      </div>
+                      {/* Sprint 2026-05-17 · Celda REF role-aware.
+                          ADMIN/CEO  → REF + chips de Proforma(s) + OC(s) + SAP(s)
+                          CLIENT_*   → REF + chips de OC(s) (sus propias POs)
+                          Los chips vienen del backend (R4 policy-driven). Si el
+                          serializer devuelve [], el chip no se renderiza. */}
+                      <RefCell
+                        lang={lang}
+                        isAdmin={isAdmin}
+                        expediente={{
+                          codigo:           e.ref,
+                          is_blocked:       e.is_blocked,
+                          // Fallback al string legacy si los arrays no llegaron.
+                          proforma_codigos: (e.proforma_codigos && e.proforma_codigos.length)
+                            ? e.proforma_codigos
+                            : (e.proforma ? [e.proforma] : []),
+                          oc_codigos:       (e.oc_codigos && e.oc_codigos.length)
+                            ? e.oc_codigos
+                            : (e.oc_client ? [e.oc_client] : []),
+                          sap_codigos:      (e.sap_codigos && e.sap_codigos.length)
+                            ? e.sap_codigos
+                            : (e.sap ? [e.sap] : []),
+                        }}
+                        onClickOc={(code) => {
+                          const oc = OCS.find(o => o.code === code)
+                                  || OCS.find(o => o.codigo === code);
+                          if (oc && onOpenOC) onOpenOC(oc.id);
+                        }}
+                      />
                     </td>
                     <td>
                       <div className="flex ai-center gap-2">
