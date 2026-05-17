@@ -777,6 +777,10 @@ export const financePaymentsApi = {
   register: async ({
     expediente_id, monto, moneda, fecha, metodo, tipo_pago,
     referencia, notas, aplicaciones, evidencia, event_id,
+    // Sprint Registrar Pago (Fase 1) — campos nuevos del wizard
+    direction, counterparty_type, counterparty_id,
+    source_mwt_account_id, destination_mwt_account_id,
+    tasa_cambio_a_usd,
   }) => {
     const fd = new FormData();
     fd.append("expediente_id", expediente_id);
@@ -788,9 +792,92 @@ export const financePaymentsApi = {
     fd.append("referencia",    referencia);
     if (notas) fd.append("notas", notas);
     if (event_id) fd.append("event_id", event_id);
+    if (direction) fd.append("direction", direction);
+    if (counterparty_type) fd.append("counterparty_type", counterparty_type);
+    if (counterparty_id)   fd.append("counterparty_id",   counterparty_id);
+    if (source_mwt_account_id)
+      fd.append("source_mwt_account_id", source_mwt_account_id);
+    if (destination_mwt_account_id)
+      fd.append("destination_mwt_account_id", destination_mwt_account_id);
+    if (tasa_cambio_a_usd != null)
+      fd.append("tasa_cambio_a_usd", String(tasa_cambio_a_usd));
     fd.append("aplicaciones", JSON.stringify(aplicaciones || []));
     fd.append("evidencia", evidencia);
     return postMultipart("/finance/payments/", fd, { token: getToken() });
+  },
+
+  // ── Sprint Registrar Pago (Fase 1) — endpoints nuevos ──────────────
+  // POST /api/finance/payments/dry-run — calcula efecto credito sin persistir.
+  //   payload: { expediente_id, monto, aplicaciones, counterparty_type, ... }
+  //   response: { validation_errors, credit_preview }
+  dryRun: (payload) =>
+    apiFetch("/finance/payments/dry-run/", {
+      method: "POST", body: payload, token: getToken(),
+    }),
+
+  // PATCH /api/finance/payments/{id}/reconcile — flip reconciled_with_bank.
+  reconcile: (id, { bank_reference, bank_statement_id } = {}) =>
+    apiFetch(`/finance/payments/${encodeURIComponent(id)}/reconcile/`, {
+      method: "PATCH",
+      body: { bank_reference, bank_statement_id },
+      token: getToken(),
+    }),
+
+  // PATCH /api/finance/payments/{id}/release-credit — CEO libera credito.
+  //   409 + EXPEDIENTE_TERMS_UNDEFINED si forma_pago NULL.
+  releaseCredit: (id, { confirm_token } = {}) =>
+    apiFetch(`/finance/payments/${encodeURIComponent(id)}/release-credit/`, {
+      method: "PATCH",
+      body: confirm_token ? { confirm_token } : {},
+      token: getToken(),
+    }),
+
+  // PATCH /api/finance/payments/{id}/reject — CEO rechaza.
+  //   payload: { rejection_reason, rejection_comment?, confirm_reversal? }
+  reject: (id, { rejection_reason, rejection_comment, confirm_reversal }) =>
+    apiFetch(`/finance/payments/${encodeURIComponent(id)}/reject/`, {
+      method: "PATCH",
+      body: {
+        rejection_reason,
+        ...(rejection_comment ? { rejection_comment } : {}),
+        ...(confirm_reversal ? { confirm_reversal: true } : {}),
+      },
+      token: getToken(),
+    }),
+
+  // Catalogos enum (Fase 1).
+  selectRejectionReasons: () =>
+    apiFetch("/finance/payments/select_rejection_reasons/", { token: getToken() }),
+  selectCounterpartyTypes: () =>
+    apiFetch("/finance/payments/select_counterparty_types/", { token: getToken() }),
+};
+
+// =====================================================================
+// Sprint Registrar Pago (Fase 1) — APIs nuevos
+// =====================================================================
+
+// CEO-ONLY · Cuentas bancarias propias MWT.
+// GET   /api/finance/mwt-accounts/?operating_company_id=<uuid>
+// POST  /api/finance/mwt-accounts/
+const _mwtAcct = resource("finance/mwt-accounts");
+export const mwtAccountsApi = {
+  list:   (params) => _mwtAcct.list(params),
+  create: (body)   => _mwtAcct.create(body),
+};
+
+// Obligaciones abiertas por contraparte — alimenta Paso 2 del wizard.
+// GET /api/finance/counterparties/{TYPE}/{UUID}/open-debts/?applicable_type=...
+export const counterpartiesApi = {
+  openDebts: ({ counterparty_type, counterparty_id, applicable_type } = {}) => {
+    const t = encodeURIComponent(String(counterparty_type || "").toUpperCase());
+    const i = encodeURIComponent(counterparty_id);
+    const qs = applicable_type
+      ? `?applicable_type=${encodeURIComponent(applicable_type)}`
+      : "";
+    return apiFetch(
+      `/finance/counterparties/${t}/${i}/open-debts/${qs}`,
+      { token: getToken() },
+    );
   },
 };
 

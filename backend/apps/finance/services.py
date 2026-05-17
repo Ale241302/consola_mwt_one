@@ -351,3 +351,338 @@ class ActivityLogger:
                 ],
             )
         return log_id
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Sprint Registrar Pago (Fase 1) — Servicios para wizard de 4 pasos
+# Ref: §6 Delta Document sobre apps/finance
+# ════════════════════════════════════════════════════════════════════════
+from django.conf import settings  # noqa: E402
+
+from .enums import (
+    PaymentCounterpartyType, PaymentDirection,
+    PaymentRejectionReason, PaymentErrorCode,
+    PAYMENT_STATES_RELEASABLE, PAYMENT_STATES_REJECTABLE,
+)
+
+
+# UUID hardcoded de MWT como operating company. El brief sugiere env var;
+# leemos `MWT_OPERATING_COMPANY_ID` con default a la constante existente
+# en apps.core.constants para backward-compat.
+def _mwt_operating_company_id() -> str:
+    env_val = getattr(settings, "MWT_OPERATING_COMPANY_ID", None)
+    if env_val:
+        return str(env_val).strip().lower()
+    try:
+        from apps.core.constants import MWT_OPERATING_CLIENT_ID
+        return str(MWT_OPERATING_CLIENT_ID).strip().lower()
+    except Exception:  # noqa: BLE001 — fail-safe: sin MWT id, todo es CLIENT-op
+        return ""
+
+
+def _is_operated_by_mwt(operating_company_id) -> bool:
+    if not operating_company_id:
+        return False
+    return str(operating_company_id).strip().lower() == _mwt_operating_company_id()
+
+
+# ── CounterpartyValidator ───────────────────────────────────────────────
+class CounterpartyMismatchError(Exception):
+    """Raised cuando las PaymentApplications apuntan a obligaciones de
+    contrapartes distintas a la del Payment. Code: COUNTERPARTY_MISMATCH."""
+    def __init__(self, message: str = "Aplicaciones inconsistentes con la contraparte del pago"):
+        super().__init__(message)
+        self.code = PaymentErrorCode.COUNTERPARTY_MISMATCH
+
+
+class CounterpartyValidator:
+    """Validador para asegurar que todas las PaymentApplications de un
+    Payment apunten a obligaciones de la MISMA contraparte declarada
+    en el header del pago.
+
+    Implementacion Fase 1: en este sprint, los applicables (PROFORMA,
+    FACTURA, COSTO, PRODUCTO) NO tienen un campo `counterparty_id`
+    canonico. La validacion delega al expediente del pago y al
+    counterparty_type declarado. Cuando el modelo de counterparties se
+    formalice, este validator hara las queries reales.
+    """
+    @classmethod
+    def assert_consistent(cls, payment_payload: Dict[str, Any],
+                          applications: List[Dict[str, Any]]) -> None:
+        ct = payment_payload.get("counterparty_type")
+        cid = payment_payload.get("counterparty_id")
+        if not applications:
+            return
+        if ct and ct not in PaymentCounterpartyType.values:
+            raise CounterpartyMismatchError(
+                f"counterparty_type='{ct}' no valido. Permitidos: "
+                f"{list(PaymentCounterpartyType.values)}"
+            )
+        # En Fase 1 aceptamos cualquier set de aplicaciones siempre que
+        # exista un counterparty_id valido. Validaciones cross-contraparte
+        # se agregan cuando el modulo counterparties este definido.
+        if ct and not cid:
+            raise CounterpartyMismatchError(
+                "counterparty_id requerido cuando counterparty_type esta presente"
+            )
+
+
+# ── CreditEffectService ─────────────────────────────────────────────────
+@dataclass(frozen=True)
+class CreditEffectPreview:
+    """Preview del impacto que tendra un Payment sobre el credito al ser
+    liberado por CEO. Devuelto por CreditEffectService.dry_run() y
+    consumido por el Paso 4 del wizard."""
+    will_affect_credit: bool
+    target_client_id: Optional[str]
+    target_client_name: Optional[str]
+    delta_usd: Decimal              # positivo = "liberara X de credito"
+    reason: str                     # explicacion human-readable
+    blocking_error: Optional[str]   # None | 'EXPEDIENTE_TERMS_UNDEFINED'
+
+
+class ExpedienteTermsUndefinedError(Exception):
+    code = PaymentErrorCode.EXPEDIENTE_TERMS_UNDEFINED
+
+
+class CreditEffectService:
+    """Aplica la matriz §2 del brief usando el credit clock existente.
+    NO duplica el calculo de saldo — solo decide A QUIEN y CUANTO afectar.
+
+    Matriz §2:
+        target=COST     -> nunca afecta credito.
+        target=PRODUCT + is_operated_by_mwt=True + forma_pago=CREDITO
+                        -> libera credito al cliente MWT.
+        target=PRODUCT + is_operated_by_mwt=True + forma_pago=CONTADO
+                        -> no afecta credito.
+        target=PRODUCT + is_operated_by_mwt=False + forma_pago=CREDITO
+                        -> libera credito al cliente final del expediente.
+        target=PRODUCT + is_operated_by_mwt=False + forma_pago=CONTADO
+                        -> no afecta credito.
+
+    Si forma_pago IS NULL al evaluar -> ExpedienteTermsUndefinedError (409).
+    """
+
+    @classmethod
+    def _load_expediente_info(cls, expediente_id) -> Dict[str, Any]:
+        """Lee operating_company_id + forma_pago del expediente.
+        Si no existe el expediente devuelve {} (las validaciones de
+        existencia ocurren upstream en el serializer)."""
+        if not expediente_id:
+            return {}
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT id, codigo, operating_company_id, forma_pago, client_id
+                  FROM expedientes.expediente
+                 WHERE id = %s::uuid
+                 LIMIT 1
+            """, [str(expediente_id)])
+            row = c.fetchone()
+        if not row:
+            return {}
+        return {
+            "id":                   str(row[0]),
+            "codigo":               row[1],
+            "operating_company_id": str(row[2]) if row[2] else None,
+            "forma_pago":           row[3],
+            "client_id":            str(row[4]) if row[4] else None,
+        }
+
+    @classmethod
+    def _resolve_target_client(cls, exp: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Resuelve a quien afecta el credito segun matriz §2.
+        Devuelve {id, name} o None si NO debe afectar."""
+        if not exp:
+            return None
+        target_id = (_mwt_operating_company_id()
+                     if _is_operated_by_mwt(exp.get("operating_company_id"))
+                     else exp.get("client_id"))
+        if not target_id:
+            return None
+        # Buscar nombre legible (best-effort).
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT id, razon_social, nombre
+                  FROM clientes.cliente
+                 WHERE id = %s::uuid
+                 LIMIT 1
+            """, [str(target_id)])
+            row = c.fetchone()
+        if not row:
+            return {"id": str(target_id), "name": None}
+        return {"id": str(row[0]), "name": row[1] or row[2]}
+
+    @classmethod
+    def _payment_target_type(cls, applications: List[Dict[str, Any]]) -> str:
+        """Devuelve 'PRODUCT' si todas las apps son PRODUCTO/PROFORMA/FACTURA,
+        'COST' si todas son COSTO, o 'MIXED' si hay mezcla.
+        En Fase 1 el wizard solo permite uniformidad; aqui solo decidimos
+        el efecto si todas son del mismo tipo."""
+        if not applications:
+            return "EMPTY"
+        types = {a.get("applicable_type") for a in applications}
+        if types == {"COSTO"}:
+            return "COST"
+        if "COSTO" not in types:
+            return "PRODUCT"
+        return "MIXED"
+
+    @classmethod
+    def dry_run(cls, payment_payload: Dict[str, Any],
+                applications: List[Dict[str, Any]]) -> CreditEffectPreview:
+        """Calcula el impacto sin persistir. Alimenta Paso 4 del wizard.
+
+        Reglas:
+          · Si target=COST -> no afecta credito (nunca).
+          · Si target=PRODUCT y forma_pago NULL -> blocking_error.
+          · Si target=PRODUCT y forma_pago=CONTADO -> no afecta.
+          · Si target=PRODUCT y forma_pago=CREDITO -> libera al target client.
+        """
+        try:
+            monto = Decimal(str(payment_payload.get("monto") or 0))
+        except (TypeError, ValueError):
+            monto = Decimal("0")
+
+        target_type = cls._payment_target_type(applications)
+        if target_type == "COST":
+            return CreditEffectPreview(
+                will_affect_credit=False,
+                target_client_id=None, target_client_name=None,
+                delta_usd=Decimal("0"),
+                reason="Pago de COSTO — nunca afecta credito de ningun cliente.",
+                blocking_error=None,
+            )
+        if target_type == "MIXED":
+            return CreditEffectPreview(
+                will_affect_credit=False,
+                target_client_id=None, target_client_name=None,
+                delta_usd=Decimal("0"),
+                reason=("Aplicaciones mezclan COSTO y PRODUCTO — el wizard "
+                        "requiere uniformidad por session."),
+                blocking_error="MIXED_APPLICATION_TYPES",
+            )
+        if target_type == "EMPTY":
+            return CreditEffectPreview(
+                will_affect_credit=False,
+                target_client_id=None, target_client_name=None,
+                delta_usd=Decimal("0"),
+                reason="Sin aplicaciones — agregue al menos una en el Paso 2.",
+                blocking_error=None,
+            )
+
+        # target_type == "PRODUCT"
+        exp = cls._load_expediente_info(payment_payload.get("expediente_id"))
+        if not exp:
+            return CreditEffectPreview(
+                will_affect_credit=False,
+                target_client_id=None, target_client_name=None,
+                delta_usd=Decimal("0"),
+                reason="Expediente no encontrado.",
+                blocking_error="EXPEDIENTE_NOT_FOUND",
+            )
+        forma_pago = exp.get("forma_pago")
+        if not forma_pago:
+            return CreditEffectPreview(
+                will_affect_credit=False,
+                target_client_id=None, target_client_name=None,
+                delta_usd=Decimal("0"),
+                reason=f"Expediente {exp.get('codigo')} sin forma_pago definida. "
+                       f"Definir antes de liberar.",
+                blocking_error=PaymentErrorCode.EXPEDIENTE_TERMS_UNDEFINED,
+            )
+        if forma_pago == "CONTADO":
+            return CreditEffectPreview(
+                will_affect_credit=False,
+                target_client_id=None, target_client_name=None,
+                delta_usd=Decimal("0"),
+                reason=f"Expediente {exp.get('codigo')} es CONTADO — no afecta credito.",
+                blocking_error=None,
+            )
+        # CREDITO -> libera al target client.
+        target = cls._resolve_target_client(exp)
+        if not target:
+            return CreditEffectPreview(
+                will_affect_credit=False,
+                target_client_id=None, target_client_name=None,
+                delta_usd=Decimal("0"),
+                reason="No se pudo resolver el cliente objetivo del credito.",
+                blocking_error="TARGET_CLIENT_UNRESOLVED",
+            )
+        op_label = ("Muito Work Limitada (operador MWT)"
+                    if _is_operated_by_mwt(exp.get("operating_company_id"))
+                    else f"cliente final del expediente {exp.get('codigo')}")
+        return CreditEffectPreview(
+            will_affect_credit=True,
+            target_client_id=target["id"],
+            target_client_name=target.get("name"),
+            delta_usd=monto,
+            reason=(f"Al liberar, decrementara ~${monto} de credito utilizado de "
+                    f"{target.get('name') or target['id']} ({op_label})."),
+            blocking_error=None,
+        )
+
+    @classmethod
+    def apply(cls, payment: Payment, actor_id=None) -> None:
+        """Invocado en transicion a CONFIRMADO_HUMANO (CREDIT_RELEASED).
+        Delega a CreditClockProjector.recompute() del cliente target.
+
+        Si forma_pago IS NULL -> ExpedienteTermsUndefinedError (409 upstream).
+        """
+        exp = cls._load_expediente_info(getattr(payment, "expediente_id", None))
+        if not exp:
+            log.warning("[CreditEffectService.apply] payment=%s sin expediente",
+                        getattr(payment, "id", None))
+            return
+        forma_pago = exp.get("forma_pago")
+        # Si target=COST, no hay nada que hacer.
+        # En Fase 1 el target_type esta en PaymentApplication, no en Payment.
+        # Cargamos las applications del pago para decidir.
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT DISTINCT applicable_type
+                  FROM finance.payment_application
+                 WHERE payment_id = %s::uuid
+            """, [str(payment.id)])
+            types = {r[0] for r in c.fetchall()}
+        if types == {"COSTO"}:
+            return  # COST — nunca afecta credito.
+        if not types or "COSTO" in types:
+            return  # MIXED o vacio — no aplicar (el dry_run debe haber bloqueado)
+        # PRODUCT path:
+        if not forma_pago:
+            raise ExpedienteTermsUndefinedError(
+                f"Expediente {exp.get('codigo')} sin forma_pago — no se puede liberar."
+            )
+        if forma_pago == "CONTADO":
+            return  # CONTADO no afecta credito.
+        # CREDITO -> recompute el credit clock del target.
+        target = cls._resolve_target_client(exp)
+        if not target:
+            log.warning("[CreditEffectService.apply] no target client for payment=%s",
+                        payment.id)
+            return
+        try:
+            from .tasks import enqueue_credit_clock_recompute
+            enqueue_credit_clock_recompute(target["id"], last_payment_id=str(payment.id))
+            log.info("[CreditEffectService.apply] credit recompute encolado "
+                     "payment=%s target_client=%s", payment.id, target["id"])
+        except Exception as exc:  # noqa: BLE001 — fail-soft, no romper el release
+            log.exception("[CreditEffectService.apply] error encolando recompute: %s", exc)
+
+    @classmethod
+    def revert(cls, payment: Payment, actor_id=None) -> None:
+        """Invocado en CONFIRMADO_HUMANO -> RECHAZADO. Mismo path que
+        apply(): recomputa el clock del target client (que ahora vera el
+        pago en estado RECHAZADO y lo excluira de la suma)."""
+        cls.apply(payment, actor_id=actor_id)
+
+
+__all__ = [
+    "PaymentService",  # ya existia
+    "ActivityLogger",  # ya existia
+    "CreditEffectService",
+    "CreditEffectPreview",
+    "CounterpartyValidator",
+    "CounterpartyMismatchError",
+    "ExpedienteTermsUndefinedError",
+]

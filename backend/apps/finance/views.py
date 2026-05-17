@@ -34,7 +34,17 @@ from .models import (
 from .serializers import (
     PaymentDetailSerializer, PaymentRegisterSerializer,
 )
-from .services import PaymentService
+from .services import (
+    PaymentService,
+    CreditEffectService, CounterpartyValidator, CounterpartyMismatchError,
+    ExpedienteTermsUndefinedError, ActivityLogger,
+)
+# Sprint Registrar Pago (Fase 1)
+from .enums import (
+    PaymentRejectionReason, PaymentCounterpartyType, PaymentDirection,
+    PaymentStatus, PaymentErrorCode,
+    PAYMENT_STATES_RELEASABLE, PAYMENT_STATES_REJECTABLE,
+)
 
 log = logging.getLogger(__name__)
 
@@ -419,3 +429,467 @@ def _safe_user_uuid(request) -> uuid.UUID | None:
         except (ValueError, AttributeError, TypeError):
             continue
     return None
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Helper · Guard CEO-only para release-credit / reject
+# ════════════════════════════════════════════════════════════════════════
+def _require_ceo(request) -> Response | None:
+    """Devuelve 403 Response si el actor no es CEO/ADMIN. None si pasa."""
+    role = ""
+    if request.auth:
+        role = str(request.auth.get("role") or "")
+    if not role:
+        user = getattr(request, "user", None)
+        role = str(getattr(user, "role_default", "") or
+                   getattr(user, "role", "") or "")
+    if str(role).upper() not in ("CEO", "ADMIN"):
+        return Response(
+            {"detail": "Esta accion requiere rol CEO o ADMIN.",
+             "code": PaymentErrorCode.FORBIDDEN_NOT_CEO},
+            status=403,
+        )
+    return None
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Sprint Registrar Pago (Fase 1) — Endpoints nuevos en PaymentViewSet
+# Se agregan via monkey-patch para mantener el archivo organizado por
+# sprint. NO redefinen list/retrieve/create existentes.
+# ════════════════════════════════════════════════════════════════════════
+
+@action(detail=False, methods=["post"], url_path="dry-run")
+def _payments_dry_run(self, request):
+    """POST /api/finance/payments/dry-run
+
+    Calcula el efecto sobre credito (matriz §2) sin persistir nada.
+    Alimenta el Paso 4 del wizard de Registrar Pago.
+
+    Payload minimo: { expediente_id, monto, aplicaciones: [{applicable_type, ...}] }
+    Response 200: { credit_preview: {...}, validation_errors: [...] }
+    """
+    payload = request.data if isinstance(request.data, dict) else dict(request.data)
+    applications = payload.get("aplicaciones") or payload.get("applications") or []
+    if isinstance(applications, str):
+        import json as _j
+        try:
+            applications = _j.loads(applications)
+        except Exception:  # noqa: BLE001
+            applications = []
+
+    # Validacion ligera de contraparte (best-effort; el create real revalida).
+    validation_errors = []
+    try:
+        CounterpartyValidator.assert_consistent(payload, applications)
+    except CounterpartyMismatchError as exc:
+        validation_errors.append({"code": exc.code, "detail": str(exc)})
+
+    preview = CreditEffectService.dry_run(payload, applications)
+    return Response({
+        "validation_errors": validation_errors,
+        "credit_preview": {
+            "will_affect_credit":  preview.will_affect_credit,
+            "target_client_id":    preview.target_client_id,
+            "target_client_name":  preview.target_client_name,
+            "delta_usd":           float(preview.delta_usd),
+            "reason":              preview.reason,
+            "blocking_error":      preview.blocking_error,
+        },
+    })
+
+PaymentViewSet.dry_run = _payments_dry_run
+
+
+@action(detail=True, methods=["patch"], url_path="reconcile")
+def _payments_reconcile(self, request, pk=None):
+    """PATCH /api/finance/payments/{id}/reconcile
+
+    Marca reconciled_with_bank=True. No cambia el estado del pago.
+    Payload opcional: { bank_reference, bank_statement_id }
+    """
+    try:
+        p = Payment.objects.get(pk=pk, is_active=True)
+    except Payment.DoesNotExist:
+        return Response({"detail": "Payment no existe"}, status=404)
+
+    bank_ref = (request.data.get("bank_reference") or "").strip()
+    from django.db import connection
+    with connection.cursor() as c:
+        c.execute("""
+            UPDATE finance.payment
+               SET reconciled_with_bank = TRUE,
+                   updated_at = NOW()
+                   {ref_clause}
+             WHERE id = %s::uuid
+        """.format(ref_clause=", referencia = COALESCE(NULLIF(%s,''), referencia)"
+                              if bank_ref else ""),
+            ([bank_ref, str(pk)] if bank_ref else [str(pk)])
+        )
+    p.refresh_from_db()
+
+    actor_id = _safe_user_uuid(request)
+    ActivityLogger.log(
+        action="payment.reconciled",
+        target_type="payment", target_id=p.id,
+        actor_id=actor_id,
+        actor_role=(request.auth.get("role") if request.auth else None),
+        payload_diff={"reconciled_with_bank": True},
+        metadata={"bank_reference": bank_ref or None},
+    )
+    return Response(PaymentDetailSerializer(p).data)
+
+PaymentViewSet.reconcile = _payments_reconcile
+
+
+@action(detail=True, methods=["patch"], url_path="release-credit")
+def _payments_release_credit(self, request, pk=None):
+    """PATCH /api/finance/payments/{id}/release-credit
+
+    CEO-only. Transiciona el pago a CONFIRMADO_HUMANO y dispara el
+    efecto sobre credito (matriz §2) via CreditEffectService.apply().
+
+    409 si el expediente vinculado tiene forma_pago NULL.
+    """
+    deny = _require_ceo(request)
+    if deny is not None:
+        return deny
+    try:
+        p = Payment.objects.get(pk=pk, is_active=True)
+    except Payment.DoesNotExist:
+        return Response({"detail": "Payment no existe"}, status=404)
+
+    if p.estado not in [s.value for s in PAYMENT_STATES_RELEASABLE]:
+        return Response(
+            {"detail": f"No se puede liberar credito desde estado {p.estado}",
+             "code": PaymentErrorCode.INVALID_STATE_TRANSITION},
+            status=409,
+        )
+
+    from django.db import connection
+    actor_id = _safe_user_uuid(request)
+    prev_state = p.estado
+
+    # Apply credit effect (puede lanzar ExpedienteTermsUndefinedError).
+    try:
+        CreditEffectService.apply(p, actor_id=actor_id)
+    except ExpedienteTermsUndefinedError as exc:
+        return Response(
+            {"detail": str(exc), "code": exc.code},
+            status=409,
+        )
+
+    # Transicion exitosa.
+    with connection.cursor() as c:
+        c.execute("""
+            UPDATE finance.payment
+               SET estado = %s,
+                   confirmed_at = NOW(),
+                   confirmed_by = %s::uuid,
+                   updated_at = NOW()
+             WHERE id = %s::uuid
+        """, [PaymentStatus.CONFIRMADO_HUMANO.value,
+              str(actor_id) if actor_id else None, str(pk)])
+    p.refresh_from_db()
+
+    ActivityLogger.log(
+        action="payment.credit_released",
+        target_type="payment", target_id=p.id,
+        actor_id=actor_id,
+        actor_role=(request.auth.get("role") if request.auth else None),
+        payload_diff={"estado": {"from": prev_state, "to": p.estado}},
+        metadata={"phase": "release"},
+    )
+    return Response(PaymentDetailSerializer(p).data)
+
+PaymentViewSet.release_credit = _payments_release_credit
+
+
+@action(detail=True, methods=["patch"], url_path="reject")
+def _payments_reject(self, request, pk=None):
+    """PATCH /api/finance/payments/{id}/reject
+
+    CEO-only. Transiciona el pago a RECHAZADO.
+    Payload: { rejection_reason, rejection_comment?, confirm_reversal? }
+
+    Si rejection_reason='OTRO', rejection_comment es obligatorio.
+    Si el estado actual es CONFIRMADO_HUMANO, requiere confirm_reversal=true
+    y dispara revert() del credito.
+    """
+    deny = _require_ceo(request)
+    if deny is not None:
+        return deny
+    try:
+        p = Payment.objects.get(pk=pk, is_active=True)
+    except Payment.DoesNotExist:
+        return Response({"detail": "Payment no existe"}, status=404)
+
+    if p.estado not in [s.value for s in PAYMENT_STATES_REJECTABLE]:
+        return Response(
+            {"detail": f"No se puede rechazar desde estado {p.estado}",
+             "code": PaymentErrorCode.INVALID_STATE_TRANSITION},
+            status=409,
+        )
+
+    reason = (request.data.get("rejection_reason") or "").strip().upper()
+    comment = (request.data.get("rejection_comment") or "").strip()
+    confirm_reversal = bool(request.data.get("confirm_reversal"))
+
+    if reason not in PaymentRejectionReason.values:
+        return Response(
+            {"detail": f"rejection_reason invalido. Permitidos: "
+                       f"{list(PaymentRejectionReason.values)}"},
+            status=400,
+        )
+    if reason == PaymentRejectionReason.OTRO.value and not comment:
+        return Response(
+            {"detail": "rejection_comment es obligatorio cuando reason='OTRO'.",
+             "code": PaymentErrorCode.REJECTION_COMMENT_REQUIRED},
+            status=400,
+        )
+
+    prev_state = p.estado
+    is_reversal = (prev_state == PaymentStatus.CONFIRMADO_HUMANO.value)
+    if is_reversal and not confirm_reversal:
+        return Response(
+            {"detail": "Reversion de credito liberado requiere confirm_reversal=true.",
+             "code": PaymentErrorCode.REVERSAL_CONFIRMATION_REQUIRED},
+            status=409,
+        )
+
+    actor_id = _safe_user_uuid(request)
+    from django.db import connection
+    with connection.cursor() as c:
+        c.execute("""
+            UPDATE finance.payment
+               SET estado = %s,
+                   rejection_reason = %s,
+                   rejection_comment = NULLIF(%s, ''),
+                   reverted_at = CASE WHEN %s THEN NOW() ELSE reverted_at END,
+                   reverted_by = CASE WHEN %s THEN %s::uuid ELSE reverted_by END,
+                   reverted_reason = CASE WHEN %s
+                                          THEN COALESCE(NULLIF(%s,''), %s)
+                                          ELSE reverted_reason END,
+                   updated_at = NOW()
+             WHERE id = %s::uuid
+        """, [PaymentStatus.RECHAZADO.value, reason, comment,
+              is_reversal,
+              is_reversal, str(actor_id) if actor_id else None,
+              is_reversal, comment, reason,
+              str(pk)])
+    p.refresh_from_db()
+
+    # Si era reversion, recomputar credit clock para que el monto vuelva.
+    if is_reversal:
+        try:
+            CreditEffectService.revert(p, actor_id=actor_id)
+        except Exception as exc:  # noqa: BLE001 — fail-soft
+            log.warning("[reject] revert() fallo payment=%s err=%s", p.id, exc)
+
+    ActivityLogger.log(
+        action="payment.rejected",
+        target_type="payment", target_id=p.id,
+        actor_id=actor_id,
+        actor_role=(request.auth.get("role") if request.auth else None),
+        payload_diff={"estado": {"from": prev_state, "to": p.estado},
+                      "rejection_reason": reason},
+        metadata={"rejection_comment": comment or None,
+                  "is_reversal": is_reversal},
+    )
+    return Response(PaymentDetailSerializer(p).data)
+
+PaymentViewSet.reject = _payments_reject
+
+
+@action(detail=False, methods=["get"], url_path="select_rejection_reasons")
+def _payments_select_rejection_reasons(self, request):
+    return Response([
+        {"codigo": r.value, "label": r.label}
+        for r in PaymentRejectionReason
+    ])
+PaymentViewSet.select_rejection_reasons = _payments_select_rejection_reasons
+
+
+@action(detail=False, methods=["get"], url_path="select_counterparty_types")
+def _payments_select_counterparty_types(self, request):
+    return Response([
+        {"codigo": t.value, "label": t.label}
+        for t in PaymentCounterpartyType
+    ])
+PaymentViewSet.select_counterparty_types = _payments_select_counterparty_types
+
+
+# ════════════════════════════════════════════════════════════════════════
+# MwtAccountViewSet — CEO-ONLY. Cuentas bancarias propias MWT.
+# ════════════════════════════════════════════════════════════════════════
+class MwtAccountViewSet(viewsets.ViewSet):
+    """CRUD basico de finance.mwt_account. CEO/ADMIN-only.
+    Multi-tenancy via operating_company_id (consistente con resto del repo).
+    """
+    parser_classes = (JSONParser,)
+    required_module = "finance"
+
+    def list(self, request):
+        deny = _require_ceo(request)
+        if deny is not None:
+            return deny
+        from django.db import connection
+        op_id = request.query_params.get("operating_company_id")
+        params = []
+        where = ["is_active = TRUE"]
+        if op_id:
+            where.append("operating_company_id = %s::uuid")
+            params.append(op_id)
+        where_sql = " AND ".join(where)
+        with connection.cursor() as c:
+            c.execute(f"""
+                SELECT id, operating_company_id, bank_name, account_number,
+                       account_alias, currency, country_iso2, swift_bic,
+                       is_active, notes, created_at, updated_at
+                  FROM finance.mwt_account
+                 WHERE {where_sql}
+                 ORDER BY bank_name, account_alias
+            """, params)
+            cols = [d[0] for d in c.description]
+            rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        # Normalizar UUIDs y timestamps.
+        for r in rows:
+            r["id"] = str(r["id"]) if r["id"] else None
+            r["operating_company_id"] = str(r["operating_company_id"]) if r["operating_company_id"] else None
+        return Response(rows)
+
+    def create(self, request):
+        deny = _require_ceo(request)
+        if deny is not None:
+            return deny
+        from django.db import connection
+        d = request.data if isinstance(request.data, dict) else dict(request.data)
+        required = ("operating_company_id", "bank_name", "account_number",
+                    "currency", "country_iso2")
+        missing = [f for f in required if not d.get(f)]
+        if missing:
+            return Response(
+                {"detail": f"Campos requeridos: {missing}"}, status=400)
+        new_id = uuid.uuid4()
+        actor_id = _safe_user_uuid(request)
+        with connection.cursor() as c:
+            try:
+                c.execute("""
+                    INSERT INTO finance.mwt_account (
+                        id, operating_company_id, bank_name, account_number,
+                        account_alias, currency, country_iso2, swift_bic,
+                        notes, created_by
+                    ) VALUES (
+                        %s::uuid, %s::uuid, %s, %s, %s, %s, %s, %s, %s,
+                        %s::uuid
+                    )
+                """, [
+                    str(new_id), str(d["operating_company_id"]),
+                    d["bank_name"], d["account_number"],
+                    d.get("account_alias"), d["currency"],
+                    d["country_iso2"], d.get("swift_bic"),
+                    d.get("notes"),
+                    str(actor_id) if actor_id else None,
+                ])
+            except Exception as exc:  # noqa: BLE001
+                return Response({"detail": f"Insert fallo: {exc}"}, status=400)
+        return Response({"id": str(new_id), "ok": True}, status=201)
+
+
+# ════════════════════════════════════════════════════════════════════════
+# CounterpartyOpenDebtsViewSet — wrapper read-only para el Paso 2 del wizard
+# GET /api/finance/counterparties/{type}/{id}/open-debts/?applicable_type=...
+# ════════════════════════════════════════════════════════════════════════
+class CounterpartyOpenDebtsViewSet(viewsets.ViewSet):
+    """Lista obligaciones abiertas de una contraparte.
+
+    Fase 1 — implementacion minima: filtra el endpoint existente
+    `payments/applicables/` para los expedientes asociados a la contraparte.
+
+    Si counterparty_type=CLIENTE: usa expedientes.client_id = counterparty_id.
+    Si counterparty_type=PROVEEDOR/etc: usa oc.proveedor_id (via expediente.oc_id).
+
+    Estructura de cada item devuelto:
+      { obligation_id, applicable_type, expediente_id, expediente_codigo,
+        proforma_codigo, sku, concepto, balance, currency,
+        is_operated_by_mwt, payment_terms }
+    """
+    parser_classes = (JSONParser,)
+    required_module = "finance"
+
+    def list(self, request):
+        # Listado generico no soportado (requiere {type}/{id} en URL custom).
+        return Response({"detail": "Use /counterparties/{type}/{id}/open-debts/"}, status=400)
+
+    @action(detail=False, methods=["get"],
+            url_path=r"(?P<counterparty_type>[A-Z_]+)/(?P<counterparty_id>[0-9a-f-]+)/open-debts")
+    def open_debts(self, request, counterparty_type=None, counterparty_id=None):
+        from django.db import connection
+        ct = (counterparty_type or "").strip().upper()
+        if ct not in PaymentCounterpartyType.values:
+            return Response({"detail": f"counterparty_type invalido: {ct}"}, status=400)
+        applicable_type = (request.query_params.get("applicable_type") or "").upper().strip()
+
+        # Resolver expediente_ids segun tipo de contraparte.
+        if ct == "CLIENTE":
+            exp_sql = """
+                SELECT id, codigo, operating_company_id, forma_pago
+                  FROM expedientes.expediente
+                 WHERE client_id = %s::uuid AND is_active = TRUE
+            """
+        else:
+            # Proveedor / Aduanero / Transportista / Agente / Distribuidor
+            # Pasamos via expedientes.oc.proveedor_id (best-effort, sin FK).
+            exp_sql = """
+                SELECT e.id, e.codigo, e.operating_company_id, e.forma_pago
+                  FROM expedientes.expediente e
+                  LEFT JOIN expedientes.oc oc ON oc.id = e.oc_id
+                 WHERE oc.proveedor_id = %s::uuid AND e.is_active = TRUE
+            """
+        try:
+            with connection.cursor() as c:
+                c.execute(exp_sql, [str(counterparty_id)])
+                exps = [{"id": str(r[0]), "codigo": r[1],
+                         "operating_company_id": str(r[2]) if r[2] else None,
+                         "forma_pago": r[3]} for r in c.fetchall()]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("open-debts query fallo type=%s id=%s err=%s",
+                        ct, counterparty_id, exc)
+            exps = []
+
+        if not exps:
+            return Response([])
+
+        # Para cada expediente, reusamos la accion `applicables` existente.
+        # Optimizacion: en Fase 1 hacemos un loop simple. Fase 2 puede
+        # bucketizar todo en una unica query.
+        out = []
+        from .services import _is_operated_by_mwt as is_mwt_op
+        for exp in exps:
+            try:
+                # Reusamos la accion del propio PaymentViewSet.
+                pv = PaymentViewSet()
+                pv.request = request
+                fake_req = type("R", (), {"query_params": {
+                    "expediente": exp["id"],
+                    "type": applicable_type or "FACTURA",
+                }})()
+                resp = pv.applicables(fake_req)
+                items = resp.data if hasattr(resp, "data") else []
+            except Exception as exc:  # noqa: BLE001
+                log.warning("applicables() reuse fallo exp=%s: %s", exp["id"], exc)
+                items = []
+            for it in items:
+                out.append({
+                    "obligation_id":      it.get("id"),
+                    "applicable_type":    applicable_type or it.get("meta", {}).get("kind"),
+                    "expediente_id":      exp["id"],
+                    "expediente_codigo":  exp["codigo"],
+                    "proforma_codigo":    (it.get("meta") or {}).get("proforma_codigo"),
+                    "sku":                (it.get("meta") or {}).get("sku"),
+                    "concepto":           it.get("label"),
+                    "balance":            it.get("balance") or 0,
+                    "currency":           (it.get("meta") or {}).get("currency") or "USD",
+                    "is_operated_by_mwt": is_mwt_op(exp["operating_company_id"]),
+                    "payment_terms":      exp["forma_pago"],
+                })
+        return Response(out)
