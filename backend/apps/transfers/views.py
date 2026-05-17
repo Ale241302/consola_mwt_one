@@ -157,12 +157,18 @@ class TransferenciaViewSet(viewsets.ViewSet):
         # transferencia_id NULL), cae a un parse del campo `notas`
         # ('transfer from {uuid}'). Si tampoco hay match, deja la fila
         # con expediente = "—" en el FE.
+        # Sprint 2026-05-17 · Enrichment en 2 pasos (más robusto que JOIN
+        # LATERAL):
+        #   PASO 1: assignment → expediente_id, codigo, operating_company_id,
+        #           proforma_codigo.
+        #   PASO 2: para cada (expediente_id, producto_id, size) de las
+        #           líneas de la transferencia → query directo a
+        #           expedientes.linea para sacar id + unit_price_mwt/client.
+        # Esto evita el problema de matching frágil entre
+        # `expediente_nodo_assignment.talla` y `expedientes.linea.size`.
         try:
             from django.db import connection as _conn
             exp_map = {}
-            # Sprint 2026-05-17 · LEFT JOIN LATERAL para extraer el codigo
-            # de la proforma mas reciente del expediente (kind='PROFORMA').
-            # El FE muestra `proforma_codigo` con fallback a `expediente_codigo`.
             _PF_JOIN = """
                 LEFT JOIN LATERAL (
                     SELECT d.codigo
@@ -176,22 +182,6 @@ class TransferenciaViewSet(viewsets.ViewSet):
                     LIMIT 1
                 ) pf ON TRUE
             """
-            # Sprint 2026-05-17 · LEFT JOIN LATERAL a expedientes.linea para
-            # exponer linea_id, unit_price_mwt, unit_price_client y el
-            # operating_company_id del expediente. El FE los necesita para:
-            #   · Mostrar columnas Precio MWT/Cliente en CostScopeModal.
-            #   · Replicar precio por SKU via lineasApi.bulkUpdatePrices().
-            _OP_JOIN = """
-                LEFT JOIN LATERAL (
-                    SELECT id, unit_price_mwt, unit_price_client
-                    FROM expedientes.linea
-                    WHERE expediente_id = a.expediente_id
-                      AND producto_id   = a.producto_id
-                      AND COALESCE(size, '') = COALESCE(a.talla, '')
-                      AND is_active = TRUE
-                    LIMIT 1
-                ) lx ON TRUE
-            """
             with _conn.cursor() as c:
                 # 1) Path principal: por transferencia_id (post-65c).
                 c.execute(
@@ -201,14 +191,10 @@ class TransferenciaViewSet(viewsets.ViewSet):
                            a.expediente_id,
                            e.codigo                  AS expediente_codigo,
                            pf.codigo                 AS proforma_codigo,
-                           e.operating_company_id    AS operating_company_id,
-                           lx.id                     AS linea_id_expediente,
-                           lx.unit_price_mwt         AS unit_price_mwt,
-                           lx.unit_price_client      AS unit_price_client
+                           e.operating_company_id    AS operating_company_id
                     FROM inventario.expediente_nodo_assignment a
                     LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
                     {_PF_JOIN}
-                    {_OP_JOIN}
                     WHERE a.transferencia_id = %(trf_id)s::uuid
                       AND a.is_active = TRUE
                       AND a.nodo_id   = %(dest_id)s::uuid
@@ -222,9 +208,6 @@ class TransferenciaViewSet(viewsets.ViewSet):
                         "expediente_codigo":    r[3],
                         "proforma_codigo":      r[4],
                         "operating_company_id": str(r[5]) if r[5] else None,
-                        "linea_id_expediente":  str(r[6]) if r[6] else None,
-                        "unit_price_mwt":       float(r[7]) if r[7] is not None else None,
-                        "unit_price_client":    float(r[8]) if r[8] is not None else None,
                     })
                 # 2) Fallback legacy: parse de `notas LIKE %transfer from
                 #    <uuid>%`. Sólo si el path 1 quedó vacío (o sea, las
@@ -237,14 +220,10 @@ class TransferenciaViewSet(viewsets.ViewSet):
                                a.expediente_id,
                                e.codigo                  AS expediente_codigo,
                                pf.codigo                 AS proforma_codigo,
-                               e.operating_company_id    AS operating_company_id,
-                               lx.id                     AS linea_id_expediente,
-                               lx.unit_price_mwt         AS unit_price_mwt,
-                               lx.unit_price_client      AS unit_price_client
+                               e.operating_company_id    AS operating_company_id
                         FROM inventario.expediente_nodo_assignment a
                         LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
                         {_PF_JOIN}
-                        {_OP_JOIN}
                         WHERE a.is_active = TRUE
                           AND a.nodo_id   = %(dest_id)s::uuid
                           AND a.notas ILIKE %(notas_pat)s
@@ -259,10 +238,10 @@ class TransferenciaViewSet(viewsets.ViewSet):
                             "expediente_codigo":    r[3],
                             "proforma_codigo":      r[4],
                             "operating_company_id": str(r[5]) if r[5] else None,
-                            "linea_id_expediente":  str(r[6]) if r[6] else None,
-                            "unit_price_mwt":       float(r[7]) if r[7] is not None else None,
-                            "unit_price_client":    float(r[8]) if r[8] is not None else None,
                         })
+
+            # Primer pass: inyectar expediente_id / codigo / proforma /
+            # operating_company_id en cada línea.
             for ln in lineas_data:
                 key = (str(ln.get("producto_id") or ""),
                        (ln.get("size") or ""))
@@ -272,9 +251,80 @@ class TransferenciaViewSet(viewsets.ViewSet):
                     ln["expediente_codigo"]    = m["expediente_codigo"]
                     ln["proforma_codigo"]      = m["proforma_codigo"]
                     ln["operating_company_id"] = m["operating_company_id"]
-                    ln["linea_id_expediente"]  = m["linea_id_expediente"]
-                    ln["unit_price_mwt"]       = m["unit_price_mwt"]
-                    ln["unit_price_client"]    = m["unit_price_client"]
+
+            # Segundo pass: query directo a expedientes.linea por
+            # (expediente_id, producto_id, size) de cada línea. Esto saca
+            # linea_id, unit_price_mwt y unit_price_client SIN depender del
+            # JOIN LATERAL frágil.
+            linea_keys = []
+            seen_lk    = set()
+            for ln in lineas_data:
+                eid = ln.get("expediente_id")
+                pid = ln.get("producto_id")
+                if not eid or not pid:
+                    continue
+                sz  = str(ln.get("size") or "")
+                lk  = (str(eid), str(pid), sz)
+                if lk not in seen_lk:
+                    seen_lk.add(lk)
+                    linea_keys.append(lk)
+
+            linea_info = {}  # (eid_str, pid_str, size_str) → dict
+            if linea_keys:
+                # Construir IN con tuplas para batch query.
+                placeholders = ",".join(
+                    ["(%s::uuid, %s::uuid, %s)"] * len(linea_keys)
+                )
+                params = [v for lk in linea_keys for v in lk]
+                with _conn.cursor() as c:
+                    c.execute(
+                        f"""
+                        SELECT expediente_id, producto_id,
+                               COALESCE(size, '') AS size_norm,
+                               id, unit_price_mwt, unit_price_client
+                          FROM expedientes.linea
+                         WHERE (expediente_id, producto_id, COALESCE(size,''))
+                            IN ({placeholders})
+                           AND is_active = TRUE
+                        """,
+                        params,
+                    )
+                    for r in c.fetchall():
+                        k = (str(r[0]), str(r[1]), r[2] or "")
+                        linea_info[k] = {
+                            "linea_id_expediente": str(r[3]) if r[3] else None,
+                            "unit_price_mwt":      float(r[4]) if r[4] is not None else None,
+                            "unit_price_client":   float(r[5]) if r[5] is not None else None,
+                        }
+
+            # Inyectar precios + linea_id en cada línea (None si no match).
+            for ln in lineas_data:
+                eid = ln.get("expediente_id")
+                pid = ln.get("producto_id")
+                sz  = str(ln.get("size") or "")
+                info = (linea_info.get((str(eid), str(pid), sz))
+                        if (eid and pid) else None)
+                ln["linea_id_expediente"] = info["linea_id_expediente"] if info else None
+                ln["unit_price_mwt"]      = info["unit_price_mwt"]      if info else None
+                ln["unit_price_client"]   = info["unit_price_client"]   if info else None
+
+            # Diagnostico estructurado (visible en docker compose logs django).
+            try:
+                n_total = len(lineas_data)
+                n_with_eid    = sum(1 for x in lineas_data if x.get("expediente_id"))
+                n_with_op     = sum(1 for x in lineas_data if x.get("operating_company_id"))
+                n_with_lid    = sum(1 for x in lineas_data if x.get("linea_id_expediente"))
+                n_with_prices = sum(1 for x in lineas_data
+                                    if x.get("unit_price_mwt") is not None
+                                    or x.get("unit_price_client") is not None)
+                log.info(
+                    "[trf.retrieve enrich] trf=%s lines=%s eid=%s op=%s "
+                    "lid=%s prices=%s",
+                    t.id, n_total, n_with_eid, n_with_op, n_with_lid, n_with_prices,
+                )
+            except Exception:  # noqa: BLE001 — logging is best-effort
+                pass
+
         except Exception:
             # Si falla el enriquecimiento, no rompemos el endpoint —
             # la tabla del FE simplemente muestra "—" en la columna.
