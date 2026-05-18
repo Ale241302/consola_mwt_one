@@ -770,8 +770,10 @@ function ExpedientesTab({ lang, expedientes, onOpen, consolidate, isParent, isCl
       <table className="table">
         <thead>
           <tr>
+            {/* Sprint 2026-05-17 · columna OC eliminada (CEO request).
+                Mostraba el EXP-YYYY-NNNN, redundante con la columna
+                EXPEDIENTE (que ahora ya es role-aware: proforma/OC). */}
             <th>{lang==='es'?'Expediente':'File'}</th>
-            <th>OC</th>
             <th>{lang==='es'?'Estado':'Status'}</th>
             <th>{lang==='es'?'Marca':'Brand'}</th>
             <th style={{textAlign:'right'}}>{lang==='es'?'Facturado':'Invoiced'}</th>
@@ -787,7 +789,6 @@ function ExpedientesTab({ lang, expedientes, onOpen, consolidate, isParent, isCl
                 {/* Sprint 2026-05-17 · header se mantiene "EXPEDIENTE" pero
                     el valor es proforma (admin) u OC cliente (client). */}
                 <td className="mono-sm">{_displayCode(e)}</td>
-                <td className="mono-sm">{e.oc_client}</td>
                 <td><span className="badge badge-outline">{e.status}</span></td>
                 <td>{e.brand}</td>
                 <td style={{textAlign:'right'}}>{fmtMoney(e.total_invoiced)}</td>
