@@ -33,7 +33,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { apiFetch, clientesApi, marcasApi } from "../lib/api.js";
 import { CLIENTS, BRANDS } from "../data/mockData.js";
 import {
-  BANDAS_MARLUVAS, PLAZOS_MARLUVAS, bandaForTC, fmtUSD0, fmtPct,
+  BANDAS_MARLUVAS, PLAZOS_MARLUVAS, bandaForTC, fmtUSD, fmtPct,
 } from "../constants/marluvas.js";
 import {
   calcSKU, parseExcelMarluvas, defaultSkuState,
@@ -842,7 +842,16 @@ export default function ScreenBrandClientPricingForm() {
                         </td>
                         <td style={{ ...tdSku, textAlign: "left", paddingLeft: 12, color: MUTED, fontSize: 10 }}>{s.sku}</td>
                         <td style={{ ...tdSku, textAlign: "left", fontFamily: "var(--font-body)", fontWeight: 600, color: NAVY, fontSize: 11, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.ref}>{s.ref}</td>
-                        <td style={tdSku}>{Number(s.brl).toFixed(2)}</td>
+                        <td style={tdSku}>
+                          <input type="number" min={0} step={0.01}
+                            value={Number(s.brl).toFixed(2)}
+                            onChange={(e) => patchSku(i, { brl: Math.max(0, Number(e.target.value) || 0) })}
+                            onFocus={(e) => e.target.select()}
+                            style={inpMono(82)}
+                            title={lang === "es"
+                              ? "Precio BRL del Excel — editable para overrides puntuales"
+                              : "BRL price from Excel — editable for ad-hoc overrides"}/>
+                        </td>
                         <td style={tdSku}>
                           <input type="number" min={0} max={10} step={0.5}
                             value={s.com}
@@ -850,7 +859,7 @@ export default function ScreenBrandClientPricingForm() {
                             onFocus={(e) => e.target.select()}
                             style={inpMono(48)}/>
                         </td>
-                        <td style={{ ...tdSku, background: `${TECHO}66` }}>{fmtUSD0(c.baseUsdTecho)}</td>
+                        <td style={{ ...tdSku, background: `${TECHO}66` }}>{fmtUSD(c.baseUsdTecho)}</td>
                         <td style={{ ...tdSku, background: `${TECHO}66` }}>
                           <input type="number" min={0} step={0.25}
                             value={Number(s.ajuste).toFixed(2)}
@@ -873,7 +882,7 @@ export default function ScreenBrandClientPricingForm() {
                           <span style={{ color: AMBER, fontWeight: 700, fontSize: 9, marginLeft: 2 }}>%</span>
                         </td>
                         <td style={{ ...tdSku, background: `${TECHO}66`, fontWeight: 700, color: NAVY }}>
-                          {fmtUSD0(c.listaTecho)}
+                          {fmtUSD(c.listaTecho)}
                         </td>
                       </tr>
                     );
@@ -896,9 +905,9 @@ export default function ScreenBrandClientPricingForm() {
               <KPI label={lang === "es" ? "Comisión promedio" : "Avg commission"}
                 value={resumen.comAvg != null ? resumen.comAvg.toFixed(1) + "%" : "—"}/>
               <KPI label={lang === "es" ? "Total 90d techo" : "Total 90d top"}
-                value={fmtUSD0(resumen.total90)}/>
+                value={fmtUSD(resumen.total90)}/>
               <KPI label={lang === "es" ? "Total 8d techo" : "Total 8d top"}
-                value={fmtUSD0(resumen.total8)}/>
+                value={fmtUSD(resumen.total8)}/>
             </div>
           </Section>
         )}
