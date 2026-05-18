@@ -101,28 +101,49 @@ export function calcSKU(sku) {
 }
 
 /**
+ * Normaliza string para matching de headers (lowercase, sin acentos, sin
+ * caracteres no alfanuméricos). "Preço 26 v7 (R$)" → "preco 26 v7 r ".
+ *
+ * @param {*} s
+ * @returns {string}
+ */
+function normalizeHeader(s) {
+  return String(s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
  * Parser de Excel Marluvas COMEX 2026 v7.
  *
- * Estrategia: el Excel tiene múltiples hojas y formato libre, así que
- * recorremos todas las celdas buscando filas que parezcan
- * `[SKU 6 dígitos, Referencia, ..., precio BRL]`.
+ * Estrategia (sin heurística, basada en headers):
+ *   1. Para cada hoja, busca en las primeras filas un header que contenga
+ *      una columna con "Preço … v7" o "Preço … R$" (columna del precio).
+ *      Sólo procesa hojas que tengan ese header — eso descarta
+ *      automáticamente "Calculadora", "Banda Cambial", etc.
+ *   2. En la misma fila de header detecta:
+ *        · skuCol  → primera columna con header "Material" o "SKU"
+ *        · refCol  → primera columna con header "Descrição" o "Descricao"
+ *        · priceCol → columna del header "Preço … v7" o "Preço … R$"
+ *   3. Itera filas posteriores extrayendo (sku, ref, brl) usando esos índices.
  *
- * Heurística:
- *   · SKU         = primera columna que matchea /^7\d{5}$|^8\d{5}$/
- *   · Referencia  = siguiente columna no vacía y NO numérica
- *   · BRL         = primer número > 1 encontrado a la derecha
- *
- * Si el Excel cambia de formato, esta función es el único punto a tocar.
+ * Por qué cambiar la heurística anterior:
+ *   La versión vieja tomaba "primer número > 1 a la derecha del SKU", lo cual
+ *   en este Excel agarraba la columna C ("Modelo Material" = 75) en vez de la
+ *   columna M ("Preço 26 v7 (R$)" = 144.46). Además iteraba la hoja
+ *   "Calculadora" donde los SKUs aparecen pero con valores tipo CA del MTE.
  *
  * @param {ArrayBuffer} arrayBuffer
- * @param {{ XLSX: any }} deps    Inyectamos SheetJS para que la función sea pura
+ * @param {{ XLSX: any }} deps
  * @returns {Array<{sku:string, ref:string, brl:number}>}
  */
 export function parseExcelMarluvas(arrayBuffer, { XLSX }) {
   const wb = XLSX.read(arrayBuffer, { type: "array" });
   const seen = new Set();
   const result = [];
-
   const skuRe = /^[78]\d{5}$/;
 
   for (const sheetName of wb.SheetNames) {
@@ -130,48 +151,65 @@ export function parseExcelMarluvas(arrayBuffer, { XLSX }) {
     const rows = XLSX.utils.sheet_to_json(sheet, {
       header: 1, raw: true, defval: null,
     });
-    for (const row of rows) {
-      if (!Array.isArray(row) || row.length === 0) continue;
+    if (!rows.length) continue;
 
-      // Buscar el SKU en cualquier celda
-      let skuIdx = -1;
-      let sku = null;
-      for (let i = 0; i < row.length; i++) {
-        const v = row[i];
-        if (v == null) continue;
-        const s = String(v).trim();
-        if (skuRe.test(s)) {
-          sku = s;
-          skuIdx = i;
-          break;
+    // 1) Detección del header row + columnas clave.
+    let headerRowIdx = -1;
+    let priceCol = -1, skuCol = -1, refCol = -1;
+
+    for (let r = 0; r < Math.min(8, rows.length); r++) {
+      const row = rows[r];
+      if (!Array.isArray(row)) continue;
+      let localPrice = -1, localSku = -1, localRef = -1;
+
+      for (let c = 0; c < row.length; c++) {
+        const n = normalizeHeader(row[c]);
+        if (!n) continue;
+
+        // "preco 26 v7 r" — exige "preco" + ("v7" o "r" de R$).
+        if (localPrice < 0 && /\bpreco\b/.test(n) && (/\bv7\b/.test(n) || /\br\b/.test(n))) {
+          localPrice = c;
+        }
+        // "material" o "sku" (primer match — hay dos cols "Material" en el Excel real)
+        if (localSku < 0 && (/^material$/.test(n) || /^sku$/.test(n))) {
+          localSku = c;
+        }
+        // "descricao" o "descricion"
+        if (localRef < 0 && /^descric/.test(n)) {
+          localRef = c;
         }
       }
-      if (!sku || seen.has(sku)) continue;
 
-      // Referencia: siguiente celda no vacía y no numérica
-      let ref = "";
-      for (let i = skuIdx + 1; i < row.length; i++) {
-        const v = row[i];
-        if (v == null) continue;
-        const s = String(v).trim();
-        if (s.length === 0) continue;
-        if (Number.isFinite(Number(s)) && !/[A-Za-z]/.test(s)) continue;
-        ref = s;
+      if (localPrice >= 0 && localSku >= 0) {
+        headerRowIdx = r;
+        priceCol = localPrice;
+        skuCol   = localSku;
+        refCol   = localRef;
         break;
       }
+    }
 
-      // Precio BRL: primer número > 1 a la derecha del SKU
-      let brl = null;
-      for (let i = skuIdx + 1; i < row.length; i++) {
-        const v = row[i];
-        if (v == null) continue;
-        const n = Number(String(v).replace(",", "."));
-        if (Number.isFinite(n) && n > 1) {
-          brl = n;
-          break;
-        }
-      }
-      if (brl == null) continue;
+    // Si la hoja no tiene un header reconocible, no la procesamos.
+    if (priceCol < 0 || skuCol < 0) continue;
+
+    // 2) Iterar filas de datos.
+    for (let r = headerRowIdx + 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!Array.isArray(row)) continue;
+
+      const skuRaw = row[skuCol];
+      if (skuRaw == null) continue;
+      const sku = String(skuRaw).trim();
+      if (!skuRe.test(sku) || seen.has(sku)) continue;
+
+      const priceRaw = row[priceCol];
+      if (priceRaw == null) continue;
+      const brl = Number(String(priceRaw).replace(",", "."));
+      if (!Number.isFinite(brl) || brl <= 0) continue;
+
+      const ref = refCol >= 0 && row[refCol] != null
+        ? String(row[refCol]).trim()
+        : "";
 
       seen.add(sku);
       result.push({ sku, ref, brl });
