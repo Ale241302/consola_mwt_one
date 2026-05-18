@@ -39,6 +39,7 @@ import {
   calcSKU, parseExcelMarluvas, defaultSkuState,
   computeMatrixFromInputs, cascadeRow,
 } from "../lib/marluvasPricing.js";
+import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 
 // ─── Helpers backend → shape interno ──────────────────────────
 const _FLAG_ISO2 = {
@@ -123,37 +124,8 @@ function useClientEnabledSkus(clienteId, brandId, accessToken) {
   return data;
 }
 
-// ═════════════════════════════════════════════════════════════
-// Hook · cotización USD/BRL en vivo desde backend
-// ═════════════════════════════════════════════════════════════
-function useExchangeRateUSDBRL(accessToken) {
-  const [data, setData] = useState({ tc: null, loading: true, error: null, ts: null, source: null });
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setData((d) => ({ ...d, loading: true }));
-    apiFetch("/commercial/exchange-rate/usd-brl/", { token: accessToken })
-      .then((r) => {
-        if (cancelled) return;
-        const tc = Number(r?.rate ?? r?.bid ?? r?.value);
-        setData({
-          tc: Number.isFinite(tc) ? tc : null,
-          loading: false,
-          error: null,
-          ts: r?.timestamp || r?.create_date || new Date().toISOString(),
-          source: r?.source || "AwesomeAPI BR",
-        });
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setData({ tc: null, loading: false, error: e?.message || String(e), ts: null, source: null });
-      });
-    return () => { cancelled = true; };
-  }, [accessToken, reloadKey]);
-
-  return { ...data, reload: () => setReloadKey((k) => k + 1) };
-}
+// (useExchangeRateUSDBRL ahora vive en hooks/useExchangeRateUSDBRL.js
+//  para poder compartirse con ProductFormView — ver bloque de imports.)
 
 // ═════════════════════════════════════════════════════════════
 // Hook · carga simulación persistida desde backend.

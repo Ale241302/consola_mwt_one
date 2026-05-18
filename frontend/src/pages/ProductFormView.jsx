@@ -83,6 +83,8 @@ import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
 import PriceMatrixCompact from "../components/marluvas/PriceMatrixCompact.jsx";
 import { cascadeRow } from "../lib/marluvasPricing.js";
+import { bandaForTC } from "../constants/marluvas.js";
+import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 
 // TABS canónicos del detalle de producto. La visibilidad se recorta
 // dinámicamente según el rol (POL_VISIBILIDAD):
@@ -356,6 +358,12 @@ export default function ScreenProductFormView() {
   const [savingClient, setSavingClient] = useState(null);   // cliente_id en vuelo
   const [matrixBanner, setMatrixBanner] = useState(null);   // {type, msg, cliente_id}
   const [dirtyClients, setDirtyClients] = useState({});     // {cliente_id: true}
+
+  // Cotización USD/BRL en vivo → banda vigente para resaltar en cada matriz.
+  // Si el endpoint FX falla, bandaVigente queda null y PriceMatrixCompact
+  // simplemente no resalta ninguna banda (degradación silenciosa).
+  const { tc: tcVigente } = useExchangeRateUSDBRL(getToken());
+  const bandaVigente = useMemo(() => bandaForTC(tcVigente), [tcVigente]);
 
   useEffect(() => {
     if (!isEdit || !existing?.sku) return;
@@ -1558,10 +1566,36 @@ export default function ScreenProductFormView() {
             overflow: 'hidden',
             boxSizing: 'border-box',
           }}>
-            <div className="form-sub-title" style={{ marginBottom: 6 }}>
-              <IconDollar size={13}/> {lang === 'es'
-                ? 'Matriz de precios · USD por par · por cliente habilitado'
-                : 'Price matrix · USD per pair · per enabled client'}
+            <div className="form-sub-title" style={{
+              marginBottom: 6,
+              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            }}>
+              <span>
+                <IconDollar size={13}/> {lang === 'es'
+                  ? 'Matriz de precios · USD por par · por cliente habilitado'
+                  : 'Price matrix · USD per pair · per enabled client'}
+              </span>
+              {/* Chip de TC vigente + banda activa (FX en vivo desde backend). */}
+              {tcVigente != null && bandaVigente && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '3px 10px', borderRadius: 12,
+                  background: 'rgba(245, 158, 11, 0.10)',
+                  color: '#92400E',
+                  border: '1px solid rgba(245, 158, 11, 0.35)',
+                  font: '600 10.5px/1.2 var(--font-body)',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+                  title={lang === 'es'
+                    ? 'Cotización USD/BRL en vivo y banda cambial vigente'
+                    : 'Live USD/BRL rate and active FX band'}>
+                  <span>● USD/BRL</span>
+                  <strong style={{ fontWeight: 700 }}>{tcVigente.toFixed(4)}</strong>
+                  <span style={{ opacity: 0.6 }}>·</span>
+                  <span>{lang === 'es' ? 'Banda' : 'Band'} #{bandaVigente.id}</span>
+                  <strong style={{ fontWeight: 700 }}>{bandaVigente.rango}</strong>
+                </span>
+              )}
             </div>
             <div className="caption" style={{
               color: 'var(--text-tertiary)', marginBottom: 12, lineHeight: 1.5,
@@ -1684,6 +1718,7 @@ export default function ScreenProductFormView() {
                     matrix={c.prices_matrix}
                     onCellChange={(bandaId, plazoDias, newValue) =>
                       handleMatrixCellChange(c.cliente_id, bandaId, plazoDias, newValue)}
+                    bandaVigente={bandaVigente}
                     maxHeight="40vh"
                   />
                 </div>
