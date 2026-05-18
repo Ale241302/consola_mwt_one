@@ -14,6 +14,8 @@ Reglas MWT respetadas:
   · Cada tabla tiene id / is_active / created_at / updated_at.
 =====================================================================
 """
+import uuid
+
 from django.db import models
 
 
@@ -389,8 +391,16 @@ class MarluvasClientSkuPricing(models.Model):
       — sólo un override vigente por triple. Para reemplazar, el
       backend marca is_active=FALSE el anterior y crea el nuevo dentro
       de transaction.atomic().
+
+      Nota: `id` usa default=uuid.uuid4 (lado Python) en lugar de
+      delegar al `DEFAULT gen_random_uuid()` del DDL. Razón: con
+      bulk_create Django envía explícitamente la columna `id` con
+      NULL si no tiene default Python — y un INSERT con NULL viola
+      la NOT NULL constraint (el DEFAULT del DDL sólo se aplica cuando
+      la columna se OMITE del INSERT, no cuando se manda NULL).
     """
-    id                = models.UUIDField(primary_key=True)
+    id                = models.UUIDField(
+        primary_key=True, default=uuid.uuid4, editable=False)
     brand_id          = models.UUIDField()                          # ⛔ sin FK
     cliente_id        = models.UUIDField()                          # ⛔ sin FK
     sku               = models.CharField(max_length=64)
