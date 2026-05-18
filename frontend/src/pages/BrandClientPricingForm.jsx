@@ -853,11 +853,14 @@ export default function ScreenBrandClientPricingForm() {
                               : "BRL price from Excel — editable for ad-hoc overrides"}/>
                         </td>
                         <td style={tdSku}>
-                          <input type="number" min={0} max={10} step={0.5}
+                          <input type="number" min={0} max={100} step={0.5}
                             value={s.com}
-                            onChange={(e) => patchSku(i, { com: Math.max(0, Math.min(10, Number(e.target.value) || 0)) })}
+                            onChange={(e) => patchSku(i, { com: Math.max(0, Number(e.target.value) || 0) })}
                             onFocus={(e) => e.target.select()}
-                            style={inpMono(48)}/>
+                            style={inpMono(48)}
+                            title={lang === "es"
+                              ? "Comisión % (base exponencial 1.0183^com). Default = comisión pactada del cliente."
+                              : "Commission % (exponential base 1.0183^com)."}/>
                         </td>
                         <td style={{ ...tdSku, background: `${TECHO}66` }}>{fmtUSD(c.baseUsdTecho)}</td>
                         <td style={{ ...tdSku, background: `${TECHO}66` }}>
