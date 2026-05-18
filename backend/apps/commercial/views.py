@@ -1589,26 +1589,84 @@ class ProductClientsPricingView(APIView):
 # =====================================================================
 # MarluvasExchangeRateView · cotización USD/BRL en vivo
 # ---------------------------------------------------------------------
-# Proxy hacia AwesomeAPI BR para evitar CORS y dejar la cotización
-# cacheada del lado servidor (15 min). El simulador de precios Marluvas
-# consume este endpoint para resaltar la banda cambial vigente.
+# Proxy con fallback en cadena hacia 2 proveedores de FX y cache Redis
+# (60 min). El simulador de precios Marluvas consume este endpoint
+# para resaltar la banda cambial vigente.
+#
+# Cadena de upstreams (en orden):
+#   1. AwesomeAPI BR (mercado BR, datos minuto a minuto)
+#   2. Frankfurter (ECB, datos diarios, sin rate limit)
+#   3. Último valor cacheado en Redis (stale)
+#   4. rate=null + error
 #
 # GET /api/commercial/exchange-rate/usd-brl/
 #   → { rate, bid, ask, high, low, varBid, timestamp, source, cached }
-#
-# Si la API externa falla, devuelve 200 con `rate=null` y `error` para
-# que el frontend pueda degradar gracefully (el usuario sigue pudiendo
-# editar manualmente la matriz).
 # =====================================================================
 class MarluvasExchangeRateView(APIView):
-    """Proxy + cache para USD/BRL (AwesomeAPI BR)."""
+    """Proxy + cache + fallback chain para USD/BRL."""
     permission_classes = [IsAuthenticated]
 
     CACHE_KEY = "commercial:fx:usd-brl"
-    CACHE_TTL = 60 * 15  # 15 minutos
-    UPSTREAM_URL = "https://economia.awesomeapi.com.br/last/USD-BRL"
-    UPSTREAM_TIMEOUT = 6  # segundos
+    CACHE_TTL = 60 * 60                       # 60 minutos (era 15)
+    UPSTREAM_TIMEOUT = 6                       # segundos
 
+    URL_AWESOME    = "https://economia.awesomeapi.com.br/last/USD-BRL"
+    URL_FRANKFURTER = "https://api.frankfurter.app/latest?from=USD&to=BRL"
+
+    # ---------- Helpers de fetch por upstream -------------------------
+    @classmethod
+    def _fetch_awesomeapi(cls):
+        """Devuelve payload normalizado o levanta excepción."""
+        resp = requests.get(cls.URL_AWESOME, timeout=cls.UPSTREAM_TIMEOUT)
+        resp.raise_for_status()
+        raw = resp.json()
+
+        # AwesomeAPI a veces devuelve HTTP 200 con body de error:
+        # { "status": 429, "code": "QuotaExceeded", ... }
+        # Detectamos eso antes de intentar parsear como cotización.
+        if isinstance(raw, dict) and raw.get("code") and not raw.get("USDBRL"):
+            raise RuntimeError(f"AwesomeAPI body error: {raw.get('code')} — {raw.get('message')}")
+
+        data = raw.get("USDBRL") or {}
+        bid = data.get("bid")
+        if bid in (None, ""):
+            raise RuntimeError("AwesomeAPI: bid vacío en respuesta")
+        bid_f = float(bid)
+        return {
+            "rate":      bid_f,
+            "bid":       bid_f,
+            "ask":       float(data["ask"])    if data.get("ask")    not in (None, "") else None,
+            "high":      float(data["high"])   if data.get("high")   not in (None, "") else None,
+            "low":       float(data["low"])    if data.get("low")    not in (None, "") else None,
+            "varBid":    float(data["varBid"]) if data.get("varBid") not in (None, "") else None,
+            "timestamp": data.get("create_date"),
+            "source":    "AwesomeAPI BR",
+            "cached":    False,
+        }
+
+    @classmethod
+    def _fetch_frankfurter(cls):
+        """Fallback: ECB via Frankfurter. Sin rate limit."""
+        resp = requests.get(cls.URL_FRANKFURTER, timeout=cls.UPSTREAM_TIMEOUT)
+        resp.raise_for_status()
+        raw = resp.json()
+        rate = (raw.get("rates") or {}).get("BRL")
+        if rate in (None, ""):
+            raise RuntimeError("Frankfurter: rate BRL vacío")
+        rate_f = float(rate)
+        return {
+            "rate":      rate_f,
+            "bid":       rate_f,
+            "ask":       rate_f,
+            "high":      None,
+            "low":       None,
+            "varBid":    None,
+            "timestamp": raw.get("date"),
+            "source":    "Frankfurter (ECB)",
+            "cached":    False,
+        }
+
+    # ---------- View ---------------------------------------------------
     def get(self, request):
         force = str(request.query_params.get("refresh", "")).lower() in ("1", "true", "yes")
 
@@ -1619,43 +1677,40 @@ class MarluvasExchangeRateView(APIView):
                 payload["cached"] = True
                 return Response(payload, status=200)
 
-        try:
-            resp = requests.get(self.UPSTREAM_URL, timeout=self.UPSTREAM_TIMEOUT)
-            resp.raise_for_status()
-            raw = resp.json()
-            # AwesomeAPI devuelve { "USDBRL": { bid, ask, high, low, varBid, create_date, ... } }
-            data = raw.get("USDBRL") or {}
-            bid = float(data.get("bid")) if data.get("bid") not in (None, "") else None
-            ask = float(data.get("ask")) if data.get("ask") not in (None, "") else None
-            payload = {
-                "rate":      bid,
-                "bid":       bid,
-                "ask":       ask,
-                "high":      float(data.get("high"))   if data.get("high")   else None,
-                "low":       float(data.get("low"))    if data.get("low")    else None,
-                "varBid":    float(data.get("varBid")) if data.get("varBid") else None,
-                "timestamp": data.get("create_date"),
-                "source":    "AwesomeAPI BR",
-                "cached":    False,
-            }
-            cache.set(self.CACHE_KEY, payload, timeout=self.CACHE_TTL)
-            return Response(payload, status=200)
-        except (requests.RequestException, ValueError) as exc:
-            log.warning("MarluvasExchangeRateView upstream failed: %s", exc)
-            # Degradación: devolver último valor cacheado si existe, si no null.
-            stale = cache.get(self.CACHE_KEY)
-            if stale:
-                payload = dict(stale)
-                payload["cached"] = True
-                payload["error"] = "Upstream sin respuesta; usando último valor cacheado."
+        # Intentar upstreams en orden — el primero que devuelva válido gana.
+        errors = []
+        for fetcher_name, fetcher in [
+            ("awesomeapi",  self._fetch_awesomeapi),
+            ("frankfurter", self._fetch_frankfurter),
+        ]:
+            try:
+                payload = fetcher()
+                cache.set(self.CACHE_KEY, payload, timeout=self.CACHE_TTL)
+                log.info("MarluvasExchangeRateView: ok via %s (rate=%s)", fetcher_name, payload.get("rate"))
                 return Response(payload, status=200)
-            return Response({
-                "rate": None, "bid": None, "ask": None,
-                "timestamp": None,
-                "source": "AwesomeAPI BR",
-                "cached": False,
-                "error":  f"Upstream sin respuesta: {exc}",
-            }, status=200)
+            except Exception as exc:  # noqa: BLE001
+                err_msg = f"{fetcher_name}: {exc}"
+                errors.append(err_msg)
+                log.warning("MarluvasExchangeRateView upstream %s failed: %s", fetcher_name, exc)
+
+        # Si todos los upstreams fallaron → último valor cacheado (stale).
+        stale = cache.get(self.CACHE_KEY)
+        if stale:
+            payload = dict(stale)
+            payload["cached"] = True
+            payload["error"] = "Todos los upstreams sin respuesta; usando último valor cacheado."
+            payload["upstream_errors"] = errors
+            return Response(payload, status=200)
+
+        # Sin cache previo: devolver null con detalle de errores.
+        return Response({
+            "rate":             None, "bid": None, "ask": None,
+            "timestamp":        None,
+            "source":           "none",
+            "cached":           False,
+            "error":            "Todos los upstreams (AwesomeAPI, Frankfurter) sin respuesta.",
+            "upstream_errors":  errors,
+        }, status=200)
 
 
 # =====================================================================
