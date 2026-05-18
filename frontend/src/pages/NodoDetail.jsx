@@ -1160,6 +1160,10 @@ function NodoCostosTab({ nodeId, lang, navigate }) {
         cost.byExp.set(ek, {
           expediente_id:     r.expediente_id,
           expediente_codigo: r.expediente_codigo,
+          // Sprint 2026-05-17 · proforma_codigo agregado por el backend
+          // (LEFT JOIN LATERAL a expedientes.documento kind=PROFORMA).
+          // Se muestra con fallback al EXP code en el render.
+          proforma_codigo:   r.proforma_codigo,
           lines:             [],
         });
       }
@@ -1349,7 +1353,8 @@ function NodoCostosTab({ nodeId, lang, navigate }) {
                             <span className="mono-sm" style={{
                               fontWeight: 700, color: 'var(--brand-primary)',
                             }}>
-                              {exp.expediente_codigo || '—'}
+                              {/* Sprint 2026-05-17 · proforma con fallback al EXP code. */}
+                              {exp.proforma_codigo || exp.expediente_codigo || '—'}
                             </span>
                             <span className="caption" style={{
                               color: 'var(--text-tertiary)',

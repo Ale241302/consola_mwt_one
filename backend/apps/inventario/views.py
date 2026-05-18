@@ -1286,6 +1286,7 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                 t.created_at                                       AS transferencia_fecha,
                 a.expediente_id,
                 e.codigo                                           AS expediente_codigo,
+                pf.codigo                                          AS proforma_codigo,
                 a.producto_id,
                 l.sku,
                 COALESCE(p.nombre, p.descripcion, l.sku, '—')      AS nombre,
@@ -1313,6 +1314,20 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             LEFT JOIN expedientes.expediente e    ON e.id = a.expediente_id
             LEFT JOIN productos.producto p        ON p.id = a.producto_id
             LEFT JOIN transfers.cost_kind_cat ck  ON ck.codigo = cl.kind
+            -- Sprint 2026-05-17 · proforma mas reciente del expediente.
+            -- El FE muestra proforma_codigo con fallback a expediente_codigo
+            -- en la tab Costos del NodoDetail (CEO request).
+            LEFT JOIN LATERAL (
+                SELECT d.codigo
+                FROM expedientes.documento d
+                WHERE d.expediente_id = e.id
+                  AND d.kind          = 'PROFORMA'
+                  AND d.is_active     = TRUE
+                  AND d.codigo IS NOT NULL
+                  AND d.codigo <> ''
+                ORDER BY d.created_at DESC
+                LIMIT 1
+            ) pf ON TRUE
             WHERE (
                 -- scope null o applies_to_all → cost aplica a todo
                 cl.scope_json IS NULL

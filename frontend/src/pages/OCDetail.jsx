@@ -778,6 +778,25 @@ export default function ScreenOCDetail() {
     (e) => isMwtOperated(e?.operating_company_id)
   );
 
+  // Sprint 2026-05-17 · Header de OC role-aware (CEO request).
+  // El codigo PO-YYYY-NNNNN autogenerado por el sistema se OCULTA siempre.
+  //   · ADMIN  ve el numero de proforma mas reciente (kind=PROFORMA)
+  //   · CLIENT ve su propio numero de OC (kind='OC Cliente')
+  // Fallback al codigo PO si la OC no tiene aun el documento esperado.
+  const _docsByKind = (kind) => (apiOcDocs || [])
+    .filter(d => String(d.kind || '').toUpperCase().trim()
+                  === String(kind).toUpperCase().trim()
+               && d.is_active !== false
+               && d.codigo)
+    .sort((a, b) => String(b.created_at || b.fecha || '')
+                       .localeCompare(String(a.created_at || a.fecha || '')));
+  const latestProformaCode = _docsByKind('PROFORMA')[0]?.codigo || null;
+  const latestOcClienteCode = _docsByKind('OC Cliente')[0]?.codigo || null;
+  // Codigo a mostrar en el h1 del header.
+  const headerCode = isClient
+    ? (latestOcClienteCode || oc?.code || '—')
+    : (latestProformaCode  || oc?.code || '—');
+
   // Group edited lines by SAP (null → orphan bucket)
   const sapGroups = useMemo(() => {
     const map = new Map();
@@ -848,11 +867,23 @@ export default function ScreenOCDetail() {
               <IconChevLeft size={14}/> {tr(lang,'back_to_list')}
             </button>
             <span className="caption" style={{color:'var(--text-tertiary)'}}>•</span>
-            <span className="micro">{tr(lang,'po_number')}</span>
+            {/* Sprint 2026-05-17 · etiqueta del header role-aware.
+                ADMIN ve "Proforma" o "OC del Cliente" si no hay proforma
+                todavia; CLIENT siempre ve "OC del Cliente". El codigo PO
+                autogenerado del sistema queda oculto en el h1. */}
+            <span className="micro">
+              {isClient
+                ? (lang === 'es' ? 'OC DEL CLIENTE'   : 'CLIENT PO')
+                : (latestProformaCode
+                    ? (lang === 'es' ? 'PROFORMA'       : 'PROFORMA')
+                    : (lang === 'es' ? 'OC DEL CLIENTE' : 'CLIENT PO'))}
+            </span>
           </div>
 
           <div className="flex ai-center gap-3" style={{marginBottom: 6, flexWrap: 'wrap'}}>
-            <h1 className="page-title" style={{margin: 0}}>{oc.code}</h1>
+            {/* Sprint 2026-05-17 · header h1 muestra proforma (admin) u
+                OC cliente (client). Si ninguno existe, fallback al PO. */}
+            <h1 className="page-title" style={{margin: 0}}>{headerCode}</h1>
             <span className="oc-status-chip" style={{
               color: statusColor, background: 'color-mix(in oklab,' + statusColor + ' 14%, transparent)',
               border: '1px solid color-mix(in oklab,' + statusColor + ' 36%, transparent)',
