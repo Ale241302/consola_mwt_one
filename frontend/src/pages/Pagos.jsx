@@ -21,8 +21,10 @@ import {
   CLIENTS,
   OCS as MOCK_OCS,
 } from "../data/mockData.js";
-import { expedientesApi, ocsApi } from "../lib/api.js";
+import { expedientesApi, ocsApi, financePaymentsApi } from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
+// Sprint Registrar Pago (Fase 2) · Wizard ensamblador.
+import RegisterPaymentWizard from "../components/finance/RegisterPaymentWizard.jsx";
 
 // ── Mapeo backend → UI (campos financieros) ────────
 function mapExpedienteForPagos(r) {
@@ -60,6 +62,27 @@ export default function ScreenPagos() {
   const [apiExpedientes, setApiExpedientes] = useState([]);
   const [apiOcs,         setApiOcs]         = useState([]);
   const [loading,        setLoading]        = useState(true);
+
+  // Sprint Registrar Pago (Fase 2) · Estado del wizard + pagos reales.
+  const [wizardOpen,  setWizardOpen]  = useState(false);
+  const [apiPayments, setApiPayments] = useState([]);
+  const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0);
+
+  // Pagos reales para alimentar los KPIs financieros. Antes mostraba
+  // mock; ahora consume /api/finance/payments/. El refreshKey se bump-ea
+  // cuando el wizard registra un pago para refrescar los KPIs sin
+  // reload de pagina.
+  useEffect(() => {
+    let alive = true;
+    financePaymentsApi.list()
+      .then((rows) => {
+        if (!alive) return;
+        const arr = Array.isArray(rows) ? rows : (rows?.results || []);
+        setApiPayments(arr);
+      })
+      .catch(() => { if (alive) setApiPayments([]); });
+    return () => { alive = false; };
+  }, [paymentsRefreshKey]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -171,7 +194,13 @@ export default function ScreenPagos() {
         <div className="flex gap-2">
           <button className="btn btn-secondary"><IconDownload size={14}/>{tr(lang,'export')}</button>
           {can('register_payment') && (
-            <button className="btn btn-primary"><IconPlus size={14}/>{tr(lang,'register_payment')}</button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setWizardOpen(true)}
+            >
+              <IconPlus size={14}/>{tr(lang,'register_payment')}
+            </button>
           )}
         </div>
       </div>
@@ -399,6 +428,20 @@ export default function ScreenPagos() {
       )}
 
       {tab === 'history' && <PaymentHistoryTable lang={lang}/>}
+
+      {/* Sprint Registrar Pago (Fase 2) · Wizard montado a nivel pagina.
+          Solo se renderea cuando wizardOpen=true; los efectos / hooks
+          internos del wizard solo corren si `open` es true. */}
+      <RegisterPaymentWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onSuccess={(payment) => {
+          setPaymentsRefreshKey((k) => k + 1);
+          // eslint-disable-next-line no-console
+          console.info("[Pagos] pago registrado:", payment?.id || payment);
+        }}
+        lang={lang}
+      />
     </div>
   );
 }
