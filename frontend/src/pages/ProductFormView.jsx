@@ -1532,11 +1532,21 @@ export default function ScreenProductFormView() {
         </div>
 
         {/* ── Matriz de precios Marluvas · 12 bandas × 4 plazos por cliente ── */}
-        {/* IMPORTANTE: minWidth: 0 + overflow: hidden contienen el scroll-X
-            dentro del wrapper de cada card, evitando que la tabla ancha (12
-            bandas × 4 plazos ≈ 1600px) empuje el layout de toda la página. */}
+        {/* Wrapper "container query"-style: width:0 forzado por flex/grid,
+            min-width:0 permite que el contenido respete el flex item,
+            overflow:hidden corta lo que sobra. El truco de `width:0` con
+            `flex-basis` no es necesario porque ya estamos dentro de un
+            block container — pero box-sizing:border-box garantiza que el
+            padding no agregue ancho. */}
         {isEdit && (
-          <div style={{ marginTop: 22, minWidth: 0, maxWidth: '100%' }}>
+          <div style={{
+            marginTop: 22,
+            width: '100%',
+            maxWidth: '100%',
+            minWidth: 0,
+            overflow: 'hidden',
+            boxSizing: 'border-box',
+          }}>
             <div className="form-sub-title" style={{ marginBottom: 6 }}>
               <IconDollar size={13}/> {lang === 'es'
                 ? 'Matriz de precios · USD por par · por cliente habilitado'
@@ -1581,12 +1591,14 @@ export default function ScreenProductFormView() {
                   marginBottom: 18, padding: 14,
                   background: '#FFFFFF',
                   border: '1px solid #E2E8F0', borderRadius: 10,
-                  // Contención: la matriz interna tiene su propio overflowX.
-                  // Sin overflow:hidden + minWidth:0 acá, el contenido ancho
-                  // empuja el card y hace scroll global de la página.
+                  // Contención TOTAL: la matriz interna tiene su propio overflowX.
+                  // box-sizing garantiza que padding no agregue ancho. Sin esto
+                  // el padding empuja al card a width > 100%.
                   overflow: 'hidden',
-                  minWidth: 0,
+                  width: '100%',
                   maxWidth: '100%',
+                  minWidth: 0,
+                  boxSizing: 'border-box',
                 }}>
                   <div style={{
                     display: 'flex', justifyContent: 'space-between',
@@ -1645,12 +1657,24 @@ export default function ScreenProductFormView() {
                     </div>
                   )}
 
-                  <PriceMatrixCompact
-                    matrix={c.prices_matrix}
-                    onCellChange={(bandaId, plazoDias, newValue) =>
-                      handleMatrixCellChange(c.cliente_id, bandaId, plazoDias, newValue)}
-                    maxHeight="40vh"
-                  />
+                  {/* Wrapper extra que actúa como "containment context":
+                      su width:100% lo deriva del card padre (que ya está
+                      contenido), y eso a su vez le da una referencia
+                      explícita de ancho al wrapper interno de PriceMatrixCompact
+                      para que su overflowX:auto funcione. */}
+                  <div style={{
+                    width: '100%',
+                    maxWidth: '100%',
+                    minWidth: 0,
+                    overflow: 'hidden',
+                  }}>
+                    <PriceMatrixCompact
+                      matrix={c.prices_matrix}
+                      onCellChange={(bandaId, plazoDias, newValue) =>
+                        handleMatrixCellChange(c.cliente_id, bandaId, plazoDias, newValue)}
+                      maxHeight="40vh"
+                    />
+                  </div>
                 </div>
               );
             })}
