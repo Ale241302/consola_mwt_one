@@ -221,21 +221,95 @@ export function parseExcelMarluvas(arrayBuffer, { XLSX }) {
 
 /**
  * Estado inicial de un SKU recién parseado del Excel.
+ *
+ * IMPORTANTE: incluye `matrix` precalculada desde los inputs. La matriz
+ * ahora es state principal (editable celda a celda), no derivada.
+ *
  * @param {{sku:string, ref:string, brl:number}} parsed
- * @param {{com?: number, activo?: boolean}} [defaults]   Defaults inyectables
- *   (típicamente com = client.comision_pct * 100).
- * @returns {SkuInput}
+ * @param {{com?: number, activo?: boolean}} [defaults]
+ * @returns {SkuInput & {matrix: Object}}
  */
 export function defaultSkuState(parsed, defaults = {}) {
   const com = Number.isFinite(defaults.com) ? defaults.com : 0;
   const activo = defaults.activo !== undefined ? !!defaults.activo : true;
-  return {
+  const base = {
     sku: parsed.sku,
     ref: parsed.ref,
     brl: parsed.brl,
     com,
     ajuste: 0,
-    sobreprecio: 0,   // fracción, ej. 0.05 = 5%
+    sobreprecio: 0,
     activo,
   };
+  return { ...base, matrix: computeMatrixFromInputs(base) };
+}
+
+/**
+ * Calcula la matriz 12×4 desde los 4 inputs (brl, com, ajuste, sobreprecio).
+ * Útil al hidratar un SKU nuevo o al cambiar un input bulk (regenera todo).
+ *
+ * Shape devuelto:
+ *   { "1": {"90": 25.25, "60": 24.99, "30": 24.80, "8": 24.55},
+ *     "2": {"90": 24.06, ...}, ..., "12": {...} }
+ *
+ * @param {SkuInput} sku
+ * @returns {Object<string, Object<string, number>>}
+ */
+export function computeMatrixFromInputs(sku) {
+  const ajuste = Number(sku.ajuste || 0);
+  const sobreprecio = Number(sku.sobreprecio || 0);
+  const out = {};
+  for (const b of BANDAS_MARLUVAS) {
+    const baseBanda = precioBaseUSD(sku.brl, b.div, sku.com);
+    const lista90 = baseBanda + ajuste + baseBanda * sobreprecio;
+    const row = {};
+    for (const p of PLAZOS_MARLUVAS) {
+      row[String(p.dias)] = round4(lista90 * p.factor);
+    }
+    out[String(b.id)] = row;
+  }
+  return out;
+}
+
+/**
+ * Aplica cascade jerárquico al editar UNA celda de UN row de banda.
+ *
+ * Jerarquía de plazos (descendente):  90d → 60d → 30d → 8d
+ *
+ *   · Editar 90d  → recalcula 60d, 30d y 8d desde la nueva ancla con
+ *                    los factores originales (60d=0.99, 30d=0.9825, 8d=0.9725).
+ *   · Editar 60d  → recalcula 30d y 8d con ratios relativos a 60d
+ *                    (30d/60d = 0.9825/0.99 ≈ 0.99242).
+ *   · Editar 30d  → recalcula 8d con ratio 8d/30d ≈ 0.98982.
+ *   · Editar 8d   → no toca nada (es terminal).
+ *
+ * Esto permite al operador "quebrar" la fórmula original — si edita 60d,
+ * la relación 60d/90d ya no es 0.99 (pero sí es la que él decidió).
+ *
+ * @param {Object<string, number>} row       Row actual {"90":..., "60":..., "30":..., "8":...}
+ * @param {number|string} plazoEdited        Plazo que el operador acaba de editar (90|60|30|8)
+ * @param {number} newValue                  Nuevo valor para esa celda
+ * @returns {Object<string, number>}         Row con cascade aplicado
+ */
+export function cascadeRow(row, plazoEdited, newValue) {
+  const order = [90, 60, 30, 8];
+  const factors = { 90: 1.0000, 60: 0.9900, 30: 0.9825, 8: 0.9725 };
+  const edited = Number(plazoEdited);
+  const editedIdx = order.indexOf(edited);
+  if (editedIdx < 0) return { ...row, [String(edited)]: round4(newValue) };
+
+  const out = { ...row };
+  out[String(edited)] = round4(newValue);
+
+  const editedFactor = factors[edited];
+  for (let i = editedIdx + 1; i < order.length; i++) {
+    const p = order[i];
+    const ratio = factors[p] / editedFactor;
+    out[String(p)] = round4(newValue * ratio);
+  }
+  return out;
+}
+
+function round4(n) {
+  return Math.round(Number(n) * 10000) / 10000;
 }

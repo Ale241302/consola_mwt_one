@@ -37,6 +37,7 @@ import {
 } from "../constants/marluvas.js";
 import {
   calcSKU, parseExcelMarluvas, defaultSkuState,
+  computeMatrixFromInputs, cascadeRow,
 } from "../lib/marluvasPricing.js";
 
 // ─── Helpers backend → shape interno ──────────────────────────
@@ -177,19 +178,30 @@ function useLoadSimulation(clienteId, brandId, accessToken) {
       .then((r) => {
         if (cancelled) return;
         const rawSkus = Array.isArray(r?.skus) ? r.skus : [];
-        const skus = rawSkus.map((s) => ({
-          sku:         String(s.sku),
-          ref:         "",  // la ref viene del Excel, no del backend
-          brl:         s.brl_override != null ? Number(s.brl_override) : 0,
-          com:         Number(s.com_pct ?? 0),
-          ajuste:      Number(s.ajuste_usd ?? 0),
-          sobreprecio: Number(s.sobreprecio_pct ?? 0),
-          activo:      s.activo !== false,
-          // Matriz congelada al guardar (contractual). El editor recalcula
-          // al editar inputs, pero esta queda disponible para auditoría o
-          // para mostrar "lo que se le cotizó al cliente" en proformas.
-          prices_matrix_frozen: s.prices_matrix || null,
-        }));
+        const skus = rawSkus.map((s) => {
+          const inputs = {
+            sku:         String(s.sku),
+            ref:         "",  // la ref viene del Excel
+            brl:         s.brl_override != null ? Number(s.brl_override) : 0,
+            com:         Number(s.com_pct ?? 0),
+            ajuste:      Number(s.ajuste_usd ?? 0),
+            sobreprecio: Number(s.sobreprecio_pct ?? 0),
+            activo:      s.activo !== false,
+          };
+          // Hidratar matrix desde lo persistido (preserva overrides manuales).
+          // Si el snapshot venía sin matrix (legacy), calculamos desde inputs.
+          const frozen = s.prices_matrix && Object.keys(s.prices_matrix).length > 0
+            ? Object.fromEntries(
+                Object.entries(s.prices_matrix).map(([bandaId, row]) => [
+                  String(bandaId),
+                  Object.fromEntries(
+                    Object.entries(row || {}).map(([dias, price]) => [String(dias), Number(price)])
+                  ),
+                ])
+              )
+            : computeMatrixFromInputs(inputs);
+          return { ...inputs, matrix: frozen };
+        });
         setData({
           skus,
           fechaInicio: r?.fecha_inicio || null,
@@ -391,11 +403,19 @@ export default function ScreenBrandClientPricingForm() {
         ? parsed
         : parsed.filter((p) => enabled.skus.has(String(p.sku)));
 
-      // Merge: si ya había SKUs en estado, conservamos sus toggles/com/ajuste
+      // Merge: si ya había SKUs en estado, conservamos sus toggles/com/ajuste.
+      // Si el BRL del Excel cambió respecto al state, regeneramos la matriz
+      // (los overrides manuales por celda se pierden cuando cambia el BRL base).
       const prevBySku = new Map(skus.map((s) => [s.sku, s]));
       const merged = filteredParsed.map((p) => {
         const prev = prevBySku.get(p.sku);
-        if (prev) return { ...prev, brl: p.brl, ref: p.ref || prev.ref };
+        if (prev) {
+          const next = { ...prev, brl: p.brl, ref: p.ref || prev.ref };
+          if (Number(prev.brl) !== Number(p.brl) || !prev.matrix) {
+            next.matrix = computeMatrixFromInputs(next);
+          }
+          return next;
+        }
         return defaultSkuState(p, { com: comDefault });
       });
       setSkus(merged);
@@ -440,8 +460,32 @@ export default function ScreenBrandClientPricingForm() {
   };
 
   // ── Mutadores por SKU ──
+  // Si el patch toca cualquier input bulk (brl, com, ajuste, sobreprecio),
+  // REGENERAMOS la matriz desde la fórmula maestra. Los overrides manuales
+  // por celda se pierden — es lo más predecible (el editor de la izquierda
+  // se usa para modelar en bulk, la matriz para ajustes finos posteriores).
+  const BULK_FIELDS = ["brl", "com", "ajuste", "sobreprecio"];
   const patchSku = (idx, patch) => {
-    setSkus((arr) => arr.map((s, i) => i === idx ? { ...s, ...patch } : s));
+    setSkus((arr) => arr.map((s, i) => {
+      if (i !== idx) return s;
+      const merged = { ...s, ...patch };
+      const touchesBulk = BULK_FIELDS.some((k) => k in patch);
+      if (touchesBulk) {
+        merged.matrix = computeMatrixFromInputs(merged);
+      }
+      return merged;
+    }));
+  };
+  // Edición de UNA celda de la matriz: aplica cascade lateral en esa banda.
+  // Plazos: 90 → 60 → 30 → 8. Editar uno solo afecta a los más cortos.
+  const patchCell = (idx, bandaId, plazoDias, newValue) => {
+    setSkus((arr) => arr.map((s, i) => {
+      if (i !== idx) return s;
+      const matrix = s.matrix || computeMatrixFromInputs(s);
+      const row = matrix[String(bandaId)] || {};
+      const newRow = cascadeRow(row, plazoDias, Number(newValue) || 0);
+      return { ...s, matrix: { ...matrix, [String(bandaId)]: newRow } };
+    }));
   };
   const toggleSku = (idx) => patchSku(idx, { activo: !skus[idx].activo });
 
@@ -521,25 +565,28 @@ export default function ScreenBrandClientPricingForm() {
       // Persistir la simulación granular (SKU × modificadores + matriz 12×4).
       // Mandamos TODOS los SKUs del state (incluso los inactivos) para que el
       // backend pueda restaurar la lista completa al re-hidratar.
-      // La matriz de precios se ENVÍA YA CALCULADA — se congela como contrato
-      // (si en el futuro cambian divisores/factores, los precios cotizados
-      // siguen siendo los mismos).
+      // La matriz que persistimos es la del state actual (s.matrix), que puede
+      // incluir overrides manuales por celda — esos son intencionales y deben
+      // congelarse como contrato.
       const simPayload = {
         brand_id:     brandId,
         cliente_id:   clienteId,
         fecha_inicio: fechaInicio || null,
         fecha_fin:    fechaFinIndef ? null : (fechaFin || null),
-        skus: skus.map((s, i) => {
-          const c = calcs[i];
-          // Shape: { "<banda_id>": { "<plazo_dias>": <precio>, ... } }
+        skus: skus.map((s) => {
+          // Fallback: si por alguna razón el SKU no tiene matrix en state,
+          // la recalculamos desde inputs (caso raro, post-hidratación).
+          const matrix = s.matrix && Object.keys(s.matrix).length > 0
+            ? s.matrix
+            : computeMatrixFromInputs(s);
+          // Normalizar a números con 4 decimales para el JSON wire.
           const prices_matrix = {};
-          for (const cell of c.matriz) {
-            const bandKey = String(cell.banda.id);
+          for (const [bandaId, row] of Object.entries(matrix)) {
             const plazosObj = {};
-            PLAZOS_MARLUVAS.forEach((p, pi) => {
-              plazosObj[String(p.dias)] = Number(cell.plazos[pi].toFixed(4));
-            });
-            prices_matrix[bandKey] = plazosObj;
+            for (const [dias, price] of Object.entries(row || {})) {
+              plazosObj[String(dias)] = Number(Number(price).toFixed(4));
+            }
+            prices_matrix[String(bandaId)] = plazosObj;
           }
           return {
             sku:             String(s.sku),
@@ -547,7 +594,7 @@ export default function ScreenBrandClientPricingForm() {
             com_pct:         Number(s.com || 0),
             ajuste_usd:      Number(s.ajuste || 0),
             sobreprecio_pct: Number(s.sobreprecio || 0),
-            prices_matrix,   // 12 bandas × 4 plazos = 48 precios congelados
+            prices_matrix,
             activo:          !!s.activo,
           };
         }),
@@ -1171,7 +1218,9 @@ export default function ScreenBrandClientPricingForm() {
                 <tbody>
                   {skus.map((s, i) => {
                     if (!s.activo) return null;
-                    const c = calcs[i];
+                    // Fuente del precio: s.matrix (state principal). Fallback al
+                    // cálculo derivado si todavía no se inicializó.
+                    const matrix = s.matrix || computeMatrixFromInputs(s);
                     return (
                       <tr key={s.sku} className="mtx-row">
                         <td style={stickyTd(0, 56, { color: MUTED, fontSize: 9.5, borderRight: "none" })}>{s.sku}</td>
@@ -1179,14 +1228,27 @@ export default function ScreenBrandClientPricingForm() {
                           {s.ref}
                         </td>
                         {filteredBands.flatMap((b) => {
-                          const m = c.matriz.find((x) => x.banda.id === b.id);
                           const isCurrent = bandaVigente?.id === b.id;
-                          return m.plazos.map((pp, pi) => (
-                            <td key={`${b.id}-${pi}`}
-                                style={plazoCellStyle(b, isCurrent, pi === 0)}>
-                              {fmtMtxCell(pp)}
-                            </td>
-                          ));
+                          const row = matrix[String(b.id)] || {};
+                          return PLAZOS_MARLUVAS.map((p, pi) => {
+                            const price = Number(row[String(p.dias)] ?? 0);
+                            const isBase = pi === 0;
+                            return (
+                              <td key={`${b.id}-${p.dias}`}
+                                  style={plazoCellStyle(b, isCurrent, isBase)}>
+                                <MtxCellInput
+                                  value={price}
+                                  onCommit={(newVal) => patchCell(i, b.id, p.dias, newVal)}
+                                  isBase={isBase}
+                                  title={lang === "es"
+                                    ? (isBase
+                                        ? `Banda ${b.id} · ${p.dias}d (ancla) · editar recalcula 60/30/8d`
+                                        : `Banda ${b.id} · ${p.dias}d · editar recalcula plazos más cortos`)
+                                    : ""}
+                                />
+                              </td>
+                            );
+                          });
                         })}
                       </tr>
                     );
@@ -1620,6 +1682,90 @@ function plazoCellStyle(b, isCurrent, isBase) {
 
 /** Formato compacto de celda de matriz: enteros con coma si ≥ 1000, 2 dec si menor. */
 function fmtMtxCell(n) {
+  const v = Number(n || 0);
+  if (v >= 1000) return v.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return v.toFixed(2);
+}
+
+/**
+ * Input editable de una celda de la matriz. Muestra el precio formateado
+ * cuando está en blur (`$45.45` o `45.45`), permite editar al focus y
+ * commitea con Enter/blur. Visualmente plano (sin borde) hasta el hover.
+ */
+function MtxCellInput({ value, onCommit, isBase, title }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef(null);
+
+  const display = formatCellValue(value);
+
+  const startEdit = () => {
+    setDraft(Number(value || 0).toFixed(4).replace(/\.?0+$/, ""));
+    setEditing(true);
+    setTimeout(() => inputRef.current?.select?.(), 0);
+  };
+  const commit = () => {
+    const n = Number(String(draft).replace(",", "."));
+    setEditing(false);
+    if (Number.isFinite(n) && Math.abs(n - Number(value)) > 0.001) {
+      onCommit(n);
+    }
+  };
+  const cancel = () => setEditing(false);
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="number" step="0.01" min={0}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); commit(); }
+          if (e.key === "Escape") { e.preventDefault(); cancel(); }
+        }}
+        title={title}
+        style={{
+          width: "100%", padding: "3px 4px",
+          border: `1.5px solid ${"#00B286"}`,
+          borderRadius: 4, outline: "none",
+          background: "#FFFFFF",
+          color: "#0B1E3A",
+          fontFamily: "var(--font-mono, ui-monospace)",
+          fontVariantNumeric: "tabular-nums",
+          fontSize: 11, fontWeight: isBase ? 700 : 500,
+          textAlign: "right",
+        }}/>
+    );
+  }
+  return (
+    <button type="button" onClick={startEdit} title={title}
+      style={{
+        width: "100%", padding: "3px 4px",
+        border: "1px solid transparent",
+        background: "transparent",
+        color: "inherit", cursor: "text",
+        fontFamily: "var(--font-mono, ui-monospace)",
+        fontVariantNumeric: "tabular-nums",
+        fontSize: 11, fontWeight: isBase ? 700 : 500,
+        textAlign: "right", borderRadius: 4,
+        transition: "background 100ms, border 100ms",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "rgba(0,176,134,0.06)";
+        e.currentTarget.style.border = "1px solid rgba(0,176,134,0.25)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.border = "1px solid transparent";
+      }}>
+      {display}
+    </button>
+  );
+}
+
+function formatCellValue(n) {
   const v = Number(n || 0);
   if (v >= 1000) return v.toLocaleString("en-US", { maximumFractionDigits: 0 });
   return v.toFixed(2);
