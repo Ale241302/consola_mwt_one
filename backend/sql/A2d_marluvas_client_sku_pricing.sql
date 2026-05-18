@@ -44,6 +44,18 @@ CREATE TABLE IF NOT EXISTS pricing.marluvas_client_sku_pricing (
     ajuste_usd        NUMERIC(14,4)   NOT NULL DEFAULT 0,
     sobreprecio_pct   NUMERIC(8,6)    NOT NULL DEFAULT 0,
 
+    -- Matriz 12 bandas × 4 plazos de precios USD ya calculados.
+    -- Se persiste para CONGELAR los precios como contrato — si en el
+    -- futuro cambia un divisor de banda o un factor de plazo, los precios
+    -- previos NO se recalculan (auditoría comercial / disputas).
+    -- Shape esperado:
+    --   { "1": {"90": 25.25, "60": 24.99, "30": 24.80, "8": 24.55},
+    --     "2": {"90": 24.06, ...},
+    --     ...
+    --     "12": {...} }
+    -- Claves: banda_id (1..12) → plazo_dias (90|60|30|8) → precio USD.
+    prices_matrix     JSONB           NOT NULL DEFAULT '{}'::jsonb,
+
     -- Relación lógica con la BCPA padre (opcional)
     bcpa_id           UUID,                         -- commercial.brand_client_pricing_assignment.id
 

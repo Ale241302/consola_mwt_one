@@ -1855,6 +1855,30 @@ class MarluvasSaveSimulationView(APIView):
                         status=400,
                     )
 
+                # Matriz 12×4 — debe llegar pre-calculada desde el frontend
+                # (precios congelados). Si falta o tiene shape inválido,
+                # persistimos {} y el frontend recalcula al hidratar.
+                matrix_raw = item.get("prices_matrix")
+                if isinstance(matrix_raw, dict):
+                    # Validación liviana: claves banda → dict de plazos.
+                    # No imponemos las 12 bandas obligatorias por flexibilidad,
+                    # pero las que vengan se persisten tal cual (JSONB nativo).
+                    prices_matrix = {}
+                    for banda_key, plazos in matrix_raw.items():
+                        if not isinstance(plazos, dict):
+                            continue
+                        plazos_clean = {}
+                        for plazo_key, price in plazos.items():
+                            try:
+                                # Guardamos float (JSON-friendly). 4 dec de precisión.
+                                plazos_clean[str(plazo_key)] = round(float(price), 4)
+                            except (TypeError, ValueError):
+                                continue
+                        if plazos_clean:
+                            prices_matrix[str(banda_key)] = plazos_clean
+                else:
+                    prices_matrix = {}
+
                 rows_to_insert.append(MarluvasClientSkuPricing(
                     brand_id        = brand_id,
                     cliente_id      = cliente_id,
@@ -1863,6 +1887,7 @@ class MarluvasSaveSimulationView(APIView):
                     com_pct         = self._to_decimal(item.get("com_pct")),
                     ajuste_usd      = self._to_decimal(item.get("ajuste_usd")),
                     sobreprecio_pct = self._to_decimal(item.get("sobreprecio_pct")),
+                    prices_matrix   = prices_matrix,
                     is_active       = True,
                     fecha_inicio    = fecha_ini,
                     fecha_fin       = fecha_fin,
@@ -1891,8 +1916,18 @@ class MarluvasSaveSimulationView(APIView):
                 status=500,
             )
 
+        # Contador de celdas guardadas (12 bandas × 4 plazos = 48 esperadas/SKU).
+        total_cells = 0
+        for row in rows_to_insert:
+            m = row.prices_matrix or {}
+            if isinstance(m, dict):
+                for plazos in m.values():
+                    if isinstance(plazos, dict):
+                        total_cells += len(plazos)
+
         return Response({
             "saved":       len(rows_to_insert),
+            "cells":       total_cells,
             "brand_id":    str(brand_id),
             "cliente_id":  str(cliente_id),
             "snapshot_at": timezone.now().isoformat(),
@@ -1964,12 +1999,24 @@ class MarluvasLoadSimulationView(APIView):
             }, status=200)
 
         first = rows[0]
+
+        # Contador de celdas (12 bandas × 4 plazos por SKU = 48 esperadas).
+        # Útil para que el frontend valide que el snapshot está completo.
+        total_cells = 0
+        for r in rows:
+            m = r.prices_matrix or {}
+            if isinstance(m, dict):
+                for plazos in m.values():
+                    if isinstance(plazos, dict):
+                        total_cells += len(plazos)
+
         skus_out = [{
             "sku":             r.sku,
             "brl_override":    str(r.brl_override) if r.brl_override is not None else None,
             "com_pct":         str(r.com_pct),
             "ajuste_usd":      str(r.ajuste_usd),
             "sobreprecio_pct": str(r.sobreprecio_pct),
+            "prices_matrix":   r.prices_matrix or {},
             "activo":          True,
             "bcpa_id":         str(r.bcpa_id) if r.bcpa_id else None,
         } for r in rows]
@@ -1982,4 +2029,5 @@ class MarluvasLoadSimulationView(APIView):
             "skus":         skus_out,
             "source":       "db",
             "count":        len(rows),
+            "cells":        total_cells,   # típicamente N_skus × 48
         }, status=200)

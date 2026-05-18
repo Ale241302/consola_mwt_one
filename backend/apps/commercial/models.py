@@ -404,6 +404,14 @@ class MarluvasClientSkuPricing(models.Model):
     sobreprecio_pct   = models.DecimalField(
         max_digits=8, decimal_places=6, default=0)
 
+    # Matriz 12 bandas × 4 plazos de precios USD calculados y CONGELADOS.
+    # Shape: { "<banda_id>": {"<plazo_dias>": <precio>} } ej.:
+    #   { "1": {"90": 25.25, "60": 24.99, "30": 24.80, "8": 24.55},
+    #     "2": {"90": 24.06, ...}, ... "12": {...} }
+    # Persistida como contrato: si cambian constantes downstream, los
+    # precios ya cotizados no se recalculan (auditoría/disputas).
+    prices_matrix     = models.JSONField(default=dict, blank=True)
+
     bcpa_id           = models.UUIDField(null=True, blank=True)     # ⛔ sin FK (→ BCPA)
     fecha_inicio      = models.DateField(null=True, blank=True)
     fecha_fin         = models.DateField(null=True, blank=True)

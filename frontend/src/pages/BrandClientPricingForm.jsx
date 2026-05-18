@@ -163,12 +163,12 @@ function useExchangeRateUSDBRL(accessToken) {
 function useLoadSimulation(clienteId, brandId, accessToken) {
   const [data, setData] = useState({
     skus: [], fechaInicio: null, fechaFin: null,
-    loading: true, source: "empty",
+    loading: true, source: "empty", cells: 0,
   });
   useEffect(() => {
     let cancelled = false;
     if (!clienteId || !brandId) {
-      setData({ skus: [], fechaInicio: null, fechaFin: null, loading: false, source: "empty" });
+      setData({ skus: [], fechaInicio: null, fechaFin: null, loading: false, source: "empty", cells: 0 });
       return;
     }
     setData((d) => ({ ...d, loading: true }));
@@ -185,6 +185,10 @@ function useLoadSimulation(clienteId, brandId, accessToken) {
           ajuste:      Number(s.ajuste_usd ?? 0),
           sobreprecio: Number(s.sobreprecio_pct ?? 0),
           activo:      s.activo !== false,
+          // Matriz congelada al guardar (contractual). El editor recalcula
+          // al editar inputs, pero esta queda disponible para auditoría o
+          // para mostrar "lo que se le cotizó al cliente" en proformas.
+          prices_matrix_frozen: s.prices_matrix || null,
         }));
         setData({
           skus,
@@ -192,11 +196,12 @@ function useLoadSimulation(clienteId, brandId, accessToken) {
           fechaFin:    r?.fecha_fin || null,
           loading: false,
           source: r?.source || "empty",
+          cells:  Number(r?.cells || 0),
         });
       })
       .catch(() => {
         if (!cancelled) {
-          setData({ skus: [], fechaInicio: null, fechaFin: null, loading: false, source: "empty" });
+          setData({ skus: [], fechaInicio: null, fechaFin: null, loading: false, source: "empty", cells: 0 });
         }
       });
     return () => { cancelled = true; };
@@ -513,22 +518,39 @@ export default function ScreenBrandClientPricingForm() {
         }
       }
 
-      // Persistir la simulación granular (SKU × modificadores) — endpoint nuevo.
+      // Persistir la simulación granular (SKU × modificadores + matriz 12×4).
       // Mandamos TODOS los SKUs del state (incluso los inactivos) para que el
       // backend pueda restaurar la lista completa al re-hidratar.
+      // La matriz de precios se ENVÍA YA CALCULADA — se congela como contrato
+      // (si en el futuro cambian divisores/factores, los precios cotizados
+      // siguen siendo los mismos).
       const simPayload = {
         brand_id:     brandId,
         cliente_id:   clienteId,
         fecha_inicio: fechaInicio || null,
         fecha_fin:    fechaFinIndef ? null : (fechaFin || null),
-        skus: skus.map((s) => ({
-          sku:             String(s.sku),
-          brl_override:    Number.isFinite(Number(s.brl)) ? Number(s.brl) : null,
-          com_pct:         Number(s.com || 0),
-          ajuste_usd:      Number(s.ajuste || 0),
-          sobreprecio_pct: Number(s.sobreprecio || 0),
-          activo:          !!s.activo,
-        })),
+        skus: skus.map((s, i) => {
+          const c = calcs[i];
+          // Shape: { "<banda_id>": { "<plazo_dias>": <precio>, ... } }
+          const prices_matrix = {};
+          for (const cell of c.matriz) {
+            const bandKey = String(cell.banda.id);
+            const plazosObj = {};
+            PLAZOS_MARLUVAS.forEach((p, pi) => {
+              plazosObj[String(p.dias)] = Number(cell.plazos[pi].toFixed(4));
+            });
+            prices_matrix[bandKey] = plazosObj;
+          }
+          return {
+            sku:             String(s.sku),
+            brl_override:    Number.isFinite(Number(s.brl)) ? Number(s.brl) : null,
+            com_pct:         Number(s.com || 0),
+            ajuste_usd:      Number(s.ajuste || 0),
+            sobreprecio_pct: Number(s.sobreprecio || 0),
+            prices_matrix,   // 12 bandas × 4 plazos = 48 precios congelados
+            activo:          !!s.activo,
+          };
+        }),
       };
       const simResp = await apiFetch("/commercial/marluvas/save-simulation/", {
         method: "POST",
@@ -536,10 +558,11 @@ export default function ScreenBrandClientPricingForm() {
         token: accessToken,
       });
       const savedCount = Number(simResp?.saved ?? skusActivos.length);
+      const savedCells = Number(simResp?.cells ?? savedCount * 48);
 
       setBanner({ type: "success", msg: lang === "es"
-        ? `Lista guardada · ${savedCount} SKUs persistidos (${skusActivos.length} activos).`
-        : `Price list saved · ${savedCount} SKUs persisted (${skusActivos.length} active).` });
+        ? `Lista guardada · ${savedCount} SKUs · ${savedCells} precios congelados (12 bandas × 4 plazos).`
+        : `Price list saved · ${savedCount} SKUs · ${savedCells} prices frozen (12 bands × 4 terms).` });
     } catch (err) {
       setBanner({ type: "error",
         msg: String(err?.body?.detail || err?.message || err) });
