@@ -2031,3 +2031,203 @@ class MarluvasLoadSimulationView(APIView):
             "count":        len(rows),
             "cells":        total_cells,   # típicamente N_skus × 48
         }, status=200)
+
+
+# =====================================================================
+# MarluvasProductClientsMatrixView · matriz por cliente, dado un SKU
+# ---------------------------------------------------------------------
+# Vista inversa al simulador: en el detalle del producto, listar todos
+# los clientes habilitados que tienen un row en
+# pricing.marluvas_client_sku_pricing para ese SKU, y devolver la
+# matriz guardada de cada uno.
+#
+# GET /api/commercial/marluvas/product-clients-matrix/?sku=X&brand_id=Y
+#   → { sku, brand_id, count,
+#       clients: [{cliente_id, razon_social, nombre_comercial, pais_iso2,
+#                  brl_override, com_pct, ajuste_usd, sobreprecio_pct,
+#                  prices_matrix, fecha_inicio, fecha_fin, updated_at}] }
+#
+# Si no hay rows para ese SKU → 200 con clients=[].
+# =====================================================================
+class MarluvasProductClientsMatrixView(APIView):
+    """GET · matrices por cliente para un SKU específico."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import MarluvasClientSkuPricing
+
+        sku      = request.query_params.get("sku")
+        brand_id = request.query_params.get("brand_id") or None
+        if not sku:
+            return Response({"detail": "sku es requerido."}, status=400)
+
+        qs = MarluvasClientSkuPricing.objects.filter(sku=sku, is_active=True)
+        if brand_id:
+            try:
+                brand_uuid = uuid.UUID(str(brand_id))
+            except (ValueError, AttributeError, TypeError):
+                return Response({"detail": "brand_id no es UUID válido."}, status=400)
+            qs = qs.filter(brand_id=brand_uuid)
+
+        rows = list(qs.order_by("cliente_id"))
+
+        # Lookup masivo de clientes para razón social / país.
+        cliente_ids = [str(r.cliente_id) for r in rows]
+        clientes_map = {}
+        if cliente_ids:
+            try:
+                with connection.cursor() as cur:
+                    cur.execute("""
+                        SELECT id, razon_social, nombre_comercial, pais_iso2
+                          FROM clientes.cliente
+                         WHERE is_active = TRUE
+                           AND id::text = ANY(%s)
+                    """, [cliente_ids])
+                    for r in cur.fetchall():
+                        clientes_map[str(r[0])] = {
+                            "razon_social":     r[1],
+                            "nombre_comercial": r[2],
+                            "pais_iso2":        r[3],
+                        }
+            except Exception as exc:  # noqa: BLE001
+                log.warning("MarluvasProductClientsMatrixView clientes lookup failed: %s", exc)
+
+        clients_out = []
+        for r in rows:
+            cli = clientes_map.get(str(r.cliente_id), {})
+            clients_out.append({
+                "cliente_id":       str(r.cliente_id),
+                "razon_social":     cli.get("razon_social"),
+                "nombre_comercial": cli.get("nombre_comercial"),
+                "pais_iso2":        cli.get("pais_iso2"),
+                "brl_override":     str(r.brl_override) if r.brl_override is not None else None,
+                "com_pct":          str(r.com_pct),
+                "ajuste_usd":       str(r.ajuste_usd),
+                "sobreprecio_pct":  str(r.sobreprecio_pct),
+                "prices_matrix":    r.prices_matrix or {},
+                "fecha_inicio":     r.fecha_inicio.isoformat() if r.fecha_inicio else None,
+                "fecha_fin":        r.fecha_fin.isoformat()    if r.fecha_fin    else None,
+                "updated_at":       r.updated_at.isoformat()   if r.updated_at   else None,
+                "bcpa_id":          str(r.bcpa_id) if r.bcpa_id else None,
+            })
+
+        return Response({
+            "sku":      str(sku),
+            "brand_id": str(brand_id) if brand_id else None,
+            "count":    len(clients_out),
+            "clients":  clients_out,
+        }, status=200)
+
+
+# =====================================================================
+# MarluvasUpsertSkuView · actualización de UN solo SKU para UN cliente
+# ---------------------------------------------------------------------
+# Diferencia clave con MarluvasSaveSimulationView:
+#   · Save-simulation: snapshot por REEMPLAZO — desactiva TODOS los rows
+#     activos del par (brand, cliente) y reinserta los del payload. Sirve
+#     para "guardar todo el simulador" desde la vista cliente-marca.
+#   · Upsert-sku: snapshot por PARCHE — desactiva sólo el row activo de
+#     (brand, cliente, sku) y crea uno nuevo. NO toca otros SKUs del
+#     mismo cliente. Sirve para editar desde el detalle del producto
+#     (donde sólo modificás UN SKU para UN cliente).
+#
+# POST /api/commercial/marluvas/upsert-sku/
+#   body: { brand_id, cliente_id, sku,
+#           brl_override, com_pct, ajuste_usd, sobreprecio_pct,
+#           prices_matrix, fecha_inicio?, fecha_fin? }
+#   → { saved: 1, cells, brand_id, cliente_id, sku, snapshot_at }
+# =====================================================================
+class MarluvasUpsertSkuView(APIView):
+    """POST · upsert atómico de UN row (brand, cliente, sku) sin tocar otros."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .models import MarluvasClientSkuPricing
+
+        data = request.data or {}
+
+        try:
+            brand_id   = MarluvasSaveSimulationView._parse_uuid(data.get("brand_id"),   "brand_id")
+            cliente_id = MarluvasSaveSimulationView._parse_uuid(data.get("cliente_id"), "cliente_id")
+            fecha_ini  = MarluvasSaveSimulationView._parse_date_optional(data.get("fecha_inicio"), "fecha_inicio")
+            fecha_fin  = MarluvasSaveSimulationView._parse_date_optional(data.get("fecha_fin"),   "fecha_fin")
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+
+        sku = (data.get("sku") or "").strip()
+        if not sku:
+            return Response({"detail": "sku es requerido."}, status=400)
+
+        try:
+            brl_override    = MarluvasSaveSimulationView._to_decimal(data.get("brl_override"), allow_null=True)
+            com_pct         = MarluvasSaveSimulationView._to_decimal(data.get("com_pct"))
+            ajuste_usd      = MarluvasSaveSimulationView._to_decimal(data.get("ajuste_usd"))
+            sobreprecio_pct = MarluvasSaveSimulationView._to_decimal(data.get("sobreprecio_pct"))
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+
+        # Normalizar prices_matrix (mismo patrón que save-simulation).
+        matrix_raw = data.get("prices_matrix")
+        prices_matrix = {}
+        if isinstance(matrix_raw, dict):
+            for banda_key, plazos in matrix_raw.items():
+                if not isinstance(plazos, dict):
+                    continue
+                plazos_clean = {}
+                for plazo_key, price in plazos.items():
+                    try:
+                        plazos_clean[str(plazo_key)] = round(float(price), 4)
+                    except (TypeError, ValueError):
+                        continue
+                if plazos_clean:
+                    prices_matrix[str(banda_key)] = plazos_clean
+
+        new_row = MarluvasClientSkuPricing(
+            brand_id        = brand_id,
+            cliente_id      = cliente_id,
+            sku             = sku,
+            brl_override    = brl_override,
+            com_pct         = com_pct,
+            ajuste_usd      = ajuste_usd,
+            sobreprecio_pct = sobreprecio_pct,
+            prices_matrix   = prices_matrix,
+            is_active       = True,
+            fecha_inicio    = fecha_ini,
+            fecha_fin       = fecha_fin,
+        )
+
+        try:
+            with transaction.atomic():
+                # Desactivar SOLO el row activo previo de este triple
+                # (brand, cliente, sku). Los demás SKUs del cliente quedan intactos.
+                (MarluvasClientSkuPricing.objects
+                    .filter(brand_id=brand_id,
+                            cliente_id=cliente_id,
+                            sku=sku,
+                            is_active=True)
+                    .update(is_active=False))
+                new_row.save()
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "MarluvasUpsertSkuView failed (brand=%s cliente=%s sku=%s): %s",
+                brand_id, cliente_id, sku, exc,
+            )
+            return Response(
+                {"detail": f"No se pudo guardar el override: {exc}"},
+                status=500,
+            )
+
+        # Cells contadas del payload aceptado.
+        cells = 0
+        for plazos in prices_matrix.values():
+            if isinstance(plazos, dict):
+                cells += len(plazos)
+
+        return Response({
+            "saved":       1,
+            "cells":       cells,
+            "brand_id":    str(brand_id),
+            "cliente_id":  str(cliente_id),
+            "sku":         sku,
+            "snapshot_at": timezone.now().isoformat(),
+        }, status=200)

@@ -43,6 +43,8 @@ from .views import (
     MarluvasClientEnabledSkusView,
     # Simulador Marluvas v7 · persistencia de simulaciones (snapshot por reemplazo)
     MarluvasSaveSimulationView, MarluvasLoadSimulationView,
+    # Simulador Marluvas v7 · vista inversa (matrices por cliente desde un SKU)
+    MarluvasProductClientsMatrixView, MarluvasUpsertSkuView,
 )
 
 
@@ -113,4 +115,12 @@ urlpatterns = [
     path("commercial/marluvas/load-simulation/",
          MarluvasLoadSimulationView.as_view(),
          name="commercial-marluvas-load-simulation"),
+    # Simulador Marluvas v7 · matriz por cliente para un SKU (GET, vista del producto)
+    path("commercial/marluvas/product-clients-matrix/",
+         MarluvasProductClientsMatrixView.as_view(),
+         name="commercial-marluvas-product-clients-matrix"),
+    # Simulador Marluvas v7 · upsert de UN row (brand, cliente, sku) sin tocar otros
+    path("commercial/marluvas/upsert-sku/",
+         MarluvasUpsertSkuView.as_view(),
+         name="commercial-marluvas-upsert-sku"),
 ]

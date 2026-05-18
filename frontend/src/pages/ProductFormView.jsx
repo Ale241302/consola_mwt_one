@@ -81,6 +81,8 @@ function orderClientsHierarchy(clients) {
 }
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
+import PriceMatrixCompact from "../components/marluvas/PriceMatrixCompact.jsx";
+import { cascadeRow } from "../lib/marluvasPricing.js";
 
 // TABS canónicos del detalle de producto. La visibilidad se recorta
 // dinámicamente según el rol (POL_VISIBILIDAD):
@@ -343,6 +345,103 @@ export default function ScreenProductFormView() {
       .catch(() => { /* sin grade_item activo aún → silencioso */ });
     return () => { cancelled = true; };
   }, [isEdit, existing?.sku]);
+
+  // ── Matrices Marluvas por cliente para este SKU ───────────────────
+  // GET /commercial/marluvas/product-clients-matrix/?sku=X&brand_id=Y
+  // Devuelve { clients: [{cliente_id, razon_social, prices_matrix, ...}] }.
+  // Renderizamos una matriz 12×4 editable por cada cliente debajo de
+  // la sección "Override por cliente".
+  const [clientMatrices, setClientMatrices] = useState([]);
+  const [matricesLoading, setMatricesLoading] = useState(false);
+  const [savingClient, setSavingClient] = useState(null);   // cliente_id en vuelo
+  const [matrixBanner, setMatrixBanner] = useState(null);   // {type, msg, cliente_id}
+  const [dirtyClients, setDirtyClients] = useState({});     // {cliente_id: true}
+
+  useEffect(() => {
+    if (!isEdit || !existing?.sku) return;
+    let cancelled = false;
+    setMatricesLoading(true);
+    const qs = `?sku=${encodeURIComponent(existing.sku)}`
+             + (brandId ? `&brand_id=${encodeURIComponent(brandId)}` : "");
+    apiFetch(`/commercial/marluvas/product-clients-matrix/${qs}`, { token: getToken() })
+      .then((res) => {
+        if (cancelled) return;
+        const list = Array.isArray(res?.clients) ? res.clients : [];
+        setClientMatrices(list.map((c) => ({
+          cliente_id:       c.cliente_id,
+          razon_social:     c.razon_social || c.nombre_comercial || "—",
+          pais_iso2:        c.pais_iso2 || "",
+          brl_override:     c.brl_override != null ? Number(c.brl_override) : null,
+          com_pct:          Number(c.com_pct ?? 0),
+          ajuste_usd:       Number(c.ajuste_usd ?? 0),
+          sobreprecio_pct:  Number(c.sobreprecio_pct ?? 0),
+          prices_matrix:    c.prices_matrix && Object.keys(c.prices_matrix).length > 0
+            ? c.prices_matrix : {},
+          fecha_inicio:     c.fecha_inicio,
+          fecha_fin:        c.fecha_fin,
+          updated_at:       c.updated_at,
+        })));
+        setDirtyClients({});
+      })
+      .catch(() => { if (!cancelled) setClientMatrices([]); })
+      .finally(() => { if (!cancelled) setMatricesLoading(false); });
+    return () => { cancelled = true; };
+  }, [isEdit, existing?.sku, brandId]);
+
+  // Editor de celda: cascade jerárquico sobre la matriz del cliente.
+  const handleMatrixCellChange = (clienteId, bandaId, plazoDias, newValue) => {
+    setClientMatrices((arr) => arr.map((c) => {
+      if (c.cliente_id !== clienteId) return c;
+      const row = c.prices_matrix?.[String(bandaId)] || {};
+      const newRow = cascadeRow(row, plazoDias, Number(newValue) || 0);
+      return {
+        ...c,
+        prices_matrix: { ...(c.prices_matrix || {}), [String(bandaId)]: newRow },
+      };
+    }));
+    setDirtyClients((d) => ({ ...d, [clienteId]: true }));
+  };
+
+  // Guardar la matriz de UN cliente via POST upsert-sku (no toca otros SKUs).
+  const handleSaveClientMatrix = async (clienteId) => {
+    const c = clientMatrices.find((x) => x.cliente_id === clienteId);
+    if (!c || !existing?.sku || !brandId) return;
+    setSavingClient(clienteId);
+    setMatrixBanner(null);
+    try {
+      const payload = {
+        brand_id:        brandId,
+        cliente_id:      clienteId,
+        sku:             existing.sku,
+        brl_override:    c.brl_override,
+        com_pct:         c.com_pct,
+        ajuste_usd:      c.ajuste_usd,
+        sobreprecio_pct: c.sobreprecio_pct,
+        prices_matrix:   c.prices_matrix,
+        fecha_inicio:    c.fecha_inicio || null,
+        fecha_fin:       c.fecha_fin || null,
+      };
+      const resp = await apiFetch("/commercial/marluvas/upsert-sku/", {
+        method: "POST", body: payload, token: getToken(),
+      });
+      setDirtyClients((d) => { const next = { ...d }; delete next[clienteId]; return next; });
+      setMatrixBanner({
+        type: "success",
+        cliente_id: clienteId,
+        msg: lang === "es"
+          ? `Matriz guardada · ${resp?.cells ?? 48} precios congelados.`
+          : `Matrix saved · ${resp?.cells ?? 48} prices frozen.`,
+      });
+    } catch (e) {
+      setMatrixBanner({
+        type: "error",
+        cliente_id: clienteId,
+        msg: (lang === "es" ? "Error: " : "Error: ") + (e?.body?.detail || e?.message || ""),
+      });
+    } finally {
+      setSavingClient(null);
+    }
+  };
 
   // ── Aliases comerciales por cliente (CEO/ADMIN-only) ──────────────
   // Estado: { [clienteId]: { alias, cliente_sku?, status?, error? } }
@@ -1431,6 +1530,123 @@ export default function ScreenProductFormView() {
             );
           })}
         </div>
+
+        {/* ── Matriz de precios Marluvas · 12 bandas × 4 plazos por cliente ── */}
+        {isEdit && (
+          <div style={{ marginTop: 22 }}>
+            <div className="form-sub-title" style={{ marginBottom: 6 }}>
+              <IconDollar size={13}/> {lang === 'es'
+                ? 'Matriz de precios · USD por par · por cliente habilitado'
+                : 'Price matrix · USD per pair · per enabled client'}
+            </div>
+            <div className="caption" style={{
+              color: 'var(--text-tertiary)', marginBottom: 12, lineHeight: 1.5,
+            }}>
+              {lang === 'es'
+                ? <>Precios congelados por contrato (12 bandas cambiales × 4 plazos = 48 precios). Editar una celda <strong>90d</strong> recalcula 60/30/8d con factores originales; editar <strong>60d</strong> recalcula 30/8d sin tocar 90d; <strong>30d</strong> recalcula 8d; <strong>8d</strong> es terminal.</>
+                : <>Prices frozen as contract (12 FX bands × 4 terms = 48 prices). Editing <strong>90d</strong> recalculates 60/30/8d; <strong>60d</strong> recalculates 30/8d; <strong>30d</strong> recalculates 8d; <strong>8d</strong> is terminal.</>}
+            </div>
+
+            {matricesLoading && (
+              <div style={{
+                padding: 24, textAlign: 'center', color: 'var(--text-tertiary)',
+                fontSize: 12, background: '#F8FAFC', border: '1px dashed #CBD5E1',
+                borderRadius: 8,
+              }}>
+                {lang === 'es' ? 'Cargando matrices…' : 'Loading matrices…'}
+              </div>
+            )}
+
+            {!matricesLoading && clientMatrices.length === 0 && (
+              <div style={{
+                padding: 20, color: 'var(--text-tertiary)', fontSize: 12,
+                background: '#F8FAFC', border: '1px dashed #CBD5E1', borderRadius: 8,
+                lineHeight: 1.5,
+              }}>
+                {lang === 'es'
+                  ? <>Aún no hay matrices guardadas para este SKU. Las matrices se crean desde el simulador del cliente-marca: <strong>Marcas → [marca] → Motor de Precios → [cliente]</strong>.</>
+                  : <>No matrices saved yet for this SKU. Matrices are created from the client-brand simulator.</>}
+              </div>
+            )}
+
+            {!matricesLoading && clientMatrices.map((c) => {
+              const isDirty = !!dirtyClients[c.cliente_id];
+              const isSaving = savingClient === c.cliente_id;
+              const showBanner = matrixBanner && matrixBanner.cliente_id === c.cliente_id;
+              return (
+                <div key={c.cliente_id} style={{
+                  marginBottom: 18, padding: 14,
+                  background: '#FFFFFF',
+                  border: '1px solid #E2E8F0', borderRadius: 10,
+                }}>
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between',
+                    alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap',
+                  }}>
+                    <div>
+                      <div style={{
+                        font: '700 13px/1.2 var(--font-body)', color: '#0B1E3A',
+                      }}>{c.razon_social}</div>
+                      <div style={{
+                        font: '500 10.5px/1.3 var(--font-body)', color: '#64748B',
+                        marginTop: 2,
+                      }}>
+                        {c.pais_iso2 && <>{c.pais_iso2} · </>}
+                        {lang === 'es' ? 'BRL base:' : 'BRL base:'}
+                        <strong style={{ color: '#0B1E3A', marginLeft: 4 }}>
+                          {c.brl_override != null ? Number(c.brl_override).toFixed(2) : '—'}
+                        </strong>
+                        {' · Com '}
+                        <strong style={{ color: '#0B1E3A' }}>
+                          {Number(c.com_pct).toFixed(2)}%
+                        </strong>
+                        {Number(c.ajuste_usd) > 0 && <>{' · Ajuste $'}<strong style={{ color: '#0B1E3A' }}>{Number(c.ajuste_usd).toFixed(2)}</strong></>}
+                        {Number(c.sobreprecio_pct) > 0 && <>{' · Sobreprec '}<strong style={{ color: '#0B1E3A' }}>{(Number(c.sobreprecio_pct) * 100).toFixed(2)}%</strong></>}
+                        {c.updated_at && <>{' · '}<span title={c.updated_at}>{new Date(c.updated_at).toLocaleDateString(lang === 'es' ? 'es-CR' : 'en-US')}</span></>}
+                      </div>
+                    </div>
+                    <button type="button"
+                      onClick={() => handleSaveClientMatrix(c.cliente_id)}
+                      disabled={!isDirty || isSaving}
+                      style={{
+                        padding: '7px 14px',
+                        background: (!isDirty || isSaving) ? '#94A3B8' : '#00B286',
+                        color: '#FFFFFF', border: 'none', borderRadius: 6,
+                        font: '700 11.5px/1 var(--font-body)',
+                        cursor: (!isDirty || isSaving) ? 'not-allowed' : 'pointer',
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                      }}>
+                      {isSaving
+                        ? (lang === 'es' ? 'Guardando…' : 'Saving…')
+                        : isDirty
+                          ? (lang === 'es' ? 'Guardar cambios' : 'Save changes')
+                          : (lang === 'es' ? 'Sin cambios' : 'No changes')}
+                    </button>
+                  </div>
+
+                  {showBanner && (
+                    <div style={{
+                      padding: '8px 12px', marginBottom: 10,
+                      background: matrixBanner.type === 'success' ? 'rgba(0,178,134,0.10)' : 'rgba(220,38,38,0.10)',
+                      color: matrixBanner.type === 'success' ? '#065F46' : '#991B1B',
+                      border: `1px solid ${matrixBanner.type === 'success' ? 'rgba(0,178,134,0.35)' : 'rgba(220,38,38,0.35)'}`,
+                      borderRadius: 6, font: '500 11.5px/1.4 var(--font-body)',
+                    }}>
+                      {matrixBanner.msg}
+                    </div>
+                  )}
+
+                  <PriceMatrixCompact
+                    matrix={c.prices_matrix}
+                    onCellChange={(bandaId, plazoDias, newValue) =>
+                      handleMatrixCellChange(c.cliente_id, bandaId, plazoDias, newValue)}
+                    maxHeight="40vh"
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <div className="ceo-footnote" style={{marginTop:18}}>
           <IconLock size={12}/> {lang==='es'
