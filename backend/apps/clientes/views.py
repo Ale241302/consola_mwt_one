@@ -372,6 +372,21 @@ class ClienteViewSet(viewsets.ViewSet):
                 placeholders = ",".join(["%s"] * len(client_ids))
                 estado_filter = "" if include_closed else "AND e.estado NOT IN (\'CERRADO\',\'CANCELADO\')"
 
+                # Sprint 2026-05-17 fix · El cliente debe ver expedientes en
+                # los que aparece como cliente_final O como operating_company
+                # (legal entity que opera la importacion). Antes solo se
+                # filtraba por client_id, asi que Muito Work Limitada veia
+                # 0 expedientes aunque operara 5 (todos con client_id=Sondel
+                # pero operating_company_id=MWT).
+                #
+                # El WHERE OR no rompe el caso del cliente normal: si Sondel
+                # consulta, sigue viendo solo sus expedientes (donde
+                # client_id=Sondel). Solo cambia para legal entities que
+                # tambien aparecen como operador.
+                #
+                # Sumamos el campo operating_company_id al SELECT por si el
+                # FE quiere distinguir "soy cliente final" vs "soy operador".
+
                 # 1. Headers de expedientes
                 c.execute(
                     f"""
@@ -381,14 +396,18 @@ class ClienteViewSet(viewsets.ViewSet):
                         COALESCE(e.total_paid,     0)::float,
                         COALESCE(e.balance,        0)::float,
                         COALESCE(e.credit_days,    0)::int,
-                        e.last_event_at, e.created_at
+                        e.last_event_at, e.created_at,
+                        e.operating_company_id::text AS operating_company_id
                     FROM expedientes.expediente e
-                    WHERE e.client_id::text IN ({placeholders})
+                    WHERE (
+                        e.client_id::text            IN ({placeholders})
+                        OR e.operating_company_id::text IN ({placeholders})
+                    )
                       AND e.is_active = TRUE
                       {estado_filter}
                     ORDER BY e.last_event_at DESC NULLS LAST, e.created_at DESC
                     """,
-                    client_ids,
+                    client_ids + client_ids,
                 )
                 rows = c.fetchall()
                 exp_ids = [r[0] for r in rows]
@@ -439,6 +458,19 @@ class ClienteViewSet(viewsets.ViewSet):
 
                 for r in rows:
                     a = agg.get(r[0]) or {"lines_count": 0, "lines_with_sap": 0, "order_value": 0.0}
+                    op_id = r[10] if len(r) > 10 else None
+                    # Sprint 2026-05-17 · `viewer_role` permite que el FE
+                    # distinga si este cliente aparece como CLIENT (cliente
+                    # final del expediente) u OPERATOR (legal entity que lo
+                    # opera). Solo informativo — no afecta filtros.
+                    is_client_of_exp = (r[3] in client_ids)
+                    is_op_of_exp     = (op_id in client_ids) if op_id else False
+                    if is_client_of_exp and is_op_of_exp:
+                        viewer_role = "BOTH"
+                    elif is_op_of_exp:
+                        viewer_role = "OPERATOR"
+                    else:
+                        viewer_role = "CLIENT"
                     out.append({
                         "id":             r[0],
                         "codigo":         r[1],
@@ -453,6 +485,10 @@ class ClienteViewSet(viewsets.ViewSet):
                         "order_value":    a["order_value"],
                         "lines_count":    a["lines_count"],
                         "lines_with_sap": a["lines_with_sap"],
+                        # Sprint 2026-05-17 — nuevos campos para distinguir
+                        # rol del cliente consultante en este expediente.
+                        "operating_company_id": op_id,
+                        "viewer_role":          viewer_role,
                     })
         except Exception as e:
             import logging
@@ -528,11 +564,14 @@ class ClienteViewSet(viewsets.ViewSet):
                            AND e.estado NOT IN (\'CERRADO\',\'CANCELADO\')
                     LEFT JOIN productos.producto p ON p.id = l.producto_id
                     WHERE l.is_active = TRUE
-                      AND e.client_id::text IN ({placeholders})
+                      AND (
+                          e.client_id::text            IN ({placeholders})
+                          OR e.operating_company_id::text IN ({placeholders})
+                      )
                     ORDER BY COALESCE(e.last_event_at, e.created_at) DESC,
                              l.sku, l.size
                     """,
-                    client_ids,
+                    client_ids + client_ids,
                 )
                 for r in c.fetchall():
                     out.append({
