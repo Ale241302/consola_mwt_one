@@ -20,7 +20,7 @@ import {
   IconRefresh, IconUsers,
 } from "../lib/icons.jsx";
 import { fmtMoney, fmtShortDate } from "../lib/i18n.js";
-import { clientesApi, apiFetch, getToken } from "../lib/api.js";
+import { clientesApi, apiFetch, getToken, financePaymentsApi } from "../lib/api.js";
 import {
   CLIENTS, EXPEDIENTES, CLIENT_PAYMENTS, CLIENT_PRODUCTS_BOUGHT, OCS,
 } from "../data/mockData.js";
@@ -29,6 +29,13 @@ import SubsidiariasTab from "../components/clientes/SubsidiariasTab.jsx";
 import ConsolidateToggle from "../components/clientes/ConsolidateToggle.jsx";
 // Sprint 2026-05-17 · rol del viewer para columna EXPEDIENTE role-aware.
 import { useRole } from "../context/RoleContext.jsx";
+// Sprint Registrar Pago (Fase 3) — drawer + i18n para tab Pagos real.
+import PaymentDetailDrawer from "../components/finance/PaymentDetailDrawer.jsx";
+import {
+  PAYMENT_STATUS_LABELS, PAYMENT_STATUS_COLORS,
+  PAYMENT_DIRECTION_LABELS,
+  getEnumLabel,
+} from "../lib/i18n/payments.js";
 
 // ── Banderitas por país (mismo subset que NodoDetail) ──
 const FLAG_BY_ISO2 = {
@@ -291,16 +298,53 @@ export default function ScreenClienteDetail() {
     ),
     [expedientesCliente]
   );
-  // Pagos: aún no hay endpoint dedicado. Usamos mock cuando es cliente
-  // mock; para clientes reales devolvemos lista vacía hasta que cobros
-  // exponga /clientes/{id}/pagos/.
+  // Sprint Registrar Pago (Fase 3) — Pagos reales desde /api/finance/payments/.
+  // El backend devuelve toda la lista; filtramos in-memory por counterparty_id
+  // o por el cliente final del expediente (target_client_id). Para clientes
+  // mock seguimos cayendo a CLIENT_PAYMENTS. El refreshKey se bump-ea cuando
+  // el drawer aplica una accion (reconcile / release / reject) para refrescar.
+  const [apiPayments, setApiPayments] = useState(null);
+  const [pagosRefreshKey, setPagosRefreshKey] = useState(0);
+  useEffect(() => {
+    if (!cid || rawClient?.__isMockShape) { setApiPayments(null); return; }
+    let cancelled = false;
+    financePaymentsApi.list()
+      .then((rows) => {
+        if (cancelled) return;
+        const arr = Array.isArray(rows) ? rows : (rows?.results || []);
+        setApiPayments(arr);
+      })
+      .catch(() => { if (!cancelled) setApiPayments([]); });
+    return () => { cancelled = true; };
+  }, [cid, rawClient?.__isMockShape, pagosRefreshKey]);
+
   const pagosCliente = useMemo(() => {
+    // Mock fallback.
     if (rawClient?.__isMockShape && cid) {
       return CLIENT_PAYMENTS.filter(p => p.client_id === cid)
         .sort((a,b) => (a.date < b.date ? 1 : -1));
     }
-    return [];
-  }, [cid, rawClient?.__isMockShape]);
+    if (!Array.isArray(apiPayments) || !cid) return [];
+    // Un pago entra en la tab del cliente si:
+    //   (a) counterparty_id === cid (cliente paga a MWT — caso comun),
+    //   (b) target_client_id === cid (el credito impactado pertenece al
+    //       cliente, util cuando MWT le paga a un proveedor en nombre del
+    //       cliente — modo C), o
+    //   (c) cualquiera de las aplicaciones tiene applicable.client_id === cid.
+    return apiPayments
+      .filter((p) => {
+        if (p.counterparty_id === cid) return true;
+        if (p.target_client_id === cid) return true;
+        if (Array.isArray(p.aplicaciones)) {
+          return p.aplicaciones.some((a) => a?.client_id === cid);
+        }
+        return false;
+      })
+      .sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+  }, [apiPayments, cid, rawClient?.__isMockShape]);
+
+  // Pago seleccionado para el drawer de detalle (Fase 3).
+  const [openPaymentId, setOpenPaymentId] = useState(null);
   const productosCliente = useMemo(() => {
     if (Array.isArray(apiProductos)) {
       return apiProductos.map(adaptProductoFromApi).filter(Boolean);
@@ -349,10 +393,18 @@ export default function ScreenClienteDetail() {
       if (e.credit_days >= 75) out.push({ severity:'critical', msg: `${e.ref} · reloj de crédito ${e.credit_days}d · cliente debería estar bloqueado.` });
       else if (e.credit_days >= 60) out.push({ severity:'warning', msg: `${e.ref} · reloj ${e.credit_days}d · negociar cobro / garantía.` });
     });
-    const rejected = pagosCliente.filter(p => p.status === 'rejected');
+    // Sprint Registrar Pago (Fase 3) · soporta tanto el enum mock
+    // (`status: 'rejected' | 'pending'`) como el real backend
+    // (`estado: 'RECHAZADO' | 'PENDIENTE_AI'`).
+    const _isRejected = (p) => p.status === 'rejected' || p.estado === 'RECHAZADO';
+    const _isPending  = (p) =>
+      p.status === 'pending' ||
+      p.estado === 'PENDIENTE_AI' ||
+      p.estado === 'NEEDS_REVIEW';
+    const rejected = pagosCliente.filter(_isRejected);
     if (rejected.length) out.push({ severity:'warning', msg: `${rejected.length} pago(s) rechazado(s) históricamente · revisar origen de fondos.` });
-    const pending = pagosCliente.filter(p => p.status === 'pending');
-    if (pending.length >= 2) out.push({ severity:'info', msg: `${pending.length} pagos en status pending · acelerar conciliación bancaria.` });
+    const pending = pagosCliente.filter(_isPending);
+    if (pending.length >= 2) out.push({ severity:'info', msg: `${pending.length} pagos pendientes de verificación · acelerar conciliación bancaria.` });
     if (client.estado === 'BLOQUEADO') out.push({ severity:'critical', msg: 'Cliente BLOQUEADO — no emitir nuevas proformas sin autorización CEO.' });
     if (!out.length) out.push({ severity:'ok', msg: 'Sin señales activas. Cliente saludable.' });
     return out;
@@ -666,8 +718,14 @@ export default function ScreenClienteDetail() {
           )}
           {tab === 'pagos' && (
             <motion.div key="pay" initial={{opacity:0, y:6}} animate={{opacity:1, y:0}} exit={{opacity:0}} transition={{duration:0.18}}>
-              <PagosTab lang={lang} pagos={pagosCliente}
-                        consolidate={consolidate} isParent={client.is_parent}/>
+              <PagosTab
+                lang={lang}
+                pagos={pagosCliente}
+                consolidate={consolidate}
+                isParent={client.is_parent}
+                isMock={!!rawClient?.__isMockShape}
+                onOpenPayment={(pid)=>setOpenPaymentId(pid)}
+              />
             </motion.div>
           )}
           {tab === 'productos' && (
@@ -713,6 +771,16 @@ export default function ScreenClienteDetail() {
           />
         )}
       </AnimatePresence>
+
+      {/* Sprint Registrar Pago (Fase 3) · Drawer detalle pago. Se monta a
+          nivel pagina para que tab Pagos pueda abrirlo con paymentId. */}
+      <PaymentDetailDrawer
+        open={!!openPaymentId}
+        paymentId={openPaymentId}
+        onClose={() => setOpenPaymentId(null)}
+        onChange={() => setPagosRefreshKey((k) => k + 1)}
+        lang={lang}
+      />
     </div>
   );
 }
@@ -813,8 +881,13 @@ function ExpedientesTab({ lang, expedientes, onOpen, consolidate, isParent, isCl
 
 /* ────────────────────────────────────────────────────
    TAB · Pagos — Payment Status Machine
+   Sprint Registrar Pago (Fase 3) · alimentada por /api/finance/payments/.
+   Soporta dos formas:
+     - "mock"   (CLIENT_PAYMENTS) — status/amount/date legacy
+     - "real"   (finance.payment)  — estado/monto/fecha + drawer detalle
+   onOpenPayment(id) abre <PaymentDetailDrawer/> en el padre.
    ──────────────────────────────────────────────────── */
-function PagosTab({ lang, pagos, consolidate, isParent }) {
+function PagosTab({ lang, pagos, consolidate, isParent, isMock = false, onOpenPayment }) {
   if (!pagos.length) {
     return (
       <>
@@ -822,31 +895,101 @@ function PagosTab({ lang, pagos, consolidate, isParent }) {
         <div className="card card-pad-lg empty">
           <IconDollar size={22} style={{color:'var(--text-tertiary)'}}/>
           <div className="heading-md">{lang==='es'?'Sin pagos registrados':'No payments recorded'}</div>
+          <div className="caption" style={{color:'var(--text-tertiary)'}}>
+            {lang==='es'
+              ? 'Cuando se registre un pago entrante de este cliente o saliente que afecte su crédito, aparecerá aquí.'
+              : 'When an incoming payment from this client or an outgoing payment affecting its credit is registered, it will appear here.'}
+          </div>
         </div>
       </>
     );
   }
 
-  const agg = pagos.reduce((acc, p) => {
-    acc[p.status] = (acc[p.status] || 0) + 1;
-    acc.total = (acc.total || 0) + p.amount;
+  // Modo mock — preservamos UI legacy.
+  if (isMock) {
+    const agg = pagos.reduce((acc, p) => {
+      acc[p.status] = (acc[p.status] || 0) + 1;
+      acc.total = (acc.total || 0) + p.amount;
+      return acc;
+    }, {});
+    return (
+      <>
+        <ConsolidatedBanner lang={lang} isParent={isParent} consolidate={consolidate}/>
+        <div className="status-machine-strip">
+          {Object.entries(PAYMENT_STATUS).map(([k, m]) => (
+            <div key={k} className={`sm-box ${m.className}`}>
+              <div className="sm-label">{m.label}</div>
+              <div className="sm-val">{agg[k] || 0}</div>
+            </div>
+          ))}
+          <div className="sm-box sm-total">
+            <div className="sm-label">{lang==='es'?'Total':'Total'}</div>
+            <div className="sm-val">{fmtMoney(agg.total || 0)}</div>
+          </div>
+        </div>
+        <div className="card card-pad-0" style={{marginTop: 12}}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{lang==='es'?'ID Pago':'Payment ID'}</th>
+                <th>{lang==='es'?'Fecha':'Date'}</th>
+                <th>{lang==='es'?'Expediente':'File'}</th>
+                <th>{lang==='es'?'Método':'Method'}</th>
+                <th>{lang==='es'?'Referencia':'Ref.'}</th>
+                <th style={{textAlign:'right'}}>{lang==='es'?'Monto':'Amount'}</th>
+                <th>{lang==='es'?'Estado':'Status'}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagos.map(p => (
+                <tr key={p.id}>
+                  <td className="mono-sm">{p.id}</td>
+                  <td>{fmtShortDate(p.date, lang)}</td>
+                  <td className="mono-sm">{p.expediente}</td>
+                  <td>{p.method}</td>
+                  <td className="mono-sm" style={{color:'var(--text-tertiary)'}}>{p.ref}</td>
+                  <td className="tabular-nums" style={{textAlign:'right'}}>{fmtMoney(p.amount)}</td>
+                  <td><PaymentStatusBadge status={p.status}/></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    );
+  }
+
+  // Modo real (finance.payment) — KPIs por estado + tabla clickeable.
+  const STATES = [
+    "PENDIENTE_AI", "CONFIRMADO_AI", "NEEDS_REVIEW",
+    "CONFIRMADO_HUMANO", "RECHAZADO",
+  ];
+  const aggReal = pagos.reduce((acc, p) => {
+    const st = p.estado || "PENDIENTE_AI";
+    acc[st] = (acc[st] || 0) + 1;
+    acc.totalUsd = (acc.totalUsd || 0) + Number(p.monto_usd ?? p.monto ?? 0);
     return acc;
   }, {});
 
   return (
     <>
       <ConsolidatedBanner lang={lang} isParent={isParent} consolidate={consolidate}/>
-      {/* Mini-dashboard de estados */}
-      <div className="status-machine-strip">
-        {Object.entries(PAYMENT_STATUS).map(([k, m]) => (
-          <div key={k} className={`sm-box ${m.className}`}>
-            <div className="sm-label">{m.label}</div>
-            <div className="sm-val">{agg[k] || 0}</div>
+
+      {/* Mini-dashboard de estados (real) */}
+      <div className="status-machine-strip" style={{marginBottom: 10}}>
+        {STATES.map((st) => (
+          <div key={st} className="sm-box" style={{
+            borderLeft: `3px solid ${PAYMENT_STATUS_COLORS[st] || 'var(--border)'}`,
+          }}>
+            <div className="sm-label">
+              {getEnumLabel(PAYMENT_STATUS_LABELS, st, lang)}
+            </div>
+            <div className="sm-val tabular-nums">{aggReal[st] || 0}</div>
           </div>
         ))}
         <div className="sm-box sm-total">
-          <div className="sm-label">{lang==='es'?'Total':'Total'}</div>
-          <div className="sm-val">{fmtMoney(agg.total || 0)}</div>
+          <div className="sm-label">{lang === 'es' ? 'Total USD' : 'Total USD'}</div>
+          <div className="sm-val tabular-nums">{fmtMoney(aggReal.totalUsd || 0)}</div>
         </div>
       </div>
 
@@ -854,27 +997,81 @@ function PagosTab({ lang, pagos, consolidate, isParent }) {
         <table className="table">
           <thead>
             <tr>
-              <th>{lang==='es'?'ID Pago':'Payment ID'}</th>
-              <th>{lang==='es'?'Fecha':'Date'}</th>
-              <th>{lang==='es'?'Expediente':'File'}</th>
-              <th>{lang==='es'?'Método':'Method'}</th>
-              <th>{lang==='es'?'Referencia':'Ref.'}</th>
-              <th style={{textAlign:'right'}}>{lang==='es'?'Monto':'Amount'}</th>
-              <th>{lang==='es'?'Estado':'Status'}</th>
+              <th>{lang === 'es' ? 'Código' : 'Code'}</th>
+              <th>{lang === 'es' ? 'Fecha' : 'Date'}</th>
+              <th>{lang === 'es' ? 'Dirección' : 'Direction'}</th>
+              <th>{lang === 'es' ? 'Método' : 'Method'}</th>
+              <th>{lang === 'es' ? 'Referencia' : 'Ref.'}</th>
+              <th style={{textAlign:'right'}}>{lang === 'es' ? 'Monto' : 'Amount'}</th>
+              <th style={{textAlign:'right'}}>{lang === 'es' ? 'USD' : 'USD'}</th>
+              <th>{lang === 'es' ? 'Estado' : 'Status'}</th>
             </tr>
           </thead>
           <tbody>
-            {pagos.map(p => (
-              <tr key={p.id}>
-                <td className="mono-sm">{p.id}</td>
-                <td>{fmtShortDate(p.date, lang)}</td>
-                <td className="mono-sm">{p.expediente}</td>
-                <td>{p.method}</td>
-                <td className="mono-sm" style={{color:'var(--text-tertiary)'}}>{p.ref}</td>
-                <td style={{textAlign:'right'}}>{fmtMoney(p.amount)}</td>
-                <td><PaymentStatusBadge status={p.status}/></td>
-              </tr>
-            ))}
+            {pagos.map((p) => {
+              const code = p.codigo || p.id?.slice?.(0, 8) || '—';
+              const dir  = p.direction || 'IN';
+              const dirLabel = getEnumLabel(PAYMENT_DIRECTION_LABELS, dir, lang);
+              const stColor = PAYMENT_STATUS_COLORS[p.estado] || 'var(--text-tertiary)';
+              const stLabel = getEnumLabel(PAYMENT_STATUS_LABELS, p.estado, lang);
+              const monto    = Number(p.monto || 0);
+              const montoUsd = Number(p.monto_usd ?? p.monto ?? 0);
+              const moneda   = p.moneda || 'USD';
+              return (
+                <tr
+                  key={p.id}
+                  onClick={() => onOpenPayment && onOpenPayment(p.id)}
+                  style={{cursor:'pointer'}}
+                >
+                  <td className="mono-sm" style={{fontWeight: 600}}>{code}</td>
+                  <td className="tabular-nums">{fmtShortDate(p.fecha, lang)}</td>
+                  <td>
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '2px 8px',
+                      borderRadius: 4,
+                      font: '600 10px/1.4 var(--font-mono)',
+                      letterSpacing: '0.06em',
+                      background: dir === 'IN'
+                        ? 'color-mix(in oklab, var(--success) 10%, transparent)'
+                        : 'color-mix(in oklab, var(--warning) 10%, transparent)',
+                      color: dir === 'IN' ? 'var(--success)' : 'var(--warning)',
+                      border: `1px solid color-mix(in oklab, ${dir === 'IN' ? 'var(--success)' : 'var(--warning)'} 32%, transparent)`,
+                    }}>
+                      {dir}
+                    </span>
+                    <span className="caption" style={{marginLeft:6, color:'var(--text-tertiary)'}}>
+                      {dirLabel.split(' ')[0]}
+                    </span>
+                  </td>
+                  <td>{p.metodo || '—'}</td>
+                  <td className="mono-sm" style={{color:'var(--text-tertiary)'}}>
+                    {p.referencia || '—'}
+                  </td>
+                  <td className="tabular-nums" style={{textAlign:'right'}}>
+                    {fmtMoney(monto)} <span style={{color:'var(--text-tertiary)', fontSize:11}}>{moneda}</span>
+                  </td>
+                  <td className="tabular-nums" style={{textAlign:'right', fontWeight: 600}}>
+                    {fmtMoney(montoUsd)}
+                  </td>
+                  <td>
+                    <span style={{
+                      display:'inline-flex', alignItems:'center', gap:6,
+                      padding:'3px 9px', borderRadius: 4,
+                      background: `color-mix(in oklab, ${stColor} 10%, transparent)`,
+                      border: `1px solid color-mix(in oklab, ${stColor} 32%, transparent)`,
+                      color: stColor,
+                      font: '600 11px/1.4 var(--font-body)',
+                    }}>
+                      <span style={{
+                        width:6, height:6, borderRadius:'50%', background: stColor,
+                      }}/>
+                      {stLabel}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

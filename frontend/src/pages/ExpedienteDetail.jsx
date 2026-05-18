@@ -44,6 +44,12 @@ import { useRole } from "../context/RoleContext.jsx";
 import {
   MWT_OPERATING_CLIENT_ID, MWT_OPERATOR_NAME, isMwtOperated,
 } from "../lib/operatingCompany.js";
+// Sprint Registrar Pago (Fase 3) · drawer detalle + i18n labels reales.
+import PaymentDetailDrawer from "../components/finance/PaymentDetailDrawer.jsx";
+import {
+  PAYMENT_STATUS_LABELS, PAYMENT_STATUS_COLORS,
+  getEnumLabel as _getPayEnum,
+} from "../lib/i18n/payments.js";
 
 export default function ScreenExpedienteDetail() {
   const navigate = useNavigate();
@@ -297,6 +303,9 @@ export default function ScreenExpedienteDetail() {
   const [showAdvance, setShowAdvance] = useState(false);
   const [showCostDrawer, setShowCostDrawer] = useState(false);
   const [showPaymentDrawer, setShowPaymentDrawer] = useState(false);
+  // Sprint Registrar Pago (Fase 3) · drawer detalle de pago + refresh key.
+  const [openPaymentId, setOpenPaymentId] = useState(null);
+  const [pagosRefreshKey, setPagosRefreshKey] = useState(0);
   // Sprint 2026-05-11 · El wizard de auditoría documental (Document
   // Matchmaker) se desacopló junto con la tab Documentos. Si vuelve, se
   // re-instancia el state `showMatchmaker` y el <DocumentMatchmakerWizard/>.
@@ -311,7 +320,25 @@ export default function ScreenExpedienteDetail() {
   // solo cuando es el hero mock.
   const lines = isHero ? HERO_LINES : (apiLines.length ? apiLines : []);
   const costs = isHero ? HERO_COSTS : [];
-  const pagos = isHero ? HERO_PAGOS : [];
+
+  // Sprint Registrar Pago (Fase 3) · pagos reales desde finance.payment
+  // filtrados por expediente. Para el hero mock seguimos usando
+  // HERO_PAGOS. El refresh key se bump-ea cuando el drawer aplica una
+  // accion (reconcile/release/reject) para refrescar la tabla en vivo.
+  const [apiPagos, setApiPagos] = useState([]);
+  useEffect(() => {
+    if (isHero || !exp?.id) { setApiPagos([]); return; }
+    let cancelled = false;
+    financePaymentsApi.list({ expediente_id: exp.id })
+      .then((rows) => {
+        if (cancelled) return;
+        const arr = Array.isArray(rows) ? rows : (rows?.results || []);
+        setApiPagos(arr);
+      })
+      .catch(() => { if (!cancelled) setApiPagos([]); });
+    return () => { cancelled = true; };
+  }, [isHero, exp?.id, pagosRefreshKey]);
+  const pagos = isHero ? HERO_PAGOS : apiPagos;
   // Sprint 2026-05-11 · `artifacts` ya no se usa en el render (tab
   // "Documentos" desconectada del expediente). El import de HERO_ARTIFACTS
   // queda disponible para reactivar si se reintegra el board.
@@ -564,7 +591,9 @@ export default function ScreenExpedienteDetail() {
           {tab === 'costs'     && !isClient && <CostsTab costs={costs} lang={lang} onAdd={() => setShowCostDrawer(true)}/>}
           {tab === 'payments'  && <PaymentsTab pagos={pagos} lang={lang} exp={exp}
                                                onAdd={isClient ? null : () => setShowPaymentDrawer(true)}
-                                               readOnly={isClient}/>}
+                                               readOnly={isClient}
+                                               isHero={isHero}
+                                               onOpenPayment={(pid)=>setOpenPaymentId(pid)}/>}
           {tab === 'activity'  && !isClient && <ActivityTab activity={activity} lang={lang}/>}
         </div>
 
@@ -606,7 +635,17 @@ export default function ScreenExpedienteDetail() {
         />
       )}
       {showCostDrawer  && <CostDrawer lang={lang} exp={exp} onClose={() => setShowCostDrawer(false)}/>}
-      {showPaymentDrawer && <PaymentDrawer lang={lang} exp={exp} onClose={() => setShowPaymentDrawer(false)}/>}
+      {showPaymentDrawer && <PaymentDrawer lang={lang} exp={exp} onClose={() => setShowPaymentDrawer(false)}
+                                            onSuccess={() => setPagosRefreshKey((k)=>k+1)}/>}
+      {/* Sprint Registrar Pago (Fase 3) · Drawer detalle del pago. Lo
+          abre la tab Pagos cuando el usuario clickea una fila. */}
+      <PaymentDetailDrawer
+        open={!!openPaymentId}
+        paymentId={openPaymentId}
+        onClose={() => setOpenPaymentId(null)}
+        onChange={() => setPagosRefreshKey((k) => k + 1)}
+        lang={lang}
+      />
       {/* Sprint 2026-05-11 · <DocumentMatchmakerWizard/> desmontado. Se
           reactiva junto con la tab Documentos en un sprint posterior si
           se decide reintegrar el cruce IA gpt-5-nano contra los artefactos. */}
@@ -1456,13 +1495,23 @@ function CostsTab({ costs, lang, onAdd }) {
   );
 }
 
-function PaymentsTab({ pagos, lang, exp, onAdd, readOnly = false }) {
+function PaymentsTab({
+  pagos, lang, exp, onAdd, readOnly = false,
+  isHero = false, onOpenPayment,
+}) {
+  // Sprint Registrar Pago (Fase 3) · cuando pagos vienen de finance.payment
+  // (no hero) usamos shape real {codigo, fecha, monto, estado, direction,
+  // metodo, referencia, monto_usd, moneda}. El hero mock conserva
+  // {date, method, ref, applied_to, amount, status} para no romper la demo.
+  const isReal = !isHero;
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
       <div className="card card-pad-lg">
         <div className="flex ai-center jc-between mb-3">
           <div className="heading-md">{tr(lang,'payment_progress')}</div>
-          <span className="mono tabular" style={{fontSize:13}}>{fmtMoney(exp.total_paid)} / {fmtMoney(exp.total_invoiced)}</span>
+          <span className="mono tabular tabular-nums" style={{fontSize:13}}>
+            {fmtMoney(exp.total_paid)} / {fmtMoney(exp.total_invoiced)}
+          </span>
         </div>
         <Progress value={exp.total_paid/exp.total_invoiced*100} variant="success"/>
         <div className="grid col-3 gap-4 mt-6">
@@ -1478,28 +1527,108 @@ function PaymentsTab({ pagos, lang, exp, onAdd, readOnly = false }) {
             <button className="btn btn-primary btn-sm" onClick={onAdd}><IconPlus size={13}/>{tr(lang,'register_payment')}</button>
           )}
         </div>
-        <table className="table">
-          <thead><tr>
-            <th>{lang==='es' ? 'Fecha' : 'Date'}</th>
-            <th>{tr(lang,'payment_method')}</th>
-            <th>{tr(lang,'reference')}</th>
-            <th>{tr(lang,'apply_to')}</th>
-            <th style={{textAlign:'right'}}>{tr(lang,'amount')}</th>
-            <th>{tr(lang,'status')}</th>
-          </tr></thead>
-          <tbody>
-            {pagos.map(p => (
-              <tr key={p.id}>
-                <td className="text-sec">{fmtDate(p.date, lang)}</td>
-                <td>{p.method}</td>
-                <td><span className="mono-sm" style={{fontWeight:600}}>{p.ref}</span></td>
-                <td className="text-sec">{p.applied_to}</td>
-                <td className="td-money">{fmtMoney(p.amount)}</td>
-                <td><Badge kind="success" dot>{p.status}</Badge></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {pagos.length === 0 ? (
+          <div className="card-pad-lg" style={{textAlign:'center', color:'var(--text-tertiary)'}}>
+            {lang === 'es'
+              ? 'Sin pagos registrados en este expediente.'
+              : 'No payments registered for this file.'}
+          </div>
+        ) : isReal ? (
+          <table className="table">
+            <thead><tr>
+              <th>{lang === 'es' ? 'Código' : 'Code'}</th>
+              <th>{lang === 'es' ? 'Fecha' : 'Date'}</th>
+              <th>{lang === 'es' ? 'Dirección' : 'Direction'}</th>
+              <th>{tr(lang,'payment_method')}</th>
+              <th>{tr(lang,'reference')}</th>
+              <th style={{textAlign:'right'}}>{tr(lang,'amount')}</th>
+              <th style={{textAlign:'right'}}>USD</th>
+              <th>{tr(lang,'status')}</th>
+            </tr></thead>
+            <tbody>
+              {pagos.map((p) => {
+                const code   = p.codigo || (p.id ? String(p.id).slice(0,8) : '—');
+                const dir    = p.direction || 'IN';
+                const stColor = PAYMENT_STATUS_COLORS[p.estado] || 'var(--text-tertiary)';
+                const stLabel = _getPayEnum(PAYMENT_STATUS_LABELS, p.estado, lang);
+                const monto    = Number(p.monto || 0);
+                const montoUsd = Number(p.monto_usd ?? p.monto ?? 0);
+                const moneda   = p.moneda || 'USD';
+                return (
+                  <tr
+                    key={p.id}
+                    onClick={() => onOpenPayment && onOpenPayment(p.id)}
+                    style={{cursor:'pointer'}}
+                  >
+                    <td className="mono-sm" style={{fontWeight:600}}>{code}</td>
+                    <td className="text-sec tabular-nums">{fmtDate(p.fecha, lang)}</td>
+                    <td>
+                      <span style={{
+                        display:'inline-block', padding:'2px 8px', borderRadius:4,
+                        font:'600 10px/1.4 var(--font-mono)', letterSpacing:'0.06em',
+                        background: dir === 'IN'
+                          ? 'color-mix(in oklab, var(--success) 10%, transparent)'
+                          : 'color-mix(in oklab, var(--warning) 10%, transparent)',
+                        color: dir === 'IN' ? 'var(--success)' : 'var(--warning)',
+                        border: `1px solid color-mix(in oklab, ${dir === 'IN' ? 'var(--success)' : 'var(--warning)'} 32%, transparent)`,
+                      }}>
+                        {dir}
+                      </span>
+                    </td>
+                    <td>{p.metodo || '—'}</td>
+                    <td>
+                      <span className="mono-sm" style={{fontWeight:600}}>{p.referencia || '—'}</span>
+                    </td>
+                    <td className="td-money tabular-nums">
+                      {fmtMoney(monto)} <span style={{color:'var(--text-tertiary)', fontSize:11}}>{moneda}</span>
+                    </td>
+                    <td className="td-money tabular-nums" style={{fontWeight:600}}>
+                      {fmtMoney(montoUsd)}
+                    </td>
+                    <td>
+                      <span style={{
+                        display:'inline-flex', alignItems:'center', gap:6,
+                        padding:'3px 9px', borderRadius:4,
+                        background:`color-mix(in oklab, ${stColor} 10%, transparent)`,
+                        border:`1px solid color-mix(in oklab, ${stColor} 32%, transparent)`,
+                        color: stColor,
+                        font:'600 11px/1.4 var(--font-body)',
+                      }}>
+                        <span style={{
+                          width:6, height:6, borderRadius:'50%', background: stColor,
+                        }}/>
+                        {stLabel}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <table className="table">
+            <thead><tr>
+              <th>{lang==='es' ? 'Fecha' : 'Date'}</th>
+              <th>{tr(lang,'payment_method')}</th>
+              <th>{tr(lang,'reference')}</th>
+              <th>{tr(lang,'apply_to')}</th>
+              <th style={{textAlign:'right'}}>{tr(lang,'amount')}</th>
+              <th>{tr(lang,'status')}</th>
+            </tr></thead>
+            <tbody>
+              {pagos.map(p => (
+                <tr key={p.id}>
+                  <td className="text-sec">{fmtDate(p.date, lang)}</td>
+                  <td>{p.method}</td>
+                  <td><span className="mono-sm" style={{fontWeight:600}}>{p.ref}</span></td>
+                  <td className="text-sec">{p.applied_to}</td>
+                  <td className="td-money tabular-nums">{fmtMoney(p.amount)}</td>
+                  <td><Badge kind="success" dot>{p.status}</Badge></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
@@ -2007,7 +2136,7 @@ function newUuidV4() {
 // a Costos, Proformas o Facturas.
 const PAY_APPLY_TABS = ['COSTO', 'PROFORMA', 'FACTURA'];
 
-function PaymentDrawer({ lang, exp, onClose }) {
+function PaymentDrawer({ lang, exp, onClose, onSuccess }) {
   const today = new Date().toISOString().slice(0,10);
 
   // Estado del formulario
@@ -2181,6 +2310,8 @@ function PaymentDrawer({ lang, exp, onClose }) {
       setSubmitting(false);
       setSubmitResult(result);
       setSubmitted(true);
+      // Sprint Registrar Pago (Fase 3) · refresca el tab Pagos del padre.
+      if (typeof onSuccess === "function") onSuccess(result);
     } catch (err) {
       setSubmitting(false);
       // El backend devuelve `detail` (string) o un dict de errores por

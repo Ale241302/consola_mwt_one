@@ -119,7 +119,12 @@ export default function CreateExpedienteWizardLite() {
   const [toast, setToast]               = useState(null);
   // Sprint 2026-05-06 · términos de pago del expediente.
   const [paymentDays,   setPaymentDays]   = useState(0);
-  const [paymentMethod, setPaymentMethod] = useState("CREDITO");
+  // Sprint Registrar Pago (Fase 3 · Commit 9) · forma_pago obligatorio.
+  // Antes default 'CREDITO' silencioso, lo que dejaba expedientes con
+  // termos no decididos por el usuario. Ahora arranca '' (Selecciona...)
+  // y el wizard bloquea el submit si no se eligio una opcion explicita.
+  // Razon: cerrar el loop EXPEDIENTE_TERMS_UNDEFINED al liberar credito.
+  const [paymentMethod, setPaymentMethod] = useState("");
 
   // ── Sprint 2026-05-01: precios y proyeccion de credito ─────────
   // Mapa { producto_id -> unit_price } resuelto desde el catalogo de
@@ -168,7 +173,9 @@ export default function CreateExpedienteWizardLite() {
       setPaymentDays(Number(selClient.dias_credito));
     } else if (!selClient && !isEditMode) {
       setPaymentDays(0);
-      setPaymentMethod("CREDITO");
+      // Sprint Commit 9 · sin cliente seleccionado volvemos a '' para
+      // forzar elección explícita en el próximo expediente.
+      setPaymentMethod("");
     }
   }, [selClient, isEditMode]);
 
@@ -458,12 +465,24 @@ export default function CreateExpedienteWizardLite() {
     if (step === 1) return !!selClient;
     if (step === 2) return orderLines.length > 0
                        && orderLines.every((l) => l.is_assigned !== false && l.cantidad > 0);
+    // Sprint Commit 9 · paso final (Resumen) — forma_pago obligatorio.
+    // Sin este gate el wizard creaba expedientes con forma_pago='CREDITO'
+    // silencioso, que luego rompía release-credit con EXPEDIENTE_TERMS_UNDEFINED.
+    if (step === 3) return paymentMethod === 'CREDITO' || paymentMethod === 'CONTADO';
     return true;
-  }, [step, selClient, orderLines, operatingMode]);
+  }, [step, selClient, orderLines, operatingMode, paymentMethod]);
 
   // ── Submit ──
   const submit = useCallback(async () => {
     if (saving) return;
+    // Sprint Commit 9 · guard defensivo: si por algún path el submit se
+    // disparara con paymentMethod vacío, bloqueamos y mostramos error.
+    if (paymentMethod !== 'CREDITO' && paymentMethod !== 'CONTADO') {
+      setError(lang === 'es'
+        ? 'Selecciona la forma de pago (Crédito o Contado) antes de guardar.'
+        : 'Choose the payment method (Credit or Cash) before saving.');
+      return;
+    }
     setSaving(true); setError(null);
     try {
       // ── Sprint 2026-05-07 · branch EDIT MODE ────────────────────
@@ -495,7 +514,9 @@ export default function CreateExpedienteWizardLite() {
 
         const body = {
           operating_company_id: operatingCompanyId,
-          forma_pago:           paymentMethod || 'CREDITO',
+          // Sprint Commit 9 · forma_pago obligatorio. Si llegó aqui es
+          // porque el wizard ya validó que paymentMethod ∈ {CREDITO, CONTADO}.
+          forma_pago:           paymentMethod,
           payment_days:         Number(paymentDays) || 0,
           lines_added,
           lines_removed,
@@ -599,7 +620,9 @@ export default function CreateExpedienteWizardLite() {
         notas:               null,
         // Sprint 2026-05-06 · términos de pago del expediente.
         credit_days:         Number(paymentDays) || 0,
-        forma_pago:          paymentMethod || 'CREDITO',
+        // Sprint Commit 9 · forma_pago obligatorio (CREDITO|CONTADO).
+        // canAdvance ya bloqueó este submit si el usuario no eligió uno.
+        forma_pago:          paymentMethod,
         lines: Object.values(grouped).map((l) => ({
           sku:           l.sku,
           talla:         l.talla || null,
@@ -756,7 +779,9 @@ export default function CreateExpedienteWizardLite() {
           ) : (
             <button
               className="btn btn-accent"
-              disabled={saving || orderLines.length === 0}
+              // Sprint Commit 9 · gate por canAdvance del step 3 — bloquea
+              // submit si paymentMethod no esta elegido (CREDITO|CONTADO).
+              disabled={saving || orderLines.length === 0 || !canAdvance}
               onClick={submit}
               style={{
                 minWidth: 240, fontWeight: 700,
@@ -1835,7 +1860,12 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 4,
               }}>
                 {lang === "es" ? "Forma de pago" : "Payment method"}
+                <span style={{ color: "var(--critical)", marginLeft: 4 }}>*</span>
               </div>
+              {/* Sprint Commit 9 · obligatorio. Mientras no se elija, el
+                  wizard mantiene canAdvance=false en el paso 3 (Resumen)
+                  y el botón "Crear" queda deshabilitado. Cerramos el loop
+                  EXPEDIENTE_TERMS_UNDEFINED en liberación de crédito. */}
               <select
                 className="input"
                 value={paymentMethod}
@@ -1846,11 +1876,28 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                   // sigue siendo el que el usuario elija en las cards.
                   setPaymentMethod(e.target.value);
                 }}
-                style={{ fontWeight: 700 }}
+                style={{
+                  fontWeight: 700,
+                  borderColor: paymentMethod ? undefined : "var(--critical)",
+                }}
+                required
               >
+                <option value="" disabled>
+                  {lang === "es" ? "— Selecciona —" : "— Select —"}
+                </option>
                 <option value="CREDITO">{lang === "es" ? "Crédito" : "Credit"}</option>
                 <option value="CONTADO">{lang === "es" ? "Contado" : "Cash"}</option>
               </select>
+              {!paymentMethod && (
+                <div style={{
+                  marginTop: 4, fontSize: 11, fontWeight: 500,
+                  color: "var(--critical)",
+                }}>
+                  {lang === "es"
+                    ? "Requerido — sin forma de pago no se podrá liberar crédito."
+                    : "Required — without payment method credit cannot be released."}
+                </div>
+              )}
             </div>
           </div>
 
