@@ -1184,7 +1184,22 @@ function NodoCostosTab({ nodeId, lang, navigate }) {
     }));
   }, [rows]);
 
-  const totalUsd = rows.reduce((a, r) => a + Number(r.amount_usd || 0), 0);
+  // Sprint 2026-05-17 fix · El backend devuelve UNA fila por
+  // (cost_line × expediente × producto × talla), por lo que un mismo
+  // cost_line de $1 aplicado a 10 lineas aparece 10 veces. Sumar crudo
+  // multiplica el costo (1 × 10 = $10 fantasma). Dedupar por
+  // cost_line_id antes de sumar — el monto real de un cost_line es
+  // unico, independiente de cuantas lineas toque su scope.
+  const totalUsd = useMemo(() => {
+    const seen = new Set();
+    let total = 0;
+    for (const r of rows) {
+      if (!r.cost_line_id || seen.has(r.cost_line_id)) continue;
+      seen.add(r.cost_line_id);
+      total += Number(r.amount_usd || 0);
+    }
+    return total;
+  }, [rows]);
 
   return (
     <div className="card card-pad" style={{ marginTop: 12 }}>
