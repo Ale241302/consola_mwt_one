@@ -210,6 +210,7 @@ export default function ScreenBrandClientPricingForm() {
   const [dragOver, setDragOver] = useState(false);
   const [showAllSkus, setShowAllSkus] = useState(false);  // override del filtro enabled-skus
   const [filterStats, setFilterStats] = useState(null);   // {parsed, kept, filtered} para banda informativa
+  const [bandFilter, setBandFilter] = useState("essentials");  // "essentials" | "current" | "all"
   const fileInputRef = useRef(null);
 
   const { tc, loading: tcLoading, error: tcError, ts: tcTs, source: tcSource, reload: reloadTC } =
@@ -218,6 +219,21 @@ export default function ScreenBrandClientPricingForm() {
 
   // SKUs habilitados del cliente (parseados del BCPA previo en notas).
   const enabled = useClientEnabledSkus(clienteId, brandId, accessToken);
+
+  // Bandas filtradas para la matriz · reduce densidad visual sin perder info.
+  const filteredBands = useMemo(() => {
+    if (bandFilter === "all") return BANDAS_MARLUVAS;
+    if (bandFilter === "current") {
+      return bandaVigente ? [bandaVigente] : [BANDAS_MARLUVAS[0]];
+    }
+    // essentials: techo + vigente (si no coincide con techo/piso) + piso
+    const out = [BANDAS_MARLUVAS[0]];
+    if (bandaVigente && bandaVigente.id !== 1 && bandaVigente.id !== 12) {
+      out.push(bandaVigente);
+    }
+    out.push(BANDAS_MARLUVAS[11]);
+    return out;
+  }, [bandFilter, bandaVigente]);
 
   // Comisión por defecto = la del cliente (* 100). Si no existe, 0.
   const comDefault = useMemo(() => {
@@ -887,47 +903,127 @@ export default function ScreenBrandClientPricingForm() {
           </Section>
         )}
 
-        {/* ── 3 · Matriz 12 × 4 ── */}
+        {/* ── 3 · Matriz de precios — rediseño UX ── */}
         {skusActivos.length > 0 && (
           <Section
-            title={lang === "es"
-              ? "Matriz 12 bandas × 4 plazos · Precios USD por par"
-              : "Matrix 12 bands × 4 terms · USD per pair"}
-            subtitle={lang === "es"
-              ? "El cliente identifica la banda según el TC USD/BRL del día. Plazo base: 90 días. Descuentos: −1.00% (60d), −1.75% (30d), −2.75% (8d)."
-              : "Client picks band by daily USD/BRL FX rate. Base term: 90 days."}
-            badge={{ label: `${skusActivos.length * 12 * 4} ${lang === "es" ? "CELDAS" : "CELLS"}`,
-                     color: NAVY, bg: `${MINT}22` }}
+            title={lang === "es" ? "Matriz de precios · USD por par" : "Price matrix · USD per pair"}
           >
-            <div style={{ overflowX: "auto", maxHeight: "70vh" }}>
-              <table style={tblMtx}>
+            {/* Toolbar de alcance */}
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              marginBottom: 14, gap: 12, flexWrap: "wrap",
+            }}>
+              <div style={{
+                display: "inline-flex", gap: 2, padding: 3,
+                background: SOFT, borderRadius: 8, border: "1px solid #E5E7EB",
+              }}>
+                {[
+                  { v: "essentials", l: lang === "es" ? "Esenciales" : "Essentials", t: lang === "es" ? "Techo · vigente · piso" : "Top · current · floor" },
+                  { v: "current",    l: lang === "es" ? "Vigente"    : "Current",    t: lang === "es" ? "Solo banda activa" : "Active band only" },
+                  { v: "all",        l: lang === "es" ? "12 bandas"  : "12 bands",   t: lang === "es" ? "Matriz completa"   : "Full matrix" },
+                ].map((opt) => {
+                  const on = bandFilter === opt.v;
+                  return (
+                    <button key={opt.v} type="button"
+                      onClick={() => setBandFilter(opt.v)}
+                      title={opt.t}
+                      style={{
+                        padding: "6px 14px",
+                        background: on ? "#FFFFFF" : "transparent",
+                        border: on ? "1px solid #E5E7EB" : "1px solid transparent",
+                        color: on ? NAVY : MUTED,
+                        font: `${on ? 700 : 600} 11px/1 var(--font-body)`,
+                        borderRadius: 6, cursor: "pointer",
+                        boxShadow: on ? "0 1px 2px rgba(11,30,58,0.06)" : "none",
+                        transition: "all 120ms ease",
+                      }}>{opt.l}</button>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 14,
+                font: "500 11px/1.4 var(--font-body)", color: MUTED,
+              }}>
+                <span>
+                  <strong style={{ color: NAVY, fontWeight: 700 }}>{filteredBands.length}</strong> {lang === "es" ? "bandas" : "bands"} ·
+                  <strong style={{ color: NAVY, fontWeight: 700, marginLeft: 4 }}>{filteredBands.length * 4}</strong> {lang === "es" ? "plazos" : "terms"} ·
+                  <strong style={{ color: NAVY, fontWeight: 700, marginLeft: 4 }}>{skusActivos.length}</strong> SKUs
+                </span>
+                {bandaVigente && (
+                  <span style={{
+                    padding: "3px 9px", borderRadius: 12,
+                    background: `${AMBER}15`, color: "#92400E",
+                    font: "700 10px/1.2 var(--font-body)",
+                    border: `1px solid ${AMBER}55`,
+                  }}>● {lang === "es" ? "Banda activa" : "Active"} #{bandaVigente.id}</span>
+                )}
+              </div>
+            </div>
+
+            {/* Leyenda mini */}
+            <div style={{
+              display: "flex", gap: 16, flexWrap: "wrap",
+              marginBottom: 10, font: "500 10.5px/1.3 var(--font-body)", color: MUTED,
+            }}>
+              <LegendDot color="#F5B895" label={lang === "es" ? "Banda techo (USD↑)" : "Top band"}/>
+              <LegendDot color="#34D399" label={lang === "es" ? "Banda piso (USD↓)" : "Floor band"}/>
+              <LegendDot color={AMBER}    label={lang === "es" ? "Banda vigente (TC del día)" : "Active band"}/>
+              <span>· <strong style={{ color: NAVY }}>90d</strong> {lang === "es" ? "es el precio ancla" : "is the anchor price"} · {lang === "es" ? "60/30/8d son descuentos por pronto pago" : "60/30/8d are early-payment discounts"}</span>
+            </div>
+
+            {/* Tabla */}
+            <div style={{
+              overflowX: "auto", maxHeight: "72vh",
+              border: "1px solid #E5E7EB", borderRadius: 8,
+              background: "#FFFFFF",
+            }}>
+              <table style={tblMtx2}>
                 <thead>
                   <tr>
-                    <th rowSpan={2} style={{ ...thMtx, width: 60, position: "sticky", left: 0, background: SOFT, zIndex: 3 }}>SKU</th>
-                    <th rowSpan={2} style={{ ...thMtx, textAlign: "left", paddingLeft: 8, minWidth: 130, position: "sticky", left: 60, background: SOFT, zIndex: 3 }}>{lang === "es" ? "Referencia" : "Reference"}</th>
-                    {BANDAS_MARLUVAS.map((b) => (
-                      <th key={b.id} colSpan={4} style={{
-                        ...thMtx,
-                        background: b.techo ? TECHO : b.piso ? "#D1FAE5" : "#E0F2FE",
-                        color: b.techo ? "#9A4A1D" : b.piso ? "#065F46" : "#075985",
-                        borderLeft: bandaVigente?.id === b.id ? `2px solid ${AMBER}` : undefined,
-                      }}>
-                        {b.rango}
-                        <br/>
-                        <small style={{ opacity: 0.75, fontWeight: 500 }}>÷{b.div.toFixed(2)}</small>
-                      </th>
-                    ))}
+                    <th rowSpan={2} style={{ ...stickyTh(0, 56), borderRight: "none" }}>SKU</th>
+                    <th rowSpan={2} style={stickyTh(56, 180)}>
+                      {lang === "es" ? "Referencia" : "Reference"}
+                    </th>
+                    {filteredBands.map((b) => {
+                      const isCurrent = bandaVigente?.id === b.id;
+                      return (
+                        <th key={b.id} colSpan={4} style={bandHeaderStyle(b, isCurrent)}>
+                          <div style={{ font: "700 11.5px/1.2 var(--font-body)" }}>{b.rango}</div>
+                          <div style={{ font: "500 9.5px/1 var(--font-mono, ui-monospace)",
+                            opacity: 0.75, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
+                            ÷{b.div.toFixed(2)}
+                          </div>
+                          {(b.techo || b.piso || isCurrent) && (
+                            <div style={{
+                              display: "inline-block", marginTop: 4,
+                              padding: "2px 7px", borderRadius: 10,
+                              background: "rgba(255,255,255,0.55)",
+                              font: "700 8.5px/1 var(--font-body)",
+                              textTransform: "uppercase", letterSpacing: 0.6,
+                            }}>
+                              {b.techo ? (lang === "es" ? "techo" : "top")
+                                : b.piso ? (lang === "es" ? "piso" : "floor")
+                                : (lang === "es" ? "vigente" : "active")}
+                            </div>
+                          )}
+                        </th>
+                      );
+                    })}
                   </tr>
                   <tr>
-                    {BANDAS_MARLUVAS.flatMap((b) =>
-                      PLAZOS_MARLUVAS.map((p) => (
-                        <th key={`${b.id}-${p.dias}`} style={{
-                          ...thMtx, fontSize: 9, padding: "4px 2px",
-                          background: b.techo ? `${TECHO}88` : "#F0F9FF",
-                          color: NAVY,
-                        }}>{p.dias}d</th>
-                      ))
-                    )}
+                    {filteredBands.flatMap((b) => {
+                      const isCurrent = bandaVigente?.id === b.id;
+                      return PLAZOS_MARLUVAS.map((p, pi) => (
+                        <th key={`${b.id}-${p.dias}`}
+                            style={plazoHeaderStyle(b, isCurrent, pi === 0)}>
+                          <div style={{ font: "700 10.5px/1 var(--font-body)" }}>{p.dias}d</div>
+                          <div style={{ font: `${pi === 0 ? 600 : 500} 8.5px/1 var(--font-body)`,
+                            opacity: 0.7, marginTop: 2 }}>
+                            {pi === 0 ? (lang === "es" ? "base" : "base") : p.sub}
+                          </div>
+                        </th>
+                      ));
+                    })}
                   </tr>
                 </thead>
                 <tbody>
@@ -935,20 +1031,21 @@ export default function ScreenBrandClientPricingForm() {
                     if (!s.activo) return null;
                     const c = calcs[i];
                     return (
-                      <tr key={s.sku}>
-                        <td style={{ ...tdMtx, color: MUTED, fontSize: 9, position: "sticky", left: 0, background: "#FFFFFF", zIndex: 2, textAlign: "left", paddingLeft: 8 }}>{s.sku}</td>
-                        <td style={{ ...tdMtx, fontFamily: "var(--font-body)", fontWeight: 600, color: NAVY, fontSize: 10, position: "sticky", left: 60, background: "#FFFFFF", zIndex: 2, textAlign: "left", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.ref}>{s.ref}</td>
-                        {c.matriz.flatMap((m, bi) =>
-                          m.plazos.map((pp, pi) => (
-                            <td key={`${bi}-${pi}`} style={{
-                              ...tdMtx,
-                              background: bi === 0 ? `${TECHO}44` : undefined,
-                              fontWeight: pi === 0 ? 700 : 500,
-                              color: pi === 0 ? NAVY : INK,
-                              borderLeft: bandaVigente?.id === m.banda.id && pi === 0 ? `2px solid ${AMBER}` : undefined,
-                            }}>{pp.toFixed(2)}</td>
-                          ))
-                        )}
+                      <tr key={s.sku} className="mtx-row">
+                        <td style={stickyTd(0, 56, { color: MUTED, fontSize: 9.5, borderRight: "none" })}>{s.sku}</td>
+                        <td style={stickyTd(56, 180, { color: NAVY, fontSize: 10.5, fontWeight: 600, body: true })} title={s.ref}>
+                          {s.ref}
+                        </td>
+                        {filteredBands.flatMap((b) => {
+                          const m = c.matriz.find((x) => x.banda.id === b.id);
+                          const isCurrent = bandaVigente?.id === b.id;
+                          return m.plazos.map((pp, pi) => (
+                            <td key={`${b.id}-${pi}`}
+                                style={plazoCellStyle(b, isCurrent, pi === 0)}>
+                              {fmtMtxCell(pp)}
+                            </td>
+                          ));
+                        })}
                       </tr>
                     );
                   })}
@@ -1285,22 +1382,119 @@ const tdSku = {
   verticalAlign: "middle",
 };
 
-const tblMtx = {
-  width: "100%", borderCollapse: "collapse", fontSize: 10,
+// ─── Estilos de la matriz rediseñada ───
+const tblMtx2 = {
+  width: "100%", borderCollapse: "separate", borderSpacing: 0,
 };
-const thMtx = {
-  font: "700 9px/1.2 var(--font-body)",
-  padding: "5px 3px", textAlign: "center",
-  textTransform: "uppercase", letterSpacing: 0.4,
-  borderBottom: "1px solid #E5E7EB",
-  position: "sticky", top: 0, zIndex: 2,
-};
-const tdMtx = {
-  padding: "4px 3px", textAlign: "center",
-  borderBottom: "1px solid #F1F5F9",
-  fontFamily: "var(--font-mono, ui-monospace)",
-  fontSize: 10, fontVariantNumeric: "tabular-nums",
-};
+
+const BAND_BG_TECHO   = "#FEF3E7";
+const BAND_BG_PISO    = "#ECFDF5";
+const BAND_BG_CURRENT = "#FEF3C7";
+const BAND_BG_NEUTRAL = "#F8FAFC";
+
+const BAND_FG_TECHO   = "#9A4A1D";
+const BAND_FG_PISO    = "#065F46";
+const BAND_FG_CURRENT = "#92400E";
+
+function bandColors(b, isCurrent) {
+  if (b.techo) return { bg: BAND_BG_TECHO,   fg: BAND_FG_TECHO   };
+  if (b.piso)  return { bg: BAND_BG_PISO,    fg: BAND_FG_PISO    };
+  if (isCurrent) return { bg: BAND_BG_CURRENT, fg: BAND_FG_CURRENT };
+  return { bg: BAND_BG_NEUTRAL, fg: NAVY };
+}
+
+function stickyTh(left, minWidth) {
+  return {
+    position: "sticky", left, top: 0, zIndex: 5,
+    background: "#FFFFFF",
+    textAlign: "left", padding: "10px 10px 10px 12px",
+    font: "700 9.5px/1 var(--font-body)", color: MUTED,
+    textTransform: "uppercase", letterSpacing: 0.5,
+    minWidth, maxWidth: minWidth,
+    borderRight: left > 0 ? "1px solid #E5E7EB" : "none",
+    borderBottom: "1px solid #E5E7EB",
+    boxShadow: left > 0 ? "4px 0 6px -3px rgba(11,30,58,0.07)" : "none",
+  };
+}
+
+function stickyTd(left, minWidth, opts) {
+  return {
+    position: "sticky", left, zIndex: 2,
+    background: "#FFFFFF",
+    textAlign: "left", padding: "9px 10px 9px 12px",
+    color: opts.color || INK,
+    fontSize: opts.fontSize || 11,
+    fontWeight: opts.fontWeight || 500,
+    fontFamily: opts.body ? "var(--font-body)" : "var(--font-mono, ui-monospace)",
+    fontVariantNumeric: "tabular-nums",
+    minWidth, maxWidth: minWidth,
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+    borderRight: left > 0 ? "1px solid #E5E7EB" : (opts.borderRight === "none" ? "none" : undefined),
+    borderBottom: "1px solid #F1F5F9",
+    boxShadow: left > 0 ? "4px 0 6px -3px rgba(11,30,58,0.07)" : "none",
+  };
+}
+
+function bandHeaderStyle(b, isCurrent) {
+  const { bg, fg } = bandColors(b, isCurrent);
+  return {
+    position: "sticky", top: 0, zIndex: 4,
+    background: bg, color: fg,
+    padding: "10px 8px 8px 8px",
+    textAlign: "center",
+    borderLeft: `2px solid ${isCurrent ? AMBER : "#E5E7EB"}`,
+    borderBottom: "1px solid #E5E7EB",
+  };
+}
+
+function plazoHeaderStyle(b, isCurrent, isBase) {
+  const { bg } = bandColors(b, isCurrent);
+  return {
+    position: "sticky", top: 60, zIndex: 4,
+    background: isBase ? bg : "#FFFFFF",
+    color: NAVY,
+    padding: "6px 4px 7px 4px",
+    textAlign: "center",
+    minWidth: 64,
+    borderLeft: isBase ? `2px solid ${isCurrent ? AMBER : "#E5E7EB"}` : "1px solid transparent",
+    borderBottom: "1px solid #E5E7EB",
+  };
+}
+
+function plazoCellStyle(b, isCurrent, isBase) {
+  return {
+    padding: "8px 8px",
+    textAlign: "right",
+    fontFamily: "var(--font-mono, ui-monospace)",
+    fontVariantNumeric: "tabular-nums",
+    fontSize: 11,
+    fontWeight: isBase ? 700 : 500,
+    color: isBase ? NAVY : "#475569",
+    background: isBase ? "#FFFFFF" : "#FAFBFC",
+    borderLeft: isBase ? `2px solid ${isCurrent ? AMBER : "#E5E7EB"}` : "1px solid transparent",
+    borderBottom: "1px solid #F1F5F9",
+  };
+}
+
+/** Formato compacto de celda de matriz: enteros con coma si ≥ 1000, 2 dec si menor. */
+function fmtMtxCell(n) {
+  const v = Number(n || 0);
+  if (v >= 1000) return v.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return v.toFixed(2);
+}
+
+function LegendDot({ color, label }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+      <span style={{
+        width: 11, height: 11, borderRadius: 3,
+        background: color, border: "1px solid rgba(0,0,0,0.08)",
+        display: "inline-block",
+      }}/>
+      {label}
+    </span>
+  );
+}
 
 const inpMono = (w) => ({
   width: w, padding: "4px 6px", borderRadius: 5,
