@@ -41,6 +41,8 @@ from .views import (
     MarluvasExchangeRateView,
     # Simulador Marluvas v7 · SKUs habilitados por cliente
     MarluvasClientEnabledSkusView,
+    # Simulador Marluvas v7 · persistencia de simulaciones (snapshot por reemplazo)
+    MarluvasSaveSimulationView, MarluvasLoadSimulationView,
 )
 
 
@@ -103,4 +105,12 @@ urlpatterns = [
     path("commercial/clients/<uuid:cliente_id>/enabled-skus/",
          MarluvasClientEnabledSkusView.as_view(),
          name="commercial-client-enabled-skus"),
+    # Simulador Marluvas v7 · guardar snapshot de simulación (POST)
+    path("commercial/marluvas/save-simulation/",
+         MarluvasSaveSimulationView.as_view(),
+         name="commercial-marluvas-save-simulation"),
+    # Simulador Marluvas v7 · cargar último snapshot vigente (GET)
+    path("commercial/marluvas/load-simulation/",
+         MarluvasLoadSimulationView.as_view(),
+         name="commercial-marluvas-load-simulation"),
 ]

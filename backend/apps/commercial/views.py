@@ -1745,3 +1745,241 @@ class MarluvasClientEnabledSkusView(APIView):
                 "overrides":      overridden_count,
             },
         }, status=200)
+
+
+# =====================================================================
+# MarluvasSaveSimulationView · persistencia de simulación de precios
+# ---------------------------------------------------------------------
+# Guarda el estado actual del simulador Marluvas para un par
+# (brand_id, cliente_id). Implementa "snapshot por reemplazo":
+# desactiva todas las rows activas previas del par y reinserta una
+# row por cada SKU del payload con `activo === true`. Los SKUs con
+# `activo === false` no se reinsertan pero su row previa queda
+# desactivada (auditoría preservada).
+#
+# Respeta el UNIQUE INDEX parcial
+#   (brand_id, cliente_id, sku) WHERE is_active=TRUE
+# gracias al bloque transaccional: desactivar → insertar dentro del
+# mismo @transaction.atomic.
+#
+# POST /api/commercial/marluvas/save-simulation/
+#   body: {
+#     brand_id, cliente_id,
+#     fecha_inicio (YYYY-MM-DD|null), fecha_fin (YYYY-MM-DD|null),
+#     skus: [{sku, brl_override, com_pct, ajuste_usd,
+#             sobreprecio_pct, activo}]
+#   }
+#   → { saved, brand_id, cliente_id, snapshot_at }
+# =====================================================================
+class MarluvasSaveSimulationView(APIView):
+    """POST · snapshot por reemplazo de la grilla de precios Marluvas."""
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _to_decimal(value, *, allow_null=False):
+        """Convierte JSON value a Decimal preservando precisión.
+
+        - None / "" → None si allow_null, si no Decimal("0").
+        - str/float/int → Decimal(str(value))
+        - Cualquier otro tipo o no-numérico → ValueError.
+        """
+        if value is None or value == "":
+            if allow_null:
+                return None
+            return Decimal("0")
+        try:
+            return Decimal(str(value))
+        except (ArithmeticError, ValueError, TypeError) as exc:
+            raise ValueError(f"valor decimal inválido: {value!r}") from exc
+
+    @staticmethod
+    def _parse_uuid(value, field_name):
+        if not value:
+            raise ValueError(f"{field_name} es requerido")
+        try:
+            return uuid.UUID(str(value))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ValueError(f"{field_name} no es un UUID válido") from exc
+
+    @staticmethod
+    def _parse_date_optional(value, field_name):
+        """None | '' → None. String YYYY-MM-DD → date. Otro → ValueError."""
+        if value in (None, ""):
+            return None
+        from django.utils.dateparse import parse_date
+        parsed = parse_date(str(value))
+        if parsed is None:
+            raise ValueError(f"{field_name} debe ser YYYY-MM-DD o null")
+        return parsed
+
+    def post(self, request):
+        # Import diferido para no romper boot si el modelo aún no se cargó.
+        from .models import MarluvasClientSkuPricing
+
+        data = request.data or {}
+
+        # --- Validación de campos top-level ------------------------------
+        try:
+            brand_id   = self._parse_uuid(data.get("brand_id"),   "brand_id")
+            cliente_id = self._parse_uuid(data.get("cliente_id"), "cliente_id")
+            fecha_ini  = self._parse_date_optional(data.get("fecha_inicio"), "fecha_inicio")
+            fecha_fin  = self._parse_date_optional(data.get("fecha_fin"),   "fecha_fin")
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+
+        skus_payload = data.get("skus")
+        if not isinstance(skus_payload, list):
+            return Response(
+                {"detail": "skus debe ser un array (puede ser vacío)."},
+                status=400,
+            )
+
+        # --- Normalización y filtro activos==True ------------------------
+        rows_to_insert = []
+        try:
+            for idx, item in enumerate(skus_payload):
+                if not isinstance(item, dict):
+                    return Response(
+                        {"detail": f"skus[{idx}] debe ser objeto."},
+                        status=400,
+                    )
+                if not item.get("activo"):
+                    # Inactivo: no se reinserta. La desactivación bulk
+                    # de abajo se encarga del soft-delete.
+                    continue
+
+                sku = (item.get("sku") or "").strip()
+                if not sku:
+                    return Response(
+                        {"detail": f"skus[{idx}].sku es requerido."},
+                        status=400,
+                    )
+
+                rows_to_insert.append(MarluvasClientSkuPricing(
+                    brand_id        = brand_id,
+                    cliente_id      = cliente_id,
+                    sku             = sku,
+                    brl_override    = self._to_decimal(item.get("brl_override"), allow_null=True),
+                    com_pct         = self._to_decimal(item.get("com_pct")),
+                    ajuste_usd      = self._to_decimal(item.get("ajuste_usd")),
+                    sobreprecio_pct = self._to_decimal(item.get("sobreprecio_pct")),
+                    is_active       = True,
+                    fecha_inicio    = fecha_ini,
+                    fecha_fin       = fecha_fin,
+                ))
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+
+        # --- Snapshot por reemplazo (atómico) ----------------------------
+        try:
+            with transaction.atomic():
+                (MarluvasClientSkuPricing.objects
+                    .filter(brand_id=brand_id,
+                            cliente_id=cliente_id,
+                            is_active=True)
+                    .update(is_active=False))
+
+                if rows_to_insert:
+                    MarluvasClientSkuPricing.objects.bulk_create(rows_to_insert)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "MarluvasSaveSimulationView failed (brand=%s cliente=%s): %s",
+                brand_id, cliente_id, exc,
+            )
+            return Response(
+                {"detail": f"No se pudo guardar la simulación: {exc}"},
+                status=500,
+            )
+
+        return Response({
+            "saved":       len(rows_to_insert),
+            "brand_id":    str(brand_id),
+            "cliente_id":  str(cliente_id),
+            "snapshot_at": timezone.now().isoformat(),
+        }, status=200)
+
+
+# =====================================================================
+# MarluvasLoadSimulationView · cargar último snapshot vigente
+# ---------------------------------------------------------------------
+# Devuelve la grilla de precios Marluvas vigente (is_active=TRUE)
+# para un par (brand_id, cliente_id). Si no hay snapshot previo,
+# responde 200 con `source="empty"` y `skus=[]` para que el frontend
+# inicialice la matriz con los defaults del catálogo.
+#
+# GET /api/commercial/marluvas/load-simulation/?brand_id=X&cliente_id=Y
+#   → { brand_id, cliente_id, fecha_inicio, fecha_fin,
+#       skus: [...], source: "db"|"empty", count }
+# =====================================================================
+class MarluvasLoadSimulationView(APIView):
+    """GET · último snapshot vigente de pricing Marluvas para (brand, cliente)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import MarluvasClientSkuPricing
+
+        brand_id_raw   = request.query_params.get("brand_id")
+        cliente_id_raw = request.query_params.get("cliente_id")
+
+        try:
+            brand_id   = uuid.UUID(str(brand_id_raw))   if brand_id_raw   else None
+            cliente_id = uuid.UUID(str(cliente_id_raw)) if cliente_id_raw else None
+        except (ValueError, AttributeError, TypeError):
+            return Response(
+                {"detail": "brand_id y cliente_id deben ser UUIDs válidos."},
+                status=400,
+            )
+        if not brand_id or not cliente_id:
+            return Response(
+                {"detail": "brand_id y cliente_id son requeridos."},
+                status=400,
+            )
+
+        try:
+            qs = (MarluvasClientSkuPricing.objects
+                  .filter(brand_id=brand_id,
+                          cliente_id=cliente_id,
+                          is_active=True)
+                  .order_by("sku"))
+            rows = list(qs)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "MarluvasLoadSimulationView failed (brand=%s cliente=%s): %s",
+                brand_id, cliente_id, exc,
+            )
+            return Response(
+                {"detail": f"No se pudo cargar la simulación: {exc}"},
+                status=500,
+            )
+
+        if not rows:
+            return Response({
+                "brand_id":     str(brand_id),
+                "cliente_id":   str(cliente_id),
+                "fecha_inicio": None,
+                "fecha_fin":    None,
+                "skus":         [],
+                "source":       "empty",
+                "count":        0,
+            }, status=200)
+
+        first = rows[0]
+        skus_out = [{
+            "sku":             r.sku,
+            "brl_override":    str(r.brl_override) if r.brl_override is not None else None,
+            "com_pct":         str(r.com_pct),
+            "ajuste_usd":      str(r.ajuste_usd),
+            "sobreprecio_pct": str(r.sobreprecio_pct),
+            "activo":          True,
+            "bcpa_id":         str(r.bcpa_id) if r.bcpa_id else None,
+        } for r in rows]
+
+        return Response({
+            "brand_id":     str(brand_id),
+            "cliente_id":   str(cliente_id),
+            "fecha_inicio": first.fecha_inicio.isoformat() if first.fecha_inicio else None,
+            "fecha_fin":    first.fecha_fin.isoformat()    if first.fecha_fin    else None,
+            "skus":         skus_out,
+            "source":       "db",
+            "count":        len(rows),
+        }, status=200)

@@ -155,6 +155,56 @@ function useExchangeRateUSDBRL(accessToken) {
 }
 
 // ═════════════════════════════════════════════════════════════
+// Hook · carga simulación persistida desde backend.
+// GET /commercial/marluvas/load-simulation/?brand_id=&cliente_id=
+// Devuelve SkuInput[] hidratable + fechas + source.
+// Si source === "empty" → skus=[] (fallback a localStorage en el caller).
+// ═════════════════════════════════════════════════════════════
+function useLoadSimulation(clienteId, brandId, accessToken) {
+  const [data, setData] = useState({
+    skus: [], fechaInicio: null, fechaFin: null,
+    loading: true, source: "empty",
+  });
+  useEffect(() => {
+    let cancelled = false;
+    if (!clienteId || !brandId) {
+      setData({ skus: [], fechaInicio: null, fechaFin: null, loading: false, source: "empty" });
+      return;
+    }
+    setData((d) => ({ ...d, loading: true }));
+    const qs = `?brand_id=${encodeURIComponent(brandId)}&cliente_id=${encodeURIComponent(clienteId)}`;
+    apiFetch(`/commercial/marluvas/load-simulation/${qs}`, { token: accessToken })
+      .then((r) => {
+        if (cancelled) return;
+        const rawSkus = Array.isArray(r?.skus) ? r.skus : [];
+        const skus = rawSkus.map((s) => ({
+          sku:         String(s.sku),
+          ref:         "",  // la ref viene del Excel, no del backend
+          brl:         s.brl_override != null ? Number(s.brl_override) : 0,
+          com:         Number(s.com_pct ?? 0),
+          ajuste:      Number(s.ajuste_usd ?? 0),
+          sobreprecio: Number(s.sobreprecio_pct ?? 0),
+          activo:      s.activo !== false,
+        }));
+        setData({
+          skus,
+          fechaInicio: r?.fecha_inicio || null,
+          fechaFin:    r?.fecha_fin || null,
+          loading: false,
+          source: r?.source || "empty",
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setData({ skus: [], fechaInicio: null, fechaFin: null, loading: false, source: "empty" });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [clienteId, brandId, accessToken]);
+  return data;
+}
+
+// ═════════════════════════════════════════════════════════════
 // Componente principal
 // ═════════════════════════════════════════════════════════════
 export default function ScreenBrandClientPricingForm() {
@@ -217,8 +267,12 @@ export default function ScreenBrandClientPricingForm() {
     useExchangeRateUSDBRL(accessToken);
   const bandaVigente = useMemo(() => bandaForTC(tc), [tc]);
 
-  // SKUs habilitados del cliente (parseados del BCPA previo en notas).
+  // SKUs habilitados del cliente (Producto.especificaciones.visibility).
   const enabled = useClientEnabledSkus(clienteId, brandId, accessToken);
+
+  // Simulación persistida en backend (precedencia sobre localStorage).
+  const loaded = useLoadSimulation(clienteId, brandId, accessToken);
+  const hydratedRef = useRef(false);
 
   // Bandas filtradas para la matriz · reduce densidad visual sin perder info.
   const filteredBands = useMemo(() => {
@@ -242,9 +296,35 @@ export default function ScreenBrandClientPricingForm() {
     return Number.isFinite(pct) ? Number(pct.toFixed(2)) : 0;
   }, [client]);
 
-  // ── Hidratar estado desde localStorage al montar ──
+  // ── Hidratar estado: backend > localStorage ──
+  // Esperamos a que enabled-skus y load-simulation hayan resuelto.
+  // Corremos UNA sola vez por brand+cliente para no pisar ediciones
+  // del operador en cada re-render.
   useEffect(() => {
     if (!brandId || !clienteId) return;
+    if (enabled.loading || loaded.loading) return;
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
+
+    // 1) Backend tiene simulación previa → hidratar desde ahí.
+    if (loaded.source === "db" && loaded.skus.length > 0) {
+      // Respetar enabled-skus salvo que el cliente no tenga lista (source empty).
+      const useFilter = enabled.source !== "empty" && enabled.skus.size > 0;
+      const filtered = useFilter
+        ? loaded.skus.filter((s) => enabled.skus.has(String(s.sku)))
+        : loaded.skus;
+      setSkus(filtered);
+      if (loaded.fechaInicio) setFechaInicio(loaded.fechaInicio);
+      if (loaded.fechaFin) {
+        setFechaFin(loaded.fechaFin);
+        setFechaFinIndef(false);
+      } else {
+        setFechaFinIndef(true);
+      }
+      return;
+    }
+
+    // 2) Backend vacío → fallback a localStorage (flow original).
     const saved = loadLocal(brandId, clienteId);
     if (saved) {
       if (Array.isArray(saved.skus)) setSkus(saved.skus);
@@ -253,7 +333,10 @@ export default function ScreenBrandClientPricingForm() {
       if (typeof saved.fechaFinIndef === "boolean") setFechaFinIndef(saved.fechaFinIndef);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brandId, clienteId]);
+  }, [brandId, clienteId, enabled.loading, loaded.loading]);
+
+  // Reset del flag si cambia el par brand+cliente (navegación entre clientes).
+  useEffect(() => { hydratedRef.current = false; }, [brandId, clienteId]);
 
   // ── Persistir cambios a localStorage (debounced trivial) ──
   useEffect(() => {
@@ -430,9 +513,33 @@ export default function ScreenBrandClientPricingForm() {
         }
       }
 
+      // Persistir la simulación granular (SKU × modificadores) — endpoint nuevo.
+      // Mandamos TODOS los SKUs del state (incluso los inactivos) para que el
+      // backend pueda restaurar la lista completa al re-hidratar.
+      const simPayload = {
+        brand_id:     brandId,
+        cliente_id:   clienteId,
+        fecha_inicio: fechaInicio || null,
+        fecha_fin:    fechaFinIndef ? null : (fechaFin || null),
+        skus: skus.map((s) => ({
+          sku:             String(s.sku),
+          brl_override:    Number.isFinite(Number(s.brl)) ? Number(s.brl) : null,
+          com_pct:         Number(s.com || 0),
+          ajuste_usd:      Number(s.ajuste || 0),
+          sobreprecio_pct: Number(s.sobreprecio || 0),
+          activo:          !!s.activo,
+        })),
+      };
+      const simResp = await apiFetch("/commercial/marluvas/save-simulation/", {
+        method: "POST",
+        body: simPayload,
+        token: accessToken,
+      });
+      const savedCount = Number(simResp?.saved ?? skusActivos.length);
+
       setBanner({ type: "success", msg: lang === "es"
-        ? `Lista de precios guardada · ${skusActivos.length} SKUs activos.`
-        : `Price list saved · ${skusActivos.length} active SKUs.` });
+        ? `Lista guardada · ${savedCount} SKUs persistidos (${skusActivos.length} activos).`
+        : `Price list saved · ${savedCount} SKUs persisted (${skusActivos.length} active).` });
     } catch (err) {
       setBanner({ type: "error",
         msg: String(err?.body?.detail || err?.message || err) });

@@ -359,3 +359,63 @@ class PaymentIndex(models.Model):
 
     def __str__(self) -> str:
         return f"PaymentIndex({self.dias}d → MI={self.factor_mi} · ME={self.factor_me})"
+
+
+class MarluvasClientSkuPricing(models.Model):
+    """Override de precio por (brand, cliente, SKU) — específico para Marluvas.
+
+    Propósito:
+      Persistir overrides puntuales de precio por SKU dentro de una
+      asignación cliente-marca (BCPA). Mientras la BCPA define los
+      modificadores globales del par (brand, cliente), esta tabla baja
+      al nivel de SKU individual: override en BRL, comisión, ajuste en
+      USD y sobreprecio porcentual.
+
+    Fuente del dato:
+      Carga manual desde el panel BrandPricingConsole (vista Marluvas).
+      El operador comercial fija valores SKU por SKU al pactar el
+      contrato con el cliente.
+
+    Relación con BCPA:
+      `bcpa_id` apunta lógicamente (sin FK física) a
+      commercial.brand_client_pricing_assignment.id. Es NULL-able para
+      permitir cargar overrides antes de que la BCPA padre exista, o
+      registrar overrides huérfanos (auditoría). Cuando `bcpa_id` está
+      presente, las vigencias (fecha_inicio/fecha_fin) NULL se heredan
+      de la BCPA padre en la capa de servicio.
+
+    Invariante DB:
+      UNIQUE parcial (brand_id, cliente_id, sku) WHERE is_active=TRUE
+      — sólo un override vigente por triple. Para reemplazar, el
+      backend marca is_active=FALSE el anterior y crea el nuevo dentro
+      de transaction.atomic().
+    """
+    id                = models.UUIDField(primary_key=True)
+    brand_id          = models.UUIDField()                          # ⛔ sin FK
+    cliente_id        = models.UUIDField()                          # ⛔ sin FK
+    sku               = models.CharField(max_length=64)
+
+    brl_override      = models.DecimalField(
+        max_digits=14, decimal_places=4, null=True, blank=True)
+    com_pct           = models.DecimalField(
+        max_digits=6, decimal_places=2, default=0)
+    ajuste_usd        = models.DecimalField(
+        max_digits=14, decimal_places=4, default=0)
+    sobreprecio_pct   = models.DecimalField(
+        max_digits=8, decimal_places=6, default=0)
+
+    bcpa_id           = models.UUIDField(null=True, blank=True)     # ⛔ sin FK (→ BCPA)
+    fecha_inicio      = models.DateField(null=True, blank=True)
+    fecha_fin         = models.DateField(null=True, blank=True)
+
+    is_active         = models.BooleanField(default=True)
+    created_at        = models.DateTimeField(auto_now_add=True)
+    updated_at        = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'pricing"."marluvas_client_sku_pricing'
+        ordering = ("brand_id", "cliente_id", "sku")
+
+    def __str__(self) -> str:
+        return f"MarluvasClientSkuPricing(brand={self.brand_id} cliente={self.cliente_id} sku={self.sku})"
