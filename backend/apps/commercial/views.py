@@ -31,6 +31,8 @@ import uuid
 import logging
 from decimal import Decimal
 
+import requests
+from django.core.cache import cache
 from django.db import transaction, connection
 from django.db.models import Q, Case, When, Value, IntegerField
 from django.utils import timezone
@@ -1582,3 +1584,75 @@ class ProductClientsPricingView(APIView):
             "count":            len(out_clients),
             "clients":          out_clients,
         }, status=200)
+
+
+# =====================================================================
+# MarluvasExchangeRateView · cotización USD/BRL en vivo
+# ---------------------------------------------------------------------
+# Proxy hacia AwesomeAPI BR para evitar CORS y dejar la cotización
+# cacheada del lado servidor (15 min). El simulador de precios Marluvas
+# consume este endpoint para resaltar la banda cambial vigente.
+#
+# GET /api/commercial/exchange-rate/usd-brl/
+#   → { rate, bid, ask, high, low, varBid, timestamp, source, cached }
+#
+# Si la API externa falla, devuelve 200 con `rate=null` y `error` para
+# que el frontend pueda degradar gracefully (el usuario sigue pudiendo
+# editar manualmente la matriz).
+# =====================================================================
+class MarluvasExchangeRateView(APIView):
+    """Proxy + cache para USD/BRL (AwesomeAPI BR)."""
+    permission_classes = [IsAuthenticated]
+
+    CACHE_KEY = "commercial:fx:usd-brl"
+    CACHE_TTL = 60 * 15  # 15 minutos
+    UPSTREAM_URL = "https://economia.awesomeapi.com.br/last/USD-BRL"
+    UPSTREAM_TIMEOUT = 6  # segundos
+
+    def get(self, request):
+        force = str(request.query_params.get("refresh", "")).lower() in ("1", "true", "yes")
+
+        if not force:
+            cached = cache.get(self.CACHE_KEY)
+            if cached:
+                payload = dict(cached)
+                payload["cached"] = True
+                return Response(payload, status=200)
+
+        try:
+            resp = requests.get(self.UPSTREAM_URL, timeout=self.UPSTREAM_TIMEOUT)
+            resp.raise_for_status()
+            raw = resp.json()
+            # AwesomeAPI devuelve { "USDBRL": { bid, ask, high, low, varBid, create_date, ... } }
+            data = raw.get("USDBRL") or {}
+            bid = float(data.get("bid")) if data.get("bid") not in (None, "") else None
+            ask = float(data.get("ask")) if data.get("ask") not in (None, "") else None
+            payload = {
+                "rate":      bid,
+                "bid":       bid,
+                "ask":       ask,
+                "high":      float(data.get("high"))   if data.get("high")   else None,
+                "low":       float(data.get("low"))    if data.get("low")    else None,
+                "varBid":    float(data.get("varBid")) if data.get("varBid") else None,
+                "timestamp": data.get("create_date"),
+                "source":    "AwesomeAPI BR",
+                "cached":    False,
+            }
+            cache.set(self.CACHE_KEY, payload, timeout=self.CACHE_TTL)
+            return Response(payload, status=200)
+        except (requests.RequestException, ValueError) as exc:
+            log.warning("MarluvasExchangeRateView upstream failed: %s", exc)
+            # Degradación: devolver último valor cacheado si existe, si no null.
+            stale = cache.get(self.CACHE_KEY)
+            if stale:
+                payload = dict(stale)
+                payload["cached"] = True
+                payload["error"] = "Upstream sin respuesta; usando último valor cacheado."
+                return Response(payload, status=200)
+            return Response({
+                "rate": None, "bid": None, "ask": None,
+                "timestamp": None,
+                "source": "AwesomeAPI BR",
+                "cached": False,
+                "error":  f"Upstream sin respuesta: {exc}",
+            }, status=200)

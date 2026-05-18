@@ -37,6 +37,8 @@ from .views import (
     BrandClientPricingAssignmentViewSet, BrandClientsSummaryView,
     # Sprint COMEX-resolved · resolved-prices por asignación / producto
     ResolvedPricesByAssignmentView, ProductClientsPricingView,
+    # Simulador Marluvas v7 · cotización USD/BRL en vivo
+    MarluvasExchangeRateView,
 )
 
 
@@ -91,4 +93,8 @@ urlpatterns = [
     path("commercial/products/<str:sku>/clients-pricing/",
          ProductClientsPricingView.as_view(),
          name="commercial-product-clients-pricing"),
+    # Simulador Marluvas v7 · proxy USD/BRL (AwesomeAPI BR + cache 15min)
+    path("commercial/exchange-rate/usd-brl/",
+         MarluvasExchangeRateView.as_view(),
+         name="commercial-fx-usd-brl"),
 ]

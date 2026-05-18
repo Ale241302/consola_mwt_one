@@ -1,34 +1,43 @@
 // =====================================================================
 // MWT.ONE · pages/BrandClientPricingForm.jsx
-// Agente responsable: [AG-FRONTEND]
+// Agente responsable: [AG-03 FRONTEND]
 //
 // Ruta: /marcas/:brandId/clientes/:clienteId/precios
 //
-// Asignación de precios para un cliente dentro de una marca:
-//   · Drag-and-drop de Excel / CSV (archivo de precios base).
-//   · Vigencia: fecha_inicio (default hoy) + fecha_fin (o "indefinida").
-//   · Sobre-precio: slider de %.
-//   · Descuento Pronto Pago: días + %.
-//   · Descuento por Volumen: unidades mínimas + %.
+// Simulador de Precios — Marluvas v7
+//   · Upload de Excel COMEX 2026 v7 (xlsx) → parsea SKUs en vivo.
+//   · Vigencia (fecha inicio + fecha fin, opcional indefinida).
+//   · Cotización USD/BRL en vivo (proxy backend con cache 15min) y
+//     resaltado de la banda cambial vigente.
+//   · Editor por SKU: toggle activo, comisión, ajuste USD, lista techo,
+//     % sobreprecio derivado.
+//   · Matriz 12 bandas × 4 plazos (90/60/30/8 días) calculada en vivo.
+//   · Guardar: persiste la asignación + sube el Excel al backend
+//     (reusa el endpoint POST /commercial/brand-client-pricing/ + upload-file/).
 //
-// Al guardar → POST /api/commercial/brand-client-pricing/ con snapshot
-// inmutable de comisión + días de crédito del cliente (el backend los
-// congela al crear la asignación).
-//
-// POL_VISIBILIDAD: la sección de "Snapshot financiero" sólo se ve para
-// isAdmin (comisión del cliente + límite de crédito).
+// POL_VISIBILIDAD:
+//   · La sección de "Snapshot financiero" (comisión, días, límite) y la
+//     matriz interna sólo se ven para isAdmin (rol CEO/admin).
+//   · Por ahora la página entera es CEO-ONLY (es la consola interna).
 // =====================================================================
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import * as XLSX from "xlsx";
 import {
   IconChevLeft, IconUpload, IconCheck, IconAlert, IconLock,
-  IconDollar, IconPercent, IconClock, IconX, IconBoxes,
+  IconDollar, IconX, IconRefresh,
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { apiFetch, clientesApi, marcasApi } from "../lib/api.js";
 import { CLIENTS, BRANDS } from "../data/mockData.js";
+import {
+  BANDAS_MARLUVAS, PLAZOS_MARLUVAS, bandaForTC, fmtUSD, fmtPct,
+} from "../constants/marluvas.js";
+import {
+  calcSKU, parseExcelMarluvas, defaultSkuState,
+} from "../lib/marluvasPricing.js";
 
 // ─── Helpers backend → shape interno ──────────────────────────
 const _FLAG_ISO2 = {
@@ -60,6 +69,7 @@ function _adaptCliente(c) {
 
 // ─── Design tokens ───────────────────────────────────────────
 const NAVY  = "#0B1E3A";
+const NAVY2 = "#1A2F52";
 const MINT  = "#00B286";
 const LIGHT = "#1DE394";
 const AMBER = "#F59E0B";
@@ -67,16 +77,58 @@ const RED   = "#DC2626";
 const INK   = "#334155";
 const MUTED = "#64748B";
 const SOFT  = "#F8FAFC";
+const TECHO = "#FCE4D6";
+const TECHO_STRONG = "#F5B895";
 
-// IconInfo helper
-const IconInfo = ({ size = 12 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="9"/>
-    <path d="M12 8h.01M12 11v5"/>
-  </svg>
-);
+// ═════════════════════════════════════════════════════════════
+// Storage local del simulador (por brand+cliente).
+// Persiste SKUs y ajustes mientras el operador modela; al guardar
+// se sincroniza al backend.
+// ═════════════════════════════════════════════════════════════
+const lsKey = (brandId, clienteId) => `mwt:marluvas-sim:${brandId}:${clienteId}`;
 
+function loadLocal(brandId, clienteId) {
+  try {
+    const raw = localStorage.getItem(lsKey(brandId, clienteId));
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveLocal(brandId, clienteId, data) {
+  try { localStorage.setItem(lsKey(brandId, clienteId), JSON.stringify(data)); }
+  catch { /* quota o privado */ }
+}
+
+// ═════════════════════════════════════════════════════════════
+// Hook · cotización USD/BRL en vivo desde backend
+// ═════════════════════════════════════════════════════════════
+function useExchangeRateUSDBRL(accessToken) {
+  const [data, setData] = useState({ tc: null, loading: true, error: null, ts: null, source: null });
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setData((d) => ({ ...d, loading: true }));
+    apiFetch("/commercial/exchange-rate/usd-brl/", { token: accessToken })
+      .then((r) => {
+        if (cancelled) return;
+        const tc = Number(r?.rate ?? r?.bid ?? r?.value);
+        setData({
+          tc: Number.isFinite(tc) ? tc : null,
+          loading: false,
+          error: null,
+          ts: r?.timestamp || r?.create_date || new Date().toISOString(),
+          source: r?.source || "AwesomeAPI BR",
+        });
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setData({ tc: null, loading: false, error: e?.message || String(e), ts: null, source: null });
+      });
+    return () => { cancelled = true; };
+  }, [accessToken, reloadKey]);
+
+  return { ...data, reload: () => setReloadKey((k) => k + 1) };
+}
 
 // ═════════════════════════════════════════════════════════════
 // Componente principal
@@ -87,9 +139,8 @@ export default function ScreenBrandClientPricingForm() {
   const { lang } = useOutletContext() || { lang: "es" };
   const { isAdmin } = useRole();
   const { accessToken } = useAuth();
-  const [resolvedPreview, setResolvedPreview] = useState(null);  // {count, items[]}
 
-  // Lookup cliente + marca · backend real con fallback al mock
+  // ── Lookup cliente + marca ──
   const [client, setClient] = useState(null);
   const [brand,  setBrand]  = useState(null);
   const [lookupLoading, setLookupLoading] = useState(true);
@@ -120,40 +171,53 @@ export default function ScreenBrandClientPricingForm() {
     return () => { cancelled = true; };
   }, [brandId]);
 
-  // ── Estado del formulario ──
+  // ── Estado del simulador ──
   const [file, setFile] = useState(null);
   const [fileError, setFileError] = useState(null);
+  const [skus, setSkus] = useState([]);          // SkuInput[]
   const [fechaInicio, setFechaInicio] = useState(today());
   const [fechaFin, setFechaFin] = useState("");
   const [fechaFinIndef, setFechaFinIndef] = useState(true);
-  const [sobrePrecioPct, setSobrePrecioPct] = useState(0);      // 0..30
-  const [prontoPagoDias, setProntoPagoDias] = useState("");
-  const [prontoPagoPct,  setProntoPagoPct]  = useState(0);       // 0..30
-  const [volumenMin,     setVolumenMin]     = useState("");
-  const [volumenPct,     setVolumenPct]     = useState(0);       // 0..30
-  const [notas, setNotas] = useState("");
+  const [vista, setVista] = useState("editor");  // 'editor' | 'matriz'
+  const [parsing, setParsing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingFinTerm, setSavingFinTerm] = useState(null);
   const [banner, setBanner] = useState(null);
-  // Spinner por badge editable del header (comisión / días crédito).
-  // Mantengo solo "una key en vuelo" porque el usuario edita uno a la vez.
-  const [savingFinTerm, setSavingFinTerm] = useState(null);  // 'comision' | 'dias' | null
   const [dragOver, setDragOver] = useState(false);
-
-  // ── Drag-and-drop ──
   const fileInputRef = useRef(null);
 
-  const handleFile = (f) => {
+  const { tc, loading: tcLoading, error: tcError, ts: tcTs, source: tcSource, reload: reloadTC } =
+    useExchangeRateUSDBRL(accessToken);
+  const bandaVigente = useMemo(() => bandaForTC(tc), [tc]);
+
+  // ── Hidratar estado desde localStorage al montar ──
+  useEffect(() => {
+    if (!brandId || !clienteId) return;
+    const saved = loadLocal(brandId, clienteId);
+    if (saved) {
+      if (Array.isArray(saved.skus)) setSkus(saved.skus);
+      if (saved.fechaInicio) setFechaInicio(saved.fechaInicio);
+      if (saved.fechaFin) setFechaFin(saved.fechaFin);
+      if (typeof saved.fechaFinIndef === "boolean") setFechaFinIndef(saved.fechaFinIndef);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandId, clienteId]);
+
+  // ── Persistir cambios a localStorage (debounced trivial) ──
+  useEffect(() => {
+    if (!brandId || !clienteId) return;
+    const id = setTimeout(() => {
+      saveLocal(brandId, clienteId, { skus, fechaInicio, fechaFin, fechaFinIndef });
+    }, 300);
+    return () => clearTimeout(id);
+  }, [brandId, clienteId, skus, fechaInicio, fechaFin, fechaFinIndef]);
+
+  // ── Excel handler ──
+  const handleFile = async (f) => {
     if (!f) return;
-    const ok = [
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",   // xlsx
-      "application/vnd.ms-excel",                                             // xls
-      "text/csv",
-      "application/csv",
-    ].includes(f.type) || /\.(xlsx|xls|csv)$/i.test(f.name || "");
+    const ok = /\.(xlsx|xls)$/i.test(f.name || "");
     if (!ok) {
-      setFileError(lang === "es"
-        ? "Formato no soportado. Usa .xlsx, .xls o .csv."
-        : "Unsupported format. Use .xlsx, .xls or .csv.");
+      setFileError(lang === "es" ? "Formato no soportado. Usa .xlsx o .xls." : "Unsupported format.");
       return;
     }
     if (f.size > 15 * 1024 * 1024) {
@@ -162,6 +226,32 @@ export default function ScreenBrandClientPricingForm() {
     }
     setFileError(null);
     setFile(f);
+    setParsing(true);
+    try {
+      const buf = await f.arrayBuffer();
+      const parsed = parseExcelMarluvas(buf, { XLSX });
+      if (parsed.length === 0) {
+        setBanner({ type: "error", msg: lang === "es"
+          ? "No se detectaron SKUs Marluvas (formato 7xxxxx / 8xxxxx) en el Excel."
+          : "No Marluvas SKUs detected in the file." });
+        return;
+      }
+      // Merge: si ya había SKUs en estado, conservamos sus toggles/com/ajuste
+      const prevBySku = new Map(skus.map((s) => [s.sku, s]));
+      const merged = parsed.map((p) => {
+        const prev = prevBySku.get(p.sku);
+        if (prev) return { ...prev, brl: p.brl, ref: p.ref || prev.ref };
+        return defaultSkuState(p);
+      });
+      setSkus(merged);
+      setBanner({ type: "success", msg: lang === "es"
+        ? `${merged.length} SKUs detectados desde ${f.name}.`
+        : `${merged.length} SKUs detected from ${f.name}.` });
+    } catch (e) {
+      setBanner({ type: "error", msg: (lang === "es" ? "Error parseando Excel: " : "Excel parse error: ") + (e?.message || "") });
+    } finally {
+      setParsing(false);
+    }
   };
 
   const onDrop = (e) => {
@@ -171,34 +261,62 @@ export default function ScreenBrandClientPricingForm() {
     if (f) handleFile(f);
   };
 
-  // ── Save ──
+  // ── Mutadores por SKU ──
+  const patchSku = (idx, patch) => {
+    setSkus((arr) => arr.map((s, i) => i === idx ? { ...s, ...patch } : s));
+  };
+  const toggleSku = (idx) => patchSku(idx, { activo: !skus[idx].activo });
+
+  // ── Derivados ──
+  const skusActivos = useMemo(() => skus.filter((s) => s.activo), [skus]);
+  const calcs = useMemo(() => skus.map((s) => calcSKU(s)), [skus]);
+
+  const resumen = useMemo(() => {
+    const n = skusActivos.length;
+    if (n === 0) return { n: 0, spAvg: null, comAvg: null, total90: 0, total8: 0 };
+    let sumaSP = 0, sumaCom = 0, sum90 = 0, sum8 = 0;
+    skus.forEach((s, i) => {
+      if (!s.activo) return;
+      const c = calcs[i];
+      sumaSP += c.sobreprecioPct;
+      sumaCom += s.com;
+      sum90 += c.listaTecho;
+      sum8  += c.listaTecho * 0.9725;
+    });
+    return {
+      n,
+      spAvg:  sumaSP / n,
+      comAvg: sumaCom / n,
+      total90: sum90,
+      total8:  sum8,
+    };
+  }, [skus, skusActivos, calcs]);
+
+  // ── Save (asignación + upload Excel si existe) ──
   const save = async () => {
     setSaving(true);
     setBanner(null);
-    // Solo brand_id + cliente_id son obligatorios. El resto: si está vacío,
-    // ni siquiera lo enviamos (DRF lo trata como "no provisto" → null en BD).
-    const payload = {
-      brand_id:   brandId,
-      cliente_id: clienteId,
-      fecha_inicio: fechaInicio || undefined,
-      fecha_fin:  fechaFinIndef ? null : (fechaFin || null),
-      sobre_precio_pct:  sobrePrecioPct > 0 ? (sobrePrecioPct / 100).toFixed(4) : null,
-      pronto_pago_dias:  prontoPagoDias === "" ? null : Number(prontoPagoDias),
-      pronto_pago_pct:   prontoPagoPct > 0 ? (prontoPagoPct / 100).toFixed(4) : null,
-      volumen_min_units: volumenMin === "" ? null : Number(volumenMin),
-      volumen_pct:       volumenPct > 0 ? (volumenPct / 100).toFixed(4) : null,
-      notas: notas || null,
-    };
     try {
-      // 1) Crear asignación (snapshot de comisión + crédito se hace server-side)
+      const payload = {
+        brand_id:   brandId,
+        cliente_id: clienteId,
+        fecha_inicio: fechaInicio || undefined,
+        fecha_fin:    fechaFinIndef ? null : (fechaFin || null),
+        sobre_precio_pct: resumen.spAvg != null
+          ? Number(resumen.spAvg.toFixed(4))
+          : null,
+        pronto_pago_dias: null,
+        pronto_pago_pct:  null,
+        volumen_min_units: null,
+        volumen_pct: null,
+        notas: `[Marluvas v7 sim · ${skusActivos.length} SKUs activos]`,
+      };
       const created = await apiFetch("/commercial/brand-client-pricing/", {
         method: "POST",
         body: payload,
         token: accessToken,
       });
 
-      // 2) Si hay archivo Excel, subirlo y disparar el parser openpyxl
-      let uploadResult = null;
       if (file && created?.id) {
         const fd = new FormData();
         fd.append("file", file);
@@ -209,37 +327,15 @@ export default function ScreenBrandClientPricingForm() {
             headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
             body: fd },
         );
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data?.detail || `HTTP ${resp.status}`);
-        uploadResult = data;
+        if (!resp.ok) {
+          const data = await resp.json().catch(() => ({}));
+          throw new Error(data?.detail || `HTTP ${resp.status}`);
+        }
       }
 
-      // 3) Pedir resolved-prices para previsualizar
-      let resolved = null;
-      if (created?.id) {
-        try {
-          resolved = await apiFetch(
-            `/commercial/brand-client-pricing/${created.id}/resolved-prices/?limit=20`,
-            { token: accessToken },
-          );
-        } catch { /* opcional */ }
-      }
-
-      setResolvedPreview(resolved);
-      const importedMsg = uploadResult
-        ? (lang === "es"
-            ? `Asignación creada · ${uploadResult.skus_imported} SKUs importados.`
-            : `Assignment created · ${uploadResult.skus_imported} SKUs imported.`)
-        : (lang === "es"
-            ? "Asignación de precios guardada."
-            : "Pricing assignment saved.");
-      setBanner({ type: "success", msg: importedMsg });
-
-      // Si NO se subió Excel, navegar; si sí, dejamos que el operador
-      // revise la tabla resolvedPreview antes de salir.
-      if (!file) {
-        setTimeout(() => navigate(`/marcas/${brandId}`), 800);
-      }
+      setBanner({ type: "success", msg: lang === "es"
+        ? `Lista de precios guardada · ${skusActivos.length} SKUs activos.`
+        : `Price list saved · ${skusActivos.length} active SKUs.` });
     } catch (err) {
       setBanner({ type: "error",
         msg: String(err?.body?.detail || err?.message || err) });
@@ -266,11 +362,8 @@ export default function ScreenBrandClientPricingForm() {
         <div style={emptyCard}>
           <IconAlert size={22} style={{ color: MUTED, marginBottom: 8 }}/>
           <div>{lang === "es" ? "Cliente no encontrado." : "Client not found."}</div>
-          <div style={{ color: MUTED, fontSize: 11, marginTop: 6 }}>
-            ID: {clienteId}
-          </div>
-          <button onClick={() => navigate("/marcas")}
-                  style={{ ...btnGhost, marginTop: 14 }}>
+          <div style={{ color: MUTED, fontSize: 11, marginTop: 6 }}>ID: {clienteId}</div>
+          <button onClick={() => navigate("/marcas")} style={{ ...btnGhost, marginTop: 14 }}>
             {lang === "es" ? "Volver" : "Back"}
           </button>
         </div>
@@ -282,28 +375,25 @@ export default function ScreenBrandClientPricingForm() {
     <div className="page" style={{ paddingBottom: 120 }}>
       {/* Breadcrumb */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-        <button onClick={() => navigate(`/marcas/${brandId}`)}
-                style={btnGhost}>
+        <button onClick={() => navigate(`/marcas/${brandId}`)} style={btnGhost}>
           <IconChevLeft size={13}/>
           {lang === "es" ? "Volver" : "Back"}
         </button>
         <span style={{ color: MUTED, fontSize: 12 }}>·</span>
-        <span style={{ fontSize: 12, color: MUTED }}>
-          {lang === "es" ? "Marcas" : "Brands"}
-        </span>
+        <span style={{ fontSize: 12, color: MUTED }}>{lang === "es" ? "Marcas" : "Brands"}</span>
         <span style={{ color: MUTED }}>/</span>
         <span style={{ fontSize: 12, color: NAVY }}>{brand?.nombre || brandId}</span>
         <span style={{ color: MUTED }}>/</span>
         <span style={{ fontSize: 12, fontWeight: 600, color: NAVY }}>
-          {lang === "es" ? "Precios — " : "Pricing — "}{client.razon_social || client.name}
+          {lang === "es" ? "Motor de Precios — " : "Pricing Engine — "}{client.razon_social || client.name}
         </span>
       </div>
 
       {/* Header · cliente + snapshot financiero */}
       <div style={{
-        background: `linear-gradient(135deg, ${NAVY} 0%, #1A2F52 100%)`,
-        color: "#FFFFFF", padding: "20px 24px", borderRadius: 12,
-        marginBottom: 20,
+        background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY2} 100%)`,
+        color: "#FFFFFF", padding: "18px 22px", borderRadius: 12,
+        marginBottom: 16,
         display: "grid",
         gridTemplateColumns: isAdmin ? "1fr auto" : "1fr",
         gap: 18, alignItems: "center",
@@ -311,19 +401,18 @@ export default function ScreenBrandClientPricingForm() {
         <div>
           <div style={{ font: "500 10.5px/1 var(--font-body)", opacity: 0.65,
             textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>
-            {lang === "es" ? "Asignación de precios" : "Pricing assignment"}
+            {lang === "es" ? "Simulador de Precios" : "Pricing Simulator"} · Marluvas v7
           </div>
           <div style={{ font: "700 20px/1.2 var(--font-body)" }}>
             {client.razon_social || client.name}
           </div>
           <div style={{ font: "500 11.5px/1.4 var(--font-body)", opacity: 0.75, marginTop: 4 }}>
-            {brand?.nombre || "—"} · {client.country || client.pais_iso2}
+            {brand?.nombre || "—"} · {client.country || client.pais_iso2} · 12 bandas × 4 plazos
           </div>
         </div>
 
-        {/* Snapshot financiero · CEO-ONLY · comisión y días crédito editables */}
         {isAdmin && (
-          <div style={{ display: "flex", gap: 22, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
             <SnapshotBadge
               label={lang === "es" ? "Comisión" : "Commission"}
               value={client.comision_pct != null ? `${(Number(client.comision_pct) * 100).toFixed(2)}%` : "—"}
@@ -331,32 +420,22 @@ export default function ScreenBrandClientPricingForm() {
               editable
               rawValue={client.comision_pct != null ? Number((Number(client.comision_pct) * 100).toFixed(4)) : null}
               suffix="%"
-              parse={(s) => {
-                const n = Number(String(s).replace(",", "."));
-                return Number.isNaN(n) ? null : n;
-              }}
+              parse={(s) => { const n = Number(String(s).replace(",", ".")); return Number.isNaN(n) ? null : n; }}
               saving={savingFinTerm === "comision"}
               onSave={async (newPct) => {
-                // Validación: 0 ≤ pct ≤ 100
                 if (newPct < 0 || newPct > 100) {
-                  setBanner({ type: "error",
-                    msg: lang === "es" ? "Comisión debe estar entre 0% y 100%." : "Commission must be 0%-100%." });
+                  setBanner({ type: "error", msg: lang === "es" ? "Comisión 0–100%." : "Commission 0-100%." });
                   return;
                 }
                 setSavingFinTerm("comision");
                 try {
-                  // Backend almacena fracción (0.0875 = 8.75%). Redondeo a 4 decimales.
                   const fraction = Number((newPct / 100).toFixed(4));
                   await clientesApi.update(clienteId, { comision_pct: fraction });
                   setClient((c) => c ? { ...c, comision_pct: fraction } : c);
-                  setBanner({ type: "success",
-                    msg: lang === "es" ? "Comisión actualizada." : "Commission updated." });
+                  setBanner({ type: "success", msg: lang === "es" ? "Comisión actualizada." : "Updated." });
                 } catch (e) {
-                  setBanner({ type: "error",
-                    msg: (lang === "es" ? "No se pudo actualizar comisión: " : "Update failed: ") + (e?.message || "") });
-                } finally {
-                  setSavingFinTerm(null);
-                }
+                  setBanner({ type: "error", msg: (lang === "es" ? "Error: " : "Error: ") + (e?.message || "") });
+                } finally { setSavingFinTerm(null); }
               }}
             />
             <SnapshotBadge
@@ -366,29 +445,21 @@ export default function ScreenBrandClientPricingForm() {
               editable
               rawValue={client.credito_dias ?? client.dias_credito ?? 0}
               suffix="d"
-              parse={(s) => {
-                const n = parseInt(String(s).trim(), 10);
-                return Number.isNaN(n) ? null : n;
-              }}
+              parse={(s) => { const n = parseInt(String(s).trim(), 10); return Number.isNaN(n) ? null : n; }}
               saving={savingFinTerm === "dias"}
               onSave={async (newDias) => {
                 if (newDias < 0 || newDias > 365) {
-                  setBanner({ type: "error",
-                    msg: lang === "es" ? "Días crédito debe estar entre 0 y 365." : "Credit days must be 0-365." });
+                  setBanner({ type: "error", msg: lang === "es" ? "Días 0–365." : "Days 0-365." });
                   return;
                 }
                 setSavingFinTerm("dias");
                 try {
                   await clientesApi.update(clienteId, { dias_credito: newDias });
                   setClient((c) => c ? { ...c, dias_credito: newDias, credito_dias: newDias } : c);
-                  setBanner({ type: "success",
-                    msg: lang === "es" ? "Días de crédito actualizados." : "Credit days updated." });
+                  setBanner({ type: "success", msg: lang === "es" ? "Días actualizados." : "Updated." });
                 } catch (e) {
-                  setBanner({ type: "error",
-                    msg: (lang === "es" ? "No se pudo actualizar días crédito: " : "Update failed: ") + (e?.message || "") });
-                } finally {
-                  setSavingFinTerm(null);
-                }
+                  setBanner({ type: "error", msg: (lang === "es" ? "Error: " : "Error: ") + (e?.message || "") });
+                } finally { setSavingFinTerm(null); }
               }}
             />
             <SnapshotBadge
@@ -400,12 +471,20 @@ export default function ScreenBrandClientPricingForm() {
         )}
       </div>
 
+      {/* Banda cambial en vivo + control de vista */}
+      <ExchangeRateBar
+        tc={tc} loading={tcLoading} error={tcError} ts={tcTs} source={tcSource}
+        bandaVigente={bandaVigente}
+        vista={vista} onVistaChange={setVista}
+        onReload={reloadTC} lang={lang}
+      />
+
       <AnimatePresence>
         {banner && (
           <motion.div
             initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
             style={{
-              padding: "10px 14px", marginBottom: 16,
+              padding: "10px 14px", marginBottom: 14,
               background: banner.type === "success" ? `${MINT}15` : `${RED}15`,
               color: banner.type === "success" ? "#065F46" : "#991B1B",
               border: `1px solid ${banner.type === "success" ? `${MINT}55` : `${RED}55`}`,
@@ -420,227 +499,311 @@ export default function ScreenBrandClientPricingForm() {
         )}
       </AnimatePresence>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 1100 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
-        {/* ── Sección 1 · Archivo de precios (drag & drop) ── */}
-        <Section
-          title={lang === "es" ? "Archivo de precios" : "Price file"}
-          subtitle={lang === "es"
-            ? "Sube el Excel con los precios base por SKU. Opcional — puedes guardar sólo con modificadores."
-            : "Upload the Excel with base prices per SKU. Optional — can be saved with modifiers only."}
-        >
-          <div
-            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={onDrop}
-            onClick={() => fileInputRef.current?.click()}
-            style={{
-              border: `2px dashed ${dragOver ? MINT : file ? MINT : "#CBD5E1"}`,
-              background: dragOver ? `${MINT}0D` : file ? `${MINT}06` : SOFT,
-              borderRadius: 12,
-              padding: 28, textAlign: "center",
-              cursor: "pointer",
-              transition: "all 160ms ease",
-            }}
+        {/* ── 1 · Archivo Excel + Vigencia (lado a lado) ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 14 }}>
+          <Section
+            title={lang === "es" ? "Archivo de precios Marluvas v7" : "Marluvas v7 price file"}
+            subtitle={lang === "es"
+              ? "Sube el Excel COMEX 2026 v7. Detecta SKUs Marluvas (7xxxxx / 8xxxxx) y carga el precio BRL base."
+              : "Upload the COMEX 2026 v7 Excel."}
+            badge={skus.length ? { label: `${skus.length} SKUS`, color: NAVY, bg: `${MINT}22` } : null}
           >
-            <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" hidden
-                   onChange={e => handleFile(e.target.files?.[0])}/>
-            {file ? (
-              <div>
-                <IconCheck size={28} style={{ color: MINT, marginBottom: 8 }}/>
-                <div style={{ font: "700 14px/1.2 var(--font-body)", color: NAVY }}>
-                  {file.name}
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                border: `2px dashed ${dragOver ? MINT : file ? MINT : "#CBD5E1"}`,
+                background: dragOver ? `${MINT}0D` : file ? `${MINT}06` : SOFT,
+                borderRadius: 10,
+                padding: 22, textAlign: "center",
+                cursor: parsing ? "wait" : "pointer",
+                transition: "all 160ms ease",
+              }}
+            >
+              <input ref={fileInputRef} type="file" accept=".xlsx,.xls" hidden
+                     onChange={e => handleFile(e.target.files?.[0])}/>
+              {parsing ? (
+                <div style={{ color: MUTED, font: "500 12px/1.3 var(--font-body)" }}>
+                  {lang === "es" ? "Procesando Excel…" : "Parsing Excel…"}
                 </div>
-                <div style={{ font: "500 11.5px/1.3 var(--font-body)", color: MUTED, marginTop: 4 }}>
-                  {(file.size / 1024).toFixed(1)} KB
+              ) : file ? (
+                <div>
+                  <IconCheck size={22} style={{ color: MINT, marginBottom: 6 }}/>
+                  <div style={{ font: "700 13px/1.2 var(--font-body)", color: NAVY }}>{file.name}</div>
+                  <div style={{ font: "500 10.5px/1.3 var(--font-body)", color: MUTED, marginTop: 3 }}>
+                    {(file.size / 1024).toFixed(1)} KB · {skus.length} SKUs
+                  </div>
+                  <button type="button"
+                    onClick={e => { e.stopPropagation(); setFile(null); }}
+                    style={{
+                      marginTop: 8, padding: "3px 9px",
+                      border: "1px solid #E5E7EB", background: "#FFFFFF",
+                      color: MUTED, borderRadius: 6, cursor: "pointer",
+                      font: "500 10.5px/1 var(--font-body)",
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                    }}>
+                    <IconX size={10}/>{lang === "es" ? "Cambiar" : "Change"}
+                  </button>
                 </div>
-                <button type="button"
-                  onClick={e => { e.stopPropagation(); setFile(null); }}
-                  style={{
-                    marginTop: 10, padding: "4px 10px",
-                    border: "1px solid #E5E7EB", background: "#FFFFFF",
-                    color: MUTED, borderRadius: 6, cursor: "pointer",
-                    font: "500 11px/1 var(--font-body)",
-                    display: "inline-flex", alignItems: "center", gap: 4,
-                  }}
-                >
-                  <IconX size={10}/>
-                  {lang === "es" ? "Cambiar archivo" : "Change file"}
-                </button>
-              </div>
-            ) : (
-              <div>
-                <IconUpload size={28} style={{ color: dragOver ? MINT : MUTED, marginBottom: 10 }}/>
-                <div style={{ font: "700 14px/1.2 var(--font-body)", color: NAVY }}>
-                  {lang === "es"
-                    ? "Arrastra el Excel aquí o click para seleccionar"
-                    : "Drag the Excel here or click to select"}
+              ) : (
+                <div>
+                  <IconUpload size={22} style={{ color: dragOver ? MINT : MUTED, marginBottom: 8 }}/>
+                  <div style={{ font: "700 13px/1.2 var(--font-body)", color: NAVY }}>
+                    {lang === "es" ? "Arrastra el Excel o click" : "Drag the Excel or click"}
+                  </div>
+                  <div style={{ font: "500 10.5px/1.3 var(--font-body)", color: MUTED, marginTop: 3 }}>
+                    .xlsx · .xls · max 15 MB
+                  </div>
                 </div>
-                <div style={{ font: "500 11.5px/1.4 var(--font-body)", color: MUTED, marginTop: 4 }}>
-                  .xlsx · .xls · .csv · max 15 MB
-                </div>
+              )}
+            </div>
+            {fileError && (
+              <div style={{
+                marginTop: 8, font: "500 11px/1.3 var(--font-body)", color: RED,
+                display: "inline-flex", alignItems: "center", gap: 4,
+              }}>
+                <IconAlert size={11}/>{fileError}
               </div>
             )}
-          </div>
-          {fileError && (
-            <div style={{
-              marginTop: 8, font: "500 11px/1.3 var(--font-body)", color: RED,
-              display: "inline-flex", alignItems: "center", gap: 4,
-            }}>
-              <IconAlert size={11}/>
-              {fileError}
-            </div>
-          )}
-        </Section>
+          </Section>
 
-        {/* ── Sección 2 · Vigencia ── */}
-        <Section
-          title={lang === "es" ? "Vigencia" : "Validity"}
-          subtitle={lang === "es"
-            ? "Período en que estos precios estarán activos para el cliente."
-            : "Period when these prices will be active for the client."}
-        >
-          <Grid cols={2}>
-            <Field label={lang === "es" ? "Fecha de inicio" : "Start date"}>
-              <Input type="date" value={fechaInicio}
-                     onChange={v => setFechaInicio(v)}/>
+          <Section
+            title={lang === "es" ? "Vigencia" : "Validity"}
+            subtitle={lang === "es" ? "Período activo de esta lista." : "Active period."}
+          >
+            <Field label={lang === "es" ? "Inicio" : "Start"}>
+              <Input type="date" value={fechaInicio} onChange={setFechaInicio}/>
             </Field>
-
-            <div>
-              <Label>{lang === "es" ? "Fecha de finalización" : "End date"}</Label>
-              <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
-                <Input type="date" value={fechaFin}
-                       onChange={v => setFechaFin(v)}
+            <div style={{ marginTop: 10 }}>
+              <Label>{lang === "es" ? "Fin" : "End"}</Label>
+              <div style={{ display: "flex", gap: 6 }}>
+                <Input type="date" value={fechaFin} onChange={setFechaFin}
                        disabled={fechaFinIndef}
-                       style={{ opacity: fechaFinIndef ? 0.5 : 1 }}/>
-                <motion.button type="button"
-                  whileTap={{ scale: 0.97 }}
+                       style={{ opacity: fechaFinIndef ? 0.45 : 1 }}/>
+                <motion.button type="button" whileTap={{ scale: 0.97 }}
                   onClick={() => {
                     const next = !fechaFinIndef;
                     setFechaFinIndef(next);
                     if (next) setFechaFin("");
                   }}
                   style={{
-                    padding: "0 14px",
+                    padding: "0 12px",
                     border: `1.5px solid ${fechaFinIndef ? MINT : "#E5E7EB"}`,
                     background: fechaFinIndef ? `${MINT}10` : "#FFFFFF",
                     color: fechaFinIndef ? MINT : INK,
-                    font: "600 11.5px/1 var(--font-body)",
-                    borderRadius: 6, cursor: "pointer",
-                    display: "inline-flex", alignItems: "center", gap: 4,
-                    whiteSpace: "nowrap", flexShrink: 0,
-                  }}
-                >
-                  {fechaFinIndef && <IconCheck size={11}/>}
-                  {lang === "es" ? "Indefinida" : "Indefinite"}
+                    font: "600 11px/1 var(--font-body)",
+                    borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
+                  }}>
+                  {fechaFinIndef && <IconCheck size={10}/>}
+                  {lang === "es" ? " Indef." : " Indef."}
                 </motion.button>
               </div>
             </div>
-          </Grid>
-        </Section>
+          </Section>
+        </div>
 
-        {/* ── Sección 3 · Sobre-precio ── */}
-        <Section
-          title={lang === "es" ? "Sobre-precio" : "Price markup"}
-          subtitle={lang === "es"
-            ? "Se aplica multiplicativamente sobre el precio base del Excel. Opcional."
-            : "Multiplicative adjustment over the Excel base price. Optional."}
-          badge={{ label: "OPCIONAL", color: MUTED, bg: "#F1F5F9" }}
-        >
-          <SliderField
-            value={sobrePrecioPct}
-            onChange={setSobrePrecioPct}
-            min={0} max={30} step={0.5}
-            unit="%"
-            labels={["0%", "10%", "20%", "30%"]}
-            colorFor={pct => pct >= 20 ? RED : pct >= 10 ? AMBER : MINT}
-          />
-        </Section>
-
-        {/* ── Sección 4 · Descuento Pronto Pago ── */}
-        <Section
-          title={lang === "es" ? "Descuento Pronto Pago" : "Early Payment Discount"}
-          subtitle={lang === "es"
-            ? "Si el cliente paga antes de X días, se aplica Y% de descuento."
-            : "If the client pays within X days, apply Y% discount."}
-          badge={{ label: "OPCIONAL", color: MUTED, bg: "#F1F5F9" }}
-        >
-          <Grid cols={2}>
-            <Field label={lang === "es" ? "Días para aplicar" : "Days to apply"}
-                   hint="0 — 180">
-              <InputAffixed affixRight={lang === "es" ? "días" : "days"}
-                            type="number" min={0} max={180}
-                            value={prontoPagoDias}
-                            onChange={v => setProntoPagoDias(v)}
-                            placeholder="ej: 10"
-                            mono tabular/>
-            </Field>
-            <div>
-              <Label>{lang === "es" ? "Descuento" : "Discount"}</Label>
-              <SliderField
-                value={prontoPagoPct}
-                onChange={setProntoPagoPct}
-                min={0} max={30} step={0.5}
-                unit="%"
-                labels={["0%", "10%", "20%", "30%"]}
-                colorFor={pct => pct >= 20 ? RED : pct >= 10 ? AMBER : MINT}
-              />
+        {/* ── 2 · Editor SKUs (banda techo) ── */}
+        {vista === "editor" && skus.length > 0 && (
+          <Section
+            title={lang === "es"
+              ? "SKUs · Banda techo 4,00–4,20 (divisor 4.07)"
+              : "SKUs · Top band 4.00–4.20 (÷4.07)"}
+            subtitle={lang === "es"
+              ? "Editás la comisión y el ajuste USD en banda techo. El % de variación implícito se derrama a las 11 bandas restantes."
+              : "Edit commission and USD adjustment at top band. Cascades as % to remaining 11 bands."}
+            badge={{ label: `${skusActivos.length}/${skus.length} ACTIVOS`, color: NAVY, bg: `${MINT}22` }}
+          >
+            <div style={{ overflowX: "auto" }}>
+              <table style={tblSku}>
+                <thead>
+                  <tr>
+                    <th style={{ ...thSku, width: 36 }}></th>
+                    <th style={{ ...thSku, textAlign: "left", paddingLeft: 12 }}>SKU</th>
+                    <th style={{ ...thSku, textAlign: "left" }}>{lang === "es" ? "Referencia" : "Reference"}</th>
+                    <th style={thSku}>BRL</th>
+                    <th style={thSku}>Com %</th>
+                    <th style={{ ...thSku, background: TECHO, color: "#9A4A1D" }}>
+                      Base USD<br/><small style={{ opacity: 0.7, fontWeight: 500 }}>90d techo</small>
+                    </th>
+                    <th style={{ ...thSku, background: TECHO, color: "#9A4A1D" }}>
+                      {lang === "es" ? "Ajuste $" : "Adj. $"}
+                    </th>
+                    <th style={thSku}>{lang === "es" ? "Sobreprecio" : "Markup"}</th>
+                    <th style={{ ...thSku, background: TECHO, color: "#9A4A1D" }}>
+                      {lang === "es" ? "Lista USD" : "List USD"}<br/>
+                      <small style={{ opacity: 0.7, fontWeight: 500 }}>90d techo</small>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {skus.map((s, i) => {
+                    const c = calcs[i];
+                    return (
+                      <tr key={s.sku} style={{ opacity: s.activo ? 1 : 0.4 }}>
+                        <td style={tdSku}>
+                          <button type="button" onClick={() => toggleSku(i)}
+                            style={{
+                              width: 20, height: 20, borderRadius: 5,
+                              border: `1.5px solid ${s.activo ? MINT : "#CBD5E1"}`,
+                              background: s.activo ? MINT : "#FFFFFF",
+                              cursor: "pointer", display: "inline-flex",
+                              alignItems: "center", justifyContent: "center",
+                            }}>
+                            {s.activo && <IconCheck size={12} style={{ color: "#FFFFFF" }}/>}
+                          </button>
+                        </td>
+                        <td style={{ ...tdSku, textAlign: "left", paddingLeft: 12, color: MUTED, fontSize: 10 }}>{s.sku}</td>
+                        <td style={{ ...tdSku, textAlign: "left", fontFamily: "var(--font-body)", fontWeight: 600, color: NAVY, fontSize: 11, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.ref}>{s.ref}</td>
+                        <td style={tdSku}>{Number(s.brl).toFixed(2)}</td>
+                        <td style={tdSku}>
+                          <input type="number" min={0} max={10} step={0.5}
+                            value={s.com}
+                            onChange={(e) => patchSku(i, { com: Math.max(0, Math.min(10, Number(e.target.value) || 0)) })}
+                            onFocus={(e) => e.target.select()}
+                            style={inpMono(48)}/>
+                        </td>
+                        <td style={{ ...tdSku, background: `${TECHO}66` }}>{fmtUSD(c.baseUsdTecho)}</td>
+                        <td style={{ ...tdSku, background: `${TECHO}66` }}>
+                          <input type="number" min={0} step={0.25}
+                            value={Number(s.ajuste).toFixed(2)}
+                            onChange={(e) => patchSku(i, { ajuste: Math.max(0, Number(e.target.value) || 0) })}
+                            onFocus={(e) => e.target.select()}
+                            style={{ ...inpMono(70), background: TECHO, borderColor: TECHO_STRONG, fontWeight: 700 }}/>
+                        </td>
+                        <td style={tdSku}>
+                          <span style={{ color: AMBER, fontWeight: 700, fontSize: 10 }}>
+                            {fmtPct(c.sobreprecioPct)}
+                          </span>
+                        </td>
+                        <td style={{ ...tdSku, background: `${TECHO}66`, fontWeight: 700, color: NAVY }}>
+                          {fmtUSD(c.listaTecho)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          </Grid>
-        </Section>
 
-        {/* ── Sección 5 · Descuento por Volumen ── */}
-        <Section
-          title={lang === "es" ? "Descuento por Volumen" : "Volume Discount"}
-          subtitle={lang === "es"
-            ? "Si la OC supera X unidades, se aplica Y% de descuento."
-            : "If the PO exceeds X units, apply Y% discount."}
-          badge={{ label: "OPCIONAL", color: MUTED, bg: "#F1F5F9" }}
-        >
-          <Grid cols={2}>
-            <Field label={lang === "es" ? "Unidades mínimas" : "Minimum units"}
-                   hint={lang === "es"
-                     ? "Se activa cuando la cantidad total de la OC supera este número."
-                     : "Triggers when the total PO quantity exceeds this number."}>
-              <InputAffixed affixRight={lang === "es" ? "un." : "un."}
-                            type="number" min={0}
-                            value={volumenMin}
-                            onChange={v => setVolumenMin(v)}
-                            placeholder="ej: 500"
-                            mono tabular/>
-            </Field>
-            <div>
-              <Label>{lang === "es" ? "Descuento" : "Discount"}</Label>
-              <SliderField
-                value={volumenPct}
-                onChange={setVolumenPct}
-                min={0} max={30} step={0.5}
-                unit="%"
-                labels={["0%", "10%", "20%", "30%"]}
-                colorFor={pct => pct >= 20 ? RED : pct >= 10 ? AMBER : MINT}
-              />
+            {/* Resumen de fila */}
+            <div style={{
+              marginTop: 12, display: "grid",
+              gridTemplateColumns: "repeat(5, 1fr)", gap: 10,
+              padding: 12, background: SOFT, borderRadius: 8,
+              border: "1px solid #E5E7EB",
+            }}>
+              <KPI label={lang === "es" ? "Activos" : "Active"} value={`${resumen.n}/${skus.length}`}/>
+              <KPI label={lang === "es" ? "Sobreprecio promedio" : "Avg markup"}
+                value={resumen.spAvg != null ? (resumen.spAvg * 100).toFixed(1) + "%" : "—"}
+                hi/>
+              <KPI label={lang === "es" ? "Comisión promedio" : "Avg commission"}
+                value={resumen.comAvg != null ? resumen.comAvg.toFixed(1) + "%" : "—"}/>
+              <KPI label={lang === "es" ? "Total 90d techo" : "Total 90d top"}
+                value={fmtUSD(resumen.total90)}/>
+              <KPI label={lang === "es" ? "Total 8d techo" : "Total 8d top"}
+                value={fmtUSD(resumen.total8)}/>
             </div>
-          </Grid>
-        </Section>
+          </Section>
+        )}
 
-        {/* ── Sección 6 · Notas internas ── */}
-        <Section
-          title={lang === "es" ? "Notas internas" : "Internal notes"}
-          subtitle={lang === "es"
-            ? "Contexto comercial, condiciones especiales, referencia a correos, etc."
-            : "Commercial context, special conditions, email refs, etc."}
-        >
-          <Textarea value={notas} onChange={setNotas} rows={3}
-            placeholder={lang === "es"
-              ? "Ej: Negociado con J. Pérez tras reunión 2026-04-01. Válido hasta resolución de incidente SAP-9182."
-              : "Negotiated with J. Pérez on 2026-04-01. Valid until SAP-9182 incident closes."}/>
-        </Section>
+        {/* ── 3 · Matriz 12 × 4 ── */}
+        {skusActivos.length > 0 && (
+          <Section
+            title={lang === "es"
+              ? "Matriz 12 bandas × 4 plazos · Precios USD por par"
+              : "Matrix 12 bands × 4 terms · USD per pair"}
+            subtitle={lang === "es"
+              ? "El cliente identifica la banda según el TC USD/BRL del día. Plazo base: 90 días. Descuentos: −1.00% (60d), −1.75% (30d), −2.75% (8d)."
+              : "Client picks band by daily USD/BRL FX rate. Base term: 90 days."}
+            badge={{ label: `${skusActivos.length * 12 * 4} ${lang === "es" ? "CELDAS" : "CELLS"}`,
+                     color: NAVY, bg: `${MINT}22` }}
+          >
+            <div style={{ overflowX: "auto", maxHeight: "70vh" }}>
+              <table style={tblMtx}>
+                <thead>
+                  <tr>
+                    <th rowSpan={2} style={{ ...thMtx, width: 60, position: "sticky", left: 0, background: SOFT, zIndex: 3 }}>SKU</th>
+                    <th rowSpan={2} style={{ ...thMtx, textAlign: "left", paddingLeft: 8, minWidth: 130, position: "sticky", left: 60, background: SOFT, zIndex: 3 }}>{lang === "es" ? "Referencia" : "Reference"}</th>
+                    {BANDAS_MARLUVAS.map((b) => (
+                      <th key={b.id} colSpan={4} style={{
+                        ...thMtx,
+                        background: b.techo ? TECHO : b.piso ? "#D1FAE5" : "#E0F2FE",
+                        color: b.techo ? "#9A4A1D" : b.piso ? "#065F46" : "#075985",
+                        borderLeft: bandaVigente?.id === b.id ? `2px solid ${AMBER}` : undefined,
+                      }}>
+                        {b.rango}
+                        <br/>
+                        <small style={{ opacity: 0.75, fontWeight: 500 }}>÷{b.div.toFixed(2)}</small>
+                      </th>
+                    ))}
+                  </tr>
+                  <tr>
+                    {BANDAS_MARLUVAS.flatMap((b) =>
+                      PLAZOS_MARLUVAS.map((p) => (
+                        <th key={`${b.id}-${p.dias}`} style={{
+                          ...thMtx, fontSize: 9, padding: "4px 2px",
+                          background: b.techo ? `${TECHO}88` : "#F0F9FF",
+                          color: NAVY,
+                        }}>{p.dias}d</th>
+                      ))
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {skus.map((s, i) => {
+                    if (!s.activo) return null;
+                    const c = calcs[i];
+                    return (
+                      <tr key={s.sku}>
+                        <td style={{ ...tdMtx, color: MUTED, fontSize: 9, position: "sticky", left: 0, background: "#FFFFFF", zIndex: 2, textAlign: "left", paddingLeft: 8 }}>{s.sku}</td>
+                        <td style={{ ...tdMtx, fontFamily: "var(--font-body)", fontWeight: 600, color: NAVY, fontSize: 10, position: "sticky", left: 60, background: "#FFFFFF", zIndex: 2, textAlign: "left", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.ref}>{s.ref}</td>
+                        {c.matriz.flatMap((m, bi) =>
+                          m.plazos.map((pp, pi) => (
+                            <td key={`${bi}-${pi}`} style={{
+                              ...tdMtx,
+                              background: bi === 0 ? `${TECHO}44` : undefined,
+                              fontWeight: pi === 0 ? 700 : 500,
+                              color: pi === 0 ? NAVY : INK,
+                              borderLeft: bandaVigente?.id === m.banda.id && pi === 0 ? `2px solid ${AMBER}` : undefined,
+                            }}>{pp.toFixed(2)}</td>
+                          ))
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+        )}
+
+        {/* Empty state si no hay SKUs */}
+        {skus.length === 0 && (
+          <div style={{
+            padding: "40px 20px", textAlign: "center",
+            background: SOFT, borderRadius: 10, border: "1px dashed #CBD5E1",
+            color: MUTED, font: "500 13px/1.5 var(--font-body)",
+          }}>
+            <IconDollar size={28} style={{ color: MUTED, marginBottom: 10 }}/>
+            <div style={{ fontWeight: 600, color: NAVY, marginBottom: 4 }}>
+              {lang === "es" ? "Aún no hay SKUs en este simulador" : "No SKUs yet"}
+            </div>
+            <div>{lang === "es"
+              ? "Subí el Excel COMEX 2026 v7 para empezar a modelar precios."
+              : "Upload the COMEX 2026 v7 Excel to start modeling prices."}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Footer sticky */}
       <div style={{
         position: "sticky", bottom: 0, zIndex: 5,
-        marginTop: 24, padding: "14px 20px",
+        marginTop: 18, padding: "12px 18px",
         background: "#FFFFFFEE", backdropFilter: "blur(6px)",
         borderTop: "1px solid #E5E7EB", borderRadius: 10,
         display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
@@ -649,7 +812,7 @@ export default function ScreenBrandClientPricingForm() {
         <div style={{ font: "500 11.5px/1.4 var(--font-body)", color: MUTED }}>
           {lang === "es"
             ? "Los términos financieros del cliente se congelan al guardar (snapshot)."
-            : "Client financial terms are frozen on save (snapshot)."}
+            : "Client financial terms are frozen on save."}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button type="button" onClick={() => navigate(`/marcas/${brandId}`)}
@@ -663,20 +826,20 @@ export default function ScreenBrandClientPricingForm() {
             {lang === "es" ? "Cancelar" : "Cancel"}
           </button>
           <button type="button" onClick={save}
-                  disabled={saving}
+                  disabled={saving || skusActivos.length === 0}
                   style={{
                     padding: "9px 22px",
-                    background: saving ? "#94A3B8" : MINT,
+                    background: (saving || skusActivos.length === 0) ? "#94A3B8" : MINT,
                     color: "#FFFFFF", border: "none",
                     font: "700 12.5px/1 var(--font-body)",
                     borderRadius: 8,
-                    cursor: saving ? "not-allowed" : "pointer",
+                    cursor: (saving || skusActivos.length === 0) ? "not-allowed" : "pointer",
                     display: "inline-flex", alignItems: "center", gap: 6,
                   }}>
             <IconCheck size={13}/>
             {saving
               ? (lang === "es" ? "Guardando…" : "Saving…")
-              : (lang === "es" ? "Guardar asignación" : "Save assignment")}
+              : (lang === "es" ? `Guardar (${skusActivos.length} SKUs)` : `Save (${skusActivos.length} SKUs)`)}
           </button>
         </div>
       </div>
@@ -686,46 +849,112 @@ export default function ScreenBrandClientPricingForm() {
 
 
 // ═════════════════════════════════════════════════════════════
-// Slider reutilizable con labels y color dinámico
+// Sub-componentes
 // ═════════════════════════════════════════════════════════════
-function SliderField({ value, onChange, min, max, step, unit = "%", labels = [], colorFor }) {
-  const color = (colorFor ? colorFor(Number(value)) : MINT);
+function ExchangeRateBar({ tc, loading, error, ts, source, bandaVigente, vista, onVistaChange, onReload, lang }) {
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
-        <span style={{
-          color, font: "700 12.5px/1 var(--font-body)",
-          fontVariantNumeric: "tabular-nums",
-        }}>
-          {Number(value).toFixed(1)}{unit}
-        </span>
+    <div style={{
+      background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 10,
+      padding: "10px 14px", marginBottom: 14,
+      display: "flex", justifyContent: "space-between", alignItems: "center",
+      gap: 14, flexWrap: "wrap",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ font: "700 9.5px/1 var(--font-body)", color: MUTED, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 3 }}>
+            {lang === "es" ? "Cotización USD/BRL" : "USD/BRL FX"}
+          </div>
+          {loading ? (
+            <div style={{ font: "500 12px/1 var(--font-body)", color: MUTED }}>
+              {lang === "es" ? "Obteniendo…" : "Fetching…"}
+            </div>
+          ) : error ? (
+            <div style={{ font: "600 12px/1 var(--font-body)", color: RED, display: "flex", alignItems: "center", gap: 4 }}>
+              <IconAlert size={11}/>{lang === "es" ? "API no disponible" : "FX API down"}
+            </div>
+          ) : tc != null ? (
+            <div style={{ font: "700 18px/1 var(--font-body)", color: NAVY, fontVariantNumeric: "tabular-nums" }}>
+              R$ {tc.toFixed(4)}
+            </div>
+          ) : (
+            <div style={{ font: "500 12px/1 var(--font-body)", color: MUTED }}>—</div>
+          )}
+        </div>
+
+        {bandaVigente && (
+          <div style={{
+            padding: "6px 12px", borderRadius: 8,
+            background: bandaVigente.techo ? TECHO : bandaVigente.piso ? "#D1FAE5" : "#E0F2FE",
+            color: bandaVigente.techo ? "#9A4A1D" : bandaVigente.piso ? "#065F46" : "#075985",
+            border: `1px solid ${bandaVigente.techo ? TECHO_STRONG : bandaVigente.piso ? "#34D399" : "#7DD3FC"}`,
+          }}>
+            <div style={{ font: "700 9px/1 var(--font-body)", textTransform: "uppercase", letterSpacing: 0.5, opacity: 0.75 }}>
+              {lang === "es" ? "Banda vigente" : "Active band"}
+            </div>
+            <div style={{ font: "700 13px/1.2 var(--font-body)", fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
+              #{bandaVigente.id} · {bandaVigente.rango} · ÷{bandaVigente.div.toFixed(2)}
+              {bandaVigente.techo && " ◆ techo"}
+              {bandaVigente.piso  && " ◆ piso"}
+            </div>
+          </div>
+        )}
+
+        {ts && !error && (
+          <div style={{ font: "500 10px/1.3 var(--font-body)", color: MUTED }}>
+            {source} · {new Date(ts).toLocaleString(lang === "es" ? "es-CR" : "en-US", { hour12: false })}
+          </div>
+        )}
+
+        <button type="button" onClick={onReload}
+          disabled={loading}
+          style={{
+            padding: "6px 10px", background: "#FFFFFF",
+            border: "1px solid #E5E7EB", color: INK,
+            font: "600 11px/1 var(--font-body)",
+            borderRadius: 6, cursor: loading ? "not-allowed" : "pointer",
+            display: "inline-flex", alignItems: "center", gap: 4,
+          }}>
+          <IconRefresh size={11}/>
+          {lang === "es" ? "Actualizar" : "Refresh"}
+        </button>
       </div>
-      <input
-        type="range" min={min} max={max} step={step}
-        value={value}
-        onChange={e => onChange(Number(e.target.value))}
-        style={{ width: "100%", accentColor: color, cursor: "pointer" }}
-      />
-      <div style={{
-        display: "flex", justifyContent: "space-between",
-        font: "500 9.5px/1 var(--font-body)", color: MUTED,
-        marginTop: 2,
-      }}>
-        {labels.map((l, i) => <span key={i}>{l}</span>)}
+
+      <div style={{ display: "flex", gap: 6 }}>
+        {[
+          { v: "editor", l: lang === "es" ? "Editor + Matriz" : "Editor + Matrix" },
+          { v: "matriz", l: lang === "es" ? "Solo Matriz" : "Matrix only" },
+        ].map((opt) => (
+          <button key={opt.v} type="button" onClick={() => onVistaChange(opt.v)}
+            style={{
+              padding: "6px 12px",
+              background: vista === opt.v ? NAVY : "#FFFFFF",
+              color: vista === opt.v ? "#FFFFFF" : INK,
+              border: `1px solid ${vista === opt.v ? NAVY : "#E5E7EB"}`,
+              font: "600 11px/1 var(--font-body)",
+              borderRadius: 6, cursor: "pointer",
+            }}>
+            {opt.l}
+          </button>
+        ))}
       </div>
     </div>
   );
 }
 
+function KPI({ label, value, hi }) {
+  return (
+    <div>
+      <div style={{ font: "600 9.5px/1 var(--font-body)", color: MUTED,
+        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{label}</div>
+      <div style={{
+        font: `700 ${hi ? 15 : 13}px/1 var(--font-body)`,
+        color: hi ? AMBER : NAVY,
+        fontVariantNumeric: "tabular-nums",
+      }}>{value}</div>
+    </div>
+  );
+}
 
-// ═════════════════════════════════════════════════════════════
-// Snapshot pill (header). Modos:
-//   · read-only (default)        → solo muestra el valor.
-//   · editable (con onSave)      → click sobre el valor → input → Enter
-//                                   o blur dispara onSave(rawNumber).
-// El parent recibe el valor "crudo" (e.g. 8.75 para 8.75%, no 0.0875)
-// y se encarga de la conversión y persistencia.
-// ═════════════════════════════════════════════════════════════
 function SnapshotBadge({ label, value, color, editable, rawValue, suffix, parse, onSave, saving }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -749,64 +978,45 @@ function SnapshotBadge({ label, value, color, editable, rawValue, suffix, parse,
 
   return (
     <div style={{
-      padding: "8px 14px",
+      padding: "7px 12px",
       background: "rgba(255,255,255,0.08)",
-      borderRadius: 10, minWidth: 96,
+      borderRadius: 10, minWidth: 88,
       cursor: editable && !isEditing ? "pointer" : "default",
       transition: "background 0.18s",
     }}
       onClick={!isEditing ? startEdit : undefined}
-      onMouseEnter={(e) => { if (editable && !isEditing) e.currentTarget.style.background = "rgba(255,255,255,0.14)"; }}
-      onMouseLeave={(e) => { if (editable && !isEditing) e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
-      title={editable && !isEditing ? "Click para editar" : undefined}
-    >
+      title={editable && !isEditing ? "Click para editar" : undefined}>
       <div style={{
-        font: "500 9.5px/1 var(--font-body)", opacity: 0.65,
-        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4,
+        font: "500 9px/1 var(--font-body)", opacity: 0.65,
+        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3,
         display: "inline-flex", alignItems: "center", gap: 4,
       }}>
         {editable
-          ? <span style={{ width: 8, height: 8, borderRadius: 4, background: "#1DE394", boxShadow: "0 0 0 2px rgba(29,227,148,0.25)" }} />
+          ? <span style={{ width: 7, height: 7, borderRadius: 4, background: LIGHT }} />
           : <IconLock size={8}/>}
         {label}
       </div>
       {isEditing ? (
-        <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
-          <input
-            ref={inputRef}
-            type="number"
-            step="any"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") { e.preventDefault(); commit(); }
-              if (e.key === "Escape") { setIsEditing(false); }
-            }}
-            disabled={saving}
-            style={{
-              width: 72,
-              font: "700 16px/1 var(--font-body)",
-              color: color,
-              background: "rgba(0,0,0,0.25)",
-              border: `1px solid ${color}`,
-              borderRadius: 4,
-              padding: "2px 4px",
-              outline: "none",
-              fontVariantNumeric: "tabular-nums",
-              MozAppearance: "textfield",
-            }}
-          />
-          {suffix && (
-            <span style={{ font: "700 14px/1 var(--font-body)", color, opacity: 0.85 }}>
-              {suffix}
-            </span>
-          )}
-        </div>
+        <input
+          ref={inputRef} type="number" step="any" value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); commit(); }
+            if (e.key === "Escape") { setIsEditing(false); }
+          }}
+          disabled={saving}
+          style={{
+            width: 70, font: "700 14px/1 var(--font-body)",
+            color, background: "rgba(0,0,0,0.25)",
+            border: `1px solid ${color}`, borderRadius: 4,
+            padding: "2px 4px", outline: "none",
+            fontVariantNumeric: "tabular-nums",
+          }}/>
       ) : (
         <div style={{
-          font: "700 16px/1 var(--font-body)",
-          color, fontVariantNumeric: "tabular-nums",
+          font: "700 14px/1 var(--font-body)", color,
+          fontVariantNumeric: "tabular-nums",
           opacity: saving ? 0.55 : 1,
         }}>
           {saving ? "…" : value}
@@ -816,21 +1026,14 @@ function SnapshotBadge({ label, value, color, editable, rawValue, suffix, parse,
   );
 }
 
-
-// ═════════════════════════════════════════════════════════════
-// Primitivas UI
-// ═════════════════════════════════════════════════════════════
-function Section({ title, subtitle, badge, highlight, children }) {
+function Section({ title, subtitle, badge, children }) {
   return (
     <section style={{
-      padding: "18px 20px",
-      background: "#FFFFFF",
-      border: `1px solid ${highlight ? `${highlight}33` : "#E5E7EB"}`,
-      borderLeft: highlight ? `3px solid ${highlight}` : `1px solid #E5E7EB`,
-      borderRadius: 10,
+      padding: "14px 16px", background: "#FFFFFF",
+      border: "1px solid #E5E7EB", borderRadius: 10,
     }}>
-      <div style={{ marginBottom: 4 }}>
-        <div style={{ font: "700 14px/1.2 var(--font-body)", color: NAVY,
+      <div>
+        <div style={{ font: "700 13px/1.2 var(--font-body)", color: NAVY,
           display: "flex", alignItems: "center", gap: 8 }}>
           {title}
           {badge && (
@@ -839,147 +1042,102 @@ function Section({ title, subtitle, badge, highlight, children }) {
               padding: "3px 8px", borderRadius: 12,
               background: badge.bg || badge.color,
               color: badge.bg ? badge.color : "#FFFFFF",
-              font: "700 9.5px/1 var(--font-body)",
+              font: "700 9px/1 var(--font-body)",
               letterSpacing: 0.4, textTransform: "uppercase",
-            }}>
-              {badge.icon}
-              {badge.label}
-            </span>
+            }}>{badge.label}</span>
           )}
         </div>
         {subtitle && (
-          <div style={{ font: "500 12px/1.4 var(--font-body)", color: MUTED, marginTop: 3 }}>
+          <div style={{ font: "500 11.5px/1.4 var(--font-body)", color: MUTED, marginTop: 3 }}>
             {subtitle}
           </div>
         )}
       </div>
-      <div style={{ marginTop: 14 }}>{children}</div>
+      <div style={{ marginTop: 12 }}>{children}</div>
     </section>
   );
 }
 
-function Grid({ cols = 2, children }) {
-  return (
-    <div style={{
-      display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-      gap: 14,
-    }}>
-      {children}
-    </div>
-  );
-}
-
 function Label({ children }) {
-  return (
-    <label style={{
-      display: "block",
-      font: "600 11px/1 var(--font-body)", color: NAVY,
-      marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4,
-    }}>
-      {children}
-    </label>
-  );
+  return <label style={{
+    display: "block", font: "600 10.5px/1 var(--font-body)", color: NAVY,
+    marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.4,
+  }}>{children}</label>;
 }
 
-function Field({ label, error, hint, children }) {
+function Field({ label, children }) {
   return (
     <div>
       <Label>{label}</Label>
       {children}
-      {error ? (
-        <div style={{ font: "500 10.5px/1.3 var(--font-body)", color: RED, marginTop: 4,
-          display: "inline-flex", alignItems: "center", gap: 3 }}>
-          <IconAlert size={10}/>{error}
-        </div>
-      ) : hint ? (
-        <div style={{ font: "500 10.5px/1.3 var(--font-body)", color: MUTED, marginTop: 4 }}>
-          {hint}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-function Input({ value, onChange, onBlur, type = "text", mono, tabular, style, ...rest }) {
+function Input({ value, onChange, type = "text", style, ...rest }) {
   return (
-    <input
-      type={type}
-      value={value ?? ""}
+    <input type={type} value={value ?? ""}
       onChange={e => onChange && onChange(e.target.value)}
-      onBlur={onBlur}
       {...rest}
       style={{
-        width: "100%", padding: "9px 11px",
+        width: "100%", padding: "8px 10px",
         border: "1px solid #E5E7EB", borderRadius: 6,
-        font: `500 13px/1.2 ${mono ? "var(--font-mono, ui-monospace)" : "var(--font-body)"}`,
-        color: NAVY, background: "#FFFFFF", outline: "none",
-        fontVariantNumeric: tabular ? "tabular-nums" : undefined,
+        font: "500 12.5px/1.2 var(--font-body)", color: NAVY,
+        background: "#FFFFFF", outline: "none",
+        fontVariantNumeric: "tabular-nums",
         ...style,
-      }}
-    />
+      }}/>
   );
 }
 
-function InputAffixed({ affixLeft, affixRight, value, onChange, type = "text", mono, tabular, ...rest }) {
-  return (
-    <div style={{
-      display: "flex", alignItems: "stretch",
-      border: "1px solid #E5E7EB", borderRadius: 6,
-      overflow: "hidden", background: "#FFFFFF",
-    }}>
-      {affixLeft && (
-        <span style={{ padding: "8px 11px", background: SOFT, color: MUTED,
-          font: "600 12px/1 var(--font-body)", borderRight: "1px solid #E5E7EB",
-          display: "grid", placeItems: "center" }}>
-          {affixLeft}
-        </span>
-      )}
-      <input type={type}
-        value={value ?? ""}
-        onChange={e => onChange && onChange(e.target.value)}
-        {...rest}
-        style={{
-          flex: 1, minWidth: 0, padding: "9px 11px",
-          border: "none", outline: "none",
-          font: `600 13px/1.2 ${mono ? "var(--font-mono, ui-monospace)" : "var(--font-body)"}`,
-          color: NAVY, fontVariantNumeric: tabular ? "tabular-nums" : undefined,
-        }}
-      />
-      {affixRight && (
-        <span style={{ padding: "8px 11px", background: SOFT, color: MUTED,
-          font: "500 10.5px/1 var(--font-body)", borderLeft: "1px solid #E5E7EB",
-          display: "grid", placeItems: "center",
-          textTransform: "uppercase", letterSpacing: 0.4 }}>
-          {affixRight}
-        </span>
-      )}
-    </div>
-  );
-}
+// ─── Estilos de tablas ───
+const tblSku = {
+  width: "100%", borderCollapse: "collapse", fontSize: 11,
+};
+const thSku = {
+  font: "700 9px/1 var(--font-body)", color: MUTED,
+  padding: "8px 6px", textAlign: "center",
+  textTransform: "uppercase", letterSpacing: 0.5,
+  borderBottom: "1px solid #E5E7EB", background: SOFT,
+};
+const tdSku = {
+  padding: "7px 6px", fontSize: 11, textAlign: "center",
+  borderBottom: "1px solid #F1F5F9",
+  fontFamily: "var(--font-mono, ui-monospace)",
+  fontVariantNumeric: "tabular-nums",
+  verticalAlign: "middle",
+};
 
-function Textarea({ value, onChange, rows = 3, ...rest }) {
-  return (
-    <textarea value={value ?? ""}
-      onChange={e => onChange && onChange(e.target.value)}
-      rows={rows}
-      {...rest}
-      style={{
-        width: "100%", padding: "10px 11px",
-        border: "1px solid #E5E7EB", borderRadius: 6,
-        font: "500 13px/1.5 var(--font-body)", color: NAVY,
-        background: "#FFFFFF", outline: "none", resize: "vertical",
-      }}
-    />
-  );
-}
+const tblMtx = {
+  width: "100%", borderCollapse: "collapse", fontSize: 10,
+};
+const thMtx = {
+  font: "700 9px/1.2 var(--font-body)",
+  padding: "5px 3px", textAlign: "center",
+  textTransform: "uppercase", letterSpacing: 0.4,
+  borderBottom: "1px solid #E5E7EB",
+  position: "sticky", top: 0, zIndex: 2,
+};
+const tdMtx = {
+  padding: "4px 3px", textAlign: "center",
+  borderBottom: "1px solid #F1F5F9",
+  fontFamily: "var(--font-mono, ui-monospace)",
+  fontSize: 10, fontVariantNumeric: "tabular-nums",
+};
 
+const inpMono = (w) => ({
+  width: w, padding: "4px 6px", borderRadius: 5,
+  border: "1px solid #E5E7EB", background: "#FFFFFF", color: NAVY,
+  fontFamily: "var(--font-mono, ui-monospace)",
+  fontSize: 11, fontWeight: 600, textAlign: "center",
+  outline: "none", fontVariantNumeric: "tabular-nums",
+});
 
 // ─── Utilidades ───
 function today() {
   const d = new Date();
   return d.toISOString().slice(0, 10);
 }
-
 function fmtMoney(n) {
   const v = Number(n || 0);
   if (!v) return "—";
