@@ -1591,10 +1591,10 @@ export default function ScreenProductFormView() {
                   marginBottom: 18, padding: 14,
                   background: '#FFFFFF',
                   border: '1px solid #E2E8F0', borderRadius: 10,
-                  // Contención TOTAL: la matriz interna tiene su propio overflowX.
-                  // box-sizing garantiza que padding no agregue ancho. Sin esto
-                  // el padding empuja al card a width > 100%.
-                  overflow: 'hidden',
+                  // OJO: NO usar `overflow: hidden` acá — bloquearía el
+                  // scroll-X interno del PriceMatrixCompact. Solo contenemos
+                  // el ancho con width:100% + box-sizing, dejando que el hijo
+                  // muestre su propio scrollbar cuando la tabla desborde.
                   width: '100%',
                   maxWidth: '100%',
                   minWidth: 0,
@@ -1657,24 +1657,17 @@ export default function ScreenProductFormView() {
                     </div>
                   )}
 
-                  {/* Wrapper extra que actúa como "containment context":
-                      su width:100% lo deriva del card padre (que ya está
-                      contenido), y eso a su vez le da una referencia
-                      explícita de ancho al wrapper interno de PriceMatrixCompact
-                      para que su overflowX:auto funcione. */}
-                  <div style={{
-                    width: '100%',
-                    maxWidth: '100%',
-                    minWidth: 0,
-                    overflow: 'hidden',
-                  }}>
-                    <PriceMatrixCompact
-                      matrix={c.prices_matrix}
-                      onCellChange={(bandaId, plazoDias, newValue) =>
-                        handleMatrixCellChange(c.cliente_id, bandaId, plazoDias, newValue)}
-                      maxHeight="40vh"
-                    />
-                  </div>
+                  {/* PriceMatrixCompact ya trae overflow-x:auto en su
+                      wrapper interno. No envolvemos en `overflow: hidden`
+                      porque eso bloquearía el scroll-X. El card padre
+                      contiene el ancho (width:100%) y la matriz hace su
+                      propio scroll cuando la tabla excede ese ancho. */}
+                  <PriceMatrixCompact
+                    matrix={c.prices_matrix}
+                    onCellChange={(bandaId, plazoDias, newValue) =>
+                      handleMatrixCellChange(c.cliente_id, bandaId, plazoDias, newValue)}
+                    maxHeight="40vh"
+                  />
                 </div>
               );
             })}
