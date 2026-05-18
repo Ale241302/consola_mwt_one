@@ -276,13 +276,16 @@ export default function ScreenBrandClientPricingForm() {
         return;
       }
 
-      // Filtro: si el cliente tiene SKUs habilitados (BCPA previa) y el override
-      // "Mostrar todos" está apagado, dejamos sólo los que están en la lista.
+      // Filtro: SOURCE OF TRUTH = ClientAssignment.is_active=True (los toggles
+      // "Excepciones por cliente" del detalle de cada producto).
+      // - Si NO hay override "Mostrar todos del Excel" → solo SKUs habilitados.
+      // - Si sí hay override → todos los SKUs del Excel.
+      // Si el cliente no tiene ningún ClientAssignment, el resultado filtrado es
+      // [] y el banner advierte que hay que configurarlos en cada producto.
       const useShowAll = opts.showAll ?? showAllSkus;
-      const hasEnabledList = enabled.skus && enabled.skus.size > 0;
-      const filteredParsed = (hasEnabledList && !useShowAll)
-        ? parsed.filter((p) => enabled.skus.has(String(p.sku)))
-        : parsed;
+      const filteredParsed = useShowAll
+        ? parsed
+        : parsed.filter((p) => enabled.skus.has(String(p.sku)));
 
       // Merge: si ya había SKUs en estado, conservamos sus toggles/com/ajuste
       const prevBySku = new Map(skus.map((s) => [s.sku, s]));
@@ -296,15 +299,28 @@ export default function ScreenBrandClientPricingForm() {
         parsed: parsed.length,
         kept: merged.length,
         filtered: parsed.length - merged.length,
-        applied: hasEnabledList && !showAllSkus,
+        applied: !useShowAll,
+        enabledCount: enabled.skus.size,
       });
-      setBanner({ type: "success", msg: lang === "es"
-        ? (hasEnabledList && !showAllSkus
-            ? `${merged.length} de ${parsed.length} SKUs (filtrados por habilitados del cliente).`
-            : `${merged.length} SKUs detectados desde ${f.name}.`)
-        : (hasEnabledList && !showAllSkus
-            ? `${merged.length} of ${parsed.length} SKUs (filtered by client enabled list).`
-            : `${merged.length} SKUs detected from ${f.name}.`) });
+      // Banner contextual: empty list / filtered / show-all.
+      let bannerMsg;
+      if (!useShowAll && enabled.skus.size === 0) {
+        bannerMsg = lang === "es"
+          ? `Este cliente no tiene SKUs habilitados en Marluvas. Activá las excepciones en el detalle de cada producto.`
+          : `This client has no enabled SKUs in Marluvas. Enable them in each product's detail.`;
+      } else if (!useShowAll) {
+        bannerMsg = lang === "es"
+          ? `${merged.length} de ${parsed.length} SKUs (filtrados por habilitados del cliente).`
+          : `${merged.length} of ${parsed.length} SKUs (filtered by client enabled list).`;
+      } else {
+        bannerMsg = lang === "es"
+          ? `${merged.length} SKUs detectados desde ${f.name}.`
+          : `${merged.length} SKUs detected from ${f.name}.`;
+      }
+      setBanner({
+        type: (!useShowAll && enabled.skus.size === 0) ? "error" : "success",
+        msg: bannerMsg,
+      });
     } catch (e) {
       setBanner({ type: "error", msg: (lang === "es" ? "Error parseando Excel: " : "Excel parse error: ") + (e?.message || "") });
     } finally {
@@ -355,15 +371,10 @@ export default function ScreenBrandClientPricingForm() {
     setSaving(true);
     setBanner(null);
     try {
-      // notas incluye marker que el endpoint enabled-skus parsea al recargar.
-      // Formato:
-      //   [Marluvas v7 sim · N SKUs activos]
-      //   ENABLED_SKUS:701407,701409,...
-      const enabledList = skusActivos.map((s) => s.sku).join(",");
-      const notasPayload = [
-        `[Marluvas v7 sim · ${skusActivos.length} SKUs activos]`,
-        `ENABLED_SKUS:${enabledList}`,
-      ].join("\n");
+      // La habilitación SKU↔cliente vive en `pricing.client_assignment`
+      // (toggles "Excepciones por cliente" del detalle del producto). El BCPA
+      // sólo almacena el archivo + modificadores globales del cliente-marca.
+      const notasPayload = `[Marluvas v7 sim · ${skusActivos.length} SKUs activos]`;
 
       const payload = {
         brand_id:   brandId,
@@ -567,19 +578,19 @@ export default function ScreenBrandClientPricingForm() {
         )}
       </AnimatePresence>
 
-      {/* Banner del filtro enabled-skus · informa cuántos SKUs se ocultaron + toggle */}
-      {filterStats && filterStats.applied && filterStats.filtered > 0 && (
+      {/* Banner contextual del filtro enabled-skus */}
+      {filterStats && filterStats.applied && filterStats.enabledCount === 0 && (
         <div style={{
-          padding: "9px 14px", marginBottom: 14,
-          background: `${AMBER}10`, border: `1px solid ${AMBER}55`, borderRadius: 8,
+          padding: "11px 14px", marginBottom: 14,
+          background: `${RED}10`, border: `1px solid ${RED}55`, borderRadius: 8,
           display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
-          font: "500 12px/1.4 var(--font-body)", color: "#78350F",
+          font: "500 12px/1.4 var(--font-body)", color: "#7F1D1D",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <IconLock size={12}/>
+            <IconAlert size={13}/>
             {lang === "es"
-              ? <>Mostrando <strong>{filterStats.kept}</strong> de <strong>{filterStats.parsed}</strong> SKUs del Excel. <strong>{filterStats.filtered}</strong> ocultos por no estar habilitados para este cliente.</>
-              : <>Showing <strong>{filterStats.kept}</strong> of <strong>{filterStats.parsed}</strong> SKUs. <strong>{filterStats.filtered}</strong> hidden (not enabled for this client).</>}
+              ? <>El cliente <strong>{client?.razon_social || client?.name}</strong> no tiene SKUs de {brand?.nombre || "esta marca"} habilitados. Activá las excepciones desde el detalle de cada producto (tab <em>Gobernanza y precios</em>).</>
+              : <>This client has no enabled SKUs for {brand?.nombre || "this brand"}. Enable them in each product's detail (<em>Governance & Prices</em> tab).</>}
           </div>
           <button type="button"
             onClick={() => {
@@ -588,7 +599,35 @@ export default function ScreenBrandClientPricingForm() {
             }}
             style={{
               padding: "5px 11px", background: "#FFFFFF",
-              border: `1px solid ${AMBER}`, color: "#78350F",
+              border: `1px solid ${RED}`, color: "#7F1D1D",
+              font: "600 11px/1 var(--font-body)",
+              borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
+            }}>
+            {lang === "es" ? "Mostrar todos (preview)" : "Show all (preview)"}
+          </button>
+        </div>
+      )}
+      {filterStats && filterStats.applied && filterStats.enabledCount > 0 && filterStats.filtered > 0 && (
+        <div style={{
+          padding: "9px 14px", marginBottom: 14,
+          background: `${MINT}10`, border: `1px solid ${MINT}55`, borderRadius: 8,
+          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+          font: "500 12px/1.4 var(--font-body)", color: "#065F46",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <IconCheck size={12}/>
+            {lang === "es"
+              ? <>Mostrando <strong>{filterStats.kept}</strong> de <strong>{filterStats.parsed}</strong> SKUs · filtrados por <strong>{filterStats.enabledCount}</strong> habilitados para este cliente. <strong>{filterStats.filtered}</strong> ocultos.</>
+              : <>Showing <strong>{filterStats.kept}</strong> of <strong>{filterStats.parsed}</strong> SKUs · filtered by <strong>{filterStats.enabledCount}</strong> enabled for this client.</>}
+          </div>
+          <button type="button"
+            onClick={() => {
+              setShowAllSkus(true);
+              if (file) handleFile(file, { showAll: true });
+            }}
+            style={{
+              padding: "5px 11px", background: "#FFFFFF",
+              border: `1px solid ${MINT}`, color: "#065F46",
               font: "600 11px/1 var(--font-body)",
               borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
             }}>
@@ -596,7 +635,7 @@ export default function ScreenBrandClientPricingForm() {
           </button>
         </div>
       )}
-      {filterStats && !filterStats.applied && enabled.skus.size > 0 && (
+      {filterStats && !filterStats.applied && (
         <div style={{
           padding: "9px 14px", marginBottom: 14,
           background: SOFT, border: "1px solid #E5E7EB", borderRadius: 8,
@@ -608,19 +647,21 @@ export default function ScreenBrandClientPricingForm() {
               ? <>Override activo · mostrando los <strong>{filterStats.kept}</strong> SKUs del Excel (sin filtrar por habilitados).</>
               : <>Override on · showing all <strong>{filterStats.kept}</strong> SKUs from the Excel.</>}
           </div>
-          <button type="button"
-            onClick={() => {
-              setShowAllSkus(false);
-              if (file) handleFile(file, { showAll: false });
-            }}
-            style={{
-              padding: "5px 11px", background: "#FFFFFF",
-              border: "1px solid #E5E7EB", color: INK,
-              font: "600 11px/1 var(--font-body)",
-              borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
-            }}>
-            {lang === "es" ? "Filtrar por habilitados" : "Filter to enabled"}
-          </button>
+          {filterStats.enabledCount > 0 && (
+            <button type="button"
+              onClick={() => {
+                setShowAllSkus(false);
+                if (file) handleFile(file, { showAll: false });
+              }}
+              style={{
+                padding: "5px 11px", background: "#FFFFFF",
+                border: "1px solid #E5E7EB", color: INK,
+                font: "600 11px/1 var(--font-body)",
+                borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
+              }}>
+              {lang === "es" ? `Filtrar por ${filterStats.enabledCount} habilitados` : `Filter to ${filterStats.enabledCount} enabled`}
+            </button>
+          )}
         </div>
       )}
 
