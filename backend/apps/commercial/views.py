@@ -1661,41 +1661,87 @@ class MarluvasExchangeRateView(APIView):
 # =====================================================================
 # MarluvasClientEnabledSkusView · SKUs habilitados por cliente
 # ---------------------------------------------------------------------
-# Source of truth: tabla `pricing.client_assignment` (CPA) — los toggles
-# "Excepciones por cliente" que el operador prende/apaga desde el detalle
-# de cada producto (tab Gobernanza y precios) crean filas con
-# `is_active=True` para (client_id, brand_id, brand_sku).
+# Source of truth: `productos.producto.especificaciones->'visibility'`.
+# Los toggles "Excepciones por cliente" del detalle del producto se
+# persisten en ese JSON con la forma:
+#   {
+#     "visibility": {
+#       "visible_to_all":   <bool>,
+#       "client_overrides": { "<cliente_uuid_str>": true, ... }
+#     }
+#   }
 #
-# Este endpoint devuelve los SKUs habilitados para un cliente en una marca,
-# que es lo que el simulador Marluvas usa para filtrar el Excel subido.
+# Un SKU está habilitado para un cliente si:
+#   · visible_to_all === true                       (catálogo público), o
+#   · client_overrides[cliente_id_str] === true     (excepción explícita)
+#
+# Se usa raw SQL (mismo patrón que apps/expedientes/views_simplified_wizard.py)
+# porque Django JSONField __contains no expresa bien el OR cruzado.
 #
 # GET /api/commercial/clients/<uuid:cliente_id>/enabled-skus/?brand_id=<uuid>
-#   → { cliente_id, brand_id, count, skus: [string], source }
-#
-# `source` puede ser:
-#   · "client_assignment" → hay overrides activos (caso normal)
-#   · "empty"             → no hay ningún SKU habilitado todavía
+#   → { cliente_id, brand_id, count, skus: [string], source,
+#        breakdown: {visible_to_all, overrides} }
 # =====================================================================
 class MarluvasClientEnabledSkusView(APIView):
-    """GET SKUs habilitados (ClientAssignment activos) por cliente + marca."""
+    """GET SKUs habilitados para un cliente en una marca (vía Producto.especificaciones)."""
     permission_classes = [IsAuthenticated]
 
+    SQL = """
+        SELECT sku,
+               COALESCE(
+                 (especificaciones #>> '{visibility,visible_to_all}')::boolean,
+                 FALSE
+               ) AS visible_to_all,
+               COALESCE(
+                 (especificaciones #>> ARRAY['visibility','client_overrides', %(cid)s])::boolean,
+                 FALSE
+               ) AS overridden
+          FROM productos.producto
+         WHERE sku IS NOT NULL
+           AND COALESCE(is_active, TRUE) = TRUE
+           AND (%(brand_id)s IS NULL OR marca_id = %(brand_id)s)
+           AND (
+             COALESCE((especificaciones #>> '{visibility,visible_to_all}')::boolean, FALSE) = TRUE
+             OR
+             COALESCE((especificaciones #>> ARRAY['visibility','client_overrides', %(cid)s])::boolean, FALSE) = TRUE
+           )
+         ORDER BY sku
+    """
+
     def get(self, request, cliente_id):
-        brand_id = request.query_params.get("brand_id")
+        brand_id = request.query_params.get("brand_id") or None
+        cid_str = str(cliente_id)
 
-        qs = ClientAssignment.objects.filter(
-            client_id=cliente_id, is_active=True,
-        )
-        if brand_id:
-            qs = qs.filter(brand_id=brand_id)
+        params = {"cid": cid_str, "brand_id": brand_id}
 
-        # Solo necesitamos los SKUs (strings). Distinct por si hubiera duplicados.
-        skus = list(qs.values_list("brand_sku", flat=True).distinct().order_by("brand_sku"))
+        rows = []
+        try:
+            with connection.cursor() as cur:
+                cur.execute(self.SQL, params)
+                rows = cur.fetchall()
+        except Exception as exc:  # noqa: BLE001 — degradación: log y devuelve vacío
+            log.warning("MarluvasClientEnabledSkusView failed: %s", exc)
+            return Response({
+                "cliente_id": cid_str,
+                "brand_id":   brand_id,
+                "count":      0,
+                "skus":       [],
+                "source":     "error",
+                "error":      str(exc),
+            }, status=200)
+
+        skus = [r[0] for r in rows]
+        visible_to_all_count = sum(1 for r in rows if r[1])
+        overridden_count     = sum(1 for r in rows if r[2])
 
         return Response({
-            "cliente_id": str(cliente_id),
+            "cliente_id": cid_str,
             "brand_id":   brand_id,
             "count":      len(skus),
             "skus":       skus,
-            "source":     "client_assignment" if skus else "empty",
+            "source":     "producto_visibility" if skus else "empty",
+            "breakdown": {
+                "visible_to_all": visible_to_all_count,
+                "overrides":      overridden_count,
+            },
         }, status=200)
