@@ -206,7 +206,7 @@ class MarcaViewSet(viewsets.ViewSet):
                         pf.codigo                     AS proforma_codigo,
                         oc.codigo                     AS oc_cliente_codigo,
                         COALESCE(cli.razon_social, cli.nombre_comercial,
-                                 cli.codigo, '—')     AS client_nombre,
+                                 cli.tax_id, '—')     AS client_nombre,
                         agg.lines_count,
                         agg.lines_marca_count
                     FROM expedientes_marca em
