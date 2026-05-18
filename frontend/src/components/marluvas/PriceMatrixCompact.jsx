@@ -58,10 +58,16 @@ export default function PriceMatrixCompact({
   return (
     <div style={{
       overflowX: "auto", maxHeight,
+      width: "100%", maxWidth: "100%",
       border: "1px solid #E5E7EB", borderRadius: 8,
       background: "#FFFFFF",
     }}>
-      <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+      <table style={{
+        // Ancho del contenido natural (12 bandas × 4 plazos × ~58px ≈ 2800px).
+        // No usar width:100% acá — queremos que la tabla mantenga su ancho real
+        // y que el div padre haga scroll horizontal cuando excede su contenedor.
+        borderCollapse: "separate", borderSpacing: 0,
+      }}>
         <thead>
           <tr>
             {BANDAS_MARLUVAS.map((b) => {
