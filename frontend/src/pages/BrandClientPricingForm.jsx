@@ -33,10 +33,10 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { apiFetch, clientesApi, marcasApi } from "../lib/api.js";
 import { CLIENTS, BRANDS } from "../data/mockData.js";
 import {
-  BANDAS_MARLUVAS, PLAZOS_MARLUVAS, bandaForTC, fmtUSD, fmtPct,
+  BANDAS_MARLUVAS, PLAZOS_MARLUVAS, bandaForTC, fmtUSD0, fmtPct,
 } from "../constants/marluvas.js";
 import {
-  calcSKU, parseExcelMarluvas, defaultSkuState,
+  calcSKU, parseExcelMarluvas, defaultSkuState, ajusteFromSobreprecio,
 } from "../lib/marluvasPricing.js";
 
 // ─── Helpers backend → shape interno ──────────────────────────
@@ -96,6 +96,30 @@ function loadLocal(brandId, clienteId) {
 function saveLocal(brandId, clienteId, data) {
   try { localStorage.setItem(lsKey(brandId, clienteId), JSON.stringify(data)); }
   catch { /* quota o privado */ }
+}
+
+// ═════════════════════════════════════════════════════════════
+// Hook · SKUs habilitados del cliente (parseado del BCPA previo).
+// Si el cliente nunca tuvo BCPA, devuelve `{ skus: Set(), source: 'empty' }`
+// y el frontend muestra todos los SKUs del Excel sin filtrar.
+// ═════════════════════════════════════════════════════════════
+function useClientEnabledSkus(clienteId, brandId, accessToken) {
+  const [data, setData] = useState({ skus: new Set(), source: "empty", loading: true });
+  useEffect(() => {
+    let cancelled = false;
+    if (!clienteId) { setData({ skus: new Set(), source: "empty", loading: false }); return; }
+    setData((d) => ({ ...d, loading: true }));
+    const qs = brandId ? `?brand_id=${encodeURIComponent(brandId)}` : "";
+    apiFetch(`/commercial/clients/${clienteId}/enabled-skus/${qs}`, { token: accessToken })
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r?.skus) ? r.skus : [];
+        setData({ skus: new Set(list.map(String)), source: r?.source || "empty", loading: false });
+      })
+      .catch(() => { if (!cancelled) setData({ skus: new Set(), source: "empty", loading: false }); });
+    return () => { cancelled = true; };
+  }, [clienteId, brandId, accessToken]);
+  return data;
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -184,11 +208,23 @@ export default function ScreenBrandClientPricingForm() {
   const [savingFinTerm, setSavingFinTerm] = useState(null);
   const [banner, setBanner] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [showAllSkus, setShowAllSkus] = useState(false);  // override del filtro enabled-skus
+  const [filterStats, setFilterStats] = useState(null);   // {parsed, kept, filtered} para banda informativa
   const fileInputRef = useRef(null);
 
   const { tc, loading: tcLoading, error: tcError, ts: tcTs, source: tcSource, reload: reloadTC } =
     useExchangeRateUSDBRL(accessToken);
   const bandaVigente = useMemo(() => bandaForTC(tc), [tc]);
+
+  // SKUs habilitados del cliente (parseados del BCPA previo en notas).
+  const enabled = useClientEnabledSkus(clienteId, brandId, accessToken);
+
+  // Comisión por defecto = la del cliente (* 100). Si no existe, 0.
+  const comDefault = useMemo(() => {
+    if (!client || client.comision_pct == null) return 0;
+    const pct = Number(client.comision_pct) * 100;
+    return Number.isFinite(pct) ? Number(pct.toFixed(2)) : 0;
+  }, [client]);
 
   // ── Hidratar estado desde localStorage al montar ──
   useEffect(() => {
@@ -213,7 +249,10 @@ export default function ScreenBrandClientPricingForm() {
   }, [brandId, clienteId, skus, fechaInicio, fechaFin, fechaFinIndef]);
 
   // ── Excel handler ──
-  const handleFile = async (f) => {
+  // `opts.showAll` permite forzar el override del filtro enabled-skus sin
+  // depender del state `showAllSkus` (que puede no haberse propagado todavía
+  // cuando este handler se invoca desde un onClick que también hace setState).
+  const handleFile = async (f, opts = {}) => {
     if (!f) return;
     const ok = /\.(xlsx|xls)$/i.test(f.name || "");
     if (!ok) {
@@ -236,17 +275,36 @@ export default function ScreenBrandClientPricingForm() {
           : "No Marluvas SKUs detected in the file." });
         return;
       }
+
+      // Filtro: si el cliente tiene SKUs habilitados (BCPA previa) y el override
+      // "Mostrar todos" está apagado, dejamos sólo los que están en la lista.
+      const useShowAll = opts.showAll ?? showAllSkus;
+      const hasEnabledList = enabled.skus && enabled.skus.size > 0;
+      const filteredParsed = (hasEnabledList && !useShowAll)
+        ? parsed.filter((p) => enabled.skus.has(String(p.sku)))
+        : parsed;
+
       // Merge: si ya había SKUs en estado, conservamos sus toggles/com/ajuste
       const prevBySku = new Map(skus.map((s) => [s.sku, s]));
-      const merged = parsed.map((p) => {
+      const merged = filteredParsed.map((p) => {
         const prev = prevBySku.get(p.sku);
         if (prev) return { ...prev, brl: p.brl, ref: p.ref || prev.ref };
-        return defaultSkuState(p);
+        return defaultSkuState(p, { com: comDefault });
       });
       setSkus(merged);
+      setFilterStats({
+        parsed: parsed.length,
+        kept: merged.length,
+        filtered: parsed.length - merged.length,
+        applied: hasEnabledList && !showAllSkus,
+      });
       setBanner({ type: "success", msg: lang === "es"
-        ? `${merged.length} SKUs detectados desde ${f.name}.`
-        : `${merged.length} SKUs detected from ${f.name}.` });
+        ? (hasEnabledList && !showAllSkus
+            ? `${merged.length} de ${parsed.length} SKUs (filtrados por habilitados del cliente).`
+            : `${merged.length} SKUs detectados desde ${f.name}.`)
+        : (hasEnabledList && !showAllSkus
+            ? `${merged.length} of ${parsed.length} SKUs (filtered by client enabled list).`
+            : `${merged.length} SKUs detected from ${f.name}.`) });
     } catch (e) {
       setBanner({ type: "error", msg: (lang === "es" ? "Error parseando Excel: " : "Excel parse error: ") + (e?.message || "") });
     } finally {
@@ -297,6 +355,16 @@ export default function ScreenBrandClientPricingForm() {
     setSaving(true);
     setBanner(null);
     try {
+      // notas incluye marker que el endpoint enabled-skus parsea al recargar.
+      // Formato:
+      //   [Marluvas v7 sim · N SKUs activos]
+      //   ENABLED_SKUS:701407,701409,...
+      const enabledList = skusActivos.map((s) => s.sku).join(",");
+      const notasPayload = [
+        `[Marluvas v7 sim · ${skusActivos.length} SKUs activos]`,
+        `ENABLED_SKUS:${enabledList}`,
+      ].join("\n");
+
       const payload = {
         brand_id:   brandId,
         cliente_id: clienteId,
@@ -309,7 +377,7 @@ export default function ScreenBrandClientPricingForm() {
         pronto_pago_pct:  null,
         volumen_min_units: null,
         volumen_pct: null,
-        notas: `[Marluvas v7 sim · ${skusActivos.length} SKUs activos]`,
+        notas: notasPayload,
       };
       const created = await apiFetch("/commercial/brand-client-pricing/", {
         method: "POST",
@@ -499,6 +567,63 @@ export default function ScreenBrandClientPricingForm() {
         )}
       </AnimatePresence>
 
+      {/* Banner del filtro enabled-skus · informa cuántos SKUs se ocultaron + toggle */}
+      {filterStats && filterStats.applied && filterStats.filtered > 0 && (
+        <div style={{
+          padding: "9px 14px", marginBottom: 14,
+          background: `${AMBER}10`, border: `1px solid ${AMBER}55`, borderRadius: 8,
+          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+          font: "500 12px/1.4 var(--font-body)", color: "#78350F",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <IconLock size={12}/>
+            {lang === "es"
+              ? <>Mostrando <strong>{filterStats.kept}</strong> de <strong>{filterStats.parsed}</strong> SKUs del Excel. <strong>{filterStats.filtered}</strong> ocultos por no estar habilitados para este cliente.</>
+              : <>Showing <strong>{filterStats.kept}</strong> of <strong>{filterStats.parsed}</strong> SKUs. <strong>{filterStats.filtered}</strong> hidden (not enabled for this client).</>}
+          </div>
+          <button type="button"
+            onClick={() => {
+              setShowAllSkus(true);
+              if (file) handleFile(file, { showAll: true });
+            }}
+            style={{
+              padding: "5px 11px", background: "#FFFFFF",
+              border: `1px solid ${AMBER}`, color: "#78350F",
+              font: "600 11px/1 var(--font-body)",
+              borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
+            }}>
+            {lang === "es" ? "Mostrar todos del Excel" : "Show all"}
+          </button>
+        </div>
+      )}
+      {filterStats && !filterStats.applied && enabled.skus.size > 0 && (
+        <div style={{
+          padding: "9px 14px", marginBottom: 14,
+          background: SOFT, border: "1px solid #E5E7EB", borderRadius: 8,
+          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+          font: "500 12px/1.4 var(--font-body)", color: MUTED,
+        }}>
+          <div>
+            {lang === "es"
+              ? <>Override activo · mostrando los <strong>{filterStats.kept}</strong> SKUs del Excel (sin filtrar por habilitados).</>
+              : <>Override on · showing all <strong>{filterStats.kept}</strong> SKUs from the Excel.</>}
+          </div>
+          <button type="button"
+            onClick={() => {
+              setShowAllSkus(false);
+              if (file) handleFile(file, { showAll: false });
+            }}
+            style={{
+              padding: "5px 11px", background: "#FFFFFF",
+              border: "1px solid #E5E7EB", color: INK,
+              font: "600 11px/1 var(--font-body)",
+              borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
+            }}>
+            {lang === "es" ? "Filtrar por habilitados" : "Filter to enabled"}
+          </button>
+        </div>
+      )}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
         {/* ── 1 · Archivo Excel + Vigencia (lado a lado) ── */}
@@ -666,7 +791,7 @@ export default function ScreenBrandClientPricingForm() {
                             onFocus={(e) => e.target.select()}
                             style={inpMono(48)}/>
                         </td>
-                        <td style={{ ...tdSku, background: `${TECHO}66` }}>{fmtUSD(c.baseUsdTecho)}</td>
+                        <td style={{ ...tdSku, background: `${TECHO}66` }}>{fmtUSD0(c.baseUsdTecho)}</td>
                         <td style={{ ...tdSku, background: `${TECHO}66` }}>
                           <input type="number" min={0} step={0.25}
                             value={Number(s.ajuste).toFixed(2)}
@@ -675,12 +800,20 @@ export default function ScreenBrandClientPricingForm() {
                             style={{ ...inpMono(70), background: TECHO, borderColor: TECHO_STRONG, fontWeight: 700 }}/>
                         </td>
                         <td style={tdSku}>
-                          <span style={{ color: AMBER, fontWeight: 700, fontSize: 10 }}>
-                            {fmtPct(c.sobreprecioPct)}
-                          </span>
+                          <input type="number" min={0} max={500} step={0.5}
+                            value={(c.sobreprecioPct * 100).toFixed(2)}
+                            onChange={(e) => {
+                              const nuevoPct = Math.max(0, Number(e.target.value) || 0) / 100;
+                              const nuevoAjuste = ajusteFromSobreprecio(nuevoPct, c.baseUsdTecho);
+                              patchSku(i, { ajuste: Number(nuevoAjuste.toFixed(4)) });
+                            }}
+                            onFocus={(e) => e.target.select()}
+                            style={{ ...inpMono(58), color: AMBER, fontWeight: 700 }}
+                            title={lang === "es" ? "Editá el % y el ajuste $ se recalcula" : "Edit % and Adj. $ recalculates"}/>
+                          <span style={{ color: AMBER, fontWeight: 700, fontSize: 9, marginLeft: 2 }}>%</span>
                         </td>
                         <td style={{ ...tdSku, background: `${TECHO}66`, fontWeight: 700, color: NAVY }}>
-                          {fmtUSD(c.listaTecho)}
+                          {fmtUSD0(c.listaTecho)}
                         </td>
                       </tr>
                     );
@@ -703,9 +836,9 @@ export default function ScreenBrandClientPricingForm() {
               <KPI label={lang === "es" ? "Comisión promedio" : "Avg commission"}
                 value={resumen.comAvg != null ? resumen.comAvg.toFixed(1) + "%" : "—"}/>
               <KPI label={lang === "es" ? "Total 90d techo" : "Total 90d top"}
-                value={fmtUSD(resumen.total90)}/>
+                value={fmtUSD0(resumen.total90)}/>
               <KPI label={lang === "es" ? "Total 8d techo" : "Total 8d top"}
-                value={fmtUSD(resumen.total8)}/>
+                value={fmtUSD0(resumen.total8)}/>
             </div>
           </Section>
         )}

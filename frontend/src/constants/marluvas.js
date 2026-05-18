@@ -70,6 +70,17 @@ export function fmtUSD(n) {
 }
 
 /**
+ * Formato monetario USD redondeado a entero (sin decimales).
+ * Usado en el editor donde el ruido decimal molesta sobre montos > $1k.
+ * @param {number} n
+ */
+export function fmtUSD0(n) {
+  return "$" + Math.round(Number(n || 0)).toLocaleString("en-US", {
+    minimumFractionDigits: 0, maximumFractionDigits: 0,
+  });
+}
+
+/**
  * Formato porcentual con 2 decimales.
  * @param {number} n   Fracción (0.0656 = 6.56%)
  */

@@ -39,6 +39,8 @@ from .views import (
     ResolvedPricesByAssignmentView, ProductClientsPricingView,
     # Simulador Marluvas v7 · cotización USD/BRL en vivo
     MarluvasExchangeRateView,
+    # Simulador Marluvas v7 · SKUs habilitados por cliente
+    MarluvasClientEnabledSkusView,
 )
 
 
@@ -97,4 +99,8 @@ urlpatterns = [
     path("commercial/exchange-rate/usd-brl/",
          MarluvasExchangeRateView.as_view(),
          name="commercial-fx-usd-brl"),
+    # Simulador Marluvas v7 · SKUs habilitados por cliente (parseo de BCPA.notas)
+    path("commercial/clients/<uuid:cliente_id>/enabled-skus/",
+         MarluvasClientEnabledSkusView.as_view(),
+         name="commercial-client-enabled-skus"),
 ]

@@ -27,6 +27,7 @@ Reglas MWT:
   · Soft-delete: DELETE hace is_active=False.
 =====================================================================
 """
+import re
 import uuid
 import logging
 from decimal import Decimal
@@ -1656,3 +1657,55 @@ class MarluvasExchangeRateView(APIView):
                 "cached": False,
                 "error":  f"Upstream sin respuesta: {exc}",
             }, status=200)
+
+
+# =====================================================================
+# MarluvasClientEnabledSkusView · SKUs habilitados por cliente
+# ---------------------------------------------------------------------
+# Lee el último BCPA activo del cliente (opcional: filtrado por brand)
+# y extrae los SKUs habilitados desde el campo `notas`, que el simulador
+# Marluvas v7 deja con un marcador `ENABLED_SKUS:701407,701409,...`.
+#
+# Si no hay BCPA o el marcador no existe → devuelve `skus: []` y el
+# frontend muestra todos los SKUs del Excel sin filtrar.
+#
+# GET /api/commercial/clients/<uuid:cliente_id>/enabled-skus/?brand_id=<uuid>
+#   → { cliente_id, brand_id, count, skus: [string], source, bcpa_id }
+#
+# Esto evita una migración nueva. Si más adelante se necesita una tabla
+# dedicada (pricing.client_sku), se migra el contenido de notas.
+# =====================================================================
+_ENABLED_SKUS_RE = re.compile(r"ENABLED_SKUS\s*:\s*([^\n\r]+)", re.IGNORECASE)
+
+
+class MarluvasClientEnabledSkusView(APIView):
+    """GET SKUs habilitados de un cliente (parseado del último BCPA)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, cliente_id):
+        brand_id = request.query_params.get("brand_id")
+        qs = BrandClientPricingAssignment.objects.filter(
+            cliente_id=cliente_id, is_active=True,
+        )
+        if brand_id:
+            qs = qs.filter(brand_id=brand_id)
+        bcpa = qs.order_by("-updated_at").first()
+
+        skus = []
+        source = "empty"
+        if bcpa and bcpa.notas:
+            m = _ENABLED_SKUS_RE.search(bcpa.notas)
+            if m:
+                raw = m.group(1).strip()
+                skus = [s.strip() for s in raw.split(",") if s.strip()]
+                source = "bcpa_notas"
+
+        return Response({
+            "cliente_id": str(cliente_id),
+            "brand_id":   brand_id,
+            "count":      len(skus),
+            "skus":       skus,
+            "source":     source,
+            "bcpa_id":    str(bcpa.id) if bcpa else None,
+            "updated_at": bcpa.updated_at.isoformat() if bcpa and bcpa.updated_at else None,
+        }, status=200)

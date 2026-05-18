@@ -170,15 +170,32 @@ export function parseExcelMarluvas(arrayBuffer, { XLSX }) {
 /**
  * Estado inicial de un SKU recién parseado del Excel.
  * @param {{sku:string, ref:string, brl:number}} parsed
+ * @param {{com?: number, activo?: boolean}} [defaults]   Defaults inyectables
+ *   (típicamente com = client.comision_pct * 100).
  * @returns {SkuInput}
  */
-export function defaultSkuState(parsed) {
+export function defaultSkuState(parsed, defaults = {}) {
+  const com = Number.isFinite(defaults.com) ? defaults.com : 0;
+  const activo = defaults.activo !== undefined ? !!defaults.activo : true;
   return {
     sku: parsed.sku,
     ref: parsed.ref,
     brl: parsed.brl,
-    com: 10,
+    com,
     ajuste: 0,
-    activo: true,
+    activo,
   };
+}
+
+/**
+ * Dado un % sobreprecio y el precio base USD techo, devuelve el ajuste USD
+ * que corresponde. Inverso de `calcSKU.sobreprecioPct`.
+ *
+ * @param {number} pctFraccion   Fracción (0.0656 = 6.56%)
+ * @param {number} baseUsdTecho
+ * @returns {number}
+ */
+export function ajusteFromSobreprecio(pctFraccion, baseUsdTecho) {
+  if (!Number.isFinite(pctFraccion) || !Number.isFinite(baseUsdTecho)) return 0;
+  return pctFraccion * baseUsdTecho;
 }
