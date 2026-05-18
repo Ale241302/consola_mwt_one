@@ -15,6 +15,7 @@
 //   Purple #481EE3 · Blue #3083FE · Cyan #1EE3D7
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useState } from "react";
+import { useRole } from "../context/RoleContext.jsx";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -150,6 +151,9 @@ export default function ScreenBrandDetail() {
   // active_skus). Se bumpea junto al productsReloadKey al cerrar
   // operaciones que cambian el catálogo.
   const [brandReloadKey, setBrandReloadKey] = useState(0);
+  // Sprint 2026-05-17 · rol del viewer para la columna EXPEDIENTE
+  // role-aware en la tab Expedientes.
+  const { isClient } = useRole();
 
   useEffect(() => {
     let cancelled = false;
@@ -229,10 +233,50 @@ export default function ScreenBrandDetail() {
       });
     return () => { cancelled = true; };
   }, [bid, productsReloadKey]);
-  const expedientes = useMemo(
-    () => bid ? EXPEDIENTES.filter(e => e.brand_id === bid) : [],
-    [bid]
-  );
+  // Sprint 2026-05-17 · expedientes desde backend (antes mock).
+  // GET /api/marcas/{id}/expedientes/ devuelve los expedientes activos
+  // con al menos un producto de la marca (JOIN producto.marca_id →
+  // linea.producto_id → expediente). Si el endpoint falla o no hay
+  // datos, fallback al mock para no romper el render del KPI.
+  const [apiExpedientes, setApiExpedientes] = useState(null);
+  useEffect(() => {
+    if (!bid) { setApiExpedientes(null); return; }
+    let cancelled = false;
+    marcasApi.expedientes(bid)
+      .then((data) => {
+        if (cancelled) return;
+        setApiExpedientes(Array.isArray(data) ? data : (data?.results || []));
+      })
+      .catch(() => { if (!cancelled) setApiExpedientes([]); });
+    return () => { cancelled = true; };
+  }, [bid, productsReloadKey]);   // recarga si cambian productos
+  const expedientes = useMemo(() => {
+    if (Array.isArray(apiExpedientes)) {
+      // Adaptar shape backend → shape esperado por ExpedientesTab.
+      return apiExpedientes.map((e) => ({
+        id:               e.id,
+        ref:              e.codigo,
+        codigo:           e.codigo,
+        status:           e.estado,
+        brand_id:         bid,
+        client_id:        e.client_id,
+        operating_company_id: e.operating_company_id,
+        client:           e.client_nombre || '—',
+        total_invoiced:   Number(e.total_invoiced || 0),
+        total_paid:       Number(e.total_paid || 0),
+        balance:          Number(e.balance || 0),
+        credit_days:      Number(e.credit_days || 0),
+        real_margin:      0,            // no expuesto por este endpoint
+        // Sprint 2026-05-17 · codigos role-aware para columna EXPEDIENTE.
+        proforma_codigo:  e.proforma_codigo,
+        oc_cliente_codigo: e.oc_cliente_codigo,
+        last_event_at:    e.last_event_at,
+        created_at:       e.created_at,
+      }));
+    }
+    // Fallback mock cuando todavia no resolvio el fetch.
+    return bid ? EXPEDIENTES.filter(e => e.brand_id === bid) : [];
+  }, [apiExpedientes, bid]);
   const expedientesActivos = useMemo(
     () => expedientes.filter(e => e.status !== 'CERRADO'),
     [expedientes]
@@ -485,6 +529,7 @@ export default function ScreenBrandDetail() {
               <ExpedientesTab
                 lang={lang}
                 expedientes={expedientes}
+                isClient={isClient}
                 onOpen={(exp)=>{
                   const oc = OCS?.find(o => o.expedientes?.includes(exp.id));
                   if (oc) navigate(`/expedientes/${oc.id}/exp/${exp.id}`);
@@ -781,7 +826,15 @@ function SpecRow({ l, v }) {
 /* ═══════════════════════════════════════════════════════════════
    TAB · Expedientes — semáforo + reloj de crédito + link
    ═══════════════════════════════════════════════════════════════ */
-function ExpedientesTab({ lang, expedientes, onOpen }) {
+function ExpedientesTab({ lang, expedientes, onOpen, isClient = false }) {
+  // Sprint 2026-05-17 · Helper para columna EXPEDIENTE role-aware.
+  // Admin -> proforma_codigo (numero de proforma)
+  // Client -> oc_cliente_codigo (numero de OC del cliente)
+  // Fallback: codigo EXP-YYYY-NNNN si no hay documento aun.
+  const _displayCode = (e) => {
+    if (isClient) return e.oc_cliente_codigo || e.ref || e.codigo || '—';
+    return e.proforma_codigo || e.ref || e.codigo || '—';
+  };
   if (!expedientes.length) {
     return (
       <div className="card card-pad-lg empty">
@@ -815,7 +868,9 @@ function ExpedientesTab({ lang, expedientes, onOpen }) {
             const logisticPct = Math.min(100, Math.round(((e.artifacts_done || 0) / (e.artifacts_total || 6)) * 100));
             return (
               <tr key={e.id} onClick={()=>onOpen(e)} style={{ cursor: 'pointer' }}>
-                <td className="mono-sm">{e.ref}</td>
+                {/* Sprint 2026-05-17 · header se mantiene "EXPEDIENTE" pero
+                    el valor es proforma (admin) u OC cliente (client). */}
+                <td className="mono-sm">{_displayCode(e)}</td>
                 <td>{e.client}</td>
                 <td>
                   <span className="badge badge-outline">{e.status}</span>

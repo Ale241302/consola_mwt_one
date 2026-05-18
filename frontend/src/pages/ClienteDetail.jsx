@@ -27,6 +27,8 @@ import {
 // Parent-Child (sprint 2026-04-29) — tab Subsidiarias y toggle de consolidación
 import SubsidiariasTab from "../components/clientes/SubsidiariasTab.jsx";
 import ConsolidateToggle from "../components/clientes/ConsolidateToggle.jsx";
+// Sprint 2026-05-17 · rol del viewer para columna EXPEDIENTE role-aware.
+import { useRole } from "../context/RoleContext.jsx";
 
 // ── Banderitas por país (mismo subset que NodoDetail) ──
 const FLAG_BY_ISO2 = {
@@ -105,6 +107,16 @@ function adaptExpedienteFromApi(r) {
     lines_count:    Number(r.lines_count || 0),
     lines_with_sap: Number(r.lines_with_sap || 0),
     order_value:    ov,
+    // Sprint 2026-05-17 · codigos role-aware para la columna EXPEDIENTE
+    // del listado (admin -> proforma, client -> OC del cliente, con
+    // fallback al EXP code).
+    proforma_codigo:      r.proforma_codigo || null,
+    oc_cliente_codigo:    r.oc_cliente_codigo || null,
+    // Sprint 2026-05-17 · operating_company_id + viewer_role para
+    // distinguir si este cliente aparece en el expediente como CLIENT
+    // final u OPERATOR (legal entity que opera).
+    operating_company_id: r.operating_company_id || null,
+    viewer_role:          r.viewer_role || 'CLIENT',
   };
 }
 
@@ -172,6 +184,8 @@ export default function ScreenClienteDetail() {
   const { clienteId } = useParams();
   const navigate = useNavigate();
   const { lang } = useOutletContext();
+  // Sprint 2026-05-17 · rol para columna EXPEDIENTE role-aware.
+  const { isClient } = useRole();
   const [tab, setTab] = useState('expedientes');
   // Toggle Consolidar (sprint Parent-Child) — solo visible en padre.
   // Si está ON, las tabs Expedientes / Pagos / Productos consolidan
@@ -635,6 +649,7 @@ export default function ScreenClienteDetail() {
                               expedientes={expedientesActivos}
                               consolidate={consolidate}
                               isParent={client.is_parent}
+                              isClient={isClient}
                               onOpen={(exp)=>{
                 // Sprint 2026-05-03: con expedientes del backend ya no
                 // tenemos un mock OCS para resolver oc_id. Usamos la ruta
@@ -728,7 +743,15 @@ function ConsolidatedBanner({ lang, isParent, consolidate }) {
   );
 }
 
-function ExpedientesTab({ lang, expedientes, onOpen, consolidate, isParent }) {
+function ExpedientesTab({ lang, expedientes, onOpen, consolidate, isParent, isClient = false }) {
+  // Sprint 2026-05-17 · Columna EXPEDIENTE role-aware (header se mantiene).
+  //   ADMIN  -> proforma_codigo (numero de proforma)
+  //   CLIENT -> oc_cliente_codigo (numero de OC del cliente)
+  // Fallback: codigo EXP-YYYY-NNNN si todavia no hay documento cargado.
+  const _displayCode = (e) => {
+    if (isClient) return e.oc_cliente_codigo || e.ref || '—';
+    return e.proforma_codigo || e.ref || '—';
+  };
   if (!expedientes.length) {
     return (
       <>
@@ -761,7 +784,9 @@ function ExpedientesTab({ lang, expedientes, onOpen, consolidate, isParent }) {
             const band = creditClockBand(e.credit_days);
             return (
               <tr key={e.id} onClick={()=>onOpen(e)} style={{cursor:'pointer'}}>
-                <td className="mono-sm">{e.ref}</td>
+                {/* Sprint 2026-05-17 · header se mantiene "EXPEDIENTE" pero
+                    el valor es proforma (admin) u OC cliente (client). */}
+                <td className="mono-sm">{_displayCode(e)}</td>
                 <td className="mono-sm">{e.oc_client}</td>
                 <td><span className="badge badge-outline">{e.status}</span></td>
                 <td>{e.brand}</td>

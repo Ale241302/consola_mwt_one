@@ -388,6 +388,12 @@ class ClienteViewSet(viewsets.ViewSet):
                 # FE quiere distinguir "soy cliente final" vs "soy operador".
 
                 # 1. Headers de expedientes
+                # Sprint 2026-05-17 v2 · agrega LEFT JOIN LATERAL a
+                # expedientes.documento para sacar proforma_codigo (PROFORMA
+                # mas reciente) y oc_cliente_codigo (OC Cliente mas reciente).
+                # El FE muestra estos codigos en la columna EXPEDIENTE del
+                # listado (admin -> proforma, cliente -> OC cliente) con
+                # fallback al e.codigo (EXP-YYYY-NNNN) si no hay documento.
                 c.execute(
                     f"""
                     SELECT
@@ -397,8 +403,28 @@ class ClienteViewSet(viewsets.ViewSet):
                         COALESCE(e.balance,        0)::float,
                         COALESCE(e.credit_days,    0)::int,
                         e.last_event_at, e.created_at,
-                        e.operating_company_id::text AS operating_company_id
+                        e.operating_company_id::text AS operating_company_id,
+                        pf.codigo                    AS proforma_codigo,
+                        oc.codigo                    AS oc_cliente_codigo
                     FROM expedientes.expediente e
+                    LEFT JOIN LATERAL (
+                        SELECT d.codigo
+                          FROM expedientes.documento d
+                         WHERE d.expediente_id = e.id
+                           AND d.kind          = 'PROFORMA'
+                           AND d.is_active     = TRUE
+                           AND d.codigo IS NOT NULL AND d.codigo <> ''
+                         ORDER BY d.created_at DESC LIMIT 1
+                    ) pf ON TRUE
+                    LEFT JOIN LATERAL (
+                        SELECT d.codigo
+                          FROM expedientes.documento d
+                         WHERE d.expediente_id = e.id
+                           AND d.kind ILIKE 'OC Cliente'
+                           AND d.is_active     = TRUE
+                           AND d.codigo IS NOT NULL AND d.codigo <> ''
+                         ORDER BY d.created_at DESC LIMIT 1
+                    ) oc ON TRUE
                     WHERE (
                         e.client_id::text            IN ({placeholders})
                         OR e.operating_company_id::text IN ({placeholders})
@@ -458,7 +484,9 @@ class ClienteViewSet(viewsets.ViewSet):
 
                 for r in rows:
                     a = agg.get(r[0]) or {"lines_count": 0, "lines_with_sap": 0, "order_value": 0.0}
-                    op_id = r[10] if len(r) > 10 else None
+                    op_id            = r[10] if len(r) > 10 else None
+                    proforma_codigo  = r[11] if len(r) > 11 else None
+                    oc_cliente_codigo = r[12] if len(r) > 12 else None
                     # Sprint 2026-05-17 · `viewer_role` permite que el FE
                     # distinga si este cliente aparece como CLIENT (cliente
                     # final del expediente) u OPERATOR (legal entity que lo
@@ -489,6 +517,13 @@ class ClienteViewSet(viewsets.ViewSet):
                         # rol del cliente consultante en este expediente.
                         "operating_company_id": op_id,
                         "viewer_role":          viewer_role,
+                        # Sprint 2026-05-17 v2 — codigos role-aware para
+                        # la columna EXPEDIENTE del listado:
+                        #   admin  -> proforma_codigo
+                        #   client -> oc_cliente_codigo
+                        # fallback: codigo (EXP-YYYY-NNNN).
+                        "proforma_codigo":    proforma_codigo,
+                        "oc_cliente_codigo":  oc_cliente_codigo,
                     })
         except Exception as e:
             import logging

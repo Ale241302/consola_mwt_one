@@ -158,6 +158,121 @@ class MarcaViewSet(viewsets.ViewSet):
             "ventas_ytd_usd":       ventas_ytd,
         })
 
+    # ── Sprint 2026-05-17 · Expedientes asociados a la marca ─────────
+    #   GET /api/marcas/{id}/expedientes/
+    #
+    # Lista todos los expedientes activos donde AL MENOS UNA linea
+    # (expedientes.linea) tiene un producto cuya marca == {id}.
+    #
+    # Antes el BrandDetail.jsx leia mock data (EXPEDIENTES.filter
+    # brand_id), por eso en produccion aparecia "Sin expedientes". Ahora
+    # consulta real al backend que JOINea producto.brand_id con
+    # linea.producto_id para encontrar los expedientes correspondientes.
+    #
+    # El response incluye proforma_codigo y oc_cliente_codigo (role-aware
+    # column EXPEDIENTE en el FE) + viewer_role.
+    @action(detail=True, methods=["get"], url_path="expedientes")
+    def expedientes_de_marca(self, request, pk=None):
+        include_closed = (request.query_params.get("include_closed") or "").lower() == "true"
+        estado_filter = "" if include_closed else "AND e.estado NOT IN ('CERRADO','CANCELADO')"
+
+        out = []
+        try:
+            with connection.cursor() as c:
+                c.execute(
+                    f"""
+                    WITH expedientes_marca AS (
+                        -- Expedientes activos con al menos UNA linea cuyo
+                        -- producto pertenece a esta marca. DISTINCT para
+                        -- no traer N filas por expediente.
+                        SELECT DISTINCT l.expediente_id AS exp_id
+                          FROM expedientes.linea l
+                          JOIN productos.producto p ON p.id = l.producto_id
+                         WHERE p.marca_id = %s::uuid
+                           AND l.is_active = TRUE
+                    )
+                    SELECT
+                        e.id::text                    AS id,
+                        e.codigo                      AS codigo,
+                        e.estado                      AS estado,
+                        e.client_id::text             AS client_id,
+                        e.operating_company_id::text  AS operating_company_id,
+                        COALESCE(e.total_invoiced, 0)::float AS total_invoiced,
+                        COALESCE(e.total_paid,     0)::float AS total_paid,
+                        COALESCE(e.balance,        0)::float AS balance,
+                        COALESCE(e.credit_days,    0)::int   AS credit_days,
+                        e.last_event_at,
+                        e.created_at,
+                        pf.codigo                     AS proforma_codigo,
+                        oc.codigo                     AS oc_cliente_codigo,
+                        COALESCE(cli.razon_social, cli.nombre_comercial,
+                                 cli.codigo, '—')     AS client_nombre,
+                        agg.lines_count,
+                        agg.lines_marca_count
+                    FROM expedientes_marca em
+                    JOIN expedientes.expediente e ON e.id = em.exp_id
+                    LEFT JOIN clientes.cliente cli ON cli.id = e.client_id
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            COUNT(*) FILTER (WHERE l.is_active = TRUE) AS lines_count,
+                            COUNT(*) FILTER (WHERE l.is_active = TRUE
+                                               AND p.marca_id = %s::uuid) AS lines_marca_count
+                          FROM expedientes.linea l
+                          LEFT JOIN productos.producto p ON p.id = l.producto_id
+                         WHERE l.expediente_id = e.id
+                    ) agg ON TRUE
+                    LEFT JOIN LATERAL (
+                        SELECT d.codigo
+                          FROM expedientes.documento d
+                         WHERE d.expediente_id = e.id
+                           AND d.kind          = 'PROFORMA'
+                           AND d.is_active     = TRUE
+                           AND d.codigo IS NOT NULL AND d.codigo <> ''
+                         ORDER BY d.created_at DESC LIMIT 1
+                    ) pf ON TRUE
+                    LEFT JOIN LATERAL (
+                        SELECT d.codigo
+                          FROM expedientes.documento d
+                         WHERE d.expediente_id = e.id
+                           AND d.kind ILIKE 'OC Cliente'
+                           AND d.is_active     = TRUE
+                           AND d.codigo IS NOT NULL AND d.codigo <> ''
+                         ORDER BY d.created_at DESC LIMIT 1
+                    ) oc ON TRUE
+                    WHERE e.is_active = TRUE
+                      {estado_filter}
+                    ORDER BY e.last_event_at DESC NULLS LAST,
+                             e.created_at DESC
+                    """,
+                    [str(pk), str(pk)],
+                )
+                for r in c.fetchall():
+                    out.append({
+                        "id":               r[0],
+                        "codigo":           r[1],
+                        "estado":           r[2],
+                        "client_id":        r[3],
+                        "operating_company_id": r[4],
+                        "total_invoiced":   float(r[5] or 0),
+                        "total_paid":       float(r[6] or 0),
+                        "balance":          float(r[7] or 0),
+                        "credit_days":      int(r[8] or 0),
+                        "last_event_at":    r[9].isoformat() if r[9] else None,
+                        "created_at":       r[10].isoformat() if r[10] else None,
+                        "proforma_codigo":  r[11],
+                        "oc_cliente_codigo": r[12],
+                        "client_nombre":    r[13],
+                        "lines_count":      int(r[14] or 0),
+                        "lines_marca_count": int(r[15] or 0),
+                    })
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception(
+                "[marcas.expedientes] query failed for pk=%s: %s", pk, exc
+            )
+            out = []
+        return Response(out)
+
     # ── Discount codes (CRUD anidado a marca) ─────────────
     @action(detail=True, methods=["get", "post"], url_path="discount_codes")
     def discount_codes(self, request, pk=None):

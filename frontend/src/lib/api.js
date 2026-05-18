@@ -303,6 +303,12 @@ export function resource(name) {
 
 export const nodosApi          = resource("nodos");
 export const marcasApi         = resource("marcas");
+// Sprint 2026-05-17 · GET /api/marcas/{id}/expedientes/
+// Lista expedientes activos con al menos un producto de la marca.
+// Response: [{id, codigo, proforma_codigo, oc_cliente_codigo, ...}]
+marcasApi.expedientes = (marcaId) =>
+  apiFetch(`/marcas/${encodeURIComponent(marcaId)}/expedientes/`,
+           { token: getToken() });
 export const clientesApi       = resource("clientes");
 export const productosApi      = resource("productos");
 
