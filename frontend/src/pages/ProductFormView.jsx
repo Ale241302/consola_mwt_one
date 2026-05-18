@@ -1591,10 +1591,11 @@ export default function ScreenProductFormView() {
                   marginBottom: 18, padding: 14,
                   background: '#FFFFFF',
                   border: '1px solid #E2E8F0', borderRadius: 10,
-                  // OJO: NO usar `overflow: hidden` acá — bloquearía el
-                  // scroll-X interno del PriceMatrixCompact. Solo contenemos
-                  // el ancho con width:100% + box-sizing, dejando que el hijo
-                  // muestre su propio scrollbar cuando la tabla desborde.
+                  // overflow:hidden NO bloquea el scrollbar interno del hijo
+                  // que tiene overflow-x:auto — solo le impone su rectángulo
+                  // visible como límite. Sin esto, el hijo expande al card
+                  // (porque min-width:auto default) y arrastra todo el layout.
+                  overflow: 'hidden',
                   width: '100%',
                   maxWidth: '100%',
                   minWidth: 0,
