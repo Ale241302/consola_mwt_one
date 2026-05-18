@@ -5,15 +5,21 @@
 // Funciones puras del simulador de precios Marluvas v7. Testeables sin
 // React. Toda la matemática vive aquí — los componentes solo presentan.
 //
-// Fórmula maestra (validada al centavo contra el HTML v7):
-//   P_base_USD(banda)     = (BRL / divisor[banda]) × 1.0183^com × 1.030
-//   P_lista_techo         = P_base[techo] + ajuste_$
-//   %sobreprecio          = ajuste_$ / P_base[techo]
-//   P_lista_banda_90d     = P_base[banda] × (1 + %sobreprecio)
-//   P_final[banda,plazo]  = P_lista_banda_90d × factor_pp[plazo]
+// Modelo de modificadores INDEPENDIENTES (Ajuste $ y Sobreprecio % no se
+// recalculan entre sí — cada uno lo edita el operador libremente):
 //
-// El ajuste se ingresa en USD absolutos SOLO en banda techo y se derrama
-// como porcentaje a las 11 bandas restantes (ratio constante).
+//   P_base_USD(banda)     = (BRL / divisor[banda]) × 1.0183^com × 1.030
+//   P_lista(banda)        = P_base(banda) + ajuste_$ + P_base(banda) × sobreprecio_%
+//   P_final[banda,plazo]  = P_lista(banda) × factor_pp[plazo]
+//
+//   ajuste_$         → monto absoluto en USD que se suma en TODA banda
+//                       (no se "diluye" — en banda piso pesa porcentualmente más).
+//   sobreprecio_%    → factor relativo a la base de cada banda (escala con la banda).
+//
+// Decisión: en lugar de derramar el ajuste como % a las otras bandas
+// (lo que acoplaba ajuste ↔ sobreprecio), tratamos los dos modificadores
+// como aditivos puros e independientes. El operador decide qué semántica
+// usar (dejar ajuste=0 + editar %, o al revés, o combinar ambos).
 // =====================================================================
 import {
   BANDAS_MARLUVAS, PLAZOS_MARLUVAS,
@@ -40,8 +46,9 @@ export function precioBaseUSD(brl, divisor, comPct) {
  * @property {string} sku
  * @property {string} ref
  * @property {number} brl
- * @property {number} com       Comisión [0..10]
- * @property {number} ajuste    Ajuste USD absoluto en banda techo
+ * @property {number} com           Comisión [0..10]
+ * @property {number} ajuste        Ajuste USD absoluto (se suma en TODA banda)
+ * @property {number} sobreprecio   Sobreprecio fracción (0.05 = 5%) — relativo a base
  * @property {boolean} activo
  */
 
@@ -49,7 +56,7 @@ export function precioBaseUSD(brl, divisor, comPct) {
  * @typedef {Object} MatrizCell
  * @property {{id:number, rango:string, div:number, techo?:boolean, piso?:boolean}} banda
  * @property {number} base       P_base USD en esa banda
- * @property {number} lista90    P_base × (1 + %sobreprecio)  (precio 90d)
+ * @property {number} lista90    Base + Ajuste + Base × Sobreprecio (precio 90d)
  * @property {number[]} plazos   4 precios finales [90d, 60d, 30d, 8d]
  */
 
@@ -57,33 +64,40 @@ export function precioBaseUSD(brl, divisor, comPct) {
  * @typedef {Object} SkuCalc
  * @property {number} baseUsdTecho
  * @property {number} listaTecho
- * @property {number} sobreprecioPct   Fracción (0.0656 = 6.56%)
- * @property {MatrizCell[]} matriz     12 entradas, una por banda
+ * @property {number} sobreprecioPct      Lo que ingresó el operador (fracción)
+ * @property {number} sobreprecioEfectivo Lo que efectivamente sumó al precio
+ *                                         contando ajuste + sobreprecio: útil para
+ *                                         mostrar el "uplift real" sobre la base.
+ * @property {MatrizCell[]} matriz        12 entradas, una por banda
  */
 
 /**
- * Calcula todo el output del SKU: precio techo, % sobreprecio y la matriz
- * 12 bandas × 4 plazos lista para renderizar.
+ * Calcula todo el output del SKU. Los dos modificadores (ajuste $ y
+ * sobreprecio %) son INDEPENDIENTES — editar uno no toca al otro.
  *
  * @param {SkuInput} sku
  * @returns {SkuCalc}
  */
 export function calcSKU(sku) {
   const bandaTecho = BANDAS_MARLUVAS[0];
+  const ajuste = Number(sku.ajuste || 0);
+  const sobreprecio = Number(sku.sobreprecio || 0);
+
   const baseUsdTecho = precioBaseUSD(sku.brl, bandaTecho.div, sku.com);
-  const listaTecho = baseUsdTecho + Number(sku.ajuste || 0);
-  const sobreprecioPct = baseUsdTecho > 0
-    ? Number(sku.ajuste || 0) / baseUsdTecho
+  const listaTecho = baseUsdTecho + ajuste + baseUsdTecho * sobreprecio;
+
+  const sobreprecioEfectivo = baseUsdTecho > 0
+    ? (listaTecho - baseUsdTecho) / baseUsdTecho
     : 0;
 
   const matriz = BANDAS_MARLUVAS.map((b) => {
     const baseBanda = precioBaseUSD(sku.brl, b.div, sku.com);
-    const lista90 = baseBanda * (1 + sobreprecioPct);
+    const lista90 = baseBanda + ajuste + baseBanda * sobreprecio;
     const plazos = PLAZOS_MARLUVAS.map((p) => lista90 * p.factor);
     return { banda: b, base: baseBanda, lista90, plazos };
   });
 
-  return { baseUsdTecho, listaTecho, sobreprecioPct, matriz };
+  return { baseUsdTecho, listaTecho, sobreprecioPct: sobreprecio, sobreprecioEfectivo, matriz };
 }
 
 /**
@@ -183,19 +197,7 @@ export function defaultSkuState(parsed, defaults = {}) {
     brl: parsed.brl,
     com,
     ajuste: 0,
+    sobreprecio: 0,   // fracción, ej. 0.05 = 5%
     activo,
   };
-}
-
-/**
- * Dado un % sobreprecio y el precio base USD techo, devuelve el ajuste USD
- * que corresponde. Inverso de `calcSKU.sobreprecioPct`.
- *
- * @param {number} pctFraccion   Fracción (0.0656 = 6.56%)
- * @param {number} baseUsdTecho
- * @returns {number}
- */
-export function ajusteFromSobreprecio(pctFraccion, baseUsdTecho) {
-  if (!Number.isFinite(pctFraccion) || !Number.isFinite(baseUsdTecho)) return 0;
-  return pctFraccion * baseUsdTecho;
 }

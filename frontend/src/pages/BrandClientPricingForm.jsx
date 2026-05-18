@@ -36,7 +36,7 @@ import {
   BANDAS_MARLUVAS, PLAZOS_MARLUVAS, bandaForTC, fmtUSD0, fmtPct,
 } from "../constants/marluvas.js";
 import {
-  calcSKU, parseExcelMarluvas, defaultSkuState, ajusteFromSobreprecio,
+  calcSKU, parseExcelMarluvas, defaultSkuState,
 } from "../lib/marluvasPricing.js";
 
 // ─── Helpers backend → shape interno ──────────────────────────
@@ -352,7 +352,9 @@ export default function ScreenBrandClientPricingForm() {
     skus.forEach((s, i) => {
       if (!s.activo) return;
       const c = calcs[i];
-      sumaSP += c.sobreprecioPct;
+      // El sobreprecio promedio que mostramos es el EFECTIVO (Ajuste $ + Sobreprecio %)
+      // sobre la base — útil para medir el uplift comercial real.
+      sumaSP += c.sobreprecioEfectivo;
       sumaCom += s.com;
       sum90 += c.listaTecho;
       sum8  += c.listaTecho * 0.9725;
@@ -779,8 +781,8 @@ export default function ScreenBrandClientPricingForm() {
               ? "SKUs · Banda techo 4,00–4,20 (divisor 4.07)"
               : "SKUs · Top band 4.00–4.20 (÷4.07)"}
             subtitle={lang === "es"
-              ? "Editás la comisión y el ajuste USD en banda techo. El % de variación implícito se derrama a las 11 bandas restantes."
-              : "Edit commission and USD adjustment at top band. Cascades as % to remaining 11 bands."}
+              ? "Ajuste $ y Sobreprecio % son modificadores independientes. Lista = Base + Ajuste $ + Base × Sobreprecio %. El Ajuste $ se suma absoluto en toda banda; el Sobreprecio % escala con la base de cada banda."
+              : "Adj. $ and Markup % are independent modifiers. List = Base + Adj. $ + Base × Markup %."}
             badge={{ label: `${skusActivos.length}/${skus.length} ACTIVOS`, color: NAVY, bg: `${MINT}22` }}
           >
             <div style={{ overflowX: "auto" }}>
@@ -842,15 +844,16 @@ export default function ScreenBrandClientPricingForm() {
                         </td>
                         <td style={tdSku}>
                           <input type="number" min={0} max={500} step={0.5}
-                            value={(c.sobreprecioPct * 100).toFixed(2)}
+                            value={(Number(s.sobreprecio || 0) * 100).toFixed(2)}
                             onChange={(e) => {
                               const nuevoPct = Math.max(0, Number(e.target.value) || 0) / 100;
-                              const nuevoAjuste = ajusteFromSobreprecio(nuevoPct, c.baseUsdTecho);
-                              patchSku(i, { ajuste: Number(nuevoAjuste.toFixed(4)) });
+                              patchSku(i, { sobreprecio: nuevoPct });
                             }}
                             onFocus={(e) => e.target.select()}
                             style={{ ...inpMono(58), color: AMBER, fontWeight: 700 }}
-                            title={lang === "es" ? "Editá el % y el ajuste $ se recalcula" : "Edit % and Adj. $ recalculates"}/>
+                            title={lang === "es"
+                              ? "% sobre la base — independiente del Ajuste $"
+                              : "% over base — independent from Adj. $"}/>
                           <span style={{ color: AMBER, fontWeight: 700, fontSize: 9, marginLeft: 2 }}>%</span>
                         </td>
                         <td style={{ ...tdSku, background: `${TECHO}66`, fontWeight: 700, color: NAVY }}>
