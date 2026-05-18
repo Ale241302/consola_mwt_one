@@ -79,9 +79,16 @@ export default function PriceMatrixCompact({
   }, [bandFilter, bandaVigente]);
 
   return (
+    // display:grid + grid-template-columns:minmax(0, 1fr) es la técnica
+    // bulletproof para forzar a un hijo (el wrapper de la tabla con
+    // overflow-x:auto) a respetar el ancho del padre. Sin esto, el
+    // min-width:auto default permite que el hijo crezca según contenido
+    // natural y arrastra todo el layout fuera del viewport.
     <div style={{
+      display: "grid",
+      gridTemplateColumns: "minmax(0, 1fr)",
+      gap: 8,
       width: "100%", maxWidth: "100%", minWidth: 0,
-      display: "flex", flexDirection: "column", gap: 8,
     }}>
       {/* Toolbar de filtro */}
       <div style={{

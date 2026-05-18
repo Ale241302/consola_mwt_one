@@ -1587,19 +1587,25 @@ export default function ScreenProductFormView() {
               const isSaving = savingClient === c.cliente_id;
               const showBanner = matrixBanner && matrixBanner.cliente_id === c.cliente_id;
               return (
+                // Card del cliente. display:grid + grid-template-columns:
+                // minmax(0, 1fr) fuerza al hijo (PriceMatrixCompact) a
+                // respetar el ancho del card sin importar lo ancho que sea
+                // su contenido natural (matriz de 12 bandas ≈ 2800px).
+                // Esta es la técnica bulletproof — más confiable que
+                // overflow:hidden + min-width:0 que dependen de contexto
+                // del padre flex/grid.
                 <div key={c.cliente_id} style={{
                   marginBottom: 18, padding: 14,
                   background: '#FFFFFF',
                   border: '1px solid #E2E8F0', borderRadius: 10,
-                  // overflow:hidden NO bloquea el scrollbar interno del hijo
-                  // que tiene overflow-x:auto — solo le impone su rectángulo
-                  // visible como límite. Sin esto, el hijo expande al card
-                  // (porque min-width:auto default) y arrastra todo el layout.
-                  overflow: 'hidden',
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr)',
+                  gap: 10,
                   width: '100%',
                   maxWidth: '100%',
                   minWidth: 0,
                   boxSizing: 'border-box',
+                  overflow: 'hidden',
                 }}>
                   <div style={{
                     display: 'flex', justifyContent: 'space-between',
