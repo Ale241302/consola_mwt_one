@@ -406,11 +406,25 @@ class CounterpartyValidator:
     counterparty_type declarado. Cuando el modelo de counterparties se
     formalice, este validator hara las queries reales.
     """
+    # Sprint Registrar Pago (Fase 2 hotfix) · Invariante defensivo
+    # direction ↔ counterparty_type. El frontend filtra en el picker
+    # pero un agente externo que llame POST /payments directamente
+    # podria armar combinaciones imposibles. Esta validacion las
+    # rechaza a nivel API.
+    #   direction = IN  (MWT cobra)  -> CLIENTE | DISTRIBUIDOR
+    #   direction = OUT (MWT paga)   -> PROVEEDOR | ADUANERO |
+    #                                   TRANSPORTISTA | AGENTE
+    _ALLOWED_TYPES_BY_DIRECTION = {
+        "IN":  {"CLIENTE", "DISTRIBUIDOR"},
+        "OUT": {"PROVEEDOR", "ADUANERO", "TRANSPORTISTA", "AGENTE"},
+    }
+
     @classmethod
     def assert_consistent(cls, payment_payload: Dict[str, Any],
                           applications: List[Dict[str, Any]]) -> None:
         ct = payment_payload.get("counterparty_type")
         cid = payment_payload.get("counterparty_id")
+        direction = payment_payload.get("direction")
         if not applications:
             return
         if ct and ct not in PaymentCounterpartyType.values:
@@ -418,13 +432,28 @@ class CounterpartyValidator:
                 f"counterparty_type='{ct}' no valido. Permitidos: "
                 f"{list(PaymentCounterpartyType.values)}"
             )
-        # En Fase 1 aceptamos cualquier set de aplicaciones siempre que
-        # exista un counterparty_id valido. Validaciones cross-contraparte
-        # se agregan cuando el modulo counterparties este definido.
         if ct and not cid:
             raise CounterpartyMismatchError(
                 "counterparty_id requerido cuando counterparty_type esta presente"
             )
+
+        # Sprint Fase 2 · Blindaje direction ↔ counterparty_type.
+        # Solo rechazamos si AMBOS estan definidos. Si falta uno, lo
+        # dejamos pasar (modo legacy / migracion) — la validacion
+        # esta-vs-esta solo aplica al wizard nuevo.
+        if direction and ct:
+            allowed = cls._ALLOWED_TYPES_BY_DIRECTION.get(str(direction).upper())
+            if allowed is not None and ct not in allowed:
+                err = CounterpartyMismatchError(
+                    f"direction={direction!r} no admite counterparty_type={ct!r}. "
+                    f"Tipos validos para direction={direction!r}: "
+                    f"{sorted(allowed)}"
+                )
+                # Codigo especifico para que el FE diferencie de
+                # COUNTERPARTY_MISMATCH (que sigue siendo errores de
+                # consistencia entre aplicaciones).
+                err.code = "DIRECTION_COUNTERPARTY_MISMATCH"
+                raise err
 
 
 # ── CreditEffectService ─────────────────────────────────────────────────
