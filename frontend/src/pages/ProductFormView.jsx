@@ -1260,6 +1260,15 @@ export default function ScreenProductFormView() {
           </div>
         </div>
 
+        {/* OCULTO · Sección "Override por cliente" (precio único + alias).
+            Reemplazada por la "Matriz de precios USD por par · por cliente
+            habilitado" (12 bandas × 4 plazos = 48 precios por SKU) que da
+            granularidad completa por banda cambial y plazo de pago.
+            Mantenemos el JSX bajo {false && (<>...</>)} para preservar los
+            hooks (clientPrices, clientAliases, resolvedClientsPricing,
+            syncStatus, etc.) y poder reactivar la vista si se necesita
+            como auditoría o fallback legacy. */}
+        {false && (<>
         <div className="caption" style={{margin:'12px 0 6px', color:'var(--text-tertiary)',
                                           display:'flex', alignItems:'center', gap:8,
                                           flexWrap:'wrap'}}>
@@ -1530,6 +1539,8 @@ export default function ScreenProductFormView() {
             );
           })}
         </div>
+        </>)}
+        {/* fin · bloque "Override por cliente" oculto */}
 
         {/* ── Matriz de precios Marluvas · 12 bandas × 4 plazos por cliente ── */}
         {/* Wrapper "container query"-style: width:0 forzado por flex/grid,
