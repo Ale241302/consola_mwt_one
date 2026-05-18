@@ -516,20 +516,47 @@ export default function ScreenOCDetail() {
   // Sprint 2026-05-11 fase 6 · mapa (exp_id::prod_id::talla) → [nodos].
   // Alimenta la columna "Nodo" de la tabla "Productos OC". Hace fetch
   // por cada expediente único del OC y mergea los resultados.
+  //
+  // Sprint 2026-05-17 fix · BUGS encontrados:
+  //   A) algunas lineas mock/legacy traen `exp_id` como codigo
+  //      (ej. 'EXP-1027') en vez de UUID; el endpoint da 404. Filtramos
+  //      con un guard UUID-shaped antes de hacer fetch.
+  //   B) `oc` es un objeto nuevo en cada render (mapper recompone), por
+  //      lo que `oc?.lines` cambia de referencia y el useEffect se
+  //      re-dispara infinito. Usamos un deps "key" estable derivado
+  //      del set ordenado de expIds validos (string), no el array crudo.
   const [nodoByLineKey, setNodoByLineKey] = useState({});
+
+  // UUID v4 shape (8-4-4-4-12 hex). Defensivo: rechaza codigos tipo "EXP-1027".
+  const _looksUuid = (s) =>
+    typeof s === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
+  const _expIdsValid = useMemo(() => {
+    const lines = oc?.lines || [];
+    const raw = lines.map((l) => l.exp_id).filter(Boolean);
+    return Array.from(new Set(raw.filter(_looksUuid))).sort();
+  }, [oc?.lines]);  // safe: useMemo solo recomputa si la referencia
+                    // cambia, y el join de abajo estabiliza el deps
+                    // del useEffect aunque el array sea nuevo.
+
+  const _expIdsKey = _expIdsValid.join(",");
+
   useEffect(() => {
-    if (!oc?.lines || oc.lines.length === 0) return;
-    const expIds = Array.from(new Set((oc.lines || [])
-      .map((l) => l.exp_id).filter(Boolean)));
-    if (expIds.length === 0) return;
+    if (!_expIdsValid.length) {
+      // Si no hay UUIDs validos, limpiamos el mapa para no quedar con
+      // valores stale del fetch anterior.
+      setNodoByLineKey((prev) => (Object.keys(prev).length ? {} : prev));
+      return;
+    }
     let cancel = false;
-    Promise.all(expIds.map((eid) =>
+    Promise.all(_expIdsValid.map((eid) =>
       nodoAssignmentsApi.nodosPorLineaExpediente(eid).catch(() => [])
     )).then((results) => {
       if (cancel) return;
       const merged = {};
       results.forEach((rows, idx) => {
-        const expId = expIds[idx];
+        const expId = _expIdsValid[idx];
         const arr = Array.isArray(rows) ? rows : (rows?.results || []);
         for (const r of arr) {
           const k = `${expId}::${r.producto_id}::${r.talla || ""}`;
@@ -542,10 +569,18 @@ export default function ScreenOCDetail() {
           });
         }
       });
-      setNodoByLineKey(merged);
+      // Evitar setState si la data es identica — corta cualquier
+      // re-render redundante adicional.
+      setNodoByLineKey((prev) => {
+        try {
+          if (JSON.stringify(prev) === JSON.stringify(merged)) return prev;
+        } catch { /* fallthrough — comparacion fallo, hacemos set */ }
+        return merged;
+      });
     });
     return () => { cancel = true; };
-  }, [oc?.id, oc?.lines]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_expIdsKey]);
 
   // Sprint 2026-05-01: AddOCProductModal devuelve un array de rows con
   // { sku, talla, cantidad, producto_id, product_label, unit_price } —
