@@ -497,6 +497,9 @@ def _payments_dry_run(self, request):
         },
     })
 
+# DRF chequea __name__ == attr_name en get_extra_actions(); el monkey-patch
+# requiere ese fix-up antes del setattr para no romper el router.
+_payments_dry_run.__name__ = "dry_run"
 PaymentViewSet.dry_run = _payments_dry_run
 
 
@@ -538,6 +541,7 @@ def _payments_reconcile(self, request, pk=None):
     )
     return Response(PaymentDetailSerializer(p).data)
 
+_payments_reconcile.__name__ = "reconcile"
 PaymentViewSet.reconcile = _payments_reconcile
 
 
@@ -601,6 +605,7 @@ def _payments_release_credit(self, request, pk=None):
     )
     return Response(PaymentDetailSerializer(p).data)
 
+_payments_release_credit.__name__ = "release_credit"
 PaymentViewSet.release_credit = _payments_release_credit
 
 
@@ -697,6 +702,7 @@ def _payments_reject(self, request, pk=None):
     )
     return Response(PaymentDetailSerializer(p).data)
 
+_payments_reject.__name__ = "reject"
 PaymentViewSet.reject = _payments_reject
 
 
@@ -706,6 +712,7 @@ def _payments_select_rejection_reasons(self, request):
         {"codigo": r.value, "label": r.label}
         for r in PaymentRejectionReason
     ])
+_payments_select_rejection_reasons.__name__ = "select_rejection_reasons"
 PaymentViewSet.select_rejection_reasons = _payments_select_rejection_reasons
 
 
@@ -715,6 +722,7 @@ def _payments_select_counterparty_types(self, request):
         {"codigo": t.value, "label": t.label}
         for t in PaymentCounterpartyType
     ])
+_payments_select_counterparty_types.__name__ = "select_counterparty_types"
 PaymentViewSet.select_counterparty_types = _payments_select_counterparty_types
 
 
