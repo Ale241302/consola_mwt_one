@@ -38,7 +38,7 @@ import {
 } from "../constants/marluvas.js";
 import {
   calcSKU, parseExcelMarluvas, defaultSkuState,
-  computeMatrixFromInputs, cascadeRow,
+  computeMatrixFromInputs, cascadeRow, anchorPrice,
 } from "../lib/marluvasPricing.js";
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 
@@ -251,6 +251,9 @@ export default function ScreenBrandClientPricingForm() {
   const [showAllSkus, setShowAllSkus] = useState(false);  // override del filtro enabled-skus
   const [filterStats, setFilterStats] = useState(null);   // {parsed, kept, filtered} para banda informativa
   const [bandFilter, setBandFilter] = useState("essentials");  // "essentials" | "current" | "all"
+  // Ancla del editor (banda × plazo). Default = banda techo 90d (comportamiento legacy).
+  // Persiste por (brand, cliente) en localStorage; no toca backend.
+  const [anchor, setAnchor] = useState({ bandaId: 1, plazoDias: 90 });
   const fileInputRef = useRef(null);
 
   const { tc, loading: tcLoading, error: tcError, ts: tcTs, source: tcSource, reload: reloadTC } =
@@ -321,6 +324,11 @@ export default function ScreenBrandClientPricingForm() {
       if (saved.fechaInicio) setFechaInicio(saved.fechaInicio);
       if (saved.fechaFin) setFechaFin(saved.fechaFin);
       if (typeof saved.fechaFinIndef === "boolean") setFechaFinIndef(saved.fechaFinIndef);
+      if (saved.anchor && typeof saved.anchor === "object"
+          && Number.isFinite(saved.anchor.bandaId)
+          && Number.isFinite(saved.anchor.plazoDias)) {
+        setAnchor(saved.anchor);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brandId, clienteId, enabled.loading, loaded.loading]);
@@ -332,10 +340,10 @@ export default function ScreenBrandClientPricingForm() {
   useEffect(() => {
     if (!brandId || !clienteId) return;
     const id = setTimeout(() => {
-      saveLocal(brandId, clienteId, { skus, fechaInicio, fechaFin, fechaFinIndef });
+      saveLocal(brandId, clienteId, { skus, fechaInicio, fechaFin, fechaFinIndef, anchor });
     }, 300);
     return () => clearTimeout(id);
-  }, [brandId, clienteId, skus, fechaInicio, fechaFin, fechaFinIndef]);
+  }, [brandId, clienteId, skus, fechaInicio, fechaFin, fechaFinIndef, anchor]);
 
   // ── Excel handler ──
   // `opts.showAll` permite forzar el override del filtro enabled-skus sin
@@ -989,17 +997,112 @@ export default function ScreenBrandClientPricingForm() {
           </Section>
         </div>
 
-        {/* ── 2 · Editor SKUs (banda techo) ── */}
-        {vista === "editor" && skus.length > 0 && (
+        {/* ── 2 · Editor SKUs · ancla configurable ── */}
+        {vista === "editor" && skus.length > 0 && (() => {
+          // Banda + plazo del ancla — se usa en headers, celdas y resumen.
+          const anchorBanda = BANDAS_MARLUVAS.find((b) => b.id === anchor.bandaId) || BANDAS_MARLUVAS[0];
+          const anchorPlazo = PLAZOS_MARLUVAS.find((p) => p.dias === anchor.plazoDias) || PLAZOS_MARLUVAS[0];
+          const anchorLabel = `${anchorBanda.rango} · ${anchorPlazo.dias}d`;
+          const isAnchorTecho   = !!anchorBanda.techo;
+          const isAnchorPiso    = !!anchorBanda.piso;
+          const isAnchorVigente = bandaVigente?.id === anchorBanda.id;
+          const anchorTag = isAnchorTecho ? "TECHO"
+                          : isAnchorPiso  ? "PISO"
+                          : isAnchorVigente ? "VIGENTE"
+                          : `#${anchorBanda.id}`;
+          // Colores del ancla — heredan del tipo de banda (techo crema, piso verde, etc.)
+          const anchorBg = isAnchorTecho ? TECHO
+                         : isAnchorPiso  ? "#D1FAE5"
+                         : isAnchorVigente ? "#FEF3C7"
+                         : `${MINT}15`;
+          const anchorFg = isAnchorTecho ? "#9A4A1D"
+                         : isAnchorPiso  ? "#065F46"
+                         : isAnchorVigente ? "#92400E"
+                         : NAVY;
+          return (
           <Section
             title={lang === "es"
-              ? "SKUs · Banda techo 4,00–4,20 (divisor 4.07)"
-              : "SKUs · Top band 4.00–4.20 (÷4.07)"}
+              ? `SKUs · Anclado a ${anchorLabel}`
+              : `SKUs · Anchored to ${anchorLabel}`}
             subtitle={lang === "es"
-              ? "Ajuste $ y Sobreprecio % son modificadores independientes. Lista = Base + Ajuste $ + Base × Sobreprecio %. El Ajuste $ se suma absoluto en toda banda; el Sobreprecio % escala con la base de cada banda."
-              : "Adj. $ and Markup % are independent modifiers. List = Base + Adj. $ + Base × Markup %."}
+              ? "Base USD y Lista USD muestran la banda + plazo seleccionados como ancla. Editar Ajuste $ o Sobreprecio % en el editor regenera la matriz completa con el modelo aditivo: Lista = Base + Ajuste + Base × Sobreprecio."
+              : "Base USD and List USD reflect the selected anchor (band + term). Edit Adj. $ or Markup % to regenerate the full matrix: List = Base + Adj. + Base × Markup."}
             badge={{ label: `${skusActivos.length}/${skus.length} ACTIVOS`, color: NAVY, bg: `${MINT}22` }}
           >
+            {/* Toolbar selector de ancla (banda + plazo) */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+              marginBottom: 14, padding: "10px 14px",
+              background: SOFT, border: "1px solid #E5E7EB", borderRadius: 8,
+            }}>
+              <span style={{ font: "700 10px/1 var(--font-body)", color: MUTED,
+                textTransform: "uppercase", letterSpacing: 0.5 }}>
+                {lang === "es" ? "Anclar editor a" : "Anchor editor to"}
+              </span>
+              <select
+                value={anchor.bandaId}
+                onChange={(e) => setAnchor({ ...anchor, bandaId: Number(e.target.value) })}
+                style={{
+                  padding: "5px 8px", borderRadius: 5,
+                  border: "1px solid #CBD5E1", background: "#FFFFFF",
+                  font: "600 11.5px/1 var(--font-body)", color: NAVY,
+                  cursor: "pointer", outline: "none",
+                  fontVariantNumeric: "tabular-nums",
+                }}>
+                {BANDAS_MARLUVAS.map((b) => {
+                  const tag = b.techo ? " · TECHO"
+                            : b.piso  ? " · PISO"
+                            : bandaVigente?.id === b.id ? " · VIGENTE" : "";
+                  return (
+                    <option key={b.id} value={b.id}>
+                      #{b.id} · {b.rango} · ÷{b.div.toFixed(2)}{tag}
+                    </option>
+                  );
+                })}
+              </select>
+              <select
+                value={anchor.plazoDias}
+                onChange={(e) => setAnchor({ ...anchor, plazoDias: Number(e.target.value) })}
+                style={{
+                  padding: "5px 8px", borderRadius: 5,
+                  border: "1px solid #CBD5E1", background: "#FFFFFF",
+                  font: "600 11.5px/1 var(--font-body)", color: NAVY,
+                  cursor: "pointer", outline: "none",
+                  fontVariantNumeric: "tabular-nums",
+                }}>
+                {PLAZOS_MARLUVAS.map((p) => (
+                  <option key={p.dias} value={p.dias}>
+                    {p.dias}d · {p.sub}
+                  </option>
+                ))}
+              </select>
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                padding: "3px 9px", borderRadius: 12,
+                background: anchorBg, color: anchorFg,
+                font: "700 9.5px/1.2 var(--font-body)",
+                textTransform: "uppercase", letterSpacing: 0.5,
+                border: `1px solid ${anchorFg}55`,
+              }}>
+                {anchorTag} · ÷{anchorBanda.div.toFixed(2)}
+              </span>
+              <button type="button"
+                onClick={() => setAnchor({ bandaId: 1, plazoDias: 90 })}
+                disabled={anchor.bandaId === 1 && anchor.plazoDias === 90}
+                style={{
+                  marginLeft: "auto",
+                  padding: "5px 10px", borderRadius: 5,
+                  border: "1px solid #E5E7EB", background: "#FFFFFF", color: MUTED,
+                  font: "600 10.5px/1 var(--font-body)", cursor: "pointer",
+                  opacity: (anchor.bandaId === 1 && anchor.plazoDias === 90) ? 0.4 : 1,
+                }}
+                title={lang === "es"
+                  ? "Resetear ancla a banda techo 90d (default)"
+                  : "Reset anchor to top band 90d"}>
+                {lang === "es" ? "Resetear" : "Reset"}
+              </button>
+            </div>
+
             <div style={{ overflowX: "auto" }}>
               <table style={tblSku}>
                 <thead>
@@ -1009,22 +1112,24 @@ export default function ScreenBrandClientPricingForm() {
                     <th style={{ ...thSku, textAlign: "left" }}>{lang === "es" ? "Referencia" : "Reference"}</th>
                     <th style={thSku}>BRL</th>
                     <th style={thSku}>Com %</th>
-                    <th style={{ ...thSku, background: TECHO, color: "#9A4A1D" }}>
-                      Base USD<br/><small style={{ opacity: 0.7, fontWeight: 500 }}>90d techo</small>
+                    <th style={{ ...thSku, background: anchorBg, color: anchorFg }}>
+                      Base USD<br/>
+                      <small style={{ opacity: 0.75, fontWeight: 500 }}>{anchorLabel}</small>
                     </th>
-                    <th style={{ ...thSku, background: TECHO, color: "#9A4A1D" }}>
+                    <th style={{ ...thSku, background: anchorBg, color: anchorFg }}>
                       {lang === "es" ? "Ajuste $" : "Adj. $"}
                     </th>
                     <th style={thSku}>{lang === "es" ? "Sobreprecio" : "Markup"}</th>
-                    <th style={{ ...thSku, background: TECHO, color: "#9A4A1D" }}>
+                    <th style={{ ...thSku, background: anchorBg, color: anchorFg }}>
                       {lang === "es" ? "Lista USD" : "List USD"}<br/>
-                      <small style={{ opacity: 0.7, fontWeight: 500 }}>90d techo</small>
+                      <small style={{ opacity: 0.75, fontWeight: 500 }}>{anchorLabel}</small>
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   {skus.map((s, i) => {
                     const c = calcs[i];
+                    const ap = anchorPrice(s, anchor);   // {base, lista} en banda+plazo elegidos
                     return (
                       <tr key={s.sku} style={{ opacity: s.activo ? 1 : 0.4 }}>
                         <td style={tdSku}>
@@ -1061,13 +1166,13 @@ export default function ScreenBrandClientPricingForm() {
                               ? "Comisión % (base exponencial 1.0183^com). Default = comisión pactada del cliente."
                               : "Commission % (exponential base 1.0183^com)."}/>
                         </td>
-                        <td style={{ ...tdSku, background: `${TECHO}66` }}>{fmtUSD(c.baseUsdTecho)}</td>
-                        <td style={{ ...tdSku, background: `${TECHO}66` }}>
+                        <td style={{ ...tdSku, background: `${anchorBg}99` }}>{fmtUSD(ap.base)}</td>
+                        <td style={{ ...tdSku, background: `${anchorBg}99` }}>
                           <input type="number" min={0} step={0.25}
                             value={Number(s.ajuste).toFixed(2)}
                             onChange={(e) => patchSku(i, { ajuste: Math.max(0, Number(e.target.value) || 0) })}
                             onFocus={(e) => e.target.select()}
-                            style={{ ...inpMono(70), background: TECHO, borderColor: TECHO_STRONG, fontWeight: 700 }}/>
+                            style={{ ...inpMono(70), background: anchorBg, borderColor: anchorFg + "55", fontWeight: 700 }}/>
                         </td>
                         <td style={tdSku}>
                           <input type="number" min={0} max={500} step={0.5}
@@ -1083,8 +1188,8 @@ export default function ScreenBrandClientPricingForm() {
                               : "% over base — independent from Adj. $"}/>
                           <span style={{ color: AMBER, fontWeight: 700, fontSize: 9, marginLeft: 2 }}>%</span>
                         </td>
-                        <td style={{ ...tdSku, background: `${TECHO}66`, fontWeight: 700, color: NAVY }}>
-                          {fmtUSD(c.listaTecho)}
+                        <td style={{ ...tdSku, background: `${anchorBg}99`, fontWeight: 700, color: NAVY }}>
+                          {fmtUSD(ap.lista)}
                         </td>
                       </tr>
                     );
@@ -1093,26 +1198,35 @@ export default function ScreenBrandClientPricingForm() {
               </table>
             </div>
 
-            {/* Resumen de fila */}
-            <div style={{
-              marginTop: 12, display: "grid",
-              gridTemplateColumns: "repeat(5, 1fr)", gap: 10,
-              padding: 12, background: SOFT, borderRadius: 8,
-              border: "1px solid #E5E7EB",
-            }}>
-              <KPI label={lang === "es" ? "Activos" : "Active"} value={`${resumen.n}/${skus.length}`}/>
-              <KPI label={lang === "es" ? "Sobreprecio promedio" : "Avg markup"}
-                value={resumen.spAvg != null ? (resumen.spAvg * 100).toFixed(1) + "%" : "—"}
-                hi/>
-              <KPI label={lang === "es" ? "Comisión promedio" : "Avg commission"}
-                value={resumen.comAvg != null ? resumen.comAvg.toFixed(1) + "%" : "—"}/>
-              <KPI label={lang === "es" ? "Total 90d techo" : "Total 90d top"}
-                value={fmtUSD(resumen.total90)}/>
-              <KPI label={lang === "es" ? "Total 8d techo" : "Total 8d top"}
-                value={fmtUSD(resumen.total8)}/>
-            </div>
+            {/* Resumen de fila — totales reflejan el ancla seleccionada */}
+            {(() => {
+              const totalAncla = skusActivos.reduce(
+                (acc, s) => acc + anchorPrice(s, anchor).lista, 0);
+              const avgAncla = skusActivos.length > 0
+                ? totalAncla / skusActivos.length : 0;
+              return (
+                <div style={{
+                  marginTop: 12, display: "grid",
+                  gridTemplateColumns: "repeat(5, 1fr)", gap: 10,
+                  padding: 12, background: SOFT, borderRadius: 8,
+                  border: "1px solid #E5E7EB",
+                }}>
+                  <KPI label={lang === "es" ? "Activos" : "Active"} value={`${resumen.n}/${skus.length}`}/>
+                  <KPI label={lang === "es" ? "Sobreprecio promedio" : "Avg markup"}
+                    value={resumen.spAvg != null ? (resumen.spAvg * 100).toFixed(1) + "%" : "—"}
+                    hi/>
+                  <KPI label={lang === "es" ? "Comisión promedio" : "Avg commission"}
+                    value={resumen.comAvg != null ? resumen.comAvg.toFixed(1) + "%" : "—"}/>
+                  <KPI label={lang === "es" ? `Total ancla (${anchorLabel})` : `Anchor total (${anchorLabel})`}
+                    value={fmtUSD(totalAncla)}/>
+                  <KPI label={lang === "es" ? `Promedio ancla` : `Anchor avg`}
+                    value={fmtUSD(avgAncla)}/>
+                </div>
+              );
+            })()}
           </Section>
-        )}
+          );
+        })()}
 
         {/* ── 3 · Matriz de precios — rediseño UX ── */}
         {skusActivos.length > 0 && (

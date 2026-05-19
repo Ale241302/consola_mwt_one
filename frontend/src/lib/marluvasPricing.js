@@ -313,3 +313,37 @@ export function cascadeRow(row, plazoEdited, newValue) {
 function round4(n) {
   return Math.round(Number(n) * 10000) / 10000;
 }
+
+/**
+ * Calcula el precio Base USD y Lista USD para una banda + plazo arbitrarios
+ * (el "ancla" configurable del editor).
+ *
+ * Coincide al centavo con `matrix[anchor.bandaId][anchor.plazoDias]` cuando
+ * el SKU no tiene overrides manuales por celda.
+ *
+ *   Base_ancla  = (BRL / div[banda]) × 1.0183^com × 1.030 × factor_plazo[plazo]
+ *   Lista_ancla = (BRL/div × com × ME + Ajuste + BRL/div×com×ME × Sobreprecio)
+ *                  × factor_plazo[plazo]
+ *
+ * Equivalentemente: Lista_ancla = (Base[banda][90d] × (1+sobreprecio) + ajuste)
+ *                                  × factor_plazo[plazo]
+ *
+ * @param {SkuInput} sku
+ * @param {{bandaId?: number, plazoDias?: number}} [anchor]   default {1, 90}
+ * @returns {{ base:number, lista:number, banda:object, plazo:object }}
+ */
+export function anchorPrice(sku, anchor) {
+  const bandaId   = anchor?.bandaId   ?? 1;
+  const plazoDias = anchor?.plazoDias ?? 90;
+  const banda = BANDAS_MARLUVAS.find((b) => b.id === bandaId) || BANDAS_MARLUVAS[0];
+  const plazo = PLAZOS_MARLUVAS.find((p) => p.dias === plazoDias) || PLAZOS_MARLUVAS[0];
+
+  const baseSinPlazo = precioBaseUSD(sku.brl, banda.div, sku.com);
+  const ajuste       = Number(sku.ajuste || 0);
+  const sobreprecio  = Number(sku.sobreprecio || 0);
+
+  const base  = baseSinPlazo * plazo.factor;
+  const lista = (baseSinPlazo + ajuste + baseSinPlazo * sobreprecio) * plazo.factor;
+
+  return { base, lista, banda, plazo };
+}
