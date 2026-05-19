@@ -82,8 +82,8 @@ function orderClientsHierarchy(clients) {
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
 import PriceMatrixCompact from "../components/marluvas/PriceMatrixCompact.jsx";
-import { cascadeRow, precioBaseUSD, computeMatrixFromInputs } from "../lib/marluvasPricing.js";
-import { BANDAS_MARLUVAS, bandaForTC } from "../constants/marluvas.js";
+import { cascadeRow, computeMatrixFromInputs } from "../lib/marluvasPricing.js";
+import { BANDAS_MARLUVAS, bandaForTC, FACTOR_COMISION, INDICE_ME_90 } from "../constants/marluvas.js";
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 
 // TABS canónicos del detalle de producto. La visibilidad se recorta
@@ -411,24 +411,29 @@ export default function ScreenProductFormView() {
       if (c.cliente_id !== clienteId) return c;
 
       if (isAnchor90) {
+        // Edit 90d en CUALQUIER banda → retro-calcula BRL para que
+        // Base USD = val. Resetea ajuste y sobreprecio.
+        // Fórmula inversa: nuevo_BRL = (val × div[banda]) / (1.0183^com × 1.030)
         const banda = BANDAS_MARLUVAS.find((b) => b.id === bandaId);
         if (!banda) return c;
-        // SkuInput-like para reusar la fórmula maestra.
-        const skuInput = {
-          brl:         Number(c.brl_override || 0),
-          com:         Number(c.com_pct || 0),
-          ajuste:      Number(c.ajuste_usd || 0),
-          sobreprecio: Number(c.sobreprecio_pct || 0),
+        const com = Number(c.com_pct || 0);
+        const factorCom = Math.pow(FACTOR_COMISION, com);
+        const denom = factorCom * INDICE_ME_90;
+        const newBrl = denom > 0
+          ? Number(((val * banda.div) / denom).toFixed(4))
+          : Number(c.brl_override || 0);
+        const updatedInput = {
+          brl:         newBrl,
+          com,
+          ajuste:      0,
+          sobreprecio: 0,
         };
-        const baseBanda = precioBaseUSD(skuInput.brl, banda.div, skuInput.com);
-        const newSobreprecio = baseBanda > 0
-          ? Number(((val - baseBanda - skuInput.ajuste) / baseBanda).toFixed(6))
-          : 0;
-        const updatedInput = { ...skuInput, sobreprecio: newSobreprecio };
         const newMatrix = computeMatrixFromInputs(updatedInput);
         return {
           ...c,
-          sobreprecio_pct: newSobreprecio,
+          brl_override:    newBrl,
+          ajuste_usd:      0,
+          sobreprecio_pct: 0,
           prices_matrix:   newMatrix,
         };
       }

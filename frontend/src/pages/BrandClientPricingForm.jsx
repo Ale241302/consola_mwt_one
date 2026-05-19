@@ -34,10 +34,11 @@ import { apiFetch, clientesApi, marcasApi } from "../lib/api.js";
 import { CLIENTS, BRANDS } from "../data/mockData.js";
 import {
   BANDAS_MARLUVAS, PLAZOS_MARLUVAS, bandaForTC, fmtUSD, fmtPct,
+  FACTOR_COMISION, INDICE_ME_90,
 } from "../constants/marluvas.js";
 import {
   calcSKU, parseExcelMarluvas, defaultSkuState,
-  computeMatrixFromInputs, cascadeRow, precioBaseUSD,
+  computeMatrixFromInputs, cascadeRow,
 } from "../lib/marluvasPricing.js";
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 
@@ -473,15 +474,30 @@ export default function ScreenBrandClientPricingForm() {
       const isAnchor90 = Number(plazoDias) === 90;
 
       if (isAnchor90) {
-        // Derrame global vía sobreprecio% recalculado desde la banda editada.
+        // Edit 90d en CUALQUIER banda → interpretamos como "este es el
+        // precio efectivo total para esa banda". Retro-calculamos el BRL
+        // que produce ese Base USD (Ajuste $ y Sobreprecio % se resetean
+        // para garantizar Base USD = Lista USD = matriz 90d en el editor).
+        //
+        // Fórmula inversa:
+        //   nuevo_BRL = (P_90d × div[banda]) / (1.0183^com × 1.030)
+        //
+        // Independientemente de qué banda se edite, el BRL resultante es
+        // el mismo (porque el factor de banda × divisor se cancela en la
+        // fórmula maestra).
         const banda = BANDAS_MARLUVAS.find((b) => b.id === bandaId);
         if (!banda) return s;
-        const baseBanda = precioBaseUSD(s.brl, banda.div, s.com);
-        const ajuste = Number(s.ajuste || 0);
-        const newSobreprecio = baseBanda > 0
-          ? Number(((val - baseBanda - ajuste) / baseBanda).toFixed(6))
-          : 0;
-        const updated = { ...s, sobreprecio: newSobreprecio };
+        const factorCom = Math.pow(FACTOR_COMISION, Number(s.com || 0));
+        const denom = factorCom * INDICE_ME_90;
+        const newBrl = denom > 0
+          ? Number(((val * banda.div) / denom).toFixed(4))
+          : Number(s.brl || 0);
+        const updated = {
+          ...s,
+          brl:         newBrl,
+          ajuste:      0,
+          sobreprecio: 0,
+        };
         updated.matrix = computeMatrixFromInputs(updated);
         return updated;
       }
