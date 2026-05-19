@@ -82,8 +82,8 @@ function orderClientsHierarchy(clients) {
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
 import PriceMatrixCompact from "../components/marluvas/PriceMatrixCompact.jsx";
-import { cascadeRow } from "../lib/marluvasPricing.js";
-import { bandaForTC } from "../constants/marluvas.js";
+import { cascadeRow, precioBaseUSD, computeMatrixFromInputs } from "../lib/marluvasPricing.js";
+import { BANDAS_MARLUVAS, bandaForTC } from "../constants/marluvas.js";
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 
 // TABS canónicos del detalle de producto. La visibilidad se recorta
@@ -396,12 +396,46 @@ export default function ScreenProductFormView() {
     return () => { cancelled = true; };
   }, [isEdit, existing?.sku, brandId]);
 
-  // Editor de celda: cascade jerárquico sobre la matriz del cliente.
+  // Editor de celda con dos semánticas:
+  //   · Edit 90d (cualquier banda) → derrame global: recalcula sobreprecio%
+  //     del cliente a partir de la celda editada y regenera la matriz
+  //     completa (12 bandas × 4 plazos) con computeMatrixFromInputs. Esto
+  //     mantiene la coherencia con el simulador cliente-marca, donde editar
+  //     90d en una banda recalcula las otras 11.
+  //   · Edit 60d / 30d / 8d → cascade lateral SOLO en esa banda (no toca
+  //     las otras). Permite override puntual de descuentos pronto pago.
   const handleMatrixCellChange = (clienteId, bandaId, plazoDias, newValue) => {
+    const val = Number(newValue) || 0;
+    const isAnchor90 = Number(plazoDias) === 90;
     setClientMatrices((arr) => arr.map((c) => {
       if (c.cliente_id !== clienteId) return c;
+
+      if (isAnchor90) {
+        const banda = BANDAS_MARLUVAS.find((b) => b.id === bandaId);
+        if (!banda) return c;
+        // SkuInput-like para reusar la fórmula maestra.
+        const skuInput = {
+          brl:         Number(c.brl_override || 0),
+          com:         Number(c.com_pct || 0),
+          ajuste:      Number(c.ajuste_usd || 0),
+          sobreprecio: Number(c.sobreprecio_pct || 0),
+        };
+        const baseBanda = precioBaseUSD(skuInput.brl, banda.div, skuInput.com);
+        const newSobreprecio = baseBanda > 0
+          ? Number(((val - baseBanda - skuInput.ajuste) / baseBanda).toFixed(6))
+          : 0;
+        const updatedInput = { ...skuInput, sobreprecio: newSobreprecio };
+        const newMatrix = computeMatrixFromInputs(updatedInput);
+        return {
+          ...c,
+          sobreprecio_pct: newSobreprecio,
+          prices_matrix:   newMatrix,
+        };
+      }
+
+      // Cascade lateral local para 60/30/8d.
       const row = c.prices_matrix?.[String(bandaId)] || {};
-      const newRow = cascadeRow(row, plazoDias, Number(newValue) || 0);
+      const newRow = cascadeRow(row, plazoDias, val);
       return {
         ...c,
         prices_matrix: { ...(c.prices_matrix || {}), [String(bandaId)]: newRow },

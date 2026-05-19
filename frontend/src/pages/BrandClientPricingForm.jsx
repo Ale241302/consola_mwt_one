@@ -37,7 +37,7 @@ import {
 } from "../constants/marluvas.js";
 import {
   calcSKU, parseExcelMarluvas, defaultSkuState,
-  computeMatrixFromInputs, cascadeRow,
+  computeMatrixFromInputs, cascadeRow, precioBaseUSD,
 } from "../lib/marluvasPricing.js";
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 
@@ -448,14 +448,48 @@ export default function ScreenBrandClientPricingForm() {
       return merged;
     }));
   };
-  // Edición de UNA celda de la matriz: aplica cascade lateral en esa banda.
-  // Plazos: 90 → 60 → 30 → 8. Editar uno solo afecta a los más cortos.
+  // Edición de UNA celda de la matriz.
+  //
+  // Dos semánticas según el plazo editado:
+  //
+  //   · Edit 90d (cualquier banda) → es el "precio ancla" → recalcular
+  //     sobreprecio% global y regenerar TODA la matriz + editor refleja
+  //     el nuevo valor. Esto sincroniza editor ↔ matriz para que sean
+  //     dos vistas de los mismos datos.
+  //
+  //   · Edit 60d / 30d / 8d → cascade lateral SOLO en esa banda
+  //     (recalcula los plazos más cortos con ratios relativos al nuevo
+  //     valor). NO toca el editor ni otras bandas — el operador está
+  //     rompiendo intencionalmente los descuentos default por esa banda.
+  //
+  // Fórmula del derrame 90d:
+  //   nuevo_sobreprecio% = (P_90d_edited − P_base[banda] − Ajuste$) / P_base[banda]
+  //   donde P_base[banda] = (BRL / div[banda]) × 1.0183^com × 1.030
+  // Luego computeMatrixFromInputs regenera las 12 bandas con ese sobreprecio%.
   const patchCell = (idx, bandaId, plazoDias, newValue) => {
     setSkus((arr) => arr.map((s, i) => {
       if (i !== idx) return s;
+      const val = Number(newValue) || 0;
+      const isAnchor90 = Number(plazoDias) === 90;
+
+      if (isAnchor90) {
+        // Derrame global vía sobreprecio% recalculado desde la banda editada.
+        const banda = BANDAS_MARLUVAS.find((b) => b.id === bandaId);
+        if (!banda) return s;
+        const baseBanda = precioBaseUSD(s.brl, banda.div, s.com);
+        const ajuste = Number(s.ajuste || 0);
+        const newSobreprecio = baseBanda > 0
+          ? Number(((val - baseBanda - ajuste) / baseBanda).toFixed(6))
+          : 0;
+        const updated = { ...s, sobreprecio: newSobreprecio };
+        updated.matrix = computeMatrixFromInputs(updated);
+        return updated;
+      }
+
+      // Cascade lateral local (mismo comportamiento que antes para 60/30/8d).
       const matrix = s.matrix || computeMatrixFromInputs(s);
       const row = matrix[String(bandaId)] || {};
-      const newRow = cascadeRow(row, plazoDias, Number(newValue) || 0);
+      const newRow = cascadeRow(row, plazoDias, val);
       return { ...s, matrix: { ...matrix, [String(bandaId)]: newRow } };
     }));
   };
