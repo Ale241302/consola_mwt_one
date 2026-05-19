@@ -225,9 +225,13 @@ export function parseExcelMarluvas(arrayBuffer, { XLSX }) {
  * IMPORTANTE: incluye `matrix` precalculada desde los inputs. La matriz
  * ahora es state principal (editable celda a celda), no derivada.
  *
+ * El campo opcional `anchor` (por-SKU) override del ancla global del editor.
+ * Si no se pasa, el SKU usa el ancla global como fallback (Fase 1).
+ *
  * @param {{sku:string, ref:string, brl:number}} parsed
- * @param {{com?: number, activo?: boolean}} [defaults]
- * @returns {SkuInput & {matrix: Object}}
+ * @param {{com?: number, activo?: boolean,
+ *          anchor?: {bandaId:number, plazoDias:number}}} [defaults]
+ * @returns {SkuInput & {matrix: Object, anchor?: object}}
  */
 export function defaultSkuState(parsed, defaults = {}) {
   const com = Number.isFinite(defaults.com) ? defaults.com : 0;
@@ -241,6 +245,14 @@ export function defaultSkuState(parsed, defaults = {}) {
     sobreprecio: 0,
     activo,
   };
+  if (defaults.anchor
+      && Number.isFinite(defaults.anchor.bandaId)
+      && Number.isFinite(defaults.anchor.plazoDias)) {
+    base.anchor = {
+      bandaId:   defaults.anchor.bandaId,
+      plazoDias: defaults.anchor.plazoDias,
+    };
+  }
   return { ...base, matrix: computeMatrixFromInputs(base) };
 }
 

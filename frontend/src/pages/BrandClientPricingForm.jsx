@@ -519,6 +519,44 @@ export default function ScreenBrandClientPricingForm() {
   };
   const toggleSku = (idx) => patchSku(idx, { activo: !skus[idx].activo });
 
+  // ── Ancla por SKU (Fase 2) ──
+  // Cada SKU puede tener su propia ancla {bandaId, plazoDias}. Si no la tiene,
+  // hereda la del editor (state `anchor` global). Útil cuando distintos SKUs
+  // de un cliente se cotizan con distintas perspectivas (palmilha siempre
+  // en banda piso, bota siempre en vigente, etc.).
+  const resolvedAnchor = (s) => {
+    if (s.anchor
+        && Number.isFinite(s.anchor.bandaId)
+        && Number.isFinite(s.anchor.plazoDias)) {
+      return s.anchor;
+    }
+    return anchor;
+  };
+  const patchSkuAnchor = (idx, partial) => {
+    setSkus((arr) => arr.map((s, i) => {
+      if (i !== idx) return s;
+      const current = s.anchor || anchor;
+      return { ...s, anchor: { ...current, ...partial } };
+    }));
+  };
+  const clearSkuAnchor = (idx) => {
+    setSkus((arr) => arr.map((s, i) => {
+      if (i !== idx) return s;
+      // Remueve `anchor` para que el SKU vuelva a usar el ancla global.
+      // eslint-disable-next-line no-unused-vars
+      const { anchor: _drop, ...rest } = s;
+      return rest;
+    }));
+  };
+  const clearAllSkuAnchors = () => {
+    setSkus((arr) => arr.map((s) => {
+      if (!s.anchor) return s;
+      // eslint-disable-next-line no-unused-vars
+      const { anchor: _drop, ...rest } = s;
+      return rest;
+    }));
+  };
+
   // ── Derivados ──
   const skusActivos = useMemo(() => skus.filter((s) => s.activo), [skus]);
   const calcs = useMemo(() => skus.map((s) => calcSKU(s)), [skus]);
@@ -1086,6 +1124,44 @@ export default function ScreenBrandClientPricingForm() {
               }}>
                 {anchorTag} · ÷{anchorBanda.div.toFixed(2)}
               </span>
+              {/* Contador de SKUs con override individual + acción "limpiar todos" */}
+              {(() => {
+                const overriddenCount = skus.filter((s) => !!s.anchor).length;
+                return overriddenCount > 0 ? (
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    padding: "3px 9px", borderRadius: 12,
+                    background: `${AMBER}15`, color: "#92400E",
+                    font: "700 9.5px/1.2 var(--font-body)",
+                    border: `1px solid ${AMBER}55`,
+                    textTransform: "uppercase", letterSpacing: 0.4,
+                  }}
+                    title={lang === "es"
+                      ? "Cada SKU puede tener su propia ancla — override por fila"
+                      : "Each SKU can have its own anchor"}>
+                    {overriddenCount} {lang === "es" ? "SKUs con ancla propia" : "SKUs with own anchor"}
+                    <button type="button"
+                      onClick={() => {
+                        if (window.confirm(lang === "es"
+                          ? `¿Resetear el ancla individual de ${overriddenCount} SKU(s) al ancla global?`
+                          : `Reset individual anchor of ${overriddenCount} SKU(s) to global?`)) {
+                          clearAllSkuAnchors();
+                        }
+                      }}
+                      style={{
+                        marginLeft: 4, padding: "0 5px", borderRadius: 3,
+                        border: "1px solid " + AMBER + "55", background: "#FFFFFF",
+                        color: "#92400E", cursor: "pointer",
+                        font: "700 10px/1 var(--font-body)",
+                      }}
+                      title={lang === "es"
+                        ? "Limpiar anclas individuales de todos los SKUs"
+                        : "Clear individual anchors of all SKUs"}>
+                      ↺
+                    </button>
+                  </span>
+                ) : null;
+              })()}
               <button type="button"
                 onClick={() => setAnchor({ bandaId: 1, plazoDias: 90 })}
                 disabled={anchor.bandaId === 1 && anchor.plazoDias === 90}
@@ -1097,9 +1173,9 @@ export default function ScreenBrandClientPricingForm() {
                   opacity: (anchor.bandaId === 1 && anchor.plazoDias === 90) ? 0.4 : 1,
                 }}
                 title={lang === "es"
-                  ? "Resetear ancla a banda techo 90d (default)"
-                  : "Reset anchor to top band 90d"}>
-                {lang === "es" ? "Resetear" : "Reset"}
+                  ? "Resetear ancla global a banda techo 90d (default)"
+                  : "Reset global anchor to top band 90d"}>
+                {lang === "es" ? "Resetear global" : "Reset global"}
               </button>
             </div>
 
@@ -1112,24 +1188,47 @@ export default function ScreenBrandClientPricingForm() {
                     <th style={{ ...thSku, textAlign: "left" }}>{lang === "es" ? "Referencia" : "Reference"}</th>
                     <th style={thSku}>BRL</th>
                     <th style={thSku}>Com %</th>
-                    <th style={{ ...thSku, background: anchorBg, color: anchorFg }}>
-                      Base USD<br/>
-                      <small style={{ opacity: 0.75, fontWeight: 500 }}>{anchorLabel}</small>
+                    <th style={thSku}>
+                      {lang === "es" ? "Ancla SKU" : "SKU anchor"}<br/>
+                      <small style={{ opacity: 0.7, fontWeight: 500 }}>
+                        {lang === "es" ? "override del global" : "global override"}
+                      </small>
                     </th>
-                    <th style={{ ...thSku, background: anchorBg, color: anchorFg }}>
+                    <th style={thSku}>
+                      Base USD<br/>
+                      <small style={{ opacity: 0.7, fontWeight: 500 }}>
+                        {lang === "es" ? "ancla del SKU" : "SKU anchor"}
+                      </small>
+                    </th>
+                    <th style={thSku}>
                       {lang === "es" ? "Ajuste $" : "Adj. $"}
                     </th>
                     <th style={thSku}>{lang === "es" ? "Sobreprecio" : "Markup"}</th>
-                    <th style={{ ...thSku, background: anchorBg, color: anchorFg }}>
+                    <th style={thSku}>
                       {lang === "es" ? "Lista USD" : "List USD"}<br/>
-                      <small style={{ opacity: 0.75, fontWeight: 500 }}>{anchorLabel}</small>
+                      <small style={{ opacity: 0.7, fontWeight: 500 }}>
+                        {lang === "es" ? "ancla del SKU" : "SKU anchor"}
+                      </small>
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   {skus.map((s, i) => {
                     const c = calcs[i];
-                    const ap = anchorPrice(s, anchor);   // {base, lista} en banda+plazo elegidos
+                    // Cada SKU resuelve su propia ancla (override > global).
+                    const sAnchor = resolvedAnchor(s);
+                    const ap = anchorPrice(s, sAnchor);
+                    const hasOverride = !!s.anchor;
+                    const sBanda = BANDAS_MARLUVAS.find((b) => b.id === sAnchor.bandaId) || BANDAS_MARLUVAS[0];
+                    // Colores específicos del ancla de este SKU
+                    const sBg = sBanda.techo ? TECHO
+                              : sBanda.piso  ? "#D1FAE5"
+                              : bandaVigente?.id === sBanda.id ? "#FEF3C7"
+                              : `${MINT}15`;
+                    const sFg = sBanda.techo ? "#9A4A1D"
+                              : sBanda.piso  ? "#065F46"
+                              : bandaVigente?.id === sBanda.id ? "#92400E"
+                              : NAVY;
                     return (
                       <tr key={s.sku} style={{ opacity: s.activo ? 1 : 0.4 }}>
                         <td style={tdSku}>
@@ -1166,13 +1265,70 @@ export default function ScreenBrandClientPricingForm() {
                               ? "Comisión % (base exponencial 1.0183^com). Default = comisión pactada del cliente."
                               : "Commission % (exponential base 1.0183^com)."}/>
                         </td>
-                        <td style={{ ...tdSku, background: `${anchorBg}99` }}>{fmtUSD(ap.base)}</td>
-                        <td style={{ ...tdSku, background: `${anchorBg}99` }}>
+                        {/* Ancla por SKU — dropdowns compactos + indicador override */}
+                        <td style={tdSku}>
+                          <div style={{
+                            display: "inline-flex", alignItems: "center", gap: 3,
+                          }}>
+                            <select
+                              value={sAnchor.bandaId}
+                              onChange={(e) => patchSkuAnchor(i, { bandaId: Number(e.target.value) })}
+                              style={{
+                                padding: "3px 4px", borderRadius: 4,
+                                border: `1px solid ${hasOverride ? sFg + "55" : "#E5E7EB"}`,
+                                background: hasOverride ? `${sBg}55` : "#FFFFFF",
+                                color: hasOverride ? sFg : NAVY,
+                                font: "600 10px/1 var(--font-body)",
+                                cursor: "pointer", outline: "none",
+                                fontVariantNumeric: "tabular-nums",
+                              }}
+                              title={lang === "es" ? "Banda ancla del SKU" : "SKU anchor band"}>
+                              {BANDAS_MARLUVAS.map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  #{b.id}{b.techo ? " T" : b.piso ? " P" : ""}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={sAnchor.plazoDias}
+                              onChange={(e) => patchSkuAnchor(i, { plazoDias: Number(e.target.value) })}
+                              style={{
+                                padding: "3px 4px", borderRadius: 4,
+                                border: `1px solid ${hasOverride ? sFg + "55" : "#E5E7EB"}`,
+                                background: hasOverride ? `${sBg}55` : "#FFFFFF",
+                                color: hasOverride ? sFg : NAVY,
+                                font: "600 10px/1 var(--font-body)",
+                                cursor: "pointer", outline: "none",
+                                fontVariantNumeric: "tabular-nums",
+                              }}
+                              title={lang === "es" ? "Plazo ancla del SKU" : "SKU anchor term"}>
+                              {PLAZOS_MARLUVAS.map((p) => (
+                                <option key={p.dias} value={p.dias}>{p.dias}d</option>
+                              ))}
+                            </select>
+                            {hasOverride && (
+                              <button type="button"
+                                onClick={() => clearSkuAnchor(i)}
+                                style={{
+                                  width: 18, height: 18, borderRadius: 3,
+                                  border: "1px solid #E5E7EB", background: "#FFFFFF",
+                                  color: MUTED, cursor: "pointer", padding: 0,
+                                  font: "700 11px/1 var(--font-body)",
+                                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                }}
+                                title={lang === "es"
+                                  ? "Volver al ancla global"
+                                  : "Revert to global anchor"}>↺</button>
+                            )}
+                          </div>
+                        </td>
+                        <td style={{ ...tdSku, background: `${sBg}99` }}>{fmtUSD(ap.base)}</td>
+                        <td style={{ ...tdSku, background: `${sBg}99` }}>
                           <input type="number" min={0} step={0.25}
                             value={Number(s.ajuste).toFixed(2)}
                             onChange={(e) => patchSku(i, { ajuste: Math.max(0, Number(e.target.value) || 0) })}
                             onFocus={(e) => e.target.select()}
-                            style={{ ...inpMono(70), background: anchorBg, borderColor: anchorFg + "55", fontWeight: 700 }}/>
+                            style={{ ...inpMono(70), background: sBg, borderColor: sFg + "55", fontWeight: 700 }}/>
                         </td>
                         <td style={tdSku}>
                           <input type="number" min={0} max={500} step={0.5}
@@ -1188,7 +1344,7 @@ export default function ScreenBrandClientPricingForm() {
                               : "% over base — independent from Adj. $"}/>
                           <span style={{ color: AMBER, fontWeight: 700, fontSize: 9, marginLeft: 2 }}>%</span>
                         </td>
-                        <td style={{ ...tdSku, background: `${anchorBg}99`, fontWeight: 700, color: NAVY }}>
+                        <td style={{ ...tdSku, background: `${sBg}99`, fontWeight: 700, color: NAVY }}>
                           {fmtUSD(ap.lista)}
                         </td>
                       </tr>
@@ -1200,8 +1356,9 @@ export default function ScreenBrandClientPricingForm() {
 
             {/* Resumen de fila — totales reflejan el ancla seleccionada */}
             {(() => {
+              // Cada SKU suma con SU ancla resuelta (override por-SKU o global).
               const totalAncla = skusActivos.reduce(
-                (acc, s) => acc + anchorPrice(s, anchor).lista, 0);
+                (acc, s) => acc + anchorPrice(s, resolvedAnchor(s)).lista, 0);
               const avgAncla = skusActivos.length > 0
                 ? totalAncla / skusActivos.length : 0;
               return (
