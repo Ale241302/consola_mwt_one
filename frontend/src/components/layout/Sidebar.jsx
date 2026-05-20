@@ -142,23 +142,34 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     // borrar, el contador se actualiza solo. Sin esto quedaba estancado.
   }, [location.pathname]);
 
+  // Sprint 2026-05-20 · Reorg sidebar.
+  //   · Ocultos: pagos (Financiero), suppliers (Proveedores),
+  //     templates (Plantillas), pipeline → quedan fuera del nav.
+  //   · Renombrados de grupo:
+  //       structure     → commercial  (Comercial)
+  //       financiero    → warehouse   (Almacén & Logística)
+  //       notifications → communications (Comunicaciones)
+  //   · Renombrados de item:
+  //       history      → "Notificaciones" / "Notifications"
+  //       collections  → "Cartera"        / "Portfolio"
+  //   · Movidos: nodos + inventario al grupo warehouse.
   const allItems = [
     { key: 'dashboard',      icon: <IconHome/>,       label: tr(lang,'dashboard'),     group: 'core' },
     { key: 'expedientes',    icon: <IconFolder/>,     label: expedientesLabel,         group: 'core', counter: expedientesCount },
-    { key: 'pipeline',       icon: <IconKanban/>,     label: tr(lang,'pipeline'),      group: 'core' },
     { key: 'portal',         icon: <IconBuilding/>,   label: tr(lang,'portal'),        group: 'core' },
-    { key: 'pagos',          icon: <IconDollar/>,     label: tr(lang,'financiero'),    group: 'financiero' },
-    { key: 'transfers',      icon: <IconSwap/>,       label: tr(lang,'transfers'),     group: 'financiero' },
-    { key: 'nodos',          icon: <IconNetwork/>,    label: tr(lang,'nodos'),         group: 'structure' },
-    { key: 'clientes',       icon: <IconUsers/>,      label: tr(lang,'clientes'),      group: 'structure' },
-    { key: 'brands',         icon: <IconTag/>,        label: tr(lang,'brands'),        group: 'structure' },
-    { key: 'productos',      icon: <IconBoxes/>,      label: tr(lang,'productos'),     group: 'structure' },
-    { key: 'suppliers',      icon: <IconTruck/>,      label: tr(lang,'suppliers'),     group: 'structure' },
-    { key: 'inventario',     icon: <IconWarehouse/>,  label: tr(lang,'inventario'),    group: 'structure' },
-    { key: 'templates',      icon: <IconMail/>,       label: tr(lang,'templates'),     group: 'notifications' },
-    { key: 'history',        icon: <IconHistory/>,    label: tr(lang,'history'),       group: 'notifications' },
-    { key: 'collections',    icon: <IconCreditCard/>, label: tr(lang,'collections'),   group: 'notifications' },
-    { key: 'tickets',       icon: <IconClipboard/>,       label: tr(lang,'tickets')  || 'Gestor de Tickets', group: 'support' },
+    // Almacén & Logística
+    { key: 'transfers',      icon: <IconSwap/>,       label: tr(lang,'transfers'),     group: 'warehouse' },
+    { key: 'nodos',          icon: <IconNetwork/>,    label: tr(lang,'nodos'),         group: 'warehouse' },
+    { key: 'inventario',     icon: <IconWarehouse/>,  label: tr(lang,'inventario'),    group: 'warehouse' },
+    // Comercial
+    { key: 'clientes',       icon: <IconUsers/>,      label: tr(lang,'clientes'),      group: 'commercial' },
+    { key: 'brands',         icon: <IconTag/>,        label: tr(lang,'brands'),        group: 'commercial' },
+    { key: 'productos',      icon: <IconBoxes/>,      label: tr(lang,'productos'),     group: 'commercial' },
+    // Comunicaciones
+    { key: 'history',        icon: <IconHistory/>,    label: lang === 'en' ? 'Notifications' : 'Notificaciones', group: 'communications' },
+    { key: 'collections',    icon: <IconCreditCard/>, label: lang === 'en' ? 'Portfolio'     : 'Cartera',        group: 'communications' },
+    // Soporte
+    { key: 'tickets',        icon: <IconClipboard/>,  label: tr(lang,'tickets')  || 'Gestor de Tickets', group: 'support' },
     // M3 CORE — gestión de acceso del ERP. Sólo visibles para admin
     // (el whitelist de CLIENT_ALLOWED_MODULES NO los incluye).
     { key: 'usuarios',       icon: <IconUsers/>,      label: tr(lang,'users')    || 'Usuarios',         group: 'core_admin' },
@@ -177,12 +188,12 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     return (!v || v === key) ? fallback : v;
   };
   const groups = [
-    { key: 'core',          label: '',                                                                   defaultOpen: true  },
-    { key: 'financiero',    label: labelOr('financiero',    lang === 'en' ? 'Financials'     : 'Financiero'),     defaultOpen: false },
-    { key: 'structure',     label: labelOr('structure',     lang === 'en' ? 'Structure'      : 'Estructura'),     defaultOpen: false },
-    { key: 'notifications', label: labelOr('notifications', lang === 'en' ? 'Notifications'  : 'Notificaciones'), defaultOpen: false },
-    { key: 'support',       label: lang === 'en' ? 'Support'         : 'Soporte',                              defaultOpen: false },
-    { key: 'core_admin',    label: lang === 'en' ? 'Administration' : 'Administración',                             defaultOpen: false },
+    { key: 'core',           label: '',                                                                   defaultOpen: true  },
+    { key: 'commercial',     label: lang === 'en' ? 'Commercial'           : 'Comercial',                 defaultOpen: false },
+    { key: 'warehouse',      label: lang === 'en' ? 'Warehouse & Logistics': 'Almacén & Logística',       defaultOpen: false },
+    { key: 'communications', label: lang === 'en' ? 'Communications'       : 'Comunicaciones',            defaultOpen: false },
+    { key: 'support',        label: lang === 'en' ? 'Support'              : 'Soporte',                   defaultOpen: false },
+    { key: 'core_admin',     label: lang === 'en' ? 'Administration'       : 'Administración',            defaultOpen: false },
   ];
 
   // ── Secciones colapsables · persistencia en localStorage ────────
