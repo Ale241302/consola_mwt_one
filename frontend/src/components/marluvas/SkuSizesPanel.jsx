@@ -116,7 +116,6 @@ export default function SkuSizesPanel({
               border: `1px solid ${hasOverride ? `${AMBER}55` : "#E5E7EB"}`,
               borderLeft: `3px solid ${hasOverride ? AMBER : "#CBD5E1"}`,
               borderRadius: 8,
-              opacity: hasOverride ? 1 : 0.95,
             }}>
               <div style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -193,16 +192,11 @@ export default function SkuSizesPanel({
                 )}
               </div>
 
-              <div style={{
-                opacity: hasOverride ? 1 : 0.55,
-                filter: hasOverride ? "none" : "grayscale(0.25)",
-                transition: "opacity 140ms, filter 140ms",
-              }}
-                title={!hasOverride
-                  ? (lang === "es"
-                      ? "Valores heredados del SKU — editar cualquier celda crea el override"
-                      : "Inherited from SKU — editing any cell creates the override")
-                  : undefined}>
+              <div title={!hasOverride
+                ? (lang === "es"
+                    ? "Valores heredados del SKU — editar cualquier celda crea el override"
+                    : "Inherited from SKU — editing any cell creates the override")
+                : undefined}>
                 <PriceMatrixCompact
                   matrix={matrixToRender}
                   bandaVigente={bandaVigente}
