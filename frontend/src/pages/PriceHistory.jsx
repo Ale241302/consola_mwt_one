@@ -5,25 +5,48 @@
 // F6 · Sprint 2026-05-20 · Bitácora histórica de cambios de precios.
 // CEO-ONLY: lista todos los eventos de "Guardar" del motor de precios
 // Marluvas (vista cliente-marca). Click en una fila → drawer read-only
-// con el snapshot completo (ancla + matriz por SKU).
+// con el snapshot completo (ancla + matriz por SKU + tallas).
+//
+// Re-diseño 2026-05-20 (post-F6.1):
+//   El render del SKU dentro del drawer ahora replica visualmente el motor:
+//     · Header del SKU con BRL, COM%, badge de ancla (con tipo
+//       TECHO/VIGENTE/PISO y rango de FX), Base USD, Ajuste $,
+//       Sobreprecio %, Lista USD.
+//     · Matriz "USD por par" con bandas como columnas (colores por tipo),
+//       plazos como sub-columnas con su sub-label (base, +1%, -1%, etc.).
+//     · Toggle "Esenciales | Todas las bandas".
+//     · Si el SKU tiene overrides por talla (sizes_pricing), aparece un
+//       toggle "+ tallas con override (N)" que expande cards por talla
+//       con su propia matriz (mismo formato que el motor).
 //
 // Endpoints:
 //   GET /commercial/marluvas/price-history/?brand_id=&cliente_id=&sku=&since=&limit=
 //   GET /commercial/marluvas/price-history/<event_id>/
-//
-// Filtros UI:
-//   · Marca (dropdown)
-//   · Cliente (dropdown)
-//   · SKU (input texto)
-//   · Desde fecha (date input)
 // =====================================================================
 import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext.jsx";
 import { apiFetch, marcasApi, clientesApi } from "../lib/api.js";
 import {
-  IconFolder, IconHistory, IconRefresh, IconX, IconChevDown,
+  IconHistory, IconRefresh, IconX, IconChevDown, IconChevRight,
 } from "../lib/icons.jsx";
-import { fmtMoney } from "../lib/i18n.js";
+import {
+  BANDAS_MARLUVAS, fmtUSD, fmtPct,
+} from "../constants/marluvas.js";
+import { getBandPlazos, anchorPrice } from "../lib/marluvasPricing.js";
+import { useSkuTallas } from "../hooks/useSkuTallas.js";
+
+// ───────────────────── Tokens visuales ─────────────────────
+// Coherentes con BrandClientPricingForm (motor de precios). Mantenerlos
+// alineados con esa fuente para que el snapshot se vea idéntico.
+const TECHO_BG       = "#FCE4D6";
+const TECHO_STRONG   = "#F5B895";
+const TECHO_TEXT     = "#92400E";
+const VIGENTE_BG     = "#FEF3C7";
+const VIGENTE_STRONG = "#FCD34D";
+const VIGENTE_TEXT   = "#92400E";
+const PISO_BG        = "#D1FAE5";
+const PISO_STRONG    = "#86EFAC";
+const PISO_TEXT      = "#065F46";
 
 const FLAG = {
   PE:'🇵🇪', CO:'🇨🇴', US:'🇺🇸', MX:'🇲🇽', AR:'🇦🇷',
@@ -32,6 +55,32 @@ const FLAG = {
   ES:'🇪🇸', CN:'🇨🇳',
 };
 
+// ───────────────────── Helpers ─────────────────────
+function bandKind(banda) {
+  if (banda?.techo) return "TECHO";
+  if (banda?.piso)  return "PISO";
+  return "VIGENTE";
+}
+function bandColors(kind) {
+  if (kind === "TECHO")  return { bg: TECHO_BG,   strong: TECHO_STRONG,   text: TECHO_TEXT };
+  if (kind === "PISO")   return { bg: PISO_BG,    strong: PISO_STRONG,    text: PISO_TEXT };
+  return                        { bg: VIGENTE_BG, strong: VIGENTE_STRONG, text: VIGENTE_TEXT };
+}
+
+// Reconstruye el "input" del SKU a partir del snapshot guardado.
+// Útil para llamar anchorPrice() y derivar base/ajuste/sobreprecio en el header.
+function snapshotToInput(sku) {
+  return {
+    brl:         Number(sku.brl_override ?? 0),
+    com:         Number(sku.com_pct ?? 0),
+    ajuste:      Number(sku.ajuste_usd ?? 0),
+    sobreprecio: Number(sku.sobreprecio_pct ?? 0),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PAGE
+// ═══════════════════════════════════════════════════════════════════
 export default function ScreenPriceHistory() {
   const { accessToken } = useAuth() || {};
 
@@ -90,7 +139,7 @@ export default function ScreenPriceHistory() {
   }, [detailId, accessToken]);
 
   // ── Helpers ──
-  const brandsById  = useMemo(() => {
+  const brandsById = useMemo(() => {
     const m = {}; for (const b of brands) m[b.id] = b.nombre || b.name || b.label || '—'; return m;
   }, [brands]);
   const fmtDate = (iso) => {
@@ -105,7 +154,6 @@ export default function ScreenPriceHistory() {
     return { events: events.length, skus, cells };
   }, [events]);
 
-  // ── Render ──
   return (
     <div className="page">
       {/* Header */}
@@ -131,9 +179,7 @@ export default function ScreenPriceHistory() {
 
       {/* Filtros */}
       <div className="card card-pad-md" style={{ marginBottom:14 }}>
-        <div style={{
-          display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:10,
-        }}>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:10 }}>
           <Field label="Marca">
             <select value={brandId} onChange={(e) => setBrandId(e.target.value)} className="input-base">
               <option value="">Todas</option>
@@ -245,9 +291,9 @@ export default function ScreenPriceHistory() {
   );
 }
 
-// =====================================================================
-// Drawer read-only con cabecera + lista de SKUs
-// =====================================================================
+// ═══════════════════════════════════════════════════════════════════
+// DRAWER
+// ═══════════════════════════════════════════════════════════════════
 function DetailDrawer({ data, loading, brandName, onClose }) {
   const fmtDateTime = (iso) => {
     if (!iso) return '—';
@@ -255,6 +301,7 @@ function DetailDrawer({ data, loading, brandName, onClose }) {
     catch { return iso; }
   };
   const flag = FLAG[(data?.event?.cliente?.pais_iso2 || '').toUpperCase()] || '🌐';
+  const customPlazos = data?.event?.custom_plazos || {};
 
   return (
     <div onClick={onClose} style={{
@@ -263,13 +310,14 @@ function DetailDrawer({ data, loading, brandName, onClose }) {
       display:'flex', justifyContent:'flex-end',
     }}>
       <div onClick={(e) => e.stopPropagation()} style={{
-        width:'min(960px, 100vw)', height:'100vh',
+        width:'min(1180px, 100vw)', height:'100vh',
         background:'var(--surface, #FFFFFF)',
         overflowY:'auto', boxShadow:'-12px 0 32px rgba(11,30,58,0.18)',
       }}>
         <div style={{
           padding:'18px 22px', borderBottom:'1px solid var(--border-subtle, #E5E7EB)',
           display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12,
+          position:'sticky', top:0, background:'var(--surface, #FFFFFF)', zIndex:5,
         }}>
           <div>
             <div style={{ font:'700 9.5px/1 var(--font-body)', color:'var(--text-tertiary)',
@@ -312,19 +360,19 @@ function DetailDrawer({ data, loading, brandName, onClose }) {
             </div>
           ) : (
             <>
-              {data.event?.custom_plazos && Object.keys(data.event.custom_plazos).length > 0 && (
+              {Object.keys(customPlazos).length > 0 && (
                 <div style={{
                   marginBottom:14, padding:'10px 12px',
                   background:'rgba(245,158,11,0.08)',
                   border:'1px solid rgba(245,158,11,0.35)', borderRadius:8,
                   font:'500 11.5px/1.4 var(--font-body)', color:'#92400E',
                 }}>
-                  Plazos custom: {Object.keys(data.event.custom_plazos).length} banda(s) con plazos
-                  personalizados. Las columnas de la matriz reflejan ese estado al momento del guardado.
+                  Plazos custom: {Object.keys(customPlazos).length} banda(s) con plazos
+                  personalizados. Las columnas reflejan ese estado al momento del guardado.
                 </div>
               )}
               {data.skus.map((s) => (
-                <SkuSnapshotCard key={s.id} sku={s} customPlazos={data.event?.custom_plazos || {}}/>
+                <SkuSnapshotCard key={s.id} sku={s} customPlazos={customPlazos}/>
               ))}
             </>
           )}
@@ -334,97 +382,386 @@ function DetailDrawer({ data, loading, brandName, onClose }) {
   );
 }
 
-// =====================================================================
-// Card por SKU dentro del drawer: ancla + matriz simplificada
-// =====================================================================
+// ═══════════════════════════════════════════════════════════════════
+// SKU card — replica visual del motor de precios
+// ═══════════════════════════════════════════════════════════════════
 function SkuSnapshotCard({ sku, customPlazos }) {
+  const [bandFilter,  setBandFilter]  = useState("essentials"); // essentials | all
+  const [showSizes,   setShowSizes]   = useState(false);
+  const sizesPricing  = sku.sizes_pricing || {};
+  const sizeOverrideCount = Object.keys(sizesPricing).length;
+
+  const input  = snapshotToInput(sku);
+  // Ancla efectiva: snapshot → si no hay, fallback al techo 90d (default histórico).
+  const anchor = sku.anchor && Number.isFinite(Number(sku.anchor.bandaId))
+    ? { bandaId: Number(sku.anchor.bandaId), plazoDias: Number(sku.anchor.plazoDias) }
+    : { bandaId: 1, plazoDias: 90 };
   const matrix = sku.prices_matrix || {};
-  const bandaIds = Object.keys(matrix).sort((a,b) => Number(a) - Number(b));
+  const anclaBanda  = BANDAS_MARLUVAS.find((b) => b.id === anchor.bandaId) || BANDAS_MARLUVAS[0];
+  const anclaKind   = bandKind(anclaBanda);
+  const anclaColors = bandColors(anclaKind);
+  // Lista USD: leer de la matriz congelada (fuente de verdad inmutable).
+  // Base USD: derivar vía anchorPrice cuando hay BRL (snapshot completo);
+  // si no hay BRL_override, se deriva indirectamente de la lista quitando
+  // ajuste y sobreprecio cuando es posible (no perfecto, pero útil).
+  const matrixLista = Number(matrix?.[String(anchor.bandaId)]?.[String(anchor.plazoDias)]);
+  const hasBrl  = Number.isFinite(input.brl) && input.brl > 0;
+  const derived = hasBrl ? anchorPrice(input, anchor) : null;
+  const listaUSD = Number.isFinite(matrixLista) ? matrixLista
+                  : (derived ? derived.lista : NaN);
+  const baseUSD  = derived ? derived.base
+                  : (Number.isFinite(matrixLista)
+                      ? (matrixLista - input.ajuste) / (1 + input.sobreprecio)
+                      : NaN);
+
+  // Determinar bandas a mostrar.
+  // "essentials" = TECHO + VIGENTE + PISO + cualquier banda con
+  //                custom_plazos + la banda anclada (si no está ya).
+  const allBandIdsInMatrix = Object.keys(matrix)
+    .map((k) => Number(k))
+    .filter((n) => !Number.isNaN(n));
+  const essentialIds = new Set();
+  for (const b of BANDAS_MARLUVAS) {
+    if (b.techo || b.piso) essentialIds.add(b.id);
+  }
+  // Banda vigente "default" = banda 6 (5,00–5,20) si está en la matriz.
+  if (allBandIdsInMatrix.includes(6)) essentialIds.add(6);
+  // Bandas con custom_plazos
+  for (const k of Object.keys(customPlazos || {})) {
+    const n = Number(k);
+    if (Number.isFinite(n)) essentialIds.add(n);
+  }
+  essentialIds.add(anchor.bandaId);
+
+  const visibleBandIds = bandFilter === "all"
+    ? allBandIdsInMatrix.length > 0
+        ? allBandIdsInMatrix.sort((a,b) => a-b)
+        : BANDAS_MARLUVAS.map((b) => b.id)
+    : [...essentialIds].filter((id) => allBandIdsInMatrix.length === 0 || allBandIdsInMatrix.includes(id))
+        .sort((a,b) => a-b);
+
   return (
     <div style={{
-      marginBottom:12, padding:'12px 14px',
+      marginBottom:14, padding:'14px 16px',
       background:'var(--surface, #FFFFFF)',
       border:'1px solid var(--border-subtle, #E5E7EB)',
-      borderRadius:8,
+      borderRadius:10,
     }}>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:10, marginBottom:8 }}>
-        <div style={{ font:'700 13.5px/1.2 var(--font-display)', color:'var(--text-primary)' }}>
-          SKU {sku.sku}
+      {/* Header del SKU (estilo motor) */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start',
+                    gap:14, marginBottom:12, flexWrap:'wrap' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+          <div style={{ font:'700 15px/1.2 var(--font-display)', color:'var(--text-primary)' }}>
+            SKU {sku.sku}
+          </div>
           {!sku.activo && <span style={{
-            marginLeft:8, padding:'2px 7px', borderRadius:10,
+            padding:'2px 7px', borderRadius:10,
             background:'rgba(100,116,139,0.15)', color:'var(--text-tertiary)',
             font:'700 9px/1 var(--font-body)', textTransform:'uppercase',
           }}>Inactivo</span>}
+          {/* Ancla badge — con tipo de banda y rango */}
+          <span style={{
+            display:'inline-flex', alignItems:'center', gap:6,
+            padding:'4px 9px', borderRadius:10,
+            background:anclaColors.bg, color:anclaColors.text,
+            border:`1px solid ${anclaColors.strong}`,
+            font:'700 10px/1 var(--font-body)', textTransform:'uppercase',
+            letterSpacing:0.4,
+          }}>
+            Ancla · #{anchor.bandaId} · {anchor.plazoDias}d · {anclaKind}
+          </span>
         </div>
-        <div style={{ display:'flex', gap:14, font:'500 10.5px/1.4 var(--font-body)',
-          color:'var(--text-secondary)', fontVariantNumeric:'tabular-nums', flexWrap:'wrap' }}>
-          {sku.brl_override != null && <span>BRL: <strong>{Number(sku.brl_override).toFixed(2)}</strong></span>}
-          <span>Com: <strong>{Number(sku.com_pct).toFixed(2)}%</strong></span>
-          <span>Ajuste: <strong>${Number(sku.ajuste_usd).toFixed(2)}</strong></span>
-          <span>Sobreprecio: <strong>{(Number(sku.sobreprecio_pct) * 100).toFixed(2)}%</strong></span>
-          {sku.anchor && (
-            <span style={{
-              padding:'2px 7px', borderRadius:10,
-              background:'rgba(0,178,134,0.12)', color:'#065F46',
-              font:'700 9.5px/1 var(--font-body)',
-            }}>
-              Ancla: #{sku.anchor.bandaId} · {sku.anchor.plazoDias}d
-            </span>
+
+        {/* KPIs derivados del snapshot */}
+        <div style={{ display:'flex', gap:14, flexWrap:'wrap',
+                      fontVariantNumeric:'tabular-nums',
+                      font:'500 11px/1.3 var(--font-body)', color:'var(--text-secondary)' }}>
+          {hasBrl && <KpiInline label="BRL"               value={input.brl.toFixed(2)}/>}
+          <KpiInline label="COM %"        value={`${input.com.toFixed(2)}%`}/>
+          {Number.isFinite(baseUSD)  && <KpiInline label="BASE USD"  value={fmtUSD(baseUSD)}  accent={anclaColors.text}/>}
+          <KpiInline label="AJUSTE $"     value={fmtUSD(input.ajuste)}/>
+          <KpiInline label="SOBREPRECIO"  value={fmtPct(input.sobreprecio)}/>
+          {Number.isFinite(listaUSD) && <KpiInline label="LISTA USD" value={fmtUSD(listaUSD)} accent={anclaColors.text}/>}
+        </div>
+      </div>
+
+      {/* Toggle Esenciales | Todas */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+                    marginBottom:8, gap:10 }}>
+        <div style={{ font:'700 10.5px/1 var(--font-body)', color:'var(--text-secondary)',
+                      textTransform:'uppercase', letterSpacing:0.5 }}>
+          Matriz de precios · USD por par
+        </div>
+        <div style={{ display:'inline-flex', gap:0,
+                      border:'1px solid var(--border-subtle, #E5E7EB)', borderRadius:6,
+                      overflow:'hidden' }}>
+          {["essentials","all"].map((mode) => (
+            <button key={mode}
+              onClick={() => setBandFilter(mode)}
+              style={{
+                padding:'5px 12px', border:'none', cursor:'pointer',
+                background: bandFilter === mode ? 'var(--surface-alt, #F1F5F9)' : 'transparent',
+                color:      bandFilter === mode ? 'var(--text-primary)' : 'var(--text-secondary)',
+                font:       '600 10.5px/1.2 var(--font-body)',
+              }}>
+              {mode === "essentials" ? "Esenciales" : "Todas las bandas"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Matriz banda × plazo */}
+      <MatrixView
+        matrix={matrix}
+        bandIds={visibleBandIds}
+        customPlazos={customPlazos}
+        anchor={anchor}
+      />
+
+      {/* Tallas */}
+      {sizeOverrideCount > 0 && (
+        <div style={{ marginTop:12 }}>
+          <button onClick={() => setShowSizes((v) => !v)} style={{
+            display:'inline-flex', alignItems:'center', gap:6,
+            background:'transparent', border:'1px solid var(--border-subtle, #E5E7EB)',
+            borderRadius:6, padding:'6px 10px', cursor:'pointer',
+            font:'600 11px/1.2 var(--font-body)', color:'var(--text-primary)',
+          }}>
+            {showSizes ? <IconChevDown size={12}/> : <IconChevRight size={12}/>}
+            Tallas con override ({sizeOverrideCount})
+          </button>
+          {showSizes && (
+            <SizesBreakdown
+              sku={sku}
+              sizesPricing={sizesPricing}
+              customPlazos={customPlazos}
+              fallbackAnchor={anchor}
+            />
           )}
-        </div>
-      </div>
-
-      <div style={{ overflowX:'auto', border:'1px solid var(--border-subtle, #E5E7EB)', borderRadius:6 }}>
-        <table style={{ width:'100%', borderCollapse:'separate', borderSpacing:0,
-                        fontVariantNumeric:'tabular-nums' }}>
-          <thead>
-            <tr>
-              <th style={smTh}>Banda</th>
-              <th style={smTh}>Plazos</th>
-            </tr>
-          </thead>
-          <tbody>
-            {bandaIds.length === 0 ? (
-              <tr><td colSpan={2} style={{ ...smTd, color:'var(--text-tertiary)', fontStyle:'italic' }}>
-                Sin matriz persistida
-              </td></tr>
-            ) : bandaIds.map((bid) => {
-              const row = matrix[bid] || {};
-              const plazos = Object.keys(row).sort((a,b) => Number(b) - Number(a));
-              return (
-                <tr key={bid}>
-                  <td style={{ ...smTd, fontWeight:700, color:'var(--text-primary)' }}>#{bid}</td>
-                  <td style={smTd}>
-                    <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
-                      {plazos.map(d => (
-                        <span key={d} style={{
-                          padding:'2px 8px', borderRadius:6,
-                          background:'var(--surface-alt, #F8FAFC)',
-                          border:'1px solid var(--border-subtle, #E5E7EB)',
-                          font:'600 10.5px/1.3 var(--font-mono, ui-monospace)',
-                        }}>
-                          {d}d: <strong>{Number(row[d]).toFixed(2)}</strong>
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {sku.sizes_pricing && Object.keys(sku.sizes_pricing).length > 0 && (
-        <div style={{ marginTop:8, font:'500 10.5px/1.3 var(--font-body)', color:'var(--text-secondary)' }}>
-          + {Object.keys(sku.sizes_pricing).length} override(s) por talla en este snapshot.
         </div>
       )}
     </div>
   );
 }
 
-// ── Sub-componentes ────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// MatrixView — renderiza una tabla agrupada por banda × plazo
+// Replica el layout del motor: header de banda con rango/÷div/tipo,
+// luego una fila de plazos con sub-label, luego los precios.
+// ═══════════════════════════════════════════════════════════════════
+function MatrixView({ matrix, bandIds, customPlazos, anchor }) {
+  if (!bandIds || bandIds.length === 0) {
+    return <div style={{
+      padding:14, font:'500 11px/1.3 var(--font-body)', color:'var(--text-tertiary)',
+      fontStyle:'italic', border:'1px dashed var(--border-subtle, #E5E7EB)', borderRadius:6,
+    }}>Sin matriz persistida en este snapshot.</div>;
+  }
+
+  return (
+    <div style={{ overflowX:'auto', border:'1px solid var(--border-subtle, #E5E7EB)',
+                  borderRadius:8 }}>
+      {/* Header banda */}
+      <div style={{ display:'flex', alignItems:'stretch' }}>
+        {bandIds.map((bid) => {
+          const banda = BANDAS_MARLUVAS.find((b) => b.id === bid);
+          if (!banda) return null;
+          const kind = bandKind(banda);
+          const colors = bandColors(kind);
+          const plazos = getBandPlazos(bid, customPlazos);
+          return (
+            <div key={`h-${bid}`} style={{
+              flex:`${plazos.length} 0 ${plazos.length * 76}px`,
+              padding:'8px 8px 6px',
+              background: colors.bg,
+              borderRight:'1px solid var(--border-subtle, #E5E7EB)',
+              borderBottom:`2px solid ${colors.strong}`,
+              textAlign:'center',
+            }}>
+              <div style={{ font:'700 11.5px/1.2 var(--font-display)',
+                            color:'var(--text-primary)' }}>
+                {banda.rango}
+              </div>
+              <div style={{ font:'500 10px/1.2 var(--font-mono, ui-monospace)',
+                            color:'var(--text-secondary)' }}>
+                ÷{banda.div.toFixed(2)}
+              </div>
+              <div style={{ font:'700 9px/1 var(--font-body)',
+                            color: colors.text, letterSpacing:0.5,
+                            textTransform:'uppercase', marginTop:2 }}>
+                {kind}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {/* Header plazos (sub) */}
+      <div style={{ display:'flex', alignItems:'stretch',
+                    background:'var(--surface-alt, #F8FAFC)' }}>
+        {bandIds.map((bid) => {
+          const plazos = getBandPlazos(bid, customPlazos);
+          return (
+            <div key={`p-${bid}`} style={{
+              flex:`${plazos.length} 0 ${plazos.length * 76}px`,
+              display:'grid',
+              gridTemplateColumns:`repeat(${plazos.length}, 1fr)`,
+              borderRight:'1px solid var(--border-subtle, #E5E7EB)',
+            }}>
+              {plazos.map((p) => {
+                const isAnchorCell = bid === anchor.bandaId && p.dias === anchor.plazoDias;
+                return (
+                  <div key={p.dias} style={{
+                    padding:'6px 4px',
+                    borderRight:'1px solid var(--border-subtle, #F1F5F9)',
+                    textAlign:'center',
+                    background: isAnchorCell ? 'rgba(0,178,134,0.08)' : 'transparent',
+                  }}>
+                    <div style={{ font:'700 10.5px/1 var(--font-body)',
+                                  color:'var(--text-primary)' }}>
+                      {p.dias}d
+                    </div>
+                    <div style={{ font:'500 9.5px/1.2 var(--font-mono, ui-monospace)',
+                                  color:'var(--text-tertiary)', marginTop:2 }}>
+                      {p.sub}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+      {/* Fila de precios */}
+      <div style={{ display:'flex', alignItems:'stretch' }}>
+        {bandIds.map((bid) => {
+          const plazos = getBandPlazos(bid, customPlazos);
+          const row    = matrix[String(bid)] || {};
+          return (
+            <div key={`v-${bid}`} style={{
+              flex:`${plazos.length} 0 ${plazos.length * 76}px`,
+              display:'grid',
+              gridTemplateColumns:`repeat(${plazos.length}, 1fr)`,
+              borderRight:'1px solid var(--border-subtle, #E5E7EB)',
+            }}>
+              {plazos.map((p) => {
+                const raw = row[String(p.dias)];
+                const val = Number(raw);
+                const ok  = Number.isFinite(val);
+                const isAnchorCell = bid === anchor.bandaId && p.dias === anchor.plazoDias;
+                return (
+                  <div key={p.dias} style={{
+                    padding:'10px 4px',
+                    borderRight:'1px solid var(--border-subtle, #F1F5F9)',
+                    textAlign:'center',
+                    background: isAnchorCell ? 'rgba(0,178,134,0.06)' : 'transparent',
+                    fontVariantNumeric:'tabular-nums',
+                    font:`${isAnchorCell ? 700 : 600} 12.5px/1.2 var(--font-mono, ui-monospace)`,
+                    color: ok ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                  }}>
+                    {ok ? val.toFixed(2) : '—'}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SizesBreakdown — cards por talla (estilo SkuSizesPanel del motor)
+// ═══════════════════════════════════════════════════════════════════
+function SizesBreakdown({ sku, sizesPricing, customPlazos, fallbackAnchor }) {
+  const { tallas } = useSkuTallas(sku.sku, true);
+  const tallasByUuid = useMemo(() => {
+    const m = {};
+    for (const t of (tallas || [])) m[String(t.uuid)] = t;
+    return m;
+  }, [tallas]);
+
+  const tallaUuids = Object.keys(sizesPricing || {});
+
+  return (
+    <div style={{ marginTop:10, padding:'12px',
+                  background:'var(--surface-alt, #F8FAFC)',
+                  border:'1px solid var(--border-subtle, #E5E7EB)',
+                  borderRadius:8 }}>
+      {tallaUuids.length === 0 ? (
+        <div style={{ font:'500 11px/1.3 var(--font-body)',
+                      color:'var(--text-tertiary)' }}>
+          Sin overrides por talla en este snapshot.
+        </div>
+      ) : tallaUuids.map((uuid) => {
+        const data       = sizesPricing[uuid] || {};
+        const tallaMeta  = tallasByUuid[uuid];
+        const sizeMatrix = data.matrix || {};
+        const sizeAnchor = data.anchor && Number.isFinite(Number(data.anchor.bandaId))
+          ? { bandaId: Number(data.anchor.bandaId), plazoDias: Number(data.anchor.plazoDias) }
+          : fallbackAnchor;
+
+        // Filtrar bandas visibles — usar las bandas que existen en la matriz de la talla
+        const idsInMatrix = Object.keys(sizeMatrix)
+          .map((k) => Number(k)).filter((n) => !Number.isNaN(n));
+        const visible = idsInMatrix.length > 0
+          ? idsInMatrix.sort((a,b) => a-b)
+          : BANDAS_MARLUVAS.filter((b) => b.techo || b.piso || b.id === 6).map((b) => b.id);
+
+        return (
+          <div key={uuid} style={{
+            marginBottom:10, padding:'10px 12px',
+            background:'var(--surface, #FFFFFF)',
+            border:'1px solid var(--border-subtle, #E5E7EB)',
+            borderRadius:6,
+          }}>
+            <div style={{ display:'flex', justifyContent:'space-between',
+                          alignItems:'center', marginBottom:8, gap:10, flexWrap:'wrap' }}>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <div style={{ font:'700 12.5px/1.2 var(--font-display)',
+                              color:'var(--text-primary)' }}>
+                  Talla {tallaMeta?.label || uuid.slice(0, 6)}
+                </div>
+                {tallaMeta?.tipo && (
+                  <span style={{
+                    padding:'2px 7px', borderRadius:10,
+                    background:'rgba(0,178,134,0.10)', color:'#065F46',
+                    font:'700 9px/1 var(--font-body)', textTransform:'uppercase',
+                  }}>{tallaMeta.tipo}</span>
+                )}
+              </div>
+              <div style={{
+                padding:'2px 8px', borderRadius:10,
+                background:'rgba(245,158,11,0.12)', color:'#92400E',
+                font:'700 9px/1 var(--font-body)', textTransform:'uppercase',
+              }}>
+                Override · Ancla #{sizeAnchor.bandaId} · {sizeAnchor.plazoDias}d
+              </div>
+            </div>
+            <MatrixView
+              matrix={sizeMatrix}
+              bandIds={visible}
+              customPlazos={customPlazos}
+              anchor={sizeAnchor}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ───────────────────── Sub-componentes ─────────────────────
+function KpiInline({ label, value, accent }) {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:1, minWidth:54 }}>
+      <div style={{ font:'700 8.5px/1 var(--font-body)', color:'var(--text-tertiary)',
+                    textTransform:'uppercase', letterSpacing:0.5 }}>{label}</div>
+      <div style={{ font:'700 12.5px/1.1 var(--font-mono, ui-monospace)',
+                    color: accent || 'var(--text-primary)' }}>{value}</div>
+    </div>
+  );
+}
+
 function KpiCard({ label, value }) {
   return (
     <div className="card card-pad-md">
@@ -445,17 +782,3 @@ function Field({ label, children }) {
     </label>
   );
 }
-
-// ── Tabla compacta del drawer ──
-const smTh = {
-  padding:'8px 10px', font:'700 9.5px/1 var(--font-body)',
-  color:'var(--text-secondary)', textAlign:'left',
-  textTransform:'uppercase', letterSpacing:0.5,
-  borderBottom:'1px solid var(--border-subtle, #E5E7EB)',
-  background:'var(--surface-alt, #F8FAFC)',
-};
-const smTd = {
-  padding:'8px 10px', fontSize:11.5,
-  borderBottom:'1px solid var(--border-subtle, #F1F5F9)',
-  verticalAlign:'middle',
-};

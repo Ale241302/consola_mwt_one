@@ -870,6 +870,18 @@ export default function ScreenBrandClientPricingForm() {
             }
             prices_matrix[String(bandaId)] = plazosObj;
           }
+          // F6 · Ancla efectiva por SKU para el snapshot histórico.
+          // Si el SKU tiene override (s.anchor), usa ese; si no, hereda
+          // del ancla global del editor (anchor). El backend lo guarda
+          // sólo en marluvas_price_history_sku.anchor — la tabla viva
+          // (marluvas_client_sku_pricing) lo ignora.
+          const effectiveAnchor = (s.anchor
+              && Number.isFinite(Number(s.anchor.bandaId))
+              && Number.isFinite(Number(s.anchor.plazoDias)))
+            ? { bandaId: Number(s.anchor.bandaId), plazoDias: Number(s.anchor.plazoDias) }
+            : (Number.isFinite(Number(anchor?.bandaId)) && Number.isFinite(Number(anchor?.plazoDias))
+                ? { bandaId: Number(anchor.bandaId), plazoDias: Number(anchor.plazoDias) }
+                : null);
           return {
             sku:             String(s.sku),
             brl_override:    Number.isFinite(Number(s.brl)) ? Number(s.brl) : null,
@@ -877,6 +889,8 @@ export default function ScreenBrandClientPricingForm() {
             ajuste_usd:      Number(s.ajuste || 0),
             sobreprecio_pct: Number(s.sobreprecio || 0),
             prices_matrix,
+            // F6 · Ancla congelada por SKU (snapshot histórico only).
+            ...(effectiveAnchor ? { anchor: effectiveAnchor } : {}),
             // Fase 3 · overrides por talla (opcional, omitir si vacío)
             ...(s.sizes_pricing && Object.keys(s.sizes_pricing).length > 0
                 ? { sizes_pricing: s.sizes_pricing } : {}),
