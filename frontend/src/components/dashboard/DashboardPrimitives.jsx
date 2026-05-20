@@ -659,10 +659,11 @@ export function UrgentExpedientesTable({
           borderBottom: "1px solid var(--divider)",
         }}
       >
-        <span>{isAdmin
-          ? (lang === "en" ? "Proforma" : "Proforma")
-          : (lang === "en" ? "PO" : "OC")}
-        </span>
+        {/* Header genérico — cada fila lleva su propio badge PF/OC/EXP
+            indicando si la cifra mostrada es proforma, número de OC o
+            código de expediente (fallback). Para admin prefiere proforma;
+            si no existe, cae a OC. Para client siempre OC. */}
+        <span>{lang === "en" ? "Reference" : "Referencia"}</span>
         <span>{tr(lang, "client")}</span>
         <span>{tr(lang, "brand")}</span>
         <span style={{ textAlign: "right" }}>{tr(lang, "credit_days")}</span>
@@ -683,15 +684,22 @@ export function UrgentExpedientesTable({
           || (u.client_id ? `${String(u.client_id).slice(0, 8)}…` : "—");
 
         // Número visible según rol (mandato CEO).
-        //   admin → proforma (número MWT)
-        //   client → oc_codigo (número de OC del cliente)
-        // Fallback: ref (EXP-XXXX) si el preferido falta.
+        //   admin → proforma (número MWT) → fallback oc_codigo → fallback ref
+        //   client → oc_codigo (número de OC del cliente) → fallback ref
+        // El cliente JAMÁS ve la proforma. El admin prefiere proforma, pero si
+        // no está poblada en BD usa oc_codigo (más útil que EXP-XXXX).
         const primaryRef = isAdmin
-          ? (u.proforma || u.ref || u.id || "")
+          ? (u.proforma || u.oc_codigo || u.ref || u.id || "")
           : (u.oc_codigo || u.ref || u.id || "");
         const refLabel = primaryRef.length <= 24
           ? primaryRef
           : String(primaryRef).slice(0, 18) + "…";
+
+        // Pequeña etiqueta que indica qué tipo de número se está mostrando
+        // (útil cuando admin cae al fallback de OC porque proforma falta).
+        const refKind = isAdmin
+          ? (u.proforma ? "PF" : (u.oc_codigo ? "OC" : "EXP"))
+          : (u.oc_codigo ? "OC" : "EXP");
 
         const isHigh = u.urgency === "high";
         return (
@@ -718,15 +726,33 @@ export function UrgentExpedientesTable({
             onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
           >
             <span
-              className="mono-sm tabular"
-              title={primaryRef}
-              style={{
-                font: "600 12px/1.2 var(--font-mono)",
-                color: "var(--interactive)",
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              }}
+              className="flex ai-center gap-2"
+              title={`${refKind === "PF" ? "Proforma" : refKind === "OC" ? "OC" : "Expediente"}: ${primaryRef}`}
+              style={{ minWidth: 0, overflow: "hidden" }}
             >
-              {refLabel || "—"}
+              <span
+                style={{
+                  font: "600 9px/1 var(--font-body)",
+                  letterSpacing: "0.05em",
+                  color: "var(--text-tertiary)",
+                  background: "var(--bg-alt)",
+                  padding: "2px 5px",
+                  borderRadius: "var(--radius-sm)",
+                  flexShrink: 0,
+                }}
+              >
+                {refKind}
+              </span>
+              <span
+                className="mono-sm tabular"
+                style={{
+                  font: "600 12px/1.2 var(--font-mono)",
+                  color: "var(--interactive)",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}
+              >
+                {refLabel || "—"}
+              </span>
             </span>
             <span
               title={clientName}
