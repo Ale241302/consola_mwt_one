@@ -1,0 +1,1025 @@
+// =====================================================================
+// MWT.ONE · DashboardPrimitives
+// Componentes de visualización para el Centro de Operaciones (CEO).
+// Rediseño 2026-05-20 — Reemplaza el dashboard de 6 KPIs simples por
+// 4 bandas verticales (KPIs · Timeseries · Operación · Análisis).
+//
+// REGLAS APLICADAS (CLAUDE.md §2):
+//   R1 — Cero hex literales: solo CSS vars MWT.
+//   R3 — Aislamiento de visibilidad: CEO-ONLY se inyecta vía useRole().can(...)
+//        desde el padre (este archivo asume que el padre ya filtró).
+//   R5 — `tabular-nums` en cualquier dato numérico.
+//
+// Importante: NO importa mock data. Toda fuente es prop. Si el padre no
+// le pasa datos, cada componente renderiza <EmptyState/> honesto.
+// =====================================================================
+import React, { useMemo, useRef, useState, useCallback } from "react";
+import { fmtMoney, fmtShortDate, tr } from "../../lib/i18n.js";
+import { Sparkline, Badge } from "../ui/primitives.jsx";
+import { IconAlert, IconClock, IconChevRight } from "../../lib/icons.jsx";
+
+// ─────────────────────────────────────────────────────────────────────
+// EmptyState — el "enchufe desconectado" honesto.
+// Se renderiza cuando un widget no tiene endpoint en backend o devolvió vacío.
+// Comunica EXACTAMENTE qué falta para que el CEO sepa qué solicitar.
+// ─────────────────────────────────────────────────────────────────────
+export function EmptyState({
+  title,
+  hint,
+  endpoint,
+  lang = "es",
+  compact = false,
+  onConfigure,
+}) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        padding: compact ? "20px 12px" : "32px 16px",
+        background: "var(--surface-hover)",
+        border: "1px dashed var(--border-strong)",
+        borderRadius: "var(--radius-lg)",
+        color: "var(--text-tertiary)",
+        textAlign: "center",
+        minHeight: compact ? 80 : 120,
+      }}
+    >
+      <div
+        aria-hidden
+        style={{
+          width: 36, height: 36, borderRadius: "var(--radius-full)",
+          background: "var(--bg-alt)",
+          display: "grid", placeItems: "center",
+          color: "var(--text-secondary)",
+        }}
+      >
+        <IconAlert size={18} />
+      </div>
+      <div style={{ font: "var(--heading-sm)", color: "var(--text-secondary)" }}>
+        {title || (lang === "es" ? "Sin datos" : "No data")}
+      </div>
+      {hint && (
+        <div style={{ font: "var(--caption)", color: "var(--text-tertiary)", maxWidth: 360 }}>
+          {hint}
+        </div>
+      )}
+      {endpoint && (
+        <code
+          style={{
+            font: "500 11px/1.4 var(--font-mono)",
+            color: "var(--text-secondary)",
+            background: "var(--bg-alt)",
+            padding: "2px 8px",
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid var(--border)",
+          }}
+        >
+          {endpoint}
+        </code>
+      )}
+      {onConfigure && (
+        <button
+          type="button"
+          onClick={onConfigure}
+          className="btn btn-ghost btn-sm"
+          style={{ marginTop: 4 }}
+        >
+          {lang === "es" ? "Solicitar a backend" : "Request from backend"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// KpiCard — tarjeta de KPI con sparkline + delta opcional.
+// Si `value === null/undefined` muestra EmptyState compacto.
+// ─────────────────────────────────────────────────────────────────────
+export function KpiCard({
+  label,
+  value,
+  valueFmt = (v) => v,
+  sub,
+  spark,                 // array de números para sparkline (90d)
+  sparkColor = "var(--brand-accent)",
+  delta,                 // { abs?: number, pct?: number, dir: 'up' | 'down' | 'flat', label?: string }
+  threshold,             // 'success' | 'warning' | 'critical' — pinta borde superior
+  emptyEndpoint,         // path del endpoint que falta
+  emptyHint,
+  lang = "es",
+  onClick,
+}) {
+  const isEmpty = value === null || value === undefined;
+
+  // Semáforo aplicado solo al borde superior, sin invadir el contenido.
+  const semColor = threshold === "critical" ? "var(--critical)"
+                : threshold === "warning"  ? "var(--warning)"
+                : threshold === "success"  ? "var(--success)"
+                : "transparent";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="stat"
+      style={{
+        position: "relative",
+        cursor: onClick ? "pointer" : "default",
+        textAlign: "left",
+        background: "var(--surface-raised)",
+        borderTop: `2px solid ${semColor}`,
+        // Reset de algunos resets de <button>
+        font: "inherit",
+        color: "inherit",
+      }}
+      aria-label={label}
+    >
+      <div className="stat-label">{label}</div>
+      {isEmpty ? (
+        <div style={{ marginTop: 8 }}>
+          <EmptyState
+            compact
+            lang={lang}
+            title={lang === "es" ? "Sin datos" : "No data"}
+            hint={emptyHint || (lang === "es"
+              ? "El backend aún no entrega esta métrica."
+              : "Backend does not deliver this metric yet.")}
+            endpoint={emptyEndpoint}
+          />
+        </div>
+      ) : (
+        <>
+          <div className="stat-row">
+            <div className="stat-value tabular">{valueFmt(value)}</div>
+            {delta && delta.dir && delta.dir !== "flat" && (
+              <span className={`stat-delta ${delta.dir === "up" ? "up" : "down"}`}>
+                {delta.label
+                  ? delta.label
+                  : (delta.pct != null
+                      ? `${delta.pct > 0 ? "+" : ""}${delta.pct.toFixed(1)}%`
+                      : delta.abs != null
+                        ? `${delta.abs > 0 ? "+" : ""}${delta.abs}`
+                        : "")}
+              </span>
+            )}
+          </div>
+          {sub && <div className="stat-sub">{sub}</div>}
+          <div className="stat-spark" style={{ marginTop: 6 }}>
+            {Array.isArray(spark) && spark.length > 1
+              ? <Sparkline values={spark} color={sparkColor} width={260} height={32} />
+              : <span style={{ font: "var(--caption)", color: "var(--text-tertiary)" }}>
+                  {lang === "es" ? "Sin serie histórica" : "No historical series"}
+                </span>}
+          </div>
+        </>
+      )}
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TimeseriesChart — gráfico tipo Google Finance.
+//   - Hover line vertical + tooltip (valor + fecha)
+//   - Selectores 1D / 5D / 1M / 3M / 1A / Max
+//   - Eje Y dinámico (no fuerza al 0)
+//   - Delta absoluto + porcentual del rango seleccionado
+//
+// Props:
+//   data: [{ date: ISO string, value: number }, ...]
+//   label: nombre de la serie (ej. "Cash neto USD")
+//   currency: 'USD' | 'BRL' | 'CRC' (solo display)
+//   color: CSS var
+// ─────────────────────────────────────────────────────────────────────
+const HORIZONS = [
+  { key: "1D",  days: 1   },
+  { key: "5D",  days: 5   },
+  { key: "1M",  days: 30  },
+  { key: "3M",  days: 90  },
+  { key: "1A",  days: 365 },
+  { key: "MAX", days: null },
+];
+
+export function TimeseriesChart({
+  data,
+  label,
+  currency = "USD",
+  color = "var(--brand-primary)",
+  height = 240,
+  lang = "es",
+  emptyEndpoint = "/api/analytics/cashflow/",
+}) {
+  const [horizon, setHorizon] = useState("3M");
+  const [hover, setHover] = useState(null); // { x, y, point }
+  const svgRef = useRef(null);
+
+  const series = useMemo(() => {
+    const arr = Array.isArray(data) ? data.filter((d) => d && d.date != null && d.value != null) : [];
+    arr.sort((a, b) => new Date(a.date) - new Date(b.date));
+    if (!arr.length) return [];
+    const h = HORIZONS.find((x) => x.key === horizon);
+    if (!h || h.days == null) return arr;
+    const cutoff = new Date(arr[arr.length - 1].date).getTime() - h.days * 86400000;
+    return arr.filter((d) => new Date(d.date).getTime() >= cutoff);
+  }, [data, horizon]);
+
+  if (!series.length) {
+    return (
+      <EmptyState
+        lang={lang}
+        title={lang === "es" ? "Sin serie temporal" : "No timeseries"}
+        hint={lang === "es"
+          ? "El backend no devolvió puntos para esta serie."
+          : "Backend returned no points for this series."}
+        endpoint={emptyEndpoint}
+      />
+    );
+  }
+
+  const W = 880, H = height, padL = 56, padR = 16, padT = 16, padB = 28;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const ys = series.map((d) => d.value);
+  const yMin = Math.min(...ys);
+  const yMax = Math.max(...ys);
+  const ySpread = yMax - yMin || Math.abs(yMax) || 1;
+  // Eje Y dinámico — padding 8% arriba/abajo, sin forzar al 0.
+  const y0 = yMin - ySpread * 0.08;
+  const y1 = yMax + ySpread * 0.08;
+  const yRange = y1 - y0 || 1;
+
+  const x = (i) => padL + (i * innerW) / Math.max(1, series.length - 1);
+  const y = (v) => padT + innerH - ((v - y0) / yRange) * innerH;
+
+  const pathD = series.map((d, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join(" ");
+  const areaD = `${pathD} L${x(series.length - 1).toFixed(1)},${padT + innerH} L${x(0).toFixed(1)},${padT + innerH} Z`;
+
+  const first = series[0].value;
+  const last  = series[series.length - 1].value;
+  const deltaAbs = last - first;
+  const deltaPct = first !== 0 ? (deltaAbs / Math.abs(first)) * 100 : null;
+  const goingUp  = deltaAbs >= 0;
+
+  // Ticks Y — 4 niveles legibles.
+  const ticks = useMemo(() => {
+    const steps = 4;
+    const out = [];
+    for (let i = 0; i <= steps; i++) {
+      const v = y0 + (yRange * i) / steps;
+      out.push(v);
+    }
+    return out;
+  }, [y0, yRange]);
+
+  const onMove = useCallback((e) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * W;
+    // Mapear a índice más cercano.
+    const i = Math.round(((px - padL) / innerW) * (series.length - 1));
+    const ix = Math.max(0, Math.min(series.length - 1, i));
+    const pt = series[ix];
+    setHover({ x: x(ix), y: y(pt.value), point: pt, index: ix });
+  }, [series, innerW]);
+
+  const onLeave = useCallback(() => setHover(null), []);
+
+  const fmtVal = (v) => {
+    if (currency === "USD") return fmtMoney(v, "USD");
+    // BRL/CRC se aceptan como display-only — el backend siempre persiste USD.
+    return new Intl.NumberFormat(lang === "es" ? "es-PE" : "en-US", {
+      style: "currency", currency, maximumFractionDigits: 0,
+    }).format(v);
+  };
+
+  const fmtDateShort = (iso) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString(lang === "es" ? "es-PE" : "en-US", {
+      weekday: "short", day: "2-digit", month: "short",
+    });
+  };
+
+  return (
+    <div>
+      {/* Pill superior con valor actual + delta del rango */}
+      <div className="flex ai-center jc-between" style={{ marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <div style={{ font: "var(--caption)", color: "var(--text-tertiary)", marginBottom: 2 }}>
+            {label}
+          </div>
+          <div className="flex ai-center gap-3" style={{ flexWrap: "wrap" }}>
+            <span className="tabular" style={{ font: "var(--display-md)", color: "var(--text-primary)" }}>
+              {fmtVal(last)}
+            </span>
+            {deltaPct != null && (
+              <span
+                className="tabular"
+                style={{
+                  font: "600 13px/1 var(--font-body)",
+                  color: goingUp ? "var(--success)" : "var(--critical)",
+                  background: goingUp ? "var(--success-bg)" : "var(--critical-bg)",
+                  padding: "4px 8px", borderRadius: "var(--radius-sm)",
+                }}
+              >
+                {goingUp ? "▲" : "▼"} {fmtVal(Math.abs(deltaAbs))} ({deltaPct >= 0 ? "+" : ""}{deltaPct.toFixed(1)}%)
+              </span>
+            )}
+            <span style={{ font: "var(--caption)", color: "var(--text-tertiary)" }}>
+              {lang === "es" ? "en" : "in"} {horizon}
+            </span>
+          </div>
+        </div>
+
+        {/* Selectores Google-style */}
+        <div className="seg" style={{ display: "inline-flex", gap: 2 }}>
+          {HORIZONS.map((h) => (
+            <button
+              key={h.key}
+              type="button"
+              data-active={horizon === h.key}
+              onClick={() => setHorizon(h.key)}
+              style={{
+                font: "600 12px/1 var(--font-body)",
+                padding: "6px 10px",
+                background: horizon === h.key ? "var(--brand-primary)" : "transparent",
+                color: horizon === h.key ? "var(--text-on-navy)" : "var(--text-secondary)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-sm)",
+                cursor: "pointer",
+              }}
+            >
+              {h.key}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* SVG */}
+      <div style={{ position: "relative", width: "100%" }}>
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${W} ${H}`}
+          width="100%" height={H}
+          preserveAspectRatio="none"
+          onMouseMove={onMove}
+          onMouseLeave={onLeave}
+          style={{ display: "block", touchAction: "none" }}
+          role="img"
+          aria-label={label}
+        >
+          {/* Grid Y */}
+          {ticks.map((t, i) => (
+            <g key={i}>
+              <line
+                x1={padL} x2={W - padR}
+                y1={y(t)} y2={y(t)}
+                stroke="var(--divider)" strokeWidth="1"
+              />
+              <text
+                x={padL - 8} y={y(t) + 3}
+                textAnchor="end"
+                style={{ font: "500 10.5px/1 var(--font-mono)", fill: "var(--text-tertiary)" }}
+              >
+                {fmtVal(t).replace(/\s/g, "")}
+              </text>
+            </g>
+          ))}
+
+          {/* Área */}
+          <path d={areaD} fill={color} fillOpacity="0.08" />
+          {/* Línea */}
+          <path d={pathD} fill="none" stroke={color} strokeWidth="1.75" strokeLinejoin="round" strokeLinecap="round" />
+
+          {/* Hover */}
+          {hover && (
+            <g>
+              <line
+                x1={hover.x} x2={hover.x}
+                y1={padT} y2={padT + innerH}
+                stroke="var(--text-tertiary)" strokeWidth="1" strokeDasharray="4 3"
+              />
+              <circle cx={hover.x} cy={hover.y} r="4" fill={color} stroke="var(--surface)" strokeWidth="2" />
+            </g>
+          )}
+        </svg>
+
+        {/* Tooltip flotante */}
+        {hover && (
+          <div
+            style={{
+              position: "absolute",
+              left: `${(hover.x / W) * 100}%`,
+              top: 8,
+              transform: "translateX(-50%)",
+              background: "var(--surface-raised)",
+              border: "1px solid var(--border-strong)",
+              boxShadow: "var(--shadow-md)",
+              padding: "8px 10px",
+              borderRadius: "var(--radius-md)",
+              pointerEvents: "none",
+              whiteSpace: "nowrap",
+              zIndex: 5,
+            }}
+          >
+            <div className="tabular" style={{ font: "var(--heading-sm)", color: "var(--text-primary)" }}>
+              {fmtVal(hover.point.value)}
+            </div>
+            <div style={{ font: "var(--caption)", color: "var(--text-tertiary)", marginTop: 2 }}>
+              {fmtDateShort(hover.point.date)}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer con rango efectivo */}
+      <div className="flex ai-center jc-between" style={{ marginTop: 6, font: "var(--caption)", color: "var(--text-tertiary)" }}>
+        <span>{fmtShortDate(series[0].date, lang)}</span>
+        <span>{fmtShortDate(series[series.length - 1].date, lang)}</span>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// PipelineByBrandTimeline — timeline horizontal apilado por marca.
+// Por mandato CEO: NO kanban. Cada marca = una fila con segmentos por estado.
+// Click en segmento → callback con (brandId, status).
+//
+// Props:
+//   rows: [{ brandId, brandName, brandColor, total, byStatus: {REGISTRO:..} }]
+//   statuses: ['REGISTRO','PRODUCCION','PREPARACION','DESPACHO','TRANSITO','EN_DESTINO','CERRADO']
+//   onClick: (brandId, status) => void
+// ─────────────────────────────────────────────────────────────────────
+const STATUS_COLORS = {
+  REGISTRO:    "var(--info)",
+  PRODUCCION:  "var(--warning)",
+  PREPARACION: "var(--brand-primary-light)",
+  DESPACHO:    "var(--brand-accent-dark)",
+  TRANSITO:    "var(--brand-primary)",
+  EN_DESTINO:  "var(--success)",
+  CERRADO:     "var(--text-tertiary)",
+};
+
+export function PipelineByBrandTimeline({
+  rows,
+  statuses = ["REGISTRO","PRODUCCION","PREPARACION","DESPACHO","TRANSITO","EN_DESTINO","CERRADO"],
+  lang = "es",
+  onClick,
+  emptyEndpoint = "/api/analytics/by_status_by_brand/",
+}) {
+  if (!Array.isArray(rows) || !rows.length) {
+    return (
+      <EmptyState
+        lang={lang}
+        title={lang === "es" ? "Sin pipeline por marca" : "No brand pipeline"}
+        hint={lang === "es"
+          ? "El endpoint actual /by_status/ agrega solo a nivel global. Pendiente endpoint con dimensión marca."
+          : "Current /by_status/ aggregates only globally. Need brand-dimension endpoint."}
+        endpoint={emptyEndpoint}
+      />
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Leyenda */}
+      <div className="flex" style={{ gap: 12, flexWrap: "wrap", font: "var(--caption)", color: "var(--text-tertiary)" }}>
+        {statuses.map((s) => (
+          <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 10, height: 10, background: STATUS_COLORS[s] || "var(--border-strong)", borderRadius: 2 }} />
+            {tr(lang, s)}
+          </span>
+        ))}
+      </div>
+
+      {rows.map((r) => {
+        const total = r.total || statuses.reduce((a, s) => a + (r.byStatus?.[s] || 0), 0);
+        return (
+          <div key={r.brandId}>
+            <div className="flex ai-center jc-between" style={{ marginBottom: 6 }}>
+              <div className="flex ai-center gap-2">
+                <span style={{ width: 10, height: 10, background: r.brandColor || "var(--brand-primary)", borderRadius: 3 }} />
+                <span className="heading-sm" style={{ color: "var(--text-primary)" }}>{r.brandName}</span>
+                <Badge kind="neutral">{total}</Badge>
+              </div>
+              <span className="tabular" style={{ font: "500 11px/1 var(--font-mono)", color: "var(--text-tertiary)" }}>
+                {total} {lang === "es" ? "expedientes" : "files"}
+              </span>
+            </div>
+            <div
+              style={{
+                position: "relative",
+                display: "flex",
+                height: 16,
+                borderRadius: "var(--radius-full)",
+                overflow: "hidden",
+                background: "var(--bg-alt)",
+              }}
+              role="group"
+              aria-label={`${r.brandName} pipeline`}
+            >
+              {statuses.map((s) => {
+                const count = r.byStatus?.[s] || 0;
+                if (!count || !total) return null;
+                const widthPct = (count / total) * 100;
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => onClick && onClick(r.brandId, s)}
+                    title={`${tr(lang, s)} · ${count}`}
+                    style={{
+                      width: `${widthPct}%`,
+                      background: STATUS_COLORS[s] || "var(--border-strong)",
+                      border: "none",
+                      padding: 0,
+                      cursor: onClick ? "pointer" : "default",
+                      transition: "filter 200ms",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.filter = "brightness(1.1)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.filter = "none")}
+                    aria-label={`${tr(lang, s)}: ${count}`}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// UrgentExpedientesTable — Top 10 por score de urgencia.
+// Reemplaza el listado actual de 3 IDs idénticos con UUIDs truncados.
+//
+// Score de urgencia (cliente-side, pendiente endpoint dedicado):
+//   urgencyScore = creditRatio*0.4 + valueRatio*0.3 + ageRatio*0.3
+// donde:
+//   creditRatio = credit_days / 90  (clamp 0..1.5)
+//   valueRatio  = expediente_value / maxValue
+//   ageRatio    = days_in_phase / phase_baseline (clamp 0..2)
+// El backend devuelve `urgent` ya pre-filtrado por bloqueado/crédito>70d.
+//
+// Props:
+//   items: [{ id, ref, client_id, brand_id, urgency, action, credit_days, balance }]
+//   resolveBrand(id) → { name, color }
+//   resolveClient(id) → { name, country }
+//   onOpen(id)
+// ─────────────────────────────────────────────────────────────────────
+export function UrgentExpedientesTable({
+  items,
+  resolveBrand = () => null,
+  resolveClient = () => null,
+  onOpen,
+  lang = "es",
+  emptyEndpoint = "/api/analytics/urgent/",
+}) {
+  if (!Array.isArray(items) || !items.length) {
+    return (
+      <EmptyState
+        lang={lang}
+        title={lang === "es" ? "Sin acciones urgentes" : "No urgent actions"}
+        hint={lang === "es"
+          ? "El backend no reportó expedientes con bloqueos ni crédito > 70d."
+          : "Backend reports no blocked files or credit > 70d."}
+        endpoint={emptyEndpoint}
+        compact
+      />
+    );
+  }
+
+  // Ordenamiento por urgencia conocida (high primero) y luego alfabético del ref.
+  const sorted = [...items].sort((a, b) => {
+    const w = (u) => (u === "high" ? 0 : u === "medium" ? 1 : 2);
+    const dw = w(a.urgency) - w(b.urgency);
+    if (dw !== 0) return dw;
+    return String(a.ref || "").localeCompare(String(b.ref || ""));
+  }).slice(0, 10);
+
+  return (
+    <div role="table" aria-label={tr(lang, "urgent_actions")}>
+      {/* Header */}
+      <div
+        role="row"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(120px, 1fr) minmax(120px, 1.4fr) 88px 92px 1fr 22px",
+          gap: 10,
+          padding: "8px 12px",
+          font: "var(--micro)",
+          color: "var(--text-tertiary)",
+          letterSpacing: "0.06em",
+          borderBottom: "1px solid var(--divider)",
+        }}
+      >
+        <span>{tr(lang, "ref")}</span>
+        <span>{tr(lang, "client")}</span>
+        <span>{tr(lang, "brand")}</span>
+        <span style={{ textAlign: "right" }}>{tr(lang, "credit_days")}</span>
+        <span>{lang === "es" ? "Acción" : "Action"}</span>
+        <span />
+      </div>
+
+      {sorted.map((u) => {
+        const brand = resolveBrand(u.brand_id);
+        const client = resolveClient(u.client_id);
+        const isHigh = u.urgency === "high";
+        return (
+          <button
+            key={u.id}
+            type="button"
+            onClick={() => onOpen && onOpen(u.id)}
+            role="row"
+            style={{
+              width: "100%",
+              display: "grid",
+              gridTemplateColumns: "minmax(120px, 1fr) minmax(120px, 1.4fr) 88px 92px 1fr 22px",
+              gap: 10,
+              padding: "10px 12px",
+              alignItems: "center",
+              background: "transparent",
+              border: "none",
+              borderBottom: "1px solid var(--divider)",
+              textAlign: "left",
+              cursor: "pointer",
+              transition: "background 120ms",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
+            <span className="mono-sm tabular" style={{
+              font: "600 12px/1.2 var(--font-mono)",
+              color: "var(--interactive)",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              {/* SI ref es un UUID largo, mostrar EXP-… humano cuando exista; si no, primeros 12 chars. */}
+              {u.ref && u.ref.length <= 24 ? u.ref : (u.ref || u.id || "").slice(0, 12) + "…"}
+            </span>
+            <span style={{ font: "var(--body-sm)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {client?.name || u.client_id || "—"}
+            </span>
+            <span className="flex ai-center gap-2" style={{ minWidth: 0 }}>
+              <span style={{ width: 8, height: 8, background: brand?.color || "var(--border-strong)", borderRadius: 2, flexShrink: 0 }} />
+              <span style={{ font: "var(--caption)", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {brand?.name || "—"}
+              </span>
+            </span>
+            <span className="tabular" style={{
+              font: "600 13px/1 var(--font-mono)",
+              color: (u.credit_days || 0) > 75 ? "var(--critical)"
+                   : (u.credit_days || 0) > 60 ? "var(--warning)"
+                   : "var(--text-secondary)",
+              textAlign: "right",
+            }}>
+              {u.credit_days != null ? `${u.credit_days}d` : "—"}
+            </span>
+            <span className="flex ai-center gap-2" style={{ minWidth: 0 }}>
+              {isHigh
+                ? <IconAlert size={14} style={{ color: "var(--critical)", flexShrink: 0 }} />
+                : <IconClock size={14} style={{ color: "var(--warning)", flexShrink: 0 }} />}
+              <span style={{ font: "var(--caption)", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {u.action || (lang === "es" ? "Revisar expediente" : "Review file")}
+              </span>
+            </span>
+            <IconChevRight size={14} style={{ color: "var(--text-tertiary)" }} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// MarginScatter — scatter de margen real vs proyectado.
+// Hoy el backend agrega POR MARCA (no por expediente). Documentamos la
+// limitación en el subtítulo y cuando exista /api/analytics/expediente_margin_scatter/
+// el componente acepta tanto puntos por marca como por expediente.
+//
+// Props:
+//   points: [{ id, label, projected, real, value, color }]
+//   driftThreshold: ±0.15 según ENT_GOB_KPI B2
+// ─────────────────────────────────────────────────────────────────────
+export function MarginScatter({
+  points,
+  driftThreshold = 0.15,
+  lang = "es",
+  emptyEndpoint = "/api/analytics/expediente_margin_scatter/",
+}) {
+  if (!Array.isArray(points) || !points.length) {
+    return (
+      <EmptyState
+        lang={lang}
+        title={lang === "es" ? "Sin puntos de margen" : "No margin points"}
+        hint={lang === "es"
+          ? "Cuando exista el endpoint con un punto por expediente cerrado, este scatter renderiza márgenes reales vs proyectados."
+          : "When per-closed-file endpoint exists, this scatter plots real vs projected margins."}
+        endpoint={emptyEndpoint}
+      />
+    );
+  }
+
+  const W = 480, H = 260, padL = 40, padR = 16, padT = 16, padB = 36;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  // Eje 0..50% — suficiente para márgenes de calzado de importación.
+  const max = Math.max(0.5, ...points.flatMap((p) => [p.projected, p.real]));
+  const min = 0;
+
+  const xScale = (v) => padL + ((v - min) / (max - min)) * innerW;
+  const yScale = (v) => padT + innerH - ((v - min) / (max - min)) * innerH;
+
+  // Tamaño del círculo por valor (sqrt para que no domine visualmente).
+  const maxValue = Math.max(1, ...points.map((p) => Math.abs(p.value || 0)));
+  const rScale = (v) => 4 + Math.sqrt(Math.abs(v || 0) / maxValue) * 10;
+
+  const ticks = [0, 0.1, 0.2, 0.3, 0.4, 0.5].filter((t) => t <= max + 0.01);
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img"
+           aria-label={lang === "es" ? "Margen real vs proyectado" : "Real vs projected margin"}>
+        {/* Grid */}
+        {ticks.map((t) => (
+          <g key={`gy${t}`}>
+            <line x1={padL} x2={W - padR} y1={yScale(t)} y2={yScale(t)} stroke="var(--divider)" strokeWidth="1" />
+            <text x={padL - 6} y={yScale(t) + 3} textAnchor="end"
+                  style={{ font: "500 10px/1 var(--font-mono)", fill: "var(--text-tertiary)" }}>
+              {(t * 100).toFixed(0)}%
+            </text>
+          </g>
+        ))}
+        {ticks.map((t) => (
+          <g key={`gx${t}`}>
+            <line x1={xScale(t)} x2={xScale(t)} y1={padT} y2={padT + innerH} stroke="var(--divider)" strokeWidth="1" />
+            <text x={xScale(t)} y={padT + innerH + 16} textAnchor="middle"
+                  style={{ font: "500 10px/1 var(--font-mono)", fill: "var(--text-tertiary)" }}>
+              {(t * 100).toFixed(0)}%
+            </text>
+          </g>
+        ))}
+
+        {/* Diagonal y=x (ideal) */}
+        <line
+          x1={xScale(min)} y1={yScale(min)}
+          x2={xScale(max)} y2={yScale(max)}
+          stroke="var(--text-tertiary)" strokeWidth="1" strokeDasharray="4 4"
+        />
+
+        {/* Banda ±driftThreshold */}
+        <line
+          x1={xScale(min)} y1={yScale(min + driftThreshold)}
+          x2={xScale(max - driftThreshold)} y2={yScale(max)}
+          stroke="var(--warning)" strokeWidth="1" strokeDasharray="2 4" opacity="0.6"
+        />
+        <line
+          x1={xScale(min + driftThreshold)} y1={yScale(min)}
+          x2={xScale(max)} y2={yScale(max - driftThreshold)}
+          stroke="var(--warning)" strokeWidth="1" strokeDasharray="2 4" opacity="0.6"
+        />
+
+        {/* Puntos */}
+        {points.map((p) => {
+          const drift = (p.real || 0) - (p.projected || 0);
+          const outsideBand = Math.abs(drift) > driftThreshold;
+          return (
+            <g key={p.id}>
+              <circle
+                cx={xScale(p.projected || 0)}
+                cy={yScale(p.real || 0)}
+                r={rScale(p.value)}
+                fill={p.color || "var(--brand-primary)"}
+                fillOpacity={outsideBand ? 0.85 : 0.55}
+                stroke={outsideBand ? "var(--critical)" : "var(--surface)"}
+                strokeWidth={outsideBand ? 1.5 : 1}
+              >
+                <title>
+                  {`${p.label || p.id} · ${lang === "es" ? "Proy" : "Proj"}: ${((p.projected || 0) * 100).toFixed(1)}% · ${lang === "es" ? "Real" : "Real"}: ${((p.real || 0) * 100).toFixed(1)}%${p.value ? ` · ${fmtMoney(p.value)}` : ""}`}
+                </title>
+              </circle>
+            </g>
+          );
+        })}
+
+        {/* Labels ejes */}
+        <text x={padL + innerW / 2} y={H - 4} textAnchor="middle"
+              style={{ font: "var(--caption)", fill: "var(--text-secondary)" }}>
+          {lang === "es" ? "Margen proyectado" : "Projected margin"}
+        </text>
+        <text x={14} y={padT + innerH / 2} textAnchor="middle" transform={`rotate(-90, 14, ${padT + innerH / 2})`}
+              style={{ font: "var(--caption)", fill: "var(--text-secondary)" }}>
+          {lang === "es" ? "Margen real" : "Real margin"}
+        </text>
+      </svg>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TopClientsTable — Top 10 clientes por exposición.
+// Lee /api/analytics/exposicion_clientes/.
+// ─────────────────────────────────────────────────────────────────────
+export function TopClientsTable({
+  items,
+  resolveClient = () => null,
+  lang = "es",
+  emptyEndpoint = "/api/analytics/exposicion_clientes/",
+}) {
+  if (!Array.isArray(items) || !items.length) {
+    return (
+      <EmptyState
+        lang={lang}
+        title={lang === "es" ? "Sin exposición de clientes" : "No client exposure"}
+        endpoint={emptyEndpoint}
+        compact
+      />
+    );
+  }
+  const sorted = [...items]
+    .sort((a, b) => (b.monto_pendiente || b.monto_total || 0) - (a.monto_pendiente || a.monto_total || 0))
+    .slice(0, 10);
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(140px, 1.4fr) 80px 90px 90px 70px",
+          gap: 8,
+          padding: "8px 12px",
+          font: "var(--micro)",
+          color: "var(--text-tertiary)",
+          letterSpacing: "0.06em",
+          borderBottom: "1px solid var(--divider)",
+        }}
+      >
+        <span>{tr(lang, "client")}</span>
+        <span style={{ textAlign: "right" }}>{lang === "es" ? "Abiertos" : "Open"}</span>
+        <span style={{ textAlign: "right" }}>{tr(lang, "balance")}</span>
+        <span style={{ textAlign: "right" }}>{lang === "es" ? "Venc. 60d" : "Past 60d"}</span>
+        <span style={{ textAlign: "right" }}>{lang === "es" ? "Venc. 30d" : "Past 30d"}</span>
+      </div>
+      {sorted.map((c, i) => {
+        const cli = resolveClient(c.client_id);
+        return (
+          <div
+            key={c.client_id || i}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(140px, 1.4fr) 80px 90px 90px 70px",
+              gap: 8,
+              padding: "10px 12px",
+              alignItems: "center",
+              borderBottom: "1px solid var(--divider)",
+            }}
+          >
+            <span style={{ font: "var(--body-sm)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {cli?.name || c.client_id || "—"}
+            </span>
+            <span className="tabular" style={{ textAlign: "right", font: "600 12px/1 var(--font-mono)", color: "var(--text-secondary)" }}>
+              {c.cobros_abiertos != null ? c.cobros_abiertos : "—"}
+            </span>
+            <span className="tabular" style={{ textAlign: "right", font: "600 12px/1 var(--font-mono)", color: "var(--text-primary)" }}>
+              {c.monto_pendiente != null ? fmtMoney(c.monto_pendiente) : "—"}
+            </span>
+            <span className="tabular" style={{
+              textAlign: "right", font: "600 12px/1 var(--font-mono)",
+              color: (c.vencidos_60 || 0) > 0 ? "var(--critical)" : "var(--text-tertiary)",
+            }}>
+              {c.vencidos_60 != null ? fmtMoney(c.vencidos_60) : "—"}
+            </span>
+            <span className="tabular" style={{
+              textAlign: "right", font: "600 12px/1 var(--font-mono)",
+              color: (c.vencidos_30 || 0) > 0 ? "var(--warning)" : "var(--text-tertiary)",
+            }}>
+              {c.vencidos_30 != null ? fmtMoney(c.vencidos_30) : "—"}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// GlobalFilters — sticky bar bajo el page-header.
+// Cambia el estado del padre. Marca con badge `pending` los filtros
+// que aún no son respetados por el backend.
+// ─────────────────────────────────────────────────────────────────────
+export function GlobalFilters({
+  value,
+  onChange,
+  brands = [],
+  lang = "es",
+}) {
+  const set = (k, v) => onChange({ ...value, [k]: v });
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 14px",
+        background: "var(--surface-raised)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-lg)",
+        marginBottom: 16,
+        flexWrap: "wrap",
+        position: "sticky",
+        top: "calc(var(--header-h) + 4px)",
+        zIndex: 4,
+      }}
+    >
+      <span style={{ font: "var(--micro)", color: "var(--text-tertiary)", letterSpacing: "0.06em" }}>
+        {lang === "es" ? "FILTROS" : "FILTERS"}
+      </span>
+
+      {/* Período */}
+      <label className="flex ai-center gap-2" style={{ font: "var(--caption)" }}>
+        <span style={{ color: "var(--text-secondary)" }}>{lang === "es" ? "Período" : "Period"}</span>
+        <select
+          value={value.period}
+          onChange={(e) => set("period", e.target.value)}
+          style={selectStyle}
+        >
+          <option value="30d">30d</option>
+          <option value="90d">90d</option>
+          <option value="1y">1A</option>
+        </select>
+      </label>
+
+      {/* Marca */}
+      <label className="flex ai-center gap-2" style={{ font: "var(--caption)" }}>
+        <span style={{ color: "var(--text-secondary)" }}>{lang === "es" ? "Marca" : "Brand"}</span>
+        <select
+          value={value.brand || ""}
+          onChange={(e) => set("brand", e.target.value || null)}
+          style={selectStyle}
+        >
+          <option value="">{lang === "es" ? "Todas" : "All"}</option>
+          {brands.map((b) => (
+            <option key={b.id} value={b.id}>{b.name}</option>
+          ))}
+        </select>
+      </label>
+
+      {/* Mercado — badge pending */}
+      <label className="flex ai-center gap-2" style={{ font: "var(--caption)" }}>
+        <span style={{ color: "var(--text-secondary)" }}>{lang === "es" ? "Mercado" : "Market"}</span>
+        <select
+          value={value.market || ""}
+          onChange={(e) => set("market", e.target.value || null)}
+          style={{ ...selectStyle, opacity: 0.7 }}
+          disabled
+          title={lang === "es"
+            ? "Pendiente: backend aún no segmenta por mercado destino."
+            : "Pending: backend does not segment by destination market yet."}
+        >
+          <option value="">{lang === "es" ? "Todos" : "All"}</option>
+        </select>
+        <Badge kind="warning" style={{ fontSize: 10 }}>
+          {lang === "es" ? "BE pend." : "BE pend."}
+        </Badge>
+      </label>
+    </div>
+  );
+}
+
+const selectStyle = {
+  font: "500 12.5px/1 var(--font-body)",
+  color: "var(--text-primary)",
+  background: "var(--surface)",
+  border: "1px solid var(--border-strong)",
+  borderRadius: "var(--radius-sm)",
+  padding: "5px 8px",
+  outline: "none",
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// CardWithEmpty — wrapper de tarjeta con título + subtítulo + slot vacío.
+// Mantiene el estilo del .card existente.
+// ─────────────────────────────────────────────────────────────────────
+export function DashboardCard({ title, subtitle, action, children, padding = 20 }) {
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <div className="card-title">{title}</div>
+          {subtitle && <div className="card-subtitle">{subtitle}</div>}
+        </div>
+        {action}
+      </div>
+      <div style={{ padding }}>{children}</div>
+    </div>
+  );
+}
