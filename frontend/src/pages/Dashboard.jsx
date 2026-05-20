@@ -774,13 +774,9 @@ export default function ScreenDashboard() {
         {can("view_margin") ? (
           <DashboardCard
             title={lang === "en" ? "Real vs projected margin" : "Margen real vs proyectado"}
-            subtitle={scatterIsPerFile
-              ? (lang === "en"
-                  ? "Per closed file · ±15% band marks ENT_GOB_KPI B2 threshold"
-                  : "Por expediente cerrado · banda ±15% marca umbral ENT_GOB_KPI B2")
-              : (lang === "en"
-                  ? "By brand (fallback) · per-file granularity pending closed_at column"
-                  : "Por marca (fallback) · granularidad por expediente pendiente columna closed_at")}
+            subtitle={lang === "en"
+              ? "Per file with lines (last 365d) · margin from price_client − price_mwt · ±15% band marks alert threshold"
+              : "Por expediente con líneas (últimos 365d) · margen calculado de precio_cliente − precio_mwt · banda ±15% marca umbral"}
           >
             <SafeWidget lang={lang} endpoint="/api/analytics/expediente_margin_scatter/">
               {loading

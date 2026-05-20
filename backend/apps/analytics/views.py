@@ -276,14 +276,27 @@ class AnalyticsViewSet(viewsets.ViewSet):
     # ── Exposición por cliente ────────────────────────────────
     @action(detail=False, methods=["get"])
     def exposicion_clientes(self, request):
-        """Saldo pendiente agrupado por client_id, orden DESC.
+        """Top clientes por exposición (saldo pendiente).
 
-        Incluye `client_name` (clientes.cliente.razon_social con fallback
-        a nombre_comercial) para que el frontend NO muestre el UUID.
-        Si la tabla `clientes.cliente` no responde, `client_name` queda
-        como NULL y el frontend cae al UUID truncado.
+        Fuente DUAL (Sprint 2026-05-20):
+          1. Primero intenta `cobros.cobro` (modelo formal de cobranza).
+          2. Si está vacía, deriva de `expedientes.expediente` + líneas.
+             Esto refleja la realidad operativa: aunque no haya cobros
+             formalizados, los expedientes activos con líneas SÍ
+             representan exposición real al cliente.
+
+        Cálculo desde líneas:
+          monto_total     = Σ qty × precio_cliente (todas las líneas activas)
+          monto_pagado    = 0 (no hay flujo de pagos contra líneas todavía)
+          monto_pendiente = monto_total
+          cobros_abiertos = # expedientes activos del cliente
+
+        Cuando exista flujo formal de cobranza y `cobros.cobro` se
+        popule automáticamente al emitir factura, este endpoint
+        prioriza esa fuente.
         """
-        rows = _fetchall("""
+        # Fuente 1: cobros formales
+        rows_cobros = _fetchall("""
             WITH agg AS (
               SELECT
                 client_id,
@@ -296,7 +309,9 @@ class AnalyticsViewSet(viewsets.ViewSet):
                 COUNT(*) FILTER (WHERE (CURRENT_DATE - fecha_vencimiento) > 60
                                  AND monto_pendiente > 0) AS vencidos_60
               FROM cobros.cobro
-              WHERE is_active = TRUE AND client_id IS NOT NULL
+              WHERE is_active = TRUE
+                AND client_id IS NOT NULL
+                AND monto_pendiente > 0
               GROUP BY client_id
             )
             SELECT
@@ -304,9 +319,9 @@ class AnalyticsViewSet(viewsets.ViewSet):
               COALESCE(c.nombre_comercial, c.razon_social) AS client_name,
               c.pais_iso2                                  AS country,
               a.cobros_abiertos,
-              a.monto_total,
-              a.monto_pagado,
-              a.monto_pendiente,
+              a.monto_total::float                         AS monto_total,
+              a.monto_pagado::float                        AS monto_pagado,
+              a.monto_pendiente::float                     AS monto_pendiente,
               a.vencidos_30,
               a.vencidos_60
             FROM agg a
@@ -314,7 +329,39 @@ class AnalyticsViewSet(viewsets.ViewSet):
             ORDER BY a.monto_pendiente DESC
             LIMIT 20
         """)
-        return Response(rows)
+        if rows_cobros:
+            return Response(rows_cobros)
+
+        # Fuente 2 (fallback): derivar de líneas reales.
+        rows_lineas = _fetchall("""
+            SELECT
+              e.client_id,
+              COALESCE(c.nombre_comercial, c.razon_social)        AS client_name,
+              c.pais_iso2                                         AS country,
+              COUNT(DISTINCT e.id)                                AS cobros_abiertos,
+              COALESCE(SUM(
+                l.qty * COALESCE(NULLIF(l.unit_price_client,0), l.unit_price, 0)
+              ), 0)::float                                        AS monto_total,
+              0::float                                            AS monto_pagado,
+              COALESCE(SUM(
+                l.qty * COALESCE(NULLIF(l.unit_price_client,0), l.unit_price, 0)
+              ), 0)::float                                        AS monto_pendiente,
+              0                                                   AS vencidos_30,
+              0                                                   AS vencidos_60
+            FROM expedientes.expediente e
+            JOIN expedientes.linea     l ON l.expediente_id = e.id
+            LEFT JOIN clientes.cliente c  ON c.id = e.client_id
+            WHERE e.is_active = TRUE
+              AND l.is_active = TRUE
+              AND e.client_id IS NOT NULL
+            GROUP BY e.client_id, c.nombre_comercial, c.razon_social, c.pais_iso2
+            HAVING SUM(
+              l.qty * COALESCE(NULLIF(l.unit_price_client,0), l.unit_price, 0)
+            ) > 0
+            ORDER BY monto_pendiente DESC
+            LIMIT 20
+        """)
+        return Response(rows_lineas)
 
     # ── Margen por marca ──────────────────────────────────────
     @action(detail=False, methods=["get"])
@@ -687,38 +734,65 @@ class AnalyticsViewSet(viewsets.ViewSet):
     # ── Scatter de margen proyectado vs real por expediente ───
     @action(detail=False, methods=["get"], url_path="expediente_margin_scatter")
     def expediente_margin_scatter(self, request):
-        """Scatter plot: un punto por expediente cerrado últimos 365d.
+        """Scatter plot: un punto por expediente con líneas en últimos 365d.
 
         Shape:
           [{ id, ref, client_id, brand_id,
              projected_margin, real_margin,
              total_invoiced, closed_at }]
 
-        ⚠ `expedientes.expediente` no expone `closed_at` ni
-        `fecha_cierre`. Como proxy se usa `updated_at` filtrado por
-        `estado='CERRADO'`, lo cual es noisy si el expediente se
-        re-edita post-cierre. Cuando se agregue una columna real
-        `closed_at`, intercambiar el filtro temporal.
+        Sprint 2026-05-20 · Cambio de fuente:
+          Antes: solo expedientes `estado='CERRADO'` con `projected_margin`
+                 y `real_margin` poblados manualmente en BD.
+          Ahora: cualquier expediente activo con líneas en últimos 365d.
+                 - `total_invoiced` = Σ qty × unit_price_client (de líneas)
+                 - `real_margin`    = (revenue − cost) / revenue (de líneas)
+                 - `projected_margin` = el guardado en BD (si > 0) o
+                                        igual al real (fallback: scatter sobre la diagonal)
+                 - `closed_at`      = `updated_at` (proxy mientras no haya
+                                       columna real)
 
-        `projected_margin` y `real_margin` existen en la BD como
-        DecimalField(6,4) (porcentajes), no como montos absolutos.
-        Se devuelven tal cual.
+        Esto refleja la realidad operativa: aunque ningún expediente
+        esté en estado `CERRADO`, los expedientes activos tienen un
+        margen "real" calculable desde las líneas (precio cliente vs
+        precio MWT). Los puntos fuera de la banda ±15% son los que
+        merecen revisión.
         """
         rows = _fetchall("""
+            WITH per_exp AS (
+              SELECT
+                e.id,
+                e.codigo                          AS ref,
+                e.client_id,
+                e.brand_id,
+                e.projected_margin,
+                e.updated_at,
+                SUM(l.qty * COALESCE(NULLIF(l.unit_price_client, 0), l.unit_price, 0))::float AS revenue,
+                SUM(l.qty * COALESCE(NULLIF(l.unit_price_mwt,    0), l.unit_cost,  0))::float AS cost
+              FROM expedientes.expediente e
+              JOIN expedientes.linea     l ON l.expediente_id = e.id
+              WHERE e.is_active = TRUE
+                AND l.is_active = TRUE
+                AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
+              GROUP BY e.id, e.codigo, e.client_id, e.brand_id,
+                       e.projected_margin, e.updated_at
+              HAVING SUM(l.qty * COALESCE(NULLIF(l.unit_price_client, 0), l.unit_price, 0)) > 0
+            )
             SELECT
               id,
-              codigo                         AS ref,
+              ref,
               client_id,
               brand_id,
-              projected_margin,
-              real_margin,
-              total_invoiced,
-              updated_at                     AS closed_at
-            FROM expedientes.expediente
-            WHERE is_active = TRUE
-              AND estado    = 'CERRADO'
-              AND updated_at >= CURRENT_DATE - INTERVAL '365 days'
-            ORDER BY updated_at DESC
+              CASE WHEN COALESCE(projected_margin, 0) > 0
+                   THEN projected_margin::float
+                   ELSE ((revenue - cost) / NULLIF(revenue, 0))::float
+              END                                        AS projected_margin,
+              ((revenue - cost) / NULLIF(revenue, 0))::float AS real_margin,
+              revenue                                    AS total_invoiced,
+              updated_at                                 AS closed_at
+            FROM per_exp
+            ORDER BY revenue DESC
+            LIMIT 50
         """)
         return Response(rows)
 
