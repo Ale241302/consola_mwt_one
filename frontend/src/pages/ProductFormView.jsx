@@ -2144,20 +2144,3 @@ function MediaDropzone({ kind='gallery', lang='es', files, onChange, label, hint
     </div>
   );
 }
-                + {lang==='es'?'Click para añadir más':'Click to add more'}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-      <input
-        ref={inputRef}
-        type="file"
-        style={{display:'none'}}
-        multiple={multiple}
-        accept={kind === 'gallery' ? 'image/*' : 'application/pdf'}
-        onChange={(e)=>{ if (e.target.files) handleFiles(e.target.files); }}
-      />
-    </div>
-  );
-}
