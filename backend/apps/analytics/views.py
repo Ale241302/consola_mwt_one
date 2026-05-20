@@ -15,6 +15,12 @@ Endpoints:
   GET /api/analytics/margen_marcas/
   GET /api/analytics/by_status/
   GET /api/analytics/urgent/
+  GET /api/analytics/credit_clock_avg/           (Sprint widgets 2026-05-20)
+  GET /api/analytics/r1_correction_ratio/
+  GET /api/analytics/by_status_by_brand/
+  GET /api/analytics/inventory_coverage_by_node/
+  GET /api/analytics/top_skus_margen/
+  GET /api/analytics/expediente_margin_scatter/
 =====================================================================
 """
 import hashlib
@@ -316,6 +322,299 @@ class AnalyticsViewSet(viewsets.ViewSet):
               AND (is_blocked = TRUE OR credit_days > 70)
             ORDER BY is_blocked DESC, credit_days DESC
             LIMIT 20
+        """)
+        return Response(rows)
+
+    # ══════════════════════════════════════════════════════════
+    # Sprint 2026-05-20 · 6 widgets nuevos del dashboard rediseñado.
+    # Notas globales:
+    #   · Read-only, JWT vía DEFAULT_PERMISSION_CLASSES (settings.py).
+    #   · Raw SQL cross-schema (estilo consistente con el resto del
+    #     archivo; los modelos relevantes son `managed=False`).
+    #   · _fetchall/_fetchone retornan [] / None si la tabla o columna
+    #     no existe en el ambiente de destino.
+    #   · NO se inventan columnas: cuando la BD real no expone el dato
+    #     pedido (ej. `corrections_count`, `closed_at`,
+    #     `dias_hasta_pago`) se documenta en el docstring del endpoint
+    #     y se devuelve estado vacío honesto.
+    # ══════════════════════════════════════════════════════════
+
+    # ── Credit clock: días promedio hasta pago ────────────────
+    @action(detail=False, methods=["get"], url_path="credit_clock_avg")
+    def credit_clock_avg(self, request):
+        """AVG / p50 / p90 de días entre emisión y pago, últimos 90d.
+
+        Shape:
+          { avg_days, p50, p90, n_files, period_days }
+
+        Fuente: cobros.cobro + cobros.pago. Por expediente cerrado en
+        los últimos 90 días, calculamos la diferencia en días entre la
+        creación del cobro (created_at) y la fecha de acreditación más
+        reciente de un pago verificado/conciliado.
+
+        ⚠ No existe columna `dias_hasta_pago` ni `fecha_cierre` en
+        `expedientes.expediente`. Se aproxima vía el ledger de pagos.
+        Si el ambiente no tiene cobros.pago o no hay datos, retorna
+        `avg_days/p50/p90 = null, n_files = 0`.
+        """
+        period_days = 90
+        empty = {
+            "avg_days":    None,
+            "p50":         None,
+            "p90":         None,
+            "n_files":     0,
+            "period_days": period_days,
+        }
+        r = _fetchone("""
+            WITH paid AS (
+              SELECT
+                c.expediente_id,
+                EXTRACT(DAY FROM (MAX(p.fecha_acreditacion)::timestamp
+                                  - MIN(c.created_at)::timestamp)) AS dias
+              FROM cobros.cobro  c
+              JOIN cobros.pago   p ON p.cobro_id = c.id
+              WHERE c.is_active = TRUE
+                AND p.is_active = TRUE
+                AND p.direccion = 'INGRESO'
+                AND p.estado IN ('VERIFICADO','LIBERADO','CONCILIADO')
+                AND p.fecha_acreditacion IS NOT NULL
+                AND p.fecha_acreditacion >= CURRENT_DATE - INTERVAL '90 days'
+                AND c.expediente_id IS NOT NULL
+              GROUP BY c.expediente_id
+              HAVING SUM(c.monto_pendiente) <= 0
+            )
+            SELECT
+              AVG(dias)::float                                       AS avg_days,
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY dias)::float AS p50,
+              percentile_cont(0.9) WITHIN GROUP (ORDER BY dias)::float AS p90,
+              COUNT(*)                                               AS n_files
+            FROM paid
+        """)
+        if not r:
+            return Response(empty)
+        avg_days, p50, p90, n_files = r
+        if not n_files:
+            return Response(empty)
+        return Response({
+            "avg_days":    float(avg_days) if avg_days is not None else None,
+            "p50":         float(p50)      if p50      is not None else None,
+            "p90":         float(p90)      if p90      is not None else None,
+            "n_files":     int(n_files),
+            "period_days": period_days,
+        })
+
+    # ── Ratio de expedientes con corrección R1+ ───────────────
+    @action(detail=False, methods=["get"], url_path="r1_correction_ratio")
+    def r1_correction_ratio(self, request):
+        """count(expedientes con corrección R1+) / total, últimos 90d.
+
+        Shape:
+          { ratio, with_corrections, total, period_days }
+
+        ⚠ La tabla `expedientes.expediente` NO tiene la columna
+        `corrections_count`. La columna disponible más cercana es el
+        booleano `cost_corrections` (true/false), que no permite
+        distinguir el nivel R1 / R2 / R3 ni contar correcciones.
+
+        Mientras esa columna no exista, este endpoint devuelve
+        `ratio = null` y `with_corrections = null` con `total` real
+        para que el front pueda renderizar estado vacío honesto.
+        """
+        period_days = 90
+        out = {
+            "ratio":            None,
+            "with_corrections": None,
+            "total":            0,
+            "period_days":      period_days,
+            # Pendiente: requiere columna `expedientes.expediente.corrections_count`
+            # (o tabla `expedientes.correccion` con nivel R1/R2/R3).
+            "_pending":         "missing column expedientes.expediente.corrections_count",
+        }
+        r = _fetchone("""
+            SELECT COUNT(*)
+            FROM expedientes.expediente
+            WHERE is_active = TRUE
+              AND created_at >= CURRENT_DATE - INTERVAL '90 days'
+        """)
+        if r:
+            out["total"] = int(r[0] or 0)
+        return Response(out)
+
+    # ── Crosstab status × brand_id ────────────────────────────
+    @action(detail=False, methods=["get"], url_path="by_status_by_brand")
+    def by_status_by_brand(self, request):
+        """Crosstab estado × brand_id.
+
+        Shape:
+          [{ brand_id, status, count, total_invoiced }]
+        """
+        rows = _fetchall("""
+            SELECT
+              brand_id,
+              estado                          AS status,
+              COUNT(*)                        AS count,
+              COALESCE(SUM(total_invoiced),0) AS total_invoiced
+            FROM expedientes.expediente
+            WHERE is_active = TRUE
+              AND brand_id IS NOT NULL
+            GROUP BY brand_id, estado
+            ORDER BY brand_id, count DESC
+        """)
+        return Response(rows)
+
+    # ── Cobertura de inventario por nodo ──────────────────────
+    @action(detail=False, methods=["get"], url_path="inventory_coverage_by_node")
+    def inventory_coverage_by_node(self, request):
+        """Cobertura de stock por nodo activo.
+
+        Shape:
+          [{ node_id, node_name, total_units, velocity_30d,
+             coverage_days, status }]
+
+        · total_units    = SUM(stock.cantidad_disponible) por nodo.
+        · velocity_30d   = movimientos de salida (tipo_movimiento_cat.direccion='-')
+                           de los últimos 30 días / 30.
+        · coverage_days  = total_units / velocity_30d (null si velocity=0).
+        · status         = 'critical' (<21d) / 'warning' (21-45d) / 'ok' (>45d) /
+                           'unknown' si velocity_30d es null o 0.
+
+        Si no existen tablas `inventario.movimiento` o
+        `inventario.tipo_movimiento_cat`, velocity / coverage quedan en null.
+
+        Nota: realiza una sola query con LEFT JOIN agregado por nodo,
+        evitando N+1 sobre nodos.
+        """
+        rows = _fetchall("""
+            WITH stock_por_nodo AS (
+              SELECT
+                s.nodo_id,
+                COALESCE(SUM(s.cantidad_disponible),0)::float AS total_units
+              FROM inventario.stock s
+              WHERE s.is_active = TRUE
+              GROUP BY s.nodo_id
+            ),
+            outs_30d AS (
+              SELECT
+                m.nodo_origen_id AS nodo_id,
+                COUNT(*)         AS movs
+              FROM inventario.movimiento     m
+              JOIN inventario.tipo_movimiento_cat t
+                   ON t.codigo = m.tipo
+              WHERE m.is_active = TRUE
+                AND t.direccion = '-'
+                AND m.nodo_origen_id IS NOT NULL
+                AND m.created_at >= CURRENT_DATE - INTERVAL '30 days'
+              GROUP BY m.nodo_origen_id
+            )
+            SELECT
+              n.id                                            AS node_id,
+              n.nombre                                        AS node_name,
+              COALESCE(sp.total_units, 0)::float              AS total_units,
+              CASE WHEN o.movs IS NULL THEN NULL
+                   ELSE (o.movs::float / 30.0) END            AS velocity_30d,
+              CASE WHEN o.movs IS NULL OR o.movs = 0 THEN NULL
+                   ELSE COALESCE(sp.total_units, 0)::float
+                        / (o.movs::float / 30.0) END          AS coverage_days
+            FROM nodos.nodo n
+            LEFT JOIN stock_por_nodo sp ON sp.nodo_id = n.id
+            LEFT JOIN outs_30d       o  ON o.nodo_id  = n.id
+            WHERE n.is_active = TRUE
+            ORDER BY n.nombre
+        """)
+        out = []
+        for r in rows:
+            cov = r.get("coverage_days")
+            if cov is None:
+                status_lbl = "unknown"
+            elif cov < 21:
+                status_lbl = "critical"
+            elif cov <= 45:
+                status_lbl = "warning"
+            else:
+                status_lbl = "ok"
+            r["status"] = status_lbl
+            out.append(r)
+        return Response(out)
+
+    # ── Top SKUs por margen ───────────────────────────────────
+    @action(detail=False, methods=["get"], url_path="top_skus_margen")
+    def top_skus_margen(self, request):
+        """Top 10 SKUs por margen USD de líneas de expedientes últimos 90d.
+
+        Shape:
+          [{ sku, product_name, brand_id, units_sold_90d,
+             revenue_usd, margin_usd, margin_pct }]
+
+        · Source: expedientes.linea × productos.producto × expedientes.expediente.
+        · Filtro temporal: líneas pertenecientes a expedientes con
+          updated_at en los últimos 90 días (no existe `closed_at`
+          explícito, ver nota del endpoint credit_clock_avg).
+        · margin_usd = SUM((unit_price - unit_cost) * qty).
+        · margin_pct = margin_usd / NULLIF(revenue_usd, 0).
+
+        Si la tabla `expedientes.linea` no expone `unit_cost` /
+        `unit_price`, _fetchall devolverá [] silenciosamente.
+        """
+        rows = _fetchall("""
+            SELECT
+              l.sku                                                       AS sku,
+              MAX(p.nombre)                                               AS product_name,
+              MAX(p.marca_id)                                             AS brand_id,
+              COALESCE(SUM(l.qty),0)::float                               AS units_sold_90d,
+              COALESCE(SUM(l.qty * l.unit_price),0)::float                AS revenue_usd,
+              COALESCE(SUM(l.qty * (l.unit_price - l.unit_cost)),0)::float AS margin_usd,
+              CASE WHEN SUM(l.qty * l.unit_price) > 0
+                   THEN (SUM(l.qty * (l.unit_price - l.unit_cost))
+                         / NULLIF(SUM(l.qty * l.unit_price),0))::float
+                   ELSE NULL END                                          AS margin_pct
+            FROM expedientes.linea     l
+            JOIN expedientes.expediente e ON e.id = l.expediente_id
+            LEFT JOIN productos.producto p ON p.id = l.producto_id
+            WHERE l.is_active = TRUE
+              AND e.is_active = TRUE
+              AND e.updated_at >= CURRENT_DATE - INTERVAL '90 days'
+              AND l.sku IS NOT NULL
+            GROUP BY l.sku
+            ORDER BY margin_usd DESC
+            LIMIT 10
+        """)
+        return Response(rows)
+
+    # ── Scatter de margen proyectado vs real por expediente ───
+    @action(detail=False, methods=["get"], url_path="expediente_margin_scatter")
+    def expediente_margin_scatter(self, request):
+        """Scatter plot: un punto por expediente cerrado últimos 365d.
+
+        Shape:
+          [{ id, ref, client_id, brand_id,
+             projected_margin, real_margin,
+             total_invoiced, closed_at }]
+
+        ⚠ `expedientes.expediente` no expone `closed_at` ni
+        `fecha_cierre`. Como proxy se usa `updated_at` filtrado por
+        `estado='CERRADO'`, lo cual es noisy si el expediente se
+        re-edita post-cierre. Cuando se agregue una columna real
+        `closed_at`, intercambiar el filtro temporal.
+
+        `projected_margin` y `real_margin` existen en la BD como
+        DecimalField(6,4) (porcentajes), no como montos absolutos.
+        Se devuelven tal cual.
+        """
+        rows = _fetchall("""
+            SELECT
+              id,
+              codigo                         AS ref,
+              client_id,
+              brand_id,
+              projected_margin,
+              real_margin,
+              total_invoiced,
+              updated_at                     AS closed_at
+            FROM expedientes.expediente
+            WHERE is_active = TRUE
+              AND estado    = 'CERRADO'
+              AND updated_at >= CURRENT_DATE - INTERVAL '365 days'
+            ORDER BY updated_at DESC
         """)
         return Response(rows)
 

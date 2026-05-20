@@ -100,6 +100,10 @@ export function EmptyState({
 // ─────────────────────────────────────────────────────────────────────
 // KpiCard — tarjeta de KPI con sparkline + delta opcional.
 // Si `value === null/undefined` muestra EmptyState compacto.
+//
+// secondary: equivalente en moneda local cuando hay tasa FX disponible.
+//   { value: number, currency: 'BRL'|'CRC', source: string, fetchedAt: ISO }
+// Si la tasa FX no está disponible, NO se renderiza nada (mandato R1).
 // ─────────────────────────────────────────────────────────────────────
 export function KpiCard({
   label,
@@ -112,6 +116,7 @@ export function KpiCard({
   threshold,             // 'success' | 'warning' | 'critical' — pinta borde superior
   emptyEndpoint,         // path del endpoint que falta
   emptyHint,
+  secondary,             // { value, currency, source, fetchedAt }
   lang = "es",
   onClick,
 }) {
@@ -170,6 +175,25 @@ export function KpiCard({
             )}
           </div>
           {sub && <div className="stat-sub">{sub}</div>}
+          {/* Equivalente en moneda local (regla #4 del prompt CEO).
+              Solo se renderiza si hay tasa FX viva — nunca inventa. */}
+          {secondary && secondary.value != null && (
+            <div
+              className="tabular"
+              title={secondary.source && secondary.fetchedAt
+                ? `${secondary.source} · ${new Date(secondary.fetchedAt).toLocaleString(lang === "es" ? "es-PE" : "en-US")}`
+                : ""}
+              style={{
+                font: "500 12px/1.4 var(--font-mono)",
+                color: "var(--text-tertiary)",
+                marginTop: 2,
+              }}
+            >
+              ≈ {new Intl.NumberFormat(lang === "es" ? "es-PE" : "en-US", {
+                  style: "currency", currency: secondary.currency, maximumFractionDigits: 0,
+                }).format(secondary.value)}
+            </div>
+          )}
           <div className="stat-spark" style={{ marginTop: 6 }}>
             {Array.isArray(spark) && spark.length > 1
               ? <Sparkline values={spark} color={sparkColor} width={260} height={32} />
@@ -1020,6 +1044,351 @@ export function DashboardCard({ title, subtitle, action, children, padding = 20 
         {action}
       </div>
       <div style={{ padding }}>{children}</div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// FxToggle — selector USD ↔ BRL con tasa, fuente y fecha visibles.
+// Replica el patrón de BrandClientPricingForm (la tasa viene del backend,
+// nunca se inventa; si no hay tasa, BRL queda deshabilitado).
+// Persiste en localStorage `mwt:dashboard-fx-display` la moneda elegida.
+//
+// Props:
+//   currency: 'USD' | 'BRL'
+//   onChange(next): callback que recibe la nueva moneda
+//   rate: number | null
+//   source: string | null
+//   fetchedAt: ISO | null
+//   loading: boolean
+//   error: string | null
+//   onRefresh(): force refresh
+// ─────────────────────────────────────────────────────────────────────
+export function FxToggle({
+  currency = "USD",
+  onChange,
+  rate,
+  source,
+  fetchedAt,
+  loading,
+  error,
+  onRefresh,
+  lang = "es",
+}) {
+  const brlAvailable = rate != null && rate > 0;
+  const setCcy = (c) => {
+    if (c === "BRL" && !brlAvailable) return; // No permitir BRL sin tasa
+    onChange && onChange(c);
+  };
+
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "4px 8px",
+        background: "var(--surface)",
+        border: "1px solid var(--border-strong)",
+        borderRadius: "var(--radius-md)",
+      }}
+    >
+      {/* Toggle */}
+      <div style={{ display: "inline-flex", gap: 2 }}>
+        <button
+          type="button"
+          onClick={() => setCcy("USD")}
+          aria-pressed={currency === "USD"}
+          style={fxBtnStyle(currency === "USD")}
+          title={lang === "es" ? "Display en USD (canónico)" : "Display in USD (canonical)"}
+        >
+          USD
+        </button>
+        <button
+          type="button"
+          onClick={() => setCcy("BRL")}
+          aria-pressed={currency === "BRL"}
+          disabled={!brlAvailable}
+          style={{
+            ...fxBtnStyle(currency === "BRL"),
+            opacity: brlAvailable ? 1 : 0.5,
+            cursor: brlAvailable ? "pointer" : "not-allowed",
+          }}
+          title={brlAvailable
+            ? `1 USD = R$ ${rate.toFixed(4)} · ${source || ""}`
+            : (lang === "es" ? "Tasa FX no disponible" : "FX rate not available")}
+        >
+          BRL
+        </button>
+      </div>
+
+      {/* Tasa actual */}
+      {brlAvailable ? (
+        <span
+          className="tabular"
+          style={{ font: "500 11.5px/1 var(--font-mono)", color: "var(--text-secondary)" }}
+        >
+          1 USD = R$ {rate.toFixed(4)}
+        </span>
+      ) : (
+        <span
+          style={{
+            font: "var(--caption)",
+            color: "var(--warning)",
+            background: "var(--warning-bg)",
+            padding: "2px 6px",
+            borderRadius: "var(--radius-sm)",
+          }}
+          title={error || (lang === "es" ? "Pendiente FX" : "Pending FX")}
+        >
+          {lang === "es" ? "[PENDIENTE FX]" : "[PENDING FX]"}
+        </span>
+      )}
+
+      {/* Refresh */}
+      <button
+        type="button"
+        onClick={onRefresh}
+        disabled={loading}
+        className="btn btn-ghost btn-sm"
+        title={lang === "es" ? "Actualizar tasa" : "Refresh rate"}
+        style={{ padding: "2px 8px", font: "500 11px/1 var(--font-body)" }}
+      >
+        {loading ? "…" : "↻"}
+      </button>
+    </div>
+  );
+}
+
+function fxBtnStyle(active) {
+  return {
+    font: "600 11px/1 var(--font-body)",
+    padding: "5px 10px",
+    background: active ? "var(--brand-primary)" : "transparent",
+    color: active ? "var(--text-on-navy)" : "var(--text-secondary)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-sm)",
+    cursor: "pointer",
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TopSkusTable — Top 10 SKUs por contribución de margen USD (90d).
+// Endpoint: /api/analytics/top_skus_margen/
+// Shape esperado: [{ sku, product_name, brand_id, units_sold_90d,
+//                    revenue_usd, margin_usd, margin_pct }]
+// ─────────────────────────────────────────────────────────────────────
+export function TopSkusTable({
+  items,
+  resolveBrand = () => null,
+  lang = "es",
+  emptyEndpoint = "/api/analytics/top_skus_margen/",
+}) {
+  if (!Array.isArray(items) || !items.length) {
+    return (
+      <EmptyState
+        lang={lang}
+        title={lang === "es" ? "Sin ranking de SKUs" : "No SKU ranking"}
+        hint={lang === "es"
+          ? "Sin ventas registradas en los últimos 90 días, o sin líneas con costo y precio unitarios."
+          : "No sales in last 90 days, or no lines with unit cost/price."}
+        endpoint={emptyEndpoint}
+        compact
+      />
+    );
+  }
+
+  const sorted = [...items]
+    .sort((a, b) => (b.margin_usd || 0) - (a.margin_usd || 0))
+    .slice(0, 10);
+
+  return (
+    <div>
+      <div
+        role="row"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(110px, 1fr) 90px 72px 90px 90px 70px",
+          gap: 8,
+          padding: "8px 12px",
+          font: "var(--micro)",
+          color: "var(--text-tertiary)",
+          letterSpacing: "0.06em",
+          borderBottom: "1px solid var(--divider)",
+        }}
+      >
+        <span>SKU</span>
+        <span>{tr(lang, "brand")}</span>
+        <span style={{ textAlign: "right" }}>{lang === "es" ? "Unid. 90d" : "Units 90d"}</span>
+        <span style={{ textAlign: "right" }}>{lang === "es" ? "Revenue" : "Revenue"}</span>
+        <span style={{ textAlign: "right" }}>{lang === "es" ? "Margen USD" : "Margin USD"}</span>
+        <span style={{ textAlign: "right" }}>{lang === "es" ? "Margen %" : "Margin %"}</span>
+      </div>
+
+      {sorted.map((s, i) => {
+        const brand = resolveBrand(s.brand_id);
+        const marginPct = s.margin_pct != null ? Number(s.margin_pct) : null;
+        return (
+          <div
+            key={s.sku || i}
+            role="row"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(110px, 1fr) 90px 72px 90px 90px 70px",
+              gap: 8,
+              padding: "10px 12px",
+              alignItems: "center",
+              borderBottom: "1px solid var(--divider)",
+            }}
+          >
+            <span style={{ minWidth: 0 }}>
+              <span className="mono-sm tabular" style={{
+                font: "600 12px/1.2 var(--font-mono)",
+                color: "var(--text-primary)",
+                display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}>
+                {s.sku || "—"}
+              </span>
+              {s.product_name && (
+                <span style={{
+                  font: "var(--caption)",
+                  color: "var(--text-tertiary)",
+                  display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  {s.product_name}
+                </span>
+              )}
+            </span>
+            <span className="flex ai-center gap-2" style={{ minWidth: 0 }}>
+              <span style={{ width: 8, height: 8, background: brand?.color || "var(--border-strong)", borderRadius: 2, flexShrink: 0 }} />
+              <span style={{ font: "var(--caption)", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {brand?.name || "—"}
+              </span>
+            </span>
+            <span className="tabular" style={{ textAlign: "right", font: "600 12px/1 var(--font-mono)", color: "var(--text-secondary)" }}>
+              {s.units_sold_90d != null ? Number(s.units_sold_90d).toLocaleString(lang === "es" ? "es-PE" : "en-US") : "—"}
+            </span>
+            <span className="tabular" style={{ textAlign: "right", font: "600 12px/1 var(--font-mono)", color: "var(--text-primary)" }}>
+              {s.revenue_usd != null ? fmtMoney(s.revenue_usd) : "—"}
+            </span>
+            <span className="tabular" style={{
+              textAlign: "right", font: "600 12px/1 var(--font-mono)",
+              color: (s.margin_usd || 0) > 0 ? "var(--success)" : "var(--text-tertiary)",
+            }}>
+              {s.margin_usd != null ? fmtMoney(s.margin_usd) : "—"}
+            </span>
+            <span className="tabular" style={{
+              textAlign: "right", font: "600 12px/1 var(--font-mono)",
+              color: marginPct == null ? "var(--text-tertiary)"
+                   : marginPct >= 25 ? "var(--success)"
+                   : marginPct >= 15 ? "var(--warning)"
+                   : "var(--critical)",
+            }}>
+              {marginPct != null ? `${marginPct.toFixed(1)}%` : "—"}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// NodeInventoryGrid — tarjetas por nodo con cobertura en días.
+// Endpoint: /api/analytics/inventory_coverage_by_node/
+// Shape: [{ node_id, node_name, total_units, velocity_30d, coverage_days, status }]
+// status: 'critical' (<21d) · 'warning' (21–45d) · 'ok' (>45d) · 'unknown'
+// ─────────────────────────────────────────────────────────────────────
+export function NodeInventoryGrid({
+  items,
+  lang = "es",
+  emptyEndpoint = "/api/analytics/inventory_coverage_by_node/",
+  onOpenNode,
+}) {
+  if (!Array.isArray(items) || !items.length) {
+    return (
+      <EmptyState
+        lang={lang}
+        title={lang === "es" ? "Sin inventario por nodo" : "No node inventory"}
+        hint={lang === "es"
+          ? "Ningún nodo activo con stock o sin movimientos en últimos 30 días."
+          : "No active nodes with stock, or no out-movements in last 30 days."}
+        endpoint={emptyEndpoint}
+        compact
+      />
+    );
+  }
+
+  const colorByStatus = (s) =>
+      s === "critical" ? "var(--critical)"
+    : s === "warning"  ? "var(--warning)"
+    : s === "ok"       ? "var(--success)"
+    : "var(--text-tertiary)";
+
+  return (
+    <div style={{
+      display: "grid",
+      gap: 8,
+      gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    }}>
+      {items.map((n) => {
+        const color = colorByStatus(n.status);
+        return (
+          <button
+            key={n.node_id}
+            type="button"
+            onClick={() => onOpenNode && onOpenNode(n.node_id)}
+            style={{
+              textAlign: "left",
+              padding: 12,
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--border)",
+              borderTop: `3px solid ${color}`,
+              background: "var(--surface)",
+              cursor: onOpenNode ? "pointer" : "default",
+              font: "inherit",
+              color: "inherit",
+            }}
+          >
+            <div style={{
+              font: "600 12px/1.2 var(--font-mono)",
+              color: "var(--text-primary)",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              marginBottom: 4,
+            }}>
+              {n.node_name || n.node_id}
+            </div>
+            <div className="tabular" style={{
+              font: "700 18px/1 var(--font-display)",
+              color: "var(--text-primary)",
+              letterSpacing: "-0.01em",
+            }}>
+              {n.total_units != null
+                ? Number(n.total_units).toLocaleString(lang === "es" ? "es-PE" : "en-US")
+                : "—"}
+              <span style={{ font: "var(--caption)", color: "var(--text-tertiary)", marginLeft: 4 }}>
+                {lang === "es" ? "uds." : "units"}
+              </span>
+            </div>
+            <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: color }} />
+              <span className="tabular" style={{
+                font: "600 11px/1 var(--font-mono)",
+                color,
+              }}>
+                {n.coverage_days != null
+                  ? `${Number(n.coverage_days).toFixed(0)}d`
+                  : (lang === "es" ? "s/cobertura" : "n/coverage")}
+              </span>
+              <span style={{ font: "var(--caption)", color: "var(--text-tertiary)" }}>
+                · {lang === "es" ? "vel. 30d" : "30d vel."}: {n.velocity_30d != null
+                  ? Number(n.velocity_30d).toFixed(1)
+                  : "—"}
+              </span>
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }

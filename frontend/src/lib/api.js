@@ -984,16 +984,41 @@ export const storageApi = {
 //   GET /api/analytics/margen_marcas/
 //   GET /api/analytics/by_status/
 //   GET /api/analytics/urgent/
+// Sprint 2026-05-20 · 6 nuevos endpoints (Centro de Operaciones CEO):
+//   GET /api/analytics/credit_clock_avg/
+//   GET /api/analytics/r1_correction_ratio/
+//   GET /api/analytics/by_status_by_brand/
+//   GET /api/analytics/inventory_coverage_by_node/
+//   GET /api/analytics/top_skus_margen/
+//   GET /api/analytics/expediente_margin_scatter/
 // ---------------------------------------------------------------------
 const analyticsBase = "/analytics";
 export const analyticsApi = {
-  dashboardKpis:       () => apiFetch(`${analyticsBase}/dashboard_kpis/`,       { token: getToken() }),
-  cashflow:            () => apiFetch(`${analyticsBase}/cashflow/`,             { token: getToken() }),
-  aging:               () => apiFetch(`${analyticsBase}/aging/`,                { token: getToken() }),
-  exposicionClientes:  () => apiFetch(`${analyticsBase}/exposicion_clientes/`,  { token: getToken() }),
-  margenMarcas:        () => apiFetch(`${analyticsBase}/margen_marcas/`,        { token: getToken() }),
-  byStatus:            () => apiFetch(`${analyticsBase}/by_status/`,            { token: getToken() }),
-  urgent:              () => apiFetch(`${analyticsBase}/urgent/`,               { token: getToken() }),
+  dashboardKpis:            () => apiFetch(`${analyticsBase}/dashboard_kpis/`,            { token: getToken() }),
+  cashflow:                 () => apiFetch(`${analyticsBase}/cashflow/`,                  { token: getToken() }),
+  aging:                    () => apiFetch(`${analyticsBase}/aging/`,                     { token: getToken() }),
+  exposicionClientes:       () => apiFetch(`${analyticsBase}/exposicion_clientes/`,       { token: getToken() }),
+  margenMarcas:             () => apiFetch(`${analyticsBase}/margen_marcas/`,             { token: getToken() }),
+  byStatus:                 () => apiFetch(`${analyticsBase}/by_status/`,                 { token: getToken() }),
+  urgent:                   () => apiFetch(`${analyticsBase}/urgent/`,                    { token: getToken() }),
+  creditClockAvg:           () => apiFetch(`${analyticsBase}/credit_clock_avg/`,          { token: getToken() }),
+  r1CorrectionRatio:        () => apiFetch(`${analyticsBase}/r1_correction_ratio/`,       { token: getToken() }),
+  byStatusByBrand:          () => apiFetch(`${analyticsBase}/by_status_by_brand/`,        { token: getToken() }),
+  inventoryCoverageByNode:  () => apiFetch(`${analyticsBase}/inventory_coverage_by_node/`,{ token: getToken() }),
+  topSkusMargen:            () => apiFetch(`${analyticsBase}/top_skus_margen/`,           { token: getToken() }),
+  expedienteMarginScatter:  () => apiFetch(`${analyticsBase}/expediente_margin_scatter/`, { token: getToken() }),
+};
+
+// ---------------------------------------------------------------------
+// FX (USD ↔ BRL) — endpoint compartido con BrandClientPricingForm.
+// Backend: backend/apps/commercial/views.py · MarluvasExchangeRateView.
+// Cadena: AwesomeAPI BR (1min) → Frankfurter/ECB (1d) → Redis cache 60min.
+// Shape: { rate, bid, ask, timestamp, source, cached, error }
+// ---------------------------------------------------------------------
+export const fxApi = {
+  usdBrl:        (refresh = false) =>
+    apiFetch(`/commercial/exchange-rate/usd-brl/${refresh ? "?refresh=1" : ""}`,
+             { token: getToken() }),
 };
 
 // ---------------------------------------------------------------------

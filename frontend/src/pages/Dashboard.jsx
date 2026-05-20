@@ -1,33 +1,29 @@
 // =====================================================================
 // MWT.ONE · Dashboard (Centro de Operaciones CEO)
 // Rediseño 2026-05-20 — AG-03 Arquitecto Ejecutor Frontend.
+// Sprint 2026-05-20 · "DEJA TODO CONECTADO" — todos los widgets cableados
+// a endpoints reales del backend + selector FX USD↔BRL con localStorage.
 //
 // 4 bandas verticales (mandato CEO):
-//   BANDA 1 — Hero "Estado del negocio hoy" (6 KPIs honestos)
+//   BANDA 1 — Hero "Estado del negocio hoy" (6 KPIs)
 //   BANDA 2 — Comparador temporal Google-Finance-style
 //   BANDA 3 — Operación (Pipeline marca · Top urgencia · Inventario nodo)
 //   BANDA 4 — Análisis multidimensional (Top SKU · Top clientes · Heatmap · Scatter)
 //
-// REGLAS APLICADAS:
-//   R1 — Cero hex hardcodeados. Solo CSS vars MWT (tokens.css).
-//   R3 — Aislamiento CEO-ONLY vía useRole().can(...).
-//   R5 — `tabular-nums` en toda métrica numérica.
-//   POL_CERO_DEMO — Si el backend no responde, EmptyState honesto. Nunca $0/NaN%.
-//
-// Notas sobre el stack (CLAUDE.md §1):
-//   El prompt original pide Next.js 14 + TanStack Query + Recharts + shadcn.
-//   El repo es React 18 + Vite + JSX + React Router. Adaptamos sin romper
-//   nada: usamos hooks propios (useDashboardKpis, useBrandsLight) y
-//   primitivos SVG inline (DashboardPrimitives.jsx). Cuando exista RFC para
-//   migrar a Next.js, este archivo se traduce 1:1.
+// REGLAS APLICADAS (CLAUDE.md §2):
+//   R1 — Cero hex. Solo CSS vars MWT.
+//   R3 — CEO-ONLY via useRole().can(...).
+//   R5 — `tabular-nums` en toda métrica.
+//   POL_CERO_DEMO — Si BE no responde, EmptyState honesto. Nunca $0/NaN%.
 // =====================================================================
-import React, { useMemo, useCallback } from "react";
+import React, { useMemo, useCallback, useState, useEffect } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
 import { Badge } from "../components/ui/primitives.jsx";
 import { IconDownload, IconPlus, IconRefresh } from "../lib/icons.jsx";
 import { useDashboardKpis } from "../hooks/useDashboardKpis.js";
 import { useBrandsLight } from "../hooks/useBrandsLight.js";
+import { useFxUsdBrl } from "../hooks/useFxUsdBrl.js";
 import { useRole } from "../context/RoleContext.jsx";
 import { OCS } from "../data/mockData.js";
 import {
@@ -37,6 +33,9 @@ import {
   UrgentExpedientesTable,
   MarginScatter,
   TopClientsTable,
+  TopSkusTable,
+  NodeInventoryGrid,
+  FxToggle,
   GlobalFilters,
   DashboardCard,
   EmptyState,
@@ -44,13 +43,12 @@ import {
 
 // ─────────────────────────────────────────────────────────────────────
 // SafeWidget — error boundary funcional por widget.
-// Un widget caído NO debe tumbar la página. Mensaje + reintento.
+// Un widget caído NO debe tumbar la página.
 // ─────────────────────────────────────────────────────────────────────
 class SafeWidget extends React.Component {
   constructor(p) { super(p); this.state = { err: null }; }
   static getDerivedStateFromError(err) { return { err }; }
   componentDidCatch(err, info) {
-    // No console.log en prod (CLAUDE.md §12) — solo si hay window.MWT_DEBUG.
     if (typeof window !== "undefined" && window.MWT_DEBUG) {
       // eslint-disable-next-line no-console
       console.error("[Dashboard SafeWidget]", err, info);
@@ -72,21 +70,13 @@ class SafeWidget extends React.Component {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Helper: derivar Cash en riesgo desde aging buckets.
-// aging shape: { bucket_0_30, bucket_31_60, bucket_61_90, bucket_90_plus, total }
+// Helpers
 // ─────────────────────────────────────────────────────────────────────
 function cashAtRisk(aging) {
   if (!aging) return null;
-  const a = (aging.bucket_61_90 || 0) + (aging.bucket_90_plus || 0);
-  // Si todos los buckets vienen 0 explícitos, igual reportamos 0 — eso es real, no NaN.
-  return a;
+  return (aging.bucket_61_90 || 0) + (aging.bucket_90_plus || 0);
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Helper: serie temporal a partir de cashflow.
-// backend devuelve [{week, proyectado, real}, ...]. La transformamos a
-// [{date, value}] usando un mapeo configurable.
-// ─────────────────────────────────────────────────────────────────────
 function cashflowToSeries(cashflow, accessor) {
   if (!Array.isArray(cashflow)) return [];
   return cashflow
@@ -94,67 +84,77 @@ function cashflowToSeries(cashflow, accessor) {
     .map((p) => ({ date: p.week, value: Number(p[accessor]) || 0 }));
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Helper: cruzar urgent[] con by_status[] para sintetizar pipeline por marca.
-// Esto es derivación cliente-side; cuando exista
-// /api/analytics/by_status_by_brand/ el componente recibe directamente
-// la data del backend.
-// ─────────────────────────────────────────────────────────────────────
-function deriveBrandPipeline(urgent, byStatus, byBrandKpis, resolveBrand) {
+// Derivar pipeline por marca cruzando byStatusByBrand (cuando exista)
+// con byStatus + by_brand (fallback consolidado).
+function deriveBrandPipeline(byStatusByBrand, byBrandKpis, resolveBrand) {
+  // Si el endpoint nuevo respondió con datos, usarlo directamente.
+  if (Array.isArray(byStatusByBrand) && byStatusByBrand.length) {
+    const grouped = new Map();
+    for (const row of byStatusByBrand) {
+      if (!row.brand_id) continue;
+      if (!grouped.has(row.brand_id)) {
+        const brand = resolveBrand(row.brand_id) || {};
+        grouped.set(row.brand_id, {
+          brandId:    row.brand_id,
+          brandName:  brand.name || row.brand_id,
+          brandColor: brand.color || "var(--brand-primary)",
+          total:      0,
+          byStatus:   {},
+        });
+      }
+      const g = grouped.get(row.brand_id);
+      const status = row.status || row.estado || "TRANSITO";
+      const cnt = Number(row.count) || 0;
+      g.byStatus[status] = (g.byStatus[status] || 0) + cnt;
+      g.total += cnt;
+    }
+    return Array.from(grouped.values()).filter((r) => r.total > 0);
+  }
+
+  // Fallback: kpis.by_brand sin desglose por status — agrupamos como TRANSITO.
   if (!Array.isArray(byBrandKpis) || !byBrandKpis.length) return [];
-  // urgent provee status proxy a partir del campo `action` cuando exista
-  // y `brand_id`; sin él no podemos asignar conteos por estado.
-  // Solo entregamos la fila por marca si tenemos count global de la KPI.
   return byBrandKpis.map((b) => {
-    const brand = resolveBrand(b.brand_id) || { name: b.brand_id, color: "var(--border-strong)" };
-    // En ausencia de breakdown por estado por marca, agrupamos todo en "TRANSITO"
-    // como aproximación visual ÚNICA de "expedientes activos". Marca explícita
-    // en subtítulo del widget como "agregado global".
+    const brand = resolveBrand(b.brand_id) || {};
     return {
-      brandId:   b.brand_id,
-      brandName: brand.name,
-      brandColor: brand.color,
-      total:     Number(b.count) || 0,
-      byStatus: {
-        // Reparto plano hasta que exista endpoint con dimensión status×brand.
-        // Usamos "TRANSITO" como bucket conservador para no inventar splits.
-        TRANSITO: Number(b.count) || 0,
-      },
+      brandId:    b.brand_id,
+      brandName:  brand.name || b.brand_id,
+      brandColor: brand.color || "var(--border-strong)",
+      total:      Number(b.count) || 0,
+      byStatus:   { TRANSITO: Number(b.count) || 0 },
     };
   }).filter((r) => r.total > 0);
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// FxFooter — recordatorio honesto de fuente FX.
-// Cuando no exista feed de tasas en vivo, mostramos "[PENDIENTE]".
-// ─────────────────────────────────────────────────────────────────────
-function FxFooter({ market, lang }) {
-  // No hay endpoint FX → siempre PENDIENTE. Cuando exista, este componente
-  // recibe { rate, source, fetchedAt } y formatea según mercado.
-  if (market === "BR" || market === "CR") {
+function FxFooter({ market, lang, fx }) {
+  if (market === "BR") {
+    if (fx?.rate != null) {
+      return (
+        <span className="tabular" style={{
+          font: "var(--caption)", color: "var(--text-tertiary)",
+        }}>
+          {fx.source ? `${fx.source} · ` : ""}1 USD = R$ {fx.rate.toFixed(4)}
+          {fx.fetchedAt && (
+            <> · {new Date(fx.fetchedAt).toLocaleDateString(lang === "en" ? "en-US" : "es-PE")}</>
+          )}
+        </span>
+      );
+    }
     return (
       <span
-        title={lang === "en"
-          ? "Pending: BCB/BCCR FX feed not connected yet."
-          : "Pendiente: feed FX BCB/BCCR no conectado todavía."}
+        title={lang === "en" ? "Pending FX feed." : "Pendiente feed FX."}
         style={{
-          font: "var(--caption)",
-          color: "var(--warning)",
+          font: "var(--caption)", color: "var(--warning)",
           background: "var(--warning-bg)",
-          padding: "2px 8px",
-          borderRadius: "var(--radius-sm)",
+          padding: "2px 8px", borderRadius: "var(--radius-sm)",
         }}
       >
-        {lang === "en" ? "[Pending — FX feed not connected]" : "[PENDIENTE — fuente FX no conectada]"}
+        {lang === "en" ? "[Pending — FX not available]" : "[PENDIENTE — fuente FX no conectada]"}
       </span>
     );
   }
   return null;
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Skeleton — placeholder neutro durante carga inicial.
-// ─────────────────────────────────────────────────────────────────────
 function Skeleton({ height = 120, width = "100%" }) {
   return (
     <div
@@ -170,7 +170,6 @@ function Skeleton({ height = 120, width = "100%" }) {
   );
 }
 
-// Mantiene el keyframe si la app no lo trae (defensa local).
 const SHIMMER_KEYFRAMES = `
 @keyframes mwt-shimmer {
   0% { background-position: 200% 0; }
@@ -178,26 +177,75 @@ const SHIMMER_KEYFRAMES = `
 }
 `;
 
+const LS_CCY = "mwt:dashboard-fx-display";
+
 // =====================================================================
 // COMPONENTE PRINCIPAL
 // =====================================================================
 export default function ScreenDashboard() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
-  const { isAdmin, can } = useRole();
+  const { can } = useRole();
+
+  // ── Display currency (persistido en LS) ─────
+  const [displayCcy, setDisplayCcy] = useState(() => {
+    try {
+      const v = localStorage.getItem(LS_CCY);
+      return v === "BRL" ? "BRL" : "USD";
+    } catch { return "USD"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(LS_CCY, displayCcy); } catch {}
+  }, [displayCcy]);
+
+  // ── FX hook ─────
+  const fx = useFxUsdBrl();
+
+  // Si el usuario tenía BRL guardado pero la tasa no llegó nunca, degradar a USD
+  // (no romper la promesa de "nunca inventar"). Se restaura BRL en cuanto haya tasa.
+  useEffect(() => {
+    if (displayCcy === "BRL" && fx.rate == null && !fx.loading) {
+      // mantener visualmente USD sin tocar LS, así si la tasa vuelve, regresa.
+    }
+  }, [displayCcy, fx.rate, fx.loading]);
+
+  const effectiveCcy = displayCcy === "BRL" && fx.rate != null ? "BRL" : "USD";
+
+  // Helper para mostrar un monto USD en la moneda activa.
+  const fmtAmount = useCallback((usd) => {
+    if (usd == null) return "—";
+    if (effectiveCcy === "BRL" && fx.rate != null) {
+      return new Intl.NumberFormat(lang === "en" ? "en-US" : "es-PE", {
+        style: "currency", currency: "BRL", maximumFractionDigits: 0,
+      }).format(Number(usd) * fx.rate);
+    }
+    return fmtMoney(usd);
+  }, [effectiveCcy, fx.rate, lang]);
+
+  // Construye el secondary BRL para un monto USD (para mostrar debajo del valor).
+  const secondaryBrl = useCallback((usd) => {
+    if (usd == null || fx.rate == null) return null;
+    return {
+      value: Number(usd) * fx.rate,
+      currency: "BRL",
+      source: fx.source,
+      fetchedAt: fx.fetchedAt,
+    };
+  }, [fx.rate, fx.source, fx.fetchedAt]);
 
   // ── Estado de filtros globales ─────
-  const [filters, setFilters] = React.useState({
+  const [filters, setFilters] = useState({
     period: "90d",
     brand: null,
-    market: null,  // 'USA' | 'CR' | 'BR' (UI only; backend no segmenta aún)
+    market: null,
     client: null,
     node: null,
   });
 
-  // ── Data ─────
+  // ── Data del backend ─────
   const {
     kpis, cashflow, aging, exposicion, margenMarcas, byStatus, urgent,
+    creditClock, r1Ratio, byStatusByBrand, inventoryByNode, topSkus, marginScatter,
     loading, error, reload,
   } = useDashboardKpis();
   const { brands, resolveBrand } = useBrandsLight();
@@ -209,11 +257,7 @@ export default function ScreenDashboard() {
     else navigate("/expedientes");
   }, [navigate]);
 
-  // El backend devuelve client_id como UUID; resolver por nombre real
-  // requiere endpoint clientes/{id}/ o un caché de clientes. Hoy
-  // mostramos el ID si el nombre no está disponible — honesto, no inventado.
   const resolveClient = useCallback((id) => {
-    // Buscar primero en exposicion (puede traer denormalizado en el futuro)
     const fromExp = Array.isArray(exposicion)
       ? exposicion.find((e) => e.client_id === id)
       : null;
@@ -224,25 +268,40 @@ export default function ScreenDashboard() {
   // ── KPIs derivados ─────
   const k = kpis || {};
   const kpiActive          = k.active != null ? Number(k.active) : null;
-  const kpiCashRisk        = cashAtRisk(aging);          // bucket_61_90 + bucket_90_plus
+  const kpiCashRisk        = cashAtRisk(aging);
   const kpiMarginPct       = k.margin_pct != null ? Number(k.margin_pct) : null;
-  const kpiTotalInvoiced   = k.total_invoiced != null ? Number(k.total_invoiced) : null;
-  const kpiTotalPaid       = k.total_paid != null ? Number(k.total_paid) : null;
-  const kpiReceivables     = k.receivables != null ? Number(k.receivables) : null;
+  const kpiCreditAvgDays   = creditClock?.avg_days != null ? Number(creditClock.avg_days) : null;
+  const kpiR1Ratio         = r1Ratio?.ratio != null ? Number(r1Ratio.ratio) : null;
 
-  // ── Series para Banda 2 ─────
+  // ── Series Banda 2 ─────
   const cashflowSeriesReal       = useMemo(() => cashflowToSeries(cashflow, "real"),       [cashflow]);
   const cashflowSeriesProyectado = useMemo(() => cashflowToSeries(cashflow, "proyectado"), [cashflow]);
-  const [chartSeriesKey, setChartSeriesKey] = React.useState("real");
+  const [chartSeriesKey, setChartSeriesKey] = useState("real");
   const chartSeries = chartSeriesKey === "real" ? cashflowSeriesReal : cashflowSeriesProyectado;
 
-  // ── Pipeline por marca (derivación con caveat) ─────
-  const brandPipelineRows = useMemo(() => {
-    return deriveBrandPipeline(urgent, byStatus, k.by_brand || [], resolveBrand);
-  }, [urgent, byStatus, k.by_brand, resolveBrand]);
+  // ── Pipeline por marca ─────
+  const brandPipelineRows = useMemo(
+    () => deriveBrandPipeline(byStatusByBrand, k.by_brand || [], resolveBrand),
+    [byStatusByBrand, k.by_brand, resolveBrand]
+  );
 
-  // ── Scatter margen (un punto por marca, NO por expediente — caveat documentado) ─────
+  // ── Scatter por expediente (preferido) o por marca (fallback) ─────
   const scatterPoints = useMemo(() => {
+    // 1) Si el endpoint expediente_margin_scatter respondió, usar granularidad por expediente.
+    if (Array.isArray(marginScatter) && marginScatter.length) {
+      return marginScatter.map((m) => {
+        const brand = resolveBrand(m.brand_id) || {};
+        return {
+          id:        m.id,
+          label:     `${m.ref || m.id} · ${m.client_id || ""}`,
+          projected: Number(m.projected_margin) || 0,
+          real:      Number(m.real_margin) || 0,
+          value:     Number(m.total_invoiced) || 0,
+          color:     brand.color || "var(--brand-primary)",
+        };
+      }).filter((p) => p.projected > 0 || p.real > 0);
+    }
+    // 2) Fallback: un punto por marca (margenMarcas).
     return (Array.isArray(margenMarcas) ? margenMarcas : []).map((m) => {
       const brand = resolveBrand(m.brand_id) || {};
       return {
@@ -254,14 +313,23 @@ export default function ScreenDashboard() {
         color:     brand.color || "var(--brand-primary)",
       };
     }).filter((p) => p.projected > 0 || p.real > 0);
-  }, [margenMarcas, resolveBrand]);
+  }, [marginScatter, margenMarcas, resolveBrand]);
 
-  // ── Filtros aplicados (cliente-side hasta que el backend respete params) ─────
+  // ── Filtros aplicados (cliente-side) ─────
   const filteredUrgent = useMemo(() => {
     if (!Array.isArray(urgent)) return [];
     if (!filters.brand) return urgent;
     return urgent.filter((u) => u.brand_id === filters.brand);
   }, [urgent, filters.brand]);
+
+  const filteredTopSkus = useMemo(() => {
+    if (!Array.isArray(topSkus)) return [];
+    if (!filters.brand) return topSkus;
+    return topSkus.filter((s) => s.brand_id === filters.brand);
+  }, [topSkus, filters.brand]);
+
+  // Granularidad scatter informativa para el subtítulo
+  const scatterIsPerFile = Array.isArray(marginScatter) && marginScatter.length > 0;
 
   // ─────────────────────────────────────────────────────────────────────
   // RENDER
@@ -284,7 +352,18 @@ export default function ScreenDashboard() {
             })}
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+          <FxToggle
+            currency={displayCcy}
+            onChange={setDisplayCcy}
+            rate={fx.rate}
+            source={fx.source}
+            fetchedAt={fx.fetchedAt}
+            loading={fx.loading}
+            error={fx.error}
+            onRefresh={fx.refresh}
+            lang={lang}
+          />
           <button
             type="button"
             className="btn btn-secondary"
@@ -313,7 +392,7 @@ export default function ScreenDashboard() {
       {/* Filtros globales */}
       <GlobalFilters value={filters} onChange={setFilters} brands={brands} lang={lang} />
 
-      {/* Banner de error global (no rompe la página) */}
+      {/* Banner de error global */}
       {error && !loading && (
         <div
           role="alert"
@@ -337,87 +416,101 @@ export default function ScreenDashboard() {
       )}
 
       {/* ──────────────────────────────────────────────────────────────
-          BANDA 1 — Hero "Estado del negocio hoy"
-          6 KPIs (3 con backend + 3 honestos en empty state).
-          NOTA: Banda 1 mantiene SIEMPRE vista global (mandato CEO).
+          BANDA 1 — 6 KPIs (cableados al backend)
           ────────────────────────────────────────────────────────────── */}
       <div
         className="grid gap-3 mb-6"
-        style={{
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-        }}
+        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}
       >
+        {/* 1 · Expedientes activos */}
         <SafeWidget lang={lang} endpoint="/api/analytics/dashboard_kpis/">
           {loading
-            ? <div className="stat"><Skeleton height={100} /></div>
+            ? <div className="stat"><Skeleton height={120} /></div>
             : <KpiCard
                 lang={lang}
                 label={tr(lang, "active_exp")}
                 value={kpiActive}
                 valueFmt={(v) => v.toLocaleString(lang === "en" ? "en-US" : "es-PE")}
-                sub={lang === "en" ? "Open files (not closed/cancelled)" : "Expedientes abiertos (no cerrados/cancelados)"}
+                sub={lang === "en"
+                  ? "Open files (not closed/cancelled)"
+                  : "Expedientes abiertos (no cerrados/cancelados)"}
                 sparkColor="var(--brand-accent)"
                 emptyEndpoint="/api/analytics/dashboard_kpis/"
-                emptyHint={lang === "en"
-                  ? "Backend did not return active count."
-                  : "El backend no devolvió conteo de activos."}
               />}
         </SafeWidget>
 
+        {/* 2 · Cash en riesgo */}
         <SafeWidget lang={lang} endpoint="/api/analytics/aging/">
           {loading
-            ? <div className="stat"><Skeleton height={100} /></div>
+            ? <div className="stat"><Skeleton height={120} /></div>
             : <KpiCard
                 lang={lang}
                 label={lang === "en" ? "Cash at risk" : "Cash en riesgo"}
                 value={kpiCashRisk}
-                valueFmt={(v) => fmtMoney(v)}
+                valueFmt={(v) => fmtAmount(v)}
+                secondary={secondaryBrl(kpiCashRisk)}
                 sub={lang === "en"
-                  ? "Receivables in buckets 61–90d and 90d+"
-                  : "Por cobrar en buckets 61–90d y 90d+"}
+                  ? "Receivables 61–90d + 90d+"
+                  : "Por cobrar 61–90d + 90d+"}
                 sparkColor="var(--critical)"
                 threshold={(kpiCashRisk || 0) > 0 ? "critical" : "success"}
                 emptyEndpoint="/api/analytics/aging/"
-                emptyHint={lang === "en"
-                  ? "Aging endpoint did not respond."
-                  : "El endpoint de aging no respondió."}
               />}
         </SafeWidget>
 
+        {/* 3 · Margen bruto ponderado */}
         <SafeWidget lang={lang} endpoint="/api/analytics/dashboard_kpis/">
           {loading
-            ? <div className="stat"><Skeleton height={100} /></div>
+            ? <div className="stat"><Skeleton height={120} /></div>
             : <KpiCard
                 lang={lang}
                 label={lang === "en" ? "Weighted gross margin" : "Margen bruto ponderado"}
                 value={kpiMarginPct != null && kpiMarginPct > 0 ? kpiMarginPct : null}
                 valueFmt={(v) => `${(v * 100).toFixed(1)}%`}
-                sub={lang === "en"
-                  ? "Closed files · last 90 days"
-                  : "Expedientes cerrados · últimos 90 días"}
+                sub={lang === "en" ? "Closed files · last 90d" : "Cerrados · últimos 90d"}
                 sparkColor="var(--info)"
-                threshold={(kpiMarginPct || 0) > 0.18 ? "success" : (kpiMarginPct || 0) > 0.12 ? "warning" : "critical"}
+                threshold={
+                  kpiMarginPct == null ? undefined
+                  : kpiMarginPct > 0.18 ? "success"
+                  : kpiMarginPct > 0.12 ? "warning"
+                  : "critical"
+                }
                 emptyEndpoint="/api/analytics/dashboard_kpis/"
                 emptyHint={lang === "en"
-                  ? "No closed files in last 90 days to compute margin."
-                  : "No hay expedientes cerrados en últimos 90d para calcular margen."}
+                  ? "No closed files in last 90d."
+                  : "No hay cerrados en últimos 90d."}
               />}
         </SafeWidget>
 
-        {/* KPI 4 · Reloj crédito promedio — empty honesto */}
-        <SafeWidget lang={lang}>
-          <KpiCard
-            lang={lang}
-            label={lang === "en" ? "Avg. credit clock" : "Reloj crédito promedio"}
-            value={null}
-            emptyEndpoint="/api/analytics/credit_clock_avg/"
-            emptyHint={lang === "en"
-              ? "Endpoint not implemented: AVG(days_to_payment) over closed files."
-              : "Endpoint no implementado: AVG(días_hasta_pago) sobre expedientes cerrados."}
-          />
+        {/* 4 · Reloj crédito promedio · cableado al endpoint nuevo */}
+        <SafeWidget lang={lang} endpoint="/api/analytics/credit_clock_avg/">
+          {loading
+            ? <div className="stat"><Skeleton height={120} /></div>
+            : <KpiCard
+                lang={lang}
+                label={lang === "en" ? "Avg. credit clock" : "Reloj crédito promedio"}
+                value={kpiCreditAvgDays}
+                valueFmt={(v) => `${v.toFixed(0)}d`}
+                sub={creditClock?.n_files
+                  ? (lang === "en"
+                      ? `${creditClock.n_files} files · p90 ${creditClock.p90?.toFixed(0) ?? "—"}d`
+                      : `${creditClock.n_files} exp. · p90 ${creditClock.p90?.toFixed(0) ?? "—"}d`)
+                  : (lang === "en" ? "Last 90 days" : "Últimos 90 días")}
+                sparkColor="var(--info)"
+                threshold={
+                  kpiCreditAvgDays == null ? undefined
+                  : kpiCreditAvgDays <= 60 ? "success"
+                  : kpiCreditAvgDays <= 80 ? "warning"
+                  : "critical"
+                }
+                emptyEndpoint="/api/analytics/credit_clock_avg/"
+                emptyHint={lang === "en"
+                  ? "No paid receivables in last 90d to compute."
+                  : "Sin cobranzas pagadas en últimos 90d para calcular."}
+              />}
         </SafeWidget>
 
-        {/* KPI 5 · TACoS Amazon — empty honesto. Tech name no se traduce. */}
+        {/* 5 · TACoS Amazon · pendiente (no hay schema Amazon en BD) */}
         <SafeWidget lang={lang}>
           <KpiCard
             lang={lang}
@@ -425,33 +518,52 @@ export default function ScreenDashboard() {
             value={null}
             emptyEndpoint="/api/analytics/tacos_fba_us/"
             emptyHint={lang === "en"
-              ? "Endpoint not implemented: ad_spend / total_revenue (last 30d)."
-              : "Endpoint no implementado: ad_spend / total_revenue (últimos 30d)."}
+              ? "Not implemented: no Amazon ads schema in DB."
+              : "No implementado: no hay schema de Amazon Ads en BD."}
           />
         </SafeWidget>
 
-        {/* KPI 6 · % R1+ — empty honesto */}
-        <SafeWidget lang={lang}>
-          <KpiCard
-            lang={lang}
-            label={lang === "en" ? "% files with R1+ correction" : "% expedientes con corrección R1+"}
-            value={null}
-            emptyEndpoint="/api/analytics/r1_correction_ratio/"
-            emptyHint={lang === "en"
-              ? "Endpoint not implemented: count(corrections>=R1) / total."
-              : "Endpoint no implementado: count(correcciones>=R1) / total."}
-          />
+        {/* 6 · % R1+ · cableado al endpoint nuevo */}
+        <SafeWidget lang={lang} endpoint="/api/analytics/r1_correction_ratio/">
+          {loading
+            ? <div className="stat"><Skeleton height={120} /></div>
+            : <KpiCard
+                lang={lang}
+                label={lang === "en"
+                  ? "% files with R1+ correction"
+                  : "% expedientes con corrección R1+"}
+                value={kpiR1Ratio}
+                valueFmt={(v) => `${(v * 100).toFixed(1)}%`}
+                sub={r1Ratio?.total
+                  ? (lang === "en"
+                      ? `${r1Ratio.with_corrections}/${r1Ratio.total} files`
+                      : `${r1Ratio.with_corrections}/${r1Ratio.total} expedientes`)
+                  : null}
+                sparkColor="var(--warning)"
+                threshold={
+                  kpiR1Ratio == null ? undefined
+                  : kpiR1Ratio < 0.10 ? "success"
+                  : kpiR1Ratio < 0.25 ? "warning"
+                  : "critical"
+                }
+                emptyEndpoint="/api/analytics/r1_correction_ratio/"
+                emptyHint={r1Ratio?._pending
+                  ? (lang === "en"
+                      ? "Pending DB column: expediente.corrections_count."
+                      : "Pendiente columna BD: expediente.corrections_count.")
+                  : (lang === "en" ? "No data." : "Sin datos.")}
+              />}
         </SafeWidget>
       </div>
 
       {/* ──────────────────────────────────────────────────────────────
-          BANDA 2 — Comparador temporal Google-Finance-style
+          BANDA 2 — Comparador temporal (cashflow)
           ────────────────────────────────────────────────────────────── */}
       <DashboardCard
         title={lang === "en" ? "Consolidated cashflow · USD" : "Cashflow consolidado · USD"}
         subtitle={lang === "en"
-          ? "Backend source: /api/analytics/cashflow/ — series: projected / real"
-          : "Fuente backend: /api/analytics/cashflow/ — series: proyectado / real"}
+          ? "Source: /api/analytics/cashflow/ — series: projected / real"
+          : "Fuente: /api/analytics/cashflow/ — series: proyectado / real"}
         action={
           <div className="seg" style={{ display: "inline-flex", gap: 2 }}>
             <button
@@ -488,27 +600,26 @@ export default function ScreenDashboard() {
               />}
         </SafeWidget>
 
-        {/* Footer FX honesto */}
-        <div className="flex ai-center gap-2 mt-3" style={{ font: "var(--caption)", color: "var(--text-tertiary)" }}>
+        <div className="flex ai-center gap-2 mt-3" style={{
+          font: "var(--caption)", color: "var(--text-tertiary)", flexWrap: "wrap",
+        }}>
           <span>
-            {lang === "en"
-              ? "Canonical currency: USD."
-              : "Moneda canónica: USD."}
+            {lang === "en" ? "Canonical currency: USD." : "Moneda canónica: USD."}
           </span>
-          <FxFooter market={filters.market} lang={lang} />
+          <FxFooter market={effectiveCcy === "BRL" ? "BR" : null} lang={lang} fx={fx} />
         </div>
       </DashboardCard>
 
       <div style={{ height: 16 }} />
 
       {/* ──────────────────────────────────────────────────────────────
-          BANDA 3 — Operación (3 columnas iguales)
+          BANDA 3 — Operación
           ────────────────────────────────────────────────────────────── */}
       <div
         className="grid gap-3 mb-6"
         style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}
       >
-        {/* 3A · Pipeline por marca (timeline horizontal apilado) */}
+        {/* 3A · Pipeline por marca */}
         <DashboardCard
           title={tr(lang, "operational_pipeline")}
           subtitle={lang === "en"
@@ -532,7 +643,7 @@ export default function ScreenDashboard() {
           </SafeWidget>
         </DashboardCard>
 
-        {/* 3B · Top 10 expedientes urgentes */}
+        {/* 3B · Top 10 urgentes */}
         <DashboardCard
           title={tr(lang, "urgent_actions")}
           subtitle={lang === "en"
@@ -555,22 +666,22 @@ export default function ScreenDashboard() {
           </SafeWidget>
         </DashboardCard>
 
-        {/* 3C · Inventario por nodo — empty honesto (sin endpoint) */}
+        {/* 3C · Inventario por nodo · cableado al endpoint nuevo */}
         <DashboardCard
           title={lang === "en" ? "Inventory by node" : "Inventario por nodo"}
           subtitle={lang === "en"
             ? "Coverage days · stock per active node"
             : "Días de cobertura · stock por nodo activo"}
         >
-          <SafeWidget lang={lang}>
-            <EmptyState
-              lang={lang}
-              title={lang === "en" ? "No node inventory" : "Sin inventario por nodo"}
-              hint={lang === "en"
-                ? "Endpoint not implemented: requires JOIN nodos + stock + 30d velocity."
-                : "Endpoint no implementado: requiere JOIN nodos + stock + velocidad 30d."}
-              endpoint="/api/analytics/inventory_coverage_by_node/"
-            />
+          <SafeWidget lang={lang} endpoint="/api/analytics/inventory_coverage_by_node/">
+            {loading
+              ? <Skeleton height={140} />
+              : <NodeInventoryGrid
+                  items={inventoryByNode}
+                  lang={lang}
+                  onOpenNode={(id) => navigate(`/nodos/${id}`)}
+                  emptyEndpoint="/api/analytics/inventory_coverage_by_node/"
+                />}
           </SafeWidget>
         </DashboardCard>
       </div>
@@ -582,31 +693,30 @@ export default function ScreenDashboard() {
         className="grid gap-3 mb-6"
         style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))" }}
       >
-        {/* 4A · Top SKUs — empty honesto */}
+        {/* 4A · Top SKUs · cableado */}
         <DashboardCard
           title={lang === "en" ? "Top 10 SKUs by margin (90d)" : "Top 10 SKUs por margen (90d)"}
           subtitle={lang === "en"
             ? "Ranked by margin USD contribution"
             : "Rankeados por contribución de margen USD"}
+          padding={0}
         >
-          <SafeWidget lang={lang}>
-            <EmptyState
-              lang={lang}
-              title={lang === "en" ? "No SKU ranking yet" : "Sin ranking de SKUs"}
-              hint={lang === "en"
-                ? "Endpoint not implemented: JOIN productos + lineas + expedientes (90d)."
-                : "Endpoint no implementado: JOIN productos + líneas + expedientes (90d)."}
-              endpoint="/api/analytics/top_skus_margen/"
-            />
+          <SafeWidget lang={lang} endpoint="/api/analytics/top_skus_margen/">
+            {loading
+              ? <div style={{ padding: 20 }}><Skeleton height={220} /></div>
+              : <TopSkusTable
+                  items={filteredTopSkus}
+                  resolveBrand={resolveBrand}
+                  lang={lang}
+                  emptyEndpoint="/api/analytics/top_skus_margen/"
+                />}
           </SafeWidget>
         </DashboardCard>
 
-        {/* 4B · Top 10 clientes — DATA REAL desde exposicion_clientes */}
+        {/* 4B · Top 10 clientes */}
         <DashboardCard
           title={lang === "en" ? "Top 10 clients" : "Top 10 clientes"}
-          subtitle={lang === "en"
-            ? "By open exposure (USD)"
-            : "Por exposición abierta (USD)"}
+          subtitle={lang === "en" ? "By open exposure (USD)" : "Por exposición abierta (USD)"}
           padding={0}
         >
           <SafeWidget lang={lang} endpoint="/api/analytics/exposicion_clientes/">
@@ -621,34 +731,38 @@ export default function ScreenDashboard() {
           </SafeWidget>
         </DashboardCard>
 
-        {/* 4C · Heatmap tallas × mercado — empty honesto */}
+        {/* 4C · Heatmap tallas — sigue pendiente (sin schema de tallas) */}
         <DashboardCard
           title={lang === "en" ? "Size × market heatmap" : "Heatmap tallas × mercado"}
           subtitle={lang === "en"
-            ? "Distribution vs expected curve S1–S6 (5/10/20/25/30/10%)"
-            : "Distribución vs curva esperada S1–S6 (5/10/20/25/30/10%)"}
+            ? "Distribution vs expected curve S1–S6"
+            : "Distribución vs curva esperada S1–S6"}
         >
           <SafeWidget lang={lang}>
             <EmptyState
               lang={lang}
               title={lang === "en" ? "No size data" : "Sin data de tallas"}
               hint={lang === "en"
-                ? "Endpoint not implemented: sales/inventory grouped by size × destination market."
-                : "Endpoint no implementado: ventas/inventario agrupados por talla × mercado destino."}
+                ? "Pending DB: ENT_OPS_TALLAS schema + sales-by-size aggregation."
+                : "Pendiente BD: schema ENT_OPS_TALLAS + agregación ventas por talla."}
               endpoint="/api/analytics/size_market_distribution/"
             />
           </SafeWidget>
         </DashboardCard>
 
-        {/* 4D · Scatter margen real vs proyectado (CEO-ONLY) */}
+        {/* 4D · Scatter margen (CEO-ONLY) · cableado al endpoint nuevo o fallback */}
         {can("view_margin") ? (
           <DashboardCard
             title={lang === "en" ? "Real vs projected margin" : "Margen real vs proyectado"}
-            subtitle={lang === "en"
-              ? "By brand · ±15% band marks ENT_GOB_KPI B2 threshold · per-file granularity pending"
-              : "Por marca · banda ±15% marca umbral ENT_GOB_KPI B2 · granularidad por expediente pendiente"}
+            subtitle={scatterIsPerFile
+              ? (lang === "en"
+                  ? "Per closed file · ±15% band marks ENT_GOB_KPI B2 threshold"
+                  : "Por expediente cerrado · banda ±15% marca umbral ENT_GOB_KPI B2")
+              : (lang === "en"
+                  ? "By brand (fallback) · per-file granularity pending closed_at column"
+                  : "Por marca (fallback) · granularidad por expediente pendiente columna closed_at")}
           >
-            <SafeWidget lang={lang} endpoint="/api/analytics/margen_marcas/">
+            <SafeWidget lang={lang} endpoint="/api/analytics/expediente_margin_scatter/">
               {loading
                 ? <Skeleton height={280} />
                 : <MarginScatter
@@ -660,19 +774,18 @@ export default function ScreenDashboard() {
             </SafeWidget>
           </DashboardCard>
         ) : (
-          // INTERNAL: solo agregado, sin descomposición de margen
           <DashboardCard
             title={lang === "en" ? "Margin (aggregated)" : "Margen (agregado)"}
             subtitle={lang === "en"
-              ? "Full breakdown is restricted to CEO role"
+              ? "Full breakdown is CEO-only"
               : "Desglose completo restringido a rol CEO"}
           >
             <EmptyState
               lang={lang}
               title={lang === "en" ? "Restricted view" : "Vista restringida"}
               hint={lang === "en"
-                ? "CEO-ONLY content. Your role sees aggregated margin only via KPI band 1."
-                : "Contenido CEO-ONLY. Tu rol ve margen agregado solo en la banda KPI 1."}
+                ? "CEO-ONLY content."
+                : "Contenido CEO-ONLY."}
             />
           </DashboardCard>
         )}
@@ -697,9 +810,9 @@ export default function ScreenDashboard() {
           {lang === "en" ? "Last reload:" : "Último refresco:"} {fmtDate(new Date().toISOString(), lang)}
         </span>
         <span>
-          {lang === "en"
-            ? "Empty states are intentional — no data is fabricated."
-            : "Los estados vacíos son intencionales — ningún dato es inventado."}
+          {fx.rate != null
+            ? `FX ${fx.source || "MWT"} · 1 USD = R$ ${fx.rate.toFixed(4)}`
+            : (lang === "en" ? "FX: pending" : "FX: pendiente")}
         </span>
       </div>
     </div>
@@ -707,7 +820,7 @@ export default function ScreenDashboard() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Helpers de estilo locales (sin clases globales nuevas).
+// Helpers de estilo locales
 // ─────────────────────────────────────────────────────────────────────
 function segBtnStyle(active) {
   return {

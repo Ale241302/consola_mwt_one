@@ -5,8 +5,16 @@ Agente responsable: [AG-BACKEND]
 
 Monta:
   · AnalyticsViewSet          → /api/analytics/<action>/ (read-only KPIs)
+      - dashboard_kpis, cashflow, aging, exposicion_clientes,
+        margen_marcas, by_status, urgent
+      - credit_clock_avg, r1_correction_ratio, by_status_by_brand,
+        inventory_coverage_by_node, top_skus_margen,
+        expediente_margin_scatter         (Sprint widgets 2026-05-20)
   · DashboardSnapshotViewSet  → /api/dashboard-snapshots/
   · WidgetCatViewSet          → /api/dashboard-widgets/ (read-only)
+
+Las rutas de los @action de AnalyticsViewSet se exponen
+automáticamente vía DefaultRouter — no requiere `path()` extra.
 =====================================================================
 """
 from rest_framework.routers import DefaultRouter

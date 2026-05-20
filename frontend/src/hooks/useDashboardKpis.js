@@ -1,25 +1,31 @@
 // =====================================================================
-// MWT.ONE · useDashboardKpis  (rediseño Centro de Operaciones · 2026-05-20)
+// MWT.ONE · useDashboardKpis  (Centro de Operaciones · 2026-05-20)
 // Agente responsable: [AG-FRONTEND / AG-03]
 //
 // Consume (TODO viene del backend — cero fallback a mock):
-//   GET /api/analytics/dashboard_kpis/        → KPIs consolidados
-//   GET /api/analytics/cashflow/              → [{week, proyectado, real}]
-//   GET /api/analytics/aging/                 → {bucket_0_30, ..., bucket_90_plus}
-//   GET /api/analytics/exposicion_clientes/   → [{client_id, monto_total, ...}]
-//   GET /api/analytics/margen_marcas/         → [{brand_id, projected_margin, real_margin, ...}]
-//   GET /api/analytics/by_status/             → [{status, count, total_invoiced, balance}]
-//   GET /api/analytics/urgent/                → [{id, ref, client_id, brand_id, urgency, action}]
+//   GET /api/analytics/dashboard_kpis/
+//   GET /api/analytics/cashflow/
+//   GET /api/analytics/aging/
+//   GET /api/analytics/exposicion_clientes/
+//   GET /api/analytics/margen_marcas/
+//   GET /api/analytics/by_status/
+//   GET /api/analytics/urgent/
+//   GET /api/analytics/credit_clock_avg/            (Sprint 2026-05-20)
+//   GET /api/analytics/r1_correction_ratio/         (Sprint 2026-05-20)
+//   GET /api/analytics/by_status_by_brand/          (Sprint 2026-05-20)
+//   GET /api/analytics/inventory_coverage_by_node/  (Sprint 2026-05-20)
+//   GET /api/analytics/top_skus_margen/             (Sprint 2026-05-20)
+//   GET /api/analytics/expediente_margin_scatter/   (Sprint 2026-05-20)
 //
-// Devuelve:
+// Devuelve un bundle único con TODO el estado del dashboard:
 //   { kpis, cashflow, aging, exposicion, margenMarcas, byStatus, urgent,
-//     loading, error, reload }
+//     creditClock, r1Ratio, byStatusByBrand, inventoryByNode, topSkus,
+//     marginScatter, loading, error, reload }
 //
 // Política de errores parciales (POL_RESILIENCIA):
-//   - Cada endpoint se cachea con .catch(null/[]) para que un widget caído
-//     NUNCA tumbe el dashboard completo.
-//   - El consumidor decide cómo renderizar el estado vacío (EmptyState).
-//   - Si NINGÚN endpoint responde, se marca error global y se ofrece reintento.
+//   Cada endpoint se cachea con .catch(null/[]) — un widget caído NUNCA
+//   tumba el dashboard. El consumidor decide cómo renderizar el estado
+//   vacío con <EmptyState/>.
 // =====================================================================
 import { useEffect, useState, useCallback } from "react";
 import { analyticsApi } from "../lib/api.js";
@@ -36,6 +42,12 @@ export function useDashboardKpis() {
     margenMarcas: [],
     byStatus: [],
     urgent: [],
+    creditClock: null,
+    r1Ratio: null,
+    byStatusByBrand: [],
+    inventoryByNode: [],
+    topSkus: [],
+    marginScatter: [],
     loading: true,
     error: null,
   });
@@ -46,6 +58,8 @@ export function useDashboardKpis() {
       const [
         kpis, cashflow, aging,
         exposicion, margenMarcas, byStatus, urgent,
+        creditClock, r1Ratio, byStatusByBrand,
+        inventoryByNode, topSkus, marginScatter,
       ] = await Promise.all([
         analyticsApi.dashboardKpis().catch(emptyObj),
         analyticsApi.cashflow().catch(emptyArray),
@@ -54,17 +68,29 @@ export function useDashboardKpis() {
         analyticsApi.margenMarcas().catch(emptyArray),
         analyticsApi.byStatus().catch(emptyArray),
         analyticsApi.urgent().catch(emptyArray),
+        analyticsApi.creditClockAvg().catch(emptyObj),
+        analyticsApi.r1CorrectionRatio().catch(emptyObj),
+        analyticsApi.byStatusByBrand().catch(emptyArray),
+        analyticsApi.inventoryCoverageByNode().catch(emptyArray),
+        analyticsApi.topSkusMargen().catch(emptyArray),
+        analyticsApi.expedienteMarginScatter().catch(emptyArray),
       ]);
       setState({
-        kpis:         kpis || null,
-        cashflow:     Array.isArray(cashflow)     ? cashflow     : [],
-        aging:        aging || null,
-        exposicion:   Array.isArray(exposicion)   ? exposicion   : [],
-        margenMarcas: Array.isArray(margenMarcas) ? margenMarcas : [],
-        byStatus:     Array.isArray(byStatus)     ? byStatus     : [],
-        urgent:       Array.isArray(urgent)       ? urgent       : [],
-        loading:      false,
-        error:        null,
+        kpis:            kpis || null,
+        cashflow:        Array.isArray(cashflow)        ? cashflow        : [],
+        aging:           aging || null,
+        exposicion:      Array.isArray(exposicion)      ? exposicion      : [],
+        margenMarcas:    Array.isArray(margenMarcas)    ? margenMarcas    : [],
+        byStatus:        Array.isArray(byStatus)        ? byStatus        : [],
+        urgent:          Array.isArray(urgent)          ? urgent          : [],
+        creditClock:     creditClock || null,
+        r1Ratio:         r1Ratio || null,
+        byStatusByBrand: Array.isArray(byStatusByBrand) ? byStatusByBrand : [],
+        inventoryByNode: Array.isArray(inventoryByNode) ? inventoryByNode : [],
+        topSkus:         Array.isArray(topSkus)         ? topSkus         : [],
+        marginScatter:   Array.isArray(marginScatter)   ? marginScatter   : [],
+        loading:         false,
+        error:           null,
       });
     } catch (err) {
       setState((s) => ({ ...s, loading: false, error: err }));
