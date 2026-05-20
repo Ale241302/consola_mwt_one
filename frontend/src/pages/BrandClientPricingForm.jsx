@@ -2228,6 +2228,27 @@ function SnapshotBadge({ label, value, color, editable, rawValue, suffix, parse,
 }
 
 function Section({ title, subtitle, badge, children }) {
+  // `badge` puede ser:
+  //   · null/undefined → no renderiza nada
+  //   · ReactNode (JSX) → renderiza tal cual
+  //   · objeto { label, color, bg } → renderiza chip estilizado
+  // Render directo de un objeto plano dispara React error #31.
+  const renderBadge = () => {
+    if (!badge) return null;
+    if (typeof badge !== "object" || React.isValidElement(badge)) return badge;
+    if (!badge.label) return null;
+    return (
+      <span style={{
+        display: "inline-flex", alignItems: "center", gap: 3,
+        padding: "3px 8px", borderRadius: 12,
+        background: badge.bg || badge.color,
+        color: badge.bg ? badge.color : "#FFFFFF",
+        font: "700 9px/1 var(--font-body)",
+        letterSpacing: 0.4, textTransform: "uppercase",
+        fontVariantNumeric: "tabular-nums",
+      }}>{badge.label}</span>
+    );
+  };
   return (
     <section style={{
       background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 12,
@@ -2235,14 +2256,17 @@ function Section({ title, subtitle, badge, children }) {
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
         <div>
-          <div style={{ font: "700 13.5px/1.1 var(--font-body)", color: NAVY }}>{title}</div>
+          <div style={{ font: "700 13.5px/1.1 var(--font-body)", color: NAVY,
+            display: "flex", alignItems: "center", gap: 8 }}>
+            {title}
+            {renderBadge()}
+          </div>
           {subtitle && (
             <div style={{ font: "500 11px/1.3 var(--font-body)", color: MUTED, marginTop: 3 }}>
               {subtitle}
             </div>
           )}
         </div>
-        {badge}
       </div>
       <div style={{ marginTop: 12 }}>{children}</div>
     </section>
