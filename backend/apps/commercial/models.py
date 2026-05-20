@@ -455,3 +455,68 @@ class MarluvasClientSkuPricing(models.Model):
 
     def __str__(self) -> str:
         return f"MarluvasClientSkuPricing(brand={self.brand_id} cliente={self.cliente_id} sku={self.sku})"
+
+
+# =====================================================================
+# MarluvasPriceHistoryEvent + MarluvasPriceHistorySku
+#
+# F6 · Sprint 2026-05-20 · Bitácora histórica de cambios de precios.
+# Una fila cabecera por click "Guardar" + N hijas por SKU del snapshot.
+# Tablas creadas en backend/sql/A2h_marluvas_price_history.sql.
+# Visibilidad: CEO-ONLY (enforce en views).
+# =====================================================================
+class MarluvasPriceHistoryEvent(models.Model):
+    id                 = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    brand_id           = models.UUIDField()                                  # ⛔ sin FK (brands.*)
+    cliente_id         = models.UUIDField()                                  # ⛔ sin FK (clientes.cliente)
+    snapshot_at        = models.DateTimeField(auto_now_add=True)
+    created_by_user_id = models.UUIDField(null=True, blank=True)             # ⛔ sin FK (core.user)
+    fecha_inicio       = models.DateField(null=True, blank=True)
+    fecha_fin          = models.DateField(null=True, blank=True)
+    # Plazos custom por banda al momento del snapshot (idéntico shape al
+    # current state). Permite recrear UX al ver entrada de historial.
+    custom_plazos      = models.JSONField(default=dict, blank=True)
+    sku_count          = models.IntegerField(default=0)
+    cells_count        = models.IntegerField(default=0)
+    notas              = models.TextField(null=True, blank=True)
+    created_at         = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'pricing"."marluvas_price_history_event'
+        ordering = ("-snapshot_at",)
+
+    def __str__(self) -> str:
+        return (f"MarluvasPriceHistoryEvent(brand={self.brand_id} "
+                f"cliente={self.cliente_id} at={self.snapshot_at})")
+
+
+class MarluvasPriceHistorySku(models.Model):
+    id              = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # FK lógica al event (lo declaramos como UUIDField — la integridad
+    # vive en el constraint de la DB, no en el ORM, para mantener
+    # managed=False simple).
+    event_id        = models.UUIDField()
+    sku             = models.CharField(max_length=64)
+    brl_override    = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    com_pct         = models.DecimalField(max_digits=8,  decimal_places=4,  default=0)
+    ajuste_usd      = models.DecimalField(max_digits=14, decimal_places=4,  default=0)
+    sobreprecio_pct = models.DecimalField(max_digits=10, decimal_places=6,  default=0)
+    # Anchor congelado al momento del save: { "bandaId": <int>, "plazoDias": <int> }
+    # Puede ser null si el snapshot heredaba del ancla global del editor.
+    anchor          = models.JSONField(null=True, blank=True)
+    # Matriz completa congelada al momento del save. Mismo shape que en
+    # MarluvasClientSkuPricing.prices_matrix.
+    prices_matrix   = models.JSONField(default=dict, blank=True)
+    # Overrides por talla congelados (Fase 3).
+    sizes_pricing   = models.JSONField(default=dict, blank=True)
+    activo          = models.BooleanField(default=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'pricing"."marluvas_price_history_sku'
+        ordering = ("event_id", "sku")
+
+    def __str__(self) -> str:
+        return f"MarluvasPriceHistorySku(event={self.event_id} sku={self.sku})"

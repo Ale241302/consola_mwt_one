@@ -63,6 +63,8 @@ const KEY_TO_PATH = {
   // M3 CORE — usuarios y permisos (admin-only)
   usuarios:    '/usuarios',
   roles:       '/roles',
+  // F6 · Bitácora histórica
+  'price-history': '/historial-precios',
 };
 
 // derive currentScreen key from the URL pathname
@@ -85,6 +87,7 @@ function screenFromPath(pathname) {
   if (pathname.startsWith('/templates')) return 'templates';
   if (pathname.startsWith('/notificaciones')) return 'history';
   if (pathname.startsWith('/cobros')) return 'collections';
+  if (pathname.startsWith('/historial-precios')) return 'price-history';
   if (pathname.startsWith('/wizard')) return 'wizard';
   if (pathname.startsWith('/ai/governance')) return 'ai-governance';
   if (pathname.startsWith('/ai')) return 'ai-hub';
@@ -165,6 +168,8 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'clientes',       icon: <IconUsers/>,      label: tr(lang,'clientes'),      group: 'commercial' },
     { key: 'brands',         icon: <IconTag/>,        label: tr(lang,'brands'),        group: 'commercial' },
     { key: 'productos',      icon: <IconBoxes/>,      label: tr(lang,'productos'),     group: 'commercial' },
+    // F6 · 2026-05-20 · Bitácora histórica de cambios de precios (CEO-ONLY).
+    { key: 'price-history',  icon: <IconHistory/>,    label: lang === 'en' ? 'Price history' : 'Historial de precios', group: 'commercial' },
     // Comunicaciones
     { key: 'history',        icon: <IconHistory/>,    label: lang === 'en' ? 'Notifications' : 'Notificaciones', group: 'communications' },
     { key: 'collections',    icon: <IconCreditCard/>, label: lang === 'en' ? 'Portfolio'     : 'Cartera',        group: 'communications' },

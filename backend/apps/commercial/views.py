@@ -2103,6 +2103,59 @@ class MarluvasSaveSimulationView(APIView):
             len(getattr(row, "sizes_pricing", None) or {}) for row in rows_to_insert
         )
 
+        # F6 · 2026-05-20 · Bitácora de cambios.
+        # Persistimos un snapshot inmutable en marluvas_price_history_event +
+        # marluvas_price_history_sku para que el CEO pueda revisar
+        # "qué guardó el operador y cuándo". NO bloquea el save si falla —
+        # un error en el log no debe perder la simulación del cliente.
+        try:
+            from .models import (
+                MarluvasPriceHistoryEvent, MarluvasPriceHistorySku,
+            )
+            user_obj = getattr(request, "user", None)
+            user_id = None
+            if user_obj is not None and getattr(user_obj, "is_authenticated", False):
+                raw = getattr(user_obj, "id", None) or getattr(user_obj, "pk", None)
+                try:
+                    user_id = uuid.UUID(str(raw)) if raw else None
+                except (ValueError, AttributeError, TypeError):
+                    user_id = None
+
+            history_event = MarluvasPriceHistoryEvent.objects.create(
+                brand_id           = brand_id,
+                cliente_id         = cliente_id,
+                created_by_user_id = user_id,
+                fecha_inicio       = fecha_ini,
+                fecha_fin          = fecha_fin,
+                custom_plazos      = custom_plazos or {},
+                sku_count          = len(rows_to_insert),
+                cells_count        = total_cells,
+                notas              = (data.get("notas") or None) if isinstance(data, dict) else None,
+            )
+
+            history_skus = []
+            for row in rows_to_insert:
+                history_skus.append(MarluvasPriceHistorySku(
+                    event_id        = history_event.id,
+                    sku             = row.sku,
+                    brl_override    = row.brl_override,
+                    com_pct         = row.com_pct,
+                    ajuste_usd      = row.ajuste_usd,
+                    sobreprecio_pct = row.sobreprecio_pct,
+                    anchor          = getattr(row, "anchor", None) or None,
+                    prices_matrix   = row.prices_matrix or {},
+                    sizes_pricing   = getattr(row, "sizes_pricing", None) or {},
+                    activo          = row.is_active,
+                ))
+            if history_skus:
+                MarluvasPriceHistorySku.objects.bulk_create(history_skus, batch_size=200)
+        except Exception as hist_exc:  # noqa: BLE001
+            log.warning(
+                "MarluvasSaveSimulationView history insert failed "
+                "(brand=%s cliente=%s): %s",
+                brand_id, cliente_id, hist_exc,
+            )
+
         return Response({
             "saved":                len(rows_to_insert),
             "cells":                total_cells,

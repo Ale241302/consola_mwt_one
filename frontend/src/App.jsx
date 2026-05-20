@@ -43,6 +43,8 @@ import ScreenAIGovernance from "./pages/AIGovernance.jsx";
 import ScreenUsers from "./pages/Users.jsx";
 import ScreenUserFormView from "./pages/UserFormView.jsx";
 import ScreenRolesPermissions from "./pages/RolesPermissions.jsx";
+// F6 · Sprint 2026-05-20 · Bitácora histórica de precios (CEO-ONLY).
+import ScreenPriceHistory from "./pages/PriceHistory.jsx";
 import ScreenProfilePage from "./pages/ProfilePage.jsx";
 import ScreenTickets from "./pages/Tickets.jsx";
 import ScreenTicketDetail from "./pages/TicketDetail.jsx";
@@ -129,6 +131,9 @@ export default function App() {
         <Route path="/usuarios/nuevo"    element={<AdminOnlyRoute><ScreenUserFormView /></AdminOnlyRoute>} />
         <Route path="/usuarios/:userId"  element={<AdminOnlyRoute><ScreenUserFormView /></AdminOnlyRoute>} />
         <Route path="/roles"             element={<AdminOnlyRoute><ScreenRolesPermissions /></AdminOnlyRoute>} />
+        {/* F6 · Historial de precios — bitácora CEO-ONLY de cambios del motor de precios. */}
+        {/* F6 · Historial de precios — bitácora CEO-ONLY de cambios del motor de precios. */}
+        <Route path="/historial-precios" element={<AdminOnlyRoute><ScreenPriceHistory /></AdminOnlyRoute>} />
         {/* Perfil propio — accesible para TODOS los usuarios autenticados
             (ADMIN + CLIENT). La vista aplica read-only por rol internamente. */}
         <Route path="/perfil"            element={<ScreenProfilePage />} />

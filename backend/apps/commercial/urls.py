@@ -46,6 +46,10 @@ from .views import (
     # Simulador Marluvas v7 · vista inversa (matrices por cliente desde un SKU)
     MarluvasProductClientsMatrixView, MarluvasUpsertSkuView,
 )
+# F6 · Sprint 2026-05-20 · Bitácora histórica de cambios de precios.
+from .views_price_history import (
+    PriceHistoryListView, PriceHistoryDetailView,
+)
 
 
 router = DefaultRouter()
@@ -123,4 +127,11 @@ urlpatterns = [
     path("commercial/marluvas/upsert-sku/",
          MarluvasUpsertSkuView.as_view(),
          name="commercial-marluvas-upsert-sku"),
+    # F6 · Bitácora histórica (CEO-ONLY)
+    path("commercial/marluvas/price-history/",
+         PriceHistoryListView.as_view(),
+         name="commercial-marluvas-price-history-list"),
+    path("commercial/marluvas/price-history/<uuid:event_id>/",
+         PriceHistoryDetailView.as_view(),
+         name="commercial-marluvas-price-history-detail"),
 ]
