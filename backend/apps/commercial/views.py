@@ -2051,7 +2051,24 @@ class MarluvasSaveSimulationView(APIView):
 
                 sizes_pricing = self._parse_sizes_pricing(item.get("sizes_pricing"))
 
-                rows_to_insert.append(MarluvasClientSkuPricing(
+                # F6 · Ancla por SKU para el snapshot histórico.
+                # Shape: { "bandaId": <int 1..12>, "plazoDias": <int positivo> }
+                # La tabla viva (MarluvasClientSkuPricing) NO almacena anchor;
+                # sólo lo necesita el snapshot inmutable. Se adjunta al row
+                # como atributo no-modelo y se levanta abajo al construir
+                # MarluvasPriceHistorySku.
+                anchor_raw = item.get("anchor")
+                anchor_clean = None
+                if isinstance(anchor_raw, dict):
+                    try:
+                        b = int(anchor_raw.get("bandaId"))
+                        p = int(anchor_raw.get("plazoDias"))
+                        if 1 <= b <= 12 and 1 <= p <= 3650:
+                            anchor_clean = {"bandaId": b, "plazoDias": p}
+                    except (TypeError, ValueError):
+                        pass
+
+                row = MarluvasClientSkuPricing(
                     brand_id        = brand_id,
                     cliente_id      = cliente_id,
                     sku             = sku,
@@ -2065,7 +2082,10 @@ class MarluvasSaveSimulationView(APIView):
                     is_active       = True,
                     fecha_inicio    = fecha_ini,
                     fecha_fin       = fecha_fin,
-                ))
+                )
+                # Atributo no-modelo, solo para el snapshot histórico (F6).
+                row._anchor_for_history = anchor_clean
+                rows_to_insert.append(row)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
 
@@ -2142,7 +2162,9 @@ class MarluvasSaveSimulationView(APIView):
                     com_pct         = row.com_pct,
                     ajuste_usd      = row.ajuste_usd,
                     sobreprecio_pct = row.sobreprecio_pct,
-                    anchor          = getattr(row, "anchor", None) or None,
+                    # F6 · El ancla viene como atributo no-modelo
+                    # (_anchor_for_history) porque la tabla viva no la usa.
+                    anchor          = getattr(row, "_anchor_for_history", None) or None,
                     prices_matrix   = row.prices_matrix or {},
                     sizes_pricing   = getattr(row, "sizes_pricing", None) or {},
                     activo          = row.is_active,
