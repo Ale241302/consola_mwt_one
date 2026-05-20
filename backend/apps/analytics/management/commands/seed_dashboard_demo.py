@@ -612,119 +612,96 @@ class Command(BaseCommand):
         self._ok(f"   stock={created_stock} nodos, movimientos IN={created_in}, OUT={created_out}.")
 
     # ------------------------------------------------------------------
-    # Paso 6 · Lineas de OC con unit_cost / unit_price para Top 10 SKUs.
+    # Paso 6 · CLEANUP de líneas DEMO + verificación de datos reales.
     #
-    # Sembramos 5 lineas por cada expediente CERRADO demo, con SKUs
-    # distintos y margenes variados, para que el endpoint
-    # /api/analytics/top_skus_margen/ devuelva un ranking interesante.
-    # Esto NO toca tus lineas reales del catalogo — solo agrega filas
-    # con codigo prefijado `DEMO-SKU-*` enlazadas a los expedientes
-    # `DEMO-DASH-CERRADO-001/002` creados en el paso 2.
+    # IMPORTANTE — Historia:
+    #   En un intento previo este paso sembraba 5 lineas DEMO-SKU-* por
+    #   expediente cerrado para que el widget "Top SKUs" mostrara algo.
+    #   Esa decision violaba la regla R1 del prompt CEO ("no inventar
+    #   datos") porque el repo YA TIENE productos y lineas reales en BD
+    #   (ver /productos y /expedientes/{id}/lineas/).
     #
-    # producto_id queda en NULL para no enlazar con tu catalogo real
-    # (las lineas reales ya tienen producto_id; las demo no, asi quedan
-    # claramente identificables). El LEFT JOIN de productos.producto en
-    # el endpoint hace que product_name salga NULL — el frontend lo
-    # renderiza como "—" en la columna Producto.
+    #   El problema real era el endpoint analytics: filtraba por las
+    #   columnas legacy `unit_cost` y `unit_price` que estan en 0; las
+    #   lineas reales usan los nuevos `unit_price_mwt` y `unit_price_client`
+    #   (Sprint 2026-05-06). Eso ya esta corregido en el endpoint.
+    #
+    # Este paso ahora:
+    #   1. BORRA cualquier linea DEMO-SKU-* que quedo de corridas previas.
+    #   2. Reporta cuantas lineas reales existen en ultimos 365d (informativo).
+    #   3. NO siembra nada — los datos reales son la fuente de verdad.
     # ------------------------------------------------------------------
     def _step_6_skus_ranking(self, cerrados: list) -> None:
-        self._info("[6/6] lineas DEMO con unit_cost/unit_price")
+        self._info("[6/6] cleanup DEMO-SKU + verificacion lineas reales")
 
-        if not cerrados:
-            self._warn("   sin expedientes CERRADO previos. paso omitido.")
-            return
+        # 1. CLEANUP: borrar las lineas DEMO-SKU-* sembradas por error en
+        #    versiones anteriores de este comando. Idempotente: si no hay
+        #    ninguna, no hace nada.
+        if not self.dry_run:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM expedientes.linea
+                    WHERE sku LIKE 'DEMO-SKU-%'
+                    """
+                )
+                deleted = cur.rowcount
+            if deleted:
+                self._ok(f"   limpieza: {deleted} lineas DEMO-SKU-* borradas (fix de seed anterior).")
+            else:
+                self._info("   limpieza: 0 lineas DEMO-SKU-* (BD ya limpia).")
+        else:
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM expedientes.linea WHERE sku LIKE 'DEMO-SKU-%'"
+                )
+                count = cur.fetchone()[0]
+            self._info(f"   limpieza (dry-run): borraria {count} lineas DEMO-SKU-*.")
 
-        # Verificar que la tabla expedientes.linea existe con las columnas requeridas.
-        required = ["sku", "qty", "unit_cost", "unit_price", "expediente_id", "is_active"]
+        # 2. Verificar cuantas lineas reales existen con datos cargados
+        #    (precio_mwt o precio_client poblado) en la ventana del endpoint.
         with connection.cursor() as cur:
             cur.execute(
                 """
-                SELECT column_name FROM information_schema.columns
-                WHERE table_schema = 'expedientes'
-                  AND table_name   = 'linea'
+                SELECT
+                    COUNT(DISTINCT l.sku)        AS skus_distintos,
+                    COUNT(*)                     AS lineas_total,
+                    COUNT(*) FILTER (WHERE
+                        COALESCE(NULLIF(l.unit_price_mwt,    0), l.unit_cost,  0) > 0
+                    )                            AS lineas_con_costo,
+                    COUNT(*) FILTER (WHERE
+                        COALESCE(NULLIF(l.unit_price_client, 0), l.unit_price, 0) > 0
+                    )                            AS lineas_con_precio
+                FROM expedientes.linea     l
+                JOIN expedientes.expediente e ON e.id = l.expediente_id
+                WHERE l.is_active = TRUE
+                  AND e.is_active = TRUE
+                  AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
+                  AND l.sku IS NOT NULL
                 """
             )
-            cols = {r[0] for r in cur.fetchall()}
-        missing = [c for c in required if c not in cols]
-        if missing:
-            self._warn(f"   WARNING: expedientes.linea sin columnas {missing}. paso omitido.")
-            return
+            row = cur.fetchone()
 
-        # 5 lineas con SKUs distintos y margenes variados.
-        # qty * unit_price = revenue; qty * (unit_price - unit_cost) = margin.
-        # Los SKUs son ficticios pero estables (prefijo DEMO-SKU-) para idempotencia.
-        sku_specs = [
-            # (sku,           qty, unit_cost, unit_price)
-            ("DEMO-SKU-ALPHA",  120, Decimal("18.50"), Decimal("32.00")),
-            ("DEMO-SKU-BRAVO",   80, Decimal("42.00"), Decimal("68.00")),
-            ("DEMO-SKU-CHARLIE", 60, Decimal("85.00"), Decimal("128.00")),
-            ("DEMO-SKU-DELTA",  200, Decimal("9.40"),  Decimal("15.50")),
-            ("DEMO-SKU-ECHO",    25, Decimal("180.00"), Decimal("245.00")),
-        ]
+        skus_distintos, lineas_total, lineas_con_costo, lineas_con_precio = row
+        self._info(
+            f"   lineas reales en ultimos 365d: total={lineas_total}, "
+            f"SKUs distintos={skus_distintos}, con costo={lineas_con_costo}, "
+            f"con precio={lineas_con_precio}"
+        )
 
-        created = 0
-        for exp in cerrados:
-            for sku, qty, ucost, uprice in sku_specs:
-                with connection.cursor() as cur:
-                    # Idempotencia por (expediente_id, sku)
-                    cur.execute(
-                        """
-                        SELECT id FROM expedientes.linea
-                        WHERE expediente_id = %s AND sku = %s
-                        LIMIT 1
-                        """,
-                        [exp.id, sku],
-                    )
-                    existing = cur.fetchone()
-
-                    if existing is None:
-                        self._info(f"   - CREATE linea exp={exp.codigo[-12:]} sku={sku} qty={qty}")
-                        if not self.dry_run:
-                            total = Decimal(qty) * uprice
-                            cur.execute(
-                                """
-                                INSERT INTO expedientes.linea
-                                    (id, oc_id, expediente_id, producto_id, sku,
-                                     qty, unit_cost, unit_price, total_price,
-                                     estado, is_active, created_at, updated_at)
-                                VALUES
-                                    (gen_random_uuid(),
-                                     %s,                              -- oc_id (placeholder UUID — la tabla acepta NOT NULL pero sin FK; usamos un UUID demo estable)
-                                     %s,                              -- expediente_id
-                                     NULL,                            -- producto_id (NULL = no enlaza catalogo real)
-                                     %s,                              -- sku
-                                     %s,                              -- qty
-                                     %s,                              -- unit_cost
-                                     %s,                              -- unit_price
-                                     %s,                              -- total_price
-                                     'CONFIRMADA',                    -- estado
-                                     TRUE,
-                                     NOW(),
-                                     NOW())
-                                """,
-                                [
-                                    uuid.UUID("d0d0d0d0-d0d0-4d0d-ad0d-d0d0d0d0d0d0"),  # oc_id demo estable
-                                    exp.id,
-                                    sku,
-                                    qty,
-                                    ucost,
-                                    uprice,
-                                    total,
-                                ],
-                            )
-                        created += 1
-                    elif self.force:
-                        self._info(f"   - UPDATE linea exp={exp.codigo[-12:]} sku={sku} (--force)")
-                        if not self.dry_run:
-                            total = Decimal(qty) * uprice
-                            cur.execute(
-                                """
-                                UPDATE expedientes.linea
-                                SET qty = %s, unit_cost = %s, unit_price = %s,
-                                    total_price = %s, updated_at = NOW()
-                                WHERE id = %s
-                                """,
-                                [qty, ucost, uprice, total, existing[0]],
-                            )
-
-        self._ok(f"   {created} lineas DEMO nuevas.")
+        if lineas_total == 0:
+            self._warn(
+                "   Sin lineas reales — el widget Top SKUs mostrara EmptyState "
+                "honesto hasta que se carguen datos."
+            )
+        elif lineas_con_precio == 0:
+            self._warn(
+                "   Hay lineas pero NINGUNA tiene precio_mwt/client > 0. "
+                "Revisar: las lineas necesitan unit_price_mwt o unit_price_client "
+                "para que el ranking de margen las incluya."
+            )
+        else:
+            self._ok(
+                f"   OK: {lineas_con_precio} lineas con precio cargado en BD "
+                f"→ el widget Top SKUs debe poblarse con esas."
+            )

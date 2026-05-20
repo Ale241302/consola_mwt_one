@@ -545,46 +545,64 @@ class AnalyticsViewSet(viewsets.ViewSet):
           [{ sku, product_name, brand_id, units_sold_90d,
              revenue_usd, margin_usd, margin_pct }]
 
-        · Source: expedientes.linea × productos.producto × expedientes.expediente.
-        · Filtro temporal: líneas de expedientes con `updated_at` en los
-          últimos 365 días — ventana amplia porque NO existe `closed_at`
-          explícito (ver nota del endpoint credit_clock_avg) y reducir a
-          90d excluía líneas legítimas de OCs activas que no se han
-          tocado en meses pero siguen vivas. Cuando exista
-          `expediente.closed_at`, este endpoint debe pivotear a esa
-          columna y volver a 90 días (regla del prompt CEO).
-        · Solo se cuentan líneas con `unit_cost > 0 AND unit_price > 0`
-          para evitar 100% de margen falso en líneas sin costo cargado.
-        · margin_usd = SUM((unit_price - unit_cost) * qty).
+        Modelo de precios (Sprint 2026-05-06 · C0_expedientes_operating_company.sql):
+          La tabla `expedientes.linea` tiene DOS pares de columnas de precio:
+          · Legacy:  unit_cost      → costo histórico
+                     unit_price     → precio histórico (no se popula en nuevas líneas)
+          · Nuevos:  unit_price_mwt    → precio que MWT paga al proveedor (costo real)
+                     unit_price_client → precio que se cobra al cliente final
+
+          La UI de /expedientes/{id} usa SOLO los nuevos. Las líneas
+          creadas post-Sprint tienen unit_cost=0 y unit_price=0 con valores
+          reales en los campos `*_mwt` y `*_client`.
+
+          Para margen real:
+            costo_efectivo  = COALESCE(NULLIF(unit_price_mwt,    0), unit_cost,  0)
+            precio_efectivo = COALESCE(NULLIF(unit_price_client, 0), unit_price, 0)
+
+        · Filtro temporal: 365 días sobre `expediente.updated_at` (proxy de
+          cierre — no existe `closed_at` explícito todavía).
+        · Solo se cuentan líneas donde precio_efectivo > 0 (para no inflar
+          margen con líneas a costo cero).
+        · margin_usd = SUM((precio_efectivo - costo_efectivo) * qty).
         · margin_pct = margin_usd / NULLIF(revenue_usd, 0).
 
-        Mantener el campo `units_sold_90d` por compatibilidad con el
-        contrato del frontend; semánticamente ahora es "units en ventana
-        de filtrado" (365d).
+        El nombre `units_sold_90d` se mantiene por compatibilidad con el
+        frontend (renombrar requeriría coordinación). Semánticamente ahora
+        representa "unidades en ventana de filtrado activa".
         """
         rows = _fetchall("""
+            WITH lineas_efectivas AS (
+              SELECT
+                l.sku,
+                l.producto_id,
+                l.qty,
+                COALESCE(NULLIF(l.unit_price_mwt,    0), l.unit_cost,  0) AS costo_efectivo,
+                COALESCE(NULLIF(l.unit_price_client, 0), l.unit_price, 0) AS precio_efectivo
+              FROM expedientes.linea     l
+              JOIN expedientes.expediente e ON e.id = l.expediente_id
+              WHERE l.is_active = TRUE
+                AND e.is_active = TRUE
+                AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
+                AND l.sku IS NOT NULL
+            )
             SELECT
-              l.sku                                                       AS sku,
-              MAX(p.nombre)                                               AS product_name,
-              MAX(p.marca_id)                                             AS brand_id,
-              COALESCE(SUM(l.qty),0)::float                               AS units_sold_90d,
-              COALESCE(SUM(l.qty * l.unit_price),0)::float                AS revenue_usd,
-              COALESCE(SUM(l.qty * (l.unit_price - l.unit_cost)),0)::float AS margin_usd,
-              CASE WHEN SUM(l.qty * l.unit_price) > 0
-                   THEN (SUM(l.qty * (l.unit_price - l.unit_cost))
-                         / NULLIF(SUM(l.qty * l.unit_price),0))::float
-                   ELSE NULL END                                          AS margin_pct
-            FROM expedientes.linea     l
-            JOIN expedientes.expediente e ON e.id = l.expediente_id
-            LEFT JOIN productos.producto p ON p.id = l.producto_id
-            WHERE l.is_active = TRUE
-              AND e.is_active = TRUE
-              AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
-              AND l.sku IS NOT NULL
-              AND l.unit_cost  > 0
-              AND l.unit_price > 0
-            GROUP BY l.sku
-            ORDER BY margin_usd DESC
+              le.sku                                                        AS sku,
+              MAX(p.nombre)                                                 AS product_name,
+              MAX(p.marca_id)                                               AS brand_id,
+              COALESCE(SUM(le.qty), 0)::float                               AS units_sold_90d,
+              COALESCE(SUM(le.qty * le.precio_efectivo), 0)::float          AS revenue_usd,
+              COALESCE(SUM(le.qty * (le.precio_efectivo - le.costo_efectivo)), 0)::float
+                                                                            AS margin_usd,
+              CASE WHEN SUM(le.qty * le.precio_efectivo) > 0
+                   THEN (SUM(le.qty * (le.precio_efectivo - le.costo_efectivo))
+                         / NULLIF(SUM(le.qty * le.precio_efectivo), 0))::float
+                   ELSE NULL END                                            AS margin_pct
+            FROM lineas_efectivas le
+            LEFT JOIN productos.producto p ON p.id = le.producto_id
+            WHERE le.precio_efectivo > 0
+            GROUP BY le.sku
+            ORDER BY margin_usd DESC NULLS LAST
             LIMIT 10
         """)
         return Response(rows)
