@@ -643,12 +643,19 @@ export default function ScreenDashboard() {
           </SafeWidget>
         </DashboardCard>
 
-        {/* 3B · Top 10 urgentes */}
+        {/* 3B · Top urgentes (hasta 10) */}
         <DashboardCard
           title={tr(lang, "urgent_actions")}
-          subtitle={lang === "en"
-            ? "Top 10 by urgency · blocked or credit > 70d"
-            : "Top 10 por urgencia · bloqueados o crédito > 70d"}
+          subtitle={(() => {
+            const n = filteredUrgent.length;
+            if (n === 0) return lang === "en" ? "No urgent files" : "Sin expedientes urgentes";
+            if (n >= 10) return lang === "en"
+              ? "Top 10 by urgency · blocked or credit > 70d"
+              : "Top 10 por urgencia · bloqueados o crédito > 70d";
+            return lang === "en"
+              ? `${n} urgent · blocked or credit > 70d`
+              : `${n} urgentes · bloqueados o crédito > 70d`;
+          })()}
           padding={0}
           action={<Badge kind="critical">{filteredUrgent.length}</Badge>}
         >
@@ -714,10 +721,21 @@ export default function ScreenDashboard() {
           </SafeWidget>
         </DashboardCard>
 
-        {/* 4B · Top 10 clientes */}
+        {/* 4B · Top clientes (hasta 10) */}
         <DashboardCard
-          title={lang === "en" ? "Top 10 clients" : "Top 10 clientes"}
-          subtitle={lang === "en" ? "By open exposure (USD)" : "Por exposición abierta (USD)"}
+          title={(() => {
+            const n = (exposicion || []).length;
+            const label = lang === "en" ? "Top clients" : "Top clientes";
+            if (n === 0) return label;
+            return n >= 10 ? `${label} · Top 10` : `${label}`;
+          })()}
+          subtitle={(() => {
+            const n = (exposicion || []).length;
+            if (n === 0) return lang === "en" ? "No client exposure" : "Sin exposición de clientes";
+            return lang === "en"
+              ? `${Math.min(n, 10)} of ${n} · by open exposure (USD)`
+              : `${Math.min(n, 10)} de ${n} · por exposición abierta (USD)`;
+          })()}
           padding={0}
         >
           <SafeWidget lang={lang} endpoint="/api/analytics/exposicion_clientes/">

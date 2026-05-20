@@ -643,15 +643,17 @@ export function UrgentExpedientesTable({
 
   return (
     <div role="table" aria-label={tr(lang, "urgent_actions")}>
-      {/* Header — el primer label depende del rol del usuario:
-            · ADMIN ve "Proforma" (número MWT)
-            · CLIENT ve "OC" (número de orden de compra del cliente) */}
+      {/* Header — layout compacto de 4 columnas + chevron.
+          Eliminamos "Acción" porque el texto del backend es genérico
+          ("Resolver bloqueo de crédito" / "Confirmar arribo...") y el
+          icono de urgencia al inicio de cada fila ya lo transmite.
+          Cada fila lleva un badge PF/OC/EXP que indica el tipo de ref. */}
       <div
         role="row"
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(120px, 1fr) minmax(120px, 1.4fr) 88px 92px 1fr 22px",
-          gap: 10,
+          gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 0.9fr) 56px 18px",
+          gap: 8,
           padding: "8px 12px",
           font: "var(--micro)",
           color: "var(--text-tertiary)",
@@ -659,15 +661,10 @@ export function UrgentExpedientesTable({
           borderBottom: "1px solid var(--divider)",
         }}
       >
-        {/* Header genérico — cada fila lleva su propio badge PF/OC/EXP
-            indicando si la cifra mostrada es proforma, número de OC o
-            código de expediente (fallback). Para admin prefiere proforma;
-            si no existe, cae a OC. Para client siempre OC. */}
         <span>{lang === "en" ? "Reference" : "Referencia"}</span>
         <span>{tr(lang, "client")}</span>
         <span>{tr(lang, "brand")}</span>
-        <span style={{ textAlign: "right" }}>{tr(lang, "credit_days")}</span>
-        <span>{lang === "es" ? "Acción" : "Action"}</span>
+        <span style={{ textAlign: "right" }}>{lang === "en" ? "Days" : "Días"}</span>
         <span />
       </div>
 
@@ -708,16 +705,18 @@ export function UrgentExpedientesTable({
             type="button"
             onClick={() => onOpen && onOpen(u.id)}
             role="row"
+            title={u.action || ""}
             style={{
               width: "100%",
               display: "grid",
-              gridTemplateColumns: "minmax(120px, 1fr) minmax(120px, 1.4fr) 88px 92px 1fr 22px",
-              gap: 10,
+              gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 0.9fr) 56px 18px",
+              gap: 8,
               padding: "10px 12px",
               alignItems: "center",
               background: "transparent",
               border: "none",
               borderBottom: "1px solid var(--divider)",
+              borderLeft: `2px solid ${isHigh ? "var(--critical)" : "var(--warning)"}`,
               textAlign: "left",
               cursor: "pointer",
               transition: "background 120ms",
@@ -727,7 +726,7 @@ export function UrgentExpedientesTable({
           >
             <span
               className="flex ai-center gap-2"
-              title={`${refKind === "PF" ? "Proforma" : refKind === "OC" ? "OC" : "Expediente"}: ${primaryRef}`}
+              title={`${refKind === "PF" ? "Proforma" : refKind === "OC" ? "OC" : "Expediente"}: ${primaryRef}${u.action ? " · " + u.action : ""}`}
               style={{ minWidth: 0, overflow: "hidden" }}
             >
               <span
@@ -746,9 +745,10 @@ export function UrgentExpedientesTable({
               <span
                 className="mono-sm tabular"
                 style={{
-                  font: "600 12px/1.2 var(--font-mono)",
+                  font: "600 11.5px/1.2 var(--font-mono)",
                   color: "var(--interactive)",
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  minWidth: 0,
                 }}
               >
                 {refLabel || "—"}
@@ -763,30 +763,29 @@ export function UrgentExpedientesTable({
             >
               {clientName}
             </span>
-            <span className="flex ai-center gap-2" style={{ minWidth: 0 }}>
+            <span className="flex ai-center gap-2" style={{ minWidth: 0, overflow: "hidden" }}>
               <span style={{ width: 8, height: 8, background: brand?.color || "var(--border-strong)", borderRadius: 2, flexShrink: 0 }} />
-              <span style={{ font: "var(--caption)", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span
+                title={brand?.name || ""}
+                style={{
+                  font: "var(--caption)", color: "var(--text-secondary)",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}
+              >
                 {brand?.name || "—"}
               </span>
             </span>
             <span className="tabular" style={{
-              font: "600 13px/1 var(--font-mono)",
+              font: "600 12.5px/1 var(--font-mono)",
               color: (u.credit_days || 0) > 75 ? "var(--critical)"
                    : (u.credit_days || 0) > 60 ? "var(--warning)"
                    : "var(--text-secondary)",
               textAlign: "right",
+              whiteSpace: "nowrap",
             }}>
               {u.credit_days != null ? `${u.credit_days}d` : "—"}
             </span>
-            <span className="flex ai-center gap-2" style={{ minWidth: 0 }}>
-              {isHigh
-                ? <IconAlert size={14} style={{ color: "var(--critical)", flexShrink: 0 }} />
-                : <IconClock size={14} style={{ color: "var(--warning)", flexShrink: 0 }} />}
-              <span style={{ font: "var(--caption)", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {u.action || (lang === "es" ? "Revisar expediente" : "Review file")}
-              </span>
-            </span>
-            <IconChevRight size={14} style={{ color: "var(--text-tertiary)" }} />
+            <IconChevRight size={14} style={{ color: "var(--text-tertiary)", flexShrink: 0 }} />
           </button>
         );
       })}
@@ -944,12 +943,16 @@ export function TopClientsTable({
     .sort((a, b) => (b.monto_pendiente || b.monto_total || 0) - (a.monto_pendiente || a.monto_total || 0))
     .slice(0, 10);
 
+  // Compacto: Cliente | # | Saldo | Venc 60d
+  // Eliminamos "Venc. 30d" porque "Venc. 60d" ya es alerta crítica y
+  // ambas columnas se salían del ancho de la card en banda 4.
+  const grid = "minmax(0, 1.6fr) 38px minmax(0, 0.9fr) minmax(0, 0.85fr)";
   return (
     <div>
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(140px, 1.4fr) 80px 90px 90px 70px",
+          gridTemplateColumns: grid,
           gap: 8,
           padding: "8px 12px",
           font: "var(--micro)",
@@ -959,13 +962,11 @@ export function TopClientsTable({
         }}
       >
         <span>{tr(lang, "client")}</span>
-        <span style={{ textAlign: "right" }}>{lang === "es" ? "Abiertos" : "Open"}</span>
+        <span style={{ textAlign: "right" }}>#</span>
         <span style={{ textAlign: "right" }}>{tr(lang, "balance")}</span>
-        <span style={{ textAlign: "right" }}>{lang === "es" ? "Venc. 60d" : "Past 60d"}</span>
-        <span style={{ textAlign: "right" }}>{lang === "es" ? "Venc. 30d" : "Past 30d"}</span>
+        <span style={{ textAlign: "right" }}>{lang === "en" ? "Past 60d" : "Venc. 60d"}</span>
       </div>
       {sorted.map((c, i) => {
-        // Prefer client_name del backend (razon_social), fallback resolver, último UUID truncado.
         const clientName = c.client_name
           || resolveClient(c.client_id)?.name
           || (c.client_id ? `${String(c.client_id).slice(0, 8)}…` : "—");
@@ -974,7 +975,7 @@ export function TopClientsTable({
             key={c.client_id || i}
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(140px, 1.4fr) 80px 90px 90px 70px",
+              gridTemplateColumns: grid,
               gap: 8,
               padding: "10px 12px",
               alignItems: "center",
@@ -982,31 +983,47 @@ export function TopClientsTable({
             }}
           >
             <span
-              title={clientName}
+              title={clientName + (c.country ? ` (${c.country})` : "")}
               style={{
                 font: "var(--body-sm)", color: "var(--text-primary)",
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                minWidth: 0,
               }}
             >
               {clientName}
             </span>
-            <span className="tabular" style={{ textAlign: "right", font: "600 12px/1 var(--font-mono)", color: "var(--text-secondary)" }}>
+            <span
+              className="tabular"
+              title={lang === "en" ? "Open receivables" : "Cobros abiertos"}
+              style={{
+                textAlign: "right", font: "600 12px/1 var(--font-mono)",
+                color: "var(--text-secondary)",
+              }}
+            >
               {c.cobros_abiertos != null ? c.cobros_abiertos : "—"}
             </span>
-            <span className="tabular" style={{ textAlign: "right", font: "600 12px/1 var(--font-mono)", color: "var(--text-primary)" }}>
+            <span
+              className="tabular"
+              title={c.monto_pendiente != null ? fmtMoney(c.monto_pendiente) : ""}
+              style={{
+                textAlign: "right", font: "600 12px/1 var(--font-mono)",
+                color: "var(--text-primary)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                minWidth: 0,
+              }}
+            >
               {c.monto_pendiente != null ? fmtMoney(c.monto_pendiente) : "—"}
             </span>
-            <span className="tabular" style={{
-              textAlign: "right", font: "600 12px/1 var(--font-mono)",
-              color: (c.vencidos_60 || 0) > 0 ? "var(--critical)" : "var(--text-tertiary)",
-            }}>
+            <span
+              className="tabular"
+              style={{
+                textAlign: "right", font: "600 12px/1 var(--font-mono)",
+                color: (c.vencidos_60 || 0) > 0 ? "var(--critical)" : "var(--text-tertiary)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                minWidth: 0,
+              }}
+            >
               {c.vencidos_60 != null ? fmtMoney(c.vencidos_60) : "—"}
-            </span>
-            <span className="tabular" style={{
-              textAlign: "right", font: "600 12px/1 var(--font-mono)",
-              color: (c.vencidos_30 || 0) > 0 ? "var(--warning)" : "var(--text-tertiary)",
-            }}>
-              {c.vencidos_30 != null ? fmtMoney(c.vencidos_30) : "—"}
             </span>
           </div>
         );
