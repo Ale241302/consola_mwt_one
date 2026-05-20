@@ -439,10 +439,15 @@ class Command(BaseCommand):
         self._ok(f"   {created} cobros nuevos con saldo pendiente.")
 
     # ------------------------------------------------------------------
-    # Paso 5 · Movimientos de inventario por nodo (velocity_30d)
+    # Paso 5 · Stock + movimientos de inventario por nodo
+    #
+    # El endpoint /analytics/inventory_coverage_by_node/ deriva:
+    #   - total_units    = SUM(inventario.stock.cantidad_disponible) por nodo
+    #   - velocity_30d   = #movimientos SALIDA últimos 30d / 30
+    # Por eso necesitamos sembrar AMBAS tablas, no solo movimientos.
     # ------------------------------------------------------------------
     def _step_5_inventario_movimientos(self) -> None:
-        self._info("[5/6] movimientos de inventario por nodo")
+        self._info("[5/6] stock + movimientos de inventario por nodo")
 
         required = ["tipo", "producto_id", "nodo_origen_id", "nodo_destino_id", "cantidad", "idempotence_token"]
         missing = [f for f in required if not self._has_field(Movimiento, f)]
@@ -456,12 +461,44 @@ class Command(BaseCommand):
             return
 
         now = timezone.now()
-        producto_demo = uuid.UUID("00000000-0000-0000-0000-00000000d3m0")
+        # UUID demo determinístico — hex válido. `producto_id` no tiene FK en
+        # inventario.stock ni en inventario.movimiento (ver backend/sql/60_inventario.sql
+        # líneas 67 y 104, comentario "⛔ sin FK"), así que un UUID hardcoded
+        # no rompe constraints. Si más adelante se agrega FK, fetchear un
+        # producto real con `Producto.objects.first()` y abortar si no existe.
+        producto_demo = uuid.UUID("dec0dec0-dec0-4ec0-aec0-dec0dec0dec0")
+        created_stock = 0
         created_in = 0
         created_out = 0
 
         for nodo in nodos:
-            # Movimiento IN inicial (stock ~500) — idempotente por token
+            # ── Stock: una fila por (nodo, producto, lote='DEMO') con 500 uds.
+            # Usamos SQL crudo + ON CONFLICT por el UNIQUE(nodo_id, producto_id, lote).
+            self._info(f"   - UPSERT stock nodo={nodo.codigo} qty=500")
+            if not self.dry_run:
+                with connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO inventario.stock
+                            (id, nodo_id, producto_id, lote, cantidad_disponible,
+                             cantidad_reservada, cantidad_en_transito,
+                             costo_unitario_usd, is_active, created_at, updated_at,
+                             last_movement_at)
+                        VALUES
+                            (gen_random_uuid(), %s, %s, 'DEMO', 500.000,
+                             0.000, 0.000, 10.0000, TRUE, NOW(), NOW(), NOW())
+                        ON CONFLICT (nodo_id, producto_id, lote) DO UPDATE SET
+                            cantidad_disponible = CASE
+                                WHEN %s THEN EXCLUDED.cantidad_disponible
+                                ELSE inventario.stock.cantidad_disponible
+                            END,
+                            updated_at = NOW()
+                        """,
+                        [nodo.id, producto_demo, self.force],
+                    )
+            created_stock += 1
+
+            # ── Movimiento IN inicial — idempotente por token
             token_in = f"demo-in-{nodo.id}"
             existing_in = Movimiento.objects.filter(idempotence_token=token_in).first()
             if existing_in is None:
@@ -470,7 +507,7 @@ class Command(BaseCommand):
                     Movimiento.objects.create(
                         id=uuid.uuid4(),
                         tipo="ENTRADA",
-                        motivo="RECEPCION",
+                        motivo="COMPRA_OC",
                         producto_id=producto_demo,
                         nodo_destino_id=nodo.id,
                         lote="DEMO",
@@ -486,7 +523,7 @@ class Command(BaseCommand):
             elif self.force:
                 self._info(f"   - skip IN nodo={nodo.codigo} (ya existe; --force no recrea)")
 
-            # ~20 movimientos OUT en los ultimos 30d
+            # ── ~20 movimientos OUT en los últimos 30d
             for k in range(20):
                 token_out = f"demo-out-{nodo.id}-{k:02d}"
                 existing_out = Movimiento.objects.filter(idempotence_token=token_out).first()
@@ -514,7 +551,7 @@ class Command(BaseCommand):
                     )
                 created_out += 1
 
-        self._ok(f"   movimientos IN={created_in}, OUT={created_out}.")
+        self._ok(f"   stock={created_stock} nodos, movimientos IN={created_in}, OUT={created_out}.")
 
     # ------------------------------------------------------------------
     # Paso 6 · SKUs ranking (omitido por diseno)
