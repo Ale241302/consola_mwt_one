@@ -676,28 +676,27 @@ class AnalyticsViewSet(viewsets.ViewSet):
     def top_skus_margen(self, request):
         """Top 10 SKUs por margen USD de líneas activas.
 
-        Sprint 2026-05-20 · Filtro temporal ELIMINADO:
-          Antes filtraba `e.updated_at >= CURRENT_DATE - INTERVAL '365 days'`
-          pero los expedientes tienen `updated_at` antiguo y eso vaciaba
-          el ranking. Ahora muestra TODOS los SKUs activos con precio > 0,
-          sin restricción temporal. El subtítulo del widget ya no menciona
-          ventana de 90/365 días.
+        Sprint 2026-05-20 v3 · Query partida en DOS pasos:
+          Antes una sola query con `LEFT JOIN productos.producto` causaba
+          que `_fetchall` cayera silenciosamente (probablemente search_path
+          o cast falla cuando el endpoint corre vía HTTP pero NO cuando
+          corre vía management command). El diag CLI mostraba 8 SKUs pero
+          el endpoint HTTP devolvía [].
+          Solución: query 1 simple (sólo expedientes.linea, sin JOIN externo)
+          + query 2 separada para enriquecer brand_id desde productos.producto.
+          Si la query 2 falla, brand_id queda NULL — el frontend igual
+          muestra el SKU y los números (no rompe la UI).
 
         Modelo de precios (C0_expedientes_operating_company.sql):
-          La tabla `expedientes.linea` tiene DOS pares de columnas:
-          · Legacy:  unit_cost / unit_price (raro que estén poblados)
-          · Nuevos:  unit_price_mwt   → costo (lo que MWT paga al proveedor)
-                     unit_price_client → precio (lo que cobra al cliente)
-
           costo_efectivo  = COALESCE(NULLIF(unit_price_mwt,    0), unit_cost,  0)
           precio_efectivo = COALESCE(NULLIF(unit_price_client, 0), unit_price, 0)
 
-        · Solo líneas donde precio_efectivo > 0.
+        · Sin filtro temporal: muestra TODOS los SKUs activos con precio > 0.
         · margin_usd = SUM((precio_efectivo - costo_efectivo) × qty).
-        · margin_pct = margin_usd / NULLIF(revenue_usd, 0).
-        · Log explícito de count para depurar widget vacío.
         """
-        sql = """
+        # PASO 1: query simple sin JOIN externo (idéntica a la del diag CLI
+        # que confirmamos funciona en producción).
+        sql_main = """
             WITH lineas_efectivas AS (
               SELECT
                 l.sku,
@@ -713,8 +712,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
             )
             SELECT
               le.sku                                                        AS sku,
-              MAX(p.nombre)                                                 AS product_name,
-              MAX(p.marca_id)::text                                         AS brand_id,
+              (ARRAY_AGG(le.producto_id) FILTER (WHERE le.producto_id IS NOT NULL))[1]::text AS producto_id_str,
               COALESCE(SUM(le.qty), 0)::float                               AS units_sold_90d,
               COALESCE(SUM(le.qty * le.precio_efectivo), 0)::float          AS revenue_usd,
               COALESCE(SUM(le.qty * (le.precio_efectivo - le.costo_efectivo)), 0)::float
@@ -724,21 +722,53 @@ class AnalyticsViewSet(viewsets.ViewSet):
                          / NULLIF(SUM(le.qty * le.precio_efectivo), 0))::float
                    ELSE NULL END                                            AS margin_pct
             FROM lineas_efectivas le
-            LEFT JOIN productos.producto p ON p.id = le.producto_id
             WHERE le.precio_efectivo > 0
             GROUP BY le.sku
             ORDER BY margin_usd DESC NULLS LAST
             LIMIT 10
         """
-        rows = _fetchall(sql)
-        log.info("[top_skus_margen] devolviendo %d filas (sin filtro temporal)", len(rows))
-        resp = Response(rows)
-        # Cloudflare cacheo respuestas [] previas con el filtro de 365d activo.
-        # Forzamos no-cache en TODA la cadena: navegador, CDN, proxies.
-        resp["Cache-Control"] = "no-store, no-cache, must-revalidate, private, max-age=0"
-        resp["Pragma"] = "no-cache"
-        resp["Expires"] = "0"
-        return resp
+        rows = _fetchall(sql_main)
+        log.info("[top_skus_margen] paso 1: %d SKUs", len(rows))
+
+        # PASO 2: enriquecer con nombre de producto y brand_id.
+        # Best-effort: si la tabla productos.producto no responde,
+        # el endpoint igual devuelve los SKUs con datos numéricos.
+        producto_ids = [r["producto_id_str"] for r in rows if r.get("producto_id_str")]
+        producto_lookup = {}
+        if producto_ids:
+            try:
+                placeholders = ",".join(["%s"] * len(producto_ids))
+                lookup_rows = _fetchall(
+                    f"SELECT id::text AS id, nombre, marca_id::text AS marca_id "
+                    f"FROM productos.producto WHERE id::text IN ({placeholders})",
+                    producto_ids,
+                )
+                for lr in lookup_rows:
+                    producto_lookup[lr["id"]] = {
+                        "nombre":   lr.get("nombre"),
+                        "marca_id": lr.get("marca_id"),
+                    }
+                log.info("[top_skus_margen] paso 2: %d productos enriquecidos", len(lookup_rows))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[top_skus_margen] enriquecimiento falló: %s", exc)
+
+        # Salida final con shape esperado por el frontend.
+        out = []
+        for r in rows:
+            pid = r.get("producto_id_str")
+            enriched = producto_lookup.get(pid, {}) if pid else {}
+            out.append({
+                "sku":            r["sku"],
+                "product_name":   enriched.get("nombre"),
+                "brand_id":       enriched.get("marca_id"),
+                "units_sold_90d": r["units_sold_90d"],
+                "revenue_usd":    r["revenue_usd"],
+                "margin_usd":     r["margin_usd"],
+                "margin_pct":     r["margin_pct"],
+            })
+
+        log.info("[top_skus_margen] FINAL: %d filas devueltas al cliente", len(out))
+        return Response(out)
 
     # ── Scatter de margen proyectado vs real por expediente ───
     @action(detail=False, methods=["get"], url_path="expediente_margin_scatter")
