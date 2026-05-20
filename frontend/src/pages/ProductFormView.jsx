@@ -396,6 +396,12 @@ export default function ScreenProductFormView() {
           // Fase 3+ · overrides de talla a nivel cliente
           sizes_pricing:    c.sizes_pricing && Object.keys(c.sizes_pricing).length > 0
             ? c.sizes_pricing : {},
+          // Fase 4 · plazos custom por banda (global del cliente-marca).
+          // Si la banda 1 tiene [120d,90d,60d,30d,8d] en lugar de los 4
+          // por defecto, el frontend lo necesita para renderizar las
+          // columnas dinámicas en PriceMatrixCompact.
+          custom_plazos:    c.custom_plazos && typeof c.custom_plazos === "object"
+            ? c.custom_plazos : {},
           fecha_inicio:     c.fecha_inicio,
           fecha_fin:        c.fecha_fin,
           updated_at:       c.updated_at,
@@ -1874,6 +1880,7 @@ export default function ScreenProductFormView() {
                     onCellChange={(bandaId, plazoDias, newValue) =>
                       handleMatrixCellChange(c.cliente_id, bandaId, plazoDias, newValue)}
                     bandaVigente={bandaVigente}
+                    customPlazos={c.custom_plazos}
                     maxHeight="40vh"
                   />
 
@@ -2120,6 +2127,23 @@ function MediaDropzone({ kind='gallery', lang='es', files, onChange, label, hint
             ))}
             {multiple && (
               <div className="caption" style={{color:'var(--text-tertiary)', marginTop:6}}>
+                + {lang==='es'?'Click para añadir más':'Click to add more'}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        style={{display:'none'}}
+        multiple={multiple}
+        accept={kind === 'gallery' ? 'image/*' : 'application/pdf'}
+        onChange={(e)=>{ if (e.target.files) handleFiles(e.target.files); }}
+      />
+    </div>
+  );
+}
                 + {lang==='es'?'Click para añadir más':'Click to add more'}
               </div>
             )}

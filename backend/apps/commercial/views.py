@@ -2291,6 +2291,10 @@ class MarluvasProductClientsMatrixView(APIView):
                 "sobreprecio_pct":  str(r.sobreprecio_pct),
                 "prices_matrix":    r.prices_matrix or {},
                 "sizes_pricing":    getattr(r, "sizes_pricing", None) or {},
+                # Fase 4 · plazos custom por banda (global por cliente-marca).
+                # El frontend lo usa para mostrar columnas dinámicas en la
+                # matriz por cliente del detalle de producto.
+                "custom_plazos":    getattr(r, "custom_plazos", None) or {},
                 "fecha_inicio":     r.fecha_inicio.isoformat() if r.fecha_inicio else None,
                 "fecha_fin":        r.fecha_fin.isoformat()    if r.fecha_fin    else None,
                 "updated_at":       r.updated_at.isoformat()   if r.updated_at   else None,
