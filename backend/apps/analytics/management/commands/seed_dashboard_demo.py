@@ -163,7 +163,7 @@ class Command(BaseCommand):
                 self._step_3_cobros_pagados(cerrados)
                 self._step_4_top_clientes()
                 self._step_5_inventario_movimientos()
-                self._step_6_skus_ranking()
+                self._step_6_skus_ranking(cerrados)
 
                 if self.dry_run:
                     self._warn("DRY-RUN: rollback de la transaccion.")
@@ -612,12 +612,119 @@ class Command(BaseCommand):
         self._ok(f"   stock={created_stock} nodos, movimientos IN={created_in}, OUT={created_out}.")
 
     # ------------------------------------------------------------------
-    # Paso 6 · SKUs ranking (omitido por diseno)
+    # Paso 6 · Lineas de OC con unit_cost / unit_price para Top 10 SKUs.
+    #
+    # Sembramos 5 lineas por cada expediente CERRADO demo, con SKUs
+    # distintos y margenes variados, para que el endpoint
+    # /api/analytics/top_skus_margen/ devuelva un ranking interesante.
+    # Esto NO toca tus lineas reales del catalogo — solo agrega filas
+    # con codigo prefijado `DEMO-SKU-*` enlazadas a los expedientes
+    # `DEMO-DASH-CERRADO-001/002` creados en el paso 2.
+    #
+    # producto_id queda en NULL para no enlazar con tu catalogo real
+    # (las lineas reales ya tienen producto_id; las demo no, asi quedan
+    # claramente identificables). El LEFT JOIN de productos.producto en
+    # el endpoint hace que product_name salga NULL — el frontend lo
+    # renderiza como "—" en la columna Producto.
     # ------------------------------------------------------------------
-    def _step_6_skus_ranking(self) -> None:
-        self._info("[6/6] SKUs ranking")
-        self._warn(
-            "   SKIP por diseno: requiere lineas de expediente con unit_cost/"
-            "unit_price reales. Sembrar lineas falsas distorsiona el motor "
-            "de margen. Documentar en CLAUDE.md cuando se cargue data real."
-        )
+    def _step_6_skus_ranking(self, cerrados: list) -> None:
+        self._info("[6/6] lineas DEMO con unit_cost/unit_price")
+
+        if not cerrados:
+            self._warn("   sin expedientes CERRADO previos. paso omitido.")
+            return
+
+        # Verificar que la tabla expedientes.linea existe con las columnas requeridas.
+        required = ["sku", "qty", "unit_cost", "unit_price", "expediente_id", "is_active"]
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'expedientes'
+                  AND table_name   = 'linea'
+                """
+            )
+            cols = {r[0] for r in cur.fetchall()}
+        missing = [c for c in required if c not in cols]
+        if missing:
+            self._warn(f"   WARNING: expedientes.linea sin columnas {missing}. paso omitido.")
+            return
+
+        # 5 lineas con SKUs distintos y margenes variados.
+        # qty * unit_price = revenue; qty * (unit_price - unit_cost) = margin.
+        # Los SKUs son ficticios pero estables (prefijo DEMO-SKU-) para idempotencia.
+        sku_specs = [
+            # (sku,           qty, unit_cost, unit_price)
+            ("DEMO-SKU-ALPHA",  120, Decimal("18.50"), Decimal("32.00")),
+            ("DEMO-SKU-BRAVO",   80, Decimal("42.00"), Decimal("68.00")),
+            ("DEMO-SKU-CHARLIE", 60, Decimal("85.00"), Decimal("128.00")),
+            ("DEMO-SKU-DELTA",  200, Decimal("9.40"),  Decimal("15.50")),
+            ("DEMO-SKU-ECHO",    25, Decimal("180.00"), Decimal("245.00")),
+        ]
+
+        created = 0
+        for exp in cerrados:
+            for sku, qty, ucost, uprice in sku_specs:
+                with connection.cursor() as cur:
+                    # Idempotencia por (expediente_id, sku)
+                    cur.execute(
+                        """
+                        SELECT id FROM expedientes.linea
+                        WHERE expediente_id = %s AND sku = %s
+                        LIMIT 1
+                        """,
+                        [exp.id, sku],
+                    )
+                    existing = cur.fetchone()
+
+                    if existing is None:
+                        self._info(f"   - CREATE linea exp={exp.codigo[-12:]} sku={sku} qty={qty}")
+                        if not self.dry_run:
+                            total = Decimal(qty) * uprice
+                            cur.execute(
+                                """
+                                INSERT INTO expedientes.linea
+                                    (id, oc_id, expediente_id, producto_id, sku,
+                                     qty, unit_cost, unit_price, total_price,
+                                     estado, is_active, created_at, updated_at)
+                                VALUES
+                                    (gen_random_uuid(),
+                                     %s,                              -- oc_id (placeholder UUID — la tabla acepta NOT NULL pero sin FK; usamos un UUID demo estable)
+                                     %s,                              -- expediente_id
+                                     NULL,                            -- producto_id (NULL = no enlaza catalogo real)
+                                     %s,                              -- sku
+                                     %s,                              -- qty
+                                     %s,                              -- unit_cost
+                                     %s,                              -- unit_price
+                                     %s,                              -- total_price
+                                     'CONFIRMADA',                    -- estado
+                                     TRUE,
+                                     NOW(),
+                                     NOW())
+                                """,
+                                [
+                                    uuid.UUID("d0d0d0d0-d0d0-4d0d-ad0d-d0d0d0d0d0d0"),  # oc_id demo estable
+                                    exp.id,
+                                    sku,
+                                    qty,
+                                    ucost,
+                                    uprice,
+                                    total,
+                                ],
+                            )
+                        created += 1
+                    elif self.force:
+                        self._info(f"   - UPDATE linea exp={exp.codigo[-12:]} sku={sku} (--force)")
+                        if not self.dry_run:
+                            total = Decimal(qty) * uprice
+                            cur.execute(
+                                """
+                                UPDATE expedientes.linea
+                                SET qty = %s, unit_cost = %s, unit_price = %s,
+                                    total_price = %s, updated_at = NOW()
+                                WHERE id = %s
+                                """,
+                                [qty, ucost, uprice, total, existing[0]],
+                            )
+
+        self._ok(f"   {created} lineas DEMO nuevas.")

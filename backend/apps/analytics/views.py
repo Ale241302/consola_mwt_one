@@ -539,21 +539,28 @@ class AnalyticsViewSet(viewsets.ViewSet):
     # ── Top SKUs por margen ───────────────────────────────────
     @action(detail=False, methods=["get"], url_path="top_skus_margen")
     def top_skus_margen(self, request):
-        """Top 10 SKUs por margen USD de líneas de expedientes últimos 90d.
+        """Top 10 SKUs por margen USD de líneas de expedientes activos.
 
         Shape:
           [{ sku, product_name, brand_id, units_sold_90d,
              revenue_usd, margin_usd, margin_pct }]
 
         · Source: expedientes.linea × productos.producto × expedientes.expediente.
-        · Filtro temporal: líneas pertenecientes a expedientes con
-          updated_at en los últimos 90 días (no existe `closed_at`
-          explícito, ver nota del endpoint credit_clock_avg).
+        · Filtro temporal: líneas de expedientes con `updated_at` en los
+          últimos 365 días — ventana amplia porque NO existe `closed_at`
+          explícito (ver nota del endpoint credit_clock_avg) y reducir a
+          90d excluía líneas legítimas de OCs activas que no se han
+          tocado en meses pero siguen vivas. Cuando exista
+          `expediente.closed_at`, este endpoint debe pivotear a esa
+          columna y volver a 90 días (regla del prompt CEO).
+        · Solo se cuentan líneas con `unit_cost > 0 AND unit_price > 0`
+          para evitar 100% de margen falso en líneas sin costo cargado.
         · margin_usd = SUM((unit_price - unit_cost) * qty).
         · margin_pct = margin_usd / NULLIF(revenue_usd, 0).
 
-        Si la tabla `expedientes.linea` no expone `unit_cost` /
-        `unit_price`, _fetchall devolverá [] silenciosamente.
+        Mantener el campo `units_sold_90d` por compatibilidad con el
+        contrato del frontend; semánticamente ahora es "units en ventana
+        de filtrado" (365d).
         """
         rows = _fetchall("""
             SELECT
@@ -572,8 +579,10 @@ class AnalyticsViewSet(viewsets.ViewSet):
             LEFT JOIN productos.producto p ON p.id = l.producto_id
             WHERE l.is_active = TRUE
               AND e.is_active = TRUE
-              AND e.updated_at >= CURRENT_DATE - INTERVAL '90 days'
+              AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
               AND l.sku IS NOT NULL
+              AND l.unit_cost  > 0
+              AND l.unit_price > 0
             GROUP BY l.sku
             ORDER BY margin_usd DESC
             LIMIT 10
