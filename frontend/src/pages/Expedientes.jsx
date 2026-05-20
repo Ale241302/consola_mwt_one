@@ -38,6 +38,10 @@ import {
   OCS as MOCK_OCS,
 } from "../data/mockData.js";
 import { expedientesApi, ocsApi, clientesApi, lineasApi, productosApi } from "../lib/api.js";
+// Sprint 2026-05-20 · Fusión Pipeline → Expedientes.
+// Tabla/Kanban toggle reemplaza Vista Financial/Ops/Fleet. El render del
+// Kanban delega 100% al ScreenPipeline (mismo fetch, mismo UX, sin reescritura).
+import ScreenPipeline from "./Pipeline.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 // Sprint 2026-05-17 · Celda REF con chips role-aware (proforma / OC / SAP).
 import RefCell from "../components/expedientes/RefCell.jsx";
@@ -282,7 +286,10 @@ export default function ScreenExpedientes() {
   const [clientFilter, setClientFilter] = useState('ALL');
   const [signalFilter, setSignalFilter] = useState('ALL'); // ALL | green | amber | red
   const [alertFilter, setAlertFilter] = useState('ALL');   // ALL | blocked | alerts
-  const [view, setView] = useState('financial');           // financial | ops | fleet (solo ADMIN)
+  const [view, setView] = useState('financial');           // financial | ops | fleet (legacy — sin toggle UI)
+  // Sprint 2026-05-20 · Toggle nuevo: Tabla vs Kanban.
+  // El antiguo selector Financial/Ops/Fleet se ocultó por simplificación de UX.
+  const [viewMode, setViewMode] = useState('table');       // 'table' | 'kanban'
   const [expandedId, setExpandedId] = useState(null);
   // En CLIENT forzamos la vista "fleet" (origen→destino, modo, ETA, total
   // facturado como "precio") y escondemos el selector. Esa vista es la más
@@ -672,15 +679,20 @@ export default function ScreenExpedientes() {
 
         <div style={{ marginLeft:'auto' }}/>
 
-        {/* Selector de vista (Financial / Ops / Fleet) es CEO-ONLY. En CLIENT
-            forzamos "fleet" para mostrar origen→destino + ETA, sin márgenes. */}
-        {isAdmin && (
-          <div className="ceo-chip-group">
-            <button data-active={view==='financial'} onClick={()=>setView('financial')}>{tr(lang,'financial_view')}</button>
-            <button data-active={view==='ops'}       onClick={()=>setView('ops')}>{tr(lang,'ops_view')}</button>
-            <button data-active={view==='fleet'}     onClick={()=>setView('fleet')}>{tr(lang,'fleet_view')}</button>
-          </div>
-        )}
+        {/* Sprint 2026-05-20 · Toggle Tabla / Kanban.
+            Reemplaza el antiguo Financial/Ops/Fleet.  Visible para todos los
+            roles — CLIENT también puede ver el board (Pipeline ya está
+            gobernado por ClientScopedManager y se renderiza READ-ONLY).
+            La vista 'financial' del state legacy queda como default para
+            las columnas de la tabla (las más informativas para CEO). */}
+        <div className="ceo-chip-group">
+          <button data-active={viewMode==='table'}  onClick={()=>setViewMode('table')}>
+            {lang === 'es' ? 'Tabla' : 'Table'}
+          </button>
+          <button data-active={viewMode==='kanban'} onClick={()=>setViewMode('kanban')}>
+            Kanban
+          </button>
+        </div>
       </div>
 
       {/* ── Bulk action bar (CEO-ONLY) ───── */}
@@ -737,6 +749,14 @@ export default function ScreenExpedientes() {
         </div>
       )}
 
+      {/* Sprint 2026-05-20 · Render condicional según viewMode.
+          'kanban' → delegamos al ScreenPipeline existente (mismo fetch, mismo
+          UX). 'table' → render tradicional de la master table. */}
+      {viewMode === 'kanban' ? (
+        <div style={{ marginTop: 4 }}>
+          <ScreenPipeline />
+        </div>
+      ) : (<>
       {/* ── Master table ───── */}
       <div className="table-wrap">
         <table className="table ceo-table">
@@ -1066,6 +1086,7 @@ export default function ScreenExpedientes() {
           <div className="caption">{lang==='es'?'Ajusta los filtros para ver expedientes.':'Adjust filters to see files.'}</div>
         </div>
       )}
+      </>)}{/* fin del bloque viewMode === 'table' */}
 
       {/* Sprint 2026-05-03 v4 · Modal de confirmación de bulk delete.
           Replica el patrón exacto de Productos.jsx:
@@ -1342,6 +1363,9 @@ function CeoDetailRow({ e, lang, deferredVal, showDeferred, onUpdate, onOpen }) 
           </button>
         </div>
       </div>
+    </div>
+  );
+}
     </div>
   );
 }
