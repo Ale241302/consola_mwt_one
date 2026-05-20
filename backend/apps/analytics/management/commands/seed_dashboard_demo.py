@@ -76,7 +76,13 @@ class Command(BaseCommand):
     def _err(self, msg):   self.stdout.write(self.style.ERROR(msg))
 
     def _run_sql(self, sql, params=None, fetch=False):
-        """Ejecuta SQL con respeto a --dry-run; opcionalmente retorna fetchall."""
+        """Ejecuta SQL con respeto a --dry-run; opcionalmente retorna fetchall.
+
+        IMPORTANTE: cuando `params` es None, psycopg interpreta los `%` del
+        SQL como placeholders. Para evitarlo, en queries SIN parámetros
+        que usen `LIKE '...%'` SIEMPRE escapar como `%%`. Esta función NO
+        re-escapa automáticamente — la responsabilidad es del caller.
+        """
         if self.dry_run and not fetch:
             self._info(f"   (dry-run) {sql.strip()[:120]}")
             return None
@@ -148,42 +154,67 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------
     # Paso 2 · Cleanup completo de DEMO data previa
+    #
+    # Notas técnicas (lecciones aprendidas en el sprint):
+    #   · NO se puede llamar connection.rollback() dentro de un
+    #     transaction.atomic() block — Django lo prohíbe.
+    #     Solución: cada DELETE se envuelve en un savepoint propio.
+    #     Si falla, transaction.savepoint_rollback() lo revierte sin
+    #     romper la transacción global.
+    #   · psycopg interpreta `%` como placeholder cuando params es None.
+    #     Solución: pasar el patrón LIKE como parámetro `%s` en lugar
+    #     de inlinearlo en el SQL.
     # ------------------------------------------------------------------
     def _step_2_cleanup_demo(self):
         self._info("[2/3] cleanup de datos DEMO previos")
 
-        # Orden importa por FK lógicas (aunque no haya FK declaradas).
+        # (tabla, where_clause_con_placeholder, params)
+        # Orden importa por FK lógicas (aunque no haya FK declaradas):
+        # primero hijos, luego padres.
         cleanups = [
-            ("expedientes.linea",          "sku LIKE 'DEMO-SKU-%'"),
-            ("cobros.pago",                "codigo LIKE 'DEMO-PAGO-%'"),
-            ("cobros.cobro",               "codigo LIKE 'DEMO-COB-%'"),
-            ("expedientes.expediente",     "codigo LIKE 'DEMO-DASH-%'"),
+            ("expedientes.linea",
+             "sku LIKE %s",                         ["DEMO-SKU-%"]),
+            ("cobros.pago",
+             "codigo LIKE %s",                      ["DEMO-PAGO-%"]),
+            ("cobros.cobro",
+             "codigo LIKE %s",                      ["DEMO-COB-%"]),
+            ("expedientes.expediente",
+             "codigo LIKE %s",                      ["DEMO-DASH-%"]),
             ("inventario.movimiento",
-             "notas = 'seed_dashboard_demo · stock inicial' OR "
-             "notas = 'seed_dashboard_demo · salida demo' OR "
-             "idempotence_token LIKE 'demo-in-%' OR "
-             "idempotence_token LIKE 'demo-out-%'"),
-            ("inventario.stock",           "lote = 'DEMO'"),
+             "notas IN (%s, %s) OR idempotence_token LIKE %s OR idempotence_token LIKE %s",
+             [
+                 "seed_dashboard_demo · stock inicial",
+                 "seed_dashboard_demo · salida demo",
+                 "demo-in-%",
+                 "demo-out-%",
+             ]),
+            ("inventario.stock",
+             "lote = %s",                           ["DEMO"]),
         ]
 
         total_deleted = 0
-        for table, where in cleanups:
+        for table, where, params in cleanups:
             sql = f"DELETE FROM {table} WHERE {where}"
+            sid = transaction.savepoint()
             try:
-                count = self._run_sql(sql)
+                if self.dry_run:
+                    self._info(f"   (dry-run) {sql.strip()[:90]} params={params}")
+                    transaction.savepoint_rollback(sid)
+                    continue
+                with connection.cursor() as cur:
+                    cur.execute(sql, params)
+                    count = cur.rowcount
                 if count and count > 0:
                     self._info(f"   - {table}: {count} fila(s) borradas")
                     total_deleted += count
+                transaction.savepoint_commit(sid)
             except Exception as exc:  # noqa: BLE001 — tolerar tablas faltantes
-                self._warn(f"   - {table}: skip ({type(exc).__name__})")
-                # Rollback para no contaminar transacción
-                connection.rollback()
-                # Reabrir savepoint
-                continue
+                transaction.savepoint_rollback(sid)
+                self._warn(f"   - {table}: skip ({type(exc).__name__}: {str(exc)[:60]})")
 
-        if total_deleted == 0:
+        if total_deleted == 0 and not self.dry_run:
             self._info("   BD ya limpia (0 filas DEMO encontradas).")
-        else:
+        elif not self.dry_run:
             self._ok(f"   total filas DEMO borradas: {total_deleted}")
 
     # ------------------------------------------------------------------
@@ -257,19 +288,21 @@ class Command(BaseCommand):
         }
 
         for label, sql in diagnostics:
+            sid = transaction.savepoint()
             try:
                 r = self._run_sql(sql, fetch=True)
                 count = (r[0][0] if r else 0) or 0
                 self._info(f"   {label}: {count}")
-            except Exception as exc:  # noqa: BLE001
-                self._warn(f"   {label}: error ({type(exc).__name__})")
-                connection.rollback()
+                transaction.savepoint_commit(sid)
+            except Exception as exc:  # noqa: BLE001 — tolerar tabla faltante
+                transaction.savepoint_rollback(sid)
+                self._warn(f"   {label}: error ({type(exc).__name__}: {str(exc)[:60]})")
 
         self._info("")
         self._info("Widgets sin data real → empty state honesto:")
         self._info("  · Margen bruto ponderado y Scatter: necesitan")
         self._info("    expedientes con estado='CERRADO' y projected/real_margin>0.")
-        self._info("  · Reloj credito: necesita cobros 100%% saldados en 90d.")
+        self._info("  · Reloj credito: necesita cobros 100% saldados en 90d.")
         self._info("  · Inventario por nodo: necesita stock + movimientos.")
         self._info("  · Heatmap tallas: ya implementado — usa linea.size + cliente.pais_iso2.")
         self._info("  · Top SKUs: ya implementado — espera lineas con precio.")
