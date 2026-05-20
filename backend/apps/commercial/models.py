@@ -422,6 +422,16 @@ class MarluvasClientSkuPricing(models.Model):
     # precios ya cotizados no se recalculan (auditoría/disputas).
     prices_matrix     = models.JSONField(default=dict, blank=True)
 
+    # Overrides de precio por talla (Fase 3). Shape:
+    #   { "<talla_uuid>": {
+    #         "matrix": { "<banda_id>": {"<plazo_dias>": <precio_usd>} },
+    #         "anchor": { "bandaId": <int>, "plazoDias": <int> }
+    #     } }
+    # Talla SIN entrada → hereda de `prices_matrix` (SKU default).
+    # BRL único por SKU — no varía por talla. Solo display por ahora
+    # (no impacta proformas/OCs en Fase 3).
+    sizes_pricing     = models.JSONField(default=dict, blank=True)
+
     bcpa_id           = models.UUIDField(null=True, blank=True)     # ⛔ sin FK (→ BCPA)
     fecha_inicio      = models.DateField(null=True, blank=True)
     fecha_fin         = models.DateField(null=True, blank=True)

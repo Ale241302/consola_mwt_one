@@ -41,6 +41,7 @@ import {
   computeMatrixFromInputs, cascadeRow, anchorPrice,
 } from "../lib/marluvasPricing.js";
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
+import SkuSizesPanel from "../components/marluvas/SkuSizesPanel.jsx";
 
 // ─── Helpers backend → shape interno ──────────────────────────
 const _FLAG_ISO2 = {
@@ -173,7 +174,14 @@ function useLoadSimulation(clienteId, brandId, accessToken) {
                 ])
               )
             : computeMatrixFromInputs(inputs);
-          return { ...inputs, matrix: frozen };
+          return {
+            ...inputs,
+            matrix: frozen,
+            // Fase 3 · hidratar overrides por talla si vinieron del backend
+            ...(s.sizes_pricing && typeof s.sizes_pricing === "object"
+                && Object.keys(s.sizes_pricing).length > 0
+                ? { sizes_pricing: s.sizes_pricing } : {}),
+          };
         });
         setData({
           skus,
@@ -254,6 +262,14 @@ export default function ScreenBrandClientPricingForm() {
   // Ancla del editor (banda × plazo). Default = banda techo 90d (comportamiento legacy).
   // Persiste por (brand, cliente) en localStorage; no toca backend.
   const [anchor, setAnchor] = useState({ bandaId: 1, plazoDias: 90 });
+  // Fase 3 · Set de SKUs con su panel de tallas expandido. No persiste
+  // (es estado de UI volátil, no de datos comerciales).
+  const [expandedSkus, setExpandedSkus] = useState(() => new Set());
+  const toggleExpanded = (sku) => setExpandedSkus((prev) => {
+    const n = new Set(prev);
+    if (n.has(sku)) n.delete(sku); else n.add(sku);
+    return n;
+  });
   const fileInputRef = useRef(null);
 
   const { tc, loading: tcLoading, error: tcError, ts: tcTs, source: tcSource, reload: reloadTC } =
@@ -557,6 +573,75 @@ export default function ScreenBrandClientPricingForm() {
     }));
   };
 
+  // ─── Fase 3 · Overrides de precio por TALLA dentro de un SKU ──────
+  //
+  // Cada SKU puede tener sizes_pricing[tallaUuid] = { matrix, anchor }.
+  // La PRIMERA edición de una celda de una talla SIN override clona la
+  // matriz del SKU como punto de partida — así editás solo lo que cambia.
+  // Edit 90d se trata como cascade lateral (no retro-calcula BRL: el
+  // override de talla es LOCAL a esa talla, no propaga al SKU base).
+
+  const setSkuSizeMatrixCell = (skuIdx, tallaUuid, bandaId, plazoDias, value) => {
+    setSkus((arr) => arr.map((s, i) => {
+      if (i !== skuIdx) return s;
+      const sp = s.sizes_pricing || {};
+      const existing = sp[tallaUuid];
+      // Materializar override si no existe — clonamos la matriz del SKU.
+      const baseMatrix = existing?.matrix
+        || JSON.parse(JSON.stringify(s.matrix || computeMatrixFromInputs(s)));
+      const val = Number(value) || 0;
+      const row = baseMatrix[String(bandaId)] || {};
+      const newRow = cascadeRow(row, plazoDias, val);
+      const nextMatrix = { ...baseMatrix, [String(bandaId)]: newRow };
+      return {
+        ...s,
+        sizes_pricing: {
+          ...sp,
+          [tallaUuid]: {
+            matrix: nextMatrix,
+            ...(existing?.anchor ? { anchor: existing.anchor } : {}),
+          },
+        },
+      };
+    }));
+  };
+
+  const setSkuSizeAnchor = (skuIdx, tallaUuid, partial) => {
+    setSkus((arr) => arr.map((s, i) => {
+      if (i !== skuIdx) return s;
+      const sp = s.sizes_pricing || {};
+      const existing = sp[tallaUuid];
+      // Si la talla no tiene override aún, lo materializamos clonando matrix.
+      const baseMatrix = existing?.matrix
+        || JSON.parse(JSON.stringify(s.matrix || computeMatrixFromInputs(s)));
+      const currentAnchor = existing?.anchor || (s.anchor || anchor);
+      return {
+        ...s,
+        sizes_pricing: {
+          ...sp,
+          [tallaUuid]: {
+            matrix: baseMatrix,
+            anchor: { ...currentAnchor, ...partial },
+          },
+        },
+      };
+    }));
+  };
+
+  const clearSkuSizeOverride = (skuIdx, tallaUuid) => {
+    setSkus((arr) => arr.map((s, i) => {
+      if (i !== skuIdx) return s;
+      const sp = { ...(s.sizes_pricing || {}) };
+      delete sp[tallaUuid];
+      if (Object.keys(sp).length === 0) {
+        // eslint-disable-next-line no-unused-vars
+        const { sizes_pricing: _drop, ...rest } = s;
+        return rest;
+      }
+      return { ...s, sizes_pricing: sp };
+    }));
+  };
+
   // ── Derivados ──
   const skusActivos = useMemo(() => skus.filter((s) => s.activo), [skus]);
   const calcs = useMemo(() => skus.map((s) => calcSKU(s)), [skus]);
@@ -663,6 +748,9 @@ export default function ScreenBrandClientPricingForm() {
             ajuste_usd:      Number(s.ajuste || 0),
             sobreprecio_pct: Number(s.sobreprecio || 0),
             prices_matrix,
+            // Fase 3 · overrides por talla (opcional, omitir si vacío)
+            ...(s.sizes_pricing && Object.keys(s.sizes_pricing).length > 0
+                ? { sizes_pricing: s.sizes_pricing } : {}),
             activo:          !!s.activo,
           };
         }),
@@ -1183,6 +1271,7 @@ export default function ScreenBrandClientPricingForm() {
               <table style={tblSku}>
                 <thead>
                   <tr>
+                    <th style={{ ...thSku, width: 28 }}></th>
                     <th style={{ ...thSku, width: 36 }}></th>
                     <th style={{ ...thSku, textAlign: "left", paddingLeft: 12 }}>SKU</th>
                     <th style={{ ...thSku, textAlign: "left" }}>{lang === "es" ? "Referencia" : "Reference"}</th>
@@ -1230,7 +1319,27 @@ export default function ScreenBrandClientPricingForm() {
                               : bandaVigente?.id === sBanda.id ? "#92400E"
                               : NAVY;
                     return (
-                      <tr key={s.sku} style={{ opacity: s.activo ? 1 : 0.4 }}>
+                      <React.Fragment key={s.sku}>
+                      <tr style={{ opacity: s.activo ? 1 : 0.4 }}>
+                        {/* Chevron expandir panel de tallas */}
+                        <td style={tdSku}>
+                          <button type="button"
+                            onClick={() => toggleExpanded(s.sku)}
+                            style={{
+                              width: 22, height: 22, borderRadius: 4,
+                              border: "1px solid #E5E7EB", background: "#FFFFFF",
+                              color: MUTED, cursor: "pointer", padding: 0,
+                              display: "inline-flex", alignItems: "center", justifyContent: "center",
+                              transition: "transform 140ms ease",
+                              transform: expandedSkus.has(s.sku) ? "rotate(90deg)" : "rotate(0deg)",
+                              font: "700 11px/1 var(--font-body)",
+                            }}
+                            title={lang === "es"
+                              ? "Ver/editar overrides por talla"
+                              : "View/edit per-size overrides"}>
+                            ▶
+                          </button>
+                        </td>
                         <td style={tdSku}>
                           <button type="button" onClick={() => toggleSku(i)}
                             style={{
@@ -1244,7 +1353,27 @@ export default function ScreenBrandClientPricingForm() {
                           </button>
                         </td>
                         <td style={{ ...tdSku, textAlign: "left", paddingLeft: 12, color: MUTED, fontSize: 10 }}>{s.sku}</td>
-                        <td style={{ ...tdSku, textAlign: "left", fontFamily: "var(--font-body)", fontWeight: 600, color: NAVY, fontSize: 11, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.ref}>{s.ref}</td>
+                        <td style={{ ...tdSku, textAlign: "left", fontFamily: "var(--font-body)", fontWeight: 600, color: NAVY, fontSize: 11, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.ref}>
+                          {s.ref}
+                          {(() => {
+                            const ovc = Object.keys(s.sizes_pricing || {}).length;
+                            if (ovc === 0) return null;
+                            return (
+                              <span style={{
+                                marginLeft: 6, padding: "2px 6px", borderRadius: 8,
+                                background: `${AMBER}18`, color: "#92400E",
+                                font: "700 8.5px/1 var(--font-body)",
+                                border: `1px solid ${AMBER}55`,
+                                textTransform: "uppercase", letterSpacing: 0.4,
+                                verticalAlign: "middle",
+                              }} title={lang === "es"
+                                  ? `${ovc} talla(s) con override`
+                                  : `${ovc} size(s) with override`}>
+                                {ovc} {lang === "es" ? "tallas" : "sizes"}
+                              </span>
+                            );
+                          })()}
+                        </td>
                         <td style={tdSku}>
                           <input type="number" min={0} step={0.01}
                             value={Number(s.brl).toFixed(2)}
@@ -1348,6 +1477,24 @@ export default function ScreenBrandClientPricingForm() {
                           {fmtUSD(ap.lista)}
                         </td>
                       </tr>
+                      {expandedSkus.has(s.sku) && (
+                        <tr>
+                          {/* colSpan = 11 (chevron + toggle + sku + ref + brl + com + ancla + base + ajuste + sobrepre + lista) */}
+                          <td colSpan={11} style={{ padding: 0, background: "#FAFBFC" }}>
+                            <SkuSizesPanel
+                              sku={s}
+                              skuIdx={i}
+                              bandaVigente={bandaVigente}
+                              globalAnchor={anchor}
+                              onSizeMatrixCell={setSkuSizeMatrixCell}
+                              onSizeAnchor={setSkuSizeAnchor}
+                              onSizeReset={clearSkuSizeOverride}
+                              lang={lang}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>

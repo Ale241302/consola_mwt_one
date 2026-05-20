@@ -1867,6 +1867,68 @@ class MarluvasSaveSimulationView(APIView):
             raise ValueError(f"{field_name} debe ser YYYY-MM-DD o null")
         return parsed
 
+    # ------------------------------------------------------------------
+    # _parse_sizes_pricing · normaliza overrides por talla (JSONB) Fase 3
+    #
+    # Shape esperado:
+    #   { "<talla_uuid>": {
+    #         "matrix": {"<bandaId>": {"<plazoDias>": <float>}},
+    #         "anchor": {"bandaId": <int 1..12>, "plazoDias": <int 8|30|60|90>}
+    #     } }
+    #
+    # Entradas inválidas se descartan silenciosamente (no fallan el SKU).
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _parse_sizes_pricing(raw):
+        if not isinstance(raw, dict):
+            return {}
+        VALID_PLAZOS = {8, 30, 60, 90}
+        out = {}
+        for talla_key, payload in raw.items():
+            try:
+                talla_uuid = str(uuid.UUID(str(talla_key)))
+            except (ValueError, AttributeError, TypeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+
+            # matrix: mismo patrón que prices_matrix.
+            matrix_clean = {}
+            matrix_raw = payload.get("matrix")
+            if isinstance(matrix_raw, dict):
+                for banda_key, plazos in matrix_raw.items():
+                    if not isinstance(plazos, dict):
+                        continue
+                    plazos_clean = {}
+                    for plazo_key, price in plazos.items():
+                        try:
+                            plazos_clean[str(plazo_key)] = round(float(price), 4)
+                        except (TypeError, ValueError):
+                            continue
+                    if plazos_clean:
+                        matrix_clean[str(banda_key)] = plazos_clean
+
+            # anchor: bandaId ∈ 1..12, plazoDias ∈ {8,30,60,90}.
+            anchor_clean = None
+            anchor_raw = payload.get("anchor")
+            if isinstance(anchor_raw, dict):
+                try:
+                    b = int(anchor_raw.get("bandaId"))
+                    p = int(anchor_raw.get("plazoDias"))
+                    if 1 <= b <= 12 and p in VALID_PLAZOS:
+                        anchor_clean = {"bandaId": b, "plazoDias": p}
+                except (TypeError, ValueError):
+                    pass
+
+            entry = {}
+            if matrix_clean:
+                entry["matrix"] = matrix_clean
+            if anchor_clean:
+                entry["anchor"] = anchor_clean
+            if entry:
+                out[talla_uuid] = entry
+        return out
+
     def post(self, request):
         # Import diferido para no romper boot si el modelo aún no se cargó.
         from .models import MarluvasClientSkuPricing
@@ -1934,6 +1996,8 @@ class MarluvasSaveSimulationView(APIView):
                 else:
                     prices_matrix = {}
 
+                sizes_pricing = self._parse_sizes_pricing(item.get("sizes_pricing"))
+
                 rows_to_insert.append(MarluvasClientSkuPricing(
                     brand_id        = brand_id,
                     cliente_id      = cliente_id,
@@ -1943,6 +2007,7 @@ class MarluvasSaveSimulationView(APIView):
                     ajuste_usd      = self._to_decimal(item.get("ajuste_usd")),
                     sobreprecio_pct = self._to_decimal(item.get("sobreprecio_pct")),
                     prices_matrix   = prices_matrix,
+                    sizes_pricing   = sizes_pricing,
                     is_active       = True,
                     fecha_inicio    = fecha_ini,
                     fecha_fin       = fecha_fin,
@@ -1980,12 +2045,17 @@ class MarluvasSaveSimulationView(APIView):
                     if isinstance(plazos, dict):
                         total_cells += len(plazos)
 
+        size_overrides_saved = sum(
+            len(getattr(row, "sizes_pricing", None) or {}) for row in rows_to_insert
+        )
+
         return Response({
-            "saved":       len(rows_to_insert),
-            "cells":       total_cells,
-            "brand_id":    str(brand_id),
-            "cliente_id":  str(cliente_id),
-            "snapshot_at": timezone.now().isoformat(),
+            "saved":                len(rows_to_insert),
+            "cells":                total_cells,
+            "size_overrides_saved": size_overrides_saved,
+            "brand_id":             str(brand_id),
+            "cliente_id":           str(cliente_id),
+            "snapshot_at":          timezone.now().isoformat(),
         }, status=200)
 
 
@@ -2072,6 +2142,7 @@ class MarluvasLoadSimulationView(APIView):
             "ajuste_usd":      str(r.ajuste_usd),
             "sobreprecio_pct": str(r.sobreprecio_pct),
             "prices_matrix":   r.prices_matrix or {},
+            "sizes_pricing":   getattr(r, "sizes_pricing", None) or {},
             "activo":          True,
             "bcpa_id":         str(r.bcpa_id) if r.bcpa_id else None,
         } for r in rows]
@@ -2160,6 +2231,7 @@ class MarluvasProductClientsMatrixView(APIView):
                 "ajuste_usd":       str(r.ajuste_usd),
                 "sobreprecio_pct":  str(r.sobreprecio_pct),
                 "prices_matrix":    r.prices_matrix or {},
+                "sizes_pricing":    getattr(r, "sizes_pricing", None) or {},
                 "fecha_inicio":     r.fecha_inicio.isoformat() if r.fecha_inicio else None,
                 "fecha_fin":        r.fecha_fin.isoformat()    if r.fecha_fin    else None,
                 "updated_at":       r.updated_at.isoformat()   if r.updated_at   else None,
@@ -2237,6 +2309,8 @@ class MarluvasUpsertSkuView(APIView):
                 if plazos_clean:
                     prices_matrix[str(banda_key)] = plazos_clean
 
+        sizes_pricing = MarluvasSaveSimulationView._parse_sizes_pricing(data.get("sizes_pricing"))
+
         new_row = MarluvasClientSkuPricing(
             brand_id        = brand_id,
             cliente_id      = cliente_id,
@@ -2246,6 +2320,7 @@ class MarluvasUpsertSkuView(APIView):
             ajuste_usd      = ajuste_usd,
             sobreprecio_pct = sobreprecio_pct,
             prices_matrix   = prices_matrix,
+            sizes_pricing   = sizes_pricing,
             is_active       = True,
             fecha_inicio    = fecha_ini,
             fecha_fin       = fecha_fin,
@@ -2279,10 +2354,11 @@ class MarluvasUpsertSkuView(APIView):
                 cells += len(plazos)
 
         return Response({
-            "saved":       1,
-            "cells":       cells,
-            "brand_id":    str(brand_id),
-            "cliente_id":  str(cliente_id),
-            "sku":         sku,
-            "snapshot_at": timezone.now().isoformat(),
+            "saved":                1,
+            "cells":                cells,
+            "size_overrides_saved": len(sizes_pricing),
+            "brand_id":             str(brand_id),
+            "cliente_id":           str(cliente_id),
+            "sku":                  sku,
+            "snapshot_at":          timezone.now().isoformat(),
         }, status=200)
