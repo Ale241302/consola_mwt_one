@@ -1929,6 +1929,55 @@ class MarluvasSaveSimulationView(APIView):
                 out[talla_uuid] = entry
         return out
 
+    # ------------------------------------------------------------------
+    # _parse_custom_plazos · normaliza plazos personalizados por banda (Fase 4)
+    #
+    # Shape esperado:
+    #   { "<bandaId 1..12>": [
+    #       {"dias": <int 1..3650>, "factor": <float 0..10>},
+    #       ...
+    #     ] }
+    #
+    # Bandas inválidas / plazos inválidos se descartan silenciosamente.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _parse_custom_plazos(raw):
+        if not isinstance(raw, dict):
+            return {}
+        out = {}
+        for banda_key, plazos_list in raw.items():
+            try:
+                banda_id = int(banda_key)
+            except (TypeError, ValueError):
+                continue
+            if not (1 <= banda_id <= 12):
+                continue
+            if not isinstance(plazos_list, list):
+                continue
+            clean_list = []
+            seen_dias = set()
+            for p in plazos_list:
+                if not isinstance(p, dict):
+                    continue
+                try:
+                    dias   = int(p.get("dias"))
+                    factor = float(p.get("factor"))
+                except (TypeError, ValueError):
+                    continue
+                if not (1 <= dias <= 3650):
+                    continue
+                if not (0 < factor <= 10):
+                    continue
+                if dias in seen_dias:
+                    continue
+                seen_dias.add(dias)
+                clean_list.append({"dias": dias, "factor": round(factor, 6)})
+            # Ordenamos descendente por días (más largo primero — display order).
+            clean_list.sort(key=lambda x: x["dias"], reverse=True)
+            if clean_list:
+                out[str(banda_id)] = clean_list
+        return out
+
     def post(self, request):
         # Import diferido para no romper boot si el modelo aún no se cargó.
         from .models import MarluvasClientSkuPricing
@@ -1950,6 +1999,10 @@ class MarluvasSaveSimulationView(APIView):
                 {"detail": "skus debe ser un array (puede ser vacío)."},
                 status=400,
             )
+
+        # Fase 4 · custom_plazos es TOP-LEVEL del payload (mismo valor
+        # para todos los SKUs del cliente-marca). Lo aplicamos a cada row.
+        custom_plazos = self._parse_custom_plazos(data.get("custom_plazos"))
 
         # --- Normalización y filtro activos==True ------------------------
         rows_to_insert = []
@@ -2008,6 +2061,7 @@ class MarluvasSaveSimulationView(APIView):
                     sobreprecio_pct = self._to_decimal(item.get("sobreprecio_pct")),
                     prices_matrix   = prices_matrix,
                     sizes_pricing   = sizes_pricing,
+                    custom_plazos   = custom_plazos,  # Fase 4 — duplicado por SKU
                     is_active       = True,
                     fecha_inicio    = fecha_ini,
                     fecha_fin       = fecha_fin,
@@ -2147,12 +2201,17 @@ class MarluvasLoadSimulationView(APIView):
             "bcpa_id":         str(r.bcpa_id) if r.bcpa_id else None,
         } for r in rows]
 
+        # Fase 4 · custom_plazos es top-level del response (vale igual para
+        # todos los SKUs del cliente-marca). Lo tomamos del primer row.
+        custom_plazos_out = getattr(first, "custom_plazos", None) or {}
+
         return Response({
             "brand_id":     str(brand_id),
             "cliente_id":   str(cliente_id),
             "fecha_inicio": first.fecha_inicio.isoformat() if first.fecha_inicio else None,
             "fecha_fin":    first.fecha_fin.isoformat()    if first.fecha_fin    else None,
             "skus":         skus_out,
+            "custom_plazos": custom_plazos_out,
             "source":       "db",
             "count":        len(rows),
             "cells":        total_cells,   # típicamente N_skus × 48

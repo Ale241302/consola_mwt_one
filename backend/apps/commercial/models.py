@@ -422,6 +422,14 @@ class MarluvasClientSkuPricing(models.Model):
     # precios ya cotizados no se recalculan (auditoría/disputas).
     prices_matrix     = models.JSONField(default=dict, blank=True)
 
+    # Plazos personalizados por banda — Fase 4.
+    # Shape: { "<bandaId>": [{"dias": <int>, "factor": <float>}, ...] }
+    # Bandas SIN entrada → usan defaults [90/60/30/8d].
+    # Bandas CON entrada → usan SOLO esa lista (materialización lazy).
+    # El save-simulation guarda el MISMO valor en TODOS los rows del
+    # par (brand, cliente) atómicamente — redundancia aceptada.
+    custom_plazos     = models.JSONField(default=dict, blank=True)
+
     # Overrides de precio por talla (Fase 3). Shape:
     #   { "<talla_uuid>": {
     #         "matrix": { "<banda_id>": {"<plazo_dias>": <precio_usd>} },

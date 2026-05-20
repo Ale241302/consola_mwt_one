@@ -42,6 +42,8 @@ import {
 } from "../lib/marluvasPricing.js";
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 import SkuSizesPanel from "../components/marluvas/SkuSizesPanel.jsx";
+import PlazoFormModal from "../components/marluvas/PlazoFormModal.jsx";
+import { getBandPlazos, materializeDefaultPlazos } from "../lib/marluvasPricing.js";
 
 // ─── Helpers backend → shape interno ──────────────────────────
 const _FLAG_ISO2 = {
@@ -190,11 +192,18 @@ function useLoadSimulation(clienteId, brandId, accessToken) {
           loading: false,
           source: r?.source || "empty",
           cells:  Number(r?.cells || 0),
+          // Fase 4 · custom_plazos viene top-level del response
+          customPlazos: (r?.custom_plazos && typeof r.custom_plazos === "object")
+            ? r.custom_plazos : {},
         });
       })
       .catch(() => {
         if (!cancelled) {
-          setData({ skus: [], fechaInicio: null, fechaFin: null, loading: false, source: "empty", cells: 0 });
+          setData({
+            skus: [], fechaInicio: null, fechaFin: null,
+            loading: false, source: "empty", cells: 0,
+            customPlazos: {},
+          });
         }
       });
     return () => { cancelled = true; };
@@ -262,6 +271,16 @@ export default function ScreenBrandClientPricingForm() {
   // Ancla del editor (banda × plazo). Default = banda techo 90d (comportamiento legacy).
   // Persiste por (brand, cliente) en localStorage; no toca backend.
   const [anchor, setAnchor] = useState({ bandaId: 1, plazoDias: 90 });
+  // Fase 4 · plazos custom por banda — global por (brand, cliente).
+  // Shape: { "<bandaId>": [{dias, factor}] }
+  // Bandas sin entrada usan defaults [90/60/30/8]. Bandas con entrada
+  // usan SOLO esa lista (materialización lazy al agregar/quitar).
+  const [customPlazos, setCustomPlazos] = useState({});
+  // Modal de agregar/editar plazo: { open, contextBandaId, initial }
+  const [plazoModal, setPlazoModal] = useState({
+    open: false, contextBandaId: null, initial: null,
+  });
+
   // Fase 3 · Set de SKUs con su panel de tallas expandido. No persiste
   // (es estado de UI volátil, no de datos comerciales).
   const [expandedSkus, setExpandedSkus] = useState(() => new Set());
@@ -345,9 +364,25 @@ export default function ScreenBrandClientPricingForm() {
           && Number.isFinite(saved.anchor.plazoDias)) {
         setAnchor(saved.anchor);
       }
+      // Fase 4 · hidratar customPlazos desde localStorage
+      if (saved.customPlazos && typeof saved.customPlazos === "object") {
+        setCustomPlazos(saved.customPlazos);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brandId, clienteId, enabled.loading, loaded.loading]);
+
+  // Fase 4 · hidratar customPlazos desde backend cuando llega el load.
+  // Si el backend tiene una versión y localStorage no, usamos backend.
+  useEffect(() => {
+    if (loaded.loading) return;
+    const fromBackend = loaded.customPlazos;
+    if (fromBackend && typeof fromBackend === "object"
+        && Object.keys(fromBackend).length > 0) {
+      setCustomPlazos(fromBackend);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded.loading]);
 
   // Reset del flag si cambia el par brand+cliente (navegación entre clientes).
   useEffect(() => { hydratedRef.current = false; }, [brandId, clienteId]);
@@ -356,10 +391,12 @@ export default function ScreenBrandClientPricingForm() {
   useEffect(() => {
     if (!brandId || !clienteId) return;
     const id = setTimeout(() => {
-      saveLocal(brandId, clienteId, { skus, fechaInicio, fechaFin, fechaFinIndef, anchor });
+      saveLocal(brandId, clienteId, {
+        skus, fechaInicio, fechaFin, fechaFinIndef, anchor, customPlazos,
+      });
     }, 300);
     return () => clearTimeout(id);
-  }, [brandId, clienteId, skus, fechaInicio, fechaFin, fechaFinIndef, anchor]);
+  }, [brandId, clienteId, skus, fechaInicio, fechaFin, fechaFinIndef, anchor, customPlazos]);
 
   // ── Excel handler ──
   // `opts.showAll` permite forzar el override del filtro enabled-skus sin
@@ -468,7 +505,7 @@ export default function ScreenBrandClientPricingForm() {
       const merged = { ...s, ...patch };
       const touchesBulk = BULK_FIELDS.some((k) => k in patch);
       if (touchesBulk) {
-        merged.matrix = computeMatrixFromInputs(merged);
+        merged.matrix = computeMatrixFromInputs(merged, customPlazos);
       }
       return merged;
     }));
@@ -498,17 +535,7 @@ export default function ScreenBrandClientPricingForm() {
       const isAnchor90 = Number(plazoDias) === 90;
 
       if (isAnchor90) {
-        // Edit 90d en CUALQUIER banda → interpretamos como "este es el
-        // precio efectivo total para esa banda". Retro-calculamos el BRL
-        // que produce ese Base USD (Ajuste $ y Sobreprecio % se resetean
-        // para garantizar Base USD = Lista USD = matriz 90d en el editor).
-        //
-        // Fórmula inversa:
-        //   nuevo_BRL = (P_90d × div[banda]) / (1.0183^com × 1.030)
-        //
-        // Independientemente de qué banda se edite, el BRL resultante es
-        // el mismo (porque el factor de banda × divisor se cancela en la
-        // fórmula maestra).
+        // Edit 90d → retro-calcula BRL inverso, resetea ajuste/sobreprecio.
         const banda = BANDAS_MARLUVAS.find((b) => b.id === bandaId);
         if (!banda) return s;
         const factorCom = Math.pow(FACTOR_COMISION, Number(s.com || 0));
@@ -522,14 +549,15 @@ export default function ScreenBrandClientPricingForm() {
           ajuste:      0,
           sobreprecio: 0,
         };
-        updated.matrix = computeMatrixFromInputs(updated);
+        updated.matrix = computeMatrixFromInputs(updated, customPlazos);
         return updated;
       }
 
-      // Cascade lateral local (mismo comportamiento que antes para 60/30/8d).
-      const matrix = s.matrix || computeMatrixFromInputs(s);
+      // Cascade lateral local — Fase 4: respeta plazos efectivos de la banda.
+      const matrix = s.matrix || computeMatrixFromInputs(s, customPlazos);
       const row = matrix[String(bandaId)] || {};
-      const newRow = cascadeRow(row, plazoDias, val);
+      const bandPlazos = getBandPlazos(bandaId, customPlazos);
+      const newRow = cascadeRow(row, plazoDias, val, bandPlazos);
       return { ...s, matrix: { ...matrix, [String(bandaId)]: newRow } };
     }));
   };
@@ -625,6 +653,104 @@ export default function ScreenBrandClientPricingForm() {
           },
         },
       };
+    }));
+  };
+
+  // ─── Fase 4 · Handlers de plazos personalizados por banda ─────────
+  // Materialización lazy: agregar/quitar UNA vez en una banda copia
+  // los defaults [90/60/30/8] a esa banda en customPlazos.
+  // Quitar todos los plazos de una banda no la elimina del map — el
+  // operador debe usar onResetBandPlazos para volver a defaults.
+
+  const openAddPlazoModal  = (contextBandaId = null) => {
+    setPlazoModal({ open: true, contextBandaId, initial: null });
+  };
+  const closeAddPlazoModal = () => {
+    setPlazoModal({ open: false, contextBandaId: null, initial: null });
+  };
+
+  /**
+   * Aplica un plazo (dias + factor) a una lista de bandas.
+   * Materializa cada banda con defaults + el nuevo plazo si no estaba.
+   * Si la banda ya tenía el mismo `dias`, reemplaza el factor.
+   */
+  const applyPlazoToBandas = ({ dias, factor, bandasIds }) => {
+    setCustomPlazos((prev) => {
+      const next = { ...prev };
+      for (const bid of bandasIds) {
+        const key = String(bid);
+        const current = Array.isArray(next[key]) && next[key].length > 0
+          ? next[key]
+          : materializeDefaultPlazos();
+        const filtered = current.filter((p) => Number(p.dias) !== Number(dias));
+        filtered.push({ dias: Number(dias), factor: Number(factor) });
+        filtered.sort((a, b) => b.dias - a.dias);
+        next[key] = filtered;
+      }
+      return next;
+    });
+    // Regenerar las matrices de todos los SKUs con los nuevos plazos.
+    setSkus((arr) => arr.map((s) => ({
+      ...s,
+      matrix: computeMatrixFromInputs(s, applyNextCustomPlazos({ dias, factor, bandasIds }, customPlazos)),
+    })));
+  };
+
+  /** Helper sincrónico para calcular el nextCustomPlazos sin esperar setState. */
+  const applyNextCustomPlazos = ({ dias, factor, bandasIds }, prev) => {
+    const next = { ...prev };
+    for (const bid of bandasIds) {
+      const key = String(bid);
+      const current = Array.isArray(next[key]) && next[key].length > 0
+        ? next[key]
+        : materializeDefaultPlazos();
+      const filtered = current.filter((p) => Number(p.dias) !== Number(dias));
+      filtered.push({ dias: Number(dias), factor: Number(factor) });
+      filtered.sort((a, b) => b.dias - a.dias);
+      next[key] = filtered;
+    }
+    return next;
+  };
+
+  /** Quita UN plazo de UNA banda. Si la banda no tenía custom todavía,
+   *  la materializa con defaults y luego quita ese plazo. */
+  const removePlazoFromBanda = (bandaId, plazoDias) => {
+    setCustomPlazos((prev) => {
+      const next = { ...prev };
+      const key = String(bandaId);
+      const current = Array.isArray(next[key]) && next[key].length > 0
+        ? next[key]
+        : materializeDefaultPlazos();
+      const filtered = current.filter((p) => Number(p.dias) !== Number(plazoDias));
+      next[key] = filtered;
+      return next;
+    });
+    // Regenerar las matrices de todos los SKUs.
+    setSkus((arr) => arr.map((s) => {
+      const nextCp = (() => {
+        const next = { ...customPlazos };
+        const key = String(bandaId);
+        const current = Array.isArray(next[key]) && next[key].length > 0
+          ? next[key]
+          : materializeDefaultPlazos();
+        next[key] = current.filter((p) => Number(p.dias) !== Number(plazoDias));
+        return next;
+      })();
+      return { ...s, matrix: computeMatrixFromInputs(s, nextCp) };
+    }));
+  };
+
+  /** Resetea UNA banda a defaults: quita su entrada de customPlazos. */
+  const resetBandaPlazos = (bandaId) => {
+    setCustomPlazos((prev) => {
+      const next = { ...prev };
+      delete next[String(bandaId)];
+      return next;
+    });
+    setSkus((arr) => arr.map((s) => {
+      const nextCp = { ...customPlazos };
+      delete nextCp[String(bandaId)];
+      return { ...s, matrix: computeMatrixFromInputs(s, nextCp) };
     }));
   };
 
@@ -726,6 +852,9 @@ export default function ScreenBrandClientPricingForm() {
         cliente_id:   clienteId,
         fecha_inicio: fechaInicio || null,
         fecha_fin:    fechaFinIndef ? null : (fechaFin || null),
+        // Fase 4 · plazos custom (top-level, vale para todos los SKUs)
+        ...(customPlazos && Object.keys(customPlazos).length > 0
+            ? { custom_plazos: customPlazos } : {}),
         skus: skus.map((s) => {
           // Fallback: si por alguna razón el SKU no tiene matrix en state,
           // la recalculamos desde inputs (caso raro, post-hidratación).
@@ -1570,14 +1699,21 @@ export default function ScreenBrandClientPricingForm() {
                 })}
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 14,
+              <div style={{ display: "flex", alignItems: "center", gap: 10,
                 font: "500 11px/1.4 var(--font-body)", color: MUTED,
+                flexWrap: "wrap",
               }}>
-                <span>
-                  <strong style={{ color: NAVY, fontWeight: 700 }}>{filteredBands.length}</strong> {lang === "es" ? "bandas" : "bands"} ·
-                  <strong style={{ color: NAVY, fontWeight: 700, marginLeft: 4 }}>{filteredBands.length * 4}</strong> {lang === "es" ? "plazos" : "terms"} ·
-                  <strong style={{ color: NAVY, fontWeight: 700, marginLeft: 4 }}>{skusActivos.length}</strong> SKUs
-                </span>
+                {(() => {
+                  const totalPlazos = filteredBands.reduce(
+                    (acc, b) => acc + getBandPlazos(b.id, customPlazos).length, 0);
+                  return (
+                    <span>
+                      <strong style={{ color: NAVY, fontWeight: 700 }}>{filteredBands.length}</strong> {lang === "es" ? "bandas" : "bands"} ·
+                      <strong style={{ color: NAVY, fontWeight: 700, marginLeft: 4 }}>{totalPlazos}</strong> {lang === "es" ? "plazos" : "terms"} ·
+                      <strong style={{ color: NAVY, fontWeight: 700, marginLeft: 4 }}>{skusActivos.length}</strong> SKUs
+                    </span>
+                  );
+                })()}
                 {bandaVigente && (
                   <span style={{
                     padding: "3px 9px", borderRadius: 12,
@@ -1585,6 +1721,44 @@ export default function ScreenBrandClientPricingForm() {
                     font: "700 10px/1.2 var(--font-body)",
                     border: `1px solid ${AMBER}55`,
                   }}>● {lang === "es" ? "Banda activa" : "Active"} #{bandaVigente.id}</span>
+                )}
+                <button type="button"
+                  onClick={() => openAddPlazoModal(null)}
+                  title={lang === "es"
+                    ? "Agregar un plazo personalizado (ej. 120d a +2%)"
+                    : "Add a custom term (e.g. 120d at +2%)"}
+                  style={{
+                    padding: "5px 11px", borderRadius: 6,
+                    background: MINT, color: "#FFFFFF",
+                    border: "none",
+                    font: "700 11px/1 var(--font-body)",
+                    cursor: "pointer",
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                  }}>
+                  + {lang === "es" ? "Agregar plazo" : "Add term"}
+                </button>
+                {Object.keys(customPlazos).length > 0 && (
+                  <button type="button"
+                    onClick={() => {
+                      if (window.confirm(lang === "es"
+                        ? "¿Resetear todos los plazos custom a [90/60/30/8]?"
+                        : "Reset all custom terms to [90/60/30/8]?")) {
+                        setCustomPlazos({});
+                        setSkus((arr) => arr.map((s) => ({
+                          ...s, matrix: computeMatrixFromInputs(s, {}),
+                        })));
+                      }
+                    }}
+                    title={lang === "es" ? "Resetear todos los plazos a defaults" : "Reset all terms to defaults"}
+                    style={{
+                      padding: "5px 9px", borderRadius: 6,
+                      background: "#FFFFFF", color: INK,
+                      border: "1px solid #E5E7EB",
+                      font: "600 10.5px/1 var(--font-body)",
+                      cursor: "pointer",
+                    }}>
+                    ↺ {lang === "es" ? "Reset todo" : "Reset all"}
+                  </button>
                 )}
               </div>
             </div>
@@ -1597,7 +1771,18 @@ export default function ScreenBrandClientPricingForm() {
               <LegendDot color="#F5B895" label={lang === "es" ? "Banda techo (USD↑)" : "Top band"}/>
               <LegendDot color="#34D399" label={lang === "es" ? "Banda piso (USD↓)" : "Floor band"}/>
               <LegendDot color={AMBER}    label={lang === "es" ? "Banda vigente (TC del día)" : "Active band"}/>
-              <span>· <strong style={{ color: NAVY }}>90d</strong> {lang === "es" ? "es el precio ancla" : "is the anchor price"} · {lang === "es" ? "60/30/8d son descuentos por pronto pago" : "60/30/8d are early-payment discounts"}</span>
+              <span>· <strong style={{ color: NAVY }}>{lang === "es" ? "base" : "base"}</strong> {lang === "es" ? "es el precio ancla" : "is the anchor price"} · {lang === "es"
+                ? "los demás plazos son ± % sobre la base"
+                : "other terms are ± % over base"} · <button type="button"
+                  onClick={() => openAddPlazoModal(null)}
+                  style={{
+                    background: "transparent", border: "none", padding: 0,
+                    color: MINT, font: "700 10.5px/1.3 var(--font-body)",
+                    cursor: "pointer", textDecoration: "underline",
+                  }}>
+                  + {lang === "es" ? "agregar plazo" : "add term"}
+                </button>
+              </span>
             </div>
 
             {/* Tabla */}
@@ -1615,8 +1800,13 @@ export default function ScreenBrandClientPricingForm() {
                     </th>
                     {filteredBands.map((b) => {
                       const isCurrent = bandaVigente?.id === b.id;
+                      const bandPlazos = getBandPlazos(b.id, customPlazos);
+                      const hasCustom = Array.isArray(customPlazos[String(b.id)])
+                        && customPlazos[String(b.id)].length >= 0
+                        && Object.prototype.hasOwnProperty.call(customPlazos, String(b.id));
                       return (
-                        <th key={b.id} colSpan={4} style={bandHeaderStyle(b, isCurrent)}>
+                        <th key={b.id} colSpan={Math.max(bandPlazos.length, 1)}
+                            style={bandHeaderStyle(b, isCurrent)}>
                           <div style={{ font: "700 11.5px/1.2 var(--font-body)" }}>{b.rango}</div>
                           <div style={{ font: "500 9.5px/1 var(--font-mono, ui-monospace)",
                             opacity: 0.75, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
@@ -1635,6 +1825,29 @@ export default function ScreenBrandClientPricingForm() {
                                 : (lang === "es" ? "vigente" : "active")}
                             </div>
                           )}
+                          <div style={{
+                            marginTop: 5, display: "inline-flex", gap: 3,
+                            justifyContent: "center",
+                          }}>
+                            <button type="button"
+                              onClick={() => openAddPlazoModal(b.id)}
+                              title={lang === "es"
+                                ? `Agregar plazo a banda ${b.id}`
+                                : `Add term to band ${b.id}`}
+                              style={bandHdrBtn}>
+                              +
+                            </button>
+                            {hasCustom && (
+                              <button type="button"
+                                onClick={() => resetBandaPlazos(b.id)}
+                                title={lang === "es"
+                                  ? `Resetear banda ${b.id} a [90/60/30/8]`
+                                  : `Reset band ${b.id} to defaults`}
+                                style={bandHdrBtn}>
+                                ↺
+                              </button>
+                            )}
+                          </div>
                         </th>
                       );
                     })}
@@ -1642,16 +1855,53 @@ export default function ScreenBrandClientPricingForm() {
                   <tr>
                     {filteredBands.flatMap((b) => {
                       const isCurrent = bandaVigente?.id === b.id;
-                      return PLAZOS_MARLUVAS.map((p, pi) => (
-                        <th key={`${b.id}-${p.dias}`}
-                            style={plazoHeaderStyle(b, isCurrent, pi === 0)}>
-                          <div style={{ font: "700 10.5px/1 var(--font-body)" }}>{p.dias}d</div>
-                          <div style={{ font: `${pi === 0 ? 600 : 500} 8.5px/1 var(--font-body)`,
-                            opacity: 0.7, marginTop: 2 }}>
-                            {pi === 0 ? (lang === "es" ? "base" : "base") : p.sub}
-                          </div>
-                        </th>
-                      ));
+                      const bandPlazos = getBandPlazos(b.id, customPlazos);
+                      if (bandPlazos.length === 0) {
+                        // Banda con custom_plazos = [] (sin plazos). Mostramos celda vacía.
+                        return [(
+                          <th key={`${b.id}-empty`}
+                              style={plazoHeaderStyle(b, isCurrent, false)}>
+                            <div style={{
+                              font: "500 9.5px/1.2 var(--font-body)",
+                              color: MUTED, fontStyle: "italic",
+                            }}>
+                              {lang === "es" ? "— sin plazos —" : "— no terms —"}
+                            </div>
+                          </th>
+                        )];
+                      }
+                      return bandPlazos.map((p) => {
+                        const isBase = Math.abs(p.factor - 1) < 0.0001;
+                        return (
+                          <th key={`${b.id}-${p.dias}`}
+                              style={plazoHeaderStyle(b, isCurrent, isBase)}>
+                            <div style={{
+                              display: "flex", alignItems: "center",
+                              justifyContent: "center", gap: 3,
+                            }}>
+                              <div style={{ font: "700 10.5px/1 var(--font-body)" }}>{p.dias}d</div>
+                              <button type="button"
+                                onClick={() => {
+                                  if (window.confirm(lang === "es"
+                                    ? `¿Quitar el plazo ${p.dias}d de la banda ${b.id}?`
+                                    : `Remove term ${p.dias}d from band ${b.id}?`)) {
+                                    removePlazoFromBanda(b.id, p.dias);
+                                  }
+                                }}
+                                title={lang === "es"
+                                  ? `Quitar ${p.dias}d de banda ${b.id}`
+                                  : `Remove ${p.dias}d from band ${b.id}`}
+                                style={plazoHdrXBtn}>
+                                ✕
+                              </button>
+                            </div>
+                            <div style={{ font: `${isBase ? 600 : 500} 8.5px/1 var(--font-body)`,
+                              opacity: 0.7, marginTop: 2 }}>
+                              {isBase ? (lang === "es" ? "base" : "base") : p.sub}
+                            </div>
+                          </th>
+                        );
+                      });
                     })}
                   </tr>
                 </thead>
@@ -1660,7 +1910,7 @@ export default function ScreenBrandClientPricingForm() {
                     if (!s.activo) return null;
                     // Fuente del precio: s.matrix (state principal). Fallback al
                     // cálculo derivado si todavía no se inicializó.
-                    const matrix = s.matrix || computeMatrixFromInputs(s);
+                    const matrix = s.matrix || computeMatrixFromInputs(s, customPlazos);
                     return (
                       <tr key={s.sku} className="mtx-row">
                         <td style={stickyTd(0, 56, { color: MUTED, fontSize: 9.5, borderRight: "none" })}>{s.sku}</td>
@@ -1670,9 +1920,32 @@ export default function ScreenBrandClientPricingForm() {
                         {filteredBands.flatMap((b) => {
                           const isCurrent = bandaVigente?.id === b.id;
                           const row = matrix[String(b.id)] || {};
-                          return PLAZOS_MARLUVAS.map((p, pi) => {
-                            const price = Number(row[String(p.dias)] ?? 0);
-                            const isBase = pi === 0;
+                          const bandPlazos = getBandPlazos(b.id, customPlazos);
+                          if (bandPlazos.length === 0) {
+                            return [(
+                              <td key={`${b.id}-empty`}
+                                  style={{
+                                    ...plazoCellStyle(b, isCurrent, false),
+                                    color: MUTED, fontStyle: "italic", fontSize: 10,
+                                  }}>
+                                —
+                              </td>
+                            )];
+                          }
+                          // Precio base (factor=1) — necesario para recalcular
+                          // celdas de plazos custom que aún no están en matrix.
+                          const baseEntry = bandPlazos.find((q) => Math.abs(q.factor - 1) < 0.0001);
+                          const basePrice = baseEntry
+                            ? Number(row[String(baseEntry.dias)] ?? 0)
+                            : Number(row["90"] ?? 0);
+                          return bandPlazos.map((p) => {
+                            const isBase = Math.abs(p.factor - 1) < 0.0001;
+                            // Si la celda no existe en matrix (plazo custom recién
+                            // agregado), la derivamos on-the-fly desde base × factor.
+                            const stored = row[String(p.dias)];
+                            const price = stored != null
+                              ? Number(stored)
+                              : Number((basePrice * Number(p.factor)).toFixed(4));
                             return (
                               <td key={`${b.id}-${p.dias}`}
                                   style={plazoCellStyle(b, isCurrent, isBase)}>
@@ -1682,7 +1955,7 @@ export default function ScreenBrandClientPricingForm() {
                                   isBase={isBase}
                                   title={lang === "es"
                                     ? (isBase
-                                        ? `Banda ${b.id} · ${p.dias}d (ancla) · editar recalcula 60/30/8d`
+                                        ? `Banda ${b.id} · ${p.dias}d (ancla) · editar recalcula plazos más cortos`
                                         : `Banda ${b.id} · ${p.dias}d · editar recalcula plazos más cortos`)
                                     : ""}
                                 />
@@ -1761,6 +2034,17 @@ export default function ScreenBrandClientPricingForm() {
           </button>
         </div>
       </div>
+
+      {/* Fase 4 · Modal para agregar/editar plazos custom por banda. */}
+      <PlazoFormModal
+        open={plazoModal.open}
+        onClose={closeAddPlazoModal}
+        onSubmit={applyPlazoToBandas}
+        contextBandaId={plazoModal.contextBandaId}
+        bandaVigente={bandaVigente}
+        initial={plazoModal.initial}
+        lang={lang}
+      />
     </div>
   );
 }
@@ -1926,18 +2210,17 @@ function SnapshotBadge({ label, value, color, editable, rawValue, suffix, parse,
           disabled={saving}
           style={{
             width: 70, font: "700 14px/1 var(--font-body)",
-            color, background: "rgba(0,0,0,0.25)",
-            border: `1px solid ${color}`, borderRadius: 4,
-            padding: "2px 4px", outline: "none",
+            color: "#FFFFFF", background: "rgba(0,0,0,0.25)",
+            border: `1px solid ${LIGHT}`, borderRadius: 5,
+            padding: "3px 6px", outline: "none",
             fontVariantNumeric: "tabular-nums",
-          }}/>
+          }}
+        />
       ) : (
-        <div style={{
-          font: "700 14px/1 var(--font-body)", color,
-          fontVariantNumeric: "tabular-nums",
-          opacity: saving ? 0.55 : 1,
-        }}>
-          {saving ? "…" : value}
+        <div style={{ font: "700 14px/1 var(--font-body)", color, fontVariantNumeric: "tabular-nums",
+          display: "inline-flex", alignItems: "baseline", gap: 3 }}>
+          {value}
+          {suffix && <span style={{ font: "500 9.5px/1 var(--font-body)", opacity: 0.7 }}>{suffix}</span>}
         </div>
       )}
     </div>
@@ -1947,29 +2230,19 @@ function SnapshotBadge({ label, value, color, editable, rawValue, suffix, parse,
 function Section({ title, subtitle, badge, children }) {
   return (
     <section style={{
-      padding: "14px 16px", background: "#FFFFFF",
-      border: "1px solid #E5E7EB", borderRadius: 10,
+      background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 12,
+      padding: "16px 18px 18px 18px", marginBottom: 14,
     }}>
-      <div>
-        <div style={{ font: "700 13px/1.2 var(--font-body)", color: NAVY,
-          display: "flex", alignItems: "center", gap: 8 }}>
-          {title}
-          {badge && (
-            <span style={{
-              display: "inline-flex", alignItems: "center", gap: 3,
-              padding: "3px 8px", borderRadius: 12,
-              background: badge.bg || badge.color,
-              color: badge.bg ? badge.color : "#FFFFFF",
-              font: "700 9px/1 var(--font-body)",
-              letterSpacing: 0.4, textTransform: "uppercase",
-            }}>{badge.label}</span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+        <div>
+          <div style={{ font: "700 13.5px/1.1 var(--font-body)", color: NAVY }}>{title}</div>
+          {subtitle && (
+            <div style={{ font: "500 11px/1.3 var(--font-body)", color: MUTED, marginTop: 3 }}>
+              {subtitle}
+            </div>
           )}
         </div>
-        {subtitle && (
-          <div style={{ font: "500 11.5px/1.4 var(--font-body)", color: MUTED, marginTop: 3 }}>
-            {subtitle}
-          </div>
-        )}
+        {badge}
       </div>
       <div style={{ marginTop: 12 }}>{children}</div>
     </section>
@@ -2120,6 +2393,23 @@ function plazoCellStyle(b, isCurrent, isBase) {
   };
 }
 
+// Fase 4 · Botones inline en headers de banda (↺/+) y plazo (✕).
+const bandHdrBtn = {
+  padding: "1px 6px", borderRadius: 8,
+  background: "rgba(255,255,255,0.7)",
+  color: NAVY, border: "1px solid rgba(11,30,58,0.18)",
+  font: "700 9.5px/1 var(--font-body)",
+  cursor: "pointer", lineHeight: 1.1,
+};
+const plazoHdrXBtn = {
+  padding: 0, width: 14, height: 14, borderRadius: 7,
+  background: "transparent", color: MUTED,
+  border: "1px solid #CBD5E1",
+  font: "700 8.5px/1 var(--font-body)",
+  cursor: "pointer", lineHeight: 1,
+  display: "inline-flex", alignItems: "center", justifyContent: "center",
+};
+
 /** Formato compacto de celda de matriz: enteros con coma si ≥ 1000, 2 dec si menor. */
 function fmtMtxCell(n) {
   const v = Number(n || 0);
@@ -2246,7 +2536,7 @@ function fmtMoney(n) {
 const btnGhost = {
   padding: "6px 10px", background: "transparent",
   border: "1px solid #E5E7EB", color: INK,
-  font: "600 12px/1 var(--font-body)",
+  font: "600 11px/1 var(--font-body)",
   borderRadius: 6, cursor: "pointer",
   display: "inline-flex", alignItems: "center", gap: 4,
 };

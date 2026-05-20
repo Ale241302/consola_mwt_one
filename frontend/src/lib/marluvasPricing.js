@@ -257,17 +257,21 @@ export function defaultSkuState(parsed, defaults = {}) {
 }
 
 /**
- * Calcula la matriz 12×4 desde los 4 inputs (brl, com, ajuste, sobreprecio).
+ * Calcula la matriz N×M desde los 4 inputs (brl, com, ajuste, sobreprecio).
  * Útil al hidratar un SKU nuevo o al cambiar un input bulk (regenera todo).
+ *
+ * Fase 4: si se pasa `customPlazos`, cada banda usa sus plazos efectivos
+ * (puede ser distinto a los 4 defaults). Bandas sin entrada usan defaults.
  *
  * Shape devuelto:
  *   { "1": {"90": 25.25, "60": 24.99, "30": 24.80, "8": 24.55},
  *     "2": {"90": 24.06, ...}, ..., "12": {...} }
  *
  * @param {SkuInput} sku
+ * @param {Object} [customPlazos]  Fase 4 · { "<bandaId>": [{dias, factor}] }
  * @returns {Object<string, Object<string, number>>}
  */
-export function computeMatrixFromInputs(sku) {
+export function computeMatrixFromInputs(sku, customPlazos = null) {
   const ajuste = Number(sku.ajuste || 0);
   const sobreprecio = Number(sku.sobreprecio || 0);
   const out = {};
@@ -275,7 +279,8 @@ export function computeMatrixFromInputs(sku) {
     const baseBanda = precioBaseUSD(sku.brl, b.div, sku.com);
     const lista90 = baseBanda + ajuste + baseBanda * sobreprecio;
     const row = {};
-    for (const p of PLAZOS_MARLUVAS) {
+    const bandPlazos = getBandPlazos(b.id, customPlazos);
+    for (const p of bandPlazos) {
       row[String(p.dias)] = round4(lista90 * p.factor);
     }
     out[String(b.id)] = row;
@@ -286,44 +291,109 @@ export function computeMatrixFromInputs(sku) {
 /**
  * Aplica cascade jerárquico al editar UNA celda de UN row de banda.
  *
- * Jerarquía de plazos (descendente):  90d → 60d → 30d → 8d
+ * Jerarquía de plazos (descendente). Para defaults [90, 60, 30, 8]:
+ *   · Editar 90d  → recalcula 60d, 30d y 8d con factores originales.
+ *   · Editar 60d  → recalcula 30d y 8d con ratios relativos a 60d.
+ *   · Editar 30d  → recalcula 8d con ratio 8d/30d.
+ *   · Editar 8d   → no toca nada (terminal).
  *
- *   · Editar 90d  → recalcula 60d, 30d y 8d desde la nueva ancla con
- *                    los factores originales (60d=0.99, 30d=0.9825, 8d=0.9725).
- *   · Editar 60d  → recalcula 30d y 8d con ratios relativos a 60d
- *                    (30d/60d = 0.9825/0.99 ≈ 0.99242).
- *   · Editar 30d  → recalcula 8d con ratio 8d/30d ≈ 0.98982.
- *   · Editar 8d   → no toca nada (es terminal).
+ * Fase 4: si se pasa `bandPlazos`, usa esos plazos en orden descendente
+ * por días en lugar de los defaults. Si el plazo editado no está en la
+ * lista, devuelve el row con solo esa celda actualizada.
  *
- * Esto permite al operador "quebrar" la fórmula original — si edita 60d,
- * la relación 60d/90d ya no es 0.99 (pero sí es la que él decidió).
- *
- * @param {Object<string, number>} row       Row actual {"90":..., "60":..., "30":..., "8":...}
- * @param {number|string} plazoEdited        Plazo que el operador acaba de editar (90|60|30|8)
- * @param {number} newValue                  Nuevo valor para esa celda
- * @returns {Object<string, number>}         Row con cascade aplicado
+ * @param {Object<string, number>} row    Row actual { "<plazoDias>": precio }
+ * @param {number|string} plazoEdited     Plazo editado (días)
+ * @param {number} newValue               Nuevo valor para esa celda
+ * @param {Array<{dias:number,factor:number}>} [bandPlazos]  Fase 4
+ * @returns {Object<string, number>}      Row con cascade aplicado
  */
-export function cascadeRow(row, plazoEdited, newValue) {
-  const order = [90, 60, 30, 8];
-  const factors = { 90: 1.0000, 60: 0.9900, 30: 0.9825, 8: 0.9725 };
+export function cascadeRow(row, plazoEdited, newValue, bandPlazos = null) {
+  // Orden descendente por días (ej. [120, 90, 60, 30, 8]).
+  const plazosArr = (bandPlazos && bandPlazos.length > 0)
+    ? [...bandPlazos].sort((a, b) => b.dias - a.dias)
+    : [
+        { dias: 90, factor: 1.0000 },
+        { dias: 60, factor: 0.9900 },
+        { dias: 30, factor: 0.9825 },
+        { dias:  8, factor: 0.9725 },
+      ];
   const edited = Number(plazoEdited);
-  const editedIdx = order.indexOf(edited);
+  const editedIdx = plazosArr.findIndex((p) => p.dias === edited);
   if (editedIdx < 0) return { ...row, [String(edited)]: round4(newValue) };
 
   const out = { ...row };
   out[String(edited)] = round4(newValue);
 
-  const editedFactor = factors[edited];
-  for (let i = editedIdx + 1; i < order.length; i++) {
-    const p = order[i];
-    const ratio = factors[p] / editedFactor;
-    out[String(p)] = round4(newValue * ratio);
+  const editedFactor = plazosArr[editedIdx].factor;
+  for (let i = editedIdx + 1; i < plazosArr.length; i++) {
+    const p = plazosArr[i];
+    const ratio = p.factor / editedFactor;
+    out[String(p.dias)] = round4(newValue * ratio);
   }
   return out;
 }
 
 function round4(n) {
   return Math.round(Number(n) * 10000) / 10000;
+}
+
+/**
+ * Plazos default — para bandas sin entrada en custom_plazos.
+ * Fase 4: getBandPlazos(bandaId, customPlazos) devuelve esto si no hay override.
+ * @returns {Array<{dias:number, factor:number, sub:string}>}
+ */
+export function defaultBandPlazos() {
+  return PLAZOS_MARLUVAS.map((p) => ({
+    dias:   p.dias,
+    factor: p.factor,
+    sub:    p.sub,
+  }));
+}
+
+/**
+ * Plazos efectivos para una banda — respeta overrides Fase 4.
+ *
+ * @param {number} bandaId
+ * @param {Object} customPlazos   { "<bandaId>": [{dias, factor}] } o null/undefined
+ * @returns {Array<{dias:number, factor:number, sub:string}>}
+ *
+ * Bandas SIN entrada → defaults [90/60/30/8].
+ * Bandas CON entrada → SOLO esa lista (puede ser más larga o más corta).
+ *
+ * `sub` se calcula como `±X.XX%` desde el factor (para display).
+ * El plazo cuyo factor es exactamente 1.0 se marca como "base".
+ */
+export function getBandPlazos(bandaId, customPlazos) {
+  const entry = customPlazos && customPlazos[String(bandaId)];
+  if (!Array.isArray(entry) || entry.length === 0) return defaultBandPlazos();
+  const out = entry.map((p) => {
+    const dias   = Number(p.dias);
+    const factor = Number(p.factor);
+    const pct = (factor - 1) * 100;
+    let sub;
+    if (Math.abs(pct) < 0.005) sub = "base";
+    else sub = (pct > 0 ? "+" : "−") + Math.abs(pct).toFixed(2) + "%";
+    return { dias, factor, sub };
+  });
+  // Display: ordenado descendente por días (120, 90, 60, ...).
+  out.sort((a, b) => b.dias - a.dias);
+  return out;
+}
+
+/** Convierte un porcentaje (ej. +2, -1.5) a factor (1.02, 0.985). */
+export function pctToFactor(pct) {
+  return 1 + Number(pct) / 100;
+}
+
+/** Convierte un factor (1.02, 0.985) a porcentaje (+2, -1.5). */
+export function factorToPct(factor) {
+  return (Number(factor) - 1) * 100;
+}
+
+/** Materializa los plazos default de UNA banda (clona el array). Útil para
+ *  iniciar overrides — primera edición de una banda copia los defaults. */
+export function materializeDefaultPlazos() {
+  return PLAZOS_MARLUVAS.map((p) => ({ dias: p.dias, factor: p.factor }));
 }
 
 /**

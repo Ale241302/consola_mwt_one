@@ -2,30 +2,35 @@
 // MWT.ONE · components/marluvas/PriceMatrixCompact.jsx
 // Agente responsable: [AG-03 FRONTEND]
 //
-// Matriz de precios Marluvas — 12 bandas × 4 plazos para UN solo SKU.
-// Por defecto muestra solo "Esenciales" (techo + piso, ≈ 8 columnas)
-// para que CABE en la pantalla sin scroll horizontal global. Pills
-// arriba para alternar a "Vigente" (solo banda activa) o "12 bandas"
-// (matriz completa, activa scroll horizontal interno).
+// Matriz de precios Marluvas — N bandas × M plazos POR BANDA (variable).
+// Fase 4: cada banda puede tener sus propios plazos (custom o defaults).
+// Bandas sin entrada en `customPlazos` usan defaults [90/60/30/8d].
 //
-// Diseño consistente con la vista cliente-marca (BrandClientPricingForm).
+// Pills arriba para filtrar bandas:
+//   · Esenciales  → techo + (vigente si aplica) + piso (~3 bandas)
+//   · Vigente     → solo banda activa según TC
+//   · 12 bandas   → matriz completa con scroll-X interno
 //
-// Cada celda es un input editable con cascade jerárquico:
-//   90d → recalcula 60/30/8d con factores originales (0.99/0.9825/0.9725)
-//   60d → recalcula 30/8d con ratios relativos (no toca 90d)
-//   30d → recalcula 8d (no toca 90/60d)
-//   8d  → terminal
+// Cada celda es editable con cascade jerárquico (heredado de Fase 2):
+//   90d (factor=1.0) → "ancla": recalcula otros plazos con factores.
+//   plazo no-ancla    → cascade lateral local (solo plazos más cortos).
 //
 // Props:
 //   · matrix             { "<bandaId>": {"<plazoDias>": <precio>} }
 //   · onCellChange       (bandaId, plazoDias, newValue) => void
+//   · customPlazos       { "<bandaId>": [{dias, factor}] } — Fase 4
+//   · onRemovePlazo?     (bandaId, plazoDias) => void  — Fase 4
+//   · onAddPlazoBanda?   (bandaId) => void             — Fase 4 (botón + por banda)
+//   · onResetBandPlazos? (bandaId) => void             — Fase 4 (botón ↺ por banda)
+//   · onAddPlazoGlobal?  () => void                    — Fase 4 (botón + en toolbar)
 //   · bandaVigente?      banda activa según TC (resaltada)
-//   · readOnly?          si true, celdas no editables
+//   · readOnly?          si true, celdas no editables y ✕/↺ ocultos
 //   · maxHeight?         altura máxima del scroll vertical (default '52vh')
 //   · defaultFilter?     "essentials" | "current" | "all" (default "essentials")
 // =====================================================================
 import React, { useState, useRef, useMemo } from "react";
 import { BANDAS_MARLUVAS, PLAZOS_MARLUVAS } from "../../constants/marluvas.js";
+import { getBandPlazos } from "../../lib/marluvasPricing.js";
 
 // ─── Design tokens ───
 const NAVY = "#0B1E3A";
@@ -51,10 +56,17 @@ function bandColors(b, isCurrent) {
   return { bg: BAND_BG_NEUTRAL, fg: NAVY };
 }
 
+const isBaseFactor = (factor) => Math.abs(Number(factor) - 1) < 0.0001;
+
 // ─── Componente principal ───
 export default function PriceMatrixCompact({
   matrix,
   onCellChange,
+  customPlazos = null,
+  onRemovePlazo = null,
+  onAddPlazoBanda = null,
+  onResetBandPlazos = null,
+  onAddPlazoGlobal = null,
   bandaVigente = null,
   readOnly = false,
   maxHeight = "52vh",
@@ -69,7 +81,6 @@ export default function PriceMatrixCompact({
     if (bandFilter === "current") {
       return bandaVigente ? [bandaVigente] : [BANDAS_MARLUVAS[0]];
     }
-    // essentials: techo + vigente (si no coincide con techo/piso) + piso.
     const out = [BANDAS_MARLUVAS[0]];
     if (bandaVigente && bandaVigente.id !== 1 && bandaVigente.id !== 12) {
       out.push(bandaVigente);
@@ -78,19 +89,32 @@ export default function PriceMatrixCompact({
     return out;
   }, [bandFilter, bandaVigente]);
 
+  // Plazos efectivos por banda. customPlazos puede mover el total de cols.
+  const plazosPorBanda = useMemo(() => {
+    const map = new Map();
+    for (const b of filteredBands) {
+      map.set(b.id, getBandPlazos(b.id, customPlazos));
+    }
+    return map;
+  }, [filteredBands, customPlazos]);
+
+  const totalPlazos = useMemo(() => {
+    let n = 0;
+    for (const arr of plazosPorBanda.values()) n += arr.length;
+    return n;
+  }, [plazosPorBanda]);
+
+  const hasAnyCustom = customPlazos
+    && Object.keys(customPlazos).length > 0;
+
   return (
-    // display:grid + grid-template-columns:minmax(0, 1fr) es la técnica
-    // bulletproof para forzar a un hijo (el wrapper de la tabla con
-    // overflow-x:auto) a respetar el ancho del padre. Sin esto, el
-    // min-width:auto default permite que el hijo crezca según contenido
-    // natural y arrastra todo el layout fuera del viewport.
     <div style={{
       display: "grid",
       gridTemplateColumns: "minmax(0, 1fr)",
       gap: 8,
       width: "100%", maxWidth: "100%", minWidth: 0,
     }}>
-      {/* Toolbar de filtro */}
+      {/* Toolbar: filtro de bandas + contador + botón + Agregar plazo */}
       <div style={{
         display: "flex", justifyContent: "space-between", alignItems: "center",
         gap: 10, flexWrap: "wrap",
@@ -122,13 +146,42 @@ export default function PriceMatrixCompact({
           })}
         </div>
         <div style={{
+          display: "flex", alignItems: "center", gap: 10,
           font: "500 10.5px/1.4 var(--font-body)", color: MUTED,
-          fontVariantNumeric: "tabular-nums",
+          fontVariantNumeric: "tabular-nums", flexWrap: "wrap",
         }}>
-          <strong style={{ color: NAVY, fontWeight: 700 }}>{filteredBands.length}</strong>
-          {" bandas · "}
-          <strong style={{ color: NAVY, fontWeight: 700 }}>{filteredBands.length * 4}</strong>
-          {" plazos"}
+          <span>
+            <strong style={{ color: NAVY, fontWeight: 700 }}>{filteredBands.length}</strong>
+            {" bandas · "}
+            <strong style={{ color: NAVY, fontWeight: 700 }}>{totalPlazos}</strong>
+            {" plazos"}
+          </span>
+          {hasAnyCustom && (
+            <span style={{
+              padding: "2px 8px", borderRadius: 10,
+              background: `${AMBER}18`, color: "#92400E",
+              font: "700 9px/1 var(--font-body)",
+              border: `1px solid ${AMBER}55`,
+              textTransform: "uppercase", letterSpacing: 0.4,
+            }} title="Hay bandas con plazos custom">
+              {Object.keys(customPlazos).length} con custom
+            </span>
+          )}
+          {!readOnly && onAddPlazoGlobal && (
+            <button type="button"
+              onClick={() => onAddPlazoGlobal()}
+              style={{
+                padding: "5px 11px", borderRadius: 5,
+                border: `1px solid ${MINT}`, background: `${MINT}10`,
+                color: "#065F46",
+                font: "700 10.5px/1 var(--font-body)",
+                cursor: "pointer",
+                display: "inline-flex", alignItems: "center", gap: 4,
+              }}
+              title="Agregar plazo personalizado a una o más bandas">
+              + Agregar plazo
+            </button>
+          )}
         </div>
       </div>
 
@@ -141,18 +194,19 @@ export default function PriceMatrixCompact({
         boxSizing: "border-box",
       }}>
         <table style={{
-          // Si el filtro es "essentials" o "current" la tabla cabe naturalmente.
-          // Si es "all", la tabla excede el wrapper y aparece scrollbar-X interno.
           borderCollapse: "separate", borderSpacing: 0,
-          width: bandFilter === "all" ? "auto" : "100%",
+          width: bandFilter === "all" || totalPlazos > 12 ? "auto" : "100%",
         }}>
           <thead>
+            {/* Header row 1: bandas (colspan = #plazos de esa banda) */}
             <tr>
               {filteredBands.map((b) => {
                 const isCurrent = bandaVigente?.id === b.id;
                 const { bg, fg } = bandColors(b, isCurrent);
+                const bandPlazos = plazosPorBanda.get(b.id) || [];
+                const hasCustom = !!(customPlazos && customPlazos[String(b.id)]);
                 return (
-                  <th key={b.id} colSpan={4} style={{
+                  <th key={b.id} colSpan={bandPlazos.length || 1} style={{
                     position: "sticky", top: 0, zIndex: 4,
                     background: bg, color: fg,
                     padding: "8px 6px 6px 6px",
@@ -160,7 +214,28 @@ export default function PriceMatrixCompact({
                     borderLeft: `2px solid ${isCurrent ? AMBER : "#E5E7EB"}`,
                     borderBottom: "1px solid #E5E7EB",
                   }}>
-                    <div style={{ font: "700 10.5px/1.2 var(--font-body)" }}>{b.rango}</div>
+                    <div style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      font: "700 10.5px/1.2 var(--font-body)",
+                    }}>
+                      {b.rango}
+                      {!readOnly && hasCustom && onResetBandPlazos && (
+                        <button type="button"
+                          onClick={() => {
+                            if (window.confirm(
+                              `¿Resetear plazos de banda ${b.rango} a defaults [90/60/30/8d]?`
+                            )) onResetBandPlazos(b.id);
+                          }}
+                          style={miniBtn(fg)}
+                          title="Resetear plazos de esta banda a defaults">↺</button>
+                      )}
+                      {!readOnly && onAddPlazoBanda && (
+                        <button type="button"
+                          onClick={() => onAddPlazoBanda(b.id)}
+                          style={miniBtn(fg)}
+                          title="Agregar plazo a esta banda">+</button>
+                      )}
+                    </div>
                     <div style={{
                       font: "500 9px/1 var(--font-mono, ui-monospace)",
                       opacity: 0.75, marginTop: 2, fontVariantNumeric: "tabular-nums",
@@ -176,36 +251,79 @@ export default function PriceMatrixCompact({
                         {b.techo ? "techo" : b.piso ? "piso" : "vigente"}
                       </div>
                     )}
+                    {hasCustom && (
+                      <div style={{
+                        display: "inline-block", marginTop: 3, marginLeft: 4,
+                        padding: "1px 6px", borderRadius: 8,
+                        background: `${AMBER}25`, color: "#92400E",
+                        font: "700 7.5px/1 var(--font-body)",
+                        textTransform: "uppercase", letterSpacing: 0.5,
+                      }} title="Plazos custom">
+                        {bandPlazos.length} plazos
+                      </div>
+                    )}
                   </th>
                 );
               })}
             </tr>
+            {/* Header row 2: plazos individuales por banda */}
             <tr>
               {filteredBands.flatMap((b) => {
                 const isCurrent = bandaVigente?.id === b.id;
                 const { bg } = bandColors(b, isCurrent);
-                return PLAZOS_MARLUVAS.map((p, pi) => (
-                  <th key={`${b.id}-${p.dias}`} style={{
-                    position: "sticky", top: 56, zIndex: 4,
-                    background: pi === 0 ? bg : "#FFFFFF",
-                    color: NAVY,
-                    padding: "5px 4px 6px 4px",
-                    textAlign: "center",
-                    minWidth: 58,
-                    borderLeft: pi === 0
-                      ? `2px solid ${isCurrent ? AMBER : "#E5E7EB"}`
-                      : "1px solid transparent",
-                    borderBottom: "1px solid #E5E7EB",
-                  }}>
-                    <div style={{ font: "700 10px/1 var(--font-body)" }}>{p.dias}d</div>
-                    <div style={{
-                      font: `${pi === 0 ? 600 : 500} 8.5px/1 var(--font-body)`,
-                      opacity: 0.7, marginTop: 2,
+                const bandPlazos = plazosPorBanda.get(b.id) || [];
+                return bandPlazos.map((p, pi) => {
+                  const isBase = isBaseFactor(p.factor);
+                  return (
+                    <th key={`${b.id}-${p.dias}`} style={{
+                      position: "sticky", top: 56, zIndex: 4,
+                      background: isBase ? bg : "#FFFFFF",
+                      color: NAVY,
+                      padding: "5px 4px 6px 4px",
+                      textAlign: "center",
+                      minWidth: 64,
+                      borderLeft: pi === 0
+                        ? `2px solid ${isCurrent ? AMBER : "#E5E7EB"}`
+                        : "1px solid transparent",
+                      borderBottom: "1px solid #E5E7EB",
                     }}>
-                      {pi === 0 ? "base" : p.sub}
-                    </div>
-                  </th>
-                ));
+                      <div style={{
+                        display: "inline-flex", alignItems: "center", gap: 3,
+                        font: "700 10px/1 var(--font-body)",
+                      }}>
+                        {p.dias}d
+                        {!readOnly && onRemovePlazo && (
+                          <button type="button"
+                            onClick={() => onRemovePlazo(b.id, p.dias)}
+                            style={{
+                              width: 14, height: 14, padding: 0, borderRadius: 3,
+                              border: "1px solid transparent", background: "transparent",
+                              color: MUTED, cursor: "pointer",
+                              font: "700 10px/1 var(--font-body)",
+                              display: "inline-flex", alignItems: "center", justifyContent: "center",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = "#FEE2E2";
+                              e.currentTarget.style.color = "#991B1B";
+                              e.currentTarget.style.borderColor = "#FCA5A5";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = "transparent";
+                              e.currentTarget.style.color = MUTED;
+                              e.currentTarget.style.borderColor = "transparent";
+                            }}
+                            title={`Quitar ${p.dias}d de esta banda`}>✕</button>
+                        )}
+                      </div>
+                      <div style={{
+                        font: `${isBase ? 600 : 500} 8.5px/1 var(--font-body)`,
+                        opacity: 0.7, marginTop: 2,
+                      }}>
+                        {p.sub}
+                      </div>
+                    </th>
+                  );
+                });
               })}
             </tr>
           </thead>
@@ -214,9 +332,20 @@ export default function PriceMatrixCompact({
               {filteredBands.flatMap((b) => {
                 const isCurrent = bandaVigente?.id === b.id;
                 const row = m[String(b.id)] || {};
-                return PLAZOS_MARLUVAS.map((p, pi) => {
-                  const price = Number(row[String(p.dias)] ?? 0);
-                  const isBase = pi === 0;
+                const bandPlazos = plazosPorBanda.get(b.id) || [];
+                return bandPlazos.map((p, pi) => {
+                  let price = Number(row[String(p.dias)]);
+                  // Si no está en matrix (plazo custom recién agregado),
+                  // lo calculamos on-the-fly: lista90 × factor.
+                  if (!Number.isFinite(price)) {
+                    const lista90 = Number(row["90"]);
+                    if (Number.isFinite(lista90)) {
+                      price = lista90 * Number(p.factor);
+                    } else {
+                      price = 0;
+                    }
+                  }
+                  const isBase = isBaseFactor(p.factor);
                   return (
                     <td key={`${b.id}-${p.dias}`} style={{
                       padding: "8px 6px",
@@ -227,7 +356,7 @@ export default function PriceMatrixCompact({
                       fontWeight: isBase ? 700 : 500,
                       color: isBase ? NAVY : INK,
                       background: isBase ? "#FFFFFF" : "#FAFBFC",
-                      borderLeft: isBase
+                      borderLeft: pi === 0
                         ? `2px solid ${isCurrent ? AMBER : "#E5E7EB"}`
                         : "1px solid transparent",
                       borderBottom: "1px solid #F1F5F9",
@@ -251,6 +380,18 @@ export default function PriceMatrixCompact({
       </div>
     </div>
   );
+}
+
+// ─── Estilo mini-botón en header de banda ───
+function miniBtn(fg) {
+  return {
+    width: 16, height: 16, padding: 0, borderRadius: 3,
+    border: `1px solid ${fg}33`,
+    background: "rgba(255,255,255,0.6)",
+    color: fg, cursor: "pointer",
+    font: "700 10px/1 var(--font-body)",
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
+  };
 }
 
 // ─── MtxCellInput · plano hasta hover, input al click ───
