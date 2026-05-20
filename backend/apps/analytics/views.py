@@ -797,6 +797,128 @@ class AnalyticsViewSet(viewsets.ViewSet):
             "curve":   None,  # Pendiente productos.size_distribution_curve
         })
 
+    # ── Diagnóstico (DEBUG-ONLY visible en navegador) ─────────
+    @action(detail=False, methods=["get"], url_path="_diag")
+    def _diag(self, request):
+        """Endpoint de auto-diagnóstico para depurar widgets vacíos.
+
+        Ejecuta cada query crítica del dashboard EN AISLAMIENTO (con
+        savepoint por query) y devuelve para cada una:
+          { count: int, sample: [...], error: str | null, sql_preview: str }
+
+        Diseñado para resolver "Top SKUs vacío" cuando la BD SÍ tiene
+        datos: revela si la query falla con error específico (qué tipo)
+        o devuelve [] legítimamente.
+
+        Visible en https://consola.mwt.one/api/analytics/_diag/
+        protegido por mismo JWT que el resto de analytics.
+
+        Marcado con prefijo `_` para indicar uso interno. Cuando se
+        estabilice la situación, este endpoint puede borrarse.
+        """
+        from django.db import transaction as _txn
+
+        queries = {
+            "top_skus_margen": """
+                WITH lineas_efectivas AS (
+                  SELECT
+                    l.sku,
+                    l.producto_id,
+                    l.qty,
+                    COALESCE(NULLIF(l.unit_price_mwt,    0), l.unit_cost,  0) AS costo_efectivo,
+                    COALESCE(NULLIF(l.unit_price_client, 0), l.unit_price, 0) AS precio_efectivo
+                  FROM expedientes.linea     l
+                  JOIN expedientes.expediente e ON e.id = l.expediente_id
+                  WHERE l.is_active = TRUE
+                    AND e.is_active = TRUE
+                    AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
+                    AND l.sku IS NOT NULL
+                )
+                SELECT
+                  le.sku,
+                  SUM(le.qty)::float                                   AS units,
+                  SUM(le.qty * le.precio_efectivo)::float              AS revenue_usd,
+                  SUM(le.qty * (le.precio_efectivo - le.costo_efectivo))::float
+                                                                       AS margin_usd
+                FROM lineas_efectivas le
+                WHERE le.precio_efectivo > 0
+                GROUP BY le.sku
+                ORDER BY margin_usd DESC NULLS LAST
+                LIMIT 5
+            """,
+            "exposicion_clientes": """
+                SELECT client_id, COUNT(*) AS n,
+                       COALESCE(SUM(monto_pendiente), 0)::float AS pendiente
+                FROM cobros.cobro
+                WHERE is_active = TRUE AND client_id IS NOT NULL
+                GROUP BY client_id
+                ORDER BY pendiente DESC
+                LIMIT 5
+            """,
+            "expediente_margin_scatter": """
+                SELECT id, codigo, estado, projected_margin, real_margin, total_invoiced
+                FROM expedientes.expediente
+                WHERE is_active = TRUE
+                  AND estado = 'CERRADO'
+                  AND updated_at >= CURRENT_DATE - INTERVAL '365 days'
+                LIMIT 5
+            """,
+            "any_cerrado_no_filter": """
+                SELECT id, codigo, estado, projected_margin, real_margin
+                FROM expedientes.expediente
+                WHERE is_active = TRUE AND estado = 'CERRADO'
+                LIMIT 5
+            """,
+            "any_cobros": """
+                SELECT id, codigo, client_id, monto_total, monto_pagado, monto_pendiente
+                FROM cobros.cobro
+                WHERE is_active = TRUE
+                LIMIT 5
+            """,
+            "any_lineas_con_precio": """
+                SELECT l.sku, l.qty, l.unit_cost, l.unit_price,
+                       l.unit_price_mwt, l.unit_price_client,
+                       e.codigo AS exp_codigo, e.updated_at AS exp_updated_at,
+                       e.estado AS exp_estado, e.is_active AS exp_active
+                FROM expedientes.linea l
+                JOIN expedientes.expediente e ON e.id = l.expediente_id
+                WHERE l.is_active = TRUE
+                  AND COALESCE(NULLIF(l.unit_price_client, 0), l.unit_price, 0) > 0
+                LIMIT 5
+            """,
+            "now_and_tz": """
+                SELECT NOW() AS now_ts,
+                       CURRENT_DATE AS today,
+                       CURRENT_DATE - INTERVAL '365 days' AS cutoff_365d,
+                       CURRENT_SETTING('timezone') AS tz
+            """,
+        }
+
+        out = {}
+        for name, sql in queries.items():
+            sid = _txn.savepoint()
+            entry = {"count": 0, "sample": [], "error": None, "sql_preview": sql.strip()[:200]}
+            try:
+                with connection.cursor() as cur:
+                    cur.execute(sql)
+                    cols = [d[0] for d in cur.description] if cur.description else []
+                    rows = cur.fetchall()
+                    entry["count"] = len(rows)
+                    entry["sample"] = [
+                        {c: (v.isoformat() if hasattr(v, "isoformat") else
+                             float(v) if hasattr(v, "as_tuple") else
+                             str(v) if not isinstance(v, (int, float, str, bool, type(None))) else v)
+                         for c, v in zip(cols, row)}
+                        for row in rows[:5]
+                    ]
+                _txn.savepoint_commit(sid)
+            except Exception as exc:  # noqa: BLE001 — propósito del endpoint
+                _txn.savepoint_rollback(sid)
+                entry["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+            out[name] = entry
+
+        return Response(out)
+
 
 # ══════════════════════════════════════════════════════════════
 # DashboardSnapshotViewSet — CRUD con idempotencia
