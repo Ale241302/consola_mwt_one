@@ -1898,6 +1898,7 @@ export default function ScreenProductFormView() {
                         skuIdx={0}
                         bandaVigente={bandaVigente}
                         globalAnchor={{ bandaId: 1, plazoDias: 90 }}
+                        customPlazos={c.custom_plazos}
                         onSizeMatrixCell={(_, tallaUuid, bandaId, plazoDias, value) =>
                           setClientSizeMatrixCell(c.cliente_id, tallaUuid, bandaId, plazoDias, value)}
                         onSizeAnchor={(_, tallaUuid, partial) =>

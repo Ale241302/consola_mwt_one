@@ -1325,7 +1325,8 @@ export default function ScreenBrandClientPricingForm() {
                   cursor: "pointer", outline: "none",
                   fontVariantNumeric: "tabular-nums",
                 }}>
-                {PLAZOS_MARLUVAS.map((p) => (
+                {/* Fase 4 · plazos efectivos de la banda anclada del editor global. */}
+                {getBandPlazos(anchor.bandaId, customPlazos).map((p) => (
                   <option key={p.dias} value={p.dias}>
                     {p.dias}d · {p.sub}
                   </option>
@@ -1560,7 +1561,8 @@ export default function ScreenBrandClientPricingForm() {
                                 fontVariantNumeric: "tabular-nums",
                               }}
                               title={lang === "es" ? "Plazo ancla del SKU" : "SKU anchor term"}>
-                              {PLAZOS_MARLUVAS.map((p) => (
+                              {/* Fase 4 · plazos efectivos de la banda anclada (puede incluir custom). */}
+                              {getBandPlazos(sAnchor.bandaId, customPlazos).map((p) => (
                                 <option key={p.dias} value={p.dias}>{p.dias}d</option>
                               ))}
                             </select>
@@ -1615,6 +1617,7 @@ export default function ScreenBrandClientPricingForm() {
                               skuIdx={i}
                               bandaVigente={bandaVigente}
                               globalAnchor={anchor}
+                              customPlazos={customPlazos}
                               onSizeMatrixCell={setSkuSizeMatrixCell}
                               onSizeAnchor={setSkuSizeAnchor}
                               onSizeReset={clearSkuSizeOverride}

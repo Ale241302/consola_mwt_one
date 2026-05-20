@@ -27,6 +27,7 @@ import React from "react";
 import { BANDAS_MARLUVAS, PLAZOS_MARLUVAS } from "../../constants/marluvas.js";
 import PriceMatrixCompact from "./PriceMatrixCompact.jsx";
 import { useSkuTallas } from "../../hooks/useSkuTallas.js";
+import { getBandPlazos } from "../../lib/marluvasPricing.js";
 
 const NAVY  = "#0B1E3A";
 const AMBER = "#F59E0B";
@@ -39,6 +40,7 @@ export default function SkuSizesPanel({
   skuIdx,
   bandaVigente = null,
   globalAnchor = { bandaId: 1, plazoDias: 90 },
+  customPlazos = null,            // Fase 4: plazos custom por banda (global cliente-marca)
   onSizeMatrixCell,
   onSizeAnchor,
   onSizeReset,
@@ -173,7 +175,9 @@ export default function SkuSizesPanel({
                   value={anchorToRender.plazoDias}
                   onChange={(e) => onSizeAnchor?.(skuIdx, t.uuid, { plazoDias: Number(e.target.value) })}
                   style={selStyle(hasOverride)}>
-                  {PLAZOS_MARLUVAS.map((p) => (
+                  {/* Fase 4: plazos efectivos de la banda anclada (puede incluir 120d
+                      u otros custom que el operador haya agregado para esta banda). */}
+                  {getBandPlazos(anchorToRender.bandaId, customPlazos).map((p) => (
                     <option key={p.dias} value={p.dias}>{p.dias}d</option>
                   ))}
                 </select>
@@ -200,6 +204,7 @@ export default function SkuSizesPanel({
                 <PriceMatrixCompact
                   matrix={matrixToRender}
                   bandaVigente={bandaVigente}
+                  customPlazos={customPlazos}
                   defaultFilter="essentials"
                   maxHeight="38vh"
                   onCellChange={(bandaId, plazoDias, value) =>
@@ -221,7 +226,6 @@ function selStyle(active) {
     border: `1px solid ${active ? `${AMBER}77` : "#CBD5E1"}`,
     background: active ? "#FFFBEB" : "#FFFFFF",
     color: NAVY, font: "600 10.5px/1 var(--font-body)",
-    cursor: "pointer", outline: "none",
     fontVariantNumeric: "tabular-nums",
   };
 }
