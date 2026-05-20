@@ -20,6 +20,7 @@ from .views_builder_artifacts import (
 )
 from .views_proforma import generate_proforma, proforma_html_dynamic
 from .views_pronto_pago import apply_pronto_pago
+from .views_product_ocs import ProductOcsView
 
 router = DefaultRouter()
 router.register(r"ocs",             OcViewSet,           basename="ocs")
@@ -111,4 +112,10 @@ urlpatterns = [
     # NO toca unit_price_mwt. Líneas no-matched quedan sin cambios.
     path("expedientes/<uuid:expediente_id>/apply-pronto-pago/",
          apply_pronto_pago, name="expedientes-apply-pronto-pago"),
+
+    # Sprint 2026-05-20 (F5) · Tab Expedientes del detalle de producto.
+    # Lista OCs donde aparece el SKU como línea, con tallas/qty/precios
+    # MWT y Cliente. CLIENT_* recibe filtrado por client_id del JWT.
+    path("expedientes/products/<str:sku>/ocs/",
+         ProductOcsView.as_view(), name="expedientes-product-ocs"),
 ] + router.urls
