@@ -705,10 +705,10 @@ export default function ScreenDashboard() {
       >
         {/* 4A · Top SKUs · cableado */}
         <DashboardCard
-          title={lang === "en" ? "Top 10 SKUs by margin (90d)" : "Top 10 SKUs por margen (90d)"}
+          title={lang === "en" ? "Top 10 SKUs by margin" : "Top 10 SKUs por margen"}
           subtitle={lang === "en"
-            ? "Ranked by margin USD contribution"
-            : "Rankeados por contribución de margen USD"}
+            ? "All active lines · ranked by (price_client − price_mwt) × qty"
+            : "Todas las líneas activas · rankeadas por (precio_cliente − precio_mwt) × qty"}
           padding={0}
         >
           <SafeWidget lang={lang} endpoint="/api/analytics/top_skus_margen/">

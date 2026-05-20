@@ -663,39 +663,30 @@ class AnalyticsViewSet(viewsets.ViewSet):
     # ── Top SKUs por margen ───────────────────────────────────
     @action(detail=False, methods=["get"], url_path="top_skus_margen")
     def top_skus_margen(self, request):
-        """Top 10 SKUs por margen USD de líneas de expedientes activos.
+        """Top 10 SKUs por margen USD de líneas activas.
 
-        Shape:
-          [{ sku, product_name, brand_id, units_sold_90d,
-             revenue_usd, margin_usd, margin_pct }]
+        Sprint 2026-05-20 · Filtro temporal ELIMINADO:
+          Antes filtraba `e.updated_at >= CURRENT_DATE - INTERVAL '365 days'`
+          pero los expedientes tienen `updated_at` antiguo y eso vaciaba
+          el ranking. Ahora muestra TODOS los SKUs activos con precio > 0,
+          sin restricción temporal. El subtítulo del widget ya no menciona
+          ventana de 90/365 días.
 
-        Modelo de precios (Sprint 2026-05-06 · C0_expedientes_operating_company.sql):
-          La tabla `expedientes.linea` tiene DOS pares de columnas de precio:
-          · Legacy:  unit_cost      → costo histórico
-                     unit_price     → precio histórico (no se popula en nuevas líneas)
-          · Nuevos:  unit_price_mwt    → precio que MWT paga al proveedor (costo real)
-                     unit_price_client → precio que se cobra al cliente final
+        Modelo de precios (C0_expedientes_operating_company.sql):
+          La tabla `expedientes.linea` tiene DOS pares de columnas:
+          · Legacy:  unit_cost / unit_price (raro que estén poblados)
+          · Nuevos:  unit_price_mwt   → costo (lo que MWT paga al proveedor)
+                     unit_price_client → precio (lo que cobra al cliente)
 
-          La UI de /expedientes/{id} usa SOLO los nuevos. Las líneas
-          creadas post-Sprint tienen unit_cost=0 y unit_price=0 con valores
-          reales en los campos `*_mwt` y `*_client`.
+          costo_efectivo  = COALESCE(NULLIF(unit_price_mwt,    0), unit_cost,  0)
+          precio_efectivo = COALESCE(NULLIF(unit_price_client, 0), unit_price, 0)
 
-          Para margen real:
-            costo_efectivo  = COALESCE(NULLIF(unit_price_mwt,    0), unit_cost,  0)
-            precio_efectivo = COALESCE(NULLIF(unit_price_client, 0), unit_price, 0)
-
-        · Filtro temporal: 365 días sobre `expediente.updated_at` (proxy de
-          cierre — no existe `closed_at` explícito todavía).
-        · Solo se cuentan líneas donde precio_efectivo > 0 (para no inflar
-          margen con líneas a costo cero).
-        · margin_usd = SUM((precio_efectivo - costo_efectivo) * qty).
+        · Solo líneas donde precio_efectivo > 0.
+        · margin_usd = SUM((precio_efectivo - costo_efectivo) × qty).
         · margin_pct = margin_usd / NULLIF(revenue_usd, 0).
-
-        El nombre `units_sold_90d` se mantiene por compatibilidad con el
-        frontend (renombrar requeriría coordinación). Semánticamente ahora
-        representa "unidades en ventana de filtrado activa".
+        · Log explícito de count para depurar widget vacío.
         """
-        rows = _fetchall("""
+        sql = """
             WITH lineas_efectivas AS (
               SELECT
                 l.sku,
@@ -707,13 +698,12 @@ class AnalyticsViewSet(viewsets.ViewSet):
               JOIN expedientes.expediente e ON e.id = l.expediente_id
               WHERE l.is_active = TRUE
                 AND e.is_active = TRUE
-                AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
                 AND l.sku IS NOT NULL
             )
             SELECT
               le.sku                                                        AS sku,
               MAX(p.nombre)                                                 AS product_name,
-              MAX(p.marca_id)                                               AS brand_id,
+              MAX(p.marca_id)::text                                         AS brand_id,
               COALESCE(SUM(le.qty), 0)::float                               AS units_sold_90d,
               COALESCE(SUM(le.qty * le.precio_efectivo), 0)::float          AS revenue_usd,
               COALESCE(SUM(le.qty * (le.precio_efectivo - le.costo_efectivo)), 0)::float
@@ -728,7 +718,9 @@ class AnalyticsViewSet(viewsets.ViewSet):
             GROUP BY le.sku
             ORDER BY margin_usd DESC NULLS LAST
             LIMIT 10
-        """)
+        """
+        rows = _fetchall(sql)
+        log.info("[top_skus_margen] devolviendo %d filas (sin filtro temporal)", len(rows))
         return Response(rows)
 
     # ── Scatter de margen proyectado vs real por expediente ───
