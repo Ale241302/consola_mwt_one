@@ -1366,6 +1366,4 @@ function CeoDetailRow({ e, lang, deferredVal, showDeferred, onUpdate, onOpen }) 
     </div>
   );
 }
-    </div>
-  );
-}
+
