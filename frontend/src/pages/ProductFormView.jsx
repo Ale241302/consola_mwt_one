@@ -82,6 +82,7 @@ function orderClientsHierarchy(clients) {
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
 import PriceMatrixCompact from "../components/marluvas/PriceMatrixCompact.jsx";
+import SkuSizesPanel from "../components/marluvas/SkuSizesPanel.jsx";
 import { cascadeRow, computeMatrixFromInputs } from "../lib/marluvasPricing.js";
 import { BANDAS_MARLUVAS, bandaForTC, FACTOR_COMISION, INDICE_ME_90 } from "../constants/marluvas.js";
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
@@ -358,6 +359,13 @@ export default function ScreenProductFormView() {
   const [savingClient, setSavingClient] = useState(null);   // cliente_id en vuelo
   const [matrixBanner, setMatrixBanner] = useState(null);   // {type, msg, cliente_id}
   const [dirtyClients, setDirtyClients] = useState({});     // {cliente_id: true}
+  // Fase 3+ · UI · Set de cliente_id con su panel de tallas expandido.
+  const [expandedClients, setExpandedClients] = useState(() => new Set());
+  const toggleClientExpanded = (clienteId) => setExpandedClients((prev) => {
+    const n = new Set(prev);
+    if (n.has(clienteId)) n.delete(clienteId); else n.add(clienteId);
+    return n;
+  });
 
   // Cotización USD/BRL en vivo → banda vigente para resaltar en cada matriz.
   // Si el endpoint FX falla, bandaVigente queda null y PriceMatrixCompact
@@ -385,6 +393,9 @@ export default function ScreenProductFormView() {
           sobreprecio_pct:  Number(c.sobreprecio_pct ?? 0),
           prices_matrix:    c.prices_matrix && Object.keys(c.prices_matrix).length > 0
             ? c.prices_matrix : {},
+          // Fase 3+ · overrides de talla a nivel cliente
+          sizes_pricing:    c.sizes_pricing && Object.keys(c.sizes_pricing).length > 0
+            ? c.sizes_pricing : {},
           fecha_inicio:     c.fecha_inicio,
           fecha_fin:        c.fecha_fin,
           updated_at:       c.updated_at,
@@ -449,6 +460,67 @@ export default function ScreenProductFormView() {
     setDirtyClients((d) => ({ ...d, [clienteId]: true }));
   };
 
+  // ─── Fase 3+ · Handlers de overrides POR TALLA a nivel cliente ────
+  // Idéntica semántica que los handlers del simulador cliente-marca:
+  // primera edición clona la matriz del cliente como punto de partida.
+  // Materializa el override en sizes_pricing[tallaUuid].
+  const setClientSizeMatrixCell = (clienteId, tallaUuid, bandaId, plazoDias, value) => {
+    setClientMatrices((arr) => arr.map((c) => {
+      if (c.cliente_id !== clienteId) return c;
+      const sp = c.sizes_pricing || {};
+      const existing = sp[tallaUuid];
+      const baseMatrix = existing?.matrix
+        || JSON.parse(JSON.stringify(c.prices_matrix || {}));
+      const val = Number(value) || 0;
+      const row = baseMatrix[String(bandaId)] || {};
+      const newRow = cascadeRow(row, plazoDias, val);
+      const nextMatrix = { ...baseMatrix, [String(bandaId)]: newRow };
+      return {
+        ...c,
+        sizes_pricing: {
+          ...sp,
+          [tallaUuid]: {
+            matrix: nextMatrix,
+            ...(existing?.anchor ? { anchor: existing.anchor } : {}),
+          },
+        },
+      };
+    }));
+    setDirtyClients((d) => ({ ...d, [clienteId]: true }));
+  };
+
+  const setClientSizeAnchor = (clienteId, tallaUuid, partial) => {
+    setClientMatrices((arr) => arr.map((c) => {
+      if (c.cliente_id !== clienteId) return c;
+      const sp = c.sizes_pricing || {};
+      const existing = sp[tallaUuid];
+      const baseMatrix = existing?.matrix
+        || JSON.parse(JSON.stringify(c.prices_matrix || {}));
+      const currentAnchor = existing?.anchor || { bandaId: 1, plazoDias: 90 };
+      return {
+        ...c,
+        sizes_pricing: {
+          ...sp,
+          [tallaUuid]: {
+            matrix: baseMatrix,
+            anchor: { ...currentAnchor, ...partial },
+          },
+        },
+      };
+    }));
+    setDirtyClients((d) => ({ ...d, [clienteId]: true }));
+  };
+
+  const clearClientSizeOverride = (clienteId, tallaUuid) => {
+    setClientMatrices((arr) => arr.map((c) => {
+      if (c.cliente_id !== clienteId) return c;
+      const sp = { ...(c.sizes_pricing || {}) };
+      delete sp[tallaUuid];
+      return { ...c, sizes_pricing: sp };
+    }));
+    setDirtyClients((d) => ({ ...d, [clienteId]: true }));
+  };
+
   // Guardar la matriz de UN cliente via POST upsert-sku (no toca otros SKUs).
   const handleSaveClientMatrix = async (clienteId) => {
     const c = clientMatrices.find((x) => x.cliente_id === clienteId);
@@ -465,6 +537,9 @@ export default function ScreenProductFormView() {
         ajuste_usd:      c.ajuste_usd,
         sobreprecio_pct: c.sobreprecio_pct,
         prices_matrix:   c.prices_matrix,
+        // Fase 3+ · overrides por talla (opcional, omitir si vacío)
+        ...(c.sizes_pricing && Object.keys(c.sizes_pricing).length > 0
+            ? { sizes_pricing: c.sizes_pricing } : {}),
         fecha_inicio:    c.fecha_inicio || null,
         fecha_fin:       c.fecha_fin || null,
       };
@@ -1695,10 +1770,50 @@ export default function ScreenProductFormView() {
                     display: 'flex', justifyContent: 'space-between',
                     alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap',
                   }}>
-                    <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {/* Chevron expandir panel de tallas */}
+                      <button type="button"
+                        onClick={() => toggleClientExpanded(c.cliente_id)}
+                        style={{
+                          width: 24, height: 24, borderRadius: 4,
+                          border: '1px solid #E5E7EB', background: '#FFFFFF',
+                          color: '#64748B', cursor: 'pointer', padding: 0,
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          transition: 'transform 140ms ease',
+                          transform: expandedClients.has(c.cliente_id) ? 'rotate(90deg)' : 'rotate(0deg)',
+                          font: '700 12px/1 var(--font-body)',
+                          flexShrink: 0,
+                        }}
+                        title={lang === 'es'
+                          ? 'Ver/editar precios por talla para este cliente'
+                          : 'View/edit per-size pricing for this client'}>
+                        ▶
+                      </button>
+                      <div>
                       <div style={{
                         font: '700 13px/1.2 var(--font-body)', color: '#0B1E3A',
-                      }}>{c.razon_social}</div>
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                      }}>
+                        {c.razon_social}
+                        {(() => {
+                          const ovc = Object.keys(c.sizes_pricing || {}).length;
+                          if (ovc === 0) return null;
+                          return (
+                            <span style={{
+                              padding: '2px 7px', borderRadius: 10,
+                              background: 'rgba(245, 158, 11, 0.15)',
+                              color: '#92400E',
+                              border: '1px solid rgba(245, 158, 11, 0.4)',
+                              font: '700 9px/1 var(--font-body)',
+                              textTransform: 'uppercase', letterSpacing: 0.4,
+                            }} title={lang === 'es'
+                                ? `${ovc} talla(s) con override`
+                                : `${ovc} size(s) with override`}>
+                              {ovc} {lang === 'es' ? 'tallas' : 'sizes'}
+                            </span>
+                          );
+                        })()}
+                      </div>
                       <div style={{
                         font: '500 10.5px/1.3 var(--font-body)', color: '#64748B',
                         marginTop: 2,
@@ -1716,7 +1831,8 @@ export default function ScreenProductFormView() {
                         {Number(c.sobreprecio_pct) > 0 && <>{' · Sobreprec '}<strong style={{ color: '#0B1E3A' }}>{(Number(c.sobreprecio_pct) * 100).toFixed(2)}%</strong></>}
                         {c.updated_at && <>{' · '}<span title={c.updated_at}>{new Date(c.updated_at).toLocaleDateString(lang === 'es' ? 'es-CR' : 'en-US')}</span></>}
                       </div>
-                    </div>
+                      </div>{/* cierre del nuevo wrapper razon+info */}
+                    </div>{/* cierre del flex wrapper con chevron */}
                     <button type="button"
                       onClick={() => handleSaveClientMatrix(c.cliente_id)}
                       disabled={!isDirty || isSaving}
@@ -1760,6 +1876,31 @@ export default function ScreenProductFormView() {
                     bandaVigente={bandaVigente}
                     maxHeight="40vh"
                   />
+
+                  {/* Fase 3+ · Panel de overrides POR TALLA para este cliente.
+                      Se expande al click del chevron en el header de la card. */}
+                  {expandedClients.has(c.cliente_id) && (
+                    <div style={{ marginTop: 12 }}>
+                      <SkuSizesPanel
+                        sku={{
+                          sku:           existing?.sku || '',
+                          matrix:        c.prices_matrix,
+                          sizes_pricing: c.sizes_pricing,
+                          anchor:        { bandaId: 1, plazoDias: 90 },
+                        }}
+                        skuIdx={0}
+                        bandaVigente={bandaVigente}
+                        globalAnchor={{ bandaId: 1, plazoDias: 90 }}
+                        onSizeMatrixCell={(_, tallaUuid, bandaId, plazoDias, value) =>
+                          setClientSizeMatrixCell(c.cliente_id, tallaUuid, bandaId, plazoDias, value)}
+                        onSizeAnchor={(_, tallaUuid, partial) =>
+                          setClientSizeAnchor(c.cliente_id, tallaUuid, partial)}
+                        onSizeReset={(_, tallaUuid) =>
+                          clearClientSizeOverride(c.cliente_id, tallaUuid)}
+                        lang={lang}
+                      />
+                    </div>
+                  )}
                 </div>
               );
             })}
