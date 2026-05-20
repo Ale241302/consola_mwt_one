@@ -71,13 +71,21 @@ export function EmptyState({
       )}
       {endpoint && (
         <code
+          title={endpoint}
           style={{
-            font: "500 11px/1.4 var(--font-mono)",
+            font: "500 10.5px/1.4 var(--font-mono)",
             color: "var(--text-secondary)",
             background: "var(--bg-alt)",
             padding: "2px 8px",
             borderRadius: "var(--radius-sm)",
             border: "1px solid var(--border)",
+            // R1 fix · sin esto los paths largos rompían el ancho del card
+            maxWidth: "100%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            boxSizing: "border-box",
+            wordBreak: "break-all",
           }}
         >
           {endpoint}
@@ -587,22 +595,26 @@ export function PipelineByBrandTimeline({
 //
 // Score de urgencia (cliente-side, pendiente endpoint dedicado):
 //   urgencyScore = creditRatio*0.4 + valueRatio*0.3 + ageRatio*0.3
-// donde:
-//   creditRatio = credit_days / 90  (clamp 0..1.5)
-//   valueRatio  = expediente_value / maxValue
-//   ageRatio    = days_in_phase / phase_baseline (clamp 0..2)
 // El backend devuelve `urgent` ya pre-filtrado por bloqueado/crédito>70d.
 //
+// Visibilidad por rol (mandato CEO):
+//   · isAdmin === true  → muestra `proforma` (número MWT interno)
+//   · isAdmin === false → muestra `oc_codigo` (número de OC del cliente)
+// Si ambos faltan, degrada a `ref` (codigo del expediente · EXP-XXXX).
+//
 // Props:
-//   items: [{ id, ref, client_id, brand_id, urgency, action, credit_days, balance }]
-//   resolveBrand(id) → { name, color }
-//   resolveClient(id) → { name, country }
+//   items: [{ id, ref, oc_codigo, proforma, client_id, client_name,
+//             brand_id, brand_name, urgency, action, credit_days }]
+//   resolveBrand(id) → { name, color }  (fallback si brand_name viene null)
+//   resolveClient(id) → { name, country } (fallback si client_name viene null)
+//   isAdmin: boolean (de useRole().isAdmin) — decide qué número mostrar
 //   onOpen(id)
 // ─────────────────────────────────────────────────────────────────────
 export function UrgentExpedientesTable({
   items,
   resolveBrand = () => null,
   resolveClient = () => null,
+  isAdmin = true,
   onOpen,
   lang = "es",
   emptyEndpoint = "/api/analytics/urgent/",
@@ -631,7 +643,9 @@ export function UrgentExpedientesTable({
 
   return (
     <div role="table" aria-label={tr(lang, "urgent_actions")}>
-      {/* Header */}
+      {/* Header — el primer label depende del rol del usuario:
+            · ADMIN ve "Proforma" (número MWT)
+            · CLIENT ve "OC" (número de orden de compra del cliente) */}
       <div
         role="row"
         style={{
@@ -645,7 +659,10 @@ export function UrgentExpedientesTable({
           borderBottom: "1px solid var(--divider)",
         }}
       >
-        <span>{tr(lang, "ref")}</span>
+        <span>{isAdmin
+          ? (lang === "en" ? "Proforma" : "Proforma")
+          : (lang === "en" ? "PO" : "OC")}
+        </span>
         <span>{tr(lang, "client")}</span>
         <span>{tr(lang, "brand")}</span>
         <span style={{ textAlign: "right" }}>{tr(lang, "credit_days")}</span>
@@ -654,8 +671,28 @@ export function UrgentExpedientesTable({
       </div>
 
       {sorted.map((u) => {
-        const brand = resolveBrand(u.brand_id);
-        const client = resolveClient(u.client_id);
+        // Brand: usar primero brand_name del payload, fallback al resolver.
+        const brandFromPayload = u.brand_name
+          ? { name: u.brand_name, color: resolveBrand(u.brand_id)?.color || "var(--brand-primary)" }
+          : null;
+        const brand = brandFromPayload || resolveBrand(u.brand_id);
+
+        // Cliente: razón_social del backend, fallback al resolver o UUID.
+        const clientName = u.client_name
+          || resolveClient(u.client_id)?.name
+          || (u.client_id ? `${String(u.client_id).slice(0, 8)}…` : "—");
+
+        // Número visible según rol (mandato CEO).
+        //   admin → proforma (número MWT)
+        //   client → oc_codigo (número de OC del cliente)
+        // Fallback: ref (EXP-XXXX) si el preferido falta.
+        const primaryRef = isAdmin
+          ? (u.proforma || u.ref || u.id || "")
+          : (u.oc_codigo || u.ref || u.id || "");
+        const refLabel = primaryRef.length <= 24
+          ? primaryRef
+          : String(primaryRef).slice(0, 18) + "…";
+
         const isHigh = u.urgency === "high";
         return (
           <button
@@ -680,16 +717,25 @@ export function UrgentExpedientesTable({
             onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
             onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
           >
-            <span className="mono-sm tabular" style={{
-              font: "600 12px/1.2 var(--font-mono)",
-              color: "var(--interactive)",
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }}>
-              {/* SI ref es un UUID largo, mostrar EXP-… humano cuando exista; si no, primeros 12 chars. */}
-              {u.ref && u.ref.length <= 24 ? u.ref : (u.ref || u.id || "").slice(0, 12) + "…"}
+            <span
+              className="mono-sm tabular"
+              title={primaryRef}
+              style={{
+                font: "600 12px/1.2 var(--font-mono)",
+                color: "var(--interactive)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}
+            >
+              {refLabel || "—"}
             </span>
-            <span style={{ font: "var(--body-sm)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {client?.name || u.client_id || "—"}
+            <span
+              title={clientName}
+              style={{
+                font: "var(--body-sm)", color: "var(--text-primary)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}
+            >
+              {clientName}
             </span>
             <span className="flex ai-center gap-2" style={{ minWidth: 0 }}>
               <span style={{ width: 8, height: 8, background: brand?.color || "var(--border-strong)", borderRadius: 2, flexShrink: 0 }} />
@@ -893,7 +939,10 @@ export function TopClientsTable({
         <span style={{ textAlign: "right" }}>{lang === "es" ? "Venc. 30d" : "Past 30d"}</span>
       </div>
       {sorted.map((c, i) => {
-        const cli = resolveClient(c.client_id);
+        // Prefer client_name del backend (razon_social), fallback resolver, último UUID truncado.
+        const clientName = c.client_name
+          || resolveClient(c.client_id)?.name
+          || (c.client_id ? `${String(c.client_id).slice(0, 8)}…` : "—");
         return (
           <div
             key={c.client_id || i}
@@ -906,8 +955,14 @@ export function TopClientsTable({
               borderBottom: "1px solid var(--divider)",
             }}
           >
-            <span style={{ font: "var(--body-sm)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {cli?.name || c.client_id || "—"}
+            <span
+              title={clientName}
+              style={{
+                font: "var(--body-sm)", color: "var(--text-primary)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}
+            >
+              {clientName}
             </span>
             <span className="tabular" style={{ textAlign: "right", font: "600 12px/1 var(--font-mono)", color: "var(--text-secondary)" }}>
               {c.cobros_abiertos != null ? c.cobros_abiertos : "—"}

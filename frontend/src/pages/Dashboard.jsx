@@ -185,7 +185,7 @@ const LS_CCY = "mwt:dashboard-fx-display";
 export default function ScreenDashboard() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
-  const { can } = useRole();
+  const { can, isAdmin } = useRole();
 
   // ── Display currency (persistido en LS) ─────
   const [displayCcy, setDisplayCcy] = useState(() => {
@@ -659,6 +659,7 @@ export default function ScreenDashboard() {
                   items={filteredUrgent}
                   resolveBrand={resolveBrand}
                   resolveClient={resolveClient}
+                  isAdmin={isAdmin}
                   onOpen={onOpenExpediente}
                   lang={lang}
                   emptyEndpoint="/api/analytics/urgent/"

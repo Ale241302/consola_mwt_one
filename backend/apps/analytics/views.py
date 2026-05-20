@@ -248,22 +248,42 @@ class AnalyticsViewSet(viewsets.ViewSet):
     # ── Exposición por cliente ────────────────────────────────
     @action(detail=False, methods=["get"])
     def exposicion_clientes(self, request):
-        """Saldo pendiente agrupado por client_id, orden DESC."""
+        """Saldo pendiente agrupado por client_id, orden DESC.
+
+        Incluye `client_name` (clientes.cliente.razon_social con fallback
+        a nombre_comercial) para que el frontend NO muestre el UUID.
+        Si la tabla `clientes.cliente` no responde, `client_name` queda
+        como NULL y el frontend cae al UUID truncado.
+        """
         rows = _fetchall("""
+            WITH agg AS (
+              SELECT
+                client_id,
+                COUNT(*)                                AS cobros_abiertos,
+                COALESCE(SUM(monto_total),0)            AS monto_total,
+                COALESCE(SUM(monto_pagado),0)           AS monto_pagado,
+                COALESCE(SUM(monto_pendiente),0)        AS monto_pendiente,
+                COUNT(*) FILTER (WHERE (CURRENT_DATE - fecha_vencimiento) > 30
+                                 AND monto_pendiente > 0) AS vencidos_30,
+                COUNT(*) FILTER (WHERE (CURRENT_DATE - fecha_vencimiento) > 60
+                                 AND monto_pendiente > 0) AS vencidos_60
+              FROM cobros.cobro
+              WHERE is_active = TRUE AND client_id IS NOT NULL
+              GROUP BY client_id
+            )
             SELECT
-              client_id,
-              COUNT(*)                                AS cobros_abiertos,
-              COALESCE(SUM(monto_total),0)            AS monto_total,
-              COALESCE(SUM(monto_pagado),0)           AS monto_pagado,
-              COALESCE(SUM(monto_pendiente),0)        AS monto_pendiente,
-              COUNT(*) FILTER (WHERE (CURRENT_DATE - fecha_vencimiento) > 30
-                               AND monto_pendiente > 0) AS vencidos_30,
-              COUNT(*) FILTER (WHERE (CURRENT_DATE - fecha_vencimiento) > 60
-                               AND monto_pendiente > 0) AS vencidos_60
-            FROM cobros.cobro
-            WHERE is_active = TRUE AND client_id IS NOT NULL
-            GROUP BY client_id
-            ORDER BY monto_pendiente DESC
+              a.client_id,
+              COALESCE(c.nombre_comercial, c.razon_social) AS client_name,
+              c.pais_iso2                                  AS country,
+              a.cobros_abiertos,
+              a.monto_total,
+              a.monto_pagado,
+              a.monto_pendiente,
+              a.vencidos_30,
+              a.vencidos_60
+            FROM agg a
+            LEFT JOIN clientes.cliente c ON c.id = a.client_id
+            ORDER BY a.monto_pendiente DESC
             LIMIT 20
         """)
         return Response(rows)
@@ -309,18 +329,47 @@ class AnalyticsViewSet(viewsets.ViewSet):
     # ── Urgent standalone ────────────────────────────────────
     @action(detail=False, methods=["get"])
     def urgent(self, request):
+        """Expedientes urgentes con info enriquecida para la UI.
+
+        Devuelve por cada expediente:
+          · id, ref (expediente.codigo · "EXP-XXXX")
+          · oc_codigo  (número de OC del cliente — visible para CLIENT B2B)
+          · proforma   (número de proforma MWT — visible para ADMIN/CEO)
+          · client_id, client_name (razon_social, fallback nombre_comercial)
+          · brand_id,  brand_name  (marca.nombre)
+          · credit_days, is_blocked, urgency, action
+
+        El frontend elige qué número mostrar según useRole().isAdmin:
+          · admin → proforma
+          · client → oc_codigo
+
+        Mantiene `ref = expediente.codigo` por compatibilidad — si los
+        otros campos vienen null, la UI degrada a `ref`.
+        """
         rows = _fetchall("""
-            SELECT id, codigo AS ref, client_id, brand_id, credit_days,
-                   is_blocked,
-                   CASE WHEN is_blocked THEN 'high' ELSE 'medium' END AS urgency,
-                   CASE WHEN is_blocked
-                        THEN 'Resolver bloqueo de crédito'
-                        ELSE 'Confirmar arribo antes del vencimiento'
-                   END AS action
-            FROM expedientes.expediente
-            WHERE is_active = TRUE
-              AND (is_blocked = TRUE OR credit_days > 70)
-            ORDER BY is_blocked DESC, credit_days DESC
+            SELECT
+              e.id,
+              e.codigo                                       AS ref,
+              o.codigo                                       AS oc_codigo,
+              o.proforma                                     AS proforma,
+              e.client_id,
+              COALESCE(cli.nombre_comercial, cli.razon_social) AS client_name,
+              e.brand_id,
+              m.nombre                                       AS brand_name,
+              e.credit_days,
+              e.is_blocked,
+              CASE WHEN e.is_blocked THEN 'high' ELSE 'medium' END AS urgency,
+              CASE WHEN e.is_blocked
+                   THEN 'Resolver bloqueo de crédito'
+                   ELSE 'Confirmar arribo antes del vencimiento'
+              END                                            AS action
+            FROM expedientes.expediente e
+            LEFT JOIN expedientes.oc       o   ON o.id = e.oc_id
+            LEFT JOIN clientes.cliente     cli ON cli.id = e.client_id
+            LEFT JOIN brands.marca         m   ON m.id   = e.brand_id
+            WHERE e.is_active = TRUE
+              AND (e.is_blocked = TRUE OR e.credit_days > 70)
+            ORDER BY e.is_blocked DESC, e.credit_days DESC
             LIMIT 20
         """)
         return Response(rows)
