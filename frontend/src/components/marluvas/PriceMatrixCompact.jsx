@@ -195,7 +195,12 @@ export default function PriceMatrixCompact({
       }}>
         <table style={{
           borderCollapse: "separate", borderSpacing: 0,
-          width: bandFilter === "all" || totalPlazos > 12 ? "auto" : "100%",
+          // Width policy:
+          //   · "all" filter → auto (12 bandas × 4+ plazos no caben → scroll-X)
+          //   · resto (essentials/current con ≤ ~6 bandas) → 100% incluso con
+          //     plazos custom, así las columnas se distribuyen uniformemente.
+          //     min-width 64 por <th> garantiza legibilidad sin overflow.
+          width: bandFilter === "all" ? "auto" : "100%",
         }}>
           <thead>
             {/* Header row 1: bandas (colspan = #plazos de esa banda) */}
