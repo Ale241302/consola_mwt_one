@@ -115,6 +115,21 @@ function snapshotToInput(sku) {
   };
 }
 
+// Saneamiento defensivo: si un endpoint devuelve JSONB como string
+// (caso raw cursor sin adapter psycopg2 JSONB), parsea a objeto.
+// Si ya es objeto, lo devuelve tal cual. Vacío en errores.
+function safeObj(v) {
+  if (v == null) return {};
+  if (typeof v === "object" && !Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch { return {}; }
+  }
+  return {};
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // PAGE
 // ═══════════════════════════════════════════════════════════════════
@@ -342,8 +357,9 @@ function DetailDrawer({ data, loading, brandName, onClose }) {
   // (ej. lista plana en vez de { "<bandaId>": [...] }). Sólo aceptamos
   // claves 1..12 y arrays válidos de {dias, factor}.
   const customPlazos = useMemo(() => {
-    const raw = data?.event?.custom_plazos;
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    // safeObj para tolerar JSONB-como-string del backend.
+    const raw = safeObj(data?.event?.custom_plazos);
+    if (!raw || Array.isArray(raw)) return {};
     const out = {};
     for (const [k, v] of Object.entries(raw)) {
       const bid = Number(k);
@@ -442,15 +458,18 @@ function DetailDrawer({ data, loading, brandName, onClose }) {
 function SkuSnapshotCard({ sku, customPlazos }) {
   const [bandFilter,  setBandFilter]  = useState("essentials"); // essentials | all
   const [showSizes,   setShowSizes]   = useState(false);
-  const sizesPricing  = sku.sizes_pricing || {};
+  // Saneamiento defensivo — los JSONB pueden llegar como strings si el
+  // backend lee con raw cursor sin adapter psycopg2 registrado.
+  const sizesPricing  = safeObj(sku.sizes_pricing);
+  const matrix        = safeObj(sku.prices_matrix);
+  const rawAnchor     = safeObj(sku.anchor);
   const sizeOverrideCount = Object.keys(sizesPricing).length;
 
   const input  = snapshotToInput(sku);
   // Ancla efectiva: snapshot → si no hay, fallback al techo 90d (default histórico).
-  const anchor = sku.anchor && Number.isFinite(Number(sku.anchor.bandaId))
-    ? { bandaId: Number(sku.anchor.bandaId), plazoDias: Number(sku.anchor.plazoDias) }
+  const anchor = Number.isFinite(Number(rawAnchor.bandaId))
+    ? { bandaId: Number(rawAnchor.bandaId), plazoDias: Number(rawAnchor.plazoDias) }
     : { bandaId: 1, plazoDias: 90 };
-  const matrix = sku.prices_matrix || {};
   const anclaBanda  = BANDAS_MARLUVAS.find((b) => b.id === anchor.bandaId) || BANDAS_MARLUVAS[0];
   const anclaKind   = bandKind(anclaBanda);
   const anclaColors = bandColors(anclaKind);
@@ -771,11 +790,12 @@ function SizesBreakdown({ sku, sizesPricing, customPlazos, fallbackAnchor }) {
           Sin overrides por talla en este snapshot.
         </div>
       ) : tallaUuids.map((uuid) => {
-        const data       = sizesPricing[uuid] || {};
+        const data       = safeObj(sizesPricing[uuid]);
         const tallaMeta  = tallasByUuid[uuid];
-        const sizeMatrix = data.matrix || {};
-        const sizeAnchor = data.anchor && Number.isFinite(Number(data.anchor.bandaId))
-          ? { bandaId: Number(data.anchor.bandaId), plazoDias: Number(data.anchor.plazoDias) }
+        const sizeMatrix = safeObj(data.matrix);
+        const sizeAnchorRaw = safeObj(data.anchor);
+        const sizeAnchor = Number.isFinite(Number(sizeAnchorRaw.bandaId))
+          ? { bandaId: Number(sizeAnchorRaw.bandaId), plazoDias: Number(sizeAnchorRaw.plazoDias) }
           : fallbackAnchor;
 
         // Filtrar bandas visibles — usar las bandas que existen en la matriz de la talla

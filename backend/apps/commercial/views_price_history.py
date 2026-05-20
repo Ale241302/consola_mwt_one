@@ -25,6 +25,7 @@ GET /api/commercial/marluvas/price-history/<event_id>/
 Visibilidad: CEO-ONLY. CLIENT_* recibe 403.
 =====================================================================
 """
+import json
 import logging
 import uuid
 from datetime import datetime, date as _date
@@ -35,6 +36,29 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 log = logging.getLogger(__name__)
+
+
+def _jsonb(value):
+    """Normaliza un campo JSONB leído via raw cursor.
+
+    psycopg2 a veces devuelve JSONB como string (depende de versión y de
+    si el adapter `psycopg2.extras.register_default_jsonb` está registrado
+    para esta conexión). Para evitar que el frontend reciba `"{\"1\":...}"`
+    en lugar de `{"1": ...}`, siempre intentamos deserializar si viene
+    como string.
+
+    - dict / list           → devuelve tal cual
+    - str con JSON válido   → json.loads
+    - str inválido / None / otros → devuelve sin tocar
+    """
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return value
+    return value
 
 
 def _is_client(request):
@@ -156,7 +180,9 @@ class PriceHistoryListView(APIView):
                     # bandaId (1..12). Snapshots viejos pueden traer JSON
                     # con shape inesperado (ej. lista plana de plazos
                     # serializada como dict-de-índices), por eso filtramos.
-                    cp = r.get("custom_plazos") or {}
+                    # Además normalizamos JSONB que viene como string desde
+                    # el raw cursor (psycopg2 sin adapter JSONB registrado).
+                    cp = _jsonb(r.get("custom_plazos")) or {}
                     if isinstance(cp, dict):
                         valid_band_keys = []
                         for k in cp.keys():
@@ -255,6 +281,10 @@ class PriceHistoryDetailView(APIView):
                 cols = [c[0] for c in cur.description]
                 for row in cur.fetchall():
                     r = dict(zip(cols, row))
+                    # JSONB normalization (raw cursor puede devolver strings).
+                    anchor_v = _jsonb(r.get("anchor"))
+                    matrix_v = _jsonb(r.get("prices_matrix"))
+                    sizes_v  = _jsonb(r.get("sizes_pricing"))
                     skus_out.append({
                         "id":              str(r["id"]),
                         "sku":             r["sku"],
@@ -262,9 +292,9 @@ class PriceHistoryDetailView(APIView):
                         "com_pct":         _safe_float(r["com_pct"]) or 0.0,
                         "ajuste_usd":      _safe_float(r["ajuste_usd"]) or 0.0,
                         "sobreprecio_pct": _safe_float(r["sobreprecio_pct"]) or 0.0,
-                        "anchor":          r["anchor"] or None,
-                        "prices_matrix":   r["prices_matrix"] or {},
-                        "sizes_pricing":   r["sizes_pricing"] or {},
+                        "anchor":          anchor_v if isinstance(anchor_v, dict) else None,
+                        "prices_matrix":   matrix_v if isinstance(matrix_v, dict) else {},
+                        "sizes_pricing":   sizes_v  if isinstance(sizes_v,  dict) else {},
                         "activo":          bool(r["activo"]),
                     })
         except Exception as exc:  # noqa: BLE001
@@ -281,7 +311,7 @@ class PriceHistoryDetailView(APIView):
                 "fecha_fin":          ev["fecha_fin"].isoformat()    if ev["fecha_fin"]    else None,
                 "sku_count":          int(ev["sku_count"] or 0),
                 "cells_count":        int(ev["cells_count"] or 0),
-                "custom_plazos":      ev["custom_plazos"] or {},
+                "custom_plazos":      (lambda v: v if isinstance(v, dict) else {})(_jsonb(ev["custom_plazos"])),
                 "created_by_user_id": str(ev["created_by_user_id"]) if ev["created_by_user_id"] else None,
                 "notas":              ev["notas"],
                 "cliente": {
