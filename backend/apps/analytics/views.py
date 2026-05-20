@@ -29,6 +29,8 @@ import logging
 import uuid
 from django.db import connection
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -100,8 +102,17 @@ def _fetchall(sql, params=None):
         return []
 
 
+@method_decorator(never_cache, name="dispatch")
 class AnalyticsViewSet(viewsets.ViewSet):
-    """Ruteador de vistas analíticas agregadas."""
+    """Ruteador de vistas analíticas agregadas.
+
+    `@never_cache` aplicado a nivel de clase para que TODAS las respuestas
+    lleven headers `Cache-Control: max-age=0, no-cache, no-store,
+    must-revalidate, private` + `Expires: 0` + `Pragma: no-cache`.
+    Sin esto, Cloudflare/CDN/browser puede cachear una respuesta vacía
+    (ej. cuando había filtros que devolvían []) y servirla durante el TTL
+    incluso después de que el backend ya devuelve datos correctos.
+    """
 
     # ── Dashboard KPIs ────────────────────────────────────────
     @action(detail=False, methods=["get"])
@@ -721,7 +732,13 @@ class AnalyticsViewSet(viewsets.ViewSet):
         """
         rows = _fetchall(sql)
         log.info("[top_skus_margen] devolviendo %d filas (sin filtro temporal)", len(rows))
-        return Response(rows)
+        resp = Response(rows)
+        # Cloudflare cacheo respuestas [] previas con el filtro de 365d activo.
+        # Forzamos no-cache en TODA la cadena: navegador, CDN, proxies.
+        resp["Cache-Control"] = "no-store, no-cache, must-revalidate, private, max-age=0"
+        resp["Pragma"] = "no-cache"
+        resp["Expires"] = "0"
+        return resp
 
     # ── Scatter de margen proyectado vs real por expediente ───
     @action(detail=False, methods=["get"], url_path="expediente_margin_scatter")
