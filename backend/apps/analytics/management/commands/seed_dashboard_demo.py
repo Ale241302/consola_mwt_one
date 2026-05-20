@@ -472,30 +472,88 @@ class Command(BaseCommand):
         created_out = 0
 
         for nodo in nodos:
-            # ── Stock: una fila por (nodo, producto, lote='DEMO') con 500 uds.
-            # Usamos SQL crudo + ON CONFLICT por el UNIQUE(nodo_id, producto_id, lote).
+            # ── Stock: una fila por (nodo, producto, lote='DEMO', size NULL) con 500 uds.
+            #
+            # Nota técnica importante:
+            #   En la BD productiva, el UNIQUE de `inventario.stock` NO es un
+            #   constraint declarado sino un UNIQUE INDEX sobre expresión:
+            #     `(nodo_id, producto_id, lote, COALESCE(size, ''))`
+            #   creado por backend/sql/63_inventario_stock_by_size.sql.
+            #   Por eso `ON CONFLICT (cols)` falla con InvalidColumnReference
+            #   y `ON CONFLICT ON CONSTRAINT <name>` también falla porque ese
+            #   nombre es un INDEX, no un CONSTRAINT en pg_constraint.
+            #   Usamos SELECT-then-INSERT/UPDATE — seguro al estar en transacción.
             self._info(f"   - UPSERT stock nodo={nodo.codigo} qty=500")
             if not self.dry_run:
                 with connection.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO inventario.stock
-                            (id, nodo_id, producto_id, lote, cantidad_disponible,
-                             cantidad_reservada, cantidad_en_transito,
-                             costo_unitario_usd, is_active, created_at, updated_at,
-                             last_movement_at)
-                        VALUES
-                            (gen_random_uuid(), %s, %s, 'DEMO', 500.000,
-                             0.000, 0.000, 10.0000, TRUE, NOW(), NOW(), NOW())
-                        ON CONFLICT (nodo_id, producto_id, lote) DO UPDATE SET
-                            cantidad_disponible = CASE
-                                WHEN %s THEN EXCLUDED.cantidad_disponible
-                                ELSE inventario.stock.cantidad_disponible
-                            END,
-                            updated_at = NOW()
+                        SELECT id FROM inventario.stock
+                        WHERE nodo_id = %s
+                          AND producto_id = %s
+                          AND lote = 'DEMO'
+                          AND COALESCE(size, '') = ''
+                        LIMIT 1
                         """,
-                        [nodo.id, producto_demo, self.force],
+                        [nodo.id, producto_demo],
                     )
+                    existing = cur.fetchone()
+
+                    if existing is None:
+                        # Detectar si la columna `size` existe (BD muy vieja podría no tenerla).
+                        cur.execute(
+                            """
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_schema = 'inventario'
+                              AND table_name = 'stock'
+                              AND column_name = 'size'
+                            LIMIT 1
+                            """
+                        )
+                        has_size_col = cur.fetchone() is not None
+
+                        if has_size_col:
+                            cur.execute(
+                                """
+                                INSERT INTO inventario.stock
+                                    (id, nodo_id, producto_id, lote, size,
+                                     cantidad_disponible, cantidad_reservada, cantidad_en_transito,
+                                     costo_unitario_usd, is_active, created_at, updated_at,
+                                     last_movement_at)
+                                VALUES
+                                    (gen_random_uuid(), %s, %s, 'DEMO', NULL,
+                                     500.000, 0.000, 0.000,
+                                     10.0000, TRUE, NOW(), NOW(), NOW())
+                                """,
+                                [nodo.id, producto_demo],
+                            )
+                        else:
+                            cur.execute(
+                                """
+                                INSERT INTO inventario.stock
+                                    (id, nodo_id, producto_id, lote,
+                                     cantidad_disponible, cantidad_reservada, cantidad_en_transito,
+                                     costo_unitario_usd, is_active, created_at, updated_at,
+                                     last_movement_at)
+                                VALUES
+                                    (gen_random_uuid(), %s, %s, 'DEMO',
+                                     500.000, 0.000, 0.000,
+                                     10.0000, TRUE, NOW(), NOW(), NOW())
+                                """,
+                                [nodo.id, producto_demo],
+                            )
+                    elif self.force:
+                        cur.execute(
+                            """
+                            UPDATE inventario.stock
+                            SET cantidad_disponible = 500.000,
+                                costo_unitario_usd  = 10.0000,
+                                updated_at = NOW(),
+                                last_movement_at = NOW()
+                            WHERE id = %s
+                            """,
+                            [existing[0]],
+                        )
             created_stock += 1
 
             # ── Movimiento IN inicial — idempotente por token
