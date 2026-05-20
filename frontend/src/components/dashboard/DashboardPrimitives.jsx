@@ -1444,13 +1444,18 @@ export function TopSkusTable({
     .sort((a, b) => (b.margin_usd || 0) - (a.margin_usd || 0))
     .slice(0, 10);
 
+  // Layout compacto para banda 4 (~350px de ancho cuando hay 3 cards):
+  // SKU+producto · Marca · Unidades · Margen($+%) — 4 columnas con minmax(0, fr).
+  // Revenue se mueve a tooltip de la columna Margen.
+  const grid = "minmax(0, 1.3fr) minmax(0, 0.9fr) minmax(0, 0.55fr) minmax(0, 0.75fr)";
+
   return (
     <div>
       <div
         role="row"
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(110px, 1fr) 90px 72px 90px 90px 70px",
+          gridTemplateColumns: grid,
           gap: 8,
           padding: "8px 12px",
           font: "var(--micro)",
@@ -1461,29 +1466,35 @@ export function TopSkusTable({
       >
         <span>SKU</span>
         <span>{tr(lang, "brand")}</span>
-        <span style={{ textAlign: "right" }}>{lang === "es" ? "Unid. 90d" : "Units 90d"}</span>
-        <span style={{ textAlign: "right" }}>{lang === "es" ? "Revenue" : "Revenue"}</span>
-        <span style={{ textAlign: "right" }}>{lang === "es" ? "Margen USD" : "Margin USD"}</span>
-        <span style={{ textAlign: "right" }}>{lang === "es" ? "Margen %" : "Margin %"}</span>
+        <span style={{ textAlign: "right" }}>{lang === "es" ? "Unid." : "Units"}</span>
+        <span style={{ textAlign: "right" }}>{lang === "es" ? "Margen" : "Margin"}</span>
       </div>
 
       {sorted.map((s, i) => {
         const brand = resolveBrand(s.brand_id);
         const marginPct = s.margin_pct != null ? Number(s.margin_pct) : null;
+        const tooltip = [
+          s.sku,
+          s.product_name,
+          s.revenue_usd != null ? `Revenue: ${fmtMoney(s.revenue_usd)}` : null,
+          s.margin_usd != null ? `Margen USD: ${fmtMoney(s.margin_usd)}` : null,
+        ].filter(Boolean).join(" · ");
+
         return (
           <div
             key={s.sku || i}
             role="row"
+            title={tooltip}
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(110px, 1fr) 90px 72px 90px 90px 70px",
+              gridTemplateColumns: grid,
               gap: 8,
               padding: "10px 12px",
               alignItems: "center",
               borderBottom: "1px solid var(--divider)",
             }}
           >
-            <span style={{ minWidth: 0 }}>
+            <span style={{ minWidth: 0, overflow: "hidden" }}>
               <span className="mono-sm tabular" style={{
                 font: "600 12px/1.2 var(--font-mono)",
                 color: "var(--text-primary)",
@@ -1501,32 +1512,51 @@ export function TopSkusTable({
                 </span>
               )}
             </span>
-            <span className="flex ai-center gap-2" style={{ minWidth: 0 }}>
+            <span className="flex ai-center gap-2" style={{ minWidth: 0, overflow: "hidden" }}>
               <span style={{ width: 8, height: 8, background: brand?.color || "var(--border-strong)", borderRadius: 2, flexShrink: 0 }} />
-              <span style={{ font: "var(--caption)", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span style={{
+                font: "var(--caption)", color: "var(--text-secondary)",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}>
                 {brand?.name || "—"}
               </span>
             </span>
-            <span className="tabular" style={{ textAlign: "right", font: "600 12px/1 var(--font-mono)", color: "var(--text-secondary)" }}>
-              {s.units_sold_90d != null ? Number(s.units_sold_90d).toLocaleString(lang === "es" ? "es-PE" : "en-US") : "—"}
+            <span
+              className="tabular"
+              title={lang === "es"
+                ? `${s.units_sold_90d} unidades`
+                : `${s.units_sold_90d} units`}
+              style={{
+                textAlign: "right",
+                font: "600 12px/1 var(--font-mono)",
+                color: "var(--text-secondary)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {s.units_sold_90d != null
+                ? Number(s.units_sold_90d).toLocaleString(lang === "es" ? "es-PE" : "en-US")
+                : "—"}
             </span>
-            <span className="tabular" style={{ textAlign: "right", font: "600 12px/1 var(--font-mono)", color: "var(--text-primary)" }}>
-              {s.revenue_usd != null ? fmtMoney(s.revenue_usd) : "—"}
-            </span>
-            <span className="tabular" style={{
-              textAlign: "right", font: "600 12px/1 var(--font-mono)",
-              color: (s.margin_usd || 0) > 0 ? "var(--success)" : "var(--text-tertiary)",
-            }}>
-              {s.margin_usd != null ? fmtMoney(s.margin_usd) : "—"}
-            </span>
-            <span className="tabular" style={{
-              textAlign: "right", font: "600 12px/1 var(--font-mono)",
-              color: marginPct == null ? "var(--text-tertiary)"
-                   : marginPct >= 25 ? "var(--success)"
-                   : marginPct >= 15 ? "var(--warning)"
-                   : "var(--critical)",
-            }}>
-              {marginPct != null ? `${marginPct.toFixed(1)}%` : "—"}
+            {/* Columna combinada: margen USD arriba, margen % debajo */}
+            <span style={{ textAlign: "right", minWidth: 0, overflow: "hidden" }}>
+              <span className="tabular" style={{
+                font: "600 12px/1.2 var(--font-mono)",
+                color: (s.margin_usd || 0) > 0 ? "var(--success)" : "var(--text-tertiary)",
+                display: "block",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}>
+                {s.margin_usd != null ? fmtMoney(s.margin_usd) : "—"}
+              </span>
+              <span className="tabular" style={{
+                font: "500 10.5px/1.2 var(--font-mono)",
+                color: marginPct == null ? "var(--text-tertiary)"
+                     : marginPct >= 25 ? "var(--success)"
+                     : marginPct >= 15 ? "var(--warning)"
+                     : "var(--critical)",
+                display: "block",
+              }}>
+                {marginPct != null ? `${marginPct.toFixed(1)}%` : ""}
+              </span>
             </span>
           </div>
         );
