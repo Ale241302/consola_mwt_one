@@ -152,8 +152,23 @@ class PriceHistoryListView(APIView):
                 cols = [c[0] for c in cur.description]
                 for row in cur.fetchall():
                     r = dict(zip(cols, row))
+                    # Conteo defensivo: aceptamos sólo claves que parezcan
+                    # bandaId (1..12). Snapshots viejos pueden traer JSON
+                    # con shape inesperado (ej. lista plana de plazos
+                    # serializada como dict-de-índices), por eso filtramos.
                     cp = r.get("custom_plazos") or {}
-                    custom_count = len(cp) if isinstance(cp, dict) else 0
+                    if isinstance(cp, dict):
+                        valid_band_keys = []
+                        for k in cp.keys():
+                            try:
+                                kn = int(k)
+                                if 1 <= kn <= 12:
+                                    valid_band_keys.append(kn)
+                            except (TypeError, ValueError):
+                                continue
+                        custom_count = len(valid_band_keys)
+                    else:
+                        custom_count = 0
                     out.append({
                         "id":                 str(r["id"]),
                         "brand_id":           str(r["brand_id"]) if r["brand_id"] else None,

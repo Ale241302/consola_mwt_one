@@ -856,19 +856,42 @@ export default function ScreenBrandClientPricingForm() {
         ...(customPlazos && Object.keys(customPlazos).length > 0
             ? { custom_plazos: customPlazos } : {}),
         skus: skus.map((s) => {
-          // Fallback: si por alguna razón el SKU no tiene matrix en state,
-          // la recalculamos desde inputs (caso raro, post-hidratación).
-          const matrix = s.matrix && Object.keys(s.matrix).length > 0
-            ? s.matrix
-            : computeMatrixFromInputs(s);
-          // Normalizar a números con 4 decimales para el JSON wire.
+          // F6.2 · 2026-05-20 · Reconstrucción de la matriz garantizando
+          // shape canónico: para CADA banda (1..12), incluir EXACTAMENTE
+          // los plazos efectivos (defaults + custom_plazos[banda]). Si el
+          // operador editó manualmente alguna celda, esa edición gana.
+          // Las celdas con plazos que ya no existen (plazo eliminado) se
+          // descartan — el snapshot refleja la grilla viva del momento
+          // del save.
+          //
+          // Bug fix: antes la matriz se persistía "tal cual" desde s.matrix,
+          // pero s.matrix podía no reflejar el último estado de customPlazos
+          // (ej. si el usuario agregaba 120d a banda 1 y luego cambiaba el
+          // BRL — el patchSku regenera la matriz con customPlazos sí, pero
+          // si por algún edge case s.matrix se quedaba viejo, el snapshot
+          // guardaba plazos defaults [90/60/30/8] y el visor mostraba "—"
+          // en el plazo custom).
+          const baseMatrix = computeMatrixFromInputs(s, customPlazos);
+          const userMatrix = (s.matrix && typeof s.matrix === "object") ? s.matrix : {};
           const prices_matrix = {};
-          for (const [bandaId, row] of Object.entries(matrix)) {
+          for (const banda of BANDAS_MARLUVAS) {
+            const bid = String(banda.id);
+            const baseRow = baseMatrix[bid] || {};
+            const userRow = userMatrix[bid] || {};
+            const plazos  = getBandPlazos(banda.id, customPlazos);
             const plazosObj = {};
-            for (const [dias, price] of Object.entries(row || {})) {
-              plazosObj[String(dias)] = Number(Number(price).toFixed(4));
+            for (const p of plazos) {
+              const dKey = String(p.dias);
+              // Prioridad: override manual del operador (userRow) > cálculo base (baseRow).
+              const candidate = Number.isFinite(Number(userRow[dKey]))
+                ? Number(userRow[dKey])
+                : Number(baseRow[dKey]);
+              if (Number.isFinite(candidate)) {
+                plazosObj[dKey] = Number(candidate.toFixed(4));
+              }
             }
-            prices_matrix[String(bandaId)] = plazosObj;
+            // Persistir incluso si la banda no tiene celdas (caso degenerado).
+            prices_matrix[bid] = plazosObj;
           }
           // F6 · Ancla efectiva por SKU para el snapshot histórico.
           // Si el SKU tiene override (s.anchor), usa ese; si no, hereda

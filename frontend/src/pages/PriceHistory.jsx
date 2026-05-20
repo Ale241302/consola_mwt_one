@@ -61,6 +61,43 @@ function bandKind(banda) {
   if (banda?.piso)  return "PISO";
   return "VIGENTE";
 }
+
+// Plazos efectivos para una banda dada — tolerante a snapshots viejos.
+//   1) Si hay customPlazos[banda] válido → usa esos (mismo shape que el motor).
+//   2) Si NO hay customPlazos pero la matriz tiene claves de plazo,
+//      DERIVA los plazos desde las claves reales calculando el factor
+//      relativo al plazo "base" (el de 90d si existe, sino el mayor).
+//   3) Fallback: defaults del motor [90, 60, 30, 8].
+function effectivePlazos(bandaId, customPlazos, matrixRow) {
+  const cp = customPlazos && customPlazos[String(bandaId)];
+  if (Array.isArray(cp) && cp.length > 0) {
+    return getBandPlazos(bandaId, customPlazos);
+  }
+  const row = matrixRow || {};
+  const keys = Object.keys(row)
+    .map((k) => Number(k))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (keys.length > 0) {
+    keys.sort((a, b) => b - a);
+    const baseDay  = keys.includes(90) ? 90 : keys[0];
+    const baseVal  = Number(row[String(baseDay)] ?? row[baseDay]);
+    if (Number.isFinite(baseVal) && baseVal > 0) {
+      return keys.map((d) => {
+        const v = Number(row[String(d)] ?? row[d]);
+        const factor = Number.isFinite(v) ? v / baseVal : 1;
+        const pct    = (factor - 1) * 100;
+        let sub;
+        if (d === baseDay)               sub = "base";
+        else if (Math.abs(pct) < 0.005)  sub = "base";
+        else                              sub = (pct > 0 ? "+" : "−") + Math.abs(pct).toFixed(2) + "%";
+        return { dias: d, factor, sub };
+      });
+    }
+    // No podemos derivar factor (precios inválidos) — listar plazos sin sub.
+    return keys.map((d) => ({ dias: d, factor: 1, sub: "" }));
+  }
+  return getBandPlazos(bandaId, null);
+}
 function bandColors(kind) {
   if (kind === "TECHO")  return { bg: TECHO_BG,   strong: TECHO_STRONG,   text: TECHO_TEXT };
   if (kind === "PISO")   return { bg: PISO_BG,    strong: PISO_STRONG,    text: PISO_TEXT };
@@ -301,7 +338,24 @@ function DetailDrawer({ data, loading, brandName, onClose }) {
     catch { return iso; }
   };
   const flag = FLAG[(data?.event?.cliente?.pais_iso2 || '').toUpperCase()] || '🌐';
-  const customPlazos = data?.event?.custom_plazos || {};
+  // Saneamos custom_plazos por si snapshots viejos tienen shape raro
+  // (ej. lista plana en vez de { "<bandaId>": [...] }). Sólo aceptamos
+  // claves 1..12 y arrays válidos de {dias, factor}.
+  const customPlazos = useMemo(() => {
+    const raw = data?.event?.custom_plazos;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      const bid = Number(k);
+      if (!Number.isFinite(bid) || bid < 1 || bid > 12) continue;
+      if (!Array.isArray(v)) continue;
+      const clean = v
+        .filter((p) => p && Number.isFinite(Number(p.dias)) && Number.isFinite(Number(p.factor)))
+        .map((p) => ({ dias: Number(p.dias), factor: Number(p.factor) }));
+      if (clean.length > 0) out[String(bid)] = clean;
+    }
+    return out;
+  }, [data?.event?.custom_plazos]);
 
   return (
     <div onClick={onClose} style={{
@@ -567,7 +621,8 @@ function MatrixView({ matrix, bandIds, customPlazos, anchor }) {
           if (!banda) return null;
           const kind = bandKind(banda);
           const colors = bandColors(kind);
-          const plazos = getBandPlazos(bid, customPlazos);
+          const row    = matrix[String(bid)] || matrix[bid] || {};
+          const plazos = effectivePlazos(bid, customPlazos, row);
           return (
             <div key={`h-${bid}`} style={{
               flex:`${plazos.length} 0 ${plazos.length * 76}px`,
@@ -598,7 +653,8 @@ function MatrixView({ matrix, bandIds, customPlazos, anchor }) {
       <div style={{ display:'flex', alignItems:'stretch',
                     background:'var(--surface-alt, #F8FAFC)' }}>
         {bandIds.map((bid) => {
-          const plazos = getBandPlazos(bid, customPlazos);
+          const row    = matrix[String(bid)] || matrix[bid] || {};
+          const plazos = effectivePlazos(bid, customPlazos, row);
           return (
             <div key={`p-${bid}`} style={{
               flex:`${plazos.length} 0 ${plazos.length * 76}px`,
@@ -630,11 +686,21 @@ function MatrixView({ matrix, bandIds, customPlazos, anchor }) {
           );
         })}
       </div>
-      {/* Fila de precios */}
+      {/* Fila de precios. Lookup tolerante: prueba String e int keys; si la
+          celda no está, intenta derivarla desde el plazo base de la banda
+          (precio_base × factor_plazo) — útil para snapshots viejos que
+          guardaron grilla incompleta. */}
       <div style={{ display:'flex', alignItems:'stretch' }}>
         {bandIds.map((bid) => {
-          const plazos = getBandPlazos(bid, customPlazos);
-          const row    = matrix[String(bid)] || {};
+          // Lookup tolerante por bandaId (string o int).
+          const row = matrix[String(bid)] || matrix[bid] || {};
+          const plazos = effectivePlazos(bid, customPlazos, row);
+          // Precio base de la banda — el plazo cuyo factor = 1.0 ("base").
+          const basePlazo = plazos.find((pp) => Math.abs(pp.factor - 1) < 0.0001);
+          const baseDays  = basePlazo ? String(basePlazo.dias) : null;
+          const basePrice = baseDays != null
+            ? Number(row[baseDays] ?? row[Number(baseDays)])
+            : NaN;
           return (
             <div key={`v-${bid}`} style={{
               flex:`${plazos.length} 0 ${plazos.length * 76}px`,
@@ -643,20 +709,32 @@ function MatrixView({ matrix, bandIds, customPlazos, anchor }) {
               borderRight:'1px solid var(--border-subtle, #E5E7EB)',
             }}>
               {plazos.map((p) => {
-                const raw = row[String(p.dias)];
-                const val = Number(raw);
+                const dKey  = String(p.dias);
+                const raw   = row[dKey] ?? row[Number(dKey)];
+                let val     = Number(raw);
+                let derived = false;
+                if (!Number.isFinite(val) && Number.isFinite(basePrice)) {
+                  // Derivar desde el base de la banda usando el factor del plazo.
+                  val = basePrice * p.factor;
+                  derived = true;
+                }
                 const ok  = Number.isFinite(val);
                 const isAnchorCell = bid === anchor.bandaId && p.dias === anchor.plazoDias;
                 return (
-                  <div key={p.dias} style={{
-                    padding:'10px 4px',
-                    borderRight:'1px solid var(--border-subtle, #F1F5F9)',
-                    textAlign:'center',
-                    background: isAnchorCell ? 'rgba(0,178,134,0.06)' : 'transparent',
-                    fontVariantNumeric:'tabular-nums',
-                    font:`${isAnchorCell ? 700 : 600} 12.5px/1.2 var(--font-mono, ui-monospace)`,
-                    color: ok ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                  }}>
+                  <div key={p.dias}
+                    title={derived ? `Derivado desde base ${baseDays}d (snapshot viejo sin esta celda).` : undefined}
+                    style={{
+                      padding:'10px 4px',
+                      borderRight:'1px solid var(--border-subtle, #F1F5F9)',
+                      textAlign:'center',
+                      background: isAnchorCell ? 'rgba(0,178,134,0.06)' : 'transparent',
+                      fontVariantNumeric:'tabular-nums',
+                      font:`${isAnchorCell ? 700 : 600} 12.5px/1.2 var(--font-mono, ui-monospace)`,
+                      color: !ok ? 'var(--text-tertiary)'
+                            : derived ? 'var(--text-secondary)'
+                            : 'var(--text-primary)',
+                      fontStyle: derived ? 'italic' : 'normal',
+                    }}>
                     {ok ? val.toFixed(2) : '—'}
                   </div>
                 );
