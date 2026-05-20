@@ -52,23 +52,51 @@ def _scope_hash(payload) -> str:
 
 
 def _fetchone(sql, params=None):
-    """Ejecuta SELECT que devuelve una fila; si falla, retorna None."""
+    """Ejecuta SELECT que devuelve una fila; si falla, loguea y retorna None.
+
+    Sprint 2026-05-20 · Antes este helper tragaba TODOS los errores con
+    `except Exception: return None`, lo que hacía indistinguible una BD
+    sin datos de una query rota. Causó que el dashboard mostrara
+    EmptyState honesto durante horas mientras la causa real era un
+    InFailedSqlTransaction o un statement_timeout. Ahora logueamos con
+    contexto (primeros 200 chars del SQL) y mantenemos el fallback
+    silencioso para no tumbar la respuesta HTTP.
+    """
     try:
         with connection.cursor() as c:
             c.execute(sql, params or [])
             return c.fetchone()
-    except Exception:
+    except Exception as exc:
+        log.exception(
+            "[analytics._fetchone] SQL failed (%s): %s",
+            type(exc).__name__, (sql or "").strip()[:200],
+        )
+        # Si la transacción quedó en estado de fallo, hay que abortarla
+        # para que las queries subsiguientes del mismo request no caigan
+        # también con InFailedSqlTransaction.
+        try:
+            connection.rollback()
+        except Exception:
+            pass
         return None
 
 
 def _fetchall(sql, params=None):
-    """Ejecuta SELECT que devuelve múltiples filas; si falla, retorna []."""
+    """Ejecuta SELECT que devuelve múltiples filas; si falla, loguea y retorna []."""
     try:
         with connection.cursor() as c:
             c.execute(sql, params or [])
             cols = [d[0] for d in c.description]
             return [dict(zip(cols, r)) for r in c.fetchall()]
-    except Exception:
+    except Exception as exc:
+        log.exception(
+            "[analytics._fetchall] SQL failed (%s): %s",
+            type(exc).__name__, (sql or "").strip()[:200],
+        )
+        try:
+            connection.rollback()
+        except Exception:
+            pass
         return []
 
 
@@ -693,6 +721,81 @@ class AnalyticsViewSet(viewsets.ViewSet):
             ORDER BY updated_at DESC
         """)
         return Response(rows)
+
+    # ── Heatmap tallas × mercado ──────────────────────────────
+    @action(detail=False, methods=["get"], url_path="size_market_distribution")
+    def size_market_distribution(self, request):
+        """Distribución de unidades vendidas por talla × mercado.
+
+        Shape:
+          {
+            sizes:   ["38","39","40","41","42","43","44"],  // ordenadas
+            markets: [{ code: "CR", name: "Costa Rica" }, ...],
+            data:    [{ size, market, units }],
+            curve:   [{ size, pct_target }] | null   // si existe curva esperada
+          }
+
+        · Fuente:
+            expedientes.linea.size (string EU '34'..'49')
+            clientes.cliente.pais_iso2 (mercado destino del cliente)
+            expedientes.linea.qty (unidades)
+        · Filtro: líneas activas con tallas válidas en últimos 365d
+          (proxy de cierre vía expediente.updated_at).
+        · La "curva esperada S1–S6" del prompt CEO no existe como tabla
+          de % objetivo por SKU. Cuando se cree
+          `productos.size_distribution_curve` con pct_target, se puede
+          devolver en `curve`. Hoy `curve` es null.
+        """
+        # Detectar si schema/cols existen — evita 500 si BD es muy vieja
+        check = _fetchone("""
+            SELECT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='expedientes' AND table_name='linea'
+                AND column_name='size'
+            )
+        """)
+        if not check or not check[0]:
+            return Response({"sizes": [], "markets": [], "data": [], "curve": None})
+
+        rows = _fetchall("""
+            SELECT
+              l.size                                       AS size,
+              COALESCE(cli.pais_iso2, 'ZZ')                AS market,
+              SUM(l.qty)::float                            AS units
+            FROM expedientes.linea     l
+            JOIN expedientes.expediente e ON e.id = l.expediente_id
+            LEFT JOIN clientes.cliente cli  ON cli.id = e.client_id
+            WHERE l.is_active = TRUE
+              AND e.is_active = TRUE
+              AND l.size IS NOT NULL
+              AND l.size <> ''
+              AND l.qty > 0
+              AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
+            GROUP BY l.size, COALESCE(cli.pais_iso2, 'ZZ')
+            ORDER BY l.size, market
+        """)
+
+        # Construcción del shape esperado por el frontend.
+        size_set = sorted({r["size"] for r in rows if r.get("size")},
+                          key=lambda s: (len(s), s))  # 38 < 39 < ... < 100
+        market_set = sorted({r["market"] for r in rows if r.get("market")})
+
+        # Nombres legibles de mercado (best-effort sin lookup pesado).
+        market_names = {
+            "CR": "Costa Rica", "BR": "Brasil",    "US": "USA",
+            "MX": "México",     "CO": "Colombia",  "PE": "Perú",
+            "CL": "Chile",      "AR": "Argentina", "EC": "Ecuador",
+            "DO": "R. Dominicana",
+            "ZZ": "Sin país",
+        }
+        markets = [{"code": m, "name": market_names.get(m, m)} for m in market_set]
+
+        return Response({
+            "sizes":   size_set,
+            "markets": markets,
+            "data":    rows,
+            "curve":   None,  # Pendiente productos.size_distribution_curve
+        })
 
 
 # ══════════════════════════════════════════════════════════════

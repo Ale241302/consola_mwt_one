@@ -1007,6 +1007,7 @@ export const analyticsApi = {
   inventoryCoverageByNode:  () => apiFetch(`${analyticsBase}/inventory_coverage_by_node/`,{ token: getToken() }),
   topSkusMargen:            () => apiFetch(`${analyticsBase}/top_skus_margen/`,           { token: getToken() }),
   expedienteMarginScatter:  () => apiFetch(`${analyticsBase}/expediente_margin_scatter/`, { token: getToken() }),
+  sizeMarketDistribution:   () => apiFetch(`${analyticsBase}/size_market_distribution/`,  { token: getToken() }),
 };
 
 // ---------------------------------------------------------------------

@@ -48,6 +48,7 @@ export function useDashboardKpis() {
     inventoryByNode: [],
     topSkus: [],
     marginScatter: [],
+    sizeMarket: null,
     loading: true,
     error: null,
   });
@@ -60,6 +61,7 @@ export function useDashboardKpis() {
         exposicion, margenMarcas, byStatus, urgent,
         creditClock, r1Ratio, byStatusByBrand,
         inventoryByNode, topSkus, marginScatter,
+        sizeMarket,
       ] = await Promise.all([
         analyticsApi.dashboardKpis().catch(emptyObj),
         analyticsApi.cashflow().catch(emptyArray),
@@ -74,6 +76,7 @@ export function useDashboardKpis() {
         analyticsApi.inventoryCoverageByNode().catch(emptyArray),
         analyticsApi.topSkusMargen().catch(emptyArray),
         analyticsApi.expedienteMarginScatter().catch(emptyArray),
+        analyticsApi.sizeMarketDistribution().catch(emptyObj),
       ]);
       setState({
         kpis:            kpis || null,
@@ -89,6 +92,7 @@ export function useDashboardKpis() {
         inventoryByNode: Array.isArray(inventoryByNode) ? inventoryByNode : [],
         topSkus:         Array.isArray(topSkus)         ? topSkus         : [],
         marginScatter:   Array.isArray(marginScatter)   ? marginScatter   : [],
+        sizeMarket:      sizeMarket || null,
         loading:         false,
         error:           null,
       });

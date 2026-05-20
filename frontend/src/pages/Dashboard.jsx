@@ -35,6 +35,7 @@ import {
   TopClientsTable,
   TopSkusTable,
   NodeInventoryGrid,
+  SizeMarketHeatmap,
   FxToggle,
   GlobalFilters,
   DashboardCard,
@@ -246,6 +247,7 @@ export default function ScreenDashboard() {
   const {
     kpis, cashflow, aging, exposicion, margenMarcas, byStatus, urgent,
     creditClock, r1Ratio, byStatusByBrand, inventoryByNode, topSkus, marginScatter,
+    sizeMarket,
     loading, error, reload,
   } = useDashboardKpis();
   const { brands, resolveBrand } = useBrandsLight();
@@ -750,22 +752,21 @@ export default function ScreenDashboard() {
           </SafeWidget>
         </DashboardCard>
 
-        {/* 4C · Heatmap tallas — sigue pendiente (sin schema de tallas) */}
+        {/* 4C · Heatmap tallas × mercado · cableado al endpoint real */}
         <DashboardCard
           title={lang === "en" ? "Size × market heatmap" : "Heatmap tallas × mercado"}
           subtitle={lang === "en"
-            ? "Distribution vs expected curve S1–S6"
-            : "Distribución vs curva esperada S1–S6"}
+            ? "Units sold by size and destination market (last 365d)"
+            : "Unidades vendidas por talla y mercado destino (últimos 365d)"}
         >
-          <SafeWidget lang={lang}>
-            <EmptyState
-              lang={lang}
-              title={lang === "en" ? "No size data" : "Sin data de tallas"}
-              hint={lang === "en"
-                ? "Pending DB: ENT_OPS_TALLAS schema + sales-by-size aggregation."
-                : "Pendiente BD: schema ENT_OPS_TALLAS + agregación ventas por talla."}
-              endpoint="/api/analytics/size_market_distribution/"
-            />
+          <SafeWidget lang={lang} endpoint="/api/analytics/size_market_distribution/">
+            {loading
+              ? <Skeleton height={220} />
+              : <SizeMarketHeatmap
+                  payload={sizeMarket}
+                  lang={lang}
+                  emptyEndpoint="/api/analytics/size_market_distribution/"
+                />}
           </SafeWidget>
         </DashboardCard>
 

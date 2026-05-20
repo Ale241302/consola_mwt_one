@@ -1128,6 +1128,150 @@ const selectStyle = {
 };
 
 // ─────────────────────────────────────────────────────────────────────
+// SizeMarketHeatmap — distribución unidades vendidas por talla × mercado.
+//
+// Shape esperado del backend (`/api/analytics/size_market_distribution/`):
+//   {
+//     sizes:   ["38","39","40",...],
+//     markets: [{ code: "CR", name: "Costa Rica" }, ...],
+//     data:    [{ size, market, units }],
+//     curve:   [{ size, pct_target }] | null
+//   }
+//
+// Cada celda colorea por intensidad (escala por máximo absoluto del set).
+// Cuando exista `curve` (curva esperada), se calcula desviación cliente-side
+// y se colorea verde/rojo según prompt CEO (verde = match, rojo > 50% drift).
+// Hoy `curve` viene null → escala neutral por intensidad de ventas.
+// ─────────────────────────────────────────────────────────────────────
+export function SizeMarketHeatmap({
+  payload,
+  lang = "es",
+  emptyEndpoint = "/api/analytics/size_market_distribution/",
+}) {
+  const sizes   = Array.isArray(payload?.sizes)   ? payload.sizes   : [];
+  const markets = Array.isArray(payload?.markets) ? payload.markets : [];
+  const data    = Array.isArray(payload?.data)    ? payload.data    : [];
+
+  if (!sizes.length || !markets.length || !data.length) {
+    return (
+      <EmptyState
+        lang={lang}
+        title={lang === "es" ? "Sin distribución de tallas" : "No size distribution"}
+        hint={lang === "es"
+          ? "No hay líneas con talla (size) registradas en últimos 365d, o ningún cliente tiene país asignado."
+          : "No lines with size in last 365d, or no clients with country."}
+        endpoint={emptyEndpoint}
+      />
+    );
+  }
+
+  // Index para lookup O(1)
+  const cellMap = useMemo(() => {
+    const m = new Map();
+    for (const row of data) {
+      m.set(`${row.size}|${row.market}`, Number(row.units) || 0);
+    }
+    return m;
+  }, [data]);
+
+  const maxUnits = useMemo(() => Math.max(1, ...data.map(d => Number(d.units) || 0)), [data]);
+
+  const cellColor = (units) => {
+    if (!units || units <= 0) return "var(--bg-alt)";
+    const intensity = Math.min(1, units / maxUnits);
+    // Escala de verde menta → primary navy según intensidad
+    // Usamos opacity en lugar de hex para respetar R1 (tokens MWT)
+    return `color-mix(in oklab, var(--brand-accent), var(--brand-primary) ${Math.round(intensity * 80)}%)`;
+  };
+
+  const cellTextColor = (units) =>
+    units && units / maxUnits > 0.5 ? "var(--text-on-navy)" : "var(--text-primary)";
+
+  // Grid: 1 col para label de talla + N cols (una por mercado)
+  const gridTemplate = `42px repeat(${markets.length}, minmax(0, 1fr))`;
+
+  return (
+    <div>
+      {/* Header con códigos de mercado */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: gridTemplate,
+        gap: 4,
+        padding: "0 0 6px 0",
+        font: "var(--micro)",
+        color: "var(--text-tertiary)",
+        letterSpacing: "0.06em",
+      }}>
+        <span>{lang === "es" ? "Talla" : "Size"}</span>
+        {markets.map(m => (
+          <span key={m.code} title={m.name} style={{ textAlign: "center" }}>
+            {m.code}
+          </span>
+        ))}
+      </div>
+
+      {/* Filas de tallas */}
+      {sizes.map(size => (
+        <div key={size} style={{
+          display: "grid",
+          gridTemplateColumns: gridTemplate,
+          gap: 4,
+          marginBottom: 4,
+          alignItems: "center",
+        }}>
+          <span className="tabular" style={{
+            font: "600 12px/1 var(--font-mono)",
+            color: "var(--text-secondary)",
+            textAlign: "right",
+            paddingRight: 6,
+          }}>
+            {size}
+          </span>
+          {markets.map(m => {
+            const units = cellMap.get(`${size}|${m.code}`) || 0;
+            return (
+              <div
+                key={m.code}
+                title={`${size} · ${m.name}: ${units.toLocaleString(lang === "en" ? "en-US" : "es-PE")} uds`}
+                style={{
+                  background: cellColor(units),
+                  color: cellTextColor(units),
+                  borderRadius: "var(--radius-sm)",
+                  textAlign: "center",
+                  padding: "6px 4px",
+                  font: "600 11px/1 var(--font-mono)",
+                  minHeight: 24,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                {units > 0 ? units : ""}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+
+      <div style={{
+        marginTop: 10,
+        font: "var(--caption)",
+        color: "var(--text-tertiary)",
+      }}>
+        {lang === "es"
+          ? `Total ${data.reduce((a, d) => a + (Number(d.units) || 0), 0).toLocaleString("es-PE")} uds en ${sizes.length} tallas × ${markets.length} mercados.`
+          : `Total ${data.reduce((a, d) => a + (Number(d.units) || 0), 0).toLocaleString("en-US")} units across ${sizes.length} sizes × ${markets.length} markets.`}
+        {!payload?.curve && (
+          <span style={{ marginLeft: 6 }}>
+            · {lang === "es"
+                ? "Curva esperada S1-S6 pendiente: requiere tabla productos.size_distribution_curve."
+                : "Expected curve S1-S6 pending: needs productos.size_distribution_curve."}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // CardWithEmpty — wrapper de tarjeta con título + subtítulo + slot vacío.
 // Mantiene el estilo del .card existente.
 // ─────────────────────────────────────────────────────────────────────
