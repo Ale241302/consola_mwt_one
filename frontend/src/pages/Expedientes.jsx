@@ -812,8 +812,11 @@ export default function ScreenExpedientes() {
                 <th style={{width: 140}}>{tr(lang,'payments_breakdown')}</th>
               </>}
               {effectiveView === 'fleet' && <>
-                <th>{tr(lang,'origin')} → {tr(lang,'destination')}</th>
-                <th style={{textAlign:'right'}}>{tr(lang,'mode')}</th>
+                {/* "Origen → Destino" y "Modo" son información operativa
+                    interna de MWT (rutas / freight mode). POL_VISIBILIDAD:
+                    CLIENT no ve datos logísticos de back-office. */}
+                {!isClient && <th>{tr(lang,'origin')} → {tr(lang,'destination')}</th>}
+                {!isClient && <th style={{textAlign:'right'}}>{tr(lang,'mode')}</th>}
                 {/* "Días de crédito" es una señal interna (cuántos días lleva
                     la factura sin pagar). No mostramos esto al cliente. */}
                 {isAdmin && <th style={{width:90, textAlign:'right'}}>{tr(lang,'credit_days')}</th>}
@@ -979,13 +982,19 @@ export default function ScreenExpedientes() {
                     </>}
 
                     {effectiveView === 'fleet' && <>
-                      <td>
-                        <div className="caption">{e.origin}</div>
-                        <div className="body-sm" style={{fontWeight:500}}>→ {e.destination}</div>
-                      </td>
-                      <td style={{textAlign:'right'}}>
-                        <span className="caption">{e.mode} · {e.freight_mode}</span>
-                      </td>
+                      {/* Columnas logísticas (origen/destino + modo de
+                          transporte) OCULTAS para CLIENT (POL_VISIBILIDAD). */}
+                      {!isClient && (
+                        <td>
+                          <div className="caption">{e.origin}</div>
+                          <div className="body-sm" style={{fontWeight:500}}>→ {e.destination}</div>
+                        </td>
+                      )}
+                      {!isClient && (
+                        <td style={{textAlign:'right'}}>
+                          <span className="caption">{e.mode} · {e.freight_mode}</span>
+                        </td>
+                      )}
                       {/* "credit_days" es una señal interna (edad de la cuenta por cobrar).
                           CLIENT no ve esto. */}
                       {isAdmin && (

@@ -307,8 +307,15 @@ class PortalViewSet(viewsets.ViewSet):
         Sprint 2026-05-20 · Multi-empresa. Devuelve OCs de TODAS las
         empresas asignadas al usuario (vía legal_entity_ids[]) — o de
         una sola si se pasa ?empresa_id=.
-        Incluye `client_id` y `client_name` para que el frontend pueda
-        agrupar por empresa cuando el usuario tiene más de una.
+
+        Sprint 2026-05-21 · fix DB drift.
+        Las OCs en BD pueden tener `oc.client_id` NULL mientras los
+        expedientes hijos sí tienen client_id correcto. Por eso aquí
+        incluimos UNION lógica:
+          · OCs cuyo `client_id` matchea, O
+          · OCs que tienen algún expediente con `client_id` del usuario.
+
+        Incluye `client_id` y `client_name` para agrupar por empresa.
         """
         cids = _resolve_client_ids(request)
         if not cids:
@@ -317,20 +324,32 @@ class PortalViewSet(viewsets.ViewSet):
         placeholders = ",".join(["%s"] * len(cids))
         rows = _fetchall(
             f"""
-            SELECT
+            SELECT DISTINCT
               o.id, o.codigo, o.brand_id, o.proforma, o.moneda,
               o.total_value, o.total_invoiced, o.total_paid, o.balance,
               o.coverage_pct, o.lines_count, o.issued_at, o.estado,
-              o.client_id,
+              COALESCE(o.client_id, exp_inner.client_id) AS client_id,
               c.nombre AS client_name
             FROM expedientes.oc o
-            LEFT JOIN clientes.cliente c ON c.id = o.client_id
+            LEFT JOIN LATERAL (
+              SELECT e.client_id
+                FROM expedientes.expediente e
+               WHERE e.oc_id = o.id
+                 AND e.is_active = TRUE
+                 AND e.client_id IS NOT NULL
+               LIMIT 1
+            ) exp_inner ON TRUE
+            LEFT JOIN clientes.cliente c
+                   ON c.id = COALESCE(o.client_id, exp_inner.client_id)
             WHERE o.is_active = TRUE
-              AND o.client_id::text IN ({placeholders})
-            ORDER BY o.issued_at DESC, o.created_at DESC
+              AND (
+                o.client_id::text IN ({placeholders})
+                OR exp_inner.client_id::text IN ({placeholders})
+              )
+            ORDER BY o.issued_at DESC NULLS LAST, o.created_at DESC
             LIMIT 100
             """,
-            cids,
+            cids + cids,
         )
         return Response(rows)
 
