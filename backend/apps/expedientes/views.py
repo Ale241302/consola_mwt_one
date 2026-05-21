@@ -279,17 +279,20 @@ class ExpedienteViewSet(viewsets.ViewSet):
         if q:
             qs = qs.filter(codigo__icontains=q)
 
-        # Sprint 2026-05-06 · Aislamiento de visibilidad por rol.
-        # Para CLIENT_*: solo expedientes cuyo client_id u
-        # operating_company_id estén en su pool de empresas
+        # Sprint 2026-05-06 / fix 2026-05-21 · Aislamiento de visibilidad por rol.
+        # Para CLIENT_*: SOLO expedientes cuyo client_id esté en su pool
         # (legal_entity_ids). Admin/CEO/staff: sin filtro.
+        #
+        # NOTA: antes se aceptaba también `operating_company_id__in` pero eso
+        # abría una fuga de scope (un CLIENT con MWT en su pool veía TODOS
+        # los expedientes operados por MWT). El portal nunca consideró
+        # operating_company_id y el contrato es: legal_entity_ids = clientes
+        # del CLIENT, no empresas operadoras. Si necesitás impersonación
+        # staff, usar Tweaks Panel / X-Viewport-Role.
         if _is_client_viewer(request):
             user_companies = list(getattr(request.user, "legal_entity_ids", None) or [])
             if user_companies:
-                qs = qs.filter(
-                    Q(client_id__in=user_companies) |
-                    Q(operating_company_id__in=user_companies)
-                )
+                qs = qs.filter(client_id__in=user_companies)
             else:
                 # Sin scope → no ve nada (defensivo).
                 qs = qs.none()
@@ -722,12 +725,12 @@ class ExpedienteViewSet(viewsets.ViewSet):
                     "credit_60_75": 0, "credit_75_plus": 0,
                     "factory_delayed": 0,
                 })
+            # Fix 2026-05-21 · SOLO client_id, no operating_company_id.
+            # Mismo motivo que ExpedienteViewSet.list(): un CLIENT con MWT
+            # en su pool veía KPIs de TODOS los expedientes operados por MWT.
             placeholders = ",".join(["%s"] * len(scope))
-            where.append(
-                f"(client_id IN ({placeholders}) "
-                f"OR operating_company_id IN ({placeholders}))"
-            )
-            params.extend(scope); params.extend(scope)
+            where.append(f"client_id IN ({placeholders})")
+            params.extend(scope)
 
         where_sql = " AND ".join(where)
 
@@ -2164,14 +2167,14 @@ class ExpedienteViewSet(viewsets.ViewSet):
         is_client = _is_client_viewer(request)
 
         # Visibilidad CLIENT_*: el expediente debe pertenecer a su pool
-        # (consistente con list()).
+        # (consistente con list()). Fix 2026-05-21: SOLO client_id, no
+        # operating_company_id — ver comentario largo en list().
         if is_client:
             user_companies = list(getattr(request.user, "legal_entity_ids", None) or [])
             if not user_companies:
                 return Response({"detail": "forbidden"}, status=403)
             client_ok = str(getattr(exp, "client_id", "") or "") in {str(c) for c in user_companies}
-            op_ok     = str(getattr(exp, "operating_company_id", "") or "") in {str(c) for c in user_companies}
-            if not (client_ok or op_ok):
+            if not client_ok:
                 return Response({"detail": "forbidden"}, status=403)
 
         # 1) Lookup ART-04 metadata (puede no existir si el SAP fue
