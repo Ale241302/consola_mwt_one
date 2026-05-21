@@ -159,6 +159,8 @@ def _resolve_client_ids(request):
     """
     # 1. Empresas reales del usuario desde users.mwtuser.legal_entity_ids
     #    Join por EMAIL: core.users.email_plain == users.mwtuser.email_plain.
+    #    Sin filtro is_active=TRUE — el flag soft-delete del usuario no debe
+    #    invalidar el scope (los chips siguen visibles en /usuarios).
     user_ids = []
     try:
         u = getattr(request, "user", None)
@@ -166,15 +168,20 @@ def _resolve_client_ids(request):
             email = (getattr(u, "email", "") or "").strip().lower()
             if email:
                 with connection.cursor() as cur:
+                    # Búsqueda tolerante (TRIM + LOWER) por email_plain
+                    # y, como fallback, por contact_email.
                     cur.execute(
                         """
                         SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
                           FROM users.mwtuser
-                         WHERE lower(email_plain) = %s
-                           AND is_active = TRUE
+                         WHERE lower(trim(email_plain)) = %s
+                            OR lower(trim(COALESCE(contact_email, ''))) = %s
+                         ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                                  cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
+                                  updated_at DESC NULLS LAST
                          LIMIT 1
                         """,
-                        [email],
+                        [email, email],
                     )
                     row = cur.fetchone()
                     if row and row[0]:
@@ -187,8 +194,7 @@ def _resolve_client_ids(request):
                         """
                         SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
                           FROM users.mwtuser
-                         WHERE id = %s
-                           AND is_active = TRUE
+                         WHERE id::text = %s
                          LIMIT 1
                         """,
                         [str(u.id)],
@@ -601,6 +607,97 @@ class PortalViewSet(viewsets.ViewSet):
             payload={"keys": list(prefs.keys())},
         )
         return Response({"ok": True, "preferences": row[0]})
+
+    # ── /api/portal/_debug/ ───────────────────────────────────
+    @action(detail=False, methods=["get"], url_path="_debug")
+    def _debug(self, request):
+        """Diagnóstico del scope del portal (CEO/staff únicamente).
+
+        Devuelve EXACTAMENTE qué encuentra el resolver en cada paso:
+          · request.user info (id, email, role)
+          · Filas de users.mwtuser que coincidan por email y por id
+          · client_ids resueltos
+          · Para cada client_id: nombre + is_active
+
+        Útil para diagnosticar por qué `empresas` viene vacío.
+        Solo accesible para staff (CEO/admin).
+        """
+        u = getattr(request, "user", None)
+        role = (getattr(u, "role", "") or "").lower()
+        email = (getattr(u, "email", "") or "").strip().lower()
+
+        # Limitar a staff por seguridad (cliente B2B no debe ver internals)
+        staff_roles = {"superadmin", "admin", "ceo", "manager"}
+        if role not in staff_roles:
+            return Response(
+                {"detail": "Debug endpoint only for staff."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        out = {
+            "request_user": {
+                "id":    str(getattr(u, "id", None)),
+                "email": getattr(u, "email", None),
+                "role":  role,
+            },
+            "lookup_email_lowercased": email,
+            "mwtuser_by_email":   [],
+            "mwtuser_by_id":      [],
+            "resolved_client_ids": [],
+            "resolved_empresas":   [],
+        }
+
+        try:
+            with connection.cursor() as cur:
+                # Filas en users.mwtuser que matcheen email
+                cur.execute("""
+                    SELECT id::text, email_plain, contact_email,
+                           is_active, legal_entity_ids
+                      FROM users.mwtuser
+                     WHERE lower(trim(email_plain)) = %s
+                        OR lower(trim(COALESCE(contact_email, ''))) = %s
+                """, [email, email])
+                for r in cur.fetchall():
+                    out["mwtuser_by_email"].append({
+                        "id":               r[0],
+                        "email_plain":      r[1],
+                        "contact_email":    r[2],
+                        "is_active":        r[3],
+                        "legal_entity_ids": list(r[4]) if r[4] else [],
+                    })
+
+                # Filas en users.mwtuser que matcheen id
+                cur.execute("""
+                    SELECT id::text, email_plain, is_active, legal_entity_ids
+                      FROM users.mwtuser
+                     WHERE id::text = %s
+                """, [str(getattr(u, "id", "")) or "x"])
+                for r in cur.fetchall():
+                    out["mwtuser_by_id"].append({
+                        "id":               r[0],
+                        "email_plain":      r[1],
+                        "is_active":        r[2],
+                        "legal_entity_ids": list(r[3]) if r[3] else [],
+                    })
+        except Exception as e:
+            out["error"] = str(e)
+
+        cids = _resolve_client_ids(request)
+        out["resolved_client_ids"] = cids
+
+        if cids:
+            placeholders = ",".join(["%s"] * len(cids))
+            empresas = _fetchall(
+                f"""
+                SELECT id::text, nombre, is_active
+                  FROM clientes.cliente
+                 WHERE id::text IN ({placeholders})
+                """,
+                cids,
+            )
+            out["resolved_empresas"] = empresas
+
+        return Response(out)
 
     # ── /api/portal/kpis/ ─────────────────────────────────────
     @action(detail=False, methods=["get"])
@@ -1024,12 +1121,22 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
         request._portal_client_id  = cid
         request._portal_client_ids = cids
 
-    # ── QUERYSET — scope + whitelist de visibility_tier ───────────
+    # ── QUERYSET — scope + gobernanza ─────────────────────────────
+    #
+    # Sprint 2026-05-21 · fix gobernanza producto↔cliente.
+    # La gobernanza producto-cliente vive en
+    #   `productos.producto.especificaciones->visibility`
+    # con shape:
+    #   { "visible_to_all": bool, "client_overrides": { "<client_uuid>": bool } }
+    #
+    # Reglas de visibilidad (POL_VISIBILIDAD_PRODUCTO):
+    #   · visible_to_all === TRUE  → todos los clientes B2B lo ven.
+    #   · visible_to_all === FALSE → solo lo ven los clientes con override TRUE.
+    #
+    # Esto OVERRIDEA el `visibility_tier` legacy. Aquí asumimos que cualquier
+    # producto activo es candidato; la decisión final es por JSON.
     def get_queryset(self):
-        qs = Producto.objects.filter(
-            is_active=True,
-            visibility_tier__in=["PUBLIC", "PARTNER_B2B"],
-        )
+        qs = Producto.objects.filter(is_active=True)
 
         # Filtros opcionales (útiles en el grid: q, marca, categoría)
         q = self.request.query_params.get("q")
@@ -1042,36 +1149,47 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
         if categoria:
             qs = qs.filter(categoria=categoria)
 
-        # Scope adicional: brands asignados al/los cliente(s) vía
-        # commercial.client_assignment (si existe). Best-effort.
-        # Sprint 2026-05-21 · multi-empresa: si el usuario tiene varias
-        # empresas, unimos las brands de TODAS (catálogo agregado).
+        # Resolver client_ids del scope (multi-empresa)
         cids = getattr(self.request, "_portal_client_ids", None) or []
         if not cids:
             cid_single = getattr(self.request, "_portal_client_id", None)
             if cid_single:
                 cids = [str(cid_single)]
+
+        # ── Gobernanza por especificaciones.visibility ────────────────
+        # Si el usuario tiene N empresas, el producto se incluye si:
+        #   - visibility.visible_to_all = TRUE  (todos los clientes lo ven)
+        #   - OR  visibility.client_overrides[<empresa_id>] = TRUE  para
+        #         alguna de las empresas del usuario.
+        #
+        # Para evitar Q complejos, hacemos un OR construido con extra(where=).
         if cids:
-            try:
-                with connection.cursor() as c:
-                    placeholders = ",".join(["%s"] * len(cids))
-                    c.execute(
-                        f"""
-                        SELECT DISTINCT brand_id
-                          FROM commercial.client_assignment
-                         WHERE client_id::text IN ({placeholders})
-                           AND is_active = TRUE
-                        """,
-                        [str(x) for x in cids],
-                    )
-                    brand_ids = [r[0] for r in c.fetchall() if r[0]]
-                if brand_ids:
-                    qs = qs.filter(marca_id__in=brand_ids)
-            except Exception:
-                # Si la tabla no está montada → se deja el whitelist
-                # visibility_tier como único filtro (comportamiento OK
-                # en ambientes dev/sandbox).
-                pass
+            # Cada empresa contribuye una cláusula
+            # (especificaciones->'visibility'->'client_overrides'->><id>)::boolean = TRUE
+            override_clauses = []
+            params = []
+            for cid in cids:
+                override_clauses.append(
+                    "(especificaciones->'visibility'->'client_overrides'->>%s)::text = 'true'"
+                )
+                params.append(str(cid))
+            override_or = " OR ".join(override_clauses) if override_clauses else "FALSE"
+            qs = qs.extra(  # noqa: S610 — params binded
+                where=[
+                    f"(COALESCE((especificaciones->'visibility'->>'visible_to_all')::text, 'true') = 'true' "
+                    f" OR ({override_or}))"
+                ],
+                params=params,
+            )
+        else:
+            # Sin scope (staff sin impersonación): mostramos solo productos
+            # marcados como visibles para TODOS los clientes (no expongamos
+            # productos sensibles por defecto).
+            qs = qs.extra(
+                where=[
+                    "(COALESCE((especificaciones->'visibility'->>'visible_to_all')::text, 'true') = 'true')"
+                ],
+            )
 
         return qs.order_by("marca_id", "sku")
 

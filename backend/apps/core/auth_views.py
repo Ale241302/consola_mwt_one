@@ -402,6 +402,9 @@ class MeView(APIView):
             # legal_entity_ids) son tablas INDEPENDIENTES con UUIDs
             # distintos. Hacemos el lookup por EMAIL (canónico en ambas)
             # con fallback por id por si los UUIDs sí coinciden.
+            #
+            # Sin filtro is_active=TRUE: el flag soft-delete no debe
+            # invalidar el scope si el usuario igual está accediendo.
             user["legal_entity_ids"] = []
             email_low = (user.get("email_plain") or "").strip().lower()
             try:
@@ -411,7 +414,8 @@ class MeView(APIView):
                         SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
                           FROM users.mwtuser
                          WHERE lower(email_plain) = %s
-                           AND is_active = TRUE
+                         ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                                  updated_at DESC NULLS LAST
                          LIMIT 1
                         """,
                         [email_low],
@@ -426,8 +430,7 @@ class MeView(APIView):
                         """
                         SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
                           FROM users.mwtuser
-                         WHERE id = %s
-                           AND is_active = TRUE
+                         WHERE id::text = %s
                          LIMIT 1
                         """,
                         [user["id"]],
