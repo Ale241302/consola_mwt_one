@@ -320,8 +320,27 @@ function ProductCard({ product, lang, onOpenDetail, onBuy, cartQty = 0, onChange
       {/* Thumbnail */}
       <div className="catalog-card-thumb" aria-hidden="true">
         {imagen_url ? (
-          <img src={imagen_url} alt={nombre || sku} loading="lazy" />
-        ) : (
+          <img
+            src={
+              // Si imagen_url ya es URL absoluta (CDN externo), úsala
+              // directo. Si es una key de MinIO (formato 'producto/.../*.png'),
+              // pásala por /api/storage/download/ — mismo patrón que el
+              // módulo /productos admin.
+              /^https?:\/\//i.test(imagen_url)
+                ? imagen_url
+                : `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(imagen_url)}`
+            }
+            alt={nombre || sku}
+            loading="lazy"
+            onError={(e) => {
+              // Si la key es inválida (legacy), oculta y deja placeholder
+              e.currentTarget.style.display = "none";
+              const ph = e.currentTarget.nextElementSibling;
+              if (ph && ph.classList) ph.classList.remove("hidden");
+            }}
+          />
+        ) : null}
+        {!imagen_url && (
           <div className="catalog-card-thumb-placeholder">
             <span style={{ fontSize: 32, opacity: 0.4 }}>📦</span>
           </div>
