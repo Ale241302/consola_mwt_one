@@ -241,6 +241,106 @@ def _resolve_client_ids(request):
     return user_ids
 
 
+def _all_user_client_ids(request):
+    """Variante de _resolve_client_ids que IGNORA empresa_id / X-Portal-Client
+    y siempre devuelve la lista canónica de empresas del usuario logueado.
+    Útil para /api/portal/me/ donde queremos exponer SIEMPRE el catálogo
+    completo de empresas, independiente del filtro activo del UI.
+    """
+    user_ids: list[str] = []
+    u = getattr(request, "user", None)
+    if u is not None and getattr(u, "is_authenticated", False):
+        injected = list(getattr(u, "legal_entity_ids", None) or [])
+        if injected:
+            user_ids = [str(x).lower() for x in injected if x]
+
+    # Mismo fallback SQL por email/id que _resolve_client_ids
+    if not user_ids:
+        try:
+            if u is not None and getattr(u, "is_authenticated", False):
+                email = (getattr(u, "email", "") or "").strip().lower()
+                with connection.cursor() as cur:
+                    if email:
+                        cur.execute(
+                            """
+                            SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                              FROM users.mwtuser
+                             WHERE lower(trim(email_plain)) = %s
+                                OR lower(trim(COALESCE(contact_email, ''))) = %s
+                             ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                                      cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
+                                      updated_at DESC NULLS LAST
+                             LIMIT 1
+                            """,
+                            [email, email],
+                        )
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            user_ids = [str(x) for x in row[0] if x]
+                    if not user_ids:
+                        cur.execute(
+                            """
+                            SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                              FROM users.mwtuser
+                             WHERE id::text = %s
+                             LIMIT 1
+                            """,
+                            [str(u.id)],
+                        )
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            user_ids = [str(x) for x in row[0] if x]
+        except Exception as e:
+            log.warning("_all_user_client_ids fallback SQL falló: %s", e)
+            user_ids = []
+
+    return user_ids
+
+
+def _user_identity(request):
+    """Devuelve {id, email, full_name} del usuario logueado o None.
+    Resuelve full_name desde users.mwtuser via email/id (core.users solo
+    tiene email/username y dispatch_admin)."""
+    u = getattr(request, "user", None)
+    if u is None or not getattr(u, "is_authenticated", False):
+        return None
+    out = {
+        "id":         str(getattr(u, "id", "") or ""),
+        "email":      getattr(u, "email", "") or "",
+        "full_name":  None,
+    }
+    try:
+        email = (out["email"] or "").strip().lower()
+        with connection.cursor() as cur:
+            if email:
+                cur.execute(
+                    """
+                    SELECT full_name
+                      FROM users.mwtuser
+                     WHERE lower(trim(email_plain)) = %s
+                        OR lower(trim(COALESCE(contact_email, ''))) = %s
+                     ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                              updated_at DESC NULLS LAST
+                     LIMIT 1
+                    """,
+                    [email, email],
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    out["full_name"] = row[0]
+            if not out["full_name"] and out["id"]:
+                cur.execute(
+                    "SELECT full_name FROM users.mwtuser WHERE id::text = %s LIMIT 1",
+                    [out["id"]],
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    out["full_name"] = row[0]
+    except Exception as e:
+        log.warning("_user_identity lookup falló: %s", e)
+    return out
+
+
 def _forbidden():
     return Response(
         {"detail": "No se pudo resolver el cliente del portal."},
@@ -287,11 +387,20 @@ class PortalViewSet(viewsets.ViewSet):
             ],
             primary: { ...primera empresa de la lista... }  // retrocompat
           }
-        Si el usuario no tiene empresas asignadas, devuelve `{empresas: [], primary: null}`.
+        Si el usuario no tiene empresas asignadas, devuelve
+        `{user: {...}, empresas: [], primary: null}`.
+
+        IMPORTANTE — Sprint 2026-05-21 · multi-empresa.
+        Este endpoint IGNORA `?empresa_id=` y `X-Portal-Client`. Siempre
+        devuelve TODAS las empresas del usuario para que el chip-row del
+        portal pueda mostrar el catálogo completo y permitir cambiar de
+        empresa activa sin perder las otras opciones. El filtro vivo
+        sigue aplicándose en mis_ocs/mis_expedientes/mis_pagos.
         """
-        cids = _resolve_client_ids(request)
+        user = _user_identity(request)
+        cids = _all_user_client_ids(request)
         if not cids:
-            return Response({"empresas": [], "primary": None})
+            return Response({"user": user, "empresas": [], "primary": None})
 
         # Una sola query con IN (...) — sin N+1
         placeholders = ",".join(["%s"] * len(cids))
@@ -313,6 +422,7 @@ class PortalViewSet(viewsets.ViewSet):
         )
         empresas = rows or []
         return Response({
+            "user":     user,
             "empresas": empresas,
             "primary":  empresas[0] if empresas else None,
         })
@@ -347,7 +457,7 @@ class PortalViewSet(viewsets.ViewSet):
               o.total_value, o.total_invoiced, o.total_paid, o.balance,
               o.coverage_pct, o.lines_count, o.issued_at, o.estado,
               COALESCE(o.client_id, exp_inner.client_id) AS client_id,
-              c.nombre AS client_name
+              COALESCE(c.nombre_comercial, c.razon_social) AS client_name
             FROM expedientes.oc o
             LEFT JOIN LATERAL (
               SELECT e.client_id
@@ -397,11 +507,10 @@ class PortalViewSet(viewsets.ViewSet):
               e.origin, e.destination, e.freight_mode,
               e.eta, e.last_event_at,
               e.total_invoiced, e.total_paid, e.balance,
-              e.coverage_pct,
               e.client_id,
               o.codigo   AS oc_codigo,
               o.proforma AS oc_proforma,
-              c.nombre   AS client_name,
+              COALESCE(c.nombre_comercial, c.razon_social) AS client_name,
               m.nombre   AS brand_name
             FROM expedientes.expediente e
             LEFT JOIN expedientes.oc    o ON o.id = e.oc_id

@@ -410,7 +410,15 @@ export default function ScreenPortal() {
           </div>
           <h1 className="page-title">
             {(() => {
-              const greetingName = client?.contact?.split(' ')[0]
+              // Sprint 2026-05-21 · El greeting usa el nombre del USUARIO
+              // logueado, no del contacto de la empresa primaria. Antes
+              // decía "Hola, Saymonn" / "Hola, Alvaro" — el contacto de
+              // Sondel / Muito — incluso cuando el logueado era el CEO.
+              // me.user.full_name viene del backend (_user_identity →
+              // users.mwtuser.full_name). Fallback: nombre de empresa
+              // → genérico.
+              const userFullName = me?.user?.full_name || '';
+              const greetingName = userFullName.split(' ')[0]
                 || client?.name
                 || (lang === 'en' ? 'there' : '');
               return lang === 'es' ? `Hola, ${greetingName}` : `Hi, ${greetingName}`;
