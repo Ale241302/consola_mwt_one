@@ -172,7 +172,12 @@ def _resolve_client_ids(request):
     if u is not None and getattr(u, "is_authenticated", False):
         injected = list(getattr(u, "legal_entity_ids", None) or [])
         if injected:
-            user_ids = [str(x) for x in injected if x]
+            # Normalizar a lowercase. Defensa contra `legal_entity_ids`
+            # guardado en mayúsculas (algunos paths del UI envían el
+            # UUID como `str(uuid)` que es lowercase, pero impersonations
+            # vía Tweaks podrían inyectar uppercase). El `client_id::text`
+            # de PG siempre es lowercase.
+            user_ids = [str(x).lower() for x in injected if x]
 
     # Fallback SQL si el campo no fue inyectado por la JWT auth.
     if not user_ids:
@@ -295,7 +300,7 @@ class PortalViewSet(viewsets.ViewSet):
             SELECT id::text, nombre, contacto, email, telefono,
                    credit_days, pais_iso2
               FROM clientes.cliente
-             WHERE id::text IN ({placeholders})
+             WHERE lower(id::text) IN ({placeholders})
                AND is_active = TRUE
              ORDER BY nombre
             """,
@@ -351,8 +356,8 @@ class PortalViewSet(viewsets.ViewSet):
                    ON c.id = COALESCE(o.client_id, exp_inner.client_id)
             WHERE o.is_active = TRUE
               AND (
-                o.client_id::text IN ({placeholders})
-                OR exp_inner.client_id::text IN ({placeholders})
+                lower(o.client_id::text) IN ({placeholders})
+                OR lower(exp_inner.client_id::text) IN ({placeholders})
               )
             ORDER BY o.issued_at DESC NULLS LAST, o.created_at DESC
             LIMIT 100
@@ -398,7 +403,7 @@ class PortalViewSet(viewsets.ViewSet):
             LEFT JOIN clientes.cliente  c ON c.id = e.client_id
             LEFT JOIN brands.marca      m ON m.id = e.brand_id
             WHERE e.is_active = TRUE
-              AND e.client_id::text IN ({placeholders})
+              AND lower(e.client_id::text) IN ({placeholders})
             ORDER BY e.last_event_at DESC, e.created_at DESC
             LIMIT 100
             """,
@@ -433,7 +438,7 @@ class PortalViewSet(viewsets.ViewSet):
             FROM cobros.pago p
             LEFT JOIN clientes.cliente c ON c.id = p.client_id
             WHERE p.is_active = TRUE
-              AND p.client_id::text IN ({placeholders})
+              AND lower(p.client_id::text) IN ({placeholders})
               AND p.direccion = 'INGRESO'
             ORDER BY p.fecha_operacion DESC, p.created_at DESC
             LIMIT 200
@@ -460,7 +465,7 @@ class PortalViewSet(viewsets.ViewSet):
               client_id
             FROM cobros.cobro
             WHERE is_active = TRUE
-              AND client_id::text IN ({placeholders})
+              AND lower(client_id::text) IN ({placeholders})
             ORDER BY fecha_vencimiento ASC, created_at DESC
             LIMIT 100
             """,
@@ -492,10 +497,10 @@ class PortalViewSet(viewsets.ViewSet):
             WHERE d.is_active = TRUE
               AND (
                 d.oc_id IN (SELECT id FROM expedientes.oc
-                            WHERE client_id::text IN ({placeholders})
+                            WHERE lower(client_id::text) IN ({placeholders})
                               AND is_active = TRUE)
                 OR d.expediente_id IN (SELECT id FROM expedientes.expediente
-                                       WHERE client_id::text IN ({placeholders})
+                                       WHERE lower(client_id::text) IN ({placeholders})
                                          AND is_active = TRUE)
               )
             ORDER BY d.fecha DESC, d.created_at DESC
@@ -718,7 +723,7 @@ class PortalViewSet(viewsets.ViewSet):
                 f"""
                 SELECT id::text, nombre, is_active
                   FROM clientes.cliente
-                 WHERE id::text IN ({placeholders})
+                 WHERE lower(id::text) IN ({placeholders})
                 """,
                 cids,
             )
@@ -764,7 +769,7 @@ class PortalViewSet(viewsets.ViewSet):
               COALESCE(SUM(total_paid),0),
               COALESCE(SUM(balance),0)
             FROM expedientes.oc
-            WHERE is_active = TRUE AND client_id::text IN ({placeholders})
+            WHERE is_active = TRUE AND lower(client_id::text) IN ({placeholders})
             """,
             cids,
         )
@@ -786,7 +791,7 @@ class PortalViewSet(viewsets.ViewSet):
             f"""
             SELECT COALESCE(MIN(credit_days), 0)
             FROM clientes.cliente
-            WHERE id::text IN ({placeholders}) AND is_active = TRUE
+            WHERE lower(id::text) IN ({placeholders}) AND is_active = TRUE
             """,
             cids,
         )
@@ -799,7 +804,7 @@ class PortalViewSet(viewsets.ViewSet):
             SELECT COALESCE(MAX(credit_days), 0)
             FROM expedientes.expediente
             WHERE is_active = TRUE
-              AND client_id::text IN ({placeholders})
+              AND lower(client_id::text) IN ({placeholders})
               AND estado NOT IN ('CERRADO','CANCELADA')
             """,
             cids,

@@ -246,7 +246,7 @@ class MwtJWTAuthentication(JWTAuthentication):
                         """
                         SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
                           FROM users.mwtuser
-                         WHERE id::text = %s
+                         WHERE lower(id::text) = lower(%s)
                          LIMIT 1
                         """,
                         [str(uid)],
@@ -257,6 +257,10 @@ class MwtJWTAuthentication(JWTAuthentication):
         except Exception:
             # users.mwtuser puede no existir en ambientes legacy.
             legal_entity_ids = []
+
+        # Normalizar a lowercase — `client_id::text` de PG es lowercase
+        # y comparaciones case-sensitive en TEXT generan mismatch.
+        legal_entity_ids = [s.lower() for s in legal_entity_ids if s]
 
         return MwtUser(
             user_id=uid,
