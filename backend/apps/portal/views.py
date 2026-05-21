@@ -148,28 +148,56 @@ def _resolve_client_ids(request):
     Retorna: lista de UUIDs como strings, posiblemente vacía si el usuario
     no tiene empresas asignadas (en cuyo caso la UI mostrará EmptyState
     "Aún no tienes empresas asignadas. Contactá a MWT.").
+
+    IMPORTANTE (Sprint 2026-05-21 · fix multi-tabla):
+      · `core.users` (login/JWT) y `users.mwtuser` (donde vive
+        legal_entity_ids) son tablas INDEPENDIENTES con UUIDs
+        distintos para el mismo usuario.
+      · `seed_admins` solo siembra en core.users; los chips de empresa
+        del UI /usuarios viven en users.mwtuser.
+      · Por eso joineamos por EMAIL case-insensitive, no por id.
     """
     # 1. Empresas reales del usuario desde users.mwtuser.legal_entity_ids
+    #    Join por EMAIL: core.users.email_plain == users.mwtuser.email_plain.
     user_ids = []
     try:
         u = getattr(request, "user", None)
         if u is not None and getattr(u, "is_authenticated", False):
-            # auth_views.MeView ya carga legal_entity_ids; aquí buscamos
-            # directo en BD por si el user object no lo tiene cacheado.
-            with connection.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
-                      FROM users.mwtuser
-                     WHERE id = %s
-                     LIMIT 1
-                    """,
-                    [str(u.id)],
-                )
-                row = cur.fetchone()
-                if row and row[0]:
-                    user_ids = [str(x) for x in row[0] if x]
-    except Exception:
+            email = (getattr(u, "email", "") or "").strip().lower()
+            if email:
+                with connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                          FROM users.mwtuser
+                         WHERE lower(email_plain) = %s
+                           AND is_active = TRUE
+                         LIMIT 1
+                        """,
+                        [email],
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        user_ids = [str(x) for x in row[0] if x]
+            # Fallback secundario: probar por id (caso edge cuando IDs estén
+            # sincronizados — ambientes nuevos sembrados con UUID compartido).
+            if not user_ids:
+                with connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                          FROM users.mwtuser
+                         WHERE id = %s
+                           AND is_active = TRUE
+                         LIMIT 1
+                        """,
+                        [str(u.id)],
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        user_ids = [str(x) for x in row[0] if x]
+    except Exception as e:
+        log.warning("_resolve_client_ids: lookup falló: %s", e)
         user_ids = []
 
     # 2. Override: query param ?empresa_id (cliente activo del usuario)
@@ -952,7 +980,7 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
     # aplicando (staff NO accede a productos CEO-ONLY por esta ruta;
     # para eso está /api/productos/ del backoffice).
     _STAFF_ROLES = {
-        "superadmin", "admin", "manager", "operator",
+        "superadmin", "admin", "ceo", "manager", "operator",
         "finance", "viewer", "compras",
     }
 
@@ -960,32 +988,41 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
     def initial(self, request, *args, **kwargs):
         """Enforce client scope ANTES de ejecutar la acción.
 
+        Sprint 2026-05-21 · Multi-empresa:
+          Usa `_resolve_client_ids` (lista) para soportar usuarios
+          que tienen N empresas en `users.mwtuser.legal_entity_ids`.
+          El primer elemento se expone como `_portal_client_id` para
+          retrocompat con el resolver de precios + filtro por brand_id.
+          La lista completa queda en `_portal_client_ids` por si el
+          queryset la necesita (ej. brands de todas las empresas).
+
         Política:
-          · staff interno MWT  → scope opcional. Si no hay header/query,
+          · staff interno MWT  → scope opcional. Si no hay scope,
                                  ven el catálogo completo filtrado por
                                  visibility_tier (sin personalización
                                  de precio por cliente).
           · cliente B2B        → scope obligatorio. Si no podemos
-                                 resolver el client_id → 403 explícito
-                                 (no 401/404) para no filtrar existencia.
+                                 resolver al menos UNA empresa → 403
+                                 explícito (no 401/404) para no filtrar
+                                 existencia.
         """
         super().initial(request, *args, **kwargs)
         role = (getattr(request.user, "role", "") or "").lower()
-        cid = _resolve_client_id(request)
+        cids = _resolve_client_ids(request)
+        cid = cids[0] if cids else None
 
         if role in self._STAFF_ROLES:
-            # Staff: scope opcional. Si pasaron un client_id (impersonation
-            # desde el Tweaks panel en dev), lo usamos para resolver precios;
-            # si no, request._portal_client_id queda None y el queryset
-            # devuelve el catálogo global filtrado por visibility_tier.
-            request._portal_client_id = cid  # puede ser None
+            # Staff: scope opcional.
+            request._portal_client_id  = cid          # puede ser None
+            request._portal_client_ids = cids or []   # puede ser []
             return
 
         # Cliente B2B: scope obligatorio
-        if not cid:
+        if not cids:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("No se pudo resolver el cliente del portal.")
-        request._portal_client_id = cid
+        request._portal_client_id  = cid
+        request._portal_client_ids = cids
 
     # ── QUERYSET — scope + whitelist de visibility_tier ───────────
     def get_queryset(self):
@@ -1005,16 +1042,28 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
         if categoria:
             qs = qs.filter(categoria=categoria)
 
-        # Scope adicional: brands asignados al cliente vía
+        # Scope adicional: brands asignados al/los cliente(s) vía
         # commercial.client_assignment (si existe). Best-effort.
-        cid = getattr(self.request, "_portal_client_id", None)
-        if cid:
+        # Sprint 2026-05-21 · multi-empresa: si el usuario tiene varias
+        # empresas, unimos las brands de TODAS (catálogo agregado).
+        cids = getattr(self.request, "_portal_client_ids", None) or []
+        if not cids:
+            cid_single = getattr(self.request, "_portal_client_id", None)
+            if cid_single:
+                cids = [str(cid_single)]
+        if cids:
             try:
                 with connection.cursor() as c:
-                    c.execute("""
-                        SELECT brand_id FROM commercial.client_assignment
-                        WHERE client_id = %s AND is_active = TRUE
-                    """, [str(cid)])
+                    placeholders = ",".join(["%s"] * len(cids))
+                    c.execute(
+                        f"""
+                        SELECT DISTINCT brand_id
+                          FROM commercial.client_assignment
+                         WHERE client_id::text IN ({placeholders})
+                           AND is_active = TRUE
+                        """,
+                        [str(x) for x in cids],
+                    )
                     brand_ids = [r[0] for r in c.fetchall() if r[0]]
                 if brand_ids:
                     qs = qs.filter(marca_id__in=brand_ids)
@@ -1174,7 +1223,7 @@ class PortalExpedienteViewSet(viewsets.ReadOnlyModelViewSet):
     http_method_names = ["get", "head", "options"]
 
     _STAFF_ROLES = {
-        "superadmin", "admin", "manager", "operator",
+        "superadmin", "admin", "ceo", "manager", "operator",
         "finance", "viewer", "compras",
     }
 
@@ -1187,26 +1236,31 @@ class PortalExpedienteViewSet(viewsets.ReadOnlyModelViewSet):
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
         role = (getattr(request.user, "role", "") or "").lower()
-        cid  = _resolve_client_id(request)
+        cids = _resolve_client_ids(request)
+        cid  = cids[0] if cids else None
 
         if role in self._STAFF_ROLES:
             # Staff: scope opcional (para impersonar en dev vía Tweaks).
-            # Sin scope, ven TODOS los expedientes activos — eso se mitiga
-            # con el filtro por client_id cuando se pasa el header.
-            request._portal_client_id = cid
+            request._portal_client_id  = cid
+            request._portal_client_ids = cids or []
             return
 
         # Cliente B2B: scope obligatorio
-        if not cid:
+        if not cids:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("No se pudo resolver el cliente del portal.")
-        request._portal_client_id = cid
+        request._portal_client_id  = cid
+        request._portal_client_ids = cids
 
     def get_queryset(self):
         qs = Expediente.objects.filter(is_active=True)
-        cid = getattr(self.request, "_portal_client_id", None)
-        if cid:
-            qs = qs.filter(client_id=cid)
+        cids = getattr(self.request, "_portal_client_ids", None) or []
+        if cids:
+            qs = qs.filter(client_id__in=cids)
+        else:
+            cid = getattr(self.request, "_portal_client_id", None)
+            if cid:
+                qs = qs.filter(client_id=cid)
         # Filtros opcionales útiles en el front (por OC, brand, estado)
         oc_id    = self.request.query_params.get("oc_id")
         brand_id = self.request.query_params.get("brand_id")

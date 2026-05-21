@@ -397,24 +397,46 @@ class MeView(APIView):
                 user["role_name"]  = (user["role"] or "").title()
                 user["permissions"] = {"modules": ["*"]} if user["role"] in ("admin", "superadmin") else {}
 
-            # Sprint 2026-05-20 · Portal multi-empresa.
-            # `users.mwtuser` tabla paralela con el array de empresas asignadas
-            # al usuario (Sprint A4d). Si no existe la fila (usuario solo en
-            # core.users sin entry en users.mwtuser), array queda vacío.
+            # Sprint 2026-05-21 · Portal multi-empresa · fix multi-tabla.
+            # `core.users` (login/JWT) y `users.mwtuser` (donde está
+            # legal_entity_ids) son tablas INDEPENDIENTES con UUIDs
+            # distintos. Hacemos el lookup por EMAIL (canónico en ambas)
+            # con fallback por id por si los UUIDs sí coinciden.
+            user["legal_entity_ids"] = []
+            email_low = (user.get("email_plain") or "").strip().lower()
             try:
-                cur.execute(
-                    """
-                    SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
-                      FROM users.mwtuser
-                     WHERE id = %s
-                     LIMIT 1
-                    """,
-                    [user["id"]],
-                )
-                mrow = cur.fetchone()
-                user["legal_entity_ids"] = list(mrow[0]) if mrow and mrow[0] else []
+                if email_low:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                          FROM users.mwtuser
+                         WHERE lower(email_plain) = %s
+                           AND is_active = TRUE
+                         LIMIT 1
+                        """,
+                        [email_low],
+                    )
+                    mrow = cur.fetchone()
+                    if mrow and mrow[0]:
+                        user["legal_entity_ids"] = list(mrow[0])
+
+                # Fallback por id (ambientes con UUIDs sincronizados)
+                if not user["legal_entity_ids"]:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                          FROM users.mwtuser
+                         WHERE id = %s
+                           AND is_active = TRUE
+                         LIMIT 1
+                        """,
+                        [user["id"]],
+                    )
+                    mrow = cur.fetchone()
+                    if mrow and mrow[0]:
+                        user["legal_entity_ids"] = list(mrow[0])
             except Exception:
                 # Tabla users.mwtuser puede no existir en ambientes legacy.
-                user["legal_entity_ids"] = []
+                user["legal_entity_ids"] = user.get("legal_entity_ids") or []
 
         return Response(_serialize_user(user), status=200)
