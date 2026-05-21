@@ -193,12 +193,28 @@ export async function apiFetch(path, { method = "GET", body, token, headers = {}
     );
   }
 
+  // Sprint 2026-05-21 · Override de viewport desde Tweaks Panel.
+  // Si el admin/CEO eligió "Ver como Cliente" en el Tweaks, RoleContext
+  // guarda 'CLIENT' en sessionStorage('mwt-role-override'). El backend
+  // respeta ese flag si el usuario tiene legal_entity_ids (ver
+  // apps.expedientes.views._is_client_viewer).
+  let viewportHeader = {};
+  try {
+    if (typeof window !== "undefined") {
+      const ov = window.sessionStorage?.getItem("mwt-role-override");
+      if (ov === "CLIENT" || ov === "ADMIN") {
+        viewportHeader = { "X-Viewport-Role": ov };
+      }
+    }
+  } catch { /* SSR / privacy mode → ignorar */ }
+
   const opts = {
     method,
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...viewportHeader,
       ...headers,
     },
   };

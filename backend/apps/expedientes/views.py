@@ -79,13 +79,28 @@ def _is_client_viewer(request) -> bool:
     """True si el usuario es CLIENT_* (rol del Portal B2B).
 
     Reglas:
-      · is_superuser → False (Admin total).
+      · is_superuser → False (Admin total), salvo override explícito.
       · role_default que empieza con CLIENT_* → True.
       · rol legacy `client` / `cliente` / `client_b2b` → True.
+      · Header `X-Viewport-Role: CLIENT` (override desde Tweaks Panel
+        en frontend, solo aplicable si el user tiene legal_entity_ids
+        asignados — i.e. tiene empresas para hacer scope).
     """
     user = getattr(request, "user", None)
     if user is None:
         return False
+
+    # Sprint 2026-05-21 · Override viewport explícito desde frontend.
+    # Si el admin/CEO usa el Tweaks Panel para verse como CLIENT, el
+    # frontend manda `X-Viewport-Role: CLIENT` y aquí lo respetamos —
+    # SIEMPRE que el usuario tenga legal_entity_ids (sin scope, mostrar
+    # como admin igual).
+    hdr_viewport = (request.headers.get("X-Viewport-Role") or "").upper()
+    if hdr_viewport == "CLIENT":
+        leis = list(getattr(user, "legal_entity_ids", None) or [])
+        if leis:
+            return True
+
     if getattr(user, "is_superuser", False):
         return False
     role_upper = _viewer_role_upper(request)

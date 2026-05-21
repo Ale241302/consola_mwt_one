@@ -67,6 +67,7 @@ class MwtUser:
         role: str | None = None,
         permissions: dict | None = None,
         is_active: bool = True,
+        legal_entity_ids: list | None = None,
     ):
         self.id          = str(user_id)
         self.pk          = str(user_id)
@@ -76,6 +77,15 @@ class MwtUser:
         self.role        = role or ""
         self._permissions = permissions or {}
         self._is_active  = bool(is_active)
+        # Sprint 2026-05-21 · Portal multi-empresa.
+        # Array de UUIDs de empresas (clientes.cliente.id) asignadas al
+        # usuario vía `users.mwtuser.legal_entity_ids`. Lo lee
+        # MwtJWTAuthentication.get_user con join por email a users.mwtuser.
+        # `[]` si es staff interno sin restricción de empresa.
+        self.legal_entity_ids = list(legal_entity_ids or [])
+        # Compat: `role_default` se usa en algunos endpoints
+        # (apps.expedientes._viewer_role_upper) — espejo de `role`.
+        self.role_default = self.role
 
     # ---- flags estándar de DRF/Django ------------------------------
     @property
@@ -204,6 +214,50 @@ class MwtJWTAuthentication(JWTAuthentication):
         if not isinstance(permissions, dict):
             permissions = {}
 
+        # Sprint 2026-05-21 · Portal multi-empresa.
+        # `core.users` (login) y `users.mwtuser` (donde vive legal_entity_ids)
+        # son tablas independientes con UUIDs distintos. Joineamos por EMAIL
+        # (canónico) con fallback por id. Sin este lookup, todos los
+        # filtros por scope de cliente colapsan a `.none()`.
+        legal_entity_ids: list[str] = []
+        try:
+            email_low = (email or "").strip().lower()
+            with connection.cursor() as cur:
+                if email_low:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                          FROM users.mwtuser
+                         WHERE lower(trim(email_plain)) = %s
+                            OR lower(trim(COALESCE(contact_email, ''))) = %s
+                         ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                                  cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
+                                  updated_at DESC NULLS LAST
+                         LIMIT 1
+                        """,
+                        [email_low, email_low],
+                    )
+                    r2 = cur.fetchone()
+                    if r2 and r2[0]:
+                        legal_entity_ids = [str(x) for x in r2[0] if x]
+                # Fallback por id (ambientes con UUIDs sincronizados)
+                if not legal_entity_ids:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                          FROM users.mwtuser
+                         WHERE id::text = %s
+                         LIMIT 1
+                        """,
+                        [str(uid)],
+                    )
+                    r3 = cur.fetchone()
+                    if r3 and r3[0]:
+                        legal_entity_ids = [str(x) for x in r3[0] if x]
+        except Exception:
+            # users.mwtuser puede no existir en ambientes legacy.
+            legal_entity_ids = []
+
         return MwtUser(
             user_id=uid,
             email=email,
@@ -211,4 +265,5 @@ class MwtJWTAuthentication(JWTAuthentication):
             role=role,
             permissions=permissions,
             is_active=bool(is_active),
+            legal_entity_ids=legal_entity_ids,
         )
