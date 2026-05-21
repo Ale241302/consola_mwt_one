@@ -151,6 +151,14 @@ def _make_tokens(user: dict) -> dict:
 
 
 def _serialize_user(user: dict) -> dict:
+    """Shape canónico del usuario para /api/auth/me/ y similares.
+
+    Sprint 2026-05-20 · Portal multi-empresa:
+      `legal_entity_ids` se incluye en la respuesta para que el frontend
+      del Portal sepa cuántas empresas tiene asignadas el usuario y
+      pueda mostrar (o no) el filtro de empresa. Lectura desde
+      `users.mwtuser.legal_entity_ids TEXT[]` (Sprint A4d).
+    """
     return {
         "id":           str(user["id"]),
         "email":        user["email_plain"],
@@ -161,6 +169,9 @@ def _serialize_user(user: dict) -> dict:
         "is_active":    bool(user["is_active"]),
         "is_staff":     bool(user["is_staff"]),
         "last_login_at": user.get("last_login_at").isoformat() if user.get("last_login_at") else None,
+        # Array de UUIDs de empresas (clientes.cliente.id) asignadas al usuario.
+        # Vacío [] si es staff interno sin restricción de empresa.
+        "legal_entity_ids": list(user.get("legal_entity_ids") or []),
     }
 
 
@@ -385,5 +396,25 @@ class MeView(APIView):
                 user["role_slug"]  = user["role"]
                 user["role_name"]  = (user["role"] or "").title()
                 user["permissions"] = {"modules": ["*"]} if user["role"] in ("admin", "superadmin") else {}
+
+            # Sprint 2026-05-20 · Portal multi-empresa.
+            # `users.mwtuser` tabla paralela con el array de empresas asignadas
+            # al usuario (Sprint A4d). Si no existe la fila (usuario solo en
+            # core.users sin entry en users.mwtuser), array queda vacío.
+            try:
+                cur.execute(
+                    """
+                    SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                      FROM users.mwtuser
+                     WHERE id = %s
+                     LIMIT 1
+                    """,
+                    [user["id"]],
+                )
+                mrow = cur.fetchone()
+                user["legal_entity_ids"] = list(mrow[0]) if mrow and mrow[0] else []
+            except Exception:
+                # Tabla users.mwtuser puede no existir en ambientes legacy.
+                user["legal_entity_ids"] = []
 
         return Response(_serialize_user(user), status=200)

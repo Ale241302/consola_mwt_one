@@ -111,7 +111,12 @@ def _fetchone(sql, params=None):
 
 
 def _resolve_client_id(request):
-    """Resuelve el client_id del portal. Orden de precedencia:
+    """LEGACY · Resuelve UN client_id del portal.
+
+    Mantenido por retrocompat para `expediente_detail` u otros endpoints
+    detail/RPC que aún esperan un cliente único.
+
+    Orden de precedencia:
        1. request.user.portal_client_id  (futuro)
        2. header X-Portal-Client
        3. query param ?client_id=
@@ -129,11 +134,76 @@ def _resolve_client_id(request):
     return None
 
 
+def _resolve_client_ids(request):
+    """Sprint 2026-05-20 · Multi-empresa.
+
+    Resuelve LISTA de client_ids (empresas) del portal. Orden de precedencia:
+       1. JWT del usuario → query a `users.mwtuser.legal_entity_ids` (TEXT[]).
+          Esto cubre el caso real: usuario tiene 1+ empresas asignadas.
+       2. Override por query param `?empresa_id=` (filtra a UNA del set, debe
+          estar en el array del usuario; si no, se ignora).
+       3. Override por header `X-Portal-Client` (legacy, scope a UNA).
+       4. Legacy `?client_id=` (mismo efecto que header).
+
+    Retorna: lista de UUIDs como strings, posiblemente vacía si el usuario
+    no tiene empresas asignadas (en cuyo caso la UI mostrará EmptyState
+    "Aún no tienes empresas asignadas. Contactá a MWT.").
+    """
+    # 1. Empresas reales del usuario desde users.mwtuser.legal_entity_ids
+    user_ids = []
+    try:
+        u = getattr(request, "user", None)
+        if u is not None and getattr(u, "is_authenticated", False):
+            # auth_views.MeView ya carga legal_entity_ids; aquí buscamos
+            # directo en BD por si el user object no lo tiene cacheado.
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                      FROM users.mwtuser
+                     WHERE id = %s
+                     LIMIT 1
+                    """,
+                    [str(u.id)],
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    user_ids = [str(x) for x in row[0] if x]
+    except Exception:
+        user_ids = []
+
+    # 2. Override: query param ?empresa_id (cliente activo del usuario)
+    empresa_q = request.query_params.get("empresa_id")
+    if empresa_q and (not user_ids or empresa_q in user_ids):
+        return [empresa_q]
+
+    # 3. Override: header X-Portal-Client (legacy, una sola empresa)
+    hdr = request.headers.get("X-Portal-Client")
+    if hdr:
+        # Si user_ids está poblado y el header NO está, ignorarlo
+        # (no podemos confiar en headers para autorización).
+        if not user_ids or hdr in user_ids:
+            return [hdr]
+
+    # 4. Legacy ?client_id=
+    cid_q = request.query_params.get("client_id")
+    if cid_q and (not user_ids or cid_q in user_ids):
+        return [cid_q]
+
+    # 5. Por defecto: TODAS las empresas del usuario
+    return user_ids
+
+
 def _forbidden():
     return Response(
         {"detail": "No se pudo resolver el cliente del portal."},
         status=status.HTTP_403_FORBIDDEN,
     )
+
+
+def _empty_scope():
+    """Helper para retornar [] cuando el user no tiene empresas asignadas."""
+    return Response([], status=status.HTTP_200_OK)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -159,73 +229,120 @@ class PortalViewSet(viewsets.ViewSet):
     # ── /api/portal/me/ ───────────────────────────────────────
     @action(detail=False, methods=["get"])
     def me(self, request):
-        cid = _resolve_client_id(request)
-        if not cid:
-            return _forbidden()
-        r = _fetchone("""
-            SELECT id, nombre, contacto, email, telefono, credit_days
-            FROM clientes.cliente
-            WHERE id = %s AND is_active = TRUE
-        """, [cid])
-        if not r:
-            # Cliente no existe todavía en backend — shape mínimo
-            return Response({"id": cid, "nombre": None, "contacto": None,
-                             "email": None, "telefono": None,
-                             "credit_days": None})
+        """Sprint 2026-05-20 · Multi-empresa.
+
+        Devuelve TODAS las empresas del usuario (vía users.mwtuser.legal_entity_ids).
+        Shape:
+          {
+            empresas: [
+              { id, nombre, contacto, email, telefono, credit_days, pais_iso2 },
+              ...
+            ],
+            primary: { ...primera empresa de la lista... }  // retrocompat
+          }
+        Si el usuario no tiene empresas asignadas, devuelve `{empresas: [], primary: null}`.
+        """
+        cids = _resolve_client_ids(request)
+        if not cids:
+            return Response({"empresas": [], "primary": None})
+
+        # Una sola query con IN (...) — sin N+1
+        placeholders = ",".join(["%s"] * len(cids))
+        rows = _fetchall(
+            f"""
+            SELECT id::text, nombre, contacto, email, telefono,
+                   credit_days, pais_iso2
+              FROM clientes.cliente
+             WHERE id::text IN ({placeholders})
+               AND is_active = TRUE
+             ORDER BY nombre
+            """,
+            cids,
+        )
+        empresas = rows or []
         return Response({
-            "id":          r[0],
-            "nombre":      r[1],
-            "contacto":    r[2],
-            "email":       r[3],
-            "telefono":    r[4],
-            "credit_days": r[5],
+            "empresas": empresas,
+            "primary":  empresas[0] if empresas else None,
         })
 
     # ── /api/portal/mis_ocs/ ──────────────────────────────────
     @action(detail=False, methods=["get"])
     def mis_ocs(self, request):
-        """Lista de órdenes (OCs) del cliente — solo campos visibles."""
-        cid = _resolve_client_id(request)
-        if not cid:
-            return _forbidden()
-        rows = _fetchall("""
+        """Lista de órdenes (OCs) de las empresas del usuario.
+
+        Sprint 2026-05-20 · Multi-empresa. Devuelve OCs de TODAS las
+        empresas asignadas al usuario (vía legal_entity_ids[]) — o de
+        una sola si se pasa ?empresa_id=.
+        Incluye `client_id` y `client_name` para que el frontend pueda
+        agrupar por empresa cuando el usuario tiene más de una.
+        """
+        cids = _resolve_client_ids(request)
+        if not cids:
+            return _empty_scope()
+
+        placeholders = ",".join(["%s"] * len(cids))
+        rows = _fetchall(
+            f"""
             SELECT
-              id, codigo, brand_id, moneda,
-              total_value, total_invoiced, total_paid, balance,
-              coverage_pct, lines_count, issued_at,
-              estado
-            FROM expedientes.oc
-            WHERE is_active = TRUE AND client_id = %s
-            ORDER BY issued_at DESC, created_at DESC
-            LIMIT 50
-        """, [cid])
+              o.id, o.codigo, o.brand_id, o.proforma, o.moneda,
+              o.total_value, o.total_invoiced, o.total_paid, o.balance,
+              o.coverage_pct, o.lines_count, o.issued_at, o.estado,
+              o.client_id,
+              c.nombre AS client_name
+            FROM expedientes.oc o
+            LEFT JOIN clientes.cliente c ON c.id = o.client_id
+            WHERE o.is_active = TRUE
+              AND o.client_id::text IN ({placeholders})
+            ORDER BY o.issued_at DESC, o.created_at DESC
+            LIMIT 100
+            """,
+            cids,
+        )
         return Response(rows)
 
     # ── /api/portal/mis_expedientes/ ──────────────────────────
     @action(detail=False, methods=["get"])
     def mis_expedientes(self, request):
-        """Lista de expedientes del cliente.
+        """Lista de expedientes de las empresas del usuario (multi-empresa).
 
         NOTA: NO expone total_cost, projected_margin, real_margin,
               commission_pct, modo_operacion, phase_signal, is_blocked,
               supplier_id. Sólo se incluyen los campos seguros del spec.
+
+        Sprint 2026-05-20: devuelve además `oc_codigo`, `oc_proforma`,
+        `brand_name`, `client_id`, `client_name` para que el frontend
+        no haga lookups separados.
         """
-        cid = _resolve_client_id(request)
-        if not cid:
-            return _forbidden()
-        rows = _fetchall("""
+        cids = _resolve_client_ids(request)
+        if not cids:
+            return _empty_scope()
+
+        placeholders = ",".join(["%s"] * len(cids))
+        rows = _fetchall(
+            f"""
             SELECT
-              id, codigo, oc_id, brand_id,
-              estado,
-              origin, destination, freight_mode,
-              eta, last_event_at,
-              total_invoiced, total_paid, balance,
-              coverage_pct
-            FROM expedientes.expediente
-            WHERE is_active = TRUE AND client_id = %s
-            ORDER BY last_event_at DESC, created_at DESC
+              e.id, e.codigo, e.oc_id, e.brand_id,
+              e.estado,
+              e.origin, e.destination, e.freight_mode,
+              e.eta, e.last_event_at,
+              e.total_invoiced, e.total_paid, e.balance,
+              e.coverage_pct,
+              e.client_id,
+              o.codigo   AS oc_codigo,
+              o.proforma AS oc_proforma,
+              c.nombre   AS client_name,
+              m.nombre   AS brand_name
+            FROM expedientes.expediente e
+            LEFT JOIN expedientes.oc    o ON o.id = e.oc_id
+            LEFT JOIN clientes.cliente  c ON c.id = e.client_id
+            LEFT JOIN brands.marca      m ON m.id = e.brand_id
+            WHERE e.is_active = TRUE
+              AND e.client_id::text IN ({placeholders})
+            ORDER BY e.last_event_at DESC, e.created_at DESC
             LIMIT 100
-        """, [cid])
+            """,
+            cids,
+        )
         # Traducir estado técnico → natural
         for r in rows:
             m = CLIENT_STATE_MAP.get(r.get("estado"), {})
@@ -237,53 +354,76 @@ class PortalViewSet(viewsets.ViewSet):
     # ── /api/portal/mis_pagos/ ────────────────────────────────
     @action(detail=False, methods=["get"])
     def mis_pagos(self, request):
-        """Historial de pagos realizados por el cliente (INGRESO)."""
-        cid = _resolve_client_id(request)
-        if not cid:
-            return _forbidden()
-        rows = _fetchall("""
+        """Historial de pagos (INGRESO) de las empresas del usuario."""
+        cids = _resolve_client_ids(request)
+        if not cids:
+            return _empty_scope()
+
+        placeholders = ",".join(["%s"] * len(cids))
+        rows = _fetchall(
+            f"""
             SELECT
               p.id, p.codigo, p.oc_id, p.expediente_id,
               p.metodo, p.moneda, p.monto, p.monto_usd,
               p.fecha_operacion, p.fecha_acreditacion,
-              p.estado, p.referencia_externa
+              p.estado, p.referencia_externa,
+              p.client_id,
+              c.nombre AS client_name
             FROM cobros.pago p
+            LEFT JOIN clientes.cliente c ON c.id = p.client_id
             WHERE p.is_active = TRUE
-              AND p.client_id = %s
+              AND p.client_id::text IN ({placeholders})
               AND p.direccion = 'INGRESO'
             ORDER BY p.fecha_operacion DESC, p.created_at DESC
             LIMIT 200
-        """, [cid])
+            """,
+            cids,
+        )
         return Response(rows)
 
     # ── /api/portal/mis_cobros/ ───────────────────────────────
     @action(detail=False, methods=["get"])
     def mis_cobros(self, request):
-        """Cobros vigentes del cliente (resumen de saldos)."""
-        cid = _resolve_client_id(request)
-        if not cid:
-            return _forbidden()
-        rows = _fetchall("""
+        """Cobros vigentes de las empresas del usuario."""
+        cids = _resolve_client_ids(request)
+        if not cids:
+            return _empty_scope()
+
+        placeholders = ",".join(["%s"] * len(cids))
+        rows = _fetchall(
+            f"""
             SELECT
               id, codigo, oc_id, expediente_id,
               monto_total, monto_pagado, monto_pendiente,
-              fecha_vencimiento, dias_credito, estado
+              fecha_vencimiento, dias_credito, estado,
+              client_id
             FROM cobros.cobro
-            WHERE is_active = TRUE AND client_id = %s
+            WHERE is_active = TRUE
+              AND client_id::text IN ({placeholders})
             ORDER BY fecha_vencimiento ASC, created_at DESC
             LIMIT 100
-        """, [cid])
+            """,
+            cids,
+        )
         return Response(rows)
 
     # ── /api/portal/mis_documentos/ ───────────────────────────
     @action(detail=False, methods=["get"])
     def mis_documentos(self, request):
-        """Documentos del cliente (OC + expedientes). La URL devuelta
-           es un placeholder — en prod se reemplaza por signed URL (15 min)."""
-        cid = _resolve_client_id(request)
-        if not cid:
-            return _forbidden()
-        rows = _fetchall("""
+        """Documentos de las empresas del usuario (OCs + expedientes).
+
+        Sprint 2026-05-20 · Multi-empresa. La tab Documentos del Portal
+        está siendo eliminada (mandato CEO §4), pero el endpoint se
+        mantiene porque el detalle de cada expediente sigue listando
+        documentos. Por eso seguimos exponiéndolo.
+        """
+        cids = _resolve_client_ids(request)
+        if not cids:
+            return _empty_scope()
+
+        placeholders = ",".join(["%s"] * len(cids))
+        rows = _fetchall(
+            f"""
             SELECT
               d.id, d.oc_id, d.expediente_id, d.kind, d.codigo, d.titulo,
               d.fecha, d.storage_url
@@ -291,14 +431,17 @@ class PortalViewSet(viewsets.ViewSet):
             WHERE d.is_active = TRUE
               AND (
                 d.oc_id IN (SELECT id FROM expedientes.oc
-                            WHERE client_id = %s AND is_active = TRUE)
+                            WHERE client_id::text IN ({placeholders})
+                              AND is_active = TRUE)
                 OR d.expediente_id IN (SELECT id FROM expedientes.expediente
-                                       WHERE client_id = %s AND is_active = TRUE)
+                                       WHERE client_id::text IN ({placeholders})
+                                         AND is_active = TRUE)
               )
             ORDER BY d.fecha DESC, d.created_at DESC
             LIMIT 200
-        """, [cid, cid])
-        # TODO: wrap storage_url en signed URL con expiración 15 min
+            """,
+            cids + cids,
+        )
         for r in rows:
             r["signed_url_ttl_sec"] = 900
         return Response(rows)
@@ -434,28 +577,45 @@ class PortalViewSet(viewsets.ViewSet):
     # ── /api/portal/kpis/ ─────────────────────────────────────
     @action(detail=False, methods=["get"])
     def kpis(self, request):
-        """KPIs seguros para el cliente: coverage%, credit days used, órdenes activas."""
-        cid = _resolve_client_id(request)
-        if not cid:
-            return _forbidden()
+        """KPIs agregados sobre TODAS las empresas del usuario (multi-empresa).
+
+        Sprint 2026-05-20 · Frontend ya no debe renderizar 0%/0$ con
+        delta encima — si TODAS las métricas vienen en 0, mostrar
+        EmptyState 'Aún sin facturación'. Por eso este endpoint además
+        devuelve `is_empty: true` para que el frontend lo detecte sin
+        recalcular.
+        """
+        cids = _resolve_client_ids(request)
         out = {
-            "ocs_activas":     0,
-            "total_invoiced":  0.0,
-            "total_paid":      0.0,
-            "balance":         0.0,
-            "coverage_pct":    0.0,
+            "ocs_activas":       0,
+            "total_invoiced":    0.0,
+            "total_paid":        0.0,
+            "balance":           0.0,
+            "coverage_pct":      None,   # null → EmptyState honesto
             "credit_days_limit": 0,
             "credit_days_used":  0,
+            "is_empty":          True,
+            "scope_empresa_count": len(cids),
         }
-        r = _fetchone("""
+        if not cids:
+            # Usuario sin empresas asignadas
+            return Response(out)
+
+        placeholders = ",".join(["%s"] * len(cids))
+
+        # KPI principal: OCs y montos sumados sobre las empresas del usuario
+        r = _fetchone(
+            f"""
             SELECT
               COUNT(*) FILTER (WHERE estado NOT IN ('CERRADO','CANCELADA')),
               COALESCE(SUM(total_invoiced),0),
               COALESCE(SUM(total_paid),0),
               COALESCE(SUM(balance),0)
             FROM expedientes.oc
-            WHERE is_active = TRUE AND client_id = %s
-        """, [cid])
+            WHERE is_active = TRUE AND client_id::text IN ({placeholders})
+            """,
+            cids,
+        )
         if r:
             out["ocs_activas"]    = r[0] or 0
             out["total_invoiced"] = float(r[1] or 0)
@@ -463,23 +623,35 @@ class PortalViewSet(viewsets.ViewSet):
             out["balance"]        = float(r[3] or 0)
             if out["total_invoiced"] > 0:
                 out["coverage_pct"] = out["total_paid"] / out["total_invoiced"]
+                out["is_empty"] = False
+            elif out["ocs_activas"] > 0 or out["balance"] > 0:
+                # Hay OCs pero sin facturación todavía
+                out["is_empty"] = False
 
-        # Crédito del cliente (días límite)
-        r = _fetchone("""
-            SELECT COALESCE(credit_days, 0)
+        # Crédito límite: el MENOR de las empresas asignadas
+        # (el usuario está limitado por la más restrictiva).
+        r = _fetchone(
+            f"""
+            SELECT COALESCE(MIN(credit_days), 0)
             FROM clientes.cliente
-            WHERE id = %s AND is_active = TRUE
-        """, [cid])
+            WHERE id::text IN ({placeholders}) AND is_active = TRUE
+            """,
+            cids,
+        )
         if r:
             out["credit_days_limit"] = r[0] or 0
 
         # Máximo de credit_days en expedientes activos → días usados
-        r = _fetchone("""
+        r = _fetchone(
+            f"""
             SELECT COALESCE(MAX(credit_days), 0)
             FROM expedientes.expediente
-            WHERE is_active = TRUE AND client_id = %s
+            WHERE is_active = TRUE
+              AND client_id::text IN ({placeholders})
               AND estado NOT IN ('CERRADO','CANCELADA')
-        """, [cid])
+            """,
+            cids,
+        )
         if r:
             out["credit_days_used"] = r[0] or 0
 

@@ -128,7 +128,46 @@ function ClientProgress({ status, lang }) {
 }
 
 // ── KPI card: coverage % (no amounts) ─────
-function CoverageKPI({ pct, lang }) {
+// Sprint 2026-05-20 · Si `pct` es null/undefined o no hay facturación,
+// renderiza EmptyState honesto en lugar de "0% Pendiente" (prompt CEO §10).
+function CoverageKPI({ pct, lang, hasData = null }) {
+  // hasData === false → empty state (sin facturación)
+  // hasData === null  → infer desde pct (legacy)
+  const isEmpty = hasData === false || pct == null || Number.isNaN(pct);
+  if (isEmpty) {
+    return (
+      <div className="kpi-coverage">
+        <div className="kpi-coverage-ring" style={{
+          background: 'var(--bg-alt)',
+          border: '1px dashed var(--border-strong)',
+        }}>
+          <div className="kpi-coverage-inner">
+            <div style={{
+              font: '600 11px/1.2 var(--font-body)',
+              color: 'var(--text-tertiary)',
+              textAlign: 'center',
+              padding: '0 6px',
+            }}>
+              {lang === 'en' ? 'No data' : 'Sin datos'}
+            </div>
+          </div>
+        </div>
+        <div style={{flex:1}}>
+          <div className="micro" style={{color:'var(--text-tertiary)', marginBottom:4}}>
+            {lang==='es' ? 'COBERTURA DE PAGOS' : 'PAYMENT COVERAGE'}
+          </div>
+          <div style={{font:'600 13px/1.3 var(--font-body)', color:'var(--text-secondary)', marginBottom:2}}>
+            {lang==='es' ? 'Aún sin facturación' : 'No invoicing yet'}
+          </div>
+          <div className="caption">
+            {lang==='es'
+              ? 'Cuando MWT emita la primera factura, esta tarjeta se actualizará.'
+              : 'When MWT issues your first invoice, this card will update.'}
+          </div>
+        </div>
+      </div>
+    );
+  }
   const status =
     pct >= 1   ? { es:'Completo', en:'Complete', tone:'success' } :
     pct >= 0.5 ? { es:'Parcial',  en:'Partial',  tone:'warning' } :
@@ -159,7 +198,30 @@ function CoverageKPI({ pct, lang }) {
 }
 
 // ── KPI card: credit days used / limit ─────
+// Sprint 2026-05-20 · Si no hay límite o no hay OCs activas, EmptyState honesto.
 function CreditDaysKPI({ used, limit, lang }) {
+  const hasLimit = limit != null && Number(limit) > 0;
+  if (!hasLimit) {
+    return (
+      <div className="kpi-credit">
+        <div className="micro" style={{color:'var(--text-tertiary)', marginBottom:8}}>
+          {lang==='es' ? 'DÍAS DE CRÉDITO' : 'CREDIT DAYS'}
+        </div>
+        <div style={{
+          font: '700 14px/1.3 var(--font-body)',
+          color: 'var(--text-secondary)',
+          marginBottom: 6,
+        }}>
+          {lang==='es' ? 'Sin límite contratado' : 'No credit limit set'}
+        </div>
+        <div className="caption">
+          {lang==='es'
+            ? 'Tu empresa aún no tiene un plazo de crédito asignado por MWT.'
+            : 'Your company has no credit term set by MWT yet.'}
+        </div>
+      </div>
+    );
+  }
   const pct = Math.min(1, used / limit);
   const tone = used > limit * 0.85 ? 'critical' : used > limit * 0.65 ? 'warning' : 'success';
   return (
@@ -200,6 +262,28 @@ function SignedDownload({ label, lang, kind }) {
   );
 }
 
+// ── Sprint 2026-05-20 · Estilo de chip para filtro de empresa.
+// Toggle activo/inactivo con tokens MWT (R1 cero hex).
+function chipStyle(active) {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '5px 12px',
+    font: '600 12px/1 var(--font-body)',
+    color: active ? 'var(--text-on-navy)' : 'var(--text-secondary)',
+    background: active ? 'var(--brand-primary)' : 'transparent',
+    border: `1px solid ${active ? 'var(--brand-primary)' : 'var(--border-strong)'}`,
+    borderRadius: 'var(--radius-full)',
+    cursor: 'pointer',
+    transition: 'background 120ms, color 120ms, border-color 120ms',
+    maxWidth: 200,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  };
+}
+
 // ── Main Portal ─────
 export default function ScreenPortal() {
   const navigate = useNavigate();
@@ -209,30 +293,49 @@ export default function ScreenPortal() {
 
   const [tab, setTab] = useState('orders');
 
-  // ── Backend real vía hook (fallback a mocks) ─────
-  const portalClientId = 'c1';  // dev: futuro claim del JWT (portal_client_id)
+  // ── Sprint 2026-05-20 · Multi-empresa.
+  //   Antes: portalClientId = 'c1' hardcoded.
+  //   Ahora: el backend resuelve el scope a partir del JWT
+  //     (users.mwtuser.legal_entity_ids). usePortalData() ya no necesita
+  //     un client_id explícito — el header X-Portal-Client se queda null
+  //     y backend usa el array del usuario. El frontend solo decide
+  //     filtros UI (chips por empresa).
+  const [activeEmpresaId, setActiveEmpresaId] = useState(null);  // null = todas
   const {
     me, kpis: apiKpis, ocs: apiOcsRaw, expedientes: apiExpedientesRaw,
     loading: loadingPortal,
-  } = usePortalData(portalClientId);
+  } = usePortalData(activeEmpresaId);
 
   const apiExpedientes = (apiExpedientesRaw || []).map(mapApiExpedienteToPortalExp);
   const apiOcs         = (apiOcsRaw || []).map(r => mapApiOcToPortalOc(r, apiExpedientesRaw));
 
-  // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
-  // Sin demo: cliente desconocido → portal vacío. OCS / EXPEDIENTES → []
-  const CLIENTS     = [];
   const OCS         = apiOcs;
   const EXPEDIENTES = apiExpedientes;
 
-  // Cliente del portal — viene del JWT (me). Sin /me o sin claim válido,
-  // queda null y la UI muestra estado vacío.
-  const client = (me && me.id) ? {
-    id: me.id, name: me.nombre || 'Cliente', contact: me.contacto || '',
-    email: me.email || '', phone: me.telefono || '',
+  // Empresas asignadas al usuario (vienen del nuevo /api/portal/me/ shape:
+  //   { empresas: [{id, nombre, contacto, email, telefono, credit_days, pais_iso2}],
+  //     primary:  {...primera empresa...} }
+  // Si me.empresas no existe (backend viejo), fallback a shape legacy {id, nombre, ...}
+  const empresas = Array.isArray(me?.empresas) ? me.empresas
+                    : (me && me.id ? [me] : []);
+  const primaryEmpresa = me?.primary || empresas[0] || null;
+  const hasMultiEmpresa = empresas.length > 1;
+
+  // Cliente activo: si el usuario seleccionó una empresa específica, esa;
+  // si no, primary (primer empresa de la lista).
+  const activeEmpresa = activeEmpresaId
+    ? empresas.find(e => e.id === activeEmpresaId)
+    : primaryEmpresa;
+
+  const client = activeEmpresa ? {
+    id: activeEmpresa.id,
+    name: activeEmpresa.nombre || 'Cliente',
+    contact: activeEmpresa.contacto || '',
+    email: activeEmpresa.email || '',
+    phone: activeEmpresa.telefono || '',
   } : null;
 
-  // Orders = OCs belonging to this client (siempre desde API).
+  // Orders = OCs belonging to the user's empresas (already scoped by backend).
   const myOCs = apiOcs;
   // Featured (most recent / most active)
   const featured = myOCs[0];
@@ -242,12 +345,29 @@ export default function ScreenPortal() {
                                    : myOCs.reduce((a,o) => a + (o.total_value || 0), 0);
   const totalPaidAll     = apiKpis ? Number(apiKpis.total_paid) || 0
                                    : myOCs.reduce((a,o) => a + (o.total_paid  || 0), 0);
-  const coveragePct      = apiKpis && apiKpis.coverage_pct != null
-                              ? Number(apiKpis.coverage_pct)
-                              : (totalInvoicedAll > 0 ? totalPaidAll / totalInvoicedAll : 0);
-  // Credit days
-  const creditLimit      = apiKpis?.credit_days_limit || 90;
-  const creditUsed       = apiKpis?.credit_days_used  || 45;
+
+  // Sprint 2026-05-20: coverage es null cuando no hay facturación, NO 0.
+  //   Backend ahora emite is_empty:true en /kpis/ cuando aplica.
+  //   Si todavía no facturó, dejamos coverage = null → EmptyState honesto.
+  let coveragePct = null;
+  let coverageHasData = true;
+  if (apiKpis) {
+    if (apiKpis.is_empty || apiKpis.coverage_pct == null) {
+      coverageHasData = false;
+    } else {
+      coveragePct = Number(apiKpis.coverage_pct);
+    }
+  } else if (totalInvoicedAll > 0) {
+    coveragePct = totalPaidAll / totalInvoicedAll;
+  } else {
+    coverageHasData = false;
+  }
+
+  // Credit days — null si no hay límite contratado
+  const creditLimit = apiKpis?.credit_days_limit
+    || activeEmpresa?.credit_days
+    || null;
+  const creditUsed  = apiKpis?.credit_days_used ?? 0;
 
   return (
     <div style={{ background:'var(--bg)', minHeight:'100%' }} data-screen-label="Client Portal">
@@ -273,12 +393,21 @@ export default function ScreenPortal() {
             {lang==='es' ? 'PORTAL DE CLIENTES' : 'CLIENT PORTAL'}
           </div>
           <h1 className="page-title">
-            {lang==='es' ? `Hola, ${client?.contact.split(' ')[0]}` : `Hi, ${client?.contact.split(' ')[0]}`}
+            {(() => {
+              const greetingName = client?.contact?.split(' ')[0]
+                || client?.name
+                || (lang === 'en' ? 'there' : '');
+              return lang === 'es' ? `Hola, ${greetingName}` : `Hi, ${greetingName}`;
+            })()}
           </h1>
           <div className="page-subtitle">
-            {lang==='es'
-              ? 'Revisa tus órdenes, pagos y documentos de embarque.'
-              : 'Review your orders, payments, and shipping documents.'}
+            {hasMultiEmpresa
+              ? (lang === 'en'
+                  ? `${empresas.length} companies assigned. Use the filter above to switch scope.`
+                  : `${empresas.length} empresas asignadas. Usa el filtro de arriba para cambiar de empresa.`)
+              : (lang === 'es'
+                  ? 'Revisa tus órdenes, pagos y catálogo de productos.'
+                  : 'Review your orders, payments, and product catalog.')}
           </div>
         </div>
 
@@ -287,10 +416,52 @@ export default function ScreenPortal() {
           <MyCompanyCard lang={lang} client={client} creditLimit={creditLimit} creditUsed={creditUsed} />
         )}
 
+        {/* Sprint 2026-05-20 · Filtro de empresa cuando el usuario tiene >1.
+            Cuando tiene 1 sola o 0, NO se muestra el filtro. */}
+        {hasMultiEmpresa && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+              marginBottom: 16,
+              padding: '10px 14px',
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-md)',
+            }}
+          >
+            <span className="micro" style={{ color: 'var(--text-tertiary)', letterSpacing: '0.06em' }}>
+              {lang === 'en' ? 'COMPANY' : 'EMPRESA'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setActiveEmpresaId(null)}
+              data-active={activeEmpresaId == null}
+              style={chipStyle(activeEmpresaId == null)}
+            >
+              {lang === 'en' ? 'All' : 'Todas'} ({empresas.length})
+            </button>
+            {empresas.map(e => (
+              <button
+                key={e.id}
+                type="button"
+                onClick={() => setActiveEmpresaId(e.id)}
+                data-active={activeEmpresaId === e.id}
+                style={chipStyle(activeEmpresaId === e.id)}
+                title={e.nombre}
+              >
+                {e.nombre}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Client KPIs (safe, no $ exposure) */}
         <div className="portal-kpi-grid mb-6">
           <div className="card card-pad-lg">
-            <CoverageKPI pct={coveragePct} lang={lang}/>
+            <CoverageKPI pct={coveragePct} hasData={coverageHasData} lang={lang}/>
           </div>
           <div className="card card-pad-lg">
             <CreditDaysKPI used={creditUsed} limit={creditLimit} lang={lang}/>
@@ -300,8 +471,18 @@ export default function ScreenPortal() {
               {lang==='es' ? 'MIS ÓRDENES' : 'MY ORDERS'}
             </div>
             <div style={{display:'flex', alignItems:'baseline', gap:6, marginBottom:4}}>
-              <span style={{font:'800 28px/1 var(--font-display)', color:'var(--text-primary)'}}>{myOCs.length}</span>
-              <span className="caption">{lang==='es' ? 'activas' : 'active'}</span>
+              {myOCs.length > 0 ? (
+                <>
+                  <span style={{font:'800 28px/1 var(--font-display)', color:'var(--text-primary)'}}>{myOCs.length}</span>
+                  <span className="caption">{lang==='es' ? 'activas' : 'active'}</span>
+                </>
+              ) : (
+                <span style={{font:'600 14px/1.3 var(--font-body)', color:'var(--text-secondary)'}}>
+                  {empresas.length === 0
+                    ? (lang === 'en' ? 'No companies assigned' : 'Sin empresas asignadas')
+                    : (lang === 'en' ? 'No orders yet' : 'Aún sin órdenes')}
+                </span>
+              )}
             </div>
             <div className="portal-orders-breakdown">
               {['PRODUCCION','TRANSITO','EN_DESTINO','CERRADO'].map(s => {
@@ -366,12 +547,14 @@ export default function ScreenPortal() {
           );
         })()}
 
-        {/* Tabs — Portal B2B tiene 4 pestañas canónicas */}
+        {/* Sprint 2026-05-20 · Tabs reducidas de 4 a 3 (mandato CEO §4).
+            La tab "Documentos" se eliminó del nav raíz — los documentos
+            viven dentro del detalle de cada expediente, no como tab
+            global. */}
         <div className="tabs mb-4">
           {[
             { k:'orders',   es:'Mis Órdenes',        en:'My Orders' },
             { k:'payments', es:'Historial de Pagos', en:'Payment History' },
-            { k:'docs',     es:'Documentos',         en:'Documents' },
             { k:'products', es:'Productos',          en:'Products' },
           ].map(t => (
             <button key={t.k} className="tab" data-active={tab===t.k} onClick={()=>setTab(t.k)}>
@@ -380,10 +563,9 @@ export default function ScreenPortal() {
           ))}
         </div>
 
-        {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC} isClient={isClient}/>}
-        {tab === 'payments' && <PortalPayments lang={lang} ocs={myOCs}/>}
-        {tab === 'docs'     && <PortalDocs     lang={lang} ocs={myOCs}/>}
-        {tab === 'products' && <ProductCatalogGrid lang={lang} clientId={portalClientId} />}
+        {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC} isClient={isClient} showEmpresaCol={hasMultiEmpresa}/>}
+        {tab === 'payments' && <PortalPayments lang={lang} ocs={myOCs} showEmpresaCol={hasMultiEmpresa}/>}
+        {tab === 'products' && <ProductCatalogGrid lang={lang} clientId={activeEmpresa?.id || null} />}
       </div>
     </div>
   );
