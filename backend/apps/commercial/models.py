@@ -478,6 +478,10 @@ class MarluvasPriceHistoryEvent(models.Model):
     custom_plazos      = models.JSONField(default=dict, blank=True)
     sku_count          = models.IntegerField(default=0)
     cells_count        = models.IntegerField(default=0)
+    # F6.1 · 2026-05-21 · Banda que estaba vigente (según TC del día) al
+    # momento del save. NULL para snapshots viejos — el frontend hace
+    # fallback al default (banda 6 = 5,00–5,20).
+    banda_vigente_id   = models.IntegerField(null=True, blank=True)
     notas              = models.TextField(null=True, blank=True)
     created_at         = models.DateTimeField(auto_now_add=True)
 

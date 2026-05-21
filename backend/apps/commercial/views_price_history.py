@@ -106,6 +106,32 @@ def _safe_float(v):
         return None
 
 
+# Cache de existencia de columnas opcionales (agregadas por migraciones D*).
+# Evita romper si el código se despliega antes que la migración SQL.
+_COLUMN_EXISTS_CACHE = {}
+
+
+def _has_column(schema, table, column):
+    """¿Existe la columna en information_schema? Cacheado por proceso."""
+    key = (schema, table, column)
+    cached = _COLUMN_EXISTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = %s AND table_name = %s "
+                "  AND column_name = %s LIMIT 1",
+                [schema, table, column],
+            )
+            exists = cur.fetchone() is not None
+    except Exception:  # noqa: BLE001
+        exists = False
+    _COLUMN_EXISTS_CACHE[key] = exists
+    return exists
+
+
 # =====================================================================
 # Lista
 # =====================================================================
@@ -154,6 +180,14 @@ class PriceHistoryListView(APIView):
             )
             params.append(sku)
 
+        # ── Columnas opcionales agregadas por migraciones D* ──
+        has_banda_vigente = _has_column(
+            "pricing", "marluvas_price_history_event", "banda_vigente_id",
+        )
+        banda_vigente_select = (
+            "e.banda_vigente_id" if has_banda_vigente else "NULL::int AS banda_vigente_id"
+        )
+
         params.append(limit)
         sql = f"""
             SELECT
@@ -161,6 +195,16 @@ class PriceHistoryListView(APIView):
                 e.fecha_inicio, e.fecha_fin,
                 e.sku_count, e.cells_count, e.created_by_user_id, e.notas,
                 e.custom_plazos,
+                {banda_vigente_select},
+                COALESCE(
+                    ARRAY(
+                        SELECT s.sku
+                          FROM pricing.marluvas_price_history_sku s
+                         WHERE s.event_id = e.id
+                         ORDER BY s.sku
+                    ),
+                    ARRAY[]::text[]
+                ) AS skus,
                 c.razon_social, c.nombre_comercial, c.pais_iso2
             FROM pricing.marluvas_price_history_event e
             LEFT JOIN clientes.cliente c ON c.id = e.cliente_id
@@ -195,6 +239,11 @@ class PriceHistoryListView(APIView):
                         custom_count = len(valid_band_keys)
                     else:
                         custom_count = 0
+                    bv_raw = r.get("banda_vigente_id")
+                    try:
+                        bv_id = int(bv_raw) if bv_raw is not None else None
+                    except (TypeError, ValueError):
+                        bv_id = None
                     out.append({
                         "id":                 str(r["id"]),
                         "brand_id":           str(r["brand_id"]) if r["brand_id"] else None,
@@ -205,6 +254,12 @@ class PriceHistoryListView(APIView):
                         "sku_count":          int(r["sku_count"] or 0),
                         "cells_count":        int(r["cells_count"] or 0),
                         "custom_plazos_bands": custom_count,
+                        "banda_vigente_id":   bv_id,
+                        # F6.1 · lista de SKUs del evento (orden estable).
+                        # Reemplaza el render de sku_count en la tabla;
+                        # sku_count se mantiene en la respuesta para
+                        # otros consumidores.
+                        "skus":               list(r.get("skus") or []),
                         "created_by_user_id": str(r["created_by_user_id"]) if r["created_by_user_id"] else None,
                         "notas":              r["notas"],
                         "cliente": {
@@ -241,15 +296,23 @@ class PriceHistoryDetailView(APIView):
             return Response({"detail": "event_id no es UUID válido"}, status=400)
 
         # ── Cabecera + cliente ──
+        has_banda_vigente = _has_column(
+            "pricing", "marluvas_price_history_event", "banda_vigente_id",
+        )
+        banda_vigente_select = (
+            "e.banda_vigente_id" if has_banda_vigente else "NULL::int AS banda_vigente_id"
+        )
+
         ev = None
         try:
             with connection.cursor() as cur:
-                cur.execute("""
+                cur.execute(f"""
                     SELECT
                         e.id, e.brand_id, e.cliente_id, e.snapshot_at,
                         e.fecha_inicio, e.fecha_fin,
                         e.sku_count, e.cells_count, e.created_by_user_id, e.notas,
                         e.custom_plazos,
+                        {banda_vigente_select},
                         c.razon_social, c.nombre_comercial, c.pais_iso2
                     FROM pricing.marluvas_price_history_event e
                     LEFT JOIN clientes.cliente c ON c.id = e.cliente_id
@@ -301,6 +364,12 @@ class PriceHistoryDetailView(APIView):
             log.warning("PriceHistoryDetailView detalle failed: %s", exc)
             return Response({"detail": str(exc)}, status=500)
 
+        bv_raw = ev.get("banda_vigente_id")
+        try:
+            bv_id = int(bv_raw) if bv_raw is not None else None
+        except (TypeError, ValueError):
+            bv_id = None
+
         return Response({
             "event": {
                 "id":                 str(ev["id"]),
@@ -312,6 +381,7 @@ class PriceHistoryDetailView(APIView):
                 "sku_count":          int(ev["sku_count"] or 0),
                 "cells_count":        int(ev["cells_count"] or 0),
                 "custom_plazos":      (lambda v: v if isinstance(v, dict) else {})(_jsonb(ev["custom_plazos"])),
+                "banda_vigente_id":   bv_id,
                 "created_by_user_id": str(ev["created_by_user_id"]) if ev["created_by_user_id"] else None,
                 "notas":              ev["notas"],
                 "cliente": {

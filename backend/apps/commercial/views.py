@@ -2004,6 +2004,19 @@ class MarluvasSaveSimulationView(APIView):
         # para todos los SKUs del cliente-marca). Lo aplicamos a cada row.
         custom_plazos = self._parse_custom_plazos(data.get("custom_plazos"))
 
+        # F6.1 · 2026-05-21 · Banda vigente (según TC del día) al momento
+        # del save. Opcional — si no viene o es inválida, queda NULL y el
+        # visor del historial hace fallback al default (banda 6).
+        banda_vigente_raw = data.get("banda_vigente_id")
+        banda_vigente_id = None
+        if banda_vigente_raw is not None:
+            try:
+                bv = int(banda_vigente_raw)
+                if 1 <= bv <= 12:
+                    banda_vigente_id = bv
+            except (TypeError, ValueError):
+                banda_vigente_id = None
+
         # --- Normalización y filtro activos==True ------------------------
         rows_to_insert = []
         try:
@@ -2150,6 +2163,7 @@ class MarluvasSaveSimulationView(APIView):
                 custom_plazos      = custom_plazos or {},
                 sku_count          = len(rows_to_insert),
                 cells_count        = total_cells,
+                banda_vigente_id   = banda_vigente_id,
                 notas              = (data.get("notas") or None) if isinstance(data, dict) else None,
             )
 

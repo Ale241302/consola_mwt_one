@@ -863,6 +863,14 @@ export default function ScreenBrandClientPricingForm() {
         // Fase 4 · plazos custom (top-level, vale para todos los SKUs)
         ...(customPlazos && Object.keys(customPlazos).length > 0
             ? { custom_plazos: customPlazos } : {}),
+        // F6.1 · 2026-05-21 · Banda vigente (según TC del día) al
+        // momento del save. El backend la persiste en
+        // marluvas_price_history_event.banda_vigente_id para que el
+        // visor del historial pinte correctamente VIGENTE/NEUTRAL en
+        // "Todas las bandas". Si por algún motivo el TC no resolvió
+        // banda (raro), omitimos el campo y el backend deja NULL.
+        ...(Number.isFinite(Number(bandaVigente?.id))
+            ? { banda_vigente_id: Number(bandaVigente.id) } : {}),
         skus: skus.map((s) => {
           // F6.2 · 2026-05-20 · Reconstrucción de la matriz garantizando
           // shape canónico: para CADA banda (1..12), incluir EXACTAMENTE
@@ -1595,7 +1603,7 @@ export default function ScreenBrandClientPricingForm() {
                               title={lang === "es" ? "Banda ancla del SKU" : "SKU anchor band"}>
                               {BANDAS_MARLUVAS.map((b) => (
                                 <option key={b.id} value={b.id}>
-                                  #{b.id}{b.techo ? " T" : b.piso ? " P" : ""}
+                                  {b.rango}{b.techo ? " · TECHO" : b.piso ? " · PISO" : ""}
                                 </option>
                               ))}
                             </select>

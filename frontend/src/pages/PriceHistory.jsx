@@ -56,10 +56,19 @@ const FLAG = {
 };
 
 // ───────────────────── Helpers ─────────────────────
-function bandKind(banda) {
+// F6.1 · 2026-05-21 — bandKind ahora distingue NEUTRAL.
+// Antes: cualquier banda no-techo/no-piso caía a "VIGENTE" → en la vista
+// "Todas las bandas" el sistema pintaba 10 bandas amarillas (todas
+// menos #1 y #12), lo cual es semánticamente incorrecto. Solo UNA banda
+// es VIGENTE en cada momento: la que estaba activa según el TC al
+// momento del save (event.banda_vigente_id).
+function bandKind(banda, vigenteId) {
   if (banda?.techo) return "TECHO";
   if (banda?.piso)  return "PISO";
-  return "VIGENTE";
+  if (Number.isFinite(Number(vigenteId)) && Number(banda?.id) === Number(vigenteId)) {
+    return "VIGENTE";
+  }
+  return "NEUTRAL";
 }
 
 // Plazos efectivos para una banda dada — tolerante a snapshots viejos.
@@ -99,9 +108,16 @@ function effectivePlazos(bandaId, customPlazos, matrixRow) {
   return getBandPlazos(bandaId, null);
 }
 function bandColors(kind) {
-  if (kind === "TECHO")  return { bg: TECHO_BG,   strong: TECHO_STRONG,   text: TECHO_TEXT };
-  if (kind === "PISO")   return { bg: PISO_BG,    strong: PISO_STRONG,    text: PISO_TEXT };
-  return                        { bg: VIGENTE_BG, strong: VIGENTE_STRONG, text: VIGENTE_TEXT };
+  if (kind === "TECHO")   return { bg: TECHO_BG,   strong: TECHO_STRONG,   text: TECHO_TEXT };
+  if (kind === "PISO")    return { bg: PISO_BG,    strong: PISO_STRONG,    text: PISO_TEXT };
+  if (kind === "VIGENTE") return { bg: VIGENTE_BG, strong: VIGENTE_STRONG, text: VIGENTE_TEXT };
+  // NEUTRAL — bandas del medio que no estaban vigentes al momento del save.
+  // Look subdued: fondo de superficie, borde sutil, texto secundario.
+  return {
+    bg:     'var(--surface, #FFFFFF)',
+    strong: 'var(--border-subtle, #E5E7EB)',
+    text:   'var(--text-secondary, #64748B)',
+  };
 }
 
 // Reconstruye el "input" del SKU a partir del snapshot guardado.
@@ -274,52 +290,48 @@ export default function ScreenPriceHistory() {
               <th>Fecha</th>
               <th>Marca</th>
               <th>Cliente</th>
-              <th className="ta-right">SKUs</th>
-              <th className="ta-right">Celdas</th>
-              <th className="ta-right">Bandas custom</th>
+              <th>SKUs</th>
               <th>Vigencia</th>
               <th style={{ width:30 }}/>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} style={{ padding:24, textAlign:'center', color:'var(--text-tertiary)' }}>
+              <tr><td colSpan={6} style={{ padding:24, textAlign:'center', color:'var(--text-tertiary)' }}>
                 Cargando…
               </td></tr>
             ) : events.length === 0 ? (
-              <tr><td colSpan={8} style={{ padding:40, textAlign:'center', color:'var(--text-tertiary)' }}>
+              <tr><td colSpan={6} style={{ padding:40, textAlign:'center', color:'var(--text-tertiary)' }}>
                 <IconHistory size={22} style={{ color:'var(--text-tertiary)', marginBottom:6 }}/>
                 <div className="heading-md">Sin historial</div>
                 <div className="caption">Ajusta los filtros o esperá a que el motor de precios guarde una simulación.</div>
               </td></tr>
             ) : events.map((e) => {
-              const flag = FLAG[(e.cliente?.pais_iso2 || '').toUpperCase()] || '🌐';
               const vigencia = e.fecha_inicio || e.fecha_fin
                 ? `${e.fecha_inicio || '—'} → ${e.fecha_fin || 'indef.'}`
                 : '—';
+              // F6.1 · Lista comma-separated de SKUs (en lugar de count).
+              // El backend siempre devuelve `skus: []` (puede estar vacío
+              // si el snapshot no tiene hijas). Fallback a sku_count si el
+              // server viejo aún no envía la lista.
+              const skuList = Array.isArray(e.skus) ? e.skus : [];
+              const skuLabel = skuList.length > 0
+                ? skuList.join(', ')
+                : (e.sku_count > 0 ? String(e.sku_count) : '—');
               return (
                 <tr key={e.id} className="row-clickable" onClick={() => setDetailId(e.id)}
                     style={{ cursor:'pointer' }}>
                   <td className="tabular-nums">{fmtDate(e.snapshot_at)}</td>
                   <td>{brandsById[e.brand_id] || '—'}</td>
-                  <td>
-                    <span style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
-                      <span>{flag}</span>
-                      <span style={{ fontWeight:600 }}>
-                        {e.cliente?.razon_social || e.cliente?.nombre_comercial || '—'}
-                      </span>
-                    </span>
+                  <td style={{ fontWeight:600 }}>
+                    {e.cliente?.razon_social || e.cliente?.nombre_comercial || '—'}
                   </td>
-                  <td className="ta-right tabular-nums">{e.sku_count}</td>
-                  <td className="ta-right tabular-nums">{e.cells_count}</td>
-                  <td className="ta-right tabular-nums">
-                    {e.custom_plazos_bands > 0
-                      ? <span style={{
-                          padding:'2px 7px', borderRadius:10,
-                          background:'rgba(245,158,11,0.15)', color:'#92400E',
-                          font:'700 10px/1 var(--font-body)',
-                        }}>{e.custom_plazos_bands}</span>
-                      : <span style={{ color:'var(--text-tertiary)' }}>0</span>}
+                  <td className="tabular-nums" style={{
+                    font:'500 12px/1.3 var(--font-mono, ui-monospace)',
+                    color:'var(--text-primary)',
+                    maxWidth:360, wordBreak:'break-word',
+                  }}>
+                    {skuLabel}
                   </td>
                   <td className="caption">{vigencia}</td>
                   <td style={{ textAlign:'center' }}>›</td>
@@ -353,6 +365,12 @@ function DetailDrawer({ data, loading, brandName, onClose }) {
     catch { return iso; }
   };
   const flag = FLAG[(data?.event?.cliente?.pais_iso2 || '').toUpperCase()] || '🌐';
+  // F6.1 · 2026-05-21 — banda que estaba vigente al momento del save.
+  // Si el snapshot es viejo (pre-D4) el backend devuelve null y caemos al
+  // default conocido: banda 6 (5,00 – 5,20). El visor lo pinta amarillo
+  // (VIGENTE); el resto de las bandas del medio quedan NEUTRAL.
+  const vigenteIdRaw = data?.event?.banda_vigente_id;
+  const vigenteId = Number.isFinite(Number(vigenteIdRaw)) ? Number(vigenteIdRaw) : 6;
   // Saneamos custom_plazos por si snapshots viejos tienen shape raro
   // (ej. lista plana en vez de { "<bandaId>": [...] }). Sólo aceptamos
   // claves 1..12 y arrays válidos de {dias, factor}.
@@ -442,7 +460,7 @@ function DetailDrawer({ data, loading, brandName, onClose }) {
                 </div>
               )}
               {data.skus.map((s) => (
-                <SkuSnapshotCard key={s.id} sku={s} customPlazos={customPlazos}/>
+                <SkuSnapshotCard key={s.id} sku={s} customPlazos={customPlazos} vigenteId={vigenteId}/>
               ))}
             </>
           )}
@@ -455,7 +473,7 @@ function DetailDrawer({ data, loading, brandName, onClose }) {
 // ═══════════════════════════════════════════════════════════════════
 // SKU card — replica visual del motor de precios
 // ═══════════════════════════════════════════════════════════════════
-function SkuSnapshotCard({ sku, customPlazos }) {
+function SkuSnapshotCard({ sku, customPlazos, vigenteId }) {
   const [bandFilter,  setBandFilter]  = useState("essentials"); // essentials | all
   const [showSizes,   setShowSizes]   = useState(false);
   // Saneamiento defensivo — los JSONB pueden llegar como strings si el
@@ -471,7 +489,7 @@ function SkuSnapshotCard({ sku, customPlazos }) {
     ? { bandaId: Number(rawAnchor.bandaId), plazoDias: Number(rawAnchor.plazoDias) }
     : { bandaId: 1, plazoDias: 90 };
   const anclaBanda  = BANDAS_MARLUVAS.find((b) => b.id === anchor.bandaId) || BANDAS_MARLUVAS[0];
-  const anclaKind   = bandKind(anclaBanda);
+  const anclaKind   = bandKind(anclaBanda, vigenteId);
   const anclaColors = bandColors(anclaKind);
   // Lista USD: leer de la matriz congelada (fuente de verdad inmutable).
   // Base USD: derivar vía anchorPrice cuando hay BRL (snapshot completo);
@@ -589,6 +607,7 @@ function SkuSnapshotCard({ sku, customPlazos }) {
         bandIds={visibleBandIds}
         customPlazos={customPlazos}
         anchor={anchor}
+        vigenteId={vigenteId}
       />
 
       {/* Tallas */}
@@ -609,6 +628,7 @@ function SkuSnapshotCard({ sku, customPlazos }) {
               sizesPricing={sizesPricing}
               customPlazos={customPlazos}
               fallbackAnchor={anchor}
+              vigenteId={vigenteId}
             />
           )}
         </div>
@@ -622,7 +642,7 @@ function SkuSnapshotCard({ sku, customPlazos }) {
 // Replica el layout del motor: header de banda con rango/÷div/tipo,
 // luego una fila de plazos con sub-label, luego los precios.
 // ═══════════════════════════════════════════════════════════════════
-function MatrixView({ matrix, bandIds, customPlazos, anchor }) {
+function MatrixView({ matrix, bandIds, customPlazos, anchor, vigenteId }) {
   if (!bandIds || bandIds.length === 0) {
     return <div style={{
       padding:14, font:'500 11px/1.3 var(--font-body)', color:'var(--text-tertiary)',
@@ -638,7 +658,7 @@ function MatrixView({ matrix, bandIds, customPlazos, anchor }) {
         {bandIds.map((bid) => {
           const banda = BANDAS_MARLUVAS.find((b) => b.id === bid);
           if (!banda) return null;
-          const kind = bandKind(banda);
+          const kind = bandKind(banda, vigenteId);
           const colors = bandColors(kind);
           const row    = matrix[String(bid)] || matrix[bid] || {};
           const plazos = effectivePlazos(bid, customPlazos, row);
@@ -769,7 +789,7 @@ function MatrixView({ matrix, bandIds, customPlazos, anchor }) {
 // ═══════════════════════════════════════════════════════════════════
 // SizesBreakdown — cards por talla (estilo SkuSizesPanel del motor)
 // ═══════════════════════════════════════════════════════════════════
-function SizesBreakdown({ sku, sizesPricing, customPlazos, fallbackAnchor }) {
+function SizesBreakdown({ sku, sizesPricing, customPlazos, fallbackAnchor, vigenteId }) {
   const { tallas } = useSkuTallas(sku.sku, true);
   const tallasByUuid = useMemo(() => {
     const m = {};
@@ -840,6 +860,7 @@ function SizesBreakdown({ sku, sizesPricing, customPlazos, fallbackAnchor }) {
               bandIds={visible}
               customPlazos={customPlazos}
               anchor={sizeAnchor}
+              vigenteId={vigenteId}
             />
           </div>
         );
