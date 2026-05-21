@@ -1128,7 +1128,11 @@ const selectStyle = {
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// SizeMarketHeatmap — distribución unidades vendidas por talla × mercado.
+// SizeMarketHeatmap — distribución de unidades vendidas por talla × mercado.
+// Renderiza un histograma SVG por talla con una curva de Gauss ajustada
+// superpuesta (μ y σ se calculan sobre el índice ordinal de talla). Cuando
+// hay varios mercados se dibuja una serie barra+curva por mercado, con
+// colores tomados de SERIES_PALETTE (tokens MWT).
 //
 // Shape esperado del backend (`/api/analytics/size_market_distribution/`):
 //   {
@@ -1137,12 +1141,45 @@ const selectStyle = {
 //     data:    [{ size, market, units }],
 //     curve:   [{ size, pct_target }] | null
 //   }
-//
-// Cada celda colorea por intensidad (escala por máximo absoluto del set).
-// Cuando exista `curve` (curva esperada), se calcula desviación cliente-side
-// y se colorea verde/rojo según prompt CEO (verde = match, rojo > 50% drift).
-// Hoy `curve` viene null → escala neutral por intensidad de ventas.
 // ─────────────────────────────────────────────────────────────────────
+
+// Paleta para series por mercado (hasta 5; >5 se cicla). Usamos variables
+// CSS de tokens MWT para respetar R1 (cero hex hardcoded en el JSX).
+const SIZE_SERIES_PALETTE = [
+  "var(--info, #0369A1)",
+  "var(--success, #0E8A6D)",
+  "var(--warning, #B45309)",
+  "var(--critical, #DC2626)",
+  "var(--brand-primary, #013A57)",
+];
+
+/** Ajuste gaussiano sobre el índice ordinal de talla.
+ *  Devuelve { mu, sigma, total, peak } o null si no hay unidades. */
+function fitGaussianBySize(unitsBySizeIdx, sizesCount) {
+  let total = 0, sumX = 0, peak = 0;
+  for (let i = 0; i < sizesCount; i++) {
+    const u = unitsBySizeIdx[i] || 0;
+    total += u;
+    sumX  += i * u;
+    if (u > peak) peak = u;
+  }
+  if (total <= 0) return null;
+  const mu = sumX / total;
+  let sumVar = 0;
+  for (let i = 0; i < sizesCount; i++) {
+    const u = unitsBySizeIdx[i] || 0;
+    sumVar += (i - mu) ** 2 * u;
+  }
+  // Floor en sigma para evitar picos infinitos cuando todo está en una talla.
+  const sigma = Math.max(0.6, Math.sqrt(sumVar / total));
+  return { mu, sigma, total, peak };
+}
+
+/** Densidad gaussiana clásica · sin normalizar a 1. */
+function gaussDensity(x, mu, sigma) {
+  return Math.exp(-0.5 * ((x - mu) / sigma) ** 2) / (sigma * Math.SQRT2 * Math.sqrt(Math.PI));
+}
+
 export function SizeMarketHeatmap({
   payload,
   lang = "es",
@@ -1165,104 +1202,285 @@ export function SizeMarketHeatmap({
     );
   }
 
-  // Index para lookup O(1)
-  const cellMap = useMemo(() => {
-    const m = new Map();
-    for (const row of data) {
-      m.set(`${row.size}|${row.market}`, Number(row.units) || 0);
+  // ── Series por mercado · agrupa unidades por índice de talla ──────────
+  const series = useMemo(() => {
+    const sizeIdx = new Map(sizes.map((s, i) => [s, i]));
+    return markets.map((m, mi) => {
+      const units = new Array(sizes.length).fill(0);
+      for (const row of data) {
+        if (row.market !== m.code) continue;
+        const idx = sizeIdx.get(row.size);
+        if (idx == null) continue;
+        units[idx] += Number(row.units) || 0;
+      }
+      return {
+        code:  m.code,
+        name:  m.name,
+        color: SIZE_SERIES_PALETTE[mi % SIZE_SERIES_PALETTE.length],
+        units,
+        fit:   fitGaussianBySize(units, sizes.length),
+      };
+    });
+  }, [sizes, markets, data]);
+
+  const maxUnits = useMemo(() => {
+    let max = 0;
+    for (const s of series) for (const u of s.units) if (u > max) max = u;
+    return Math.max(1, max);
+  }, [series]);
+
+  const grandTotal = useMemo(
+    () => data.reduce((a, d) => a + (Number(d.units) || 0), 0),
+    [data],
+  );
+
+  // ── Geometría SVG ───────────────────────────────────────────────────
+  // viewBox fijo; el SVG escala al ancho del card con width 100%.
+  const VB_W = 640;
+  const VB_H = 280;
+  const PAD_T = 16;
+  const PAD_R = 16;
+  const PAD_B = 36;   // espacio para labels de talla
+  const PAD_L = 40;   // espacio para eje Y
+  const plotW = VB_W - PAD_L - PAD_R;
+  const plotH = VB_H - PAD_T - PAD_B;
+  const bandW = plotW / sizes.length;            // ancho asignado por talla
+  const seriesCount = Math.max(1, series.length);
+  const barGap = 2;
+  // Cada barra ocupa una franja dentro de la banda de la talla.
+  const barW = Math.max(2, (bandW - barGap * (seriesCount + 1)) / seriesCount);
+
+  const xCenterOf = (idx) => PAD_L + bandW * (idx + 0.5);
+  const xBarOf    = (idx, si) => PAD_L + bandW * idx + barGap + si * (barW + barGap);
+  const yOf       = (u)        => PAD_T + plotH * (1 - Math.min(1, u / maxUnits));
+
+  // Curva: muestreamos 160 puntos por mercado entre x=-0.5 y x=sizes.length-0.5.
+  // Escalamos cada curva para que su pico coincida con el `peak` de unidades
+  // de ese mercado → la curva queda "abrazando" el histograma.
+  const curvePathOf = (s) => {
+    if (!s.fit) return "";
+    const { mu, sigma, peak } = s.fit;
+    const densAtMu = gaussDensity(mu, mu, sigma);
+    if (!densAtMu) return "";
+    const N = 160;
+    const x0 = -0.5, x1 = sizes.length - 0.5;
+    let d = "";
+    for (let k = 0; k <= N; k++) {
+      const xv = x0 + (x1 - x0) * (k / N);
+      const dens = gaussDensity(xv, mu, sigma);
+      const u = (dens / densAtMu) * peak;
+      const px = PAD_L + bandW * (xv + 0.5);
+      const py = yOf(u);
+      d += (k === 0 ? "M" : "L") + px.toFixed(2) + "," + py.toFixed(2) + " ";
     }
-    return m;
-  }, [data]);
-
-  const maxUnits = useMemo(() => Math.max(1, ...data.map(d => Number(d.units) || 0)), [data]);
-
-  const cellColor = (units) => {
-    if (!units || units <= 0) return "var(--bg-alt)";
-    const intensity = Math.min(1, units / maxUnits);
-    // Escala de verde menta → primary navy según intensidad
-    // Usamos opacity en lugar de hex para respetar R1 (tokens MWT)
-    return `color-mix(in oklab, var(--brand-accent), var(--brand-primary) ${Math.round(intensity * 80)}%)`;
+    return d.trim();
   };
 
-  const cellTextColor = (units) =>
-    units && units / maxUnits > 0.5 ? "var(--text-on-navy)" : "var(--text-primary)";
+  // Ticks Y: 0 y maxUnits (suficiente para densidad ejecutiva).
+  const yMax = maxUnits;
 
-  // Grid: 1 col para label de talla + N cols (una por mercado)
-  const gridTemplate = `42px repeat(${markets.length}, minmax(0, 1fr))`;
+  // ── Tooltip simple controlado por hover ─────────────────────────────
+  const [tip, setTip] = useState(null); // { x, y, label }
 
   return (
     <div>
-      {/* Header con códigos de mercado */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: gridTemplate,
-        gap: 4,
-        padding: "0 0 6px 0",
-        font: "var(--micro)",
-        color: "var(--text-tertiary)",
-        letterSpacing: "0.06em",
-      }}>
-        <span>{lang === "es" ? "Talla" : "Size"}</span>
-        {markets.map(m => (
-          <span key={m.code} title={m.name} style={{ textAlign: "center" }}>
-            {m.code}
-          </span>
-        ))}
-      </div>
-
-      {/* Filas de tallas */}
-      {sizes.map(size => (
-        <div key={size} style={{
-          display: "grid",
-          gridTemplateColumns: gridTemplate,
-          gap: 4,
-          marginBottom: 4,
-          alignItems: "center",
+      {/* Leyenda de mercados (solo si hay > 1 mercado) */}
+      {series.length > 1 && (
+        <div style={{
+          display: "flex", flexWrap: "wrap", gap: 12,
+          padding: "0 0 6px 0",
+          font: "var(--micro)", color: "var(--text-secondary)",
         }}>
-          <span className="tabular" style={{
-            font: "600 12px/1 var(--font-mono)",
-            color: "var(--text-secondary)",
-            textAlign: "right",
-            paddingRight: 6,
-          }}>
-            {size}
-          </span>
-          {markets.map(m => {
-            const units = cellMap.get(`${size}|${m.code}`) || 0;
+          {series.map((s) => (
+            <span key={s.code}
+                  title={s.name}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{
+                width: 10, height: 10, borderRadius: 2,
+                background: s.color,
+                border: "1px solid color-mix(in oklab, var(--text-secondary), transparent 70%)",
+              }}/>
+              <span className="tabular" style={{ font: "600 11px/1 var(--font-mono)" }}>
+                {s.code}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Histograma + curvas */}
+      <div style={{ position: "relative", width: "100%" }}>
+        <svg
+          viewBox={`0 0 ${VB_W} ${VB_H}`}
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          aria-label={lang === "es"
+            ? `Histograma de tallas con curva de Gauss ajustada por mercado`
+            : `Histogram of sizes with fitted Gaussian curve per market`}
+          style={{
+            width: "100%", height: "auto",
+            display: "block",
+            font: "500 10.5px/1 var(--font-mono)",
+            color: "var(--text-tertiary)",
+          }}
+        >
+          {/* Eje Y · solo dos ticks limpios */}
+          <line
+            x1={PAD_L} x2={PAD_L}
+            y1={PAD_T} y2={PAD_T + plotH}
+            stroke="color-mix(in oklab, var(--text-tertiary), transparent 70%)"
+            strokeWidth="1"
+          />
+          <text
+            x={PAD_L - 6}
+            y={PAD_T + 4}
+            textAnchor="end"
+            fill="var(--text-tertiary)"
+            className="tabular"
+          >
+            {yMax.toLocaleString(lang === "en" ? "en-US" : "es-PE")}
+          </text>
+          <text
+            x={PAD_L - 6}
+            y={PAD_T + plotH}
+            textAnchor="end"
+            fill="var(--text-tertiary)"
+            className="tabular"
+          >
+            0
+          </text>
+
+          {/* Eje X · baseline */}
+          <line
+            x1={PAD_L} x2={PAD_L + plotW}
+            y1={PAD_T + plotH} y2={PAD_T + plotH}
+            stroke="color-mix(in oklab, var(--text-tertiary), transparent 60%)"
+            strokeWidth="1"
+          />
+
+          {/* Barras agrupadas por talla, una serie por mercado */}
+          {sizes.map((size, idx) => (
+            <g key={`g-${size}`}>
+              {series.map((s, si) => {
+                const u = s.units[idx] || 0;
+                if (u <= 0) return null;
+                const x = xBarOf(idx, si);
+                const y = yOf(u);
+                const h = PAD_T + plotH - y;
+                return (
+                  <rect
+                    key={`b-${size}-${s.code}`}
+                    x={x} y={y}
+                    width={barW} height={h}
+                    fill={s.color}
+                    fillOpacity={0.28}
+                    stroke={s.color}
+                    strokeOpacity={0.55}
+                    strokeWidth={0.75}
+                    rx={2}
+                    onMouseEnter={() => setTip({
+                      x: x + barW / 2,
+                      y,
+                      label: `${size} · ${s.name}: ${u.toLocaleString(lang === "en" ? "en-US" : "es-PE")} uds`,
+                    })}
+                    onMouseLeave={() => setTip(null)}
+                  />
+                );
+              })}
+            </g>
+          ))}
+
+          {/* Curvas de Gauss ajustadas (una por mercado, encima de las barras) */}
+          {series.map((s) => {
+            const d = curvePathOf(s);
+            if (!d) return null;
             return (
-              <div
-                key={m.code}
-                title={`${size} · ${m.name}: ${units.toLocaleString(lang === "en" ? "en-US" : "es-PE")} uds`}
-                style={{
-                  background: cellColor(units),
-                  color: cellTextColor(units),
-                  borderRadius: "var(--radius-sm)",
-                  textAlign: "center",
-                  padding: "6px 4px",
-                  font: "600 11px/1 var(--font-mono)",
-                  minHeight: 24,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}
-              >
-                {units > 0 ? units : ""}
-              </div>
+              <path
+                key={`c-${s.code}`}
+                d={d}
+                fill="none"
+                stroke={s.color}
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={0.95}
+              />
             );
           })}
-        </div>
-      ))}
 
+          {/* Línea vertical punteada en μ (solo si una sola serie · evita ruido) */}
+          {series.length === 1 && series[0].fit && (
+            <line
+              x1={xCenterOf(series[0].fit.mu)}
+              x2={xCenterOf(series[0].fit.mu)}
+              y1={PAD_T}
+              y2={PAD_T + plotH}
+              stroke={series[0].color}
+              strokeOpacity={0.55}
+              strokeWidth={1}
+              strokeDasharray="3 4"
+            />
+          )}
+
+          {/* Etiquetas de tallas en eje X */}
+          {sizes.map((size, idx) => (
+            <text
+              key={`xl-${size}`}
+              x={xCenterOf(idx)}
+              y={PAD_T + plotH + 16}
+              textAnchor="middle"
+              fill="var(--text-secondary)"
+              className="tabular"
+              style={{ font: "600 10.5px/1 var(--font-mono)" }}
+            >
+              {size}
+            </text>
+          ))}
+        </svg>
+
+        {/* Tooltip flotante (HTML, no SVG, para tipografía mejor) */}
+        {tip && (
+          <div style={{
+            position: "absolute",
+            left: `calc(${(tip.x / VB_W) * 100}% )`,
+            top:  `calc(${(tip.y / VB_H) * 100}% - 30px)`,
+            transform: "translate(-50%, -100%)",
+            background: "var(--surface-raised, #FFFFFF)",
+            color: "var(--text-primary)",
+            border: "1px solid var(--border-subtle, #E5E7EB)",
+            borderRadius: "var(--radius-sm, 6px)",
+            padding: "5px 8px",
+            font: "600 11px/1.2 var(--font-body)",
+            boxShadow: "0 4px 16px rgba(11,30,58,0.16)",
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+            zIndex: 2,
+          }}>
+            {tip.label}
+          </div>
+        )}
+      </div>
+
+      {/* Footer · resumen + estado de curva esperada */}
       <div style={{
-        marginTop: 10,
+        marginTop: 12,
         font: "var(--caption)",
         color: "var(--text-tertiary)",
       }}>
         {lang === "es"
-          ? `Total ${data.reduce((a, d) => a + (Number(d.units) || 0), 0).toLocaleString("es-PE")} uds en ${sizes.length} tallas × ${markets.length} mercados.`
-          : `Total ${data.reduce((a, d) => a + (Number(d.units) || 0), 0).toLocaleString("en-US")} units across ${sizes.length} sizes × ${markets.length} markets.`}
+          ? `Total ${grandTotal.toLocaleString("es-PE")} uds en ${sizes.length} tallas × ${markets.length} mercado${markets.length === 1 ? "" : "s"}.`
+          : `Total ${grandTotal.toLocaleString("en-US")} units across ${sizes.length} sizes × ${markets.length} market${markets.length === 1 ? "" : "s"}.`}
+        {series.length === 1 && series[0].fit && (
+          <span style={{ marginLeft: 6 }}>
+            · μ ≈ <span className="tabular">{sizes[Math.round(series[0].fit.mu)] ?? "?"}</span>
+            {" · σ ≈ "}
+            <span className="tabular">{series[0].fit.sigma.toFixed(2)}</span>
+          </span>
+        )}
         {!payload?.curve && (
           <span style={{ marginLeft: 6 }}>
             · {lang === "es"
-                ? "Curva esperada S1-S6 pendiente: requiere tabla productos.size_distribution_curve."
+                ? "Curva esperada S1-S6 pendiente: requiere productos.size_distribution_curve."
                 : "Expected curve S1-S6 pending: needs productos.size_distribution_curve."}
           </span>
         )}
