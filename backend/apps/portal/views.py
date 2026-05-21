@@ -801,6 +801,141 @@ class PortalViewSet(viewsets.ViewSet):
 
         return Response(out)
 
+    # ── /api/portal/_my_debug/ ────────────────────────────────
+    # Sprint 2026-05-21 · Diagnóstico user-level del drift core.users ↔ users.mwtuser.
+    # A diferencia de _debug (staff only), éste lo puede abrir CUALQUIER usuario
+    # autenticado y ver SOLO sus propios datos. Útil cuando un CLIENT reporta
+    # "no veo nada en el portal" — abrimos este endpoint con su sesión y vemos
+    # exactamente qué injecta el JWT vs qué hay en users.mwtuser.
+    # NO expone datos de otros usuarios. NO expone claims internos del JWT.
+    @action(detail=False, methods=["get"], url_path="_my_debug")
+    def _my_debug(self, request):
+        u = getattr(request, "user", None)
+        if u is None or not getattr(u, "is_authenticated", False):
+            return Response(
+                {"detail": "Debes estar autenticado para diagnosticar tu scope."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        injected_ids = list(getattr(u, "legal_entity_ids", None) or [])
+        email = (getattr(u, "email", "") or "").strip().lower()
+        uid   = str(getattr(u, "id", "") or "")
+
+        out = {
+            "jwt_view": {
+                "user_id":           uid,
+                "email":             getattr(u, "email", None),
+                "role":              getattr(u, "role", None),
+                "legal_entity_ids":  injected_ids,
+                "n_empresas_jwt":    len(injected_ids),
+            },
+            "users_mwtuser_lookup": {
+                "by_id":    None,
+                "by_email": None,
+            },
+            "join_diagnosis": None,
+            "resolved_empresas": [],
+        }
+
+        try:
+            with connection.cursor() as cur:
+                # 1) ¿Existe el mismo UUID en users.mwtuser?
+                cur.execute("""
+                    SELECT id::text, email_plain, contact_email, is_active,
+                           role_default,
+                           COALESCE(legal_entity_ids, '{}'::TEXT[]) AS leis,
+                           cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) AS n_leis
+                      FROM users.mwtuser
+                     WHERE lower(id::text) = lower(%s)
+                     LIMIT 1
+                """, [uid])
+                r = cur.fetchone()
+                if r:
+                    out["users_mwtuser_lookup"]["by_id"] = {
+                        "id":               r[0],
+                        "email_plain":      r[1],
+                        "contact_email":    r[2],
+                        "is_active":        r[3],
+                        "role_default":     r[4],
+                        "legal_entity_ids": list(r[5] or []),
+                        "n_empresas":       r[6],
+                    }
+
+                # 2) ¿Existe el mismo email en users.mwtuser?
+                if email:
+                    cur.execute("""
+                        SELECT id::text, email_plain, contact_email, is_active,
+                               role_default,
+                               COALESCE(legal_entity_ids, '{}'::TEXT[]) AS leis,
+                               cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) AS n_leis
+                          FROM users.mwtuser
+                         WHERE lower(trim(email_plain)) = %s
+                            OR lower(trim(COALESCE(contact_email,''))) = %s
+                         ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                                  cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
+                                  updated_at DESC NULLS LAST
+                         LIMIT 1
+                    """, [email, email])
+                    r = cur.fetchone()
+                    if r:
+                        out["users_mwtuser_lookup"]["by_email"] = {
+                            "id":               r[0],
+                            "email_plain":      r[1],
+                            "contact_email":    r[2],
+                            "is_active":        r[3],
+                            "role_default":     r[4],
+                            "legal_entity_ids": list(r[5] or []),
+                            "n_empresas":       r[6],
+                        }
+
+            # 3) Diagnóstico humano-legible
+            by_id    = out["users_mwtuser_lookup"]["by_id"]
+            by_email = out["users_mwtuser_lookup"]["by_email"]
+            if injected_ids:
+                out["join_diagnosis"] = "JWT injecto legal_entity_ids correctamente."
+            elif by_id and by_id["n_empresas"] > 0:
+                out["join_diagnosis"] = (
+                    "DRIFT por email: el UUID del JWT existe en users.mwtuser "
+                    "y tiene empresas, pero el JOIN por email fallo. "
+                    "Probable email_plain distinto entre core.users y users.mwtuser."
+                )
+            elif by_email and by_email["n_empresas"] > 0:
+                out["join_diagnosis"] = (
+                    "DRIFT por UUID: el email existe en users.mwtuser con "
+                    "empresas, pero el UUID es distinto al del JWT. "
+                    "El JWT auth deberia haber matcheado por email — verificar "
+                    "que el email del JWT (core.users.email_plain) este poblado."
+                )
+            elif by_id or by_email:
+                out["join_diagnosis"] = (
+                    "Usuario existe en users.mwtuser pero SIN empresas asignadas. "
+                    "Ir a /usuarios/{id} y asignar al menos una."
+                )
+            else:
+                out["join_diagnosis"] = (
+                    "Usuario NO existe en users.mwtuser. Crear primero la "
+                    "ficha desde /usuarios y asignar empresas."
+                )
+
+            # 4) ¿Qué empresas resuelve el portal hoy?
+            cids = _resolve_client_ids(request)
+            if cids:
+                placeholders = ",".join(["%s"] * len(cids))
+                empresas = _fetchall(
+                    f"""
+                    SELECT id::text, nombre, is_active
+                      FROM clientes.cliente
+                     WHERE lower(id::text) IN ({placeholders})
+                    """,
+                    cids,
+                )
+                out["resolved_empresas"] = empresas
+
+        except Exception as e:
+            out["error"] = str(e)
+
+        return Response(out)
+
     # ── /api/portal/kpis/ ─────────────────────────────────────
     @action(detail=False, methods=["get"])
     def kpis(self, request):

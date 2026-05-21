@@ -29,10 +29,13 @@ Sin migraciones, sin AUTH_USER_MODEL, sin tocar la DB. Sólo settings.py.
 from __future__ import annotations
 
 import json
+import logging
 
 from django.db import connection
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import AuthenticationFailed, InvalidToken
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------
@@ -254,9 +257,36 @@ class MwtJWTAuthentication(JWTAuthentication):
                     r3 = cur.fetchone()
                     if r3 and r3[0]:
                         legal_entity_ids = [str(x) for x in r3[0] if x]
-        except Exception:
+        except Exception as e:
             # users.mwtuser puede no existir en ambientes legacy.
+            log.warning(
+                "MwtJWTAuthentication: lookup de legal_entity_ids fallo "
+                "(uid=%s email=%s): %s",
+                uid, email, e,
+            )
             legal_entity_ids = []
+
+        # Sprint 2026-05-21 · Observabilidad de drift core.users ↔ users.mwtuser.
+        # Si el role del usuario es CLIENT_* / cliente / client_b2b y no se
+        # encontro ningun legal_entity_id, eso significa que el portal y los
+        # endpoints scopeados van a quedar vacios para este user — typicamente
+        # por drift entre los emails de las dos tablas. Logueamos un warning
+        # estructurado para que el CEO pueda greparlo en docker logs django.
+        try:
+            role_low = (role or "").lower()
+            is_client_like = (
+                role_low.startswith("client_")
+                or role_low in {"client", "cliente", "client_b2b"}
+            )
+            if is_client_like and not legal_entity_ids:
+                log.warning(
+                    "MwtJWTAuthentication: CLIENT sin legal_entity_ids — "
+                    "probable drift core.users (uid=%s, email=%s) vs "
+                    "users.mwtuser. Verificar con SQL del runbook portal_drift.",
+                    uid, email,
+                )
+        except Exception:
+            pass
 
         # Normalizar a lowercase — `client_id::text` de PG es lowercase
         # y comparaciones case-sensitive en TEXT generan mismatch.
