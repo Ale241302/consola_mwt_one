@@ -1164,12 +1164,18 @@ export default function ScreenProductFormView() {
         <div>
           <div className="heading-md">{lang==='es'?'C · Relaciones logísticas':'C · Logistics relations'}</div>
           <div className="caption" style={{color:'var(--text-tertiary)'}}>
-            {lang==='es'?'Tallas del Motor de Tallas + Nodos logísticos que operan el SKU.':'Sizing Engine sizes + logistics nodes operating the SKU.'}
+            {isClient
+              ? (lang==='es'?'Tallas del Motor de Tallas disponibles para este SKU.':'Sizing Engine sizes available for this SKU.')
+              : (lang==='es'?'Tallas del Motor de Tallas + Nodos logísticos que operan el SKU.':'Sizing Engine sizes + logistics nodes operating the SKU.')}
           </div>
         </div>
       </div>
 
-      <div className="form-grid-2">
+      {/* CLIENT B2B no ve la columna de Nodos Logísticos (información operativa
+          interna de MWT). En portal renderizamos solo Motor de Tallas a
+          ancho completo; staff ve 2 columnas (tallas + nodos). */}
+      <div className={isClient ? '' : 'form-grid-2'}
+           style={isClient ? { display: 'block' } : undefined}>
         <div>
           <div className="form-sub-title">
             <IconSliders size={13}/> {lang==='es'?'Motor de Tallas':'Sizing Engine'}
@@ -1208,42 +1214,46 @@ export default function ScreenProductFormView() {
           </div>
         </div>
 
-        <div>
-          <div className="form-sub-title">
-            <IconFolder size={13}/> {lang==='es'?'Nodos logísticos':'Logistics nodes'}
-            <span className="caption" style={{marginLeft:'auto', color:'var(--text-tertiary)'}}>
-              {selectedNodes.length} {lang==='es'?'seleccionados':'selected'}
-            </span>
+        {/* Nodos Logísticos: OCULTO para CLIENT B2B (POL_VISIBILIDAD).
+            Solo staff (admin/CEO/manager) ve qué nodos operan el SKU. */}
+        {!isClient && (
+          <div>
+            <div className="form-sub-title">
+              <IconFolder size={13}/> {lang==='es'?'Nodos logísticos':'Logistics nodes'}
+              <span className="caption" style={{marginLeft:'auto', color:'var(--text-tertiary)'}}>
+                {selectedNodes.length} {lang==='es'?'seleccionados':'selected'}
+              </span>
+            </div>
+            <div className="node-picker">
+              {realNodes.length === 0 ? (
+                <div className="caption" style={{padding:'12px 0', color:'var(--text-tertiary)'}}>
+                  {lang==='es'
+                    ? 'No hay nodos logísticos en BD. Crea el primero en /nodos.'
+                    : 'No logistics nodes in DB. Create the first one in /nodos.'}
+                </div>
+              ) : realNodes.map(n => {
+                const on = selectedNodes.includes(n.id);
+                const code  = n.codigo || n.node_id || n.id?.slice(0, 8) || '—';
+                const name  = n.nombre || n.name   || '—';
+                const flag  = n.flag   || (n.pais_iso2 ? `[${n.pais_iso2}]` : '🌐');
+                return (
+                  <button type="button" key={n.id}
+                          className={`node-pick ${on ? 'node-pick-on' : ''}`}
+                          onClick={()=>toggleNode(n.id)}>
+                    <span className="node-pick-flag">{flag}</span>
+                    <span className="node-pick-body">
+                      <span className="mono-sm">{code}</span>
+                      <span className="caption">{name}</span>
+                    </span>
+                    <span className="node-pick-check">
+                      {on ? <IconCheck size={12}/> : <IconPlus size={12} style={{opacity:0.4}}/>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="node-picker">
-            {realNodes.length === 0 ? (
-              <div className="caption" style={{padding:'12px 0', color:'var(--text-tertiary)'}}>
-                {lang==='es'
-                  ? 'No hay nodos logísticos en BD. Crea el primero en /nodos.'
-                  : 'No logistics nodes in DB. Create the first one in /nodos.'}
-              </div>
-            ) : realNodes.map(n => {
-              const on = selectedNodes.includes(n.id);
-              const code  = n.codigo || n.node_id || n.id?.slice(0, 8) || '—';
-              const name  = n.nombre || n.name   || '—';
-              const flag  = n.flag   || (n.pais_iso2 ? `[${n.pais_iso2}]` : '🌐');
-              return (
-                <button type="button" key={n.id}
-                        className={`node-pick ${on ? 'node-pick-on' : ''}`}
-                        onClick={()=>toggleNode(n.id)}>
-                  <span className="node-pick-flag">{flag}</span>
-                  <span className="node-pick-body">
-                    <span className="mono-sm">{code}</span>
-                    <span className="caption">{name}</span>
-                  </span>
-                  <span className="node-pick-check">
-                    {on ? <IconCheck size={12}/> : <IconPlus size={12} style={{opacity:0.4}}/>}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
