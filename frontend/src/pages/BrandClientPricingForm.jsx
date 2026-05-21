@@ -21,13 +21,12 @@
 //   · Por ahora la página entera es CEO-ONLY (es la consola interna).
 // =====================================================================
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import * as XLSX from "xlsx";
 import {
   IconChevLeft, IconUpload, IconCheck, IconAlert, IconLock,
-  IconDollar, IconX, IconRefresh,
+  IconDollar, IconX, IconRefresh, IconTrash,
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -44,7 +43,6 @@ import {
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 import SkuSizesPanel from "../components/marluvas/SkuSizesPanel.jsx";
 import PlazoFormModal from "../components/marluvas/PlazoFormModal.jsx";
-import ConfirmModal from "../components/common/ConfirmModal.jsx";
 import { getBandPlazos, materializeDefaultPlazos } from "../lib/marluvasPricing.js";
 
 // ─── Helpers backend → shape interno ──────────────────────────
@@ -1408,15 +1406,14 @@ export default function ScreenBrandClientPricingForm() {
                     <button type="button"
                       onClick={() => {
                         setConfirmDialog({
-                          eyebrow: lang === "es" ? "RESET DE ANCLAS" : "RESET ANCHORS",
+                          tone: "warning",
                           title: lang === "es"
                             ? `¿Resetear el ancla individual de ${overriddenCount} SKU(s)?`
                             : `Reset individual anchor of ${overriddenCount} SKU(s)?`,
                           body: lang === "es"
                             ? (<>Los <strong>{overriddenCount} SKU(s)</strong> volverán a usar el ancla global definida arriba. Sus overrides individuales se descartarán.</>)
                             : (<>The <strong>{overriddenCount} SKU(s)</strong> will revert to the global anchor defined above. Their individual overrides will be discarded.</>),
-                          actionLabel: lang === "es" ? "Sí, resetear" : "Yes, reset",
-                          actionColor: "#B45309",
+                          actionLabel: lang === "es" ? "Resetear anclas" : "Reset anchors",
                           onConfirm: () => clearAllSkuAnchors(),
                         });
                       }}
@@ -1798,15 +1795,14 @@ export default function ScreenBrandClientPricingForm() {
                   <button type="button"
                     onClick={() => {
                       setConfirmDialog({
-                        eyebrow: lang === "es" ? "RESET GLOBAL" : "GLOBAL RESET",
+                        tone: "danger",
                         title: lang === "es"
                           ? "¿Resetear todos los plazos custom a [90/60/30/8]?"
                           : "Reset all custom terms to [90/60/30/8]?",
                         body: lang === "es"
                           ? (<>Se descartarán los plazos personalizados de <strong>todas las bandas</strong> y volverán a los valores por defecto. Esta acción no se puede deshacer.</>)
                           : (<>Custom terms across <strong>all bands</strong> will be discarded and reset to defaults. This action cannot be undone.</>),
-                        actionLabel: lang === "es" ? "Sí, resetear plazos" : "Yes, reset terms",
-                        actionColor: "#DC2626",
+                        actionLabel: lang === "es" ? "Resetear plazos" : "Reset terms",
                         onConfirm: () => {
                           setCustomPlazos({});
                           setSkus((arr) => arr.map((s) => ({
@@ -1949,15 +1945,14 @@ export default function ScreenBrandClientPricingForm() {
                               <button type="button"
                                 onClick={() => {
                                   setConfirmDialog({
-                                    eyebrow: lang === "es" ? "QUITAR PLAZO" : "REMOVE TERM",
+                                    tone: "danger",
                                     title: lang === "es"
                                       ? `¿Quitar el plazo ${p.dias}d de la banda ${b.id}?`
                                       : `Remove term ${p.dias}d from band ${b.id}?`,
                                     body: lang === "es"
                                       ? (<>El plazo <strong>{p.dias}d</strong> dejará de calcularse en la <strong>banda #{b.id}</strong>. Puedes volver a agregarlo desde <em>+ Agregar plazo</em>.</>)
                                       : (<>The term <strong>{p.dias}d</strong> will stop being calculated for <strong>band #{b.id}</strong>. You can re-add it from <em>+ Add term</em>.</>),
-                                    actionLabel: lang === "es" ? "Sí, quitar plazo" : "Yes, remove term",
-                                    actionColor: "#DC2626",
+                                    actionLabel: lang === "es" ? "Quitar plazo" : "Remove term",
                                     onConfirm: () => removePlazoFromBanda(b.id, p.dias),
                                   });
                                 }}
@@ -2119,20 +2114,107 @@ export default function ScreenBrandClientPricingForm() {
         lang={lang}
       />
 
-      {/* Modal genérico de confirmación destructiva — reemplaza window.confirm. */}
+      {/* Modal de confirmación destructiva — patrón inline (mismo estilo
+          que Productos.jsx). Reemplaza window.confirm para acciones como
+          quitar plazo, resetear plazos custom o limpiar anclas por SKU. */}
       <AnimatePresence>
-        {confirmDialog && createPortal(
-          <ConfirmModal
-            eyebrow={confirmDialog.eyebrow}
-            title={confirmDialog.title}
-            body={confirmDialog.body}
-            actionLabel={confirmDialog.actionLabel || (lang === "es" ? "Confirmar" : "Confirm")}
-            actionColor={confirmDialog.actionColor || "#DC2626"}
-            cancelLabel={lang === "es" ? "Cancelar" : "Cancel"}
-            onCancel={closeConfirm}
-            onConfirm={runConfirm}
-          />,
-          document.body,
+        {confirmDialog && (
+          <motion.div
+            key="bcp-confirm-modal"
+            className="modal-backdrop"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={closeConfirm}
+            style={{
+              position: "fixed", inset: 0, zIndex: 1000,
+              background: "rgba(11,30,58,0.45)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: 16,
+            }}
+          >
+            <motion.div
+              className="modal-panel"
+              initial={{ y: 20, opacity: 0, scale: 0.98 }}
+              animate={{ y: 0,  opacity: 1, scale: 1 }}
+              exit={{ y: 10, opacity: 0, scale: 0.98 }}
+              transition={{ type: "spring", stiffness: 280, damping: 28 }}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: "#FFFFFF", borderRadius: 12,
+                width: "100%", maxWidth: 440,
+                boxShadow: "0 12px 48px rgba(11,30,58,0.18)",
+                overflow: "hidden",
+              }}
+            >
+              <div style={{
+                padding: "20px 22px 8px 22px",
+                display: "flex", alignItems: "flex-start", gap: 14,
+              }}>
+                <div style={{
+                  flexShrink: 0, width: 40, height: 40, borderRadius: "50%",
+                  background: confirmDialog.tone === "warning"
+                    ? "rgba(245,158,11,0.12)"
+                    : "rgba(239,68,68,0.10)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  color: confirmDialog.tone === "warning"
+                    ? "var(--warning, #F59E0B)"
+                    : "var(--critical, #EF4444)",
+                }}>
+                  {confirmDialog.tone === "warning"
+                    ? <IconAlert size={18}/>
+                    : <IconTrash size={18}/>}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    font: "700 16px/1.3 var(--font-body)",
+                    color: NAVY, marginBottom: 6,
+                  }}>
+                    {confirmDialog.title}
+                  </div>
+                  {confirmDialog.body && (
+                    <div style={{
+                      font: "500 13px/1.5 var(--font-body)",
+                      color: MUTED,
+                    }}>
+                      {confirmDialog.body}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div style={{
+                padding: "14px 22px 18px 22px",
+                display: "flex", gap: 8, justifyContent: "flex-end",
+              }}>
+                <button type="button"
+                  onClick={closeConfirm}
+                  style={{
+                    padding: "8px 16px", borderRadius: 8,
+                    border: "1px solid #E5E7EB", background: "#FFFFFF",
+                    color: INK, font: "600 12.5px/1 var(--font-body)",
+                    cursor: "pointer",
+                  }}>
+                  {lang === "es" ? "Cancelar" : "Cancel"}
+                </button>
+                <button type="button"
+                  onClick={runConfirm}
+                  autoFocus
+                  style={{
+                    padding: "8px 18px", borderRadius: 8,
+                    border: "none",
+                    background: confirmDialog.tone === "warning"
+                      ? "var(--warning, #F59E0B)"
+                      : "var(--critical, #DC2626)",
+                    color: "#FFFFFF",
+                    font: "700 12.5px/1 var(--font-body)",
+                    cursor: "pointer",
+                    boxShadow: confirmDialog.tone === "warning"
+                      ? "0 4px 10px rgba(245,158,11,0.30)"
+                      : "0 4px 10px rgba(220,38,38,0.30)",
+                  }}>
+                  {confirmDialog.actionLabel || (lang === "es" ? "Eliminar" : "Delete")}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
