@@ -666,17 +666,22 @@ class PortalViewSet(viewsets.ViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        injected_ids = list(getattr(u, "legal_entity_ids", None) or [])
         out = {
             "request_user": {
                 "id":    str(getattr(u, "id", None)),
                 "email": getattr(u, "email", None),
                 "role":  role,
+                "injected_legal_entity_ids": injected_ids,
             },
             "lookup_email_lowercased": email,
             "mwtuser_by_email":   [],
             "mwtuser_by_id":      [],
+            "all_alejandro_rows": [],     # Búsqueda LIKE en email
             "resolved_client_ids": [],
             "resolved_empresas":   [],
+            "sample_expedientes":  [],
+            "sample_clientes":     [],
         }
 
         try:
@@ -698,11 +703,11 @@ class PortalViewSet(viewsets.ViewSet):
                         "legal_entity_ids": list(r[4]) if r[4] else [],
                     })
 
-                # Filas en users.mwtuser que matcheen id
+                # Filas en users.mwtuser que matcheen id (case-insensitive)
                 cur.execute("""
                     SELECT id::text, email_plain, is_active, legal_entity_ids
                       FROM users.mwtuser
-                     WHERE id::text = %s
+                     WHERE lower(id::text) = lower(%s)
                 """, [str(getattr(u, "id", "")) or "x"])
                 for r in cur.fetchall():
                     out["mwtuser_by_id"].append({
@@ -710,6 +715,59 @@ class PortalViewSet(viewsets.ViewSet):
                         "email_plain":      r[1],
                         "is_active":        r[2],
                         "legal_entity_ids": list(r[3]) if r[3] else [],
+                    })
+
+                # Búsqueda LIKE — captura emails con minúsculas/mayúsculas
+                # mixtas o variantes. Útil para diagnosticar duplicados.
+                local = email.split("@")[0] if "@" in email else email
+                cur.execute("""
+                    SELECT id::text, email_plain, is_active, legal_entity_ids,
+                           created_at::text, updated_at::text
+                      FROM users.mwtuser
+                     WHERE email_plain ILIKE %s
+                     ORDER BY updated_at DESC NULLS LAST
+                     LIMIT 5
+                """, [f"%{local}%"])
+                for r in cur.fetchall():
+                    out["all_alejandro_rows"].append({
+                        "id":               r[0],
+                        "email_plain":      r[1],
+                        "is_active":        r[2],
+                        "legal_entity_ids": list(r[3]) if r[3] else [],
+                        "created_at":       r[4],
+                        "updated_at":       r[5],
+                    })
+
+                # Muestra de expedientes activos — para ver el formato del
+                # client_id (mayúsculas vs minúsculas) en la BD.
+                cur.execute("""
+                    SELECT codigo, client_id::text, is_active, estado
+                      FROM expedientes.expediente
+                     WHERE is_active = TRUE
+                     ORDER BY last_event_at DESC NULLS LAST
+                     LIMIT 5
+                """)
+                for r in cur.fetchall():
+                    out["sample_expedientes"].append({
+                        "codigo":    r[0],
+                        "client_id": r[1],
+                        "is_active": r[2],
+                        "estado":    r[3],
+                    })
+
+                # Muestra de clientes activos
+                cur.execute("""
+                    SELECT id::text, nombre, is_active
+                      FROM clientes.cliente
+                     WHERE is_active = TRUE
+                     ORDER BY nombre
+                     LIMIT 10
+                """)
+                for r in cur.fetchall():
+                    out["sample_clientes"].append({
+                        "id":        r[0],
+                        "nombre":    r[1],
+                        "is_active": r[2],
                     })
         except Exception as e:
             out["error"] = str(e)
@@ -728,6 +786,18 @@ class PortalViewSet(viewsets.ViewSet):
                 cids,
             )
             out["resolved_empresas"] = empresas
+
+            # Probar el mismo query que mis_expedientes
+            exp_count = _fetchone(
+                f"""
+                SELECT COUNT(*)::int
+                  FROM expedientes.expediente
+                 WHERE is_active = TRUE
+                   AND lower(client_id::text) IN ({placeholders})
+                """,
+                cids,
+            )
+            out["mis_expedientes_count"] = (exp_count[0] if exp_count else 0)
 
         return Response(out)
 
