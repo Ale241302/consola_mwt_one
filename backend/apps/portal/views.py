@@ -297,12 +297,17 @@ class PortalViewSet(viewsets.ViewSet):
         placeholders = ",".join(["%s"] * len(cids))
         rows = _fetchall(
             f"""
-            SELECT id::text, nombre, contacto, email, telefono,
-                   credit_days, pais_iso2
+            SELECT id::text,
+                   COALESCE(nombre_comercial, razon_social) AS nombre,
+                   contacto_nombre AS contacto,
+                   contacto_email  AS email,
+                   contacto_tel    AS telefono,
+                   dias_credito    AS credit_days,
+                   pais_iso2
               FROM clientes.cliente
              WHERE lower(id::text) IN ({placeholders})
                AND is_active = TRUE
-             ORDER BY nombre
+             ORDER BY COALESCE(nombre_comercial, razon_social)
             """,
             cids,
         )
@@ -757,10 +762,12 @@ class PortalViewSet(viewsets.ViewSet):
 
                 # Muestra de clientes activos
                 cur.execute("""
-                    SELECT id::text, nombre, is_active
+                    SELECT id::text,
+                           COALESCE(nombre_comercial, razon_social) AS nombre,
+                           is_active
                       FROM clientes.cliente
                      WHERE is_active = TRUE
-                     ORDER BY nombre
+                     ORDER BY COALESCE(nombre_comercial, razon_social)
                      LIMIT 10
                 """)
                 for r in cur.fetchall():
@@ -779,7 +786,9 @@ class PortalViewSet(viewsets.ViewSet):
             placeholders = ",".join(["%s"] * len(cids))
             empresas = _fetchall(
                 f"""
-                SELECT id::text, nombre, is_active
+                SELECT id::text,
+                       COALESCE(nombre_comercial, razon_social) AS nombre,
+                       is_active
                   FROM clientes.cliente
                  WHERE lower(id::text) IN ({placeholders})
                 """,
@@ -923,7 +932,9 @@ class PortalViewSet(viewsets.ViewSet):
                 placeholders = ",".join(["%s"] * len(cids))
                 empresas = _fetchall(
                     f"""
-                    SELECT id::text, nombre, is_active
+                    SELECT id::text,
+                           COALESCE(nombre_comercial, razon_social) AS nombre,
+                           is_active
                       FROM clientes.cliente
                      WHERE lower(id::text) IN ({placeholders})
                     """,
@@ -994,7 +1005,7 @@ class PortalViewSet(viewsets.ViewSet):
         # (el usuario está limitado por la más restrictiva).
         r = _fetchone(
             f"""
-            SELECT COALESCE(MIN(credit_days), 0)
+            SELECT COALESCE(MIN(dias_credito), 0)
             FROM clientes.cliente
             WHERE lower(id::text) IN ({placeholders}) AND is_active = TRUE
             """,
