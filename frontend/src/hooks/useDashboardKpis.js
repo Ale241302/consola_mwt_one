@@ -16,11 +16,12 @@
 //   GET /api/analytics/inventory_coverage_by_node/  (Sprint 2026-05-20)
 //   GET /api/analytics/top_skus_margen/             (Sprint 2026-05-20)
 //   GET /api/analytics/expediente_margin_scatter/   (Sprint 2026-05-20)
+//   GET /api/analytics/tacos_fba_us/                (Sprint dashboard 2026-05-21)
 //
 // Devuelve un bundle único con TODO el estado del dashboard:
 //   { kpis, cashflow, aging, exposicion, margenMarcas, byStatus, urgent,
 //     creditClock, r1Ratio, byStatusByBrand, inventoryByNode, topSkus,
-//     marginScatter, loading, error, reload }
+//     marginScatter, tacosFba, loading, error, reload }
 //
 // Política de errores parciales (POL_RESILIENCIA):
 //   Cada endpoint se cachea con .catch(null/[]) — un widget caído NUNCA
@@ -49,6 +50,7 @@ export function useDashboardKpis() {
     topSkus: [],
     marginScatter: [],
     sizeMarket: null,
+    tacosFba: null,
     loading: true,
     error: null,
   });
@@ -61,7 +63,7 @@ export function useDashboardKpis() {
         exposicion, margenMarcas, byStatus, urgent,
         creditClock, r1Ratio, byStatusByBrand,
         inventoryByNode, topSkus, marginScatter,
-        sizeMarket,
+        sizeMarket, tacosFba,
       ] = await Promise.all([
         analyticsApi.dashboardKpis().catch(emptyObj),
         analyticsApi.cashflow().catch(emptyArray),
@@ -77,6 +79,7 @@ export function useDashboardKpis() {
         analyticsApi.topSkusMargen().catch(emptyArray),
         analyticsApi.expedienteMarginScatter().catch(emptyArray),
         analyticsApi.sizeMarketDistribution().catch(emptyObj),
+        analyticsApi.tacosFbaUs().catch(emptyObj),
       ]);
       setState({
         kpis:            kpis || null,
@@ -93,6 +96,7 @@ export function useDashboardKpis() {
         topSkus:         Array.isArray(topSkus)         ? topSkus         : [],
         marginScatter:   Array.isArray(marginScatter)   ? marginScatter   : [],
         sizeMarket:      sizeMarket || null,
+        tacosFba:        tacosFba || null,
         loading:         false,
         error:           null,
       });

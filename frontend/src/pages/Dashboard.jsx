@@ -247,7 +247,7 @@ export default function ScreenDashboard() {
   const {
     kpis, cashflow, aging, exposicion, margenMarcas, byStatus, urgent,
     creditClock, r1Ratio, byStatusByBrand, inventoryByNode, topSkus, marginScatter,
-    sizeMarket,
+    sizeMarket, tacosFba,
     loading, error, reload,
   } = useDashboardKpis();
   const { brands, resolveBrand } = useBrandsLight();
@@ -460,16 +460,18 @@ export default function ScreenDashboard() {
               />}
         </SafeWidget>
 
-        {/* 3 · Margen bruto ponderado */}
+        {/* 3 · Margen proyectado ponderado · SUM(margin*cost)/SUM(cost) */}
         <SafeWidget lang={lang} endpoint="/api/analytics/dashboard_kpis/">
           {loading
             ? <div className="stat"><Skeleton height={120} /></div>
             : <KpiCard
                 lang={lang}
-                label={lang === "en" ? "Weighted gross margin" : "Margen bruto ponderado"}
+                label={lang === "en" ? "Weighted projected margin" : "Margen proyectado ponderado"}
                 value={kpiMarginPct != null && kpiMarginPct > 0 ? kpiMarginPct : null}
                 valueFmt={(v) => `${(v * 100).toFixed(1)}%`}
-                sub={lang === "en" ? "Closed files · last 90d" : "Cerrados · últimos 90d"}
+                sub={lang === "en"
+                  ? "Active files · cost-weighted"
+                  : "Activos · ponderado por costo"}
                 sparkColor="var(--info)"
                 threshold={
                   kpiMarginPct == null ? undefined
@@ -479,8 +481,8 @@ export default function ScreenDashboard() {
                 }
                 emptyEndpoint="/api/analytics/dashboard_kpis/"
                 emptyHint={lang === "en"
-                  ? "No closed files in last 90d."
-                  : "No hay cerrados en últimos 90d."}
+                  ? "No active files with projected margin yet."
+                  : "Sin expedientes activos con margen proyectado."}
               />}
         </SafeWidget>
 
@@ -512,20 +514,39 @@ export default function ScreenDashboard() {
               />}
         </SafeWidget>
 
-        {/* 5 · TACoS Amazon · pendiente (no hay schema Amazon en BD) */}
-        <SafeWidget lang={lang}>
-          <KpiCard
-            lang={lang}
-            label="TACoS Amazon · FBA-US"
-            value={null}
-            emptyEndpoint="/api/analytics/tacos_fba_us/"
-            emptyHint={lang === "en"
-              ? "Not implemented: no Amazon ads schema in DB."
-              : "No implementado: no hay schema de Amazon Ads en BD."}
-          />
+        {/* 5 · TACoS Amazon · FBA-US — cableado al endpoint nuevo */}
+        <SafeWidget lang={lang} endpoint="/api/analytics/tacos_fba_us/">
+          {loading
+            ? <div className="stat"><Skeleton height={120} /></div>
+            : <KpiCard
+                lang={lang}
+                label="TACoS Amazon · FBA-US"
+                value={tacosFba?.tacos_pct != null ? Number(tacosFba.tacos_pct) : null}
+                valueFmt={(v) => `${(v * 100).toFixed(1)}%`}
+                sub={tacosFba?.sales_usd > 0
+                  ? (lang === "en"
+                      ? `Spend $${(tacosFba.spend_usd || 0).toLocaleString("en-US", { maximumFractionDigits: 0 })} · last 30d`
+                      : `Gasto $${(tacosFba.spend_usd || 0).toLocaleString("es-PE", { maximumFractionDigits: 0 })} · últimos 30d`)
+                  : (lang === "en" ? "Last 30 days" : "Últimos 30 días")}
+                sparkColor="var(--warning)"
+                threshold={
+                  tacosFba?.tacos_pct == null ? undefined
+                  : tacosFba.tacos_pct <= 0.12 ? "success"
+                  : tacosFba.tacos_pct <= 0.20 ? "warning"
+                  : "critical"
+                }
+                emptyEndpoint="/api/analytics/tacos_fba_us/"
+                emptyHint={tacosFba?._pending
+                  ? (lang === "en"
+                      ? "Amazon ads schema not migrated yet (run sql/D3)."
+                      : "Schema amazon_ads no migrado (correr sql/D3).")
+                  : (lang === "en"
+                      ? "No Amazon FBA-US sales in last 30d."
+                      : "Sin ventas Amazon FBA-US en últimos 30d.")}
+              />}
         </SafeWidget>
 
-        {/* 6 · % R1+ · cableado al endpoint nuevo */}
+        {/* 6 · % R1+ · cableado al endpoint (usa corrections_count tras D2) */}
         <SafeWidget lang={lang} endpoint="/api/analytics/r1_correction_ratio/">
           {loading
             ? <div className="stat"><Skeleton height={120} /></div>
@@ -538,9 +559,9 @@ export default function ScreenDashboard() {
                 valueFmt={(v) => `${(v * 100).toFixed(1)}%`}
                 sub={r1Ratio?.total
                   ? (lang === "en"
-                      ? `${r1Ratio.with_corrections}/${r1Ratio.total} files`
-                      : `${r1Ratio.with_corrections}/${r1Ratio.total} expedientes`)
-                  : null}
+                      ? `${r1Ratio.with_corrections ?? 0}/${r1Ratio.total} files · last 90d`
+                      : `${r1Ratio.with_corrections ?? 0}/${r1Ratio.total} expedientes · 90d`)
+                  : (lang === "en" ? "Last 90 days" : "Últimos 90 días")}
                 sparkColor="var(--warning)"
                 threshold={
                   kpiR1Ratio == null ? undefined
@@ -551,9 +572,15 @@ export default function ScreenDashboard() {
                 emptyEndpoint="/api/analytics/r1_correction_ratio/"
                 emptyHint={r1Ratio?._pending
                   ? (lang === "en"
-                      ? "Pending DB column: expediente.corrections_count."
-                      : "Pendiente columna BD: expediente.corrections_count.")
-                  : (lang === "en" ? "No data." : "Sin datos.")}
+                      ? "Pending DB migration: run sql/D2 (corrections_count)."
+                      : "Pendiente migración BD: correr sql/D2 (corrections_count).")
+                  : (r1Ratio?.total
+                      ? (lang === "en"
+                          ? "No corrections recorded in last 90 days."
+                          : "Sin correcciones registradas en últimos 90 días.")
+                      : (lang === "en"
+                          ? "No active files in last 90 days."
+                          : "Sin expedientes activos en últimos 90 días."))}
               />}
         </SafeWidget>
       </div>

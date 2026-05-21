@@ -21,6 +21,7 @@ Endpoints:
   GET /api/analytics/inventory_coverage_by_node/
   GET /api/analytics/top_skus_margen/
   GET /api/analytics/expediente_margin_scatter/
+  GET /api/analytics/tacos_fba_us/               (Sprint dashboard 2026-05-21)
 =====================================================================
 """
 import hashlib
@@ -143,6 +144,13 @@ class AnalyticsViewSet(viewsets.ViewSet):
         }
 
         # — KPIs base sobre expedientes —
+        # NB · `margin_pct` ahora es el MARGEN PROYECTADO PONDERADO POR COSTO:
+        #   weighted_margin = Σ(projected_margin × total_cost) / Σ(total_cost)
+        # Es decir: cuánto de cada USD invertido en costos vuelve como
+        # margen proyectado, ponderando por tamaño del expediente. Funciona
+        # incluso cuando `total_invoiced` = 0 (todavía no se factura), siempre
+        # que existan expedientes activos con costo y projected_margin
+        # poblado por el orquestador comercial.
         r = _fetchone("""
             SELECT
               COUNT(*) FILTER (WHERE estado NOT IN ('CERRADO','CANCELADA')),
@@ -150,9 +158,12 @@ class AnalyticsViewSet(viewsets.ViewSet):
               COALESCE(SUM(total_invoiced),0),
               COALESCE(SUM(total_paid),0),
               COALESCE(SUM(balance),0),
-              AVG(CASE WHEN total_invoiced > 0
-                       THEN (projected_margin / NULLIF(total_invoiced,0))
-                       ELSE NULL END)
+              CASE
+                WHEN COALESCE(SUM(total_cost), 0) > 0
+                THEN COALESCE(SUM(projected_margin * total_cost), 0)
+                     / NULLIF(SUM(total_cost), 0)
+                ELSE NULL
+              END
             FROM expedientes.expediente
             WHERE is_active = TRUE
         """)
@@ -162,7 +173,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
             out["total_invoiced"] = float(r[2] or 0)
             out["total_paid"]     = float(r[3] or 0)
             out["receivables"]    = float(r[4] or 0)
-            out["margin_pct"]     = float(r[5] or 0)
+            out["margin_pct"]     = float(r[5]) if r[5] is not None else 0.0
 
         # — Conteo por estado —
         out["by_status"] = _fetchall("""
@@ -546,14 +557,15 @@ class AnalyticsViewSet(viewsets.ViewSet):
         Shape:
           { ratio, with_corrections, total, period_days }
 
-        ⚠ La tabla `expedientes.expediente` NO tiene la columna
-        `corrections_count`. La columna disponible más cercana es el
-        booleano `cost_corrections` (true/false), que no permite
-        distinguir el nivel R1 / R2 / R3 ni contar correcciones.
+        Fuente: `expedientes.expediente.corrections_count`
+        (creada por backend/sql/D2_expedientes_corrections_count.sql).
+        Si la migración D2 no se ha aplicado en el ambiente, el SELECT
+        cae al fallback sobre `cost_corrections` BOOLEAN, que es lo más
+        cercano que existía antes del sprint.
 
-        Mientras esa columna no exista, este endpoint devuelve
-        `ratio = null` y `with_corrections = null` con `total` real
-        para que el front pueda renderizar estado vacío honesto.
+        El campo `_pending` se devuelve únicamente si AMBAS columnas
+        son inaccesibles (lo que implica que el schema todavía está sin
+        migrar) — así el frontend mostrar empty state honesto.
         """
         period_days = 90
         out = {
@@ -561,21 +573,116 @@ class AnalyticsViewSet(viewsets.ViewSet):
             "with_corrections": None,
             "total":            0,
             "period_days":      period_days,
-            # Pendiente: requiere columna `expedientes.expediente.corrections_count`
-            # (o tabla `expedientes.correccion` con nivel R1/R2/R3).
-            "_pending":         "missing column expedientes.expediente.corrections_count",
         }
+        # Primer intento: nueva columna corrections_count
         r = _fetchone("""
-            SELECT COUNT(*)
+            SELECT
+              COUNT(*)                                              AS total,
+              COUNT(*) FILTER (WHERE corrections_count >= 1)        AS with_corr
             FROM expedientes.expediente
             WHERE is_active = TRUE
               AND created_at >= CURRENT_DATE - INTERVAL '90 days'
         """)
-        if r:
-            out["total"] = int(r[0] or 0)
+        if r is None:
+            # Fallback al boolean cost_corrections (pre-D2)
+            r = _fetchone("""
+                SELECT
+                  COUNT(*)                                          AS total,
+                  COUNT(*) FILTER (WHERE cost_corrections = TRUE)   AS with_corr
+                FROM expedientes.expediente
+                WHERE is_active = TRUE
+                  AND created_at >= CURRENT_DATE - INTERVAL '90 days'
+            """)
+            if r is None:
+                out["_pending"] = (
+                    "missing column expedientes.expediente.corrections_count "
+                    "and cost_corrections (run sql/D2)"
+                )
+                return Response(out)
+
+        total, with_corr = int(r[0] or 0), int(r[1] or 0)
+        out["total"]            = total
+        out["with_corrections"] = with_corr
+        out["ratio"]            = (with_corr / total) if total > 0 else None
         return Response(out)
 
-    # ── Crosstab status × brand_id ────────────────────────────
+    # ── TACoS Amazon FBA-US (ad spend / total sales) ─────────
+    @action(detail=False, methods=["get"], url_path="tacos_fba_us")
+    def tacos_fba_us(self, request):
+        """TACoS = ad_spend / total_sales (incluye ventas orgánicas).
+
+        Ventana: últimos 30 días móviles. Solo cuentas activas con
+        marketplace = 'US' (Amazon US, FBA).
+
+        Shape:
+          {
+            tacos_pct:    float | null,   # razón 0..1 (ej. 0.085 = 8.5%)
+            period_days:  int,
+            spend_usd:    float,
+            sales_usd:    float,
+            n_days:       int,            # días con datos en la ventana
+          }
+
+        Fuente: tablas amazon_ads.spend_daily +
+        amazon_ads.attributed_sales_daily (creadas por sql/D3). Si el
+        schema aún no existe en el ambiente, _fetchone() retorna None y
+        respondemos estado empty con `_pending` para que el frontend
+        muestre hint honesto.
+        """
+        period_days = 30
+        empty = {
+            "tacos_pct":   None,
+            "period_days": period_days,
+            "spend_usd":   0.0,
+            "sales_usd":   0.0,
+            "n_days":      0,
+        }
+        r = _fetchone("""
+            WITH spend AS (
+              SELECT COALESCE(SUM(s.spend_usd), 0)::float AS total_spend,
+                     COUNT(DISTINCT s.date)               AS days_spend
+                FROM amazon_ads.spend_daily s
+                JOIN amazon_ads.account    a ON a.id = s.account_id
+               WHERE a.is_active   = TRUE
+                 AND a.marketplace = 'US'
+                 AND s.is_active   = TRUE
+                 AND s.date >= CURRENT_DATE - INTERVAL '30 days'
+            ),
+            sales AS (
+              SELECT COALESCE(SUM(x.total_sales_usd), 0)::float AS total_sales,
+                     COUNT(DISTINCT x.date)                     AS days_sales
+                FROM amazon_ads.attributed_sales_daily x
+                JOIN amazon_ads.account                a ON a.id = x.account_id
+               WHERE a.is_active   = TRUE
+                 AND a.marketplace = 'US'
+                 AND x.is_active   = TRUE
+                 AND x.date >= CURRENT_DATE - INTERVAL '30 days'
+            )
+            SELECT spend.total_spend,
+                   sales.total_sales,
+                   GREATEST(spend.days_spend, sales.days_sales) AS n_days
+              FROM spend, sales
+        """)
+        if r is None:
+            # Schema amazon_ads no existe todavía (sql/D3 no aplicado)
+            empty["_pending"] = "amazon_ads schema missing (run sql/D3)"
+            return Response(empty)
+
+        spend, sales, n_days = (
+            float(r[0] or 0),
+            float(r[1] or 0),
+            int(r[2] or 0),
+        )
+        tacos = (spend / sales) if sales > 0 else None
+        return Response({
+            "tacos_pct":   float(tacos) if tacos is not None else None,
+            "period_days": period_days,
+            "spend_usd":   spend,
+            "sales_usd":   sales,
+            "n_days":      n_days,
+        })
+
+        # ── Crosstab status × brand_id ────────────────────────────
     @action(detail=False, methods=["get"], url_path="by_status_by_brand")
     def by_status_by_brand(self, request):
         """Crosstab estado × brand_id.
