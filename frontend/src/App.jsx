@@ -11,6 +11,7 @@ import ScreenOCDetail from "./pages/OCDetail.jsx";
 import ScreenExpedienteDetail from "./pages/ExpedienteDetail.jsx";
 import ScreenPipeline from "./pages/Pipeline.jsx";
 import ScreenPortal from "./pages/Portal.jsx";
+import PortalDiag from "./pages/PortalDiag.jsx";
 import ScreenPagos from "./pages/Pagos.jsx";
 import ScreenInventario from "./pages/Inventario.jsx";
 import InboundReceptionWizard from "./pages/InboundReceptionWizard.jsx";
@@ -77,6 +78,7 @@ export default function App() {
         <Route path="/expedientes/:ocId/exp/:expedienteId" element={<ScreenExpedienteDetail />} />
         <Route path="/pipeline" element={<ScreenPipeline />} />
         <Route path="/portal" element={<ScreenPortal />} />
+        <Route path="/portal/diag" element={<PortalDiag />} />
         <Route path="/financiero" element={<ScreenPagos />} />
         <Route path="/inventario" element={<ScreenInventario />} />
         {/* Sprint Inbound Engine v1 (2026-04-29) — wizard full-page */}
