@@ -369,6 +369,13 @@ export default function ScreenPortal() {
     || null;
   const creditUsed  = apiKpis?.credit_days_used ?? 0;
 
+  // Sprint 2026-05-21 · EmptyState honesto cuando no hay scope.
+  // Backend (apps.portal.views._resolve_client_ids) devuelve `empresas: []`
+  // cuando users.mwtuser.legal_entity_ids está vacío para el usuario.
+  // Sin este flag el portal renderiza chrome muda → CLIENT cree que
+  // está roto. Respetamos la señal del backend en UI.
+  const noEmpresas = !loadingPortal && empresas.length === 0;
+
   return (
     <div style={{ background:'var(--bg)', minHeight:'100%' }} data-screen-label="Client Portal">
       {/* Portal chrome */}
@@ -381,11 +388,20 @@ export default function ScreenPortal() {
           <Badge kind="mint" style={{ marginLeft: 8 }}>{lang==='es'?'VISTA CLIENTE':'CLIENT VIEW'}</Badge>
         )}
         <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:10, fontSize:13 }}>
-          <span style={{ opacity:0.7 }}>{client?.name}</span>
-          <div className="avatar" style={{ width:28, height:28, fontSize:11 }}>{client?.contact.split(' ').map(s=>s[0]).join('')}</div>
+          <span style={{ opacity:0.7 }}>
+            {client?.name || (noEmpresas ? (lang==='en'?'No company':'Sin empresa') : '')}
+          </span>
+          {client?.contact && (
+            <div className="avatar" style={{ width:28, height:28, fontSize:11 }}>
+              {client.contact.split(' ').map(s=>s[0]).join('')}
+            </div>
+          )}
         </div>
       </div>
 
+      {noEmpresas ? (
+        <NoEmpresasState lang={lang} userEmail={me?.email} />
+      ) : (
       <div className="page" style={{ maxWidth: 1280 }}>
         {/* Greeting */}
         <div className="mb-6">
@@ -566,6 +582,104 @@ export default function ScreenPortal() {
         {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC} isClient={isClient} showEmpresaCol={hasMultiEmpresa}/>}
         {tab === 'payments' && <PortalPayments lang={lang} ocs={myOCs} showEmpresaCol={hasMultiEmpresa}/>}
         {tab === 'products' && <ProductCatalogGrid lang={lang} clientId={activeEmpresa?.id || null} />}
+      </div>
+      )}
+    </div>
+  );
+}
+
+// ── EmptyState dominante cuando el usuario no tiene legal_entity_ids ─────
+// Sprint 2026-05-21. Backend (apps.portal.views) devuelve `empresas: []`
+// cuando users.mwtuser.legal_entity_ids está vacío. Antes el portal seguía
+// renderizando greeting + KPI cards en blanco; ahora muestra mensaje claro
+// con email del usuario para que el admin sepa a quién asignarle empresa.
+// Cumple R1 (tokens), R3 (sin data CEO-only), R5 (no aplica), R6 (no aplica).
+function NoEmpresasState({ lang, userEmail }) {
+  return (
+    <div className="page" style={{ maxWidth: 720 }}>
+      <div
+        className="card card-pad-lg"
+        style={{
+          marginTop: 48,
+          textAlign: 'center',
+          background: 'var(--surface)',
+          border: '1px dashed var(--border-strong)',
+        }}
+      >
+        <div
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: 16,
+            margin: '0 auto 20px',
+            display: 'grid',
+            placeItems: 'center',
+            background: 'var(--bg-alt)',
+            color: 'var(--text-tertiary)',
+          }}
+        >
+          <IconBuilding size={28} />
+        </div>
+        <h2
+          style={{
+            font: '700 22px/1.3 var(--font-display)',
+            color: 'var(--text-primary)',
+            margin: '0 0 10px',
+          }}
+        >
+          {lang === 'en'
+            ? 'No companies assigned to your account yet'
+            : 'Aún no tienes empresas asignadas a tu cuenta'}
+        </h2>
+        <p
+          style={{
+            font: '500 14px/1.55 var(--font-body)',
+            color: 'var(--text-secondary)',
+            maxWidth: 480,
+            margin: '0 auto 18px',
+          }}
+        >
+          {lang === 'en'
+            ? 'Your MWT administrator must link at least one company to your profile before you can see orders, payments or the catalog.'
+            : 'Tu administrador MWT debe vincular al menos una empresa a tu perfil antes de que puedas ver órdenes, pagos o catálogo.'}
+        </p>
+        {userEmail && (
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 12px',
+              borderRadius: 999,
+              background: 'var(--bg-alt)',
+              border: '1px solid var(--border-subtle)',
+              font: '500 12px/1 var(--font-mono)',
+              color: 'var(--text-secondary)',
+              marginBottom: 18,
+            }}
+          >
+            <IconUsers size={12} />
+            {userEmail}
+          </div>
+        )}
+        <div
+          style={{
+            font: '500 12px/1.5 var(--font-body)',
+            color: 'var(--text-tertiary)',
+            paddingTop: 16,
+            borderTop: '1px solid var(--divider)',
+          }}
+        >
+          {lang === 'en'
+            ? 'Contact your MWT representative or write to '
+            : 'Contacta a tu ejecutivo MWT o escribe a '}
+          <a
+            href="mailto:soporte@muitowork.com"
+            style={{ color: 'var(--brand-primary)', fontWeight: 600 }}
+          >
+            soporte@muitowork.com
+          </a>
+        </div>
       </div>
     </div>
   );
