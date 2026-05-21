@@ -369,8 +369,18 @@ function DetailDrawer({ data, loading, brandName, onClose }) {
   // Si el snapshot es viejo (pre-D4) el backend devuelve null y caemos al
   // default conocido: banda 6 (5,00 – 5,20). El visor lo pinta amarillo
   // (VIGENTE); el resto de las bandas del medio quedan NEUTRAL.
+  //
+  // Importante: Number(null) === 0 que es finite — por eso validamos que
+  // el id esté en el rango real de bandas Marluvas (1..12). Sin esto,
+  // snapshots viejos quedaban con vigenteId = 0 y NINGUNA banda se
+  // pintaba como vigente.
   const vigenteIdRaw = data?.event?.banda_vigente_id;
-  const vigenteId = Number.isFinite(Number(vigenteIdRaw)) ? Number(vigenteIdRaw) : 6;
+  const vigenteIdNum = Number(vigenteIdRaw);
+  const vigenteId = (Number.isFinite(vigenteIdNum)
+                    && vigenteIdNum >= 1
+                    && vigenteIdNum <= 12)
+                    ? vigenteIdNum
+                    : 6;
   // Saneamos custom_plazos por si snapshots viejos tienen shape raro
   // (ej. lista plana en vez de { "<bandaId>": [...] }). Sólo aceptamos
   // claves 1..12 y arrays válidos de {dias, factor}.
