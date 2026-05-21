@@ -623,24 +623,53 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
         </tr></thead>
         <tbody>
           {ocs.map(o => {
-            // Status = status of lead expediente
-            const expIds = Array.isArray(o.expedientes) ? o.expedientes : [];
-            const leadExp = expedientes.find(e => expIds.includes(e.id));
-            const lineCount = o.lines?.length || 0;
-            const coverage = o.total_value > 0 ? (o.total_paid / o.total_value) : 0;
+            // Sprint 2026-05-21 · Match real con shape backend
+            // (apps.portal.views.mis_ocs):
+            //   { id, codigo, brand_id, proforma, moneda, total_value,
+            //     total_invoiced, total_paid, balance, coverage_pct,
+            //     lines_count, issued_at, estado, client_id, client_name }
+            // Backend NO devuelve `expedientes[]` ni `brand` ni `po_code`.
+            // Derivamos lead expediente buscando expedientes con oc_id === o.id.
+            const ocCode    = o.codigo || o.po_code || '—';
+            const lineCount = o.lines_count ?? (o.lines?.length || 0);
+            const relatedExps = expedientes.filter(e => e.oc_id === o.id);
+            const leadExp     = relatedExps[0];
+            const expCount    = relatedExps.length;
+            // Estado natural del expediente (CLIENT_STATE_MAP en backend
+            // ya devuelve `estado_cliente_es/en/step` en mis_expedientes).
+            const expStatus   = leadExp?.estado_cliente_es
+                              || leadExp?.estado
+                              || o.estado
+                              || '—';
+            const expEta      = leadExp?.eta;
+            const totalVal    = Number(o.total_value || 0);
+            const totalPaid   = Number(o.total_paid  || 0);
+            const coverage    = totalVal > 0 ? (totalPaid / totalVal) : 0;
             return (
               <tr key={o.id} style={{cursor:'pointer'}} onClick={() => onOpenOC && onOpenOC(o.id)}>
                 <td>
-                  <div style={{font:'700 12px/1.2 var(--font-mono)', color:'var(--brand-primary)'}}>{o.po_code}</div>
-                  <div className="caption" style={{marginTop:2}}>{expIds.length} {lang==='es'?'envíos':'shipments'}</div>
+                  <div style={{font:'700 12px/1.2 var(--font-mono)', color:'var(--brand-primary)'}}>{ocCode}</div>
+                  <div className="caption" style={{marginTop:2}}>
+                    {expCount} {lang==='es'?'envíos':'shipments'}
+                  </div>
                 </td>
                 <td>
-                  <div style={{font:'500 13px/1.3 var(--font-body)'}}>{lineCount} {lang==='es' ? 'líneas' : 'lines'}</div>
-                  <div className="caption" style={{marginTop:2}}>{o.brand}</div>
+                  <div style={{font:'500 13px/1.3 var(--font-body)'}}>
+                    {lineCount} {lang==='es' ? 'líneas' : 'lines'}
+                  </div>
+                  {o.client_name && (
+                    <div className="caption" style={{marginTop:2}}>{o.client_name}</div>
+                  )}
                 </td>
-                <td>{leadExp ? <ClientStatusPill status={leadExp.status} lang={lang}/> : '—'}</td>
-                <td className="text-sec">{leadExp ? fmtDate(leadExp.eta, lang) : '—'}</td>
-                <td className="td-money">{fmtMoney(o.total_value || 0)}</td>
+                <td>
+                  {leadExp
+                    ? <ClientStatusPill status={expStatus} lang={lang}/>
+                    : <span className="caption">{expStatus}</span>}
+                </td>
+                <td className="text-sec tabular-nums">
+                  {expEta ? fmtDate(expEta, lang) : '—'}
+                </td>
+                <td className="td-money tabular-nums">{fmtMoney(totalVal)}</td>
                 <td className="td-num">
                   <CoverageMini pct={coverage} lang={lang}/>
                 </td>

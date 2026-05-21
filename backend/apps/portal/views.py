@@ -157,54 +157,62 @@ def _resolve_client_ids(request):
         del UI /usuarios viven en users.mwtuser.
       · Por eso joineamos por EMAIL case-insensitive, no por id.
     """
-    # 1. Empresas reales del usuario desde users.mwtuser.legal_entity_ids
-    #    Join por EMAIL: core.users.email_plain == users.mwtuser.email_plain.
-    #    Sin filtro is_active=TRUE — el flag soft-delete del usuario no debe
-    #    invalidar el scope (los chips siguen visibles en /usuarios).
-    user_ids = []
-    try:
-        u = getattr(request, "user", None)
-        if u is not None and getattr(u, "is_authenticated", False):
-            email = (getattr(u, "email", "") or "").strip().lower()
-            if email:
+    # 1. Empresas reales del usuario.
+    #
+    # Sprint 2026-05-21 · single source of truth.
+    # `MwtJWTAuthentication.get_user` ya inyecta `legal_entity_ids` en
+    # `request.user` (joineando users.mwtuser por email/id). Usamos ESA
+    # lista como fuente canónica — evita duplicar el lookup SQL aquí y
+    # garantiza que portal, expedientes y dashboards vean lo mismo.
+    #
+    # El fallback SQL queda como red de seguridad si por algún motivo el
+    # campo no se hidrataba (auth backend distinto, etc).
+    user_ids: list[str] = []
+    u = getattr(request, "user", None)
+    if u is not None and getattr(u, "is_authenticated", False):
+        injected = list(getattr(u, "legal_entity_ids", None) or [])
+        if injected:
+            user_ids = [str(x) for x in injected if x]
+
+    # Fallback SQL si el campo no fue inyectado por la JWT auth.
+    if not user_ids:
+        try:
+            if u is not None and getattr(u, "is_authenticated", False):
+                email = (getattr(u, "email", "") or "").strip().lower()
                 with connection.cursor() as cur:
-                    # Búsqueda tolerante (TRIM + LOWER) por email_plain
-                    # y, como fallback, por contact_email.
-                    cur.execute(
-                        """
-                        SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
-                          FROM users.mwtuser
-                         WHERE lower(trim(email_plain)) = %s
-                            OR lower(trim(COALESCE(contact_email, ''))) = %s
-                         ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
-                                  cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
-                                  updated_at DESC NULLS LAST
-                         LIMIT 1
-                        """,
-                        [email, email],
-                    )
-                    row = cur.fetchone()
-                    if row and row[0]:
-                        user_ids = [str(x) for x in row[0] if x]
-            # Fallback secundario: probar por id (caso edge cuando IDs estén
-            # sincronizados — ambientes nuevos sembrados con UUID compartido).
-            if not user_ids:
-                with connection.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
-                          FROM users.mwtuser
-                         WHERE id::text = %s
-                         LIMIT 1
-                        """,
-                        [str(u.id)],
-                    )
-                    row = cur.fetchone()
-                    if row and row[0]:
-                        user_ids = [str(x) for x in row[0] if x]
-    except Exception as e:
-        log.warning("_resolve_client_ids: lookup falló: %s", e)
-        user_ids = []
+                    if email:
+                        cur.execute(
+                            """
+                            SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                              FROM users.mwtuser
+                             WHERE lower(trim(email_plain)) = %s
+                                OR lower(trim(COALESCE(contact_email, ''))) = %s
+                             ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                                      cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
+                                      updated_at DESC NULLS LAST
+                             LIMIT 1
+                            """,
+                            [email, email],
+                        )
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            user_ids = [str(x) for x in row[0] if x]
+                    if not user_ids:
+                        cur.execute(
+                            """
+                            SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                              FROM users.mwtuser
+                             WHERE id::text = %s
+                             LIMIT 1
+                            """,
+                            [str(u.id)],
+                        )
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            user_ids = [str(x) for x in row[0] if x]
+        except Exception as e:
+            log.warning("_resolve_client_ids fallback SQL falló: %s", e)
+            user_ids = []
 
     # 2. Override: query param ?empresa_id (cliente activo del usuario)
     empresa_q = request.query_params.get("empresa_id")

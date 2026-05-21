@@ -397,28 +397,29 @@ class MeView(APIView):
                 user["role_name"]  = (user["role"] or "").title()
                 user["permissions"] = {"modules": ["*"]} if user["role"] in ("admin", "superadmin") else {}
 
-            # Sprint 2026-05-21 · Portal multi-empresa · fix multi-tabla.
-            # `core.users` (login/JWT) y `users.mwtuser` (donde está
-            # legal_entity_ids) son tablas INDEPENDIENTES con UUIDs
-            # distintos. Hacemos el lookup por EMAIL (canónico en ambas)
-            # con fallback por id por si los UUIDs sí coinciden.
-            #
-            # Sin filtro is_active=TRUE: el flag soft-delete no debe
-            # invalidar el scope si el usuario igual está accediendo.
-            user["legal_entity_ids"] = []
+            # Sprint 2026-05-21 · Portal multi-empresa · single source.
+            # `MwtJWTAuthentication.get_user` ya inyecta legal_entity_ids
+            # en `request.user` (joineando users.mwtuser por email/id).
+            # Leemos de ahí primero (canónico). El SQL queda solo como
+            # fallback de seguridad si el campo no fue hidratado.
+            user["legal_entity_ids"] = list(
+                getattr(getattr(request, "user", None), "legal_entity_ids", None) or []
+            )
             email_low = (user.get("email_plain") or "").strip().lower()
             try:
-                if email_low:
+                if not user["legal_entity_ids"] and email_low:
                     cur.execute(
                         """
                         SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
                           FROM users.mwtuser
-                         WHERE lower(email_plain) = %s
+                         WHERE lower(trim(email_plain)) = %s
+                            OR lower(trim(COALESCE(contact_email, ''))) = %s
                          ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                                  cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
                                   updated_at DESC NULLS LAST
                          LIMIT 1
                         """,
-                        [email_low],
+                        [email_low, email_low],
                     )
                     mrow = cur.fetchone()
                     if mrow and mrow[0]:
