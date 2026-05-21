@@ -21,6 +21,7 @@
 //   · Por ahora la página entera es CEO-ONLY (es la consola interna).
 // =====================================================================
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import * as XLSX from "xlsx";
@@ -43,6 +44,7 @@ import {
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 import SkuSizesPanel from "../components/marluvas/SkuSizesPanel.jsx";
 import PlazoFormModal from "../components/marluvas/PlazoFormModal.jsx";
+import ConfirmModal from "../components/common/ConfirmModal.jsx";
 import { getBandPlazos, materializeDefaultPlazos } from "../lib/marluvasPricing.js";
 
 // ─── Helpers backend → shape interno ──────────────────────────
@@ -280,6 +282,14 @@ export default function ScreenBrandClientPricingForm() {
   const [plazoModal, setPlazoModal] = useState({
     open: false, contextBandaId: null, initial: null,
   });
+  // Modal genérico de confirmación destructiva (reemplaza window.confirm).
+  // Shape: null | { eyebrow, title, body, actionLabel, actionColor, onConfirm }
+  const [confirmDialog, setConfirmDialog] = useState(null);
+  const closeConfirm = () => setConfirmDialog(null);
+  const runConfirm = () => {
+    if (confirmDialog?.onConfirm) confirmDialog.onConfirm();
+    setConfirmDialog(null);
+  };
 
   // Fase 3 · Set de SKUs con su panel de tallas expandido. No persiste
   // (es estado de UI volátil, no de datos comerciales).
@@ -1397,11 +1407,18 @@ export default function ScreenBrandClientPricingForm() {
                     {overriddenCount} {lang === "es" ? "SKUs con ancla propia" : "SKUs with own anchor"}
                     <button type="button"
                       onClick={() => {
-                        if (window.confirm(lang === "es"
-                          ? `¿Resetear el ancla individual de ${overriddenCount} SKU(s) al ancla global?`
-                          : `Reset individual anchor of ${overriddenCount} SKU(s) to global?`)) {
-                          clearAllSkuAnchors();
-                        }
+                        setConfirmDialog({
+                          eyebrow: lang === "es" ? "RESET DE ANCLAS" : "RESET ANCHORS",
+                          title: lang === "es"
+                            ? `¿Resetear el ancla individual de ${overriddenCount} SKU(s)?`
+                            : `Reset individual anchor of ${overriddenCount} SKU(s)?`,
+                          body: lang === "es"
+                            ? (<>Los <strong>{overriddenCount} SKU(s)</strong> volverán a usar el ancla global definida arriba. Sus overrides individuales se descartarán.</>)
+                            : (<>The <strong>{overriddenCount} SKU(s)</strong> will revert to the global anchor defined above. Their individual overrides will be discarded.</>),
+                          actionLabel: lang === "es" ? "Sí, resetear" : "Yes, reset",
+                          actionColor: "#B45309",
+                          onConfirm: () => clearAllSkuAnchors(),
+                        });
                       }}
                       style={{
                         marginLeft: 4, padding: "0 5px", borderRadius: 3,
@@ -1780,14 +1797,23 @@ export default function ScreenBrandClientPricingForm() {
                 {Object.keys(customPlazos).length > 0 && (
                   <button type="button"
                     onClick={() => {
-                      if (window.confirm(lang === "es"
-                        ? "¿Resetear todos los plazos custom a [90/60/30/8]?"
-                        : "Reset all custom terms to [90/60/30/8]?")) {
-                        setCustomPlazos({});
-                        setSkus((arr) => arr.map((s) => ({
-                          ...s, matrix: computeMatrixFromInputs(s, {}),
-                        })));
-                      }
+                      setConfirmDialog({
+                        eyebrow: lang === "es" ? "RESET GLOBAL" : "GLOBAL RESET",
+                        title: lang === "es"
+                          ? "¿Resetear todos los plazos custom a [90/60/30/8]?"
+                          : "Reset all custom terms to [90/60/30/8]?",
+                        body: lang === "es"
+                          ? (<>Se descartarán los plazos personalizados de <strong>todas las bandas</strong> y volverán a los valores por defecto. Esta acción no se puede deshacer.</>)
+                          : (<>Custom terms across <strong>all bands</strong> will be discarded and reset to defaults. This action cannot be undone.</>),
+                        actionLabel: lang === "es" ? "Sí, resetear plazos" : "Yes, reset terms",
+                        actionColor: "#DC2626",
+                        onConfirm: () => {
+                          setCustomPlazos({});
+                          setSkus((arr) => arr.map((s) => ({
+                            ...s, matrix: computeMatrixFromInputs(s, {}),
+                          })));
+                        },
+                      });
                     }}
                     title={lang === "es" ? "Resetear todos los plazos a defaults" : "Reset all terms to defaults"}
                     style={{
@@ -1922,11 +1948,18 @@ export default function ScreenBrandClientPricingForm() {
                               <div style={{ font: "700 10.5px/1 var(--font-body)" }}>{p.dias}d</div>
                               <button type="button"
                                 onClick={() => {
-                                  if (window.confirm(lang === "es"
-                                    ? `¿Quitar el plazo ${p.dias}d de la banda ${b.id}?`
-                                    : `Remove term ${p.dias}d from band ${b.id}?`)) {
-                                    removePlazoFromBanda(b.id, p.dias);
-                                  }
+                                  setConfirmDialog({
+                                    eyebrow: lang === "es" ? "QUITAR PLAZO" : "REMOVE TERM",
+                                    title: lang === "es"
+                                      ? `¿Quitar el plazo ${p.dias}d de la banda ${b.id}?`
+                                      : `Remove term ${p.dias}d from band ${b.id}?`,
+                                    body: lang === "es"
+                                      ? (<>El plazo <strong>{p.dias}d</strong> dejará de calcularse en la <strong>banda #{b.id}</strong>. Puedes volver a agregarlo desde <em>+ Agregar plazo</em>.</>)
+                                      : (<>The term <strong>{p.dias}d</strong> will stop being calculated for <strong>band #{b.id}</strong>. You can re-add it from <em>+ Add term</em>.</>),
+                                    actionLabel: lang === "es" ? "Sí, quitar plazo" : "Yes, remove term",
+                                    actionColor: "#DC2626",
+                                    onConfirm: () => removePlazoFromBanda(b.id, p.dias),
+                                  });
                                 }}
                                 title={lang === "es"
                                   ? `Quitar ${p.dias}d de banda ${b.id}`
@@ -2085,6 +2118,23 @@ export default function ScreenBrandClientPricingForm() {
         initial={plazoModal.initial}
         lang={lang}
       />
+
+      {/* Modal genérico de confirmación destructiva — reemplaza window.confirm. */}
+      <AnimatePresence>
+        {confirmDialog && createPortal(
+          <ConfirmModal
+            eyebrow={confirmDialog.eyebrow}
+            title={confirmDialog.title}
+            body={confirmDialog.body}
+            actionLabel={confirmDialog.actionLabel || (lang === "es" ? "Confirmar" : "Confirm")}
+            actionColor={confirmDialog.actionColor || "#DC2626"}
+            cancelLabel={lang === "es" ? "Cancelar" : "Cancel"}
+            onCancel={closeConfirm}
+            onConfirm={runConfirm}
+          />,
+          document.body,
+        )}
+      </AnimatePresence>
     </div>
   );
 }
