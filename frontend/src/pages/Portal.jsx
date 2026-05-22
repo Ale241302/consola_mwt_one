@@ -57,7 +57,12 @@ function mapApiExpedienteToPortalExp(r) {
     oc_id:        r.oc_id || null,
     client_id:    r.client_id || null,
     brand_id:     r.brand_id || null,
+    // Rev 2026-05-21d · exponer `estado` técnico + naturales (es/en)
+    // para que PortalOrders pueda renderizar la pill sin caer al fallback.
     status:       r.estado || 'REGISTRO',
+    estado:       r.estado || null,
+    estado_cliente_es: r.estado_cliente_es || null,
+    estado_cliente_en: r.estado_cliente_en || null,
     origin:       r.origin || '',
     destination:  r.destination || '',
     freight_mode: r.freight_mode || 'SEA',
@@ -776,10 +781,8 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
       <table className="table">
         <thead><tr>
           <th>{lang==='es' ? 'Orden' : 'Order'}</th>
-          <th>{lang==='es' ? 'Productos' : 'Products'}</th>
           <th>{lang==='es' ? 'Estado' : 'Status'}</th>
           <th>{lang==='es' ? 'ETA' : 'ETA'}</th>
-          <th style={{textAlign:'right'}}>{lang==='es' ? 'Valor' : 'Value'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Cobertura' : 'Coverage'}</th>
           <th/>
         </tr></thead>
@@ -814,11 +817,6 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
                   <div className="caption" style={{marginTop:2}}>
                     {expCount} {lang==='es'?'envíos':'shipments'}
                   </div>
-                </td>
-                <td>
-                  <div style={{font:'500 13px/1.3 var(--font-body)'}}>
-                    {lineCount} {lang==='es' ? 'líneas' : 'lines'}
-                  </div>
                   {o.client_name && (
                     <div className="caption" style={{marginTop:2}}>{o.client_name}</div>
                   )}
@@ -831,7 +829,6 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
                 <td className="text-sec tabular-nums">
                   {expEta ? fmtDate(expEta, lang) : '—'}
                 </td>
-                <td className="td-money tabular-nums">{fmtMoney(totalVal)}</td>
                 <td className="td-num">
                   <CoverageMini pct={coverage} lang={lang}/>
                 </td>
