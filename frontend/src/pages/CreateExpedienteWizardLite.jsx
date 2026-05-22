@@ -132,6 +132,10 @@ export default function CreateExpedienteWizardLite() {
   // snapshot. handleCreate lo lee para calcular unit_price del plazo
   // seleccionado y persistirlo en la línea del expediente.
   const pricingMatrixRef = useRef(null);
+  // Sprint 2026-05-22 · ref del TC USD/BRL vivo. El backend lo necesita
+  // para resolver el snapshot MWT (unit_price_mwt) cuando el operador
+  // del expediente es Muito Work Limitada.
+  const tcUsdBrlRef = useRef(null);
 
   // ── Sprint 2026-05-01: precios y proyeccion de credito ─────────
   // Mapa { producto_id -> unit_price } resuelto desde el catalogo de
@@ -618,6 +622,10 @@ export default function CreateExpedienteWizardLite() {
       // Sprint 2026-05-06 · operating_company_id define quien opera
       // el expediente (MWT vs cliente). Los precios duales se congelan
       // en el backend al crear las lineas (snapshot mwt + cliente).
+      // Sprint 2026-05-22 · TC USD/BRL vivo (lo leemos del ref del Step3).
+      // El backend lo usa para escoger la banda Marluvas correcta al
+      // resolver `unit_price_mwt` desde el snapshot MWT.
+      const tcLive = tcUsdBrlRef.current;
       const payload = {
         client_id:           selClient.id,
         operating_company_id: operatingCompanyId,
@@ -630,6 +638,7 @@ export default function CreateExpedienteWizardLite() {
         // Sprint Commit 9 · forma_pago obligatorio (CREDITO|CONTADO).
         // canAdvance ya bloqueó este submit si el usuario no eligió uno.
         forma_pago:          paymentMethod,
+        ...(Number.isFinite(tcLive) && tcLive > 0 ? { tc_usd_brl: tcLive } : {}),
         lines: Object.values(grouped).map((l) => {
           // Sprint 2026-05-22 · unit_price del snapshot al plazo elegido.
           // Si el cliente tiene MarluvasClientSkuPricing con plazo
@@ -771,6 +780,7 @@ export default function CreateExpedienteWizardLite() {
               paymentMethod={paymentMethod}
               setPaymentMethod={setPaymentMethod}
               pricingMatrixRef={pricingMatrixRef}
+              tcUsdBrlRef={tcUsdBrlRef}
             />
           )}
         </motion.div>
@@ -1683,7 +1693,7 @@ function Step2Productos({
  * @property {(m:string)=>void} setPaymentMethod
  */
 /** @param {Step3Props} props */
-function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentMethod, setPaymentMethod, pricingMatrixRef }) {
+function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentMethod, setPaymentMethod, pricingMatrixRef, tcUsdBrlRef }) {
   // ── Matriz dinámica de plazos por SKU (Sprint 2026-05-22) ─────────────
   // El backend (`/api/portal/products/sku_pricing_matrix/`) devuelve la
   // fila de plazos del snapshot Marluvas del cliente en la banda vigente
@@ -1734,6 +1744,16 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       pricingMatrixRef.current = pricingMatrix;
     }
   }, [pricingMatrix, pricingMatrixRef]);
+
+  // Sprint 2026-05-22 · Sync del TC vivo al ref del padre para que
+  // handleCreate lo envíe al backend en el payload.
+  useEffect(() => {
+    if (tcUsdBrlRef) {
+      tcUsdBrlRef.current = (Number.isFinite(tcUsdBrl) && tcUsdBrl > 0)
+        ? Number(tcUsdBrl)
+        : null;
+    }
+  }, [tcUsdBrl, tcUsdBrlRef]);
 
   // dynamicTiers: derivados del snapshot del primer SKU con ok=true.
   // (Asumimos que todos los SKUs del mismo cliente comparten plazos —

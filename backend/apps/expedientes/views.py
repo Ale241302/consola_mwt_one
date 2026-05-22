@@ -459,6 +459,19 @@ class ExpedienteViewSet(viewsets.ViewSet):
             from apps.commercial.views import compute_client_price
 
             client_id_val = payload.get("client_id")
+            # Sprint 2026-05-22 · TC USD/BRL viva (la manda el wizard portal
+            # para que el backend escoja la banda Marluvas correcta al
+            # resolver `unit_price_mwt` desde el snapshot del MWT.
+            tc_raw = payload.get("tc_usd_brl")
+            try:
+                tc_usd_brl_val = float(tc_raw) if tc_raw not in (None, "", "null") else None
+            except (TypeError, ValueError):
+                tc_usd_brl_val = None
+            paymentDays_val = 0
+            try:
+                paymentDays_val = int(payload.get("credit_days") or 0)
+            except (TypeError, ValueError):
+                paymentDays_val = 0
             # Sprint 2026-05-06 · "snapshot dual" de precios.
             # price_map_mwt    → precio para Muito Work Limitada (visible
             #                    a Admin/CEO/staff).
@@ -469,6 +482,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
             # si es el client_id, apunta a price_map_client.
             price_map_mwt    = {}
             price_map_client = {}
+            brand_by_pid     = {}   # pid → brand_id (uuid str)
+            sku_by_pid       = {}   # pid → sku
             try:
                 unique_pids = {str(ln.get("producto_id")) for ln in raw_lines
                                if isinstance(ln, dict) and ln.get("producto_id")}
@@ -501,6 +516,13 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                 return None
 
                         for pid, sku_db, brand_id, pl, p_mwt_override, client_prices_json in c.fetchall():
+                            # Sprint 2026-05-22 · acumulamos brand y sku por pid
+                            # para resolver el snapshot Marluvas MWT en el loop
+                            # de líneas más abajo (operatingMode='mwt').
+                            if brand_id:
+                                brand_by_pid[pid] = brand_id
+                            if sku_db:
+                                sku_by_pid[pid]   = sku_db
                             # `client_prices_json` es un dict { cliente_id: precio }
                             # (puede venir ya parseado por psycopg2 si es JSONB).
                             cp_map = client_prices_json or {}
@@ -595,17 +617,18 @@ class ExpedienteViewSet(viewsets.ViewSet):
                     unit_price_client = (price_map_client.get(pid, Decimal("0"))
                                          if pid else Decimal("0"))
 
-                    # Sprint 2026-05-22 · OVERRIDE del payload.
-                    # El wizard del portal `/portal/nueva-oc` (paso 3)
-                    # resuelve el precio con el snapshot Marluvas del
-                    # cliente (`MarluvasClientSkuPricing.prices_matrix`)
-                    # y manda el valor del plazo seleccionado en
-                    # `lines[].unit_price`. El waterfall legacy
-                    # (CPA → GradeItem → EPP) IGNORA ese snapshot —
-                    # eso producía precios distintos a los que el
-                    # cliente vio en pantalla. Si viene unit_price > 0
-                    # lo respetamos para los TRES campos (la fuente de
-                    # verdad para el portal es el snapshot).
+                    # Sprint 2026-05-22 · OVERRIDE del payload con snapshot dual.
+                    # El wizard del portal `/portal/nueva-oc` (paso 3) resuelve
+                    # el precio con el snapshot Marluvas del CLIENTE FINAL y lo
+                    # manda en `lines[].unit_price`. Eso fija `unit_price_client`
+                    # honesto (lo que el cliente vio en pantalla).
+                    #
+                    # Para `unit_price_mwt` (perspectiva CEO/MWT) necesitamos
+                    # OTRO snapshot — el del cliente "Muito Work Limitada"
+                    # (com_pct=0%, brl_override=144.46) que tiene precios más
+                    # bajos por la ausencia de comisión. Solo aplica cuando
+                    # operating_company_id == MWT_OPERATING_CLIENT_ID; si el
+                    # operador es el cliente final, ambos snapshots coinciden.
                     raw_unit_price = ln.get("unit_price")
                     override_price = None
                     if raw_unit_price is not None:
@@ -616,8 +639,54 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         except (TypeError, ValueError, InvalidOperation):
                             override_price = None
                     if override_price is not None:
-                        unit_price_mwt    = override_price
+                        # Cliente final: el precio del payload es la fuente de verdad.
                         unit_price_client = override_price
+                        # MWT: por defecto el mismo precio del cliente; si el
+                        # operador es MWT intentamos leer el snapshot MWT real.
+                        unit_price_mwt = override_price
+                        if str(operating_company_id) == MWT_OPERATING_CLIENT_ID:
+                            try:
+                                from apps.commercial.services import (  # noqa: PLC0415
+                                    get_client_price_matrix,
+                                )
+                                brand_for_line = brand_by_pid.get(pid)
+                                sku_for_line   = sku_by_pid.get(pid) or sku
+                                if brand_for_line and sku_for_line:
+                                    mwt_matrix = get_client_price_matrix(
+                                        client_id   = MWT_OPERATING_CLIENT_ID,
+                                        brand_id    = brand_for_line,
+                                        product_sku = sku_for_line,
+                                        tc_usd_brl  = tc_usd_brl_val,
+                                    )
+                                    if mwt_matrix and mwt_matrix.get("ok"):
+                                        # Tomar el precio del plazo seleccionado
+                                        # (credit_days). Si no existe en la banda
+                                        # MWT, caemos al base del snapshot MWT.
+                                        plazos = mwt_matrix.get("plazos") or []
+                                        wanted = next(
+                                            (p for p in plazos
+                                             if int(p.get("dias") or 0) == paymentDays_val),
+                                            None,
+                                        )
+                                        base = next(
+                                            (p for p in plazos if p.get("is_base")),
+                                            None,
+                                        )
+                                        picked = wanted or base
+                                        if picked:
+                                            try:
+                                                cand_mwt = Decimal(str(picked.get("price")))
+                                                if cand_mwt > 0:
+                                                    unit_price_mwt = cand_mwt
+                                            except (TypeError, ValueError, InvalidOperation):
+                                                pass
+                            except Exception as e:
+                                log.warning(
+                                    "[expediente.create] snapshot MWT falló para "
+                                    "sku=%s brand=%s tc=%s plazo=%s · %s",
+                                    sku, brand_by_pid.get(pid), tc_usd_brl_val,
+                                    paymentDays_val, e,
+                                )
 
                     # Legacy unit_price = el precio que le toca al OPERADOR.
                     unit_price = (unit_price_mwt
