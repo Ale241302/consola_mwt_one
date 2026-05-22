@@ -409,7 +409,10 @@ export default function CreateTransferWizard() {
         ref_tracking:  refTracking || null,
         notes:         notes || null,
         estado:        "PLANNED",
-        value_usd:     totals.totalValueUsd,
+        // Sprint 2026-05-22 · El backend valida max_decimal_places=2
+        // sobre value_usd. El snapshot Marluvas trae 4 decimales
+        // (ej. 29.5231) → redondeamos a 2 antes del POST.
+        value_usd:     Math.round(Number(totals.totalValueUsd || 0) * 100) / 100,
         context_data:  contextData || {},
         // Sprint v3.5 — Documentos legales por motivo. El nombre del
         // archivo va como placeholder; cuando se integre upload real
