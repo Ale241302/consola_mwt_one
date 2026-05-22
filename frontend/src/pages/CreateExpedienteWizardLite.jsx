@@ -1721,6 +1721,14 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     if (Number.isFinite(tcUsdBrl) && tcUsdBrl > 0) {
       params.set("tc", String(tcUsdBrl));
     }
+    // Sprint 2026-05-22 · Si el operador es Muito Work Limitada y el viewer
+    // es admin, pedimos también la matriz del operador para mostrar SU
+    // perspectiva (costo MWT) en lugar de la del cliente final.
+    const opCid = String(operatingCompanyId || "").toLowerCase();
+    const cliCid = String(client?.id || "").toLowerCase();
+    if (opCid && opCid !== cliCid) {
+      params.set("operator_client_id", opCid);
+    }
     fetch(`/api/portal/products/sku_pricing_matrix/?${params.toString()}`, {
       headers: {
         "Authorization": `Bearer ${getToken()}`,
@@ -1732,7 +1740,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       .then(data => { if (!cancelled && data?.results) setPricingMatrix(data); })
       .catch(() => { /* fallback silencioso al EARLY_PAYMENT_TIERS hardcoded */ });
     return () => { cancelled = true; };
-  }, [client?.id, skusInOrderKey, tcUsdBrl]);
+  }, [client?.id, skusInOrderKey, tcUsdBrl, operatingCompanyId]);
 
   // Sprint 2026-05-22 · Mantener sincronizado el ref del padre con la
   // matriz actual. El handler handleCreate del padre lee este ref para
@@ -1755,12 +1763,29 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     }
   }, [tcUsdBrl, tcUsdBrlRef]);
 
+  // Sprint 2026-05-22 · viewer-aware matrix.
+  // Cuando el admin/CEO crea una OC operada por MWT, su "perspectiva" en
+  // las cards y subtotales debe ser el snapshot del OPERADOR (com=0%,
+  // precios más bajos), no la del cliente final que sí paga la comisión.
+  // El backend devuelve `operator_results` cuando le pasamos
+  // ?operator_client_id=. Aquí escogemos cuál matriz alimenta el render.
+  const useOperatorView = (
+    isAdmin
+    && operatingMode === 'mwt'
+    && pricingMatrix
+    && pricingMatrix.operator_results
+    && Object.values(pricingMatrix.operator_results || {}).some(m => m && m.ok)
+  );
+  const viewerResults = useOperatorView
+    ? pricingMatrix.operator_results
+    : pricingMatrix?.results;
+
   // dynamicTiers: derivados del snapshot del primer SKU con ok=true.
   // (Asumimos que todos los SKUs del mismo cliente comparten plazos —
   // se cumple en el motor de precios actual donde `custom_plazos` es
   // global por (cliente, marca), no por SKU.)
   const dynamicTiers = useMemo(() => {
-    const results = pricingMatrix?.results;
+    const results = viewerResults;
     if (!results || typeof results !== "object") return null;
     const firstOk = Object.values(results).find(m => m && m.ok && Array.isArray(m.plazos) && m.plazos.length > 0);
     if (!firstOk) return null;
@@ -1776,7 +1801,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       adminOnly: false,
       realPrice: Number(p.price),  // precio USD real del snapshot (debug/futuro)
     }));
-  }, [pricingMatrix]);
+  }, [viewerResults]);
 
   // Tiers efectivos para el render: dinámicos si hay snapshot, sino el hardcoded.
   const effectiveTiers = dynamicTiers && dynamicTiers.length > 0
@@ -1791,8 +1816,8 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   // PRODUCTOS y el VALOR TOTAL DEL PEDIDO quedan sincronizados con la
   // sección PROPUESTA · Pronto Pago.
   const snapshotUnitPrice = (sku) => {
-    if (!pricingMatrix || !pricingMatrix.results) return null;
-    const m = pricingMatrix.results[sku];
+    if (!viewerResults) return null;
+    const m = viewerResults[sku];
     if (!m || !m.ok || !Array.isArray(m.plazos)) return null;
     const baseEntry = m.plazos.find(p => p && p.is_base);
     if (!baseEntry) return null;
@@ -1824,7 +1849,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   // Marluvas). Si dynamicTiers es null (sin snapshot), tierTotals queda
   // null y el render cae al cálculo legacy.
   const tierTotals = useMemo(() => {
-    if (!dynamicTiers || !pricingMatrix?.results) return null;
+    if (!dynamicTiers || !viewerResults) return null;
     // Unidades totales por SKU en la orden
     const unitsBySku = {};
     orderLines.forEach(l => {
@@ -1836,7 +1861,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     dynamicTiers.forEach(tier => {
       let total = 0;
       Object.entries(unitsBySku).forEach(([sku, units]) => {
-        const matrix = pricingMatrix.results[sku];
+        const matrix = viewerResults[sku];
         if (!matrix || !matrix.ok || !Array.isArray(matrix.plazos)) return;
         const plazo = matrix.plazos.find(p => Number(p.dias) === Number(tier.days));
         if (!plazo) return;
@@ -1845,7 +1870,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       totals[tier.days] = total;
     });
     return totals;
-  }, [dynamicTiers, pricingMatrix, orderLines]);
+  }, [dynamicTiers, viewerResults, orderLines]);
 
   // baseTier del effectiveTiers (plazo base, ej. 90d).
   const _baseTierGlobal = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];

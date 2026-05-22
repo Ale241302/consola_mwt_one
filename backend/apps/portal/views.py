@@ -1832,12 +1832,63 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
                 top_banda_id = m.get("banda_id")
                 top_banda_rango = m.get("banda_rango")
 
+        # Sprint 2026-05-22 · Bloque opcional `operator_results` cuando el
+        # caller pasa `?operator_client_id=<uuid>` (típicamente el wizard del
+        # portal al crear OC operada por Muito Work Limitada).
+        # El admin ve el snapshot del operador MWT (com=0% → precios más
+        # bajos), no el del cliente final. Si operator_client_id es igual
+        # al cliente activo o no se pasa, omitimos el bloque.
+        operator_results: dict = {}
+        operator_id = (request.query_params.get("operator_client_id") or "").strip()
+        if operator_id and operator_id.lower() != str(cid).lower():
+            for sku in skus:
+                bid_for_sku = brand_by_sku.get(sku)
+                if not bid_for_sku:
+                    operator_results[sku] = {"ok": False, "reason": "sku_not_found_or_inactive"}
+                    continue
+                try:
+                    om = get_client_price_matrix(
+                        client_id   = operator_id,
+                        brand_id    = str(bid_for_sku),
+                        product_sku = sku,
+                        tc_usd_brl  = tc_usd_brl,
+                    )
+                except Exception as e:
+                    log.warning(
+                        "sku_pricing_matrix · operator matrix falló · "
+                        "sku=%s brand=%s op=%s tc=%s · %s",
+                        sku, bid_for_sku, operator_id, tc_usd_brl, e,
+                    )
+                    operator_results[sku] = {"ok": False, "reason": f"matrix_error: {e}"}
+                    continue
+                operator_results[sku] = {
+                    "ok":          bool(om.get("ok")),
+                    "banda_id":    om.get("banda_id"),
+                    "banda_rango": om.get("banda_rango"),
+                    "banda_div":   _ser(om.get("banda_div")),
+                    "currency":    om.get("currency"),
+                    "base_dias":   om.get("base_dias"),
+                    "base_price":  _ser(om.get("base_price")),
+                    "plazos": [
+                        {
+                            "dias":    p["dias"],
+                            "price":   _ser(p["price"]),
+                            "pct":     _ser(p["pct"]),
+                            "is_base": p["is_base"],
+                        } for p in (om.get("plazos") or [])
+                    ],
+                    "source":      om.get("source"),
+                    "reason":      om.get("reason"),
+                }
+
         return Response({
             "ok":          any(r.get("ok") for r in results.values()),
             "tc":          tc_usd_brl,
             "banda_id":    top_banda_id,
             "banda_rango": top_banda_rango,
             "results":     results,
+            "operator_id":      operator_id or None,
+            "operator_results": operator_results or None,
         }, status=200)
 
     # ── Bloqueo explícito de métodos no permitidos (403 > 405) ───
