@@ -1697,6 +1697,149 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
         )
         return Response(ser.data)
 
+    # ── Matriz completa de plazos por SKU (wizard nueva-oc paso 3) ──
+    # Sprint 2026-05-22 · El wizard del portal `/portal/nueva-oc` Paso 3
+    # ("Revisar y crear") muestra "PROPUESTA — DESCUENTO POR PRONTO PAGO"
+    # con 5 cards hardcodeados (8/30/60/90/120d). Eso ignora que el
+    # operador comercial pudo configurar plazos custom por banda en
+    # `pricing.marluvas_client_sku_pricing.custom_plazos`. Este endpoint
+    # devuelve los plazos REALES de la banda vigente para cada SKU
+    # solicitado, junto con sus precios USD y % relativo al plazo base.
+    @action(detail=False, methods=["get"], url_path="sku_pricing_matrix")
+    def sku_pricing_matrix(self, request):
+        """Devuelve la matriz de plazos por SKU para el cliente activo.
+
+        Query params:
+          ?skus=700728,701340,…  (CSV — uno o varios SKUs)
+          ?sku=700728            (alias single)
+          ?tc=5.0164             (TC USD/BRL del día — opcional)
+
+        Response shape:
+          {
+            "ok": true,
+            "tc": 5.0164,
+            "banda_id": 6,
+            "banda_rango": "5,00 – 5,20",
+            "results": {
+              "700728": {
+                "ok": true,
+                "banda_id": 6,
+                "base_dias": 90,
+                "base_price": "35.39",
+                "plazos": [
+                  { "dias": 8,  "price": "34.42", "pct": "-0.0274", "is_base": false },
+                  { "dias": 30, "price": "34.77", "pct": "-0.0175", "is_base": false },
+                  { "dias": 60, "price": "35.04", "pct": "-0.0099", "is_base": false },
+                  { "dias": 90, "price": "35.39", "pct":  "0.0000", "is_base": true  }
+                ]
+              },
+              "701340": { ... }
+            }
+          }
+        """
+        cid = getattr(request, "_portal_client_id", None)
+        if not cid:
+            return Response(
+                {"ok": False, "reason": "no_client_scope", "results": {}},
+                status=200,
+            )
+
+        # Parse SKUs (?skus=csv O ?sku=single)
+        skus_raw = (request.query_params.get("skus")
+                    or request.query_params.get("sku")
+                    or "").strip()
+        skus = [s.strip() for s in skus_raw.split(",") if s.strip()]
+        if not skus:
+            return Response(
+                {"ok": False, "reason": "missing_skus", "results": {}},
+                status=200,
+            )
+
+        # Parse TC
+        tc_raw = request.query_params.get("tc")
+        try:
+            tc_usd_brl = float(tc_raw) if tc_raw not in (None, "", "null") else None
+        except (TypeError, ValueError):
+            tc_usd_brl = None
+
+        # Resolver brand_id por SKU desde productos.producto. El portal
+        # ya tiene un queryset filtrado al cliente — usamos la misma
+        # whitelist para mantener consistencia de visibilidad.
+        try:
+            with connection.cursor() as c:
+                c.execute(
+                    "SELECT sku, marca_id::text "
+                    "  FROM productos.producto "
+                    " WHERE sku = ANY(%s::text[]) AND is_active = TRUE",
+                    [skus],
+                )
+                brand_by_sku = {r[0]: r[1] for r in c.fetchall() if r[1]}
+        except Exception as e:
+            log.warning("sku_pricing_matrix · brand lookup falló · %s", e)
+            brand_by_sku = {}
+
+        from decimal import Decimal as _D
+        from apps.commercial.services import get_client_price_matrix  # noqa: PLC0415
+
+        def _ser(v):
+            """Decimal -> str (manteniendo precision para tabular-nums en FE)."""
+            return None if v is None else (str(v) if isinstance(v, _D) else v)
+
+        results = {}
+        top_banda_id = None
+        top_banda_rango = None
+        for sku in skus:
+            bid = brand_by_sku.get(sku)
+            if not bid:
+                results[sku] = {"ok": False, "reason": "sku_not_found_or_inactive"}
+                continue
+            try:
+                m = get_client_price_matrix(
+                    client_id=str(cid),
+                    brand_id=str(bid),
+                    product_sku=sku,
+                    tc_usd_brl=tc_usd_brl,
+                )
+            except Exception as e:
+                log.warning(
+                    "sku_pricing_matrix · get_client_price_matrix falló · "
+                    "sku=%s brand=%s client=%s tc=%s · %s",
+                    sku, bid, cid, tc_usd_brl, e,
+                )
+                results[sku] = {"ok": False, "reason": f"matrix_error: {e}"}
+                continue
+            # Serializar Decimals
+            results[sku] = {
+                "ok":          bool(m.get("ok")),
+                "banda_id":    m.get("banda_id"),
+                "banda_rango": m.get("banda_rango"),
+                "banda_div":   _ser(m.get("banda_div")),
+                "currency":    m.get("currency"),
+                "base_dias":   m.get("base_dias"),
+                "base_price":  _ser(m.get("base_price")),
+                "plazos": [
+                    {
+                        "dias":    p["dias"],
+                        "price":   _ser(p["price"]),
+                        "pct":     _ser(p["pct"]),
+                        "is_base": p["is_base"],
+                    } for p in (m.get("plazos") or [])
+                ],
+                "source":      m.get("source"),
+                "reason":      m.get("reason"),
+            }
+            if m.get("ok") and top_banda_id is None:
+                top_banda_id = m.get("banda_id")
+                top_banda_rango = m.get("banda_rango")
+
+        return Response({
+            "ok":          any(r.get("ok") for r in results.values()),
+            "tc":          tc_usd_brl,
+            "banda_id":    top_banda_id,
+            "banda_rango": top_banda_rango,
+            "results":     results,
+        }, status=200)
+
     # ── Bloqueo explícito de métodos no permitidos (403 > 405) ───
     # Nota: `http_method_names` ya excluye POST/PUT/PATCH/DELETE, pero
     # añadimos este override para que, si alguien en el futuro hace

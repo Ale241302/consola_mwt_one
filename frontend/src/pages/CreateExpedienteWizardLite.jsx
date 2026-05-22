@@ -27,6 +27,8 @@ import {
   IconMail, IconTrash,
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
+import { bandaForTC } from "../constants/marluvas.js";
+import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 import {
   clientesApi, expedientesApi, lineasApi, productosApi, tallasApi, getToken,
 } from "../lib/api.js";
@@ -1657,6 +1659,74 @@ function Step2Productos({
  */
 /** @param {Step3Props} props */
 function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentMethod, setPaymentMethod }) {
+  // ── Matriz dinámica de plazos por SKU (Sprint 2026-05-22) ─────────────
+  // El backend (`/api/portal/products/sku_pricing_matrix/`) devuelve la
+  // fila de plazos del snapshot Marluvas del cliente en la banda vigente
+  // según el TC USD/BRL del día. Si el cliente tiene snapshot, usamos
+  // esos plazos reales (pueden ser solo 90/60/30/8 o un subconjunto).
+  // Si no hay snapshot, caemos al EARLY_PAYMENT_TIERS hardcoded.
+  const { tc: tcUsdBrl } = useExchangeRateUSDBRL(getToken());
+  // eslint-disable-next-line no-unused-vars
+  const _bandaActiva = useMemo(() => bandaForTC(tcUsdBrl), [tcUsdBrl]);
+  const [pricingMatrix, setPricingMatrix] = useState(null); // {tc, banda_id, results: {sku → matrix}}
+
+  // SKUs únicos presentes en la OC (key estable para el effect).
+  const skusInOrderKey = useMemo(() => {
+    const set = new Set();
+    orderLines.forEach(l => { if (l && l.sku) set.add(String(l.sku).trim()); });
+    return Array.from(set).sort().join("|");
+  }, [orderLines]);
+
+  useEffect(() => {
+    if (!client?.id || !skusInOrderKey) { setPricingMatrix(null); return; }
+    let cancelled = false;
+    const skus = skusInOrderKey.split("|").filter(Boolean);
+    const params = new URLSearchParams();
+    params.set("skus", skus.join(","));
+    if (Number.isFinite(tcUsdBrl) && tcUsdBrl > 0) {
+      params.set("tc", String(tcUsdBrl));
+    }
+    fetch(`/api/portal/products/sku_pricing_matrix/?${params.toString()}`, {
+      headers: {
+        "Authorization": `Bearer ${getToken()}`,
+        "X-Portal-Client": String(client.id),
+        "Content-Type": "application/json",
+      },
+    })
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => { if (!cancelled && data?.results) setPricingMatrix(data); })
+      .catch(() => { /* fallback silencioso al EARLY_PAYMENT_TIERS hardcoded */ });
+    return () => { cancelled = true; };
+  }, [client?.id, skusInOrderKey, tcUsdBrl]);
+
+  // dynamicTiers: derivados del snapshot del primer SKU con ok=true.
+  // (Asumimos que todos los SKUs del mismo cliente comparten plazos —
+  // se cumple en el motor de precios actual donde `custom_plazos` es
+  // global por (cliente, marca), no por SKU.)
+  const dynamicTiers = useMemo(() => {
+    const results = pricingMatrix?.results;
+    if (!results || typeof results !== "object") return null;
+    const firstOk = Object.values(results).find(m => m && m.ok && Array.isArray(m.plazos) && m.plazos.length > 0);
+    if (!firstOk) return null;
+    return firstOk.plazos.map(p => ({
+      days:     Number(p.dias),
+      // EARLY_PAYMENT_TIERS usa pct positivo para descuento (2.75 → -2.75%);
+      // el backend devuelve fracción relativa al base (-0.0275). Convertimos:
+      //   descuento → pct positivo, recargo → pct negativo.
+      pct:      -Number(p.pct) * 100,
+      label_es: `${p.dias} días`,
+      label_en: `${p.dias} days`,
+      isBase:   Boolean(p.is_base),
+      adminOnly: false,
+      realPrice: Number(p.price),  // precio USD real del snapshot (debug/futuro)
+    }));
+  }, [pricingMatrix]);
+
+  // Tiers efectivos para el render: dinámicos si hay snapshot, sino el hardcoded.
+  const effectiveTiers = dynamicTiers && dynamicTiers.length > 0
+    ? dynamicTiers
+    : getAvailableTiers(isAdmin);
+
   const operatedByMwt = operatingMode === 'mwt';
   const totalUnits = orderLines.reduce((a, l) => a + Number(l.cantidad || 0), 0);
   // Agrupar por SKU para el resumen + acumular subtotales por SKU
@@ -1678,9 +1748,11 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   // Sprint 2026-05-06 · valor ajustado por el tier de pronto pago.
   // El "VALOR DEL PEDIDO" del bloque IMPACTO EN CRÉDITO refleja el
   // total con el descuento aplicado del plazo seleccionado.
-  const selectedTier = EARLY_PAYMENT_TIERS.find(
+  // Sprint 2026-05-22 · buscar en effectiveTiers (dinámicos del snapshot
+  // del cliente cuando existen; fallback hardcoded sino).
+  const selectedTier = effectiveTiers.find(
     t => t.days === Number(paymentDays)
-  ) || EARLY_PAYMENT_TIERS.find(t => t.isBase);
+  ) || effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
   const tierPct = selectedTier ? selectedTier.pct / 100 : 0;
   const adjustedTotalValue = totalValue * (1 - tierPct);
 
@@ -1936,15 +2008,15 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
 
           <div style={{
             display: "grid",
-            gridTemplateColumns: `repeat(${getAvailableTiers(isAdmin).length}, minmax(0, 1fr))`,
+            gridTemplateColumns: `repeat(${effectiveTiers.length}, minmax(0, 1fr))`,
             gap: 10,
           }}>
-            {getAvailableTiers(isAdmin).map((tier) => {
+            {effectiveTiers.map((tier) => {
               const isSelected   = Number(paymentDays) === tier.days;
               const tierDiscount = tier.pct / 100;
               const tierTotal    = totalValue * (1 - tierDiscount);
               const tierUnit     = totalUnits > 0 ? tierTotal / totalUnits : 0;
-              const baseTier     = EARLY_PAYMENT_TIERS.find(t => t.isBase);
+              const baseTier     = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
               const baseTotal    = totalValue * (1 - (baseTier ? baseTier.pct/100 : 0));
               const ahorro       = baseTotal - tierTotal;
 
