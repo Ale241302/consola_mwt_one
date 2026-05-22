@@ -279,20 +279,27 @@ class ExpedienteViewSet(viewsets.ViewSet):
         if q:
             qs = qs.filter(codigo__icontains=q)
 
-        # Sprint 2026-05-06 / fix 2026-05-21 · Aislamiento de visibilidad por rol.
-        # Para CLIENT_*: SOLO expedientes cuyo client_id esté en su pool
-        # (legal_entity_ids). Admin/CEO/staff: sin filtro.
+        # Sprint 2026-05-06 / fix 2026-05-21 / rev 2026-05-21b · Aislamiento de
+        # visibilidad por rol con scope dual (client_id ∪ operating_company_id).
         #
-        # NOTA: antes se aceptaba también `operating_company_id__in` pero eso
-        # abría una fuga de scope (un CLIENT con MWT en su pool veía TODOS
-        # los expedientes operados por MWT). El portal nunca consideró
-        # operating_company_id y el contrato es: legal_entity_ids = clientes
-        # del CLIENT, no empresas operadoras. Si necesitás impersonación
-        # staff, usar Tweaks Panel / X-Viewport-Role.
+        # Para CLIENT_*: ve expedientes donde su pool (legal_entity_ids)
+        # intersecta con `client_id` (cliente final) O con `operating_company_id`
+        # (operador). Admin/CEO/staff: sin filtro.
+        #
+        # Cambio rev 2026-05-21b (CEO directive): operadores externos que MWT
+        # gestiona en su nombre tenían 0 expedientes visibles porque solo
+        # aparecían como `operating_company_id`, no como `client_id`. El OR
+        # corrige esto. La fuga histórica documentada (un CLIENT con MWT en su
+        # pool viendo TODO lo operado por MWT) deja de aplicar porque MWT
+        # nunca debe estar en `legal_entity_ids` de un CLIENT real —
+        # responsabilidad del módulo /usuarios/ no asignar MWT a CLIENT_*.
         if _is_client_viewer(request):
             user_companies = list(getattr(request.user, "legal_entity_ids", None) or [])
             if user_companies:
-                qs = qs.filter(client_id__in=user_companies)
+                qs = qs.filter(
+                    Q(client_id__in=user_companies)
+                    | Q(operating_company_id__in=user_companies)
+                )
             else:
                 # Sin scope → no ve nada (defensivo).
                 qs = qs.none()
@@ -725,11 +732,15 @@ class ExpedienteViewSet(viewsets.ViewSet):
                     "credit_60_75": 0, "credit_75_plus": 0,
                     "factory_delayed": 0,
                 })
-            # Fix 2026-05-21 · SOLO client_id, no operating_company_id.
-            # Mismo motivo que ExpedienteViewSet.list(): un CLIENT con MWT
-            # en su pool veía KPIs de TODOS los expedientes operados por MWT.
+            # Rev 2026-05-21b · Scope dual: client_id ∪ operating_company_id.
+            # Alineado con ExpedienteViewSet.list(): operadores externos que
+            # solo aparecen como operating_company_id ahora ven sus KPIs.
+            # Responsabilidad del módulo /usuarios/ no asignar MWT a CLIENT_*.
             placeholders = ",".join(["%s"] * len(scope))
-            where.append(f"client_id IN ({placeholders})")
+            where.append(
+                f"(client_id IN ({placeholders}) OR operating_company_id IN ({placeholders}))"
+            )
+            params.extend(scope)
             params.extend(scope)
 
         where_sql = " AND ".join(where)
@@ -2167,14 +2178,16 @@ class ExpedienteViewSet(viewsets.ViewSet):
         is_client = _is_client_viewer(request)
 
         # Visibilidad CLIENT_*: el expediente debe pertenecer a su pool
-        # (consistente con list()). Fix 2026-05-21: SOLO client_id, no
-        # operating_company_id — ver comentario largo en list().
+        # (consistente con list()). Rev 2026-05-21b: scope dual —
+        # client_id ∪ operating_company_id (ver comentario largo en list()).
         if is_client:
             user_companies = list(getattr(request.user, "legal_entity_ids", None) or [])
             if not user_companies:
                 return Response({"detail": "forbidden"}, status=403)
-            client_ok = str(getattr(exp, "client_id", "") or "") in {str(c) for c in user_companies}
-            if not client_ok:
+            pool = {str(c) for c in user_companies}
+            client_ok = str(getattr(exp, "client_id", "") or "") in pool
+            oc_ok     = str(getattr(exp, "operating_company_id", "") or "") in pool
+            if not (client_ok or oc_ok):
                 return Response({"detail": "forbidden"}, status=403)
 
         # 1) Lookup ART-04 metadata (puede no existir si el SAP fue
