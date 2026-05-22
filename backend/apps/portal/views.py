@@ -26,6 +26,7 @@ import logging
 import secrets
 import uuid
 from django.db import connection
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -498,6 +499,10 @@ class PortalViewSet(viewsets.ViewSet):
         if not cids:
             return _empty_scope()
 
+        # Rev 2026-05-21b · Scope dual: client_id ∪ operating_company_id.
+        # Alineado con apps.expedientes.views.ExpedienteViewSet.list().
+        # Una empresa asignada al usuario puede actuar como cliente final
+        # o como operadora del expediente; ambos casos cuentan.
         placeholders = ",".join(["%s"] * len(cids))
         rows = _fetchall(
             f"""
@@ -517,11 +522,14 @@ class PortalViewSet(viewsets.ViewSet):
             LEFT JOIN clientes.cliente  c ON c.id = e.client_id
             LEFT JOIN brands.marca      m ON m.id = e.brand_id
             WHERE e.is_active = TRUE
-              AND lower(e.client_id::text) IN ({placeholders})
+              AND (
+                lower(e.client_id::text) IN ({placeholders})
+                OR lower(e.operating_company_id::text) IN ({placeholders})
+              )
             ORDER BY e.last_event_at DESC, e.created_at DESC
             LIMIT 100
             """,
-            cids,
+            list(cids) + list(cids),
         )
         # Traducir estado técnico → natural
         for r in rows:
@@ -1728,14 +1736,20 @@ class PortalExpedienteViewSet(viewsets.ReadOnlyModelViewSet):
         request._portal_client_ids = cids
 
     def get_queryset(self):
+        # Rev 2026-05-21b · Scope dual: client_id ∪ operating_company_id.
+        # Alineado con mis_expedientes (mismo módulo) y ExpedienteViewSet
+        # de la consola interna. El portal expone el expediente cuando la
+        # empresa del usuario es cliente final O operadora.
         qs = Expediente.objects.filter(is_active=True)
         cids = getattr(self.request, "_portal_client_ids", None) or []
         if cids:
-            qs = qs.filter(client_id__in=cids)
+            qs = qs.filter(
+                Q(client_id__in=cids) | Q(operating_company_id__in=cids)
+            )
         else:
             cid = getattr(self.request, "_portal_client_id", None)
             if cid:
-                qs = qs.filter(client_id=cid)
+                qs = qs.filter(Q(client_id=cid) | Q(operating_company_id=cid))
         # Filtros opcionales útiles en el front (por OC, brand, estado)
         oc_id    = self.request.query_params.get("oc_id")
         brand_id = self.request.query_params.get("brand_id")
