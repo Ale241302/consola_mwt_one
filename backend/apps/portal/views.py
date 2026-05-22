@@ -444,6 +444,11 @@ class PortalViewSet(viewsets.ViewSet):
           · OCs cuyo `client_id` matchea, O
           · OCs que tienen algún expediente con `client_id` del usuario.
 
+        Rev 2026-05-21b · Scope dual: agregamos `operating_company_id`
+        del expediente hijo a la UNION. Alineado con mis_expedientes y
+        ExpedienteViewSet de la consola interna — una empresa asignada
+        ve sus OCs también cuando es la operadora del expediente.
+
         Incluye `client_id` y `client_name` para agrupar por empresa.
         """
         cids = _resolve_client_ids(request)
@@ -461,7 +466,7 @@ class PortalViewSet(viewsets.ViewSet):
               COALESCE(c.nombre_comercial, c.razon_social) AS client_name
             FROM expedientes.oc o
             LEFT JOIN LATERAL (
-              SELECT e.client_id
+              SELECT e.client_id, e.operating_company_id
                 FROM expedientes.expediente e
                WHERE e.oc_id = o.id
                  AND e.is_active = TRUE
@@ -474,11 +479,12 @@ class PortalViewSet(viewsets.ViewSet):
               AND (
                 lower(o.client_id::text) IN ({placeholders})
                 OR lower(exp_inner.client_id::text) IN ({placeholders})
+                OR lower(exp_inner.operating_company_id::text) IN ({placeholders})
               )
             ORDER BY o.issued_at DESC NULLS LAST, o.created_at DESC
             LIMIT 100
             """,
-            cids + cids,
+            list(cids) + list(cids) + list(cids),
         )
         return Response(rows)
 
