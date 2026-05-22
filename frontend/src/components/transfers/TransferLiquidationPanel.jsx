@@ -325,7 +325,11 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       avgLanded: unitsTotal > 0 ? landedTotal / unitsTotal : 0,
       lines,
     };
-  }, [transfer, costLines]);
+    // Sprint 2026-05-22 · viewerIsMwt en deps. Sin esta dependencia el
+    // useMemo NO recalcula cuando el admin toggle a "Cliente B2B" en el
+    // panel Tweaks - la tabla mostraba el precio MWT cacheado aunque la
+    // logica del if/else if mas arriba ya era correcta.
+  }, [transfer, costLines, viewerIsMwt]);
 
   // ── Cost line CRUD (server-side persiste; trigger SQL actualiza total_cost_usd) ──
   // Sprint 2026-05-14 · Fase 14 — addCost acepta { scope } para que el
