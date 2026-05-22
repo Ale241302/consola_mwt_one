@@ -1745,6 +1745,45 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   const groups = Object.values(bySku);
   const totalValue = groups.reduce((a, g) => a + g.subtotalValue, 0);
 
+  // Sprint 2026-05-22 · Precios reales del snapshot por plazo.
+  // tierTotals[dias] = suma sobre TODOS los SKUs de la OC:
+  //   precio_del_snapshot_al_plazo[sku] * cantidad_del_sku.
+  // Esto reemplaza el cálculo legacy `totalValue * (1 - pct)` que usaba
+  // el precio del priceMap (que viene de parse-template, no del snapshot
+  // Marluvas). Si dynamicTiers es null (sin snapshot), tierTotals queda
+  // null y el render cae al cálculo legacy.
+  const tierTotals = useMemo(() => {
+    if (!dynamicTiers || !pricingMatrix?.results) return null;
+    // Unidades totales por SKU en la orden
+    const unitsBySku = {};
+    orderLines.forEach(l => {
+      if (!l || !l.sku) return;
+      const sku = String(l.sku).trim();
+      unitsBySku[sku] = (unitsBySku[sku] || 0) + Number(l.cantidad || 0);
+    });
+    const totals = {};
+    dynamicTiers.forEach(tier => {
+      let total = 0;
+      Object.entries(unitsBySku).forEach(([sku, units]) => {
+        const matrix = pricingMatrix.results[sku];
+        if (!matrix || !matrix.ok || !Array.isArray(matrix.plazos)) return;
+        const plazo = matrix.plazos.find(p => Number(p.dias) === Number(tier.days));
+        if (!plazo) return;
+        total += Number(plazo.price) * Number(units);
+      });
+      totals[tier.days] = total;
+    });
+    return totals;
+  }, [dynamicTiers, pricingMatrix, orderLines]);
+
+  // baseTier del effectiveTiers (plazo base, ej. 90d).
+  const _baseTierGlobal = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
+  // effectiveBaseTotal: total al plazo base usando snapshot si existe.
+  // Es el reemplazo honesto del totalValue cuando hay snapshot.
+  const effectiveBaseTotal = (tierTotals && _baseTierGlobal)
+    ? (tierTotals[_baseTierGlobal.days] ?? totalValue)
+    : totalValue;
+
   // Sprint 2026-05-06 · valor ajustado por el tier de pronto pago.
   // El "VALOR DEL PEDIDO" del bloque IMPACTO EN CRÉDITO refleja el
   // total con el descuento aplicado del plazo seleccionado.
@@ -1752,9 +1791,13 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   // del cliente cuando existen; fallback hardcoded sino).
   const selectedTier = effectiveTiers.find(
     t => t.days === Number(paymentDays)
-  ) || effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
+  ) || _baseTierGlobal;
   const tierPct = selectedTier ? selectedTier.pct / 100 : 0;
-  const adjustedTotalValue = totalValue * (1 - tierPct);
+  // Si hay tierTotals (snapshot), usamos el total real del plazo seleccionado.
+  // Sino, fallback al cálculo legacy proporcional.
+  const adjustedTotalValue = (tierTotals && selectedTier)
+    ? (tierTotals[selectedTier.days] ?? effectiveBaseTotal)
+    : (totalValue * (1 - tierPct));
 
   return (
     <div className="card card-pad-lg">
@@ -2014,10 +2057,17 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
             {effectiveTiers.map((tier) => {
               const isSelected   = Number(paymentDays) === tier.days;
               const tierDiscount = tier.pct / 100;
-              const tierTotal    = totalValue * (1 - tierDiscount);
-              const tierUnit     = totalUnits > 0 ? tierTotal / totalUnits : 0;
               const baseTier     = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
-              const baseTotal    = totalValue * (1 - (baseTier ? baseTier.pct/100 : 0));
+              // Sprint 2026-05-22 · Si hay snapshot del cliente, tierTotal y
+              // baseTotal salen de los precios reales por plazo. Sino,
+              // fallback al cálculo proporcional legacy.
+              const tierTotal    = tierTotals && tierTotals[tier.days] != null
+                ? tierTotals[tier.days]
+                : totalValue * (1 - tierDiscount);
+              const baseTotal    = tierTotals && baseTier && tierTotals[baseTier.days] != null
+                ? tierTotals[baseTier.days]
+                : totalValue * (1 - (baseTier ? baseTier.pct/100 : 0));
+              const tierUnit     = totalUnits > 0 ? tierTotal / totalUnits : 0;
               const ahorro       = baseTotal - tierTotal;
 
               const fmt = (v) => `$${Number(v || 0).toLocaleString("en-US", {
