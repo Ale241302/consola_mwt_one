@@ -1057,9 +1057,14 @@ export function GlobalFilters({
         borderRadius: "var(--radius-lg)",
         marginBottom: 16,
         flexWrap: "wrap",
+        // Sprint 2026-05-22 · Sticky robusta. `calc(var(--header-h) + 4px)`
+        // fallaba intermitentemente en el grid .app-shell — usamos top literal
+        // (56px = altura del .topbar) + z-index 15 (bajo topbar=20, sobre
+        // cards). boxShadow agrega feedback visual al hacer pin.
         position: "sticky",
-        top: "calc(var(--header-h) + 4px)",
-        zIndex: 4,
+        top: 56,
+        zIndex: 15,
+        boxShadow: "0 2px 8px rgba(15, 23, 42, 0.04)",
       }}
     >
       <span style={{ font: "var(--micro)", color: "var(--text-tertiary)", letterSpacing: "0.06em" }}>
@@ -1467,9 +1472,17 @@ export function SizeMarketHeatmap({
         font: "var(--caption)",
         color: "var(--text-tertiary)",
       }}>
-        {lang === "es"
-          ? `Total ${grandTotal.toLocaleString("es-PE")} uds en ${sizes.length} tallas × ${markets.length} mercado${markets.length === 1 ? "" : "s"}.`
-          : `Total ${grandTotal.toLocaleString("en-US")} units across ${sizes.length} sizes × ${markets.length} market${markets.length === 1 ? "" : "s"}.`}
+        {(() => {
+          const isGlobal = markets.length === 1 && (markets[0]?.code === "GLOBAL");
+          if (isGlobal) {
+            return lang === "es"
+              ? `Total ${grandTotal.toLocaleString("es-PE")} uds en ${sizes.length} tallas · agregado global.`
+              : `Total ${grandTotal.toLocaleString("en-US")} units across ${sizes.length} sizes · global aggregate.`;
+          }
+          return lang === "es"
+            ? `Total ${grandTotal.toLocaleString("es-PE")} uds en ${sizes.length} tallas × ${markets.length} mercado${markets.length === 1 ? "" : "s"}.`
+            : `Total ${grandTotal.toLocaleString("en-US")} units across ${sizes.length} sizes × ${markets.length} market${markets.length === 1 ? "" : "s"}.`;
+        })()}
         {series.length === 1 && series[0].fit && (
           <span style={{ marginLeft: 6 }}>
             · μ ≈ <span className="tabular">{sizes[Math.round(series[0].fit.mu)] ?? "?"}</span>

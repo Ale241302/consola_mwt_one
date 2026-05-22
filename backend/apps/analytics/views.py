@@ -947,12 +947,18 @@ class AnalyticsViewSet(viewsets.ViewSet):
     def size_market_distribution(self, request):
         """Distribución de unidades vendidas por talla × mercado.
 
+        Query params:
+          ?market=CR|BR|US|...   filtra a un mercado específico
+          ?market=ALL  (default) AGREGA todos los mercados en UNA sola
+                       serie llamada "Global" — es lo que el dashboard
+                       muestra cuando el filtro Mercado='Todos'.
+
         Shape:
           {
             sizes:   ["38","39","40","41","42","43","44"],  // ordenadas
-            markets: [{ code: "CR", name: "Costa Rica" }, ...],
+            markets: [{ code: "GLOBAL"|"CR"|..., name: "Global"|... }],
             data:    [{ size, market, units }],
-            curve:   [{ size, pct_target }] | null   // si existe curva esperada
+            curve:   [{ size, pct_target }] | null
           }
 
         · Fuente:
@@ -961,10 +967,11 @@ class AnalyticsViewSet(viewsets.ViewSet):
             expedientes.linea.qty (unidades)
         · Filtro: líneas activas con tallas válidas en últimos 365d
           (proxy de cierre vía expediente.updated_at).
-        · La "curva esperada S1–S6" del prompt CEO no existe como tabla
-          de % objetivo por SKU. Cuando se cree
-          `productos.size_distribution_curve` con pct_target, se puede
-          devolver en `curve`. Hoy `curve` es null.
+        · Sprint 2026-05-22 · Cuando el CEO selecciona Mercado='Todos'
+          NO queremos pintar N curvas separadas (1 por mercado), sino
+          UNA sola curva agregada — eso refleja la pregunta real
+          "¿cómo se distribuyen las tallas en todo el portafolio?".
+          Por defecto market=ALL → agregamos por talla únicamente.
         """
         # Detectar si schema/cols existen — evita 500 si BD es muy vieja
         check = _fetchone("""
@@ -977,30 +984,10 @@ class AnalyticsViewSet(viewsets.ViewSet):
         if not check or not check[0]:
             return Response({"sizes": [], "markets": [], "data": [], "curve": None})
 
-        rows = _fetchall("""
-            SELECT
-              l.size                                       AS size,
-              COALESCE(cli.pais_iso2, 'ZZ')                AS market,
-              SUM(l.qty)::float                            AS units
-            FROM expedientes.linea     l
-            JOIN expedientes.expediente e ON e.id = l.expediente_id
-            LEFT JOIN clientes.cliente cli  ON cli.id = e.client_id
-            WHERE l.is_active = TRUE
-              AND e.is_active = TRUE
-              AND l.size IS NOT NULL
-              AND l.size <> ''
-              AND l.qty > 0
-              AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
-            GROUP BY l.size, COALESCE(cli.pais_iso2, 'ZZ')
-            ORDER BY l.size, market
-        """)
+        # Parse param market — uppercase, vacío/"ALL"/"TODOS"/"GLOBAL" = agregado
+        market_param = (request.query_params.get("market") or "").strip().upper()
+        is_aggregate = market_param in ("", "ALL", "TODOS", "GLOBAL")
 
-        # Construcción del shape esperado por el frontend.
-        size_set = sorted({r["size"] for r in rows if r.get("size")},
-                          key=lambda s: (len(s), s))  # 38 < 39 < ... < 100
-        market_set = sorted({r["market"] for r in rows if r.get("market")})
-
-        # Nombres legibles de mercado (best-effort sin lookup pesado).
         market_names = {
             "CR": "Costa Rica", "BR": "Brasil",    "US": "USA",
             "MX": "México",     "CO": "Colombia",  "PE": "Perú",
@@ -1008,7 +995,55 @@ class AnalyticsViewSet(viewsets.ViewSet):
             "DO": "R. Dominicana",
             "ZZ": "Sin país",
         }
-        markets = [{"code": m, "name": market_names.get(m, m)} for m in market_set]
+
+        if is_aggregate:
+            # Sumar todas las unidades por talla (sin separar por país)
+            rows = _fetchall("""
+                SELECT
+                  l.size                AS size,
+                  'GLOBAL'              AS market,
+                  SUM(l.qty)::float     AS units
+                FROM expedientes.linea     l
+                JOIN expedientes.expediente e ON e.id = l.expediente_id
+                LEFT JOIN clientes.cliente cli  ON cli.id = e.client_id
+                WHERE l.is_active = TRUE
+                  AND e.is_active = TRUE
+                  AND l.size IS NOT NULL
+                  AND l.size <> ''
+                  AND l.qty > 0
+                  AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
+                GROUP BY l.size
+                ORDER BY l.size
+            """)
+            size_set = sorted({r["size"] for r in rows if r.get("size")},
+                              key=lambda s: (len(s), s))
+            markets = [{"code": "GLOBAL", "name": "Global"}] if rows else []
+        else:
+            # Filtrar a un mercado específico
+            rows = _fetchall("""
+                SELECT
+                  l.size                                       AS size,
+                  COALESCE(cli.pais_iso2, 'ZZ')                AS market,
+                  SUM(l.qty)::float                            AS units
+                FROM expedientes.linea     l
+                JOIN expedientes.expediente e ON e.id = l.expediente_id
+                LEFT JOIN clientes.cliente cli  ON cli.id = e.client_id
+                WHERE l.is_active = TRUE
+                  AND e.is_active = TRUE
+                  AND l.size IS NOT NULL
+                  AND l.size <> ''
+                  AND l.qty > 0
+                  AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
+                  AND COALESCE(cli.pais_iso2, 'ZZ') = %s
+                GROUP BY l.size, COALESCE(cli.pais_iso2, 'ZZ')
+                ORDER BY l.size
+            """, [market_param])
+            size_set = sorted({r["size"] for r in rows if r.get("size")},
+                              key=lambda s: (len(s), s))
+            markets = [{
+                "code": market_param,
+                "name": market_names.get(market_param, market_param),
+            }] if rows else []
 
         return Response({
             "sizes":   size_set,

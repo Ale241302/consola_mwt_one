@@ -275,11 +275,15 @@ export default function ScreenDashboard() {
   const kpiCreditAvgDays   = creditClock?.avg_days != null ? Number(creditClock.avg_days) : null;
   const kpiR1Ratio         = r1Ratio?.ratio != null ? Number(r1Ratio.ratio) : null;
 
-  // ── Series Banda 2 ─────
-  const cashflowSeriesReal       = useMemo(() => cashflowToSeries(cashflow, "real"),       [cashflow]);
-  const cashflowSeriesProyectado = useMemo(() => cashflowToSeries(cashflow, "proyectado"), [cashflow]);
-  const [chartSeriesKey, setChartSeriesKey] = useState("real");
-  const chartSeries = chartSeriesKey === "real" ? cashflowSeriesReal : cashflowSeriesProyectado;
+  // ── Series Banda 2 (legacy cashflow) ─────
+  // Sprint 2026-05-22 · Cashflow card oculta hasta que haya datos reales en
+  // cobros.cobro/pago. Las series se conservan para retomarse cuando el
+  // módulo de cobranza esté poblado. ESLint ignore: variables intencionalmente
+  // unused — quitarlas implicaría volver a recablear el feed completo.
+  // eslint-disable-next-line no-unused-vars
+  const _cashflowSeriesReal       = useMemo(() => cashflowToSeries(cashflow, "real"),       [cashflow]);
+  // eslint-disable-next-line no-unused-vars
+  const _cashflowSeriesProyectado = useMemo(() => cashflowToSeries(cashflow, "proyectado"), [cashflow]);
 
   // ── Pipeline por marca ─────
   const brandPipelineRows = useMemo(
@@ -586,57 +590,28 @@ export default function ScreenDashboard() {
       </div>
 
       {/* ──────────────────────────────────────────────────────────────
-          BANDA 2 — Comparador temporal (cashflow)
+          BANDA 2 — Heatmap tallas × mercado (full-width)
+          Sprint 2026-05-22 · CEO pidió reemplazar Cashflow (que está en $0
+          porque no hay cobros/pagos cargados aún) por el histograma global
+          de distribución de tallas. Cashflow queda OCULTO hasta que haya
+          datos reales en cobros.cobro/pago. Heatmap muestra la curva
+          agregada de TODOS los mercados (backend: ?market=ALL por default).
           ────────────────────────────────────────────────────────────── */}
       <DashboardCard
-        title={lang === "en" ? "Consolidated cashflow · USD" : "Cashflow consolidado · USD"}
+        title={lang === "en" ? "Size × market heatmap" : "Heatmap tallas × mercado"}
         subtitle={lang === "en"
-          ? "Source: /api/analytics/cashflow/ — series: projected / real"
-          : "Fuente: /api/analytics/cashflow/ — series: proyectado / real"}
-        action={
-          <div className="seg" style={{ display: "inline-flex", gap: 2 }}>
-            <button
-              type="button"
-              data-active={chartSeriesKey === "real"}
-              onClick={() => setChartSeriesKey("real")}
-              style={segBtnStyle(chartSeriesKey === "real")}
-            >
-              {lang === "en" ? "Real" : "Real"}
-            </button>
-            <button
-              type="button"
-              data-active={chartSeriesKey === "proyectado"}
-              onClick={() => setChartSeriesKey("proyectado")}
-              style={segBtnStyle(chartSeriesKey === "proyectado")}
-            >
-              {lang === "en" ? "Projected" : "Proyectado"}
-            </button>
-          </div>
-        }
+          ? "Units sold by size — aggregated across markets (last 365d)"
+          : "Unidades vendidas por talla — agregado global de mercados (últimos 365d)"}
       >
-        <SafeWidget lang={lang} endpoint="/api/analytics/cashflow/">
+        <SafeWidget lang={lang} endpoint="/api/analytics/size_market_distribution/">
           {loading
-            ? <Skeleton height={260} />
-            : <TimeseriesChart
-                data={chartSeries}
-                label={chartSeriesKey === "real"
-                  ? (lang === "en" ? "Cashflow · real" : "Cashflow · real")
-                  : (lang === "en" ? "Cashflow · projected" : "Cashflow · proyectado")}
-                currency="USD"
-                color={chartSeriesKey === "real" ? "var(--brand-primary)" : "var(--brand-accent-dark)"}
+            ? <Skeleton height={300} />
+            : <SizeMarketHeatmap
+                payload={sizeMarket}
                 lang={lang}
-                emptyEndpoint="/api/analytics/cashflow/"
+                emptyEndpoint="/api/analytics/size_market_distribution/"
               />}
         </SafeWidget>
-
-        <div className="flex ai-center gap-2 mt-3" style={{
-          font: "var(--caption)", color: "var(--text-tertiary)", flexWrap: "wrap",
-        }}>
-          <span>
-            {lang === "en" ? "Canonical currency: USD." : "Moneda canónica: USD."}
-          </span>
-          <FxFooter market={effectiveCcy === "BRL" ? "BR" : null} lang={lang} fx={fx} />
-        </div>
       </DashboardCard>
 
       <div style={{ height: 16 }} />
@@ -779,23 +754,8 @@ export default function ScreenDashboard() {
           </SafeWidget>
         </DashboardCard>
 
-        {/* 4C · Heatmap tallas × mercado · cableado al endpoint real */}
-        <DashboardCard
-          title={lang === "en" ? "Size × market heatmap" : "Heatmap tallas × mercado"}
-          subtitle={lang === "en"
-            ? "Units sold by size and destination market (last 365d)"
-            : "Unidades vendidas por talla y mercado destino (últimos 365d)"}
-        >
-          <SafeWidget lang={lang} endpoint="/api/analytics/size_market_distribution/">
-            {loading
-              ? <Skeleton height={220} />
-              : <SizeMarketHeatmap
-                  payload={sizeMarket}
-                  lang={lang}
-                  emptyEndpoint="/api/analytics/size_market_distribution/"
-                />}
-          </SafeWidget>
-        </DashboardCard>
+        {/* 4C · Heatmap promovido a BANDA 2 (full-width) en sprint 2026-05-22.
+             Quedan solo Top SKUs (4A) + Top clientes (4B) en este grid. */}
 
         {/* 4D · Scatter margen (CEO-ONLY) · cableado al endpoint nuevo o fallback */}
         {can("view_margin") ? (
