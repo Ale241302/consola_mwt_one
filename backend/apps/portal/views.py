@@ -456,13 +456,19 @@ class PortalViewSet(viewsets.ViewSet):
             return _empty_scope()
 
         placeholders = ",".join(["%s"] * len(cids))
+        # Rev 2026-05-21c · EXISTS en vez de LATERAL+LIMIT 1.
+        # Bug previo: el LATERAL solo evaluaba EL PRIMER expediente hijo, así
+        # que si la OC tenia multiples expedientes el match fallaba si el
+        # primero no era el que matcheaba con cids. EXISTS examina TODOS los
+        # expedientes hijos. Tambien cubre OCs cuyo `client_id` esta NULL
+        # pero algun expediente hijo tiene `operating_company_id` del usuario.
         rows = _fetchall(
             f"""
             SELECT DISTINCT
               o.id, o.codigo, o.brand_id, o.proforma, o.moneda,
               o.total_value, o.total_invoiced, o.total_paid, o.balance,
               o.coverage_pct, o.lines_count, o.issued_at, o.estado,
-              COALESCE(o.client_id, exp_inner.client_id) AS client_id,
+              COALESCE(o.client_id, exp_first.client_id) AS client_id,
               COALESCE(c.nombre_comercial, c.razon_social) AS client_name
             FROM expedientes.oc o
             LEFT JOIN LATERAL (
@@ -470,16 +476,25 @@ class PortalViewSet(viewsets.ViewSet):
                 FROM expedientes.expediente e
                WHERE e.oc_id = o.id
                  AND e.is_active = TRUE
-                 AND e.client_id IS NOT NULL
+               ORDER BY (e.client_id IS NOT NULL) DESC,
+                        e.created_at ASC
                LIMIT 1
-            ) exp_inner ON TRUE
+            ) exp_first ON TRUE
             LEFT JOIN clientes.cliente c
-                   ON c.id = COALESCE(o.client_id, exp_inner.client_id)
+                   ON c.id = COALESCE(o.client_id, exp_first.client_id)
             WHERE o.is_active = TRUE
               AND (
                 lower(o.client_id::text) IN ({placeholders})
-                OR lower(exp_inner.client_id::text) IN ({placeholders})
-                OR lower(exp_inner.operating_company_id::text) IN ({placeholders})
+                OR EXISTS (
+                  SELECT 1
+                    FROM expedientes.expediente e2
+                   WHERE e2.oc_id = o.id
+                     AND e2.is_active = TRUE
+                     AND (
+                       lower(e2.client_id::text) IN ({placeholders})
+                       OR lower(e2.operating_company_id::text) IN ({placeholders})
+                     )
+                )
               )
             ORDER BY o.issued_at DESC NULLS LAST, o.created_at DESC
             LIMIT 100
