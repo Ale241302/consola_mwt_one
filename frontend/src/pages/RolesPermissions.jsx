@@ -144,7 +144,13 @@ export default function RolesPermissions() {
   const toggleRowAll = (moduleSlug, value) => {
     setMatrix((prev) => prev.map((c) =>
       c.module === moduleSlug
-        ? { ...c, can_create: value, can_read: value, can_update: value, can_delete: value }
+        ? {
+            ...c,
+            can_create:       value, can_read:         value,
+            can_update:       value, can_delete:       value,
+            can_upload_doc:   value, can_download_doc: value,
+            can_view_doc:     value,
+          }
         : c));
     setDirty(true);
   };
@@ -161,9 +167,12 @@ export default function RolesPermissions() {
     try {
       const body = {
         matrix: matrix.map((c) => ({
-          module:     c.module,
-          can_create: c.can_create, can_read:   c.can_read,
-          can_update: c.can_update, can_delete: c.can_delete,
+          module:           c.module,
+          can_create:       c.can_create,       can_read:         c.can_read,
+          can_update:       c.can_update,       can_delete:       c.can_delete,
+          can_upload_doc:   !!c.can_upload_doc,
+          can_download_doc: !!c.can_download_doc,
+          can_view_doc:     !!c.can_view_doc,
         })),
       };
       await apiFetch(`/permissions/groups/${selectedRole}/`, {
@@ -195,7 +204,9 @@ export default function RolesPermissions() {
     return out;
   }, [matrix]);
 
-  const CAT_ORDER = ["CORE","OPERACIONAL","CATALOGOS","COMERCIAL","FINANCIERO","AI","B2B","INFRA","OTROS"];
+  // Sprint 2026-05-21 · A5 RBAC redesign: categorias alineadas al sidebar.
+  // Orden: CORE → COMERCIAL → ALMACEN → COMUNICACIONES → SOPORTE → ADMINISTRACION.
+  const CAT_ORDER = ["CORE","COMERCIAL","ALMACEN","COMUNICACIONES","SOPORTE","ADMINISTRACION","OTROS"];
   const orderedCats = CAT_ORDER.filter((c) => grouped[c]?.length > 0);
 
   // ── Render ──────────────────────────────────────────────
@@ -367,7 +378,6 @@ export default function RolesPermissions() {
                   key={c.module}
                   cell={c}
                   onToggle={(k) => toggle(c.module, k)}
-                  onToggleAll={(v) => toggleRowAll(c.module, v)}
                   lang={lang}
                 />
               ))}
@@ -743,7 +753,8 @@ const modalInput = {
 // ─────────────────────────────────────────────────────────────────────
 // Matrix header + row
 // ─────────────────────────────────────────────────────────────────────
-const COLS = "minmax(200px, 2fr) 80px 80px 80px 80px 80px";
+// Modulo + 4 CRUD + 3 doc actions (sin la columna "Toggle row" obsoleta).
+const COLS = "minmax(220px, 2.5fr) 70px 70px 70px 70px 90px 90px 90px";
 
 function MatrixHeader({ onColToggle, lang }) {
   const L = (es, en) => lang === "es" ? es : en;
@@ -756,11 +767,13 @@ function MatrixHeader({ onColToggle, lang }) {
       letterSpacing: 0.5, textTransform: "uppercase", alignItems: "center",
     }}>
       <span>{L("Módulo","Module")}</span>
-      <HeaderCol label={L("Crear","Create")}    onToggle={(v) => onColToggle("can_create", v)}/>
-      <HeaderCol label={L("Leer","Read")}       onToggle={(v) => onColToggle("can_read",   v)}/>
-      <HeaderCol label={L("Actualizar","Update")}onToggle={(v) => onColToggle("can_update", v)}/>
-      <HeaderCol label={L("Eliminar","Delete")}  onToggle={(v) => onColToggle("can_delete", v)}/>
-      <span style={{ textAlign: "center" }}>{L("Toggle row","Toggle row")}</span>
+      <HeaderCol label={L("Crear","Create")}       onToggle={(v) => onColToggle("can_create", v)}/>
+      <HeaderCol label={L("Leer","Read")}          onToggle={(v) => onColToggle("can_read",   v)}/>
+      <HeaderCol label={L("Actualizar","Update")}   onToggle={(v) => onColToggle("can_update", v)}/>
+      <HeaderCol label={L("Eliminar","Delete")}     onToggle={(v) => onColToggle("can_delete", v)}/>
+      <HeaderCol label={L("Subir docs","Upload docs")}     onToggle={(v) => onColToggle("can_upload_doc", v)}/>
+      <HeaderCol label={L("Bajar docs","Download docs")}   onToggle={(v) => onColToggle("can_download_doc", v)}/>
+      <HeaderCol label={L("Ver docs","View docs")}         onToggle={(v) => onColToggle("can_view_doc", v)}/>
     </div>
   );
 }
@@ -779,8 +792,7 @@ function HeaderCol({ label, onToggle }) {
   );
 }
 
-function MatrixRow({ cell, onToggle, onToggleAll, lang }) {
-  const allOn = cell.can_create && cell.can_read && cell.can_update && cell.can_delete;
+function MatrixRow({ cell, onToggle, lang }) {
   return (
     <div style={{
       display: "grid", gridTemplateColumns: COLS, gap: 4,
@@ -802,16 +814,10 @@ function MatrixRow({ cell, onToggle, onToggleAll, lang }) {
       <Cell checked={cell.can_read}   onChange={() => onToggle("can_read")}/>
       <Cell checked={cell.can_update} onChange={() => onToggle("can_update")}/>
       <Cell checked={cell.can_delete} onChange={() => onToggle("can_delete")} danger/>
-      <span style={{ textAlign: "center" }}>
-        <button
-          onClick={() => onToggleAll(!allOn)}
-          className="ai-btn ai-btn-ghost ai-btn-xs"
-          style={{ fontSize: 10 }}
-          title={allOn ? "Disable all" : "Enable all"}
-        >
-          {allOn ? "✗" : "✓"}
-        </button>
-      </span>
+      {/* Sprint 2026-05-21 · A5 RBAC redesign · gestion documental */}
+      <Cell checked={cell.can_upload_doc}   onChange={() => onToggle("can_upload_doc")}/>
+      <Cell checked={cell.can_download_doc} onChange={() => onToggle("can_download_doc")}/>
+      <Cell checked={cell.can_view_doc}     onChange={() => onToggle("can_view_doc")}/>
     </div>
   );
 }

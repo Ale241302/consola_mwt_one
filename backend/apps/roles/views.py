@@ -188,10 +188,13 @@ class RoleGroupMatrixView(APIView):
                 "module":       m.slug,
                 "module_label": m.nombre,
                 "categoria":    m.categoria,
-                "can_create":   bool(c and c.can_create),
-                "can_read":     bool(c and c.can_read),
-                "can_update":   bool(c and c.can_update),
-                "can_delete":   bool(c and c.can_delete),
+                "can_create":       bool(c and c.can_create),
+                "can_read":         bool(c and c.can_read),
+                "can_update":       bool(c and c.can_update),
+                "can_delete":       bool(c and c.can_delete),
+                "can_upload_doc":   bool(c and c.can_upload_doc),
+                "can_download_doc": bool(c and c.can_download_doc),
+                "can_view_doc":     bool(c and c.can_view_doc),
             })
         return Response({
             "role":   RoleCatSerializer(role).data,
@@ -215,11 +218,14 @@ class RoleGroupMatrixView(APIView):
             obj, created = RolePermission.objects.update_or_create(
                 role_slug=slug, module_slug=cell["module"],
                 defaults={
-                    "can_create":    cell["can_create"],
-                    "can_read":      cell["can_read"],
-                    "can_update":    cell["can_update"],
-                    "can_delete":    cell["can_delete"],
-                    "updated_by_id": updated_by,
+                    "can_create":       cell["can_create"],
+                    "can_read":         cell["can_read"],
+                    "can_update":       cell["can_update"],
+                    "can_delete":       cell["can_delete"],
+                    "can_upload_doc":   cell.get("can_upload_doc", False),
+                    "can_download_doc": cell.get("can_download_doc", False),
+                    "can_view_doc":     cell.get("can_view_doc", False),
+                    "updated_by_id":    updated_by,
                 },
             )
             if created:

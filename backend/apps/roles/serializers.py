@@ -53,6 +53,10 @@ class RoleMatrixCellSerializer(serializers.Serializer):
     can_read   = serializers.BooleanField(default=False)
     can_update = serializers.BooleanField(default=False)
     can_delete = serializers.BooleanField(default=False)
+    # Sprint 2026-05-21 · A5 RBAC redesign — acciones documentales
+    can_upload_doc   = serializers.BooleanField(default=False)
+    can_download_doc = serializers.BooleanField(default=False)
+    can_view_doc     = serializers.BooleanField(default=False)
 
 
 class RoleMatrixInputSerializer(serializers.Serializer):

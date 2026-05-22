@@ -70,6 +70,10 @@ class RolePermission(models.Model):
     can_read      = models.BooleanField(default=False)
     can_update    = models.BooleanField(default=False)
     can_delete    = models.BooleanField(default=False)
+    # Sprint 2026-05-21 · A5 RBAC redesign · gestion documental
+    can_upload_doc   = models.BooleanField(default=False)
+    can_download_doc = models.BooleanField(default=False)
+    can_view_doc     = models.BooleanField(default=False)
     updated_by_id = models.UUIDField(null=True, blank=True)
     updated_at    = models.DateTimeField(auto_now=True)
     created_at    = models.DateTimeField(auto_now_add=True)
