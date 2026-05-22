@@ -1604,10 +1604,11 @@ function Step2Productos({
         </div>
       )}
 
-      {/* ── Sprint 2026-05-01: Proyeccion de credito (CEO-only) ── */}
-      {isAdmin && creditProjection && creditProjection.limit > 0 && orderLines.length > 0 && (
-        <CreditProjectionCard cp={creditProjection} lang={lang}/>
-      )}
+      {/* Rev 2026-05-21g · Card IMPACTO EN CRÉDITO removida del PASO 2
+          (mandato CEO). La banda y los descuentos del motor de precios
+          haran la validacion comercial real; ese bloque rojo "EXCEDE
+          LIMITE" ya no aplica en este paso. Se conserva el equivalente
+          del PASO 3 (Resumen) por si quieres mantener la senial alli. */}
 
       {manualOpen && (
         <ManualLinePanel

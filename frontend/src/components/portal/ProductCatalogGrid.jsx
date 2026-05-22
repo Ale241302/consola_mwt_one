@@ -207,6 +207,8 @@ export default function ProductCatalogGrid({ lang = "es", onBuy, clientId }) {
               onBuy={() => handleBuy(p)}
               cartQty={cart[p.id]?.qty || 0}
               onChangeQty={(nq) => setQty(p, nq)}
+              tcUsdBrl={tcUsdBrl}
+              banda={bandaActiva}
             />
           ))}
         </motion.div>
@@ -298,7 +300,10 @@ export default function ProductCatalogGrid({ lang = "es", onBuy, clientId }) {
 //   cartQty      → cantidad actual de este SKU en el carrito (0 = no agregado)
 //   onChangeQty  → (nextQty) => void · callback para actualizar la cantidad
 // ---------------------------------------------------------------------
-function ProductCard({ product, lang, onOpenDetail, onBuy, cartQty = 0, onChangeQty }) {
+function ProductCard({
+  product, lang, onOpenDetail, onBuy, cartQty = 0, onChangeQty,
+  tcUsdBrl, banda,
+}) {
   const {
     sku, nombre, descripcion,
     marca_label, imagen_url,
@@ -306,6 +311,19 @@ function ProductCard({ product, lang, onOpenDetail, onBuy, cartQty = 0, onChange
     precio_venta, categoria, estado,
   } = product || {};
   const inCart = cartQty > 0;
+
+  // Rev 2026-05-21g · Precio del catalogo en BRL para el cliente activo.
+  // Toma el precio USD de venta (que en el motor de precios Marluvas es
+  // el "techo a 90d" — el plazo mas largo y de mayor valor) y lo
+  // multiplica por el divisor de la banda vigente del USD/BRL del dia.
+  // Si todavia no llego la TC o el SKU no tiene precio USD, dejamos el
+  // texto fallback "Consultar precio" para que el cliente sepa que
+  // todavia no esta disponible.
+  const precioUsdBase = Number(precio_venta) || 0;
+  const tieneBanda    = !!banda && !!banda.div;
+  const precioBrl     = (tieneBanda && precioUsdBase > 0)
+    ? precioUsdBase * Number(banda.div)
+    : null;
 
   return (
     <motion.article
@@ -372,9 +390,21 @@ function ProductCard({ product, lang, onOpenDetail, onBuy, cartQty = 0, onChange
       {/* Footer con precio + CTA (o stepper si está en carrito) */}
       <footer className="catalog-card-foot">
         <div className="catalog-card-price tabular-nums">
-          {precio_venta != null && precio_venta > 0
-            ? fmtMoney(precio_venta, moneda)
-            : (lang === "es" ? "Consultar precio" : "Quote on request")}
+          {precioBrl != null ? (
+            <>
+              <span>{"R$ " + precioBrl.toLocaleString("pt-BR", {
+                minimumFractionDigits: 2, maximumFractionDigits: 2,
+              })}</span>
+              <span style={{
+                display: "block", fontSize: 10, fontWeight: 500,
+                color: "var(--text-tertiary)", marginTop: 2,
+                letterSpacing: 0.3,
+              }}>
+                {(lang === "es" ? "Banda " : "Band ") + (banda?.rango || "") +
+                  " · 90d · " + fmtMoney(precioUsdBase, "USD")}
+              </span>
+            </>
+          ) : (lang === "es" ? "Consultar precio" : "Quote on request")}
         </div>
         {!inCart ? (
           <button
