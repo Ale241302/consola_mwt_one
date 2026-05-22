@@ -45,6 +45,10 @@ from .enums import (
     PaymentStatus, PaymentErrorCode,
     PAYMENT_STATES_RELEASABLE, PAYMENT_STATES_REJECTABLE,
 )
+from apps.core.scoped_querysets import (
+    filter_by_user_clients,
+    _is_bypass,
+)
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +67,8 @@ class PaymentViewSet(viewsets.ViewSet):
     # ── List ──────────────────────────────────────────────
     def list(self, request):
         qs = Payment.objects.filter(is_active=True)
+        # Sprint 2026-05-22 · scope multi-tenant por client_id.
+        qs = filter_by_user_clients(qs, request.user, client_field="client_id")
         for param, field in (
             ("expediente_id", "expediente_id"),
             ("client_id",     "client_id"),
@@ -88,6 +94,11 @@ class PaymentViewSet(viewsets.ViewSet):
             p = Payment.objects.get(pk=pk, is_active=True)
         except Payment.DoesNotExist:
             return Response({"detail": "Payment no existe"}, status=404)
+        # Sprint 2026-05-22 · scope guard cross-tenant.
+        if not _is_bypass(request.user):
+            scope = [str(x).lower() for x in (getattr(request.user, "legal_entity_ids", None) or [])]
+            if not scope or str(p.client_id).lower() not in scope:
+                return Response({"detail": "Payment no existe"}, status=404)
         return Response(PaymentDetailSerializer(p).data)
 
     # ── Create (multipart, drawer v2.0) ───────────────────

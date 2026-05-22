@@ -32,6 +32,11 @@ from rest_framework.response import Response
 
 from apps.core.constants import MWT_OPERATING_CLIENT_ID
 from apps.storage.services import delete_object as _storage_delete
+from apps.core.scoped_querysets import (
+    filter_by_user_clients,
+    _is_bypass,
+    scoped_expediente_ids,
+)
 
 from .models import (
     Oc, Expediente, Linea, Documento,
@@ -156,6 +161,11 @@ def _deny_client_mutation(request, action_label: str = ""):
 class OcViewSet(viewsets.ViewSet):
     def list(self, request):
         qs = Oc.objects.filter(is_active=True).order_by("-issued_at", "-created_at")
+        # Sprint 2026-05-22 · scope multi-tenant. OC tiene client_id pero NO
+        # operating_company_id (eso se materializa en el expediente). Solo
+        # filtramos por client_id; el caso "operator-sin-cliente" se cubre
+        # en ExpedienteViewSet.list con scope dual.
+        qs = filter_by_user_clients(qs, request.user, client_field="client_id")
         mapping = {
             "client":    "client_id",
             "brand":     "brand_id",
@@ -293,16 +303,16 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # pool viendo TODO lo operado por MWT) deja de aplicar porque MWT
         # nunca debe estar en `legal_entity_ids` de un CLIENT real —
         # responsabilidad del módulo /usuarios/ no asignar MWT a CLIENT_*.
-        if _is_client_viewer(request):
-            user_companies = list(getattr(request.user, "legal_entity_ids", None) or [])
-            if user_companies:
-                qs = qs.filter(
-                    Q(client_id__in=user_companies)
-                    | Q(operating_company_id__in=user_companies)
-                )
-            else:
-                # Sin scope → no ve nada (defensivo).
-                qs = qs.none()
+        # Sprint 2026-05-22 · scope unificado (R3 · POL_VISIBILIDAD).
+        # TODO rol que no sea superadmin/admin se limita a su pool
+        # (manager, operator, finance, viewer, client_b2b). El helper
+        # devuelve qs.none() si el user no-bypass tiene legal_entity_ids=[].
+        # Scope dual: client_id ∪ operating_company_id.
+        qs = filter_by_user_clients(
+            qs, request.user,
+            client_field="client_id",
+            extra_fields=("operating_company_id",),
+        )
         return Response(ExpedienteListSerializer(qs, many=True).data)
 
     def retrieve(self, request, pk=None):
@@ -2984,6 +2994,10 @@ class ExpedienteViewSet(viewsets.ViewSet):
 class LineaViewSet(viewsets.ViewSet):
     def list(self, request):
         qs = Linea.objects.filter(is_active=True)
+        # Sprint 2026-05-22 · scope multi-tenant via expediente.
+        exp_ids = scoped_expediente_ids(request.user)
+        if exp_ids is not None:
+            qs = qs.filter(expediente_id__in=exp_ids) if exp_ids else qs.none()
         for p, f in (("oc", "oc_id"), ("expediente", "expediente_id"),
                      ("producto", "producto_id"), ("sap", "sap"),
                      ("estado", "estado")):
@@ -3209,6 +3223,11 @@ class DocumentoViewSet(viewsets.ViewSet):
 
     def list(self, request):
         qs = Documento.objects.filter(is_active=True).order_by("-fecha", "-created_at")
+        # Sprint 2026-05-22 · scope multi-tenant via expediente_id.
+        # Aditivo al gating de audience que ya existe debajo.
+        exp_ids = scoped_expediente_ids(request.user)
+        if exp_ids is not None:
+            qs = qs.filter(expediente_id__in=exp_ids) if exp_ids else qs.none()
         for p, f in (("oc", "oc_id"), ("expediente", "expediente_id"), ("kind", "kind")):
             v = request.query_params.get(p)
             if v:

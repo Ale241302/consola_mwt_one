@@ -31,6 +31,11 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.storage.services import delete_object as _storage_delete
+from apps.core.scoped_querysets import (
+    filter_by_user_clients,
+    filter_by_user_clients_sql,
+    _is_bypass,
+)
 
 from .models import (
     Cobro, Pago, Conciliacion,
@@ -82,6 +87,9 @@ def _stage_for_days(dias):
 class CobroViewSet(viewsets.ViewSet):
     def list(self, request):
         qs = Cobro.objects.filter(is_active=True).order_by("-fecha_vencimiento", "-created_at")
+        # Sprint 2026-05-22 · scope multi-tenant: superadmin/admin ven todo,
+        # resto solo cobros cuyo client_id este en su legal_entity_ids.
+        qs = filter_by_user_clients(qs, request.user, client_field="client_id")
         for p, f in (("oc", "oc_id"), ("expediente", "expediente_id"),
                      ("client", "client_id"), ("estado", "estado"), ("moneda", "moneda"),
                      ("bucket_mora", "bucket_mora"), ("collection_stage", "collection_stage")):
@@ -99,6 +107,11 @@ class CobroViewSet(viewsets.ViewSet):
         try:
             c = Cobro.objects.get(pk=pk, is_active=True)
         except Cobro.DoesNotExist:
+            return Response({"detail": "Cobro no existe"}, status=404)
+        # Sprint 2026-05-22 · scope guard cross-tenant.
+        if not filter_by_user_clients(
+            Cobro.objects.filter(pk=c.id), request.user, client_field="client_id"
+        ).exists():
             return Response({"detail": "Cobro no existe"}, status=404)
         data = CobroSerializer(c).data
         data["vencimientos"] = VencimientoSerializer(
@@ -210,9 +223,16 @@ class CobroViewSet(viewsets.ViewSet):
             "monto_t3_usd": 0.0, "monto_t4_usd": 0.0,
             "en_legal": 0,
         }
+        # Sprint 2026-05-22 · scope SQL — user sin pool -> KPIs en cero.
+        scope_sql, scope_params = filter_by_user_clients_sql(
+            request.user, column="client_id"
+        )
+        if scope_sql == "FALSE":
+            return Response(out)
+        where_extra = f" AND ({scope_sql})" if scope_sql else ""
         with connection.cursor() as c:
             try:
-                c.execute("""
+                c.execute(f"""
                     SELECT
                       COUNT(*),
                       COUNT(*) FILTER (WHERE estado = 'PENDIENTE'),
@@ -231,8 +251,8 @@ class CobroViewSet(viewsets.ViewSet):
                       COALESCE(SUM(monto_pendiente) FILTER (WHERE bucket_mora = 'T4'), 0),
                       COUNT(*) FILTER (WHERE collection_stage = 'LEGAL')
                     FROM cobros.cobro
-                    WHERE is_active = TRUE
-                """)
+                    WHERE is_active = TRUE{where_extra}
+                """, scope_params)
                 r = c.fetchone()
                 out = {
                     "total":           r[0],
@@ -260,6 +280,8 @@ class CobroViewSet(viewsets.ViewSet):
 class PagoViewSet(viewsets.ViewSet):
     def list(self, request):
         qs = Pago.objects.filter(is_active=True).order_by("-fecha_operacion", "-created_at")
+        # Sprint 2026-05-22 · scope multi-tenant.
+        qs = filter_by_user_clients(qs, request.user, client_field="client_id")
         for p, f in (("cobro", "cobro_id"), ("oc", "oc_id"),
                      ("expediente", "expediente_id"), ("client", "client_id"),
                      ("proveedor", "proveedor_id"), ("direccion", "direccion"),
@@ -414,6 +436,13 @@ class PagoViewSet(viewsets.ViewSet):
 class ConciliacionViewSet(viewsets.ViewSet):
     def list(self, request):
         qs = Conciliacion.objects.filter(is_active=True).order_by("-created_at")
+        # Sprint 2026-05-22 · scope indirecto via cobro.client_id.
+        if not _is_bypass(request.user):
+            scoped_cobros = list(filter_by_user_clients(
+                Cobro.objects.filter(is_active=True), request.user,
+                client_field="client_id",
+            ).values_list("id", flat=True))
+            qs = qs.filter(cobro_id__in=scoped_cobros) if scoped_cobros else qs.none()
         for p, f in (("ingreso", "pago_ingreso_id"), ("egreso", "pago_egreso_id"),
                      ("cobro", "cobro_id"), ("external_ref", "external_ref")):
             v = request.query_params.get(p)
@@ -463,6 +492,13 @@ class ConciliacionViewSet(viewsets.ViewSet):
 class VencimientoViewSet(viewsets.ViewSet):
     def list(self, request):
         qs = Vencimiento.objects.filter(is_active=True).order_by("fecha_vencimiento")
+        # Sprint 2026-05-22 · scope indirecto via cobro.client_id.
+        if not _is_bypass(request.user):
+            scoped_cobros = list(filter_by_user_clients(
+                Cobro.objects.filter(is_active=True), request.user,
+                client_field="client_id",
+            ).values_list("id", flat=True))
+            qs = qs.filter(cobro_id__in=scoped_cobros) if scoped_cobros else qs.none()
         for p, f in (("cobro", "cobro_id"), ("estado", "estado"), ("tramo", "tramo")):
             v = request.query_params.get(p)
             if v:
@@ -504,6 +540,13 @@ class VencimientoViewSet(viewsets.ViewSet):
 class WithholdingLogViewSet(viewsets.ViewSet):
     def list(self, request):
         qs = WithholdingLog.objects.filter(is_active=True).order_by("-created_at")
+        # Sprint 2026-05-22 · scope indirecto via cobro.client_id.
+        if not _is_bypass(request.user):
+            scoped_cobros = list(filter_by_user_clients(
+                Cobro.objects.filter(is_active=True), request.user,
+                client_field="client_id",
+            ).values_list("id", flat=True))
+            qs = qs.filter(cobro_id__in=scoped_cobros) if scoped_cobros else qs.none()
         for p, f in (("pago", "pago_id"), ("cobro", "cobro_id"), ("tipo", "tipo")):
             v = request.query_params.get(p)
             if v:
@@ -582,6 +625,8 @@ class FxRateHistoryViewSet(viewsets.ViewSet):
 class CollectionEventViewSet(viewsets.ViewSet):
     def list(self, request):
         qs = CollectionEvent.objects.filter(is_active=True).order_by("-created_at")
+        # Sprint 2026-05-22 · scope directo por client_id.
+        qs = filter_by_user_clients(qs, request.user, client_field="client_id")
         for p, f in (("cobro", "cobro_id"), ("client", "client_id"),
                      ("canal", "canal"), ("stage", "stage"), ("outcome", "outcome")):
             v = request.query_params.get(p)

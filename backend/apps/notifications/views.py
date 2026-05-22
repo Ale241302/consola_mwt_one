@@ -30,6 +30,11 @@ from .serializers import (
     NotificationLogSerializer, NotificationLogListSerializer,
     GraceDaysCatSerializer, EmailQueueLogSerializer,
 )
+from apps.core.scoped_querysets import (
+    filter_by_user_clients,
+    _is_bypass,
+    scoped_expediente_ids,
+)
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +45,12 @@ log = logging.getLogger(__name__)
 class NotificationLogViewSet(viewsets.ViewSet):
     def list(self, request):
         qs = NotificationLog.objects.filter(is_active=True).order_by("-ts")
+        # Sprint 2026-05-22 · scope multi-tenant via expediente_id.
+        # Logs sin expediente_id (sistemas, password_reset) NO se exponen
+        # a non-bypass: solo superadmin/admin los ven.
+        exp_ids = scoped_expediente_ids(request.user)
+        if exp_ids is not None:
+            qs = qs.filter(expediente_id__in=exp_ids) if exp_ids else qs.none()
         for p, f in (("expediente", "expediente_id"), ("proforma", "proforma_id"),
                      ("template_key", "template_key"), ("trigger", "trigger"),
                      ("status", "status"), ("recipient", "recipient_email")):
@@ -286,27 +297,44 @@ class NotificationLogViewSet(viewsets.ViewSet):
             "last_24h": 0, "last_7d": 0,
             "failure_rate_7d": 0.0,
         }
+        # Sprint 2026-05-22 · scope SQL — non-bypass user sin pool -> ceros.
+        scope_join = ""
+        scope_params: list = []
+        if not _is_bypass(request.user):
+            scope = [str(x).lower() for x in (getattr(request.user, "legal_entity_ids", None) or [])]
+            if not scope:
+                return Response(out)
+            placeholders = ",".join(["%s"] * len(scope))
+            scope_join = (
+                f" INNER JOIN expedientes.expediente e "
+                f"   ON e.id = nl.expediente_id "
+                f"   AND e.is_active = TRUE "
+                f"   AND (e.client_id::text IN ({placeholders}) "
+                f"        OR e.operating_company_id::text IN ({placeholders}))"
+            )
+            scope_params = scope + scope
         with connection.cursor() as c:
             try:
-                c.execute("""
+                c.execute(f"""
                     SELECT
                       COUNT(*),
-                      COUNT(*) FILTER (WHERE status = 'Sent'),
-                      COUNT(*) FILTER (WHERE status = 'Delivered'),
-                      COUNT(*) FILTER (WHERE status = 'Skipped'),
-                      COUNT(*) FILTER (WHERE status = 'Failed'),
-                      COUNT(*) FILTER (WHERE status = 'Exhausted'),
-                      COUNT(*) FILTER (WHERE status = 'Bounced'),
-                      COUNT(*) FILTER (WHERE ts >= NOW() - INTERVAL '24 hours'),
-                      COUNT(*) FILTER (WHERE ts >= NOW() - INTERVAL '7 days'),
+                      COUNT(*) FILTER (WHERE nl.status = 'Sent'),
+                      COUNT(*) FILTER (WHERE nl.status = 'Delivered'),
+                      COUNT(*) FILTER (WHERE nl.status = 'Skipped'),
+                      COUNT(*) FILTER (WHERE nl.status = 'Failed'),
+                      COUNT(*) FILTER (WHERE nl.status = 'Exhausted'),
+                      COUNT(*) FILTER (WHERE nl.status = 'Bounced'),
+                      COUNT(*) FILTER (WHERE nl.ts >= NOW() - INTERVAL '24 hours'),
+                      COUNT(*) FILTER (WHERE nl.ts >= NOW() - INTERVAL '7 days'),
                       COALESCE(
-                        100.0 * COUNT(*) FILTER (WHERE status IN ('Failed','Exhausted','Bounced') AND ts >= NOW() - INTERVAL '7 days')
-                        / NULLIF(COUNT(*) FILTER (WHERE ts >= NOW() - INTERVAL '7 days'), 0),
+                        100.0 * COUNT(*) FILTER (WHERE nl.status IN ('Failed','Exhausted','Bounced') AND nl.ts >= NOW() - INTERVAL '7 days')
+                        / NULLIF(COUNT(*) FILTER (WHERE nl.ts >= NOW() - INTERVAL '7 days'), 0),
                         0
                       )
-                    FROM notifications.notification_log
-                    WHERE is_active = TRUE
-                """)
+                    FROM notifications.notification_log nl
+                    {scope_join}
+                    WHERE nl.is_active = TRUE
+                """, scope_params)
                 r = c.fetchone()
                 out = {
                     "total":           r[0],
@@ -334,6 +362,10 @@ class CollectionLogViewSet(viewsets.ViewSet):
             is_active=True,
             trigger__in=["C1", "C2", "C3"],
         ).order_by("-ts")
+        # Sprint 2026-05-22 · scope via expediente_id.
+        exp_ids = scoped_expediente_ids(request.user)
+        if exp_ids is not None:
+            qs = qs.filter(expediente_id__in=exp_ids) if exp_ids else qs.none()
         for p, f in (("expediente", "expediente_id"), ("proforma", "proforma_id"),
                      ("trigger", "trigger"), ("status", "status")):
             v = request.query_params.get(p)
@@ -421,6 +453,10 @@ class GraceDaysCatViewSet(viewsets.ViewSet):
 # ════════════════════════════════════════════════════════════
 class EmailQueueLogViewSet(viewsets.ViewSet):
     def list(self, request):
+        # Sprint 2026-05-22 · cola Celery: solo superadmin/admin la inspeccionan
+        # (es info de ops interna sin scope de cliente).
+        if not _is_bypass(request.user):
+            return Response([])
         qs = EmailQueueLog.objects.filter(is_active=True).order_by("-enqueued_at")
         for p, f in (("status",           "status"),
                      ("notification",     "notification_id"),

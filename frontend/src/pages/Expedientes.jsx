@@ -447,7 +447,9 @@ export default function ScreenExpedientes() {
     ? (lang === 'es'
         ? `${EXPEDIENTES.length} pedidos activos`
         : `${EXPEDIENTES.length} active orders`)
-    : `${tr(lang,'ceo_overview')} · ${EXPEDIENTES.length} ${lang==='es'?'expedientes globales':'global files'}`;
+    // Sprint 2026-05-22 · copy honesto: el backend filtra por legal_entity_ids
+    // para roles non-bypass; "globales" miente cuando el manager solo ve su pool.
+    : `${tr(lang,'ceo_overview')} · ${EXPEDIENTES.length} ${lang==='es'?'expedientes':'files'}`;
 
   return (
     <div

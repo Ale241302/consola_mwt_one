@@ -132,8 +132,10 @@ export default function ScreenTickets() {
           <div className="page-subtitle">
             {isAdmin
               ? (lang === "es"
-                  ? "Tickets de todos los usuarios. Cambia el estado o entra al hilo para responder."
-                  : "All users tickets. Update the state or open the thread to reply.")
+                  // Sprint 2026-05-22 · solo superadmin/admin (BYPASS_ROLES) ven
+                  // tickets globales; el resto cae al subtitulo de user normal.
+                  ? "Cambia el estado o entra al hilo para responder."
+                  : "Update the state or open the thread to reply.")
               : (lang === "es"
                   ? "Tus solicitudes a soporte. Haz click en una para ver el hilo."
                   : "Your support requests. Click any to open the chat thread.")}

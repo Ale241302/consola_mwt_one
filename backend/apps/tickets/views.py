@@ -66,7 +66,10 @@ log = logging.getLogger(__name__)
 # Roles considerados staff (pueden ver todos los tickets, transicionar
 # estados restringidos y ver el dashboard). Mismo set que el resto del
 # proyecto (R3 · POL_VISIBILIDAD).
-_ADMIN_ROLES = {"admin", "superadmin", "ceo", "manager"}
+# Sprint 2026-05-22 · spec del CEO: SOLO superadmin/admin bypassean scope.
+# `ceo`/`manager` pasan a ser users con scope normal (ven solo sus tickets,
+# no la lista global). Alineado con apps.core.scoped_querysets.BYPASS_ROLES.
+_ADMIN_ROLES = {"admin", "superadmin"}
 
 # Mapa MIME → file_kind (whitelist explicita: PDF, DOCX, JPG, PNG)
 _ALLOWED_MIME = {
