@@ -418,19 +418,19 @@ function ProductCard({
       {/* Footer con precio + CTA (o stepper si está en carrito) */}
       <footer className="catalog-card-foot">
         <div className="catalog-card-price tabular-nums">
-          {precioBrl != null ? (
+          {precioUsdBase > 0 ? (
             <>
-              <span>{"R$ " + precioBrl.toLocaleString("pt-BR", {
-                minimumFractionDigits: 2, maximumFractionDigits: 2,
-              })}</span>
-              <span style={{
-                display: "block", fontSize: 10, fontWeight: 500,
-                color: "var(--text-tertiary)", marginTop: 2,
-                letterSpacing: 0.3,
-              }}>
-                {(lang === "es" ? "Banda " : "Band ") + (banda?.rango || "") +
-                  " · 90d · " + fmtMoney(precioUsdBase, "USD")}
-              </span>
+              <span>{fmtMoney(precioUsdBase, "USD")}</span>
+              {tieneBanda && (
+                <span style={{
+                  display: "block", fontSize: 10, fontWeight: 500,
+                  color: "var(--text-tertiary)", marginTop: 2,
+                  letterSpacing: 0.3,
+                }}>
+                  {(lang === "es" ? "Banda " : "Band ") + (banda?.rango || "") +
+                    " · 90d"}
+                </span>
+              )}
             </>
           ) : (lang === "es" ? "Consultar precio" : "Quote on request")}
         </div>
