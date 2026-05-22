@@ -24,9 +24,23 @@ import { useNavigate } from "react-router-dom";
 
 import { apiFetch, getToken } from "../../lib/api.js";
 import { fmtMoney } from "../../lib/i18n.js";
+import { bandaForTC } from "../../constants/marluvas.js";
+import { useExchangeRateUSDBRL } from "../../hooks/useExchangeRateUSDBRL.js";
 
 
 export default function ProductCatalogGrid({ lang = "es", onBuy, clientId }) {
+  // ── Tasa USD/BRL en vivo + banda Marluvas activa ────────────────────
+  // Sprint 2026-05-22 · El catálogo del Portal debe pintar el precio en
+  // la moneda local (BRL para BR, USD canónico para los demás). Tomamos
+  // la TC viva (AwesomeAPI + Frankfurter fallback) y buscamos la banda
+  // Marluvas donde encaja (12 bandas de 0.20 desde 4.00). Multiplicamos
+  // el `precio_venta` que el backend ya resuelve como "techo a 90d" vía
+  // `resolve_client_price(client_id, brand, sku)` por `banda.div`. Si la
+  // TC todavía no llegó, ProductCard pinta "Consultar precio".
+  // Fix · `tcUsdBrl` y `bandaActiva` eran referenciados en línea 210-211
+  // pero NUNCA se definían → ReferenceError al abrir la tab Productos.
+  const { tc: tcUsdBrl } = useExchangeRateUSDBRL(getToken());
+  const bandaActiva = useMemo(() => bandaForTC(tcUsdBrl), [tcUsdBrl]);
   const [items,   setItems]   = useState([]);
   const [count,   setCount]   = useState(0);
   const [offset,  setOffset]  = useState(0);
