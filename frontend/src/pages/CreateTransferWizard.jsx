@@ -78,6 +78,18 @@ export default function CreateTransferWizard() {
   const { lang = "es" } = useOutletContext() || {};
   const [step, setStep] = useState(1);
 
+  // Sprint 2026-05-22 · viewer-aware para el desglose del paso 4.
+  // Un usuario "interno MWT" puede ser admin/CEO o tener MWT entre sus
+  // legal_entity_ids (operador con cliente Muito Work Limitada asignado).
+  // Definir aquí (scope del componente padre) porque el useEffect
+  // del sync transferItems → productLines más abajo consume viewerIsMwt.
+  const { isAdmin: _wizardIsAdmin, user: _wizardUser } = useRole() || {};
+  const _wizardHasMwtLE = Array.isArray(_wizardUser?.legal_entity_ids)
+    && _wizardUser.legal_entity_ids
+      .map(x => String(x || "").toLowerCase())
+      .includes(MWT_OPERATING_CLIENT_ID.toLowerCase());
+  const viewerIsMwt = !!(_wizardIsAdmin || _wizardHasMwtLE);
+
   // Estado global del wizard
   const [origenId,      setOrigenId]      = useState("");
   const [destinoId,     setDestinoId]     = useState("");
