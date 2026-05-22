@@ -307,7 +307,47 @@ export default function ScreenPortal() {
   } = usePortalData(activeEmpresaId);
 
   const apiExpedientes = (apiExpedientesRaw || []).map(mapApiExpedienteToPortalExp);
-  const apiOcs         = (apiOcsRaw || []).map(r => mapApiOcToPortalOc(r, apiExpedientesRaw));
+
+  // Rev 2026-05-21d · Fallback: si /api/portal/mis_ocs/ devuelve [] (caso
+  // tipico cuando la empresa del usuario es operadora pero no cliente final
+  // de la OC), construimos "OCs sinteticas" agrupando los expedientes por
+  // oc_id. /api/portal/mis_expedientes/ si trae los registros correctos.
+  // El shape replica el de mis_ocs (codigo, client_id, client_name,
+  // brand_id, total_invoiced/paid/balance agregados) para que el resto
+  // del componente PortalOrders no necesite cambios.
+  const ocsFromExps = Object.values(
+    (apiExpedientesRaw || []).reduce((acc, e) => {
+      const ocId = e.oc_id;
+      if (!ocId) return acc;
+      if (!acc[ocId]) {
+        acc[ocId] = {
+          id:             ocId,
+          codigo:         e.oc_codigo || '',
+          proforma:       e.oc_proforma || null,
+          client_id:      e.client_id || null,
+          client_name:    e.client_name || null,
+          brand_id:       e.brand_id || null,
+          total_value:    0,
+          total_invoiced: 0,
+          total_paid:     0,
+          balance:        0,
+          coverage_pct:   0,
+          lines_count:    0,
+          issued_at:      null,
+          estado:         e.estado || null,
+          _synthetic:     true,
+        };
+      }
+      acc[ocId].total_invoiced += Number(e.total_invoiced) || 0;
+      acc[ocId].total_paid     += Number(e.total_paid)     || 0;
+      acc[ocId].balance        += Number(e.balance)        || 0;
+      return acc;
+    }, {})
+  );
+  const apiOcsEffective = (apiOcsRaw && apiOcsRaw.length > 0)
+    ? apiOcsRaw
+    : ocsFromExps;
+  const apiOcs = apiOcsEffective.map(r => mapApiOcToPortalOc(r, apiExpedientesRaw));
 
   const OCS         = apiOcs;
   const EXPEDIENTES = apiExpedientes;
