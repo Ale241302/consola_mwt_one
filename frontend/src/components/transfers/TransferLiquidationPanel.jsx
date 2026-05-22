@@ -32,6 +32,7 @@ import {
   nodosApi,
 } from "../../lib/api.js";
 import { useRole } from "../../context/RoleContext.jsx";
+import { isMwtOperated, MWT_OPERATING_CLIENT_ID } from "../../lib/operatingCompany.js";
 
 // ── Catálogo fallback de tipos de costo (espejo del backend) ──
 const COST_KINDS_FALLBACK = [
@@ -82,8 +83,16 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // Sprint 2026-05-14 · Fase 15 — header editable (admin only).
   // El admin puede cambiar motivo, origen, destino, tracking,
   // dispatched_at y ETA en cualquier momento. Backend ya tiene PATCH.
-  const { isAdmin, isClient } = useRole();
+  const { isAdmin, isClient, user } = useRole();
   const canEdit = isAdmin && !isClient;
+  // Sprint 2026-05-22 · viewer-aware. Usuario admin/CEO o con MWT entre
+  // sus legal_entity_ids ve el snapshot MWT (unit_price_mwt); usuario
+  // normal asociado solo al cliente final ve unit_price_client.
+  const _userHasMwtLE = Array.isArray(user?.legal_entity_ids)
+    && user.legal_entity_ids
+      .map(x => String(x || "").toLowerCase())
+      .includes(MWT_OPERATING_CLIENT_ID.toLowerCase());
+  const viewerIsMwt = !!(isAdmin || _userHasMwtLE);
   const [headerEdit, setHeaderEdit] = useState({});  // patch pendiente
   const [headerSaving, setHeaderSaving] = useState(false);
   const [headerError, setHeaderError] = useState(null);
@@ -260,7 +269,23 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     let fobTotal = 0;
     const lineValues = lineas.map((l) => {
       const qty = Number(l.qty_transfer || 0);
-      const uv  = Number(l._raw?.unit_value || l.unit_value || l.unit_cost || 0);
+      // Sprint 2026-05-22 · viewer-aware unit_value.
+      // Si el expediente fue operado por MWT y el viewer es interno,
+      // usar unit_price_mwt. Sino, unit_price_client. Si ninguno está
+      // disponible (línea sin snapshot dual), caer al legacy unit_value.
+      const opIsMwt  = isMwtOperated(l.operating_company_id || l._operating_company_id);
+      const priceMwt = Number(l.unit_price_mwt    || 0);
+      const priceCli = Number(l.unit_price_client || 0);
+      let uv;
+      if (opIsMwt && viewerIsMwt) {
+        uv = priceMwt > 0 ? priceMwt : priceCli;
+      } else if (priceCli > 0) {
+        uv = priceCli;
+      } else if (priceMwt > 0) {
+        uv = priceMwt;
+      } else {
+        uv = Number(l._raw?.unit_value || l.unit_value || l.unit_cost || 0);
+      }
       const lt  = qty * uv;
       fobTotal += lt;
       return { l, qty, uv, lt };
@@ -895,7 +920,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                          value={<><span style={{ color: "#1DE394" }}>${fmt(livePreview.landedTotal)}</span></>}
                          strong/>
             <SummaryStat label={lang === "es" ? "Promedio / unidad" : "Avg / unit"}
-                         value={`$${fmt4(livePreview.avgLanded)}`}/>
+                         value={`$${fmt(livePreview.avgLanded)}`}/>
           </div>
         </div>
 
