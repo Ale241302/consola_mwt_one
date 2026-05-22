@@ -41,6 +41,7 @@ import UploadDocumentModal from "../components/expedientes/UploadDocumentModal.j
 import DocumentMatchmakerWizard from "../components/expedientes/DocumentMatchmakerWizard.jsx";
 import AddOCProductModal from "../components/expedientes/AddOCProductModal.jsx";
 import { useRole } from "../context/RoleContext.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
          productosApi, documentosApi, storageApi, getToken,
          nodoAssignmentsApi } from "../lib/api.js";
@@ -106,6 +107,14 @@ export default function ScreenOCDetail() {
   const { lang } = useOutletContext();
   // Viewport efectivo + capability gates (ver POL_VISIBILIDAD).
   const { isAdmin, isClient, can } = useRole();
+  // Rev 2026-05-21f · Visibilidad de "Precio MWT" por rol.
+  //   · ADMIN/CEO  → siempre ve Precio MWT (cuando la OC la opera MWT).
+  //   · CLIENT_*   → NO ve Precio MWT (es el costo interno de MWT).
+  //   · OPERADOR   → SÍ ve Precio MWT (es SU precio de costo). Se detecta
+  //                  cuando el usuario tiene el operating_company_id del
+  //                  expediente en sus legal_entity_ids[].
+  // Se calcula `canSeeMwtPrice` tras cargar `apiOcExpedientes` (ver más abajo).
+  const { user: authUser } = useAuth();
   const ocId = paramOcId || HERO_OC_ID;
   const onBack = () => navigate('/expedientes');
   const onOpenExpediente = (expedienteId) => {
@@ -812,6 +821,20 @@ export default function ScreenOCDetail() {
   const isMwtOp = (apiOcExpedientes || []).some(
     (e) => isMwtOperated(e?.operating_company_id)
   );
+
+  // Rev 2026-05-21f · ¿El usuario es OPERADOR de algún expediente del OC?
+  // Lo es si su pool de empresas (legal_entity_ids) intersecta con los
+  // operating_company_id de los expedientes. Normalizamos a lowercase para
+  // matchear como hace el backend.
+  const userLegalEntityIds = ((authUser && authUser.legal_entity_ids) || [])
+    .map((x) => String(x || '').toLowerCase());
+  const isOperator = (apiOcExpedientes || []).some((e) => {
+    const opId = String(e?.operating_company_id || '').toLowerCase();
+    return opId && userLegalEntityIds.includes(opId);
+  });
+  // Admin/CEO o usuario operador → ve la columna Precio MWT.
+  // Cliente puro (asignado solo al client_id) → NO la ve.
+  const canSeeMwtPrice = isAdmin || isOperator;
 
   // Sprint 2026-05-17 · Header de OC role-aware (CEO request).
   // El codigo PO-YYYY-NNNNN autogenerado por el sistema se OCULTA siempre.
@@ -1916,7 +1939,7 @@ export default function ScreenOCDetail() {
                 {/* Sprint 2026-05-17 · Columnas de precio duales (MWT + Cliente)
                     si la OC es operada por Muito Work. Si la opera el cliente
                     directamente, solo se muestra "Precio Cliente". */}
-                {isMwtOp && (
+                {isMwtOp && canSeeMwtPrice && (
                   <th style={{width:130, textAlign:'right'}}>
                     {lang==='es'?'Precio MWT':'MWT Price'}
                   </th>
@@ -1973,7 +1996,7 @@ export default function ScreenOCDetail() {
                       onBlur persiste al backend via lineasApi.update — el
                       backend recalcula total_price y mantiene `unit_price`
                       legacy alineado con el operador. */}
-                  {isMwtOp && (
+                  {isMwtOp && canSeeMwtPrice && (
                     can('edit_oc_line_unit_price') ? (
                       <td className="td-edit" style={{textAlign:'right'}}>
                         <div className="edit-input-money" style={{
@@ -2153,7 +2176,7 @@ export default function ScreenOCDetail() {
                 </tr>
               ))}
               {allLines.length === 0 && (
-                <tr><td colSpan={(isAdmin ? 10 : 7) + (isMwtOp ? 1 : 0)} style={{textAlign:'center', padding:'32px', color:'var(--text-tertiary)'}}>
+                <tr><td colSpan={(isAdmin ? 10 : 7) + (isMwtOp && canSeeMwtPrice ? 1 : 0)} style={{textAlign:'center', padding:'32px', color:'var(--text-tertiary)'}}>
                   {lang==='es'
                     ? (isClient ? 'Sin productos en esta orden.' : 'Sin productos. Agrega el primero.')
                     : (isClient ? 'No products in this order.' : 'No products yet. Add your first.')}
@@ -2164,7 +2187,7 @@ export default function ScreenOCDetail() {
               <tr>
                 {/* Sprint 2026-05-17 · colSpan condicional segun haya 1 o 2
                     columnas de precio (depende de isMwtOp). */}
-                <td colSpan={isMwtOp ? 6 : 5} style={{textAlign:'right', fontWeight:600, padding:'14px 12px'}}>
+                <td colSpan={isMwtOp && canSeeMwtPrice ? 6 : 5} style={{textAlign:'right', fontWeight:600, padding:'14px 12px'}}>
                   {lang==='es'?'Total orden':'Order total'}
                 </td>
                 <td className="td-money" style={{fontSize:15, fontWeight:700}}>{fmtMoney(computedTotal)}</td>
