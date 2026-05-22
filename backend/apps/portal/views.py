@@ -1605,6 +1605,19 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
         # Precios resueltos por cliente — una call por SKU (N+1
         # aceptable porque el grid del portal muestra a lo sumo ~50
         # productos y esto se puede cachear en Redis más adelante).
+        #
+        # Sprint 2026-05-22 · Leemos `?tc=<usd_brl>` del request. El
+        # frontend del portal envía la cotización en vivo (mismo hook
+        # useExchangeRateUSDBRL que usa el admin) para que el backend
+        # escoja la banda Marluvas vigente al resolver el precio 90d.
+        # Si no viene, services.resolve_client_price() cae a banda 6.
+        tc_raw = (self.request.query_params.get("tc")
+                  if hasattr(self.request, "query_params") else None)
+        try:
+            tc_usd_brl = float(tc_raw) if tc_raw not in (None, "", "null") else None
+        except (TypeError, ValueError):
+            tc_usd_brl = None
+
         for p in productos:
             p._marca_label = brand_map.get(str(p.marca_id)) if p.marca_id else None
             if cid and p.sku and p.marca_id:
@@ -1615,13 +1628,21 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
                         brand_id=str(p.marca_id),
                         product_sku=p.sku,
                         quantity=1,
+                        tc_usd_brl=tc_usd_brl,
                     )
                     if verdict and verdict.get("ok"):
                         p.precio_venta_resolved = verdict.get("final_price")
-                except Exception:
-                    # Silencio intencional — el fallback del serializer
-                    # (precio_distribuidor) maneja el caso.
-                    pass
+                        p._resolved_banda_id = verdict.get("banda_id")
+                except Exception as e:
+                    # Log estructurado — antes era silencio total y eso
+                    # ocultó el ImportError del services.py inexistente
+                    # por semanas (se manifestaba como "Consultar precio"
+                    # en todas las cards del portal).
+                    log.warning(
+                        "portal._hydrate_batch · resolve_client_price "
+                        "falló · sku=%s brand=%s client=%s tc=%s · %s",
+                        p.sku, p.marca_id, cid, tc_usd_brl, e,
+                    )
 
     # ── LIST ──────────────────────────────────────────────────────
     def list(self, request, *args, **kwargs):
