@@ -820,11 +820,12 @@ export default function ScreenExpedientes() {
                 {/* "Días de crédito" es una señal interna (cuántos días lleva
                     la factura sin pagar). No mostramos esto al cliente. */}
                 {isAdmin && <th style={{width:90, textAlign:'right'}}>{tr(lang,'credit_days')}</th>}
-                <th style={{textAlign:'right'}}>
-                  {isClient
-                    ? (tr(lang, 'agreed_price') || (lang==='es' ? 'Precio acordado' : 'Agreed price'))
-                    : tr(lang,'invoiced')}
-                </th>
+                {/* Rev 2026-05-21e · CLIENT NO ve esta columna (antes se
+                    mostraba como "Precio acordado"). Staff sigue viendo
+                    "Facturado". */}
+                {!isClient && (
+                  <th style={{textAlign:'right'}}>{tr(lang,'invoiced')}</th>
+                )}
               </>}
               {/* Columna de alertas internas (bloqueos, docs faltantes,
                   retrasos de fábrica, señales de crédito): CEO-ONLY. */}
@@ -1005,15 +1006,14 @@ export default function ScreenExpedientes() {
                           </div>
                         </td>
                       )}
-                      <td className="td-money">
-                        {/* Para CLIENT, esta columna es "Precio acordado" y solo se
-                            muestra si el CEO habilitó show_deferred_to_client.
-                            Si no, cae al total facturado (es el precio que el cliente
-                            ve en su factura — no expone márgenes). */}
-                        {isClient && e.show_deferred_to_client && e.deferred_total_price > 0
-                          ? fmtMoney(e.deferred_total_price)
-                          : fmtMoney(e.total_invoiced)}
-                      </td>
+                      {/* Rev 2026-05-21e · CLIENT ya no ve esta columna en el
+                          listado. El "Precio acordado" se reservó para el detalle
+                          de la OC. Staff sigue viendo "Facturado". */}
+                      {!isClient && (
+                        <td className="td-money">
+                          {fmtMoney(e.total_invoiced)}
+                        </td>
+                      )}
                     </>}
 
                     {isAdmin && (

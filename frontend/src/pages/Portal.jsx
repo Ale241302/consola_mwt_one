@@ -571,50 +571,8 @@ export default function ScreenPortal() {
           </div>
         </div>
 
-        {/* Featured OC — most recent order */}
-        {featured && (() => {
-          const expIds = Array.isArray(featured.expedientes) ? featured.expedientes : [];
-          const hero = EXPEDIENTES.find(e => expIds.includes(e.id));
-          if (!hero) return null;
-          return (
-            <div className="card mb-6" style={{overflow:'hidden', cursor:'pointer'}} onClick={() => onOpenOC && onOpenOC(featured.id)}>
-              <div style={{ padding:'20px 24px', background:'linear-gradient(135deg, var(--brand-accent-soft), var(--brand-ice-soft))', borderBottom:'1px solid var(--divider)' }}>
-                <div className="flex ai-center jc-between mb-3">
-                  <div>
-                    <div className="micro" style={{color:'var(--brand-primary)'}}>
-                      {lang==='es'?'TU ÚLTIMA ORDEN':'YOUR LATEST ORDER'}
-                    </div>
-                    <div className="heading-lg" style={{marginTop:4}}>{featured.po_code}</div>
-                    <div className="caption" style={{marginTop:2}}>
-                      {featured.lines_total || featured.lines?.length || 0} {lang==='es' ? 'líneas · ' : 'lines · '}
-                      {expIds.length} {lang==='es' ? 'envíos' : 'shipments'}
-                    </div>
-                  </div>
-                  <ClientStatusPill status={hero.status} lang={lang}/>
-                </div>
-                <div className="flex ai-center gap-3" style={{fontSize:13, color:'var(--text-secondary)', flexWrap:'wrap'}}>
-                  <span className="flex ai-center gap-2"><IconMapPin size={13}/>{hero.origin} → {hero.destination}</span>
-                  <span>·</span>
-                  <span className="flex ai-center gap-2">{hero.freight_mode === 'SEA' ? <IconShip size={13}/> : <IconPlane size={13}/>}{hero.freight_mode === 'SEA' ? (lang==='es'?'Marítimo':'Sea') : (lang==='es'?'Aéreo':'Air')}</span>
-                  <span>·</span>
-                  <span className="flex ai-center gap-2"><IconClock size={13}/>ETA {fmtDate(hero.eta, lang)}</span>
-                </div>
-              </div>
-              <div style={{ padding:'22px 24px 18px' }}>
-                <ClientProgress status={hero.status} lang={lang}/>
-              </div>
-              <div style={{ padding:'14px 24px', borderTop:'1px solid var(--divider)', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                <div className="caption">
-                  <IconShip size={12} style={{display:'inline',verticalAlign:'-2px', marginRight:4}}/>
-                  {lang==='es' ? 'Rastreo: ' : 'Tracking: '} <span className="mono" style={{fontWeight:600, color:'var(--text-secondary)'}}>MAEU-2458019</span>
-                </div>
-                <button className="btn btn-primary" onClick={(e)=>{e.stopPropagation(); onOpenOC && onOpenOC(featured.id);}}>
-                  {lang==='es' ? 'Ver detalle de orden' : 'View order details'}<IconArrow size={13}/>
-                </button>
-              </div>
-            </div>
-          );
-        })()}
+        {/* Rev 2026-05-21e · Card "TU ÚLTIMA ORDEN" removida (mandato CEO).
+            La vista del portal arranca directo con las tabs. */}
 
         {/* Sprint 2026-05-20 · Tabs reducidas de 4 a 3 (mandato CEO §4).
             La tab "Documentos" se eliminó del nav raíz — los documentos
@@ -782,7 +740,6 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
         <thead><tr>
           <th>{lang==='es' ? 'Orden' : 'Order'}</th>
           <th>{lang==='es' ? 'Estado' : 'Status'}</th>
-          <th>{lang==='es' ? 'ETA' : 'ETA'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Cobertura' : 'Coverage'}</th>
           <th/>
         </tr></thead>
@@ -825,9 +782,6 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
                   {leadExp
                     ? <ClientStatusPill status={expStatus} lang={lang}/>
                     : <span className="caption">{expStatus}</span>}
-                </td>
-                <td className="text-sec tabular-nums">
-                  {expEta ? fmtDate(expEta, lang) : '—'}
                 </td>
                 <td className="td-num">
                   <CoverageMini pct={coverage} lang={lang}/>
