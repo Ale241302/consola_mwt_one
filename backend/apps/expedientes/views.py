@@ -21,7 +21,7 @@ import json
 import logging
 import uuid
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db import connection, transaction
 from django.db.models import Q
@@ -594,6 +594,31 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                          if pid else Decimal("0"))
                     unit_price_client = (price_map_client.get(pid, Decimal("0"))
                                          if pid else Decimal("0"))
+
+                    # Sprint 2026-05-22 · OVERRIDE del payload.
+                    # El wizard del portal `/portal/nueva-oc` (paso 3)
+                    # resuelve el precio con el snapshot Marluvas del
+                    # cliente (`MarluvasClientSkuPricing.prices_matrix`)
+                    # y manda el valor del plazo seleccionado en
+                    # `lines[].unit_price`. El waterfall legacy
+                    # (CPA → GradeItem → EPP) IGNORA ese snapshot —
+                    # eso producía precios distintos a los que el
+                    # cliente vio en pantalla. Si viene unit_price > 0
+                    # lo respetamos para los TRES campos (la fuente de
+                    # verdad para el portal es el snapshot).
+                    raw_unit_price = ln.get("unit_price")
+                    override_price = None
+                    if raw_unit_price is not None:
+                        try:
+                            cand = Decimal(str(raw_unit_price))
+                            if cand > 0:
+                                override_price = cand
+                        except (TypeError, ValueError, InvalidOperation):
+                            override_price = None
+                    if override_price is not None:
+                        unit_price_mwt    = override_price
+                        unit_price_client = override_price
+
                     # Legacy unit_price = el precio que le toca al OPERADOR.
                     unit_price = (unit_price_mwt
                                   if str(operating_company_id) == MWT_OPERATING_CLIENT_ID
