@@ -33,6 +33,7 @@ import {
 } from "../../lib/api.js";
 import { useRole } from "../../context/RoleContext.jsx";
 import { isMwtOperated, MWT_OPERATING_CLIENT_ID } from "../../lib/operatingCompany.js";
+import { useTransferPriceMode } from "../../hooks/useTransferPriceMode.js";
 
 // ── Catálogo fallback de tipos de costo (espejo del backend) ──
 const COST_KINDS_FALLBACK = [
@@ -86,11 +87,18 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   const { isAdmin, isClient } = useRole();
   const canEdit = isAdmin && !isClient;
   // Sprint 2026-05-22 · viewer-aware basado en el VIEWPORT EFECTIVO.
-  // `isAdmin` ya respeta el toggle del Tweaks (admin previewing como
-  // Cliente B2B → isAdmin=false → ve unit_price_client). El override
-  // del Tweaks es la fuente de verdad — NO consultamos
-  // user.legal_entity_ids porque eso ignoraría la previsualización.
-  const viewerIsMwt = !!isAdmin;
+  //
+  // Hook canonico — la regla unificada considera:
+  //   1. Admin/CEO real (sin Tweaks override)        → MWT
+  //   2. Admin con Tweaks "Cliente B2B"               → CLIENT (previsualizacion)
+  //   3. Cliente B2B real cuyo legal_entity_ids
+  //      incluye al operador MWT                      → MWT (cliente del operador)
+  //   4. Cliente B2B real sin match                   → CLIENT
+  //
+  // El override del Tweaks SIEMPRE tiene prioridad: previsualizar como
+  // Cliente B2B debe mostrar precio cliente aunque el usuario real tenga
+  // legal_entity asignada.
+  const { viewerIsMwt } = useTransferPriceMode();
   const [headerEdit, setHeaderEdit] = useState({});  // patch pendiente
   const [headerSaving, setHeaderSaving] = useState(false);
   const [headerError, setHeaderError] = useState(null);

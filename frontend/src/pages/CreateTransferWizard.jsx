@@ -29,6 +29,7 @@ import {
 } from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
 import { isMwtOperated, MWT_OPERATING_CLIENT_ID } from "../lib/operatingCompany.js";
+import { useTransferPriceMode } from "../hooks/useTransferPriceMode.js";
 import Step3TransferAssign from "../components/transfers/Step3TransferAssign.jsx";
 import CostScopeModal      from "../components/transfers/CostScopeModal.jsx";
 
@@ -79,16 +80,15 @@ export default function CreateTransferWizard() {
   const [step, setStep] = useState(1);
 
   // Sprint 2026-05-22 · viewer-aware para el desglose del paso 4.
-  // Un usuario "interno MWT" puede ser admin/CEO o tener MWT entre sus
-  // legal_entity_ids (operador con cliente Muito Work Limitada asignado).
-  // Definir aquí (scope del componente padre) porque el useEffect
-  // del sync transferItems → productLines más abajo consume viewerIsMwt.
-  const { isAdmin: _wizardIsAdmin, user: _wizardUser } = useRole() || {};
-  const _wizardHasMwtLE = Array.isArray(_wizardUser?.legal_entity_ids)
-    && _wizardUser.legal_entity_ids
-      .map(x => String(x || "").toLowerCase())
-      .includes(MWT_OPERATING_CLIENT_ID.toLowerCase());
-  const viewerIsMwt = !!(_wizardIsAdmin || _wizardHasMwtLE);
+  //
+  // Hook canónico — la regla unificada considera:
+  //   · isAdmin efectivo (respeta Tweaks override "Cliente B2B")
+  //   · legal_entity_ids del usuario real (cliente del operador MWT)
+  //   · prioridad: override Tweaks gana sobre legal_entity_ids
+  //
+  // Mantener una sola fuente de verdad evita drift con
+  // TransferLiquidationPanel y futuras vistas de transferencias.
+  const { viewerIsMwt } = useTransferPriceMode();
 
   // Estado global del wizard
   const [origenId,      setOrigenId]      = useState("");

@@ -127,6 +127,15 @@ function mapApiDetailToTransfer(r) {
       // reciente del expediente, kind='PROFORMA'). Se usa en la columna
       // Expediente con fallback al EXP code.
       proforma_codigo:   l.proforma_codigo || '',
+      // Sprint 2026-05-22 · FIX viewer-aware pricing.
+      // El mapper venia dropeando estos 4 campos del payload del backend,
+      // por lo que TransferLiquidationPanel siempre caia al fallback
+      // unit_value (snapshot MWT) y nunca podia mostrar unit_price_client
+      // — ni siquiera cuando Tweaks forzaba "Cliente B2B".
+      operating_company_id: l.operating_company_id || null,
+      linea_id_expediente:  l.linea_id_expediente  || null,
+      unit_price_mwt:       l.unit_price_mwt    != null ? Number(l.unit_price_mwt)    : null,
+      unit_price_client:    l.unit_price_client != null ? Number(l.unit_price_client) : null,
     })),
     eventos: Array.isArray(r?.eventos) ? r.eventos : [],
   };
