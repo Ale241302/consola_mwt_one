@@ -127,6 +127,11 @@ export default function CreateExpedienteWizardLite() {
   // y el wizard bloquea el submit si no se eligio una opcion explicita.
   // Razon: cerrar el loop EXPEDIENTE_TERMS_UNDEFINED al liberar credito.
   const [paymentMethod, setPaymentMethod] = useState("");
+  // Sprint 2026-05-22 · ref compartido al pricingMatrix del Step3Resumen.
+  // Step3Resumen actualiza este ref via useEffect cuando carga el
+  // snapshot. handleCreate lo lee para calcular unit_price del plazo
+  // seleccionado y persistirlo en la línea del expediente.
+  const pricingMatrixRef = useRef(null);
 
   // ── Sprint 2026-05-01: precios y proyeccion de credito ─────────
   // Mapa { producto_id -> unit_price } resuelto desde el catalogo de
@@ -625,13 +630,32 @@ export default function CreateExpedienteWizardLite() {
         // Sprint Commit 9 · forma_pago obligatorio (CREDITO|CONTADO).
         // canAdvance ya bloqueó este submit si el usuario no eligió uno.
         forma_pago:          paymentMethod,
-        lines: Object.values(grouped).map((l) => ({
-          sku:           l.sku,
-          talla:         l.talla || null,
-          cantidad:      Number(l.cantidad) || 0,
-          producto_id:   l.producto_id || null,
-          product_label: l.product_label || null,
-        })),
+        lines: Object.values(grouped).map((l) => {
+          // Sprint 2026-05-22 · unit_price del snapshot al plazo elegido.
+          // Si el cliente tiene MarluvasClientSkuPricing con plazo
+          // paymentDays, ese es el precio congelado. Si no, fallback al
+          // plazo base del snapshot, y por último al priceMap legacy.
+          let unitPrice = null;
+          const matrix = pricingMatrixRef.current?.results?.[l.sku];
+          if (matrix && matrix.ok && Array.isArray(matrix.plazos)) {
+            const wanted = matrix.plazos.find(
+              p => Number(p?.dias) === Number(paymentDays)
+            );
+            const base = matrix.plazos.find(p => p?.is_base);
+            const picked = wanted || base;
+            if (picked && Number(picked.price) > 0) {
+              unitPrice = Number(picked.price);
+            }
+          }
+          return {
+            sku:           l.sku,
+            talla:         l.talla || null,
+            cantidad:      Number(l.cantidad) || 0,
+            producto_id:   l.producto_id || null,
+            product_label: l.product_label || null,
+            ...(unitPrice != null ? { unit_price: unitPrice } : {}),
+          };
+        }),
       };
 
       const resp = await expedientesApi.create(payload);
@@ -746,6 +770,7 @@ export default function CreateExpedienteWizardLite() {
               setPaymentDays={setPaymentDays}
               paymentMethod={paymentMethod}
               setPaymentMethod={setPaymentMethod}
+              pricingMatrixRef={pricingMatrixRef}
             />
           )}
         </motion.div>
@@ -1658,7 +1683,7 @@ function Step2Productos({
  * @property {(m:string)=>void} setPaymentMethod
  */
 /** @param {Step3Props} props */
-function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentMethod, setPaymentMethod }) {
+function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentMethod, setPaymentMethod, pricingMatrixRef }) {
   // ── Matriz dinámica de plazos por SKU (Sprint 2026-05-22) ─────────────
   // El backend (`/api/portal/products/sku_pricing_matrix/`) devuelve la
   // fila de plazos del snapshot Marluvas del cliente en la banda vigente
@@ -1698,6 +1723,17 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       .catch(() => { /* fallback silencioso al EARLY_PAYMENT_TIERS hardcoded */ });
     return () => { cancelled = true; };
   }, [client?.id, skusInOrderKey, tcUsdBrl]);
+
+  // Sprint 2026-05-22 · Mantener sincronizado el ref del padre con la
+  // matriz actual. El handler handleCreate del padre lee este ref para
+  // persistir el unit_price del plazo seleccionado en las líneas del
+  // expediente. Sin esto, el backend resuelve con parse-template y
+  // termina guardando el precio legacy (no el del snapshot Marluvas).
+  useEffect(() => {
+    if (pricingMatrixRef) {
+      pricingMatrixRef.current = pricingMatrix;
+    }
+  }, [pricingMatrix, pricingMatrixRef]);
 
   // dynamicTiers: derivados del snapshot del primer SKU con ok=true.
   // (Asumimos que todos los SKUs del mismo cliente comparten plazos —
