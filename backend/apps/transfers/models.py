@@ -160,8 +160,12 @@ class Linea(models.Model):
     qty_transfer     = models.IntegerField(default=0)
     qty_reserve      = models.IntegerField(default=0)
     qty_received     = models.IntegerField(null=True, blank=True)
-    unit_cost        = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    unit_value       = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    # Sprint 2026-05-22 · 4 decimales para soportar precios del snapshot
+    # Marluvas (prices_matrix devuelve hasta 4 decimales, ej. 29.5231).
+    # Antes era decimal_places=2 y POST /api/transferencias/ rechazaba
+    # con max_decimal_places. Migración SQL en D5_transfers_linea_4dp.sql.
+    unit_cost        = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    unit_value       = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
 
     # ── Extensiones BLOQUE 3 ──────────────────────────────
     tolerancia_pct       = models.DecimalField(max_digits=5, decimal_places=2, default=0)
