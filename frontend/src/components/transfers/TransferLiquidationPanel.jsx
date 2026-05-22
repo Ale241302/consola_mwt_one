@@ -83,16 +83,14 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // Sprint 2026-05-14 · Fase 15 — header editable (admin only).
   // El admin puede cambiar motivo, origen, destino, tracking,
   // dispatched_at y ETA en cualquier momento. Backend ya tiene PATCH.
-  const { isAdmin, isClient, user } = useRole();
+  const { isAdmin, isClient } = useRole();
   const canEdit = isAdmin && !isClient;
-  // Sprint 2026-05-22 · viewer-aware. Usuario admin/CEO o con MWT entre
-  // sus legal_entity_ids ve el snapshot MWT (unit_price_mwt); usuario
-  // normal asociado solo al cliente final ve unit_price_client.
-  const _userHasMwtLE = Array.isArray(user?.legal_entity_ids)
-    && user.legal_entity_ids
-      .map(x => String(x || "").toLowerCase())
-      .includes(MWT_OPERATING_CLIENT_ID.toLowerCase());
-  const viewerIsMwt = !!(isAdmin || _userHasMwtLE);
+  // Sprint 2026-05-22 · viewer-aware basado en el VIEWPORT EFECTIVO.
+  // `isAdmin` ya respeta el toggle del Tweaks (admin previewing como
+  // Cliente B2B → isAdmin=false → ve unit_price_client). El override
+  // del Tweaks es la fuente de verdad — NO consultamos
+  // user.legal_entity_ids porque eso ignoraría la previsualización.
+  const viewerIsMwt = !!isAdmin;
   const [headerEdit, setHeaderEdit] = useState({});  // patch pendiente
   const [headerSaving, setHeaderSaving] = useState(false);
   const [headerError, setHeaderError] = useState(null);
