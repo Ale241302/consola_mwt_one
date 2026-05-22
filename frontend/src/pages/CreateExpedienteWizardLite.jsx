@@ -1729,6 +1729,20 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
 
   const operatedByMwt = operatingMode === 'mwt';
   const totalUnits = orderLines.reduce((a, l) => a + Number(l.cantidad || 0), 0);
+  // Sprint 2026-05-22 · Si hay matriz del snapshot, el precio unitario
+  // de cada línea sale de prices_matrix[banda]["90"] (plazo base) en
+  // lugar del priceMap (que viene de parse-template). Así la tabla
+  // PRODUCTOS y el VALOR TOTAL DEL PEDIDO quedan sincronizados con la
+  // sección PROPUESTA · Pronto Pago.
+  const snapshotUnitPrice = (sku) => {
+    if (!pricingMatrix || !pricingMatrix.results) return null;
+    const m = pricingMatrix.results[sku];
+    if (!m || !m.ok || !Array.isArray(m.plazos)) return null;
+    const baseEntry = m.plazos.find(p => p && p.is_base);
+    if (!baseEntry) return null;
+    const v = Number(baseEntry.price);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  };
   // Agrupar por SKU para el resumen + acumular subtotales por SKU
   const bySku = {};
   orderLines.forEach((l) => {
@@ -1739,7 +1753,8 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       };
     }
     bySku[l.sku].tallas.push({ talla: l.talla, cantidad: l.cantidad });
-    const u = Number(priceMap[l.producto_id] || 0);
+    const uSnap = snapshotUnitPrice(l.sku);
+    const u = uSnap != null ? uSnap : Number(priceMap[l.producto_id] || 0);
     bySku[l.sku].subtotalValue += u * Number(l.cantidad || 0);
   });
   const groups = Object.values(bySku);
@@ -2314,7 +2329,15 @@ function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14 }}>
         <Stat label={lang === "es" ? "Límite total" : "Total limit"} value={fmt(cp.limit)}/>
         <Stat label={lang === "es" ? "Uso actual" : "Current used"} value={fmt(cp.used)}/>
-        <Stat label={lang === "es" ? "Valor del pedido" : "Order value"} value={fmt(cp.orderValue)} accent="#00B286"/>
+        <Stat
+          label={lang === "es" ? "Valor del pedido" : "Order value"}
+          value={fmt(
+            typeof adjustedOrderValue === "number" && !isNaN(adjustedOrderValue)
+              ? adjustedOrderValue
+              : cp.orderValue
+          )}
+          accent="#00B286"
+        />
         <Stat
           label={lang === "es" ? "Disponible después" : "After order"}
           value={fmt(cp.afterAvailable)}
