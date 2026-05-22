@@ -28,6 +28,7 @@ import {
   nodoAssignmentsApi,
 } from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
+import { isMwtOperated, MWT_OPERATING_CLIENT_ID } from "../lib/operatingCompany.js";
 import Step3TransferAssign from "../components/transfers/Step3TransferAssign.jsx";
 import CostScopeModal      from "../components/transfers/CostScopeModal.jsx";
 
@@ -200,23 +201,38 @@ export default function CreateTransferWizard() {
   // payload de transferenciasApi.create() sigan funcionando. El paso 3
   // nuevo es la fuente de verdad ahora — productLines es derivada.
   useEffect(() => {
-    setProductLines(transferItems.map((it, i) => ({
-      tmpId:         `ti-${i}-${it.producto_id}-${it.talla || ""}`,
-      sku:           it._sku || "",
-      producto_id:   it.producto_id,
-      product_label: it._nombre || it._sku || "",
-      size:          it.talla || "",
-      lote:          "",
-      qty_transfer:  Number(it.qty) || 0,
-      qty_reserve:   0,
-      disponible:    Number(it._disponible_origen || 0),
-      unit_cost:     0,
-      unit_value:    0,
-      // Metadata para el bloque "Stock movido" del paso 4.
-      _expediente_codigo: it._expediente_codigo,
-      _proforma_codigo:   it._proforma_codigo,
-    })));
-  }, [transferItems]);
+    setProductLines(transferItems.map((it, i) => {
+      // Sprint 2026-05-22 · Resolver unit_value según el viewer.
+      // El expediente carga _operating_company_id, _unit_price_mwt y
+      // _unit_price_client en cada transferItem (Step3TransferAssign).
+      // Aquí escogemos cuál mostrar al usuario.
+      const opIsMwt    = isMwtOperated(it._operating_company_id);
+      const priceMwt   = Number(it._unit_price_mwt    || 0);
+      const priceCli   = Number(it._unit_price_client || 0);
+      const pickedPrice = (opIsMwt && viewerIsMwt)
+        ? (priceMwt > 0 ? priceMwt : priceCli)
+        : (priceCli > 0 ? priceCli : priceMwt);
+      return {
+        tmpId:         `ti-${i}-${it.producto_id}-${it.talla || ""}`,
+        sku:           it._sku || "",
+        producto_id:   it.producto_id,
+        product_label: it._nombre || it._sku || "",
+        size:          it.talla || "",
+        lote:          "",
+        qty_transfer:  Number(it.qty) || 0,
+        qty_reserve:   0,
+        disponible:    Number(it._disponible_origen || 0),
+        unit_cost:     pickedPrice,
+        unit_value:    pickedPrice,
+        // Metadata para el bloque "Stock movido" del paso 4.
+        _expediente_codigo: it._expediente_codigo,
+        _proforma_codigo:   it._proforma_codigo,
+        _operating_company_id: it._operating_company_id || null,
+        _unit_price_mwt:       priceMwt,
+        _unit_price_client:    priceCli,
+      };
+    }));
+  }, [transferItems, viewerIsMwt]);
 
   // ── Filtrado dinámico de nodos por capacidad ──
   const nodosOrigen  = useMemo(() => nodos.filter((n) => hasCap(n, CAP_DISPATCH)), [nodos]);
@@ -1004,7 +1020,15 @@ function LegalDocSlot({ slot, file, onFile, onClear, lang }) {
 // SIDEBAR · Motor OCR IA · Gobernanza de skill (sprint v3.5)
 // ═════════════════════════════════════════════════════════════
 function OcrSkillSidebar({ lang, skillKey }) {
-  const { isAdmin, can } = useRole() || {};
+  const { isAdmin, can, user } = useRole() || {};
+  // Sprint 2026-05-22 · viewer-aware para el desglose del paso 4.
+  // Un usuario "interno MWT" puede ser admin/CEO o tener MWT entre sus
+  // legal_entity_ids (operador con cliente Muito Work Limitada asignado).
+  const userHasMwtLE = Array.isArray(user?.legal_entity_ids)
+    && user.legal_entity_ids
+      .map(x => String(x || "").toLowerCase())
+      .includes(MWT_OPERATING_CLIENT_ID.toLowerCase());
+  const viewerIsMwt = !!(isAdmin || userHasMwtLE);
   const [skill, setSkill]   = useState(null);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -2175,8 +2199,7 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                 <th style={{ textAlign: "center", width: 90 }}>{lang === "es" ? "Lote" : "Lot"}</th>
                 <th style={{ textAlign: "right", width: 70 }}>{lang === "es" ? "Mover" : "Move"}</th>
                 {/* Sprint 2026-04-30 — valor unitario y subtotal FOB. */}
-                <th style={{ textAlign: "right", width: 90 }}>{lang === "es" ? "Val. unit." : "Unit val."}</th>
-                <th style={{ textAlign: "right", width: 100 }}>{lang === "es" ? "Subtotal FOB" : "Subtotal FOB"}</th>
+                <th style={{ textAlign: "right", width: 100 }}>{lang === "es" ? "Val. unit." : "Unit val."}</th>
                 <th style={{ textAlign: "right", width: 110 }}>{lang === "es" ? "Costo asig." : "Cost alloc."}</th>
                 <th style={{ textAlign: "right", width: 110 }}>{lang === "es" ? "Landed unit." : "Landed unit."}</th>
               </tr>
@@ -2213,11 +2236,8 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                       {l.lote || "—"}
                     </td>
                     <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600 }}>{l.qty_transfer}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "#0B1E3A" }}>
-                      ${unitVal.toLocaleString("en-US", { maximumFractionDigits: 4 })}
-                    </td>
                     <td className="tabular-nums" style={{ textAlign: "right", color: "#0B1E3A", fontWeight: 600 }}>
-                      ${subtotalFob.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                      ${unitVal.toLocaleString("en-US", { maximumFractionDigits: 4 })}
                     </td>
                     <td className="tabular-nums" style={{ textAlign: "right", color: "#B45309", fontWeight: 600 }}>
                       +${lineCost.toLocaleString("en-US", { maximumFractionDigits: 2 })}
@@ -2232,8 +2252,7 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                 {/* +1 columna por Expediente (sprint fase 10). */}
                 <td colSpan={5} style={{ color: "#0B1E3A" }}>{lang === "es" ? "Total" : "Total"}</td>
                 <td className="tabular-nums" style={{ textAlign: "right" }}>{totals.totalUnits}</td>
-                <td></td>
-                <td className="tabular-nums" style={{ textAlign: "right", color: "#0B1E3A", fontSize: 13 }}>
+                <td className="tabular-nums" style={{ textAlign: "right", color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
                   ${totals.totalValueUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
                 </td>
                 <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 14 }}>
