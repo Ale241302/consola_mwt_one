@@ -243,7 +243,13 @@ class AnalyticsViewSet(viewsets.ViewSet):
             out["total_paid"]     = float(r[3] or 0)
             out["receivables"]    = float(r[4] or 0)
             out["margin_pct"]     = margin_clamped
-            out["margin_source"]  = r[6] or "no_data"
+            raw_source = r[6] or "no_data"
+            # Sprint 2026-05-22 · si todos los buckets dieron 0 pero hay
+            # expedientes activos, marcar 'no_invoicing_yet' para que el
+            # frontend pinte 0.0% (honesto) en vez de "Sin datos".
+            if raw_source == "no_data" and (out["active"] or 0) > 0:
+                raw_source = "no_invoicing_yet"
+            out["margin_source"]  = raw_source
 
         # — Conteo por estado —
         out["by_status"] = _fetchall("""
@@ -661,6 +667,16 @@ class AnalyticsViewSet(viewsets.ViewSet):
                  AND estado = 'CERRADO'
                  AND credit_days IS NOT NULL AND credit_days > 0
                  AND updated_at >= CURRENT_DATE - INTERVAL '180 days'{scope_e_where}
+            ),
+            exp_activos AS (
+              -- Sprint 2026-05-22 · bucket (e) ultimo recurso: cualquier
+              -- expediente activo con credit_days poblado (plazo concedido).
+              -- Es el menos honesto (no es plazo consumido) pero evita
+              -- "Sin datos" cuando el negocio recien arranca.
+              SELECT credit_days::numeric AS dias
+                FROM expedientes.expediente
+               WHERE is_active = TRUE
+                 AND credit_days IS NOT NULL AND credit_days > 0{scope_e_where}
             )
             SELECT
               (SELECT COUNT(*) FROM paid_90)                                           AS n_a,
@@ -676,21 +692,24 @@ class AnalyticsViewSet(viewsets.ViewSet):
               (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY dias)::float FROM mora_live) AS p50_c,
               (SELECT percentile_cont(0.9) WITHIN GROUP (ORDER BY dias)::float FROM mora_live) AS p90_c,
               (SELECT COUNT(*) FROM exp_cerrados)                                      AS n_d,
-              (SELECT AVG(dias)::float FROM exp_cerrados)                              AS avg_d
+              (SELECT AVG(dias)::float FROM exp_cerrados)                              AS avg_d,
+              (SELECT COUNT(*) FROM exp_activos)                                       AS n_e,
+              (SELECT AVG(dias)::float FROM exp_activos)                               AS avg_e
         """
         params = (
             scope_c_params + scope_c_params
-            + scope_cc_params + scope_e_params
+            + scope_cc_params + scope_e_params + scope_e_params
         )
         r = _fetchone(sql_cc, params)
         if not r:
             return Response(empty)
         # Buckets: (source, n_idx, avg_idx, p50_idx, p90_idx, window)
         buckets = [
-            ("primary",                          r[0], r[1], r[2],  r[3],  90),
-            ("derived_180d",                     r[4], r[5], r[6],  r[7],  180),
-            ("derived_mora_live",                r[8], r[9], r[10], r[11], None),
-            ("derived_expediente_credit_days",   r[12], r[13], None, None, 180),
+            ("primary",                              r[0],  r[1],  r[2],  r[3],  90),
+            ("derived_180d",                         r[4],  r[5],  r[6],  r[7],  180),
+            ("derived_mora_live",                    r[8],  r[9],  r[10], r[11], None),
+            ("derived_expediente_credit_days",       r[12], r[13], None,  None,  180),
+            ("derived_active_credit_days_concedido", r[14], r[15], None,  None,  None),
         ]
         for src, n, avg, p50, p90, window in buckets:
             if n and int(n) > 0 and avg is not None:

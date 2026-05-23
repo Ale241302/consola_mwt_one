@@ -481,7 +481,15 @@ export default function ScreenDashboard() {
             : <KpiCard
                 lang={lang}
                 label={lang === "en" ? "Weighted projected margin" : "Margen proyectado ponderado"}
-                value={kpiMarginPct != null && kpiMarginPct > 0 ? kpiMarginPct : null}
+                // Sprint 2026-05-22 · 0% es valor honesto cuando backend marca
+                // margin_source distinto de no_data/no_scope (ej. no_invoicing_yet,
+                // derived_invoiced_cost…). Antes el gate `> 0` lo escondia.
+                value={
+                  kpiMarginPct != null && (
+                    kpiMarginPct > 0 ||
+                    (marginSource && marginSource !== "no_data" && marginSource !== "no_scope")
+                  ) ? kpiMarginPct : null
+                }
                 valueFmt={(v) => `${(v * 100).toFixed(1)}%`}
                 sub={(lang === "en"
                   ? "Active files · cost-weighted"
@@ -511,9 +519,12 @@ export default function ScreenDashboard() {
                 valueFmt={(v) => `${v.toFixed(0)}d`}
                 sub={(creditClock?.n_files
                   ? (lang === "en"
-                      ? `${creditClock.n_files} files · p90 ${creditClock.p90?.toFixed(0) ?? "—"}d`
-                      : `${creditClock.n_files} exp. · p90 ${creditClock.p90?.toFixed(0) ?? "—"}d`)
+                      ? `${creditClock.n_files} files${creditClock.p90 != null ? ` · p90 ${creditClock.p90.toFixed(0)}d` : ""}`
+                      : `${creditClock.n_files} exp.${creditClock.p90 != null ? ` · p90 ${creditClock.p90.toFixed(0)}d` : ""}`)
                   : (lang === "en" ? "Last 90 days" : "Últimos 90 días"))
+                  + (creditSource === "derived_active_credit_days_concedido"
+                       ? (lang === "en" ? " · concedido" : " · plazo concedido")
+                       : "")
                   + derivedTag(creditSource)}
                 sparkColor="var(--info)"
                 threshold={
