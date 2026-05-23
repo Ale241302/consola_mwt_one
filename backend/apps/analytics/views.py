@@ -41,6 +41,11 @@ from .serializers import (
     DashboardSnapshotSerializer, DashboardSnapshotListSerializer,
     WidgetCatSerializer,
 )
+# Sprint 2026-05-22 · scope multi-tenant en KPIs de dashboard.
+from apps.core.scoped_querysets import (
+    filter_by_user_clients_sql,
+    is_bypass,
+)
 
 log = logging.getLogger(__name__)
 
@@ -137,43 +142,108 @@ class AnalyticsViewSet(viewsets.ViewSet):
             "total_paid":     0.0,
             "receivables":    0.0,
             "margin_pct":     0.0,
+            "margin_source":  "no_data",
             "by_status":      [],
             "by_brand":       [],
             "urgent":         [],
             "cash_90":        [],
         }
 
-        # — KPIs base sobre expedientes —
-        # NB · `margin_pct` ahora es el MARGEN PROYECTADO PONDERADO POR COSTO:
-        #   weighted_margin = Σ(projected_margin × total_cost) / Σ(total_cost)
-        # Es decir: cuánto de cada USD invertido en costos vuelve como
-        # margen proyectado, ponderando por tamaño del expediente. Funciona
-        # incluso cuando `total_invoiced` = 0 (todavía no se factura), siempre
-        # que existan expedientes activos con costo y projected_margin
-        # poblado por el orquestador comercial.
-        r = _fetchone("""
-            SELECT
-              COUNT(*) FILTER (WHERE estado NOT IN ('CERRADO','CANCELADA')),
-              COALESCE(SUM(total_cost),0),
-              COALESCE(SUM(total_invoiced),0),
-              COALESCE(SUM(total_paid),0),
-              COALESCE(SUM(balance),0),
-              CASE
-                WHEN COALESCE(SUM(total_cost), 0) > 0
-                THEN COALESCE(SUM(projected_margin * total_cost), 0)
-                     / NULLIF(SUM(total_cost), 0)
-                ELSE NULL
-              END
-            FROM expedientes.expediente
-            WHERE is_active = TRUE
-        """)
+        # Sprint 2026-05-22 · scope multi-tenant (R3 · POL_VISIBILIDAD).
+        # superadmin/admin ven todo; resto se limita a su pool de
+        # legal_entity_ids contra (client_id ∪ operating_company_id).
+        scope_sql, scope_params = filter_by_user_clients_sql(
+            request.user, column="client_id",
+            extra_columns=("operating_company_id",),
+        )
+        if scope_sql == "FALSE":
+            out["margin_source"] = "no_scope"
+            return Response(out)
+        exp_where = " AND (" + scope_sql + ")" if scope_sql else ""
+
+        # — KPIs base con CASCADA DE FALLBACKS para margin_pct —
+        # Orden de preferencia:
+        #   (a) primary:                 projected_margin × total_cost (ponderado)
+        #   (b) derived_invoiced_cost:   (total_invoiced - total_cost) / total_cost ponderado
+        #   (c) derived_lineas_client:   SUM((unit_price_client - unit_cost) * qty) / SUM(unit_cost * qty)
+        #                                desde expedientes.linea joineado por expediente_id
+        #   (d) derived_flat:            AVG((total_invoiced - total_cost) / total_invoiced) no-ponderado
+        # Si TODO está vacío -> margin_pct=0, margin_source='no_data'.
+        # Clamp [-0.99, 5.0] para evitar valores absurdos en la UI.
+        sql_kpis = f"""
+            WITH scope AS (
+              SELECT id, client_id, operating_company_id, total_cost,
+                     total_invoiced, total_paid, balance, projected_margin, estado
+                FROM expedientes.expediente
+               WHERE is_active = TRUE{exp_where}
+            ),
+            agg AS (
+              SELECT
+                COUNT(*) FILTER (WHERE estado NOT IN ('CERRADO','CANCELADA'))   AS active,
+                COALESCE(SUM(total_cost), 0)                                     AS total_cost,
+                COALESCE(SUM(total_invoiced), 0)                                 AS total_invoiced,
+                COALESCE(SUM(total_paid), 0)                                     AS total_paid,
+                COALESCE(SUM(balance), 0)                                        AS receivables,
+                CASE WHEN SUM(total_cost) FILTER (
+                          WHERE projected_margin > 0 AND total_cost > 0) > 0
+                     THEN SUM(projected_margin * total_cost) FILTER (
+                          WHERE projected_margin > 0 AND total_cost > 0)
+                          / NULLIF(SUM(total_cost) FILTER (
+                            WHERE projected_margin > 0 AND total_cost > 0), 0)
+                END AS m_primary,
+                CASE WHEN SUM(total_cost) FILTER (
+                          WHERE total_cost > 0 AND total_invoiced > 0) > 0
+                     THEN SUM((total_invoiced - total_cost)) FILTER (
+                          WHERE total_cost > 0 AND total_invoiced > 0)
+                          / NULLIF(SUM(total_cost) FILTER (
+                            WHERE total_cost > 0 AND total_invoiced > 0), 0)
+                END AS m_derived_invoiced,
+                AVG((total_invoiced - total_cost) / NULLIF(total_invoiced, 0))
+                  FILTER (WHERE total_invoiced > 0 AND total_cost > 0)
+                  AS m_derived_flat
+              FROM scope
+            ),
+            lineas_agg AS (
+              SELECT
+                CASE WHEN SUM(l.unit_cost * l.qty) FILTER (
+                          WHERE l.unit_cost > 0 AND l.qty > 0
+                            AND COALESCE(l.unit_price_client, 0) > 0) > 0
+                     THEN SUM((l.unit_price_client - l.unit_cost) * l.qty) FILTER (
+                          WHERE l.unit_cost > 0 AND l.qty > 0
+                            AND COALESCE(l.unit_price_client, 0) > 0)
+                          / NULLIF(SUM(l.unit_cost * l.qty) FILTER (
+                            WHERE l.unit_cost > 0 AND l.qty > 0
+                              AND COALESCE(l.unit_price_client, 0) > 0), 0)
+                END AS m_derived_lineas
+              FROM expedientes.linea l
+              JOIN scope e ON e.id = l.expediente_id
+              WHERE l.is_active = TRUE
+            )
+            SELECT a.active, a.total_cost, a.total_invoiced, a.total_paid,
+                   a.receivables,
+                   COALESCE(a.m_primary, a.m_derived_invoiced,
+                            la.m_derived_lineas, a.m_derived_flat, 0)::float AS margin_pct,
+                   CASE
+                     WHEN a.m_primary           IS NOT NULL THEN 'primary'
+                     WHEN a.m_derived_invoiced  IS NOT NULL THEN 'derived_invoiced_cost'
+                     WHEN la.m_derived_lineas   IS NOT NULL THEN 'derived_lineas_client_price'
+                     WHEN a.m_derived_flat      IS NOT NULL THEN 'derived_flat'
+                     ELSE 'no_data'
+                   END AS margin_source
+              FROM agg a CROSS JOIN lineas_agg la
+        """
+        r = _fetchone(sql_kpis, scope_params)
         if r:
+            margin_raw = float(r[5] or 0)
+            # Clamp: evita -8000% por outliers o factura mal cargada.
+            margin_clamped = max(-0.99, min(5.0, margin_raw))
             out["active"]         = r[0] or 0
             out["total_cost"]     = float(r[1] or 0)
             out["total_invoiced"] = float(r[2] or 0)
             out["total_paid"]     = float(r[3] or 0)
             out["receivables"]    = float(r[4] or 0)
-            out["margin_pct"]     = float(r[5]) if r[5] is not None else 0.0
+            out["margin_pct"]     = margin_clamped
+            out["margin_source"]  = r[6] or "no_data"
 
         # — Conteo por estado —
         out["by_status"] = _fetchall("""
@@ -510,44 +580,129 @@ class AnalyticsViewSet(viewsets.ViewSet):
             "p90":         None,
             "n_files":     0,
             "period_days": period_days,
+            "_source":     "no_data",
         }
-        r = _fetchone("""
-            WITH paid AS (
-              SELECT
-                c.expediente_id,
-                EXTRACT(DAY FROM (MAX(p.fecha_acreditacion)::timestamp
-                                  - MIN(c.created_at)::timestamp)) AS dias
-              FROM cobros.cobro  c
-              JOIN cobros.pago   p ON p.cobro_id = c.id
-              WHERE c.is_active = TRUE
-                AND p.is_active = TRUE
-                AND p.direccion = 'INGRESO'
-                AND p.estado IN ('VERIFICADO','LIBERADO','CONCILIADO')
-                AND p.fecha_acreditacion IS NOT NULL
-                AND p.fecha_acreditacion >= CURRENT_DATE - INTERVAL '90 days'
-                AND c.expediente_id IS NOT NULL
-              GROUP BY c.expediente_id
+
+        # Sprint 2026-05-22 · scope multi-tenant + cascada de fallbacks.
+        # Para cobros usamos client_id directo; para expedientes scope dual.
+        scope_c_sql, scope_c_params = filter_by_user_clients_sql(
+            request.user, column="c.client_id",
+        )
+        scope_cc_sql, scope_cc_params = filter_by_user_clients_sql(
+            request.user, column="client_id",
+        )
+        scope_e_sql, scope_e_params = filter_by_user_clients_sql(
+            request.user, column="client_id",
+            extra_columns=("operating_company_id",),
+        )
+        if "FALSE" in (scope_c_sql, scope_cc_sql, scope_e_sql):
+            return Response({**empty, "_source": "no_scope"})
+        scope_c_where  = " AND (" + scope_c_sql  + ")" if scope_c_sql  else ""
+        scope_cc_where = " AND (" + scope_cc_sql + ")" if scope_cc_sql else ""
+        scope_e_where  = " AND (" + scope_e_sql  + ")" if scope_e_sql  else ""
+
+        # Cascada (en orden de honestidad):
+        #   (a) primary:                   90d de pagos verificados, cobros cerrados
+        #   (b) derived_180d:              misma logica con ventana ampliada
+        #   (c) derived_mora_live:         dias_mora promedio de cobros en mora HOY
+        #   (d) derived_expediente_credit_days: AVG(credit_days) de expedientes CERRADOS
+        sql_cc = f"""
+            WITH paid_90 AS (
+              SELECT c.expediente_id,
+                     GREATEST(
+                       EXTRACT(DAY FROM (MAX(p.fecha_acreditacion)::timestamp
+                                       - MIN(c.created_at)::timestamp)),
+                       0
+                     )::numeric AS dias
+                FROM cobros.cobro c
+                JOIN cobros.pago  p ON p.cobro_id = c.id
+               WHERE c.is_active = TRUE AND p.is_active = TRUE
+                 AND p.direccion = 'INGRESO'
+                 AND p.estado IN ('VERIFICADO','LIBERADO','CONCILIADO')
+                 AND p.fecha_acreditacion IS NOT NULL
+                 AND p.fecha_acreditacion >= CURRENT_DATE - INTERVAL '90 days'
+                 AND c.expediente_id IS NOT NULL{scope_c_where}
+               GROUP BY c.expediente_id
               HAVING SUM(c.monto_pendiente) <= 0
+            ),
+            paid_180 AS (
+              SELECT c.expediente_id,
+                     GREATEST(
+                       EXTRACT(DAY FROM (MAX(p.fecha_acreditacion)::timestamp
+                                       - MIN(c.created_at)::timestamp)),
+                       0
+                     )::numeric AS dias
+                FROM cobros.cobro c
+                JOIN cobros.pago  p ON p.cobro_id = c.id
+               WHERE c.is_active = TRUE AND p.is_active = TRUE
+                 AND p.direccion = 'INGRESO'
+                 AND p.estado IN ('VERIFICADO','LIBERADO','CONCILIADO')
+                 AND p.fecha_acreditacion IS NOT NULL
+                 AND p.fecha_acreditacion >= CURRENT_DATE - INTERVAL '180 days'
+                 AND c.expediente_id IS NOT NULL{scope_c_where}
+               GROUP BY c.expediente_id
+              HAVING SUM(c.monto_pendiente) <= 0
+            ),
+            mora_live AS (
+              SELECT GREATEST(
+                       (CURRENT_DATE - fecha_vencimiento),
+                       0
+                     )::numeric AS dias
+                FROM cobros.cobro
+               WHERE is_active = TRUE
+                 AND monto_pendiente > 0
+                 AND fecha_vencimiento IS NOT NULL
+                 AND fecha_vencimiento < CURRENT_DATE{scope_cc_where}
+            ),
+            exp_cerrados AS (
+              SELECT credit_days::numeric AS dias
+                FROM expedientes.expediente
+               WHERE is_active = TRUE
+                 AND estado = 'CERRADO'
+                 AND credit_days IS NOT NULL AND credit_days > 0
+                 AND updated_at >= CURRENT_DATE - INTERVAL '180 days'{scope_e_where}
             )
             SELECT
-              AVG(dias)::float                                       AS avg_days,
-              percentile_cont(0.5) WITHIN GROUP (ORDER BY dias)::float AS p50,
-              percentile_cont(0.9) WITHIN GROUP (ORDER BY dias)::float AS p90,
-              COUNT(*)                                               AS n_files
-            FROM paid
-        """)
+              (SELECT COUNT(*) FROM paid_90)                                           AS n_a,
+              (SELECT AVG(dias)::float FROM paid_90)                                   AS avg_a,
+              (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY dias)::float FROM paid_90) AS p50_a,
+              (SELECT percentile_cont(0.9) WITHIN GROUP (ORDER BY dias)::float FROM paid_90) AS p90_a,
+              (SELECT COUNT(*) FROM paid_180)                                          AS n_b,
+              (SELECT AVG(dias)::float FROM paid_180)                                  AS avg_b,
+              (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY dias)::float FROM paid_180) AS p50_b,
+              (SELECT percentile_cont(0.9) WITHIN GROUP (ORDER BY dias)::float FROM paid_180) AS p90_b,
+              (SELECT COUNT(*) FROM mora_live)                                         AS n_c,
+              (SELECT AVG(dias)::float FROM mora_live)                                 AS avg_c,
+              (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY dias)::float FROM mora_live) AS p50_c,
+              (SELECT percentile_cont(0.9) WITHIN GROUP (ORDER BY dias)::float FROM mora_live) AS p90_c,
+              (SELECT COUNT(*) FROM exp_cerrados)                                      AS n_d,
+              (SELECT AVG(dias)::float FROM exp_cerrados)                              AS avg_d
+        """
+        params = (
+            scope_c_params + scope_c_params
+            + scope_cc_params + scope_e_params
+        )
+        r = _fetchone(sql_cc, params)
         if not r:
             return Response(empty)
-        avg_days, p50, p90, n_files = r
-        if not n_files:
-            return Response(empty)
-        return Response({
-            "avg_days":    float(avg_days) if avg_days is not None else None,
-            "p50":         float(p50)      if p50      is not None else None,
-            "p90":         float(p90)      if p90      is not None else None,
-            "n_files":     int(n_files),
-            "period_days": period_days,
-        })
+        # Buckets: (source, n_idx, avg_idx, p50_idx, p90_idx, window)
+        buckets = [
+            ("primary",                          r[0], r[1], r[2],  r[3],  90),
+            ("derived_180d",                     r[4], r[5], r[6],  r[7],  180),
+            ("derived_mora_live",                r[8], r[9], r[10], r[11], None),
+            ("derived_expediente_credit_days",   r[12], r[13], None, None, 180),
+        ]
+        for src, n, avg, p50, p90, window in buckets:
+            if n and int(n) > 0 and avg is not None:
+                return Response({
+                    "avg_days":    float(avg),
+                    "p50":         float(p50) if p50 is not None else None,
+                    "p90":         float(p90) if p90 is not None else None,
+                    "n_files":     int(n),
+                    "period_days": window or period_days,
+                    "_source":     src,
+                })
+        return Response(empty)
 
     # ── Ratio de expedientes con corrección R1+ ───────────────
     @action(detail=False, methods=["get"], url_path="r1_correction_ratio")
@@ -631,12 +786,32 @@ class AnalyticsViewSet(viewsets.ViewSet):
         """
         period_days = 30
         empty = {
-            "tacos_pct":   None,
+            "tacos_pct":   0.0,
             "period_days": period_days,
             "spend_usd":   0.0,
             "sales_usd":   0.0,
             "n_days":      0,
+            "_source":     "no_data",
         }
+
+        # Sprint 2026-05-22 · amazon_ads.account NO tiene client_id ni
+        # operating_company_id (sql/D3 no contempla scope todavia). Por
+        # ahora el TACoS es admin-only de facto. Users non-bypass reciben
+        # ceros con _source='no_scope' — el frontend muestra hint honesto.
+        if not is_bypass(request.user):
+            return Response({**empty, "_source": "no_scope"})
+
+        # Verificacion barata del schema (evita rollback en tx atomicas
+        # upstream si amazon_ads no existe).
+        with connection.cursor() as cur:
+            try:
+                cur.execute("SELECT to_regclass('amazon_ads.spend_daily')")
+                if not cur.fetchone()[0]:
+                    return Response({**empty, "_source": "no_data"})
+            except Exception:
+                connection.rollback()
+                return Response({**empty, "_source": "no_data"})
+
         r = _fetchone("""
             WITH spend AS (
               SELECT COALESCE(SUM(s.spend_usd), 0)::float AS total_spend,
@@ -664,22 +839,24 @@ class AnalyticsViewSet(viewsets.ViewSet):
               FROM spend, sales
         """)
         if r is None:
-            # Schema amazon_ads no existe todavía (sql/D3 no aplicado)
-            empty["_pending"] = "amazon_ads schema missing (run sql/D3)"
-            return Response(empty)
+            return Response({**empty, "_source": "no_data"})
 
         spend, sales, n_days = (
             float(r[0] or 0),
             float(r[1] or 0),
             int(r[2] or 0),
         )
-        tacos = (spend / sales) if sales > 0 else None
+        if n_days == 0 and sales <= 0:
+            # Schema existe pero sin filas en la ventana.
+            return Response({**empty, "_source": "no_activity"})
+        tacos = (spend / sales) if sales > 0 else 0.0
         return Response({
-            "tacos_pct":   float(tacos) if tacos is not None else None,
+            "tacos_pct":   float(tacos),
             "period_days": period_days,
             "spend_usd":   spend,
             "sales_usd":   sales,
             "n_days":      n_days,
+            "_source":     "primary" if sales > 0 else "no_activity",
         })
 
         # ── Crosstab status × brand_id ────────────────────────────

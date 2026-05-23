@@ -60,7 +60,7 @@ def _user_role(user) -> str:
     return str(role).lower().strip()
 
 
-def _is_bypass(user, bypass_roles: Iterable[str] = BYPASS_ROLES) -> bool:
+def is_bypass(user, bypass_roles: Iterable[str] = BYPASS_ROLES) -> bool:
     """¿El usuario puede ver TODOS los datos sin filtro?"""
     if user is None or not getattr(user, "is_authenticated", False):
         return False
@@ -70,6 +70,11 @@ def _is_bypass(user, bypass_roles: Iterable[str] = BYPASS_ROLES) -> bool:
     if getattr(user, "is_superuser", False):
         return True
     return _user_role(user) in {r.lower() for r in bypass_roles}
+
+
+# Backward-compat: el resto del codebase (cobros, notifications,
+# finance, expedientes) importa `_is_bypass`. Mantenemos el alias.
+_is_bypass = is_bypass
 
 
 def _scope_ids(user) -> List[str]:

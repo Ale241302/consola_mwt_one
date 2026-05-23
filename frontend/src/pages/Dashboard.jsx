@@ -275,6 +275,16 @@ export default function ScreenDashboard() {
   const kpiCreditAvgDays   = creditClock?.avg_days != null ? Number(creditClock.avg_days) : null;
   const kpiR1Ratio         = r1Ratio?.ratio != null ? Number(r1Ratio.ratio) : null;
 
+  // Sprint 2026-05-22 · flags _source para etiquetar KPIs derivados.
+  // El backend ahora pasa cascada de fallbacks; el card muestra
+  // "· estimado" en el subtitulo cuando el dato NO es de fuente primaria.
+  const marginSource = k.margin_source || null;
+  const creditSource = creditClock?._source || null;
+  const tacosSource  = tacosFba?._source  || null;
+  const isDerived = (src) => src && src !== "primary" && src !== "no_data" && src !== "no_scope";
+  const derivedTag = (src) =>
+    isDerived(src) ? (lang === "en" ? " · estimated" : " · estimado") : "";
+
   // ── Series Banda 2 (legacy cashflow) ─────
   // Sprint 2026-05-22 · Cashflow card oculta hasta que haya datos reales en
   // cobros.cobro/pago. Las series se conservan para retomarse cuando el
@@ -473,9 +483,9 @@ export default function ScreenDashboard() {
                 label={lang === "en" ? "Weighted projected margin" : "Margen proyectado ponderado"}
                 value={kpiMarginPct != null && kpiMarginPct > 0 ? kpiMarginPct : null}
                 valueFmt={(v) => `${(v * 100).toFixed(1)}%`}
-                sub={lang === "en"
+                sub={(lang === "en"
                   ? "Active files · cost-weighted"
-                  : "Activos · ponderado por costo"}
+                  : "Activos · ponderado por costo") + derivedTag(marginSource)}
                 sparkColor="var(--info)"
                 threshold={
                   kpiMarginPct == null ? undefined
@@ -499,11 +509,12 @@ export default function ScreenDashboard() {
                 label={lang === "en" ? "Avg. credit clock" : "Reloj crédito promedio"}
                 value={kpiCreditAvgDays}
                 valueFmt={(v) => `${v.toFixed(0)}d`}
-                sub={creditClock?.n_files
+                sub={(creditClock?.n_files
                   ? (lang === "en"
                       ? `${creditClock.n_files} files · p90 ${creditClock.p90?.toFixed(0) ?? "—"}d`
                       : `${creditClock.n_files} exp. · p90 ${creditClock.p90?.toFixed(0) ?? "—"}d`)
-                  : (lang === "en" ? "Last 90 days" : "Últimos 90 días")}
+                  : (lang === "en" ? "Last 90 days" : "Últimos 90 días"))
+                  + derivedTag(creditSource)}
                 sparkColor="var(--info)"
                 threshold={
                   kpiCreditAvgDays == null ? undefined
@@ -527,11 +538,12 @@ export default function ScreenDashboard() {
                 label="TACoS Amazon · FBA-US"
                 value={tacosFba?.tacos_pct != null ? Number(tacosFba.tacos_pct) : null}
                 valueFmt={(v) => `${(v * 100).toFixed(1)}%`}
-                sub={tacosFba?.sales_usd > 0
+                sub={(tacosFba?.sales_usd > 0
                   ? (lang === "en"
                       ? `Spend $${(tacosFba.spend_usd || 0).toLocaleString("en-US", { maximumFractionDigits: 0 })} · last 30d`
                       : `Gasto $${(tacosFba.spend_usd || 0).toLocaleString("es-PE", { maximumFractionDigits: 0 })} · últimos 30d`)
-                  : (lang === "en" ? "Last 30 days" : "Últimos 30 días")}
+                  : (lang === "en" ? "Last 30 days" : "Últimos 30 días"))
+                  + derivedTag(tacosSource)}
                 sparkColor="var(--warning)"
                 threshold={
                   tacosFba?.tacos_pct == null ? undefined
