@@ -610,8 +610,15 @@ export default function UploadDocumentModal({
           {/* Sprint 2026-05-10 · PLAZO DE PAGO (pronto pago). Solo se
               muestra cuando el admin/MWT sube una PROFORMA con expediente
               vinculado. Cambia el credit_days del expediente y por ende
-              afecta el HTML cliente auto-generado (descuento aplicado). */}
-          {kind === "PROFORMA" && expedienteId && !viewerIsClient && (
+              afecta el HTML cliente auto-generado (descuento aplicado).
+
+              Sprint 2026-05-24 · REMOVIDO del UI con `false &&`. El plazo
+              ahora viene del wizard Paso 3 (credit_days_mwt y
+              credit_days_cliente del expediente), y unit_price_client ya
+              tiene el descuento aplicado. No tiene sentido pedirlo aqui.
+              Codigo conservado por si en el futuro queremos reactivar el
+              campo para el caso de subir un PDF de proforma a mano. */}
+          {false && kind === "PROFORMA" && expedienteId && !viewerIsClient && (
             <div>
               <div className="micro" style={{
                 fontSize: 11, fontWeight: 700, letterSpacing: 0.5,

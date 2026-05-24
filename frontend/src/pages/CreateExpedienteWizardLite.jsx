@@ -2316,7 +2316,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 <button
                   key={tier.days}
                   type="button"
-                  onClick={() => setPaymentDays(tier.days)}
+                  onClick={() => { setPaymentDays(tier.days); setPaymentDaysCliente(tier.days); }}
                   style={{
                     textAlign: "left",
                     padding: "14px 14px",
