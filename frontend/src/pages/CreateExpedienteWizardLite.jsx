@@ -1947,14 +1947,21 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   // total con el descuento aplicado del plazo seleccionado.
   // Sprint 2026-05-22 · buscar en effectiveTiers (dinámicos del snapshot
   // del cliente cuando existen; fallback hardcoded sino).
+  // Sprint 2026-05-24 · cuando hay operador intermedio (MWT compra),
+  // el credito que se afecta es el de MWT — por lo tanto VALOR DEL PEDIDO
+  // y DISPONIBLE DESPUES deben reflejar el plazo y precios MWT, NO los
+  // del cliente final. Cuando NO hay operador, sigue siendo paymentDays
+  // (que esta sincronizado con paymentDaysCliente y paymentDaysMwt).
+  const _creditDays    = operatedByMwt ? paymentDaysMwt    : paymentDays;
+  const _creditTotals  = operatedByMwt ? (tierTotalsMwt || tierTotals) : tierTotals;
   const selectedTier = effectiveTiers.find(
-    t => t.days === Number(paymentDays)
+    t => t.days === Number(_creditDays)
   ) || _baseTierGlobal;
   const tierPct = selectedTier ? selectedTier.pct / 100 : 0;
   // Si hay tierTotals (snapshot), usamos el total real del plazo seleccionado.
   // Sino, fallback al cálculo legacy proporcional.
-  const adjustedTotalValue = (tierTotals && selectedTier)
-    ? (tierTotals[selectedTier.days] ?? effectiveBaseTotal)
+  const adjustedTotalValue = (_creditTotals && selectedTier)
+    ? (_creditTotals[selectedTier.days] ?? effectiveBaseTotal)
     : (totalValue * (1 - tierPct));
 
   return (
