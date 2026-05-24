@@ -649,29 +649,33 @@ export default function CreateExpedienteWizardLite() {
         forma_pago:          paymentMethod,
         ...(Number.isFinite(tcLive) && tcLive > 0 ? { tc_usd_brl: tcLive } : {}),
         lines: Object.values(grouped).map((l) => {
-          // Sprint 2026-05-22 · unit_price del snapshot al plazo elegido.
-          // Si el cliente tiene MarluvasClientSkuPricing con plazo
-          // paymentDays, ese es el precio congelado. Si no, fallback al
-          // plazo base del snapshot, y por último al priceMap legacy.
-          let unitPrice = null;
-          const matrix = pricingMatrixRef.current?.results?.[l.sku];
-          if (matrix && matrix.ok && Array.isArray(matrix.plazos)) {
-            const wanted = matrix.plazos.find(
-              p => Number(p?.dias) === Number(paymentDays)
-            );
-            const base = matrix.plazos.find(p => p?.is_base);
+          // Sprint 2026-05-24 · cada precio se congela con SU PROPIO plazo:
+          //   unit_price_client = precios del cliente final (results) al plazo cliente
+          //   unit_price_mwt    = precios del operador MWT (operator_results) al plazo MWT
+          // Cuando NO hay operador intermedio, operator_results no existe y
+          // unit_price_mwt cae al mismo de cliente (semantica antigua).
+          const _pickFromMatrix = (matrixSrc, days) => {
+            if (!matrixSrc || !matrixSrc.ok || !Array.isArray(matrixSrc.plazos)) return null;
+            const wanted = matrixSrc.plazos.find(p => Number(p?.dias) === Number(days));
+            const base   = matrixSrc.plazos.find(p => p?.is_base);
             const picked = wanted || base;
-            if (picked && Number(picked.price) > 0) {
-              unitPrice = Number(picked.price);
-            }
-          }
+            return (picked && Number(picked.price) > 0) ? Number(picked.price) : null;
+          };
+          const matrixClient = pricingMatrixRef.current?.results?.[l.sku];
+          const matrixMwt    = pricingMatrixRef.current?.operator_results?.[l.sku] || matrixClient;
+          const unitPriceClient = _pickFromMatrix(matrixClient, paymentDaysCliente || paymentDays);
+          const unitPriceMwt    = _pickFromMatrix(matrixMwt,    paymentDaysMwt    || paymentDays);
+          // unit_price legacy: usamos el cliente como espejo (semantica anterior).
+          const unitPriceLegacy = unitPriceClient != null ? unitPriceClient : unitPriceMwt;
           return {
             sku:           l.sku,
             talla:         l.talla || null,
             cantidad:      Number(l.cantidad) || 0,
             producto_id:   l.producto_id || null,
             product_label: l.product_label || null,
-            ...(unitPrice != null ? { unit_price: unitPrice } : {}),
+            ...(unitPriceLegacy != null ? { unit_price: unitPriceLegacy } : {}),
+            ...(unitPriceClient != null ? { unit_price_client: unitPriceClient } : {}),
+            ...(unitPriceMwt    != null ? { unit_price_mwt:    unitPriceMwt    } : {}),
           };
         }),
       };

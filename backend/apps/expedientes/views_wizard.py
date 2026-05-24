@@ -497,26 +497,37 @@ def create_from_oc(request):
                 ])
 
                 # 7.3 — Insertar Líneas (expedientes.linea)
+                # Sprint 2026-05-24 · persistir unit_price_mwt y unit_price_client
+                # separados (vienen del wizard Paso 3 segun plazo de cada perspectiva).
+                # unit_price (legacy) = unit_price_client si existe, sino unit_price.
                 for ln in ocr_lines:
                     line_id = uuid.uuid4()
                     qty = _safe_decimal(ln.get("qty"))
                     up  = _safe_decimal(ln.get("unit_price"))
-                    total_price = qty * up
+                    up_client = _safe_decimal(ln.get("unit_price_client") or up)
+                    up_mwt    = _safe_decimal(ln.get("unit_price_mwt")    or up)
+                    total_price = qty * up_client
                     c.execute("""
                         INSERT INTO expedientes.linea (
                             id, oc_id, expediente_id, producto_id,
-                            sku, size, qty, unit_price, total_price,
+                            sku, size, qty,
+                            unit_price, unit_price_client, unit_price_mwt,
+                            total_price,
                             estado, is_active
                         ) VALUES (
                             %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s,
+                            %s, %s, %s,
+                            %s, %s, %s,
+                            %s,
                             'PENDIENTE', TRUE
                         )
                     """, [
                         str(line_id), str(oc_id), str(expediente_id),
                         str(ln.get("producto_id")) if ln.get("producto_id") else None,
                         ln.get("sku"), ln.get("size"),
-                        str(qty), str(up), str(total_price),
+                        str(qty),
+                        str(up), str(up_client), str(up_mwt),
+                        str(total_price),
                     ])
 
                 # 7.4 — Insertar ART-01 (OC Cliente) en artifact_instances
