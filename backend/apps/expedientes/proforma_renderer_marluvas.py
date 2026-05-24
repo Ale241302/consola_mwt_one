@@ -38,6 +38,7 @@ from .models import Expediente, Linea, Oc
 from .proforma_renderer import (
     MWT_OPERATING_CLIENT_ID,
     PRONTO_PAGO_TIERS,
+    _build_pronto_pago_html,
     _esc,
     _esc_email,
     _fmt_date_es,
@@ -265,6 +266,14 @@ def render_proforma_html_marluvas(expediente_id, request_user=None,
     forma_pago_lbl = _forma_pago_label(expediente.forma_pago) or "Contado"
     plazo_lbl = _plazo_label(expediente.forma_pago, plazo_dias) if plazo_dias > 0 else "0 días"
 
+    # Sprint 2026-05-24 · bloque pronto-pago (reutiliza helper de SONDEL).
+    # Pasa plazo_dias (credit_days_mwt) como credit_days para que el helper
+    # detecte el tier activo y normalice price_avg a la base 90d antes de
+    # aplicar los descuentos. Coherente con vista CLIENT.
+    pronto_pago_html_mwt = _build_pronto_pago_html(
+        price_avg, total_pares, int(plazo_dias or 0),
+    )
+
     # Filename amigable
     cli_slug = (cliente_final.get("razon_social") if cliente_final else "mwt") or "mwt"
     cli_slug = "".join(ch if ch.isalnum() else "-" for ch in cli_slug).strip("-").lower() or "mwt"
@@ -391,6 +400,18 @@ table.ct .trow td{{border-top:2px solid var(--navy);}}
         <div class="sr"><span class="k">Fecha Proforma</span><span class="v" style="font-size:11px;">{_esc(_fmt_date_es(today))}</span></div>
         <div class="sr"><span class="k">Total pares</span><span class="v">{_fmt_int(total_pares)}</span></div>
         <div class="sr"><span class="k">Precio por par</span><span class="v">{_fmt_money(price_avg)}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sect">
+    <div class="sect-h"><h3>Propuesta &mdash; Descuento por Pronto Pago (MWT)</h3></div>
+    <div style="padding:18px;">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px;">
+        {pronto_pago_html_mwt}
+      </div>
+      <div style="padding:10px 14px;background:var(--mint-s);border:1px solid var(--mint);border-radius:8px;font-size:11px;color:var(--t1);line-height:1.6;">
+        <strong style="color:var(--navy);">Pronto pago (MWT &rarr; proveedor):</strong> el descuento se aplica sobre el costo MWT al confirmar el plazo. El plazo actual del expediente es {_esc(str(plazo_dias))} dias.
       </div>
     </div>
   </div>

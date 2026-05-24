@@ -64,7 +64,11 @@ def generate_proforma(request, expediente_id):
 
     # 1) Render -- ruteo segun audience
     try:
-        if raw_audience == "MWT_INTERNAL":
+        if raw_audience in ("MWT_INTERNAL", "ADMIN_ONLY"):
+            # Sprint 2026-05-24 · ADMIN_ONLY tambien usa vista MARLUVAS
+            # (perspectiva MWT-compra, credit_days_mwt). Se diferencia de
+            # MWT_INTERNAL solo en la columna `audience` del Documento
+            # (ADMIN_ONLY = CEO/superuser only · MWT_INTERNAL = staff MWT).
             html_str, metadata = render_proforma_html_marluvas(
                 expediente_id,
                 request_user=request.user,
@@ -72,9 +76,7 @@ def generate_proforma(request, expediente_id):
                 payment_days_override=payment_days_override,
             )
         else:
-            # CLIENT y ADMIN_ONLY usan la vista cliente (SONDEL).
-            # ADMIN_ONLY se diferencia solo en la columna `audience` de la tabla
-            # de documentos (lo ve solo CEO), no en el HTML.
+            # CLIENT usa la vista cliente (SONDEL) con credit_days_cliente.
             html_str, metadata = render_proforma_html(
                 expediente_id,
                 request_user=request.user,
