@@ -153,7 +153,12 @@ export default function UploadDocumentModal({
         const body = {
           audience: audiencePayload,
           codigo: (codigo || "").trim() || null,
-          payment_days: Number(paymentDays) || null,
+          // Sprint 2026-05-24 · NO enviar payment_days. El backend ya
+          // rutea segun audience: CLIENT -> expediente.credit_days,
+          // MWT_INTERNAL/ADMIN_ONLY -> expediente.credit_days_mwt.
+          // Mandar paymentDays aqui sobreescribia credit_days_mwt con
+          // el legacy credit_days del cliente (bug visible: vista Marluvas
+          // mostraba 8d activo cuando credit_days_mwt era 90).
         };
         const token = getToken();
         const resp = await fetch(
