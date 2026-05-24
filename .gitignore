@@ -63,3 +63,6 @@ redis-data/
 # --- Coverage / tests -------------------------------------------------
 coverage/
 .nyc_output/
+
+# Archivos temporales generados por scripts/python en el mount Windows
+*.tmp

@@ -121,7 +121,8 @@ export default function ScreenTransfers() {
     if (!loadingBackend && Array.isArray(apiTransfers) && apiTransfers.length > 0) {
       return apiTransfers.map(mapApiTransferToRow);
     }
-    return MOCK_TRANSFERS;
+    // Sprint 2026-05-24 · CEO: apagar fallback a mock (DB ya tiene data real o se quiere ver el estado vacio).
+    return [];
   }, [apiTransfers, loadingBackend]);
 
   // ── KPIs ───────────

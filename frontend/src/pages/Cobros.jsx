@@ -20,9 +20,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   IconAlert, IconDollar, IconMail, IconShield, IconSparkle,
 } from "../lib/icons.jsx";
-import {
-  EXPEDIENTES, CLIENTS, NOTIFICATION_LOGS, COLLECTION_EMAIL_LOG,
-} from "../data/mockData.js";
+// Sprint 2026-05-24 · CEO: pantalla Cobros migra a estado vacio mientras
+// no exista hook real (hoy era 100% mock-driven). Cuando se construya
+// useCobrosData(), reemplazar estos const [] por el hook.
+const EXPEDIENTES = [];
+const CLIENTS = [];
+const NOTIFICATION_LOGS = [];
+const COLLECTION_EMAIL_LOG = [];
 import OverduePortfolioTable, { stageFromDays }
   from "../components/cobros/OverduePortfolioTable.jsx";
 import AutomaticCollectionLogTable

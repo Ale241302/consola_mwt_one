@@ -77,14 +77,16 @@ export default function ScreenNotificaciones() {
     if (!loadingLogs && Array.isArray(apiLogs) && apiLogs.length > 0) {
       return apiLogs.map(mapApiLogToRow);
     }
-    return MOCK_NOTIFICATION_LOGS;
+    // Sprint 2026-05-24 · CEO: apagar fallback a mock.
+    return [];
   }, [apiLogs, loadingLogs]);
 
   const COLLECTION_EMAIL_LOG = useMemo(() => {
     if (!loadingLogs && Array.isArray(apiCollLogs) && apiCollLogs.length > 0) {
       return apiCollLogs.map(mapApiLogToRow);
     }
-    return MOCK_COLLECTION_EMAIL_LOG;
+    // Sprint 2026-05-24 · CEO: apagar fallback a mock.
+    return [];
   }, [apiCollLogs, loadingLogs]);
 
   // ── KPIs (scope: dataset completo) ──────────────────

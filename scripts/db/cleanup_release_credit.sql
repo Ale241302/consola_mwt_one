@@ -30,8 +30,8 @@
 --   · productos.producto, .variante, .talla_matriz, .product_client_alias
 --   · proveedores.proveedor + extensiones (audit, certificacion, promo,
 --     iso_evaluations, suppliers_product_assignments)
---   · nodos.nodo, .artefacto, .nodo_jerarquia, .builder_artifact_instance,
---     .builder_artifact_line
+--   · (nodos.* AHORA se BORRA — ver seccion "LO QUE SE BORRA" abajo;
+--      solo se conservan los catalogos nodos.status_cat y nodos.tipo_cat)
 --   · commercial.early_payment_policy, .early_payment_tier, .commission_rule
 --   · pricing.grade_item, .pricelist_version, .payment_index, .pricing_constants
 --   · finance.mwt_account (cuentas bancarias propias)
@@ -53,6 +53,8 @@
 --   · brands.brand_import_log
 --   · proveedores.supplier_import_log
 --   · inventario.inventory_import_log, .expediente_nodo_assignment
+--   · nodos.nodo, .artefacto, .nodo_jerarquia, .builder_artifact_instance,
+--     .builder_artifact_line (decision CEO 2026-05-24, ampliacion)
 --
 -- USO MANUAL (one-off, desde el VPS):
 --   ssh -p 2222 root@187.77.218.102
@@ -183,7 +185,15 @@ DECLARE
         'productos.precio_history',
         'productos.imports_log',
         'brands.brand_import_log',
-        'proveedores.supplier_import_log'
+        'proveedores.supplier_import_log',
+
+        -- ── Nodos completos (decision CEO 2026-05-24, ampliacion) ──
+        -- Se conservan los catalogos nodos.status_cat y nodos.tipo_cat.
+        'nodos.builder_artifact_line',
+        'nodos.builder_artifact_instance',
+        'nodos.artefacto',
+        'nodos.nodo_jerarquia',
+        'nodos.nodo'
     ];
 BEGIN
     RAISE NOTICE '═══════════════════════════════════════════════════════════════';
@@ -287,8 +297,8 @@ UNION ALL SELECT 'tickets.ticket',           COUNT(*) FROM tickets.ticket
 UNION ALL SELECT 'ai.thread',                COUNT(*) FROM ai.thread
 ORDER BY tabla;
 
-\echo
 \echo '═══ Verificacion: credito_usado de cada cliente (deben ser 0) ═══'
+SELECT razon_social,
 SELECT razon_social,
        credito_aprobado,
        credito_usado,
