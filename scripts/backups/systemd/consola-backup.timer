@@ -1,0 +1,17 @@
+[Unit]
+Description=Consola MWT.ONE — disparador diario del backup (03:00 UTC)
+Documentation=file:///opt/consola-mwt-one/scripts/backups/README.md
+
+[Timer]
+# Diario a las 03:00 UTC (22:00 hora Ecuador, 21:00 hora CDMX).
+# Equivale a `0 3 * * *` en cron, pero con ventajas:
+#   · Persistent=true → si el VPS estaba apagado/rebooteando, dispara al volver.
+#   · AccuracySec → tolerancia de hasta 5 min para no saturar el host
+#     cuando hay varios timers; nos da igual el segundo exacto.
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+AccuracySec=5min
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target

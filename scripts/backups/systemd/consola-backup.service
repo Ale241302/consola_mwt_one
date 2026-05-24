@@ -1,0 +1,34 @@
+[Unit]
+Description=Consola MWT.ONE — backup diario (Postgres + media + volúmenes + config)
+Documentation=file:///opt/consola-mwt-one/scripts/backups/README.md
+# Solo arranca si docker está vivo (importante: depende del daemon).
+After=docker.service
+Requires=docker.service
+# Si docker no responde, no tiene sentido intentarlo.
+ConditionPathExists=/var/run/docker.sock
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+# Working dir = directorio del repo, por si algún path es relativo.
+WorkingDirectory=/opt/consola-mwt-one
+# Bin sh -c para que `set -e` del script funcione y los exit codes lleguen.
+ExecStart=/usr/bin/env bash /opt/consola-mwt-one/scripts/backups/backup_consola.sh
+
+# Timeout generoso: con DB grande + media + 3 volúmenes puede tomar 5-15 min.
+TimeoutStartSec=30min
+
+# Hardening básico (no estricto porque necesitamos docker socket y /opt/backups).
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Logs van a journald automáticamente; también escribimos a /opt/backups/.../logs/.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=consola-backup
+
+[Install]
+WantedBy=multi-user.target

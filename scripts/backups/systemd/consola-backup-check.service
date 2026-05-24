@@ -1,0 +1,18 @@
+[Unit]
+Description=Consola MWT.ONE — verificación de salud del backup diario
+Documentation=file:///opt/consola-mwt-one/scripts/backups/README.md
+After=consola-backup.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/consola-mwt-one
+ExecStart=/usr/bin/env bash /opt/consola-mwt-one/scripts/backups/check_backups.sh
+TimeoutStartSec=5min
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=consola-backup-check
+
+[Install]
+WantedBy=multi-user.target

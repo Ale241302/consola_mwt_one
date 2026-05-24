@@ -1,0 +1,14 @@
+[Unit]
+Description=Consola MWT.ONE — disparador del health-check (04:00 UTC, 1h después del backup)
+Documentation=file:///opt/consola-mwt-one/scripts/backups/README.md
+
+[Timer]
+# 1 hora después del backup, para que la verificación corra cuando ya
+# debería estar todo escrito a disco. Si falla, journalctl deja
+# evidencia y `systemctl status` lo marca rojo.
+OnCalendar=*-*-* 04:00:00 UTC
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target
