@@ -3,7 +3,7 @@ const STRINGS = {
   es: {
     // Nav
     dashboard: 'Dashboard', expedientes: 'Expedientes', pipeline: 'Pipeline', portal: 'Portal',
-    financiero: 'Financiero', transfers: 'Transferencias', nodos: 'Nodos', clientes: 'Clientes',
+    financiero: 'Financiero', transfers: 'Transferencias', nodos: 'Nodos', clientes: 'Clientes', finanzas: 'Finanzas',
     brands: 'Marcas', productos: 'Productos', suppliers: 'Proveedores', inventario: 'Inventario',
     templates: 'Plantillas', history: 'Historial', collections: 'Cobros',
     core: 'Operación', structure: 'Estructura', notifications: 'Notificaciones',
@@ -158,7 +158,7 @@ const STRINGS = {
   },
   en: {
     dashboard: 'Dashboard', expedientes: 'Files', pipeline: 'Pipeline', portal: 'Portal',
-    financiero: 'Financial', transfers: 'Transfers', nodos: 'Nodes', clientes: 'Clients',
+    financiero: 'Financial', transfers: 'Transfers', nodos: 'Nodes', clientes: 'Clients', finanzas: 'Finance',
     brands: 'Brands', productos: 'Products', suppliers: 'Suppliers', inventario: 'Inventory',
     templates: 'Templates', history: 'History', collections: 'Collections',
     core: 'Operations', structure: 'Structure', notifications: 'Notifications',

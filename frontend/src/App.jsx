@@ -13,6 +13,8 @@ import ScreenPipeline from "./pages/Pipeline.jsx";
 import ScreenPortal from "./pages/Portal.jsx";
 import PortalDiag from "./pages/PortalDiag.jsx";
 import ScreenPagos from "./pages/Pagos.jsx";
+// Sprint 2026-05-24 · Modulo Finanzas CEO-ONLY (comisiones, margen, devengo).
+import ScreenFinanzas from "./pages/Finanzas.jsx";
 import ScreenInventario from "./pages/Inventario.jsx";
 import InboundReceptionWizard from "./pages/InboundReceptionWizard.jsx";
 // import ScreenWizard from "./pages/Wizard.jsx";  // legacy — ahora /wizard redirige al wizard simplificado
@@ -80,6 +82,10 @@ export default function App() {
         <Route path="/portal" element={<ScreenPortal />} />
         <Route path="/portal/diag" element={<PortalDiag />} />
         <Route path="/financiero" element={<ScreenPagos />} />
+        {/* Sprint 2026-05-24 · /finanzas es CEO-ONLY (admin/superadmin).
+            AdminOnlyRoute bloquea CLIENT_* redirigiendolos a /ai.
+            El backend ademas hace 403 si el rol no es admin (defense in depth). */}
+        <Route path="/finanzas" element={<AdminOnlyRoute><ScreenFinanzas /></AdminOnlyRoute>} />
         <Route path="/inventario" element={<ScreenInventario />} />
         {/* Sprint Inbound Engine v1 (2026-04-29) — wizard full-page */}
         <Route path="/inventario/recepcion" element={<InboundReceptionWizard />} />

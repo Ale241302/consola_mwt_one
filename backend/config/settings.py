@@ -87,6 +87,7 @@ LOCAL_APPS = [
     "apps.roles",           # M3 CORE · RBAC — role_cat + module_cat + role_permission + user_role_bridge
     "apps.tickets",         # Modulo de tickets / soporte interno (LOTE_SM_TICKETS)
     "apps.finance",         # Finance v2.0 · "Registrar Pago" + IA + audit append-only
+    "apps.finanzas",        # Sprint 2026-05-24 · Modulo Finanzas CEO-ONLY (comisiones, margen, devengo)
     # Los siguientes módulos se irán activando cuando cada app tenga su
     # apps.py + views.py correspondiente. Dejarlos comentados evita que
     # Django falle al arrancar por ImportError durante INSTALLED_APPS.

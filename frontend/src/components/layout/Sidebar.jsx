@@ -44,6 +44,7 @@ const KEY_TO_PATH = {
   pipeline:    '/pipeline',
   portal:      '/portal',
   pagos:       '/financiero',
+  finanzas:    '/finanzas',  // Sprint 2026-05-24 · Modulo Finanzas CEO-ONLY
   transfers:   '/transferencias',
   nodos:       '/nodos',
   clientes:    '/clientes',
@@ -77,6 +78,7 @@ function screenFromPath(pathname) {
   if (pathname.startsWith('/pipeline')) return 'pipeline';
   if (pathname.startsWith('/portal')) return 'portal';
   if (pathname.startsWith('/financiero')) return 'pagos';
+  if (pathname.startsWith('/finanzas')) return 'finanzas';  // Sprint 2026-05-24
   if (pathname.startsWith('/transferencias')) return 'transfers';
   if (pathname.startsWith('/nodos')) return 'nodos';
   if (pathname.startsWith('/clientes')) return 'clientes';
@@ -170,6 +172,9 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'productos',      icon: <IconBoxes/>,      label: tr(lang,'productos'),     group: 'commercial' },
     // F6 · 2026-05-20 · Bitácora histórica de cambios de precios (CEO-ONLY).
     { key: 'price-history',  icon: <IconHistory/>,    label: lang === 'en' ? 'Price history' : 'Historial de precios', group: 'commercial' },
+    // Sprint 2026-05-24 · Modulo Finanzas CEO-ONLY (comisiones, margen, devengo).
+    // CLIENT_* no lo ve porque 'finanzas' NO esta en CLIENT_ALLOWED_MODULES.
+    { key: 'finanzas',       icon: <IconDollar/>,     label: lang === 'en' ? 'Finance' : 'Finanzas',                  group: 'commercial' },
     // Comunicaciones
     { key: 'history',        icon: <IconHistory/>,    label: lang === 'en' ? 'Notifications' : 'Notificaciones', group: 'communications' },
     { key: 'collections',    icon: <IconCreditCard/>, label: lang === 'en' ? 'Portfolio'     : 'Cartera',        group: 'communications' },
