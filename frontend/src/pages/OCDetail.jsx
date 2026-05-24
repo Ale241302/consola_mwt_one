@@ -77,8 +77,18 @@ const _DOC_KIND_LABEL_EN = {
   OTRO: 'Other document',
   'ART-04': 'SAP Confirmation',
 };
-function _docKindLabel(kind, lang) {
+function _docKindLabel(kind, lang, audience) {
   const k = String(kind || 'OTRO').toUpperCase();
+  // Sprint 2026-05-24 · Proforma se diferencia por audience.
+  // El backend persiste audience en el Documento (CLIENT / MWT_INTERNAL /
+  // ADMIN_ONLY) — aqui lo mostramos para que el operador distinga las dos
+  // variantes en el listado "Documentos comerciales".
+  if (k === 'PROFORMA') {
+    const a = String(audience || '').toUpperCase();
+    if (a === 'MWT_INTERNAL') return lang === 'en' ? 'MWT Proforma' : 'Proforma MWT';
+    if (a === 'ADMIN_ONLY')   return lang === 'en' ? 'CEO Proforma' : 'Proforma CEO';
+    if (a === 'CLIENT')       return lang === 'en' ? 'Client Proforma' : 'Proforma Cliente';
+  }
   const map = lang === 'en' ? _DOC_KIND_LABEL_EN : _DOC_KIND_LABEL_ES;
   return map[k] || (lang === 'en' ? 'Document' : 'Documento');
 }
@@ -296,7 +306,7 @@ export default function ScreenOCDetail() {
     docs:         apiOcDocs.map(d => ({
       id:     d.id,
       ext:    String(d.file_ext || _extractExt(d.codigo || d.filename) || 'file').toLowerCase(),
-      kind:   _docKindLabel(d.kind, lang),
+      kind:   _docKindLabel(d.kind, lang, d.audience),
       code:   d.codigo || d.filename || '—',
       date:   _formatDocDate(d.fecha || d.created_at),
       size:   _formatBytes(d.file_size_bytes ?? d.file_size ?? 0),
