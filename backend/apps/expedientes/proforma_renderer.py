@@ -212,7 +212,33 @@ def _plazo_label(forma_pago, credit_days) -> str:
 def _build_pronto_pago_html(price_base: Decimal, total_pares: int,
                              credit_days: int) -> str:
     """Construye los 5 cards de pronto pago marcando el activo según
-    credit_days del expediente."""
+    credit_days del expediente.
+
+    Sprint 2026-05-24 · BUG FIX:
+      `price_base` recibido viene calculado a partir de `unit_price_client`
+      de las lineas, que YA tiene el descuento del plazo activo aplicado
+      (por el wizard Paso 3 / pricing matrix). Por lo tanto NO es la base
+      real de 90 dias — es el precio AL PLAZO ACTUAL.
+
+      Antes (bug): aplicar PRONTO_PAGO_TIERS sobre ese precio mostraba al
+      tier de 90d como "base" con valor del precio actual (ej. 8d=$46.43
+      y 90d=$46.43, ambos iguales) y los ahorros mal calculados.
+
+      Fix: normalizar dividiendo por (1 + delta_del_plazo_actual) para
+      recuperar la base 90d real, luego aplicar los tiers desde ahi.
+    """
+    # Detectar delta del plazo actual del expediente
+    current_delta = Decimal("0")
+    for days, delta_pct, _label in PRONTO_PAGO_TIERS:
+        if days == int(credit_days or 0):
+            current_delta = delta_pct
+            break
+
+    # Normalizar a base 90d (denominador != 0 siempre que delta != -1)
+    denom = Decimal("1") + current_delta
+    if current_delta != Decimal("0") and denom != Decimal("0"):
+        price_base = (price_base / denom).quantize(Decimal("0.0001"))
+
     cards = []
     base_total = price_base * Decimal(total_pares or 0)
     for days, delta_pct, label in PRONTO_PAGO_TIERS:
