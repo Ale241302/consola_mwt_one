@@ -642,8 +642,11 @@ export default function CreateExpedienteWizardLite() {
         credit_days:         Number(paymentDays) || 0,
         // Sprint 2026-05-24 · plazos duales (cuando hay operador intermedio).
         // Si no hay operador, ambos == paymentDays (sincronizados via useEffect).
-        credit_days_mwt:     Number(paymentDaysMwt) || Number(paymentDays) || 0,
-        credit_days_cliente: Number(paymentDaysCliente) || Number(paymentDays) || 0,
+        // Sprint 2026-05-24 (fix v2) · si el user no toca el bloque MWT,
+        // paymentDaysMwt queda 0 y antes caia a paymentDays (cliente). Ahora
+        // cae a 90 (base) — coherente con el default del sync hook.
+        credit_days_mwt:     Number(paymentDaysMwt)     > 0 ? Number(paymentDaysMwt)     : (Number(paymentDays) || 90),
+        credit_days_cliente: Number(paymentDaysCliente) > 0 ? Number(paymentDaysCliente) : (Number(paymentDays) || 90),
         // Sprint Commit 9 · forma_pago obligatorio (CREDITO|CONTADO).
         // canAdvance ya bloqueó este submit si el usuario no eligió uno.
         forma_pago:          paymentMethod,
@@ -663,8 +666,16 @@ export default function CreateExpedienteWizardLite() {
           };
           const matrixClient = pricingMatrixRef.current?.results?.[l.sku];
           const matrixMwt    = pricingMatrixRef.current?.operator_results?.[l.sku] || matrixClient;
-          const unitPriceClient = _pickFromMatrix(matrixClient, paymentDaysCliente || paymentDays);
-          const unitPriceMwt    = _pickFromMatrix(matrixMwt,    paymentDaysMwt    || paymentDays);
+          // Sprint 2026-05-24 (fix v2) · fallback al base 90d si el state
+          // esta en 0, NUNCA al paymentDays (que es el plazo del bloque cliente
+          // y NO aplica al precio MWT). Cuando NO hay operador, paymentDays
+          // == paymentDaysMwt == paymentDaysCliente por el sync hook, asi
+          // que este fallback solo se activa en operacion con operador y
+          // user que no tocó el bloque MWT (asume 90d base).
+          const _clientDays = Number(paymentDaysCliente) > 0 ? Number(paymentDaysCliente) : (Number(paymentDays) || 90);
+          const _mwtDays    = Number(paymentDaysMwt)     > 0 ? Number(paymentDaysMwt)     : 90;
+          const unitPriceClient = _pickFromMatrix(matrixClient, _clientDays);
+          const unitPriceMwt    = _pickFromMatrix(matrixMwt,    _mwtDays);
           // unit_price legacy: usamos el cliente como espejo (semantica anterior).
           const unitPriceLegacy = unitPriceClient != null ? unitPriceClient : unitPriceMwt;
           return {
@@ -1719,10 +1730,15 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       // Sin operador intermedio: ambos plazos = paymentDays (el selector unico que el user ve)
       if (Number(paymentDaysMwt) !== Number(paymentDays)) setPaymentDaysMwt(Number(paymentDays) || 0);
       if (Number(paymentDaysCliente) !== Number(paymentDays)) setPaymentDaysCliente(Number(paymentDays) || 0);
-    } else if (Number(paymentDaysMwt) === 0 && Number(paymentDaysCliente) === 0) {
-      // Primera vez con operador: inicializar ambos al paymentDays actual
-      setPaymentDaysMwt(Number(paymentDays) || 0);
-      setPaymentDaysCliente(Number(paymentDays) || 0);
+    } else {
+      // Sprint 2026-05-24 (fix v2) · con operador intermedio, los plazos son
+      // INDEPENDIENTES pero deben tener default razonable (90d = base).
+      // Antes: solo se inicializaba si AMBOS estaban en 0. Si el cliente
+      // clickeaba 8d primero y nunca tocaba el bloque MWT, paymentDaysMwt
+      // quedaba en 0 y el handleCreate guardaba unit_price_mwt con plazo
+      // cliente (bug: $14.91 a 8d en vez de $15.33 a 90d).
+      if (Number(paymentDaysMwt) === 0)     setPaymentDaysMwt(Number(paymentDays) || 90);
+      if (Number(paymentDaysCliente) === 0) setPaymentDaysCliente(Number(paymentDays) || 90);
     }
   }, [paymentDays, _operatedByMwtSync]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Matriz dinámica de plazos por SKU (Sprint 2026-05-22) ─────────────
