@@ -130,9 +130,63 @@ export default function UploadDocumentModal({
     setFile(f);
   };
 
+  // Sprint 2026-05-24 · Auto-Proforma: cuando el usuario elige Proforma
+  // sobre un expediente y es admin/MWT, no pide archivo — el backend
+  // genera el HTML al vuelo (vista cliente SONDEL o vista interna MARLUVAS
+  // segun audience) y lo persiste como documento.
+  const isAutoProforma = (
+    kind === "PROFORMA" && !!expedienteId && !viewerIsClient
+  );
+
   const onSubmit = async () => {
-    if (!file) { setError(lang === "es" ? "Sube un archivo" : "Upload a file"); return; }
     if (!kind) { setError(lang === "es" ? "Elige el tipo" : "Pick a type"); return; }
+    if (!isAutoProforma && !file) {
+      setError(lang === "es" ? "Sube un archivo" : "Upload a file"); return;
+    }
+
+    // === RAMA AUTO-PROFORMA (sin archivo) ===
+    if (isAutoProforma) {
+      setUploading(true); setError(null); setAiPhase(null);
+      try {
+        const targetExpId = expedienteId;
+        const audiencePayload = audienceApplies ? audience : "CLIENT";
+        const body = {
+          audience: audiencePayload,
+          codigo: (codigo || "").trim() || null,
+          payment_days: Number(paymentDays) || null,
+        };
+        const token = getToken();
+        const resp = await fetch(
+          `${API_BASE}/expedientes/${encodeURIComponent(targetExpId)}/generate-proforma/`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(body),
+          }
+        );
+        const text = await resp.text();
+        let data = null;
+        if (text) { try { data = JSON.parse(text); } catch { data = { raw: text }; } }
+        if (!resp.ok) {
+          throw new Error(data?.detail || data?.error || `HTTP ${resp.status}`);
+        }
+        if (typeof onUploaded === "function") onUploaded(data);
+        if (typeof onClose === "function") onClose();
+        return;
+      } catch (e) {
+        setError(
+          (lang === "es" ? "No se pudo generar la proforma" : "Could not generate proforma") +
+          ": " + (e?.message || String(e))
+        );
+        return;
+      } finally {
+        setUploading(false); setAiPhase(null);
+      }
+    }
+
     setUploading(true); setError(null); setAiPhase("uploading");
     try {
       // Sprint 2026-05-10 · si el admin cambió el plazo de pronto pago
@@ -313,6 +367,10 @@ export default function UploadDocumentModal({
     }
     if (aiEligible) {
       return lang === "es" ? "Subir y analizar con IA" : "Upload & analyze with AI";
+    }
+    // Sprint 2026-05-24 · Auto-Proforma: label distinto cuando no se sube archivo
+    if (kind === "PROFORMA" && !!expedienteId && !viewerIsClient) {
+      return lang === "es" ? "Generar proforma" : "Generate proforma";
     }
     return lang === "es" ? "Subir documento" : "Upload document";
   })();
@@ -629,7 +687,8 @@ export default function UploadDocumentModal({
             />
           </label>
 
-          {/* Drop zone */}
+          {/* Drop zone (oculto cuando es Auto-Proforma: el backend genera el HTML) */}
+          {!isAutoProforma && (
           <div>
             <div className="micro" style={{
               fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
@@ -730,6 +789,7 @@ export default function UploadDocumentModal({
               )}
             </div>
           </div>
+          )}
 
           {/* Estado IA en curso */}
           {aiPhase === "analyzing" && (
@@ -787,7 +847,7 @@ export default function UploadDocumentModal({
           </button>
           <button
             type="button"
-            disabled={uploading || !file || !kind}
+            disabled={uploading || !kind || (!isAutoProforma && !file)}
             onClick={onSubmit}
             className="btn btn-accent"
             style={{

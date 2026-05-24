@@ -28,6 +28,7 @@ from rest_framework.response import Response
 
 from .models import Documento, Expediente
 from .proforma_renderer import render_proforma_html
+from .proforma_renderer_marluvas import render_proforma_html_marluvas
 from .serializers import DocumentoSerializer
 from .views import _deny_client_mutation
 
@@ -53,11 +54,32 @@ def generate_proforma(request, expediente_id):
     except (TypeError, ValueError):
         return Response({"detail": "expediente_id inválido"}, status=400)
 
-    # 1) Render
+    # Sprint 2026-05-24 · parametros del body (audience + codigo + payment_days).
+    body = request.data if isinstance(request.data, dict) else {}
+    raw_audience = str(body.get("audience") or "CLIENT").upper().strip()
+    if raw_audience not in ("CLIENT", "MWT_INTERNAL", "ADMIN_ONLY"):
+        raw_audience = "CLIENT"
+    codigo_override = (body.get("codigo") or body.get("numero") or "").strip() or None
+    payment_days_override = body.get("payment_days")
+
+    # 1) Render -- ruteo segun audience
     try:
-        html_str, metadata = render_proforma_html(
-            expediente_id, request_user=request.user,
-        )
+        if raw_audience == "MWT_INTERNAL":
+            html_str, metadata = render_proforma_html_marluvas(
+                expediente_id,
+                request_user=request.user,
+                codigo_override=codigo_override,
+                payment_days_override=payment_days_override,
+            )
+        else:
+            # CLIENT y ADMIN_ONLY usan la vista cliente (SONDEL).
+            # ADMIN_ONLY se diferencia solo en la columna `audience` de la tabla
+            # de documentos (lo ve solo CEO), no en el HTML.
+            html_str, metadata = render_proforma_html(
+                expediente_id,
+                request_user=request.user,
+                codigo_override=codigo_override,
+            )
     except Expediente.DoesNotExist:
         return Response({"detail": "Expediente no encontrado"}, status=404)
     except ValueError as ve:
@@ -136,7 +158,7 @@ def generate_proforma(request, expediente_id):
                         str(doc_uuid),
                         oc_id if oc_id else None,
                         str(expediente_id),
-                        "PROFORMA", "CLIENT", codigo,
+                        "PROFORMA", raw_audience, codigo,
                         "html", file_size, key,
                         author,
                     ],
