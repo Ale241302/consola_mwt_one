@@ -202,9 +202,13 @@ BEGIN
                AND table_name   = tbl
         ) THEN
             EXECUTE format('SELECT COUNT(*) FROM %I.%I', sch, tbl) INTO rows_deleted;
-            EXECUTE format('TRUNCATE TABLE %I.%I RESTART IDENTITY', sch, tbl);
+            -- CASCADE: Postgres maneja el orden de FKs automaticamente. Necesario
+            -- porque pricing.marluvas_price_history_sku tiene FK fisica hacia
+            -- pricing.marluvas_price_history_event (la unica FK fisica en la lista
+            -- de targets; el resto son FKs logicas sin constraint).
+            EXECUTE format('TRUNCATE TABLE %I.%I RESTART IDENTITY CASCADE', sch, tbl);
             total_rows_deleted := total_rows_deleted + rows_deleted;
-            RAISE NOTICE '  TRUNCATE %.%  %s filas', sch, tbl, rows_deleted;
+            RAISE NOTICE '  TRUNCATE %.% : % filas', sch, tbl, rows_deleted;
         ELSE
             RAISE NOTICE '  SKIP     %.%  (tabla no existe en este deploy)', sch, tbl;
         END IF;
