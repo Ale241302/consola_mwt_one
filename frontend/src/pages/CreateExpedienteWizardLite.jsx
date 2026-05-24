@@ -1899,6 +1899,41 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     return totals;
   }, [dynamicTiers, viewerResults, orderLines]);
 
+  // Sprint 2026-05-24 · CADA BLOQUE DE PROPUESTA usa SU PROPIA MATRIZ
+  // (fix: antes los dos bloques mostraban los mismos precios porque ambos
+  // leian viewerResults, que es la perspectiva del que ve la pantalla,
+  // no necesariamente la del cliente final).
+  // - mwtResults    -> precios MWT (operator_results del backend)
+  // - clientResults -> precios cliente final (results del backend)
+  const mwtResults    = pricingMatrix && pricingMatrix.operator_results ? pricingMatrix.operator_results : null;
+  const clientResults = pricingMatrix && pricingMatrix.results ? pricingMatrix.results : null;
+
+  // Helper: dado una matriz (cualquiera), calcular { dias: total } para cada tier.
+  const _buildTierTotals = (matrixSrc) => {
+    if (!dynamicTiers || !matrixSrc) return null;
+    const unitsBySku = {};
+    orderLines.forEach(l => {
+      if (!l || !l.sku) return;
+      const sku = String(l.sku).trim();
+      unitsBySku[sku] = (unitsBySku[sku] || 0) + Number(l.cantidad || 0);
+    });
+    const totals = {};
+    dynamicTiers.forEach(tier => {
+      let total = 0;
+      Object.entries(unitsBySku).forEach(([sku, units]) => {
+        const matrix = matrixSrc[sku];
+        if (!matrix || !matrix.ok || !Array.isArray(matrix.plazos)) return;
+        const plazo = matrix.plazos.find(p => Number(p.dias) === Number(tier.days));
+        if (!plazo) return;
+        total += Number(plazo.price) * Number(units);
+      });
+      totals[tier.days] = total;
+    });
+    return totals;
+  };
+  const tierTotalsMwt     = useMemo(() => _buildTierTotals(mwtResults),    [dynamicTiers, mwtResults, orderLines]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tierTotalsCliente = useMemo(() => _buildTierTotals(clientResults), [dynamicTiers, clientResults, orderLines]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // baseTier del effectiveTiers (plazo base, ej. 90d).
   const _baseTierGlobal = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
   // effectiveBaseTotal: total al plazo base usando snapshot si existe.
@@ -2182,11 +2217,13 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
               const isSelected   = Number(paymentDaysMwt) === tier.days;
               const tierDiscount = tier.pct / 100;
               const baseTier     = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
-              const tierTotal    = tierTotals && tierTotals[tier.days] != null
-                ? tierTotals[tier.days]
+              // Sprint 2026-05-24 · este bloque (MWT) usa tierTotalsMwt (precios operator).
+              const _tt          = tierTotalsMwt || tierTotals;
+              const tierTotal    = _tt && _tt[tier.days] != null
+                ? _tt[tier.days]
                 : totalValue * (1 - tierDiscount);
-              const baseTotal    = tierTotals && baseTier && tierTotals[baseTier.days] != null
-                ? tierTotals[baseTier.days]
+              const baseTotal    = _tt && baseTier && _tt[baseTier.days] != null
+                ? _tt[baseTier.days]
                 : totalValue * (1 - (baseTier ? baseTier.pct/100 : 0));
               const tierUnit     = totalUnits > 0 ? tierTotal / totalUnits : 0;
               const ahorro       = baseTotal - tierTotal;
@@ -2252,14 +2289,14 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
               const isSelected   = Number(paymentDays) === tier.days;
               const tierDiscount = tier.pct / 100;
               const baseTier     = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
-              // Sprint 2026-05-22 · Si hay snapshot del cliente, tierTotal y
-              // baseTotal salen de los precios reales por plazo. Sino,
-              // fallback al cálculo proporcional legacy.
-              const tierTotal    = tierTotals && tierTotals[tier.days] != null
-                ? tierTotals[tier.days]
+              // Sprint 2026-05-24 · este bloque (CLIENTE) usa tierTotalsCliente.
+              // Si NO hay operador intermedio, tierTotalsCliente == tierTotals (mismo cliente).
+              const _tt          = tierTotalsCliente || tierTotals;
+              const tierTotal    = _tt && _tt[tier.days] != null
+                ? _tt[tier.days]
                 : totalValue * (1 - tierDiscount);
-              const baseTotal    = tierTotals && baseTier && tierTotals[baseTier.days] != null
-                ? tierTotals[baseTier.days]
+              const baseTotal    = _tt && baseTier && _tt[baseTier.days] != null
+                ? _tt[baseTier.days]
                 : totalValue * (1 - (baseTier ? baseTier.pct/100 : 0));
               const tierUnit     = totalUnits > 0 ? tierTotal / totalUnits : 0;
               const ahorro       = baseTotal - tierTotal;
