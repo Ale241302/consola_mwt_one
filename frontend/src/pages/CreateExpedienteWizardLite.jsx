@@ -121,6 +121,11 @@ export default function CreateExpedienteWizardLite() {
   const [toast, setToast]               = useState(null);
   // Sprint 2026-05-06 · términos de pago del expediente.
   const [paymentDays,   setPaymentDays]   = useState(0);
+  // Sprint 2026-05-24 · plazos duales cuando hay operador intermedio (MWT vs cliente).
+  // Cuando NO hay operador, ambos se mantienen sincronizados con paymentDays
+  // a traves de useEffect en Step3Resumen. handleCreate envia los dos al backend.
+  const [paymentDaysMwt,     setPaymentDaysMwt]     = useState(0);
+  const [paymentDaysCliente, setPaymentDaysCliente] = useState(0);
   // Sprint Registrar Pago (Fase 3 · Commit 9) · forma_pago obligatorio.
   // Antes default 'CREDITO' silencioso, lo que dejaba expedientes con
   // termos no decididos por el usuario. Ahora arranca '' (Selecciona...)
@@ -635,6 +640,10 @@ export default function CreateExpedienteWizardLite() {
         notas:               null,
         // Sprint 2026-05-06 · términos de pago del expediente.
         credit_days:         Number(paymentDays) || 0,
+        // Sprint 2026-05-24 · plazos duales (cuando hay operador intermedio).
+        // Si no hay operador, ambos == paymentDays (sincronizados via useEffect).
+        credit_days_mwt:     Number(paymentDaysMwt) || Number(paymentDays) || 0,
+        credit_days_cliente: Number(paymentDaysCliente) || Number(paymentDays) || 0,
         // Sprint Commit 9 · forma_pago obligatorio (CREDITO|CONTADO).
         // canAdvance ya bloqueó este submit si el usuario no eligió uno.
         forma_pago:          paymentMethod,
@@ -777,6 +786,10 @@ export default function CreateExpedienteWizardLite() {
               isAdmin={isAdmin}
               paymentDays={paymentDays}
               setPaymentDays={setPaymentDays}
+              paymentDaysMwt={paymentDaysMwt}
+              setPaymentDaysMwt={setPaymentDaysMwt}
+              paymentDaysCliente={paymentDaysCliente}
+              setPaymentDaysCliente={setPaymentDaysCliente}
               paymentMethod={paymentMethod}
               setPaymentMethod={setPaymentMethod}
               pricingMatrixRef={pricingMatrixRef}
@@ -1253,7 +1266,7 @@ function Step1Cliente({ lang, clients, selClient, setSelClient, existingClientUs
 // id=MWT_OPERATING_CLIENT_ID); aqui la fetcheamos via clientesApi.get.
 function MwtOperatorCard({ lang }) {
   const [op, setOp] = React.useState(null);
-  React.useEffect(() => {
+  useEffect(() => {
     let cancel = false;
     clientesApi.get(MWT_OPERATING_CLIENT_ID)
       .then((d) => { if (!cancel) setOp(d || null); })
@@ -1693,7 +1706,21 @@ function Step2Productos({
  * @property {(m:string)=>void} setPaymentMethod
  */
 /** @param {Step3Props} props */
-function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentMethod, setPaymentMethod, pricingMatrixRef, tcUsdBrlRef }) {
+function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentDaysMwt, setPaymentDaysMwt, paymentDaysCliente, setPaymentDaysCliente, paymentMethod, setPaymentMethod, pricingMatrixRef, tcUsdBrlRef }) {
+  // Sprint 2026-05-24 · sincronizar plazos duales con paymentDays cuando NO hay operador intermedio.
+  // Cuando hay operador (MWT distinto del cliente), cada selector es independiente.
+  const _operatedByMwtSync = operatingMode === 'mwt';
+  useEffect(() => {
+    if (!_operatedByMwtSync) {
+      // Sin operador intermedio: ambos plazos = paymentDays (el selector unico que el user ve)
+      if (Number(paymentDaysMwt) !== Number(paymentDays)) setPaymentDaysMwt(Number(paymentDays) || 0);
+      if (Number(paymentDaysCliente) !== Number(paymentDays)) setPaymentDaysCliente(Number(paymentDays) || 0);
+    } else if (Number(paymentDaysMwt) === 0 && Number(paymentDaysCliente) === 0) {
+      // Primera vez con operador: inicializar ambos al paymentDays actual
+      setPaymentDaysMwt(Number(paymentDays) || 0);
+      setPaymentDaysCliente(Number(paymentDays) || 0);
+    }
+  }, [paymentDays, _operatedByMwtSync]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Matriz dinámica de plazos por SKU (Sprint 2026-05-22) ─────────────
   // El backend (`/api/portal/products/sku_pricing_matrix/`) devuelve la
   // fila de plazos del snapshot Marluvas del cliente en la banda vigente
@@ -2134,15 +2161,86 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
           120 días = recargo (solo admin). El usuario hace click en una card
           y se actualiza paymentDays. Visible solo cuando hay líneas con
           totalValue > 0 (necesario para calcular ahorro). */}
-      {client && totalValue > 0 && (
+      {/* Sprint 2026-05-24 · Bloque PROPUESTA MWT (solo ADMIN cuando hay operador intermedio).
+          Se renderiza ANTES del bloque cliente. Estado independiente: paymentDaysMwt. */}
+      {client && totalValue > 0 && operatedByMwt && isAdmin && (
         <div style={{ marginTop: 14 }}>
           <div className="micro" style={{
             color: "#0B1E3A", letterSpacing: 1, fontWeight: 700,
             marginBottom: 10, padding: "0 4px",
           }}>
             {lang === "es"
-              ? "PROPUESTA — DESCUENTO POR PRONTO PAGO"
-              : "PROPOSAL — EARLY-PAYMENT DISCOUNT"}
+              ? "PROPUESTA — MUITO WORK LIMITADA (operador)"
+              : "PROPOSAL — MUITO WORK LIMITADA (operator)"}
+          </div>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${effectiveTiers.length}, minmax(0, 1fr))`,
+            gap: 10,
+          }}>
+            {effectiveTiers.map((tier) => {
+              const isSelected   = Number(paymentDaysMwt) === tier.days;
+              const tierDiscount = tier.pct / 100;
+              const baseTier     = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
+              const tierTotal    = tierTotals && tierTotals[tier.days] != null
+                ? tierTotals[tier.days]
+                : totalValue * (1 - tierDiscount);
+              const baseTotal    = tierTotals && baseTier && tierTotals[baseTier.days] != null
+                ? tierTotals[baseTier.days]
+                : totalValue * (1 - (baseTier ? baseTier.pct/100 : 0));
+              const tierUnit     = totalUnits > 0 ? tierTotal / totalUnits : 0;
+              const ahorro       = baseTotal - tierTotal;
+              const fmt = (v) => `$${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+              return (
+                <button
+                  key={`mwt-${tier.days}`}
+                  type="button"
+                  onClick={() => setPaymentDaysMwt(tier.days)}
+                  style={{
+                    textAlign: "left", padding: "14px 14px", borderRadius: 10,
+                    cursor: "pointer",
+                    background: isSelected ? "rgba(0,178,134,0.08)" : "#fff",
+                    border: isSelected ? "2px solid #00B286" : "1px solid #E1E6ED",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  <div style={{ fontSize: 11, color: "#64748B", letterSpacing: 0.5, fontWeight: 600 }}>
+                    {lang === "es" ? (tier.label_es || `${tier.days} días`) : (tier.label_en || `${tier.days} days`)}
+                  </div>
+                  <div className="tabular-nums" style={{ fontSize: 22, fontWeight: 800, color: tier.isBase ? "#64748B" : "#00B286", marginTop: 4 }}>
+                    {tier.isBase ? (lang === "es" ? "base" : "base") : `${tier.pct < 0 ? "+" : "-"}${Math.abs(tier.pct).toFixed(2)}%`}
+                  </div>
+                  <div className="tabular-nums" style={{ fontSize: 16, fontWeight: 700, color: "#0B1E3A", marginTop: 8 }}>
+                    {fmt(tierUnit)} <span style={{ fontSize: 11, color: "#64748B", fontWeight: 500 }}>{lang === "es" ? "por par" : "per pair"}</span>
+                  </div>
+                  <div className="tabular-nums" style={{ fontSize: 14, color: "#0B1E3A", marginTop: 8, paddingTop: 8, borderTop: "1px solid #E1E6ED" }}>
+                    {fmt(tierTotal)}
+                  </div>
+                  <div className="tabular-nums" style={{ fontSize: 11, color: ahorro > 0 ? "#00B286" : "#64748B", marginTop: 2 }}>
+                    {ahorro > 0 ? `${lang === "es" ? "Ahorro" : "Save"} ${fmt(ahorro)}` : (tier.isBase ? (lang === "es" ? "Plazo actual MWT" : "Current MWT term") : "")}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Bloque PROPUESTA original (cliente final). Cuando hay operador,
+          el label cambia a "CLIENTE: ..." para diferenciarlo del MWT de arriba. */}
+      {client && totalValue > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div className="micro" style={{
+            color: "#0B1E3A", letterSpacing: 1, fontWeight: 700,
+            marginBottom: 10, padding: "0 4px",
+          }}>
+            {operatedByMwt && isAdmin
+              ? (lang === "es"
+                  ? `PROPUESTA — CLIENTE: ${client.razon_social || ''}`
+                  : `PROPOSAL — CLIENT: ${client.razon_social || ''}`)
+              : (lang === "es"
+                  ? "PROPUESTA — DESCUENTO POR PRONTO PAGO"
+                  : "PROPOSAL — EARLY-PAYMENT DISCOUNT")}
           </div>
 
           <div style={{

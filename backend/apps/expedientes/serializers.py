@@ -176,7 +176,7 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             # de credito (CreateExpedienteWizardLite). `payment_days` no
             # existe en el modelo (se usa credit_days).
             "forma_pago",
-            "credit_days", "credit_band",
+            "credit_days", "credit_days_mwt", "credit_days_cliente", "credit_band",
             "is_blocked", "block_reason", "block_cause", "factory_delay",
             "phase_ratio", "phase_signal",
             "is_active", "updated_at",

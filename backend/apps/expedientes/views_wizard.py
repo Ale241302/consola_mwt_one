@@ -373,6 +373,9 @@ def create_from_oc(request):
         price_basis           = request.data.get("price_basis")       # 'FOB' | 'CIF' | ...
         deferred_total_price  = request.data.get("deferred_total_price")
         credit_days           = request.data.get("credit_days")
+        # Sprint 2026-05-24 · plazos duales (operador intermedio)
+        credit_days_mwt       = request.data.get("credit_days_mwt")
+        credit_days_cliente   = request.data.get("credit_days_cliente")
         moneda                = request.data.get("moneda") or (
             (ocr_payload.get("po") or {}).get("currency") or "USD"
         )
@@ -459,7 +462,7 @@ def create_from_oc(request):
                         dispatch_mode, price_basis, credit_clock_start_rule,
                         moneda, total_cost, total_invoiced, total_paid, balance,
                         deferred_total_price,
-                        credit_days, phase_signal,
+                        credit_days, credit_days_mwt, credit_days_cliente, phase_signal,
                         submitted_by_role, submitted_by_user_id,
                         submitted_via_portal, submitted_at,
                         artifacts_done, artifacts_total,
@@ -470,7 +473,7 @@ def create_from_oc(request):
                         %s, %s, %s,
                         %s, %s, 0, 0, %s,
                         %s,
-                        %s, %s,
+                        %s, %s, %s, %s,
                         %s, %s,
                         %s, now(),
                         1, 6,
@@ -484,7 +487,10 @@ def create_from_oc(request):
                     dispatch_mode, price_basis, credit_clock_start_rule,
                     str(moneda), str(total_value), str(total_value),
                     str(deferred_total_price) if deferred_total_price is not None else None,
-                    credit_days, phase_signal,
+                    credit_days,
+                    int(credit_days_mwt) if credit_days_mwt is not None else None,
+                    int(credit_days_cliente) if credit_days_cliente is not None else None,
+                    phase_signal,
                     submitted_role_val,
                     str(submitted_by_id) if submitted_by_id else None,
                     is_client,

@@ -145,6 +145,11 @@ class Expediente(models.Model):
     pg_rejected         = models.DecimalField(max_digits=14, decimal_places=2, default=0)
 
     credit_days         = models.IntegerField(default=0)
+    # Sprint 2026-05-24 · plazos duales para soportar operador intermedio.
+    # credit_days_mwt visible solo a ADMIN/CEO; credit_days_cliente a todos.
+    # Cuando no hay operador intermedio, ambos == credit_days (backfill D6).
+    credit_days_mwt     = models.IntegerField(null=True, blank=True)
+    credit_days_cliente = models.IntegerField(null=True, blank=True)
     credit_band         = models.CharField(max_length=16, null=True, blank=True)
     # Sprint 2026-05-06 · forma de pago del expediente.
     # 'CREDITO' afecta credito_usado del cliente. 'CONTADO' no.
