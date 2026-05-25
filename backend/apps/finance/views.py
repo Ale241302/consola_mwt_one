@@ -103,11 +103,21 @@ class PaymentViewSet(viewsets.ViewSet):
                 oc_id=oc_id,
             )
             if cost_line_ids is not None:
-                # cost_line_ids puede ser lista vacía (no hay costos → 0 pagos)
-                qs = qs.filter(
-                    applications__applicable_type="COSTO",
-                    applications__applicable_id__in=cost_line_ids,
-                ).distinct()
+                # PaymentApplication.payment_id es UUIDField (no FK), así
+                # que NO existe la relación inversa `payment.applications`.
+                # Resolvemos por subquery explícito sobre payment_id para
+                # evitar FieldError → 500.
+                if cost_line_ids:
+                    payment_ids = list(
+                        PaymentApplication.objects.filter(
+                            applicable_type="COSTO",
+                            applicable_id__in=cost_line_ids,
+                        ).values_list("payment_id", flat=True).distinct()
+                    )
+                else:
+                    # scope existe pero sin costos → 0 pagos
+                    payment_ids = []
+                qs = qs.filter(id__in=payment_ids)
             # Si _resolve_cost_line_ids devuelve None fue un error SQL;
             # seguimos sin filtrar cross-transfers (fail-open, logeado).
 
