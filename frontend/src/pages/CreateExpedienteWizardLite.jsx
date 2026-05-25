@@ -2146,22 +2146,54 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
               }}>
                 {lang === "es" ? "Plazo de pago" : "Payment terms"}
               </div>
-              <div className="tabular-nums" style={{
-                fontSize: 16, fontWeight: 700, color: "#0B1E3A", padding: "8px 0",
-              }}>
-                {Number(paymentDays || 0)} {lang === "es" ? "días" : "days"}
-                {Number(client?.dias_credito || 0) > 0
-                 && Number(paymentDays || 0) !== Number(client.dias_credito || 0) && (
-                  <span style={{
-                    marginLeft: 8, fontSize: 11, fontWeight: 500,
-                    color: "var(--text-tertiary)",
-                  }}>
-                    · {lang === "es"
-                        ? `cliente: ${Number(client.dias_credito)}d default`
-                        : `client: ${Number(client.dias_credito)}d default`}
-                  </span>
-                )}
-              </div>
+              {/* Sprint 2026-05-24 (fix v4) · cuando hay operador intermedio
+                  mostrar AMBOS plazos separados (cliente y MWT) para que el
+                  ADMIN vea claramente que son independientes. Cuando no hay
+                  operador, mostrar solo el plazo unico. */}
+              {operatedByMwt ? (
+                <div style={{ padding: "8px 0", display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700, color: "#0B1E3A" }}>
+                    <span style={{
+                      display: "inline-block", minWidth: 60,
+                      fontSize: 10, color: "var(--text-tertiary)", fontWeight: 600,
+                      textTransform: "uppercase", letterSpacing: 0.5,
+                    }}>
+                      {lang === "es" ? "Cliente:" : "Client:"}
+                    </span>{" "}
+                    {Number(paymentDaysCliente || paymentDays || 0)} {lang === "es" ? "días" : "days"}
+                  </div>
+                  <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700, color: "#0B1E3A" }}>
+                    <span style={{
+                      display: "inline-block", minWidth: 60,
+                      fontSize: 10, color: "var(--text-tertiary)", fontWeight: 600,
+                      textTransform: "uppercase", letterSpacing: 0.5,
+                    }}>
+                      {lang === "es" ? "MWT:" : "MWT:"}
+                    </span>{" "}
+                    {Number(paymentDaysMwt || 90)} {lang === "es" ? "días" : "days"}
+                    <span style={{ marginLeft: 6, fontSize: 10, color: "var(--brand-accent, #75CBB3)", fontWeight: 600 }}>
+                      · {lang === "es" ? "independiente" : "independent"}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="tabular-nums" style={{
+                  fontSize: 16, fontWeight: 700, color: "#0B1E3A", padding: "8px 0",
+                }}>
+                  {Number(paymentDays || 0)} {lang === "es" ? "días" : "days"}
+                  {Number(client?.dias_credito || 0) > 0
+                   && Number(paymentDays || 0) !== Number(client.dias_credito || 0) && (
+                    <span style={{
+                      marginLeft: 8, fontSize: 11, fontWeight: 500,
+                      color: "var(--text-tertiary)",
+                    }}>
+                      · {lang === "es"
+                          ? `cliente: ${Number(client.dias_credito)}d default`
+                          : `client: ${Number(client.dias_credito)}d default`}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
             <div>
               <div style={{
