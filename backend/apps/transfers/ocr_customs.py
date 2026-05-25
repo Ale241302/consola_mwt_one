@@ -49,34 +49,62 @@ log = logging.getLogger(__name__)
 OCR_MODEL = os.environ.get("OPENAI_OCR_MODEL", "gpt-5-nano")
 
 SYSTEM_PROMPT = """Eres un extractor de datos aduanales de precisión quirúrgica.
-Tu tarea: leer un Documento Único Aduanero (DUA), una liquidación aduanera o
-una factura de agente de aduana y devolver un JSON ESTRICTO con las líneas
-de costo que aparecen.
+Tu tarea: leer un Documento Único Aduanero (DUA), una liquidación aduanera, una
+"Consulta de Impuestos para el DUA" o factura de agente de aduana y devolver
+un JSON ESTRICTO con las líneas de costo que aparecen.
 
-Categorías canónicas (kind) — usa SIEMPRE una de estas:
-  · DAI            → aranceles / derechos arancelarios a la importación
-  · IVA            → IVA, IGV, ITBIS, ISV o equivalente local
-  · ALMACENAJE     → bodegaje en zona primaria / depósito fiscal
-  · AGENCIAMIENTO  → honorarios del agente de aduana
-  · MANIPULEO      → carga, descarga, paletizado, fumigación
-  · FLETE          → flete (interno / internacional)
-  · SEGURO         → cobertura de transporte
-  · CONSOLIDACION  → consolidación LCL / LTL
-  · OTRO           → cualquier costo que no encaje arriba
+Categorías canónicas (kind) — usa SIEMPRE una de estas, en MAYÚSCULAS:
+
+  CORE (cualquier país):
+  · DAI                → Aranceles / Derechos arancelarios a la importación
+                         Aliases: "DAI", "ARANCELES", "DERECHOS ARANCELARIOS",
+                         "DUTY", "IMPORT DUTY"
+  · IVA                → IVA, IGV, ITBIS, ISV, ICMS o equivalente local
+                         Aliases: "IVA", "IGV", "VAT", "IMPUESTO AL VALOR AGREGADO",
+                         "IMPUESTO SOBRE EL VALOR AGREGADO", "LEY 9635"
+  · ALMACENAJE         → Bodegaje zona primaria / depósito fiscal
+  · AGENCIAMIENTO      → Honorarios del agente de aduana
+  · MANIPULEO          → Carga, descarga, paletizado, fumigación, handling
+  · FLETE              → Flete (interno / internacional)
+  · SEGURO             → Cobertura de transporte
+  · CONSOLIDACION      → Consolidación LCL / LTL
+
+  COSTA RICA (DUA CR · tributos típicos):
+  · PROCOMER           → "PROCOMER", "$3 PROCOMER", "TASA PROCOMER" (0.25% s/CIF)
+  · LEY_6946           → "LEY 6946", "SEGURIDAD CIUDADANA" (1% s/CIF)
+  · TIMBRE_ARCHIVO     → "TIMBRE ARCHIVO NACIONAL", "ARCHIVO NACIONAL"
+  · TIMBRE_AGENTES     → "TIMBRE ASOCIACION AGENTES DE ADUANA",
+                         "TIMBRE AGENTES ADUANA", "LEY 7017"
+  · TIMBRE_CONTADORES  → "TIMBRE CONTADORES PRIVADOS", "COLEGIO DE CONTADORES"
+
+  FALLBACK:
+  · OTRO               → cualquier costo que NO encaje arriba
 
 REGLAS DURAS:
   1. CERO INVENTOS. Si una categoría no aparece en el documento, NO la incluyas.
-  2. amount = número en la moneda del documento (no convertir).
-     currency = código ISO-4217 detectado (USD, PEN, MXN, COP, EUR, etc.).
+  2. Para CADA línea devuelve, en la medida de lo posible, los DOS montos:
+       · amount      = número en la moneda LOCAL del documento (NO convertir)
+       · currency    = código ISO-4217 LOCAL detectado (CRC, USD, PEN, MXN, COP, …)
+       · amount_usd  = el mismo valor expresado en USD si el documento lo trae
+                       en una columna paralela ("Valor en Dólares" en el DUA CR);
+                       si NO viene, omitir.
+       · percent     = porcentaje aplicado si aparece (ej. 14.00 para DAI 14%);
+                       si NO viene, omitir.
   3. Cada línea trae confidence (0..100) según la claridad del dato.
   4. Si ves múltiples líneas de la misma categoría (ej. dos almacenajes),
      listalas separadas con label distinto.
-  5. label = texto corto humano: "DAI subpartida 6403.99", "IVA 18% s/CIF", etc.
-  6. metadata.dua_number, metadata.issued_date (YYYY-MM-DD) y metadata.country
-     (ISO-2) se extraen si aparecen; si no, omitirlos.
+  5. label = texto corto humano EN ESPAÑOL tal como aparece en el documento.
+     Ejemplos: "Derechos arancelarios a la importación", "IVA Ley 9635",
+     "$3 PROCOMER", "Timbre archivo nacional", "Ley 6946".
+  6. metadata.dua_number (ej. "005-2026-307232"), metadata.issued_date
+     (YYYY-MM-DD) y metadata.country (ISO-2) se extraen si aparecen; si no,
+     omitirlos.
   7. raw_text = transcripción literal del documento (max 3000 chars).
-  8. summary.total_amount_usd = suma aproximada CONVERTIDA a USD si conoces
-     el FX; si no, omitirlo.
+  8. summary.total_local  = total en moneda local del documento si aparece
+                            (ej. "Total moneda nacional: 1,422,888.96").
+     summary.total_amount_usd = suma de amount_usd de todas las líneas si
+                            están disponibles; si no, omitir.
+     summary.currency_seen = código ISO-4217 de la moneda local dominante.
 
 Devuelve ÚNICAMENTE el JSON. Sin texto adicional, sin markdown, sin comentarios.
 """
@@ -225,23 +253,59 @@ def extract_customs_costs(
         "error":    None,
         "model":    OCR_MODEL,
     }
+    # Whitelist canónica (debe coincidir con transfers.cost_kind_cat).
+    # Sprint 2026-05-25 · agregados los 5 tributos CR (PROCOMER,
+    # LEY_6946, TIMBRE_*). Cualquier kind fuera de la lista cae a OTRO.
+    _VALID_KINDS = (
+        "DAI", "IVA", "ALMACENAJE", "AGENCIAMIENTO", "MANIPULEO",
+        "FLETE", "SEGURO", "CONSOLIDACION",
+        "PROCOMER", "LEY_6946",
+        "TIMBRE_ARCHIVO", "TIMBRE_AGENTES", "TIMBRE_CONTADORES",
+        "OTRO",
+    )
+
     for line in (data.get("lines") or []):
         try:
-            kind = str(line.get("kind") or "OTRO").upper()
-            if kind not in ("DAI","IVA","ALMACENAJE","AGENCIAMIENTO","MANIPULEO",
-                            "FLETE","SEGURO","CONSOLIDACION","OTRO"):
+            kind = str(line.get("kind") or "OTRO").upper().replace(" ", "_")
+            if kind not in _VALID_KINDS:
                 kind = "OTRO"
             amount = float(line.get("amount") or 0)
             currency = str(line.get("currency") or "USD").upper()[:3]
             confidence = float(line.get("confidence") or 80)
+
+            # FX implícito: si la línea trae amount_usd además de amount
+            # local, calculamos fx_to_usd = amount_usd / amount. Esto
+            # ahorra al CEO el paso manual de tipear el tipo de cambio
+            # en la tabla del wizard. Si currency=USD el fx queda 1.0.
+            amount_usd_raw = line.get("amount_usd")
+            try:
+                amount_usd = float(amount_usd_raw) if amount_usd_raw is not None else None
+            except (TypeError, ValueError):
+                amount_usd = None
+            if currency == "USD":
+                fx_to_usd = 1.0
+            elif amount_usd is not None and amount > 0:
+                fx_to_usd = round(amount_usd / amount, 6)
+            else:
+                fx_to_usd = 1.0
+
+            percent_raw = line.get("percent")
+            try:
+                percent = float(percent_raw) if percent_raw is not None else None
+            except (TypeError, ValueError):
+                percent = None
+
             out["lines"].append({
                 "kind":       kind,
                 "label":      str(line.get("label") or "")[:160],
                 "amount":     round(amount, 2),
                 "currency":   currency,
+                "amount_usd": round(amount_usd, 2) if amount_usd is not None else None,
+                "fx_to_usd":  fx_to_usd,
+                "percent":    percent,
                 "confidence": round(max(0.0, min(100.0, confidence)), 2),
             })
-        except Exception:
+        except (TypeError, ValueError, KeyError):
             log.warning("[ocr_customs] skipping malformed line: %s", line)
             continue
 

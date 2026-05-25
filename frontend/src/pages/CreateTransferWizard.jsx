@@ -300,7 +300,11 @@ export default function CreateTransferWizard() {
           label:          l.label || labelForKind(costKinds, l.kind),
           amount:         Number(l.amount || 0),
           currency:       l.currency || "USD",
-          fx_to_usd:      1,
+          // Sprint 2026-05-25 · ocr_customs ahora calcula fx_to_usd
+          // implícito (amount_usd / amount). Si viene, lo usamos; si
+          // no, fallback a 1 (CRC=1 sería incorrecto pero el CEO lo
+          // puede ajustar manualmente en la tabla).
+          fx_to_usd:      Number(l.fx_to_usd) > 0 ? Number(l.fx_to_usd) : 1,
           source:         "OCR_DUA",
           ocr_confidence: Number(l.confidence || 0),
         }));
@@ -608,6 +612,10 @@ export default function CreateTransferWizard() {
             // Step2Costs recibe `transferItems` para que cada cost-line
             // pueda restringir su aplicación a un subconjunto de los
             // expedientes / líneas ya elegidos en el paso 2.
+            // Sprint 2026-05-25 · pasamos también el dropzone DUA al paso 3
+            // (antes solo estaba en paso 1) para que el operador pueda
+            // subir la liquidación aquí mismo y dejar que la IA llene la
+            // tabla automáticamente.
             <Step2Costs
               lang={lang}
               costKinds={costKinds}
@@ -618,6 +626,11 @@ export default function CreateTransferWizard() {
               totals={totals}
               currencies={currencies}
               transferItems={transferItems}
+              legalContext={legalContext}
+              docFile={docFile}
+              onDocFile={handleDoc}
+              ocrLoading={ocrLoading}
+              ocrResult={ocrResult}
             />
           )}
 
@@ -1388,7 +1401,20 @@ function Label({ children }) {
 // El picker (CostScopeModal) lee transferItems del paso 2 (Productos)
 // para que el operador no tenga que tipear UUIDs.
 // ═════════════════════════════════════════════════════════════
-function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, removeCostLine, totals, currencies = [], transferItems = [] }) {
+function Step2Costs({
+  lang, costKinds, costLines,
+  addCostLine, updateCostLine, removeCostLine,
+  totals, currencies = [], transferItems = [],
+  // Sprint 2026-05-25 · uploader DUA en paso 3
+  legalContext = "INTERNAL",
+  docFile = null,
+  onDocFile = () => {},
+  ocrLoading = false,
+  ocrResult = null,
+}) {
+  const showOcrUploader = legalContext === "NATIONALIZATION" || legalContext === "EXPORT";
+  const ocrInputRef = React.useRef(null);
+  const [dragOver, setDragOver] = useState(false);
   // Sprint 2026-05-13 · Fase 9.1 — el flow ahora es:
   //   click "+ Agregar costo" → abre scope modal con creatingNew=true
   //   → al guardar, se crea la fila ya con el scope persistido.
@@ -1423,11 +1449,114 @@ function Step2Costs({ lang, costKinds, costLines, addCostLine, updateCostLine, r
         <h2 className="heading-md">
           {lang === "es" ? "Paso 3 · Costos operativos" : "Step 3 · Operating costs"}
         </h2>
-        <button className="btn btn-ghost btn-sm"
-                onClick={() => setCreatingNewScope(true)}>
-          <IconPlus size={11}/> {lang === "es" ? "Agregar costo" : "Add cost"}
-        </button>
+        <div style={{display:"flex", gap:8, alignItems:"center"}}>
+          {showOcrUploader && (
+            <>
+              <input
+                ref={ocrInputRef}
+                type="file"
+                accept=".pdf,image/*"
+                style={{display:"none"}}
+                onChange={(e) => {
+                  const f = e.target.files && e.target.files[0];
+                  if (f) onDocFile(f);
+                  if (ocrInputRef.current) ocrInputRef.current.value = "";
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => ocrInputRef.current && ocrInputRef.current.click()}
+                disabled={ocrLoading}
+                title={lang==="es"
+                  ? "Sube el DUA / liquidación y la IA llenará la tabla automáticamente"
+                  : "Upload the DUA / liquidation and AI will fill the table automatically"}>
+                {ocrLoading
+                  ? (lang === "es" ? "Analizando…" : "Analyzing…")
+                  : (lang === "es" ? "Subir documento (IA)" : "Upload doc (AI)")}
+              </button>
+            </>
+          )}
+          <button className="btn btn-ghost btn-sm"
+                  onClick={() => setCreatingNewScope(true)}>
+            <IconPlus size={11}/> {lang === "es" ? "Agregar costo" : "Add cost"}
+          </button>
+        </div>
       </div>
+
+      {/* Dropzone DUA · solo visible cuando el motivo legal requiere
+          aduana (NATIONALIZATION / EXPORT). El paso 1 también lo
+          ofrece, pero replicarlo aquí ahorra ir y venir cuando el
+          operador olvidó adjuntar el documento al principio. */}
+      {showOcrUploader && (
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            const f = e.dataTransfer.files && e.dataTransfer.files[0];
+            if (f) onDocFile(f);
+          }}
+          onClick={() => ocrInputRef.current && ocrInputRef.current.click()}
+          role="button"
+          tabIndex={0}
+          style={{
+            border: `2px dashed ${dragOver ? "var(--brand-primary)" : "var(--border-subtle, var(--divider))"}`,
+            borderRadius: 10,
+            padding: "16px 14px",
+            marginBottom: 14,
+            background: dragOver
+              ? "color-mix(in oklab, var(--brand-primary), transparent 92%)"
+              : "var(--surface-alt, var(--bg-alt))",
+            cursor: ocrLoading ? "wait" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            transition: "background 0.15s, border-color 0.15s",
+          }}>
+          <div style={{display:"flex", alignItems:"center", gap:12}}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 8,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              background:"color-mix(in oklab, var(--brand-primary), transparent 88%)",
+              color:"var(--brand-primary)",
+              fontSize: 18, fontWeight: 700,
+            }}>
+              IA
+            </div>
+            <div style={{display:"flex", flexDirection:"column"}}>
+              <div className="heading-sm">
+                {docFile
+                  ? docFile.name
+                  : (lang === "es"
+                      ? "Arrastra el DUA, liquidación o factura aduanal aquí"
+                      : "Drag the DUA, liquidation or customs invoice here")}
+              </div>
+              <div className="caption" style={{color:"var(--text-tertiary)"}}>
+                {ocrLoading
+                  ? (lang === "es" ? "Analizando con IA…" : "Analyzing with AI…")
+                  : ocrResult && Array.isArray(ocrResult.lines) && ocrResult.lines.length > 0
+                    ? (lang === "es"
+                        ? `${ocrResult.lines.length} costo(s) detectado(s) por la IA · revísalos abajo`
+                        : `${ocrResult.lines.length} cost(s) detected by AI · review below`)
+                    : (lang === "es"
+                        ? "PDF, JPG o PNG · máx 25 MB · la IA detectará DAI, IVA, PROCOMER, timbres y Ley 6946"
+                        : "PDF, JPG or PNG · max 25 MB · AI will detect DAI, IVA, PROCOMER, stamps and Law 6946")}
+              </div>
+            </div>
+          </div>
+          <span className="caption" style={{
+            padding:"4px 10px", borderRadius: 6, fontWeight: 600,
+            background:"var(--surface-raised, var(--surface))",
+            color:"var(--text-secondary)",
+            whiteSpace:"nowrap",
+          }}>
+            {lang === "es" ? "Seleccionar archivo" : "Select file"}
+          </span>
+        </div>
+      )}
 
       {costLines.length === 0 ? (
         <div className="empty" style={{ padding: 30 }}>
@@ -2612,11 +2741,4 @@ function SummaryBox({ title, children }) {
   );
 }
 
-function Row({ k, v }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px dashed #F1F4F9" }}>
-      <span className="caption" style={{ color: "var(--text-tertiary)" }}>{k}</span>
-      <span style={{ color: "#0B1E3A" }}>{v}</span>
-    </div>
-  );
-}
+function

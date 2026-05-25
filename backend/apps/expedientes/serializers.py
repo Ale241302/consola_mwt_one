@@ -110,9 +110,36 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
 
     # ── ocs[] ──────────────────────────────────────────────────
     def get_oc_codigos(self, obj):
-        """OCs del cliente. Visible a todos los roles."""
+        """OCs del cliente. Visible a todos los roles.
+
+        Política (Sprint 2026-05-25): el código del documento PDF que
+        el cliente subió (kind ∈ {OC, OC Cliente}) es la fuente de
+        verdad y va PRIMERO en la lista — el frontend muestra el [0].
+        El código auto-generado por el wizard (tabla commercial.oc,
+        ej. 'PO-2026-00004') queda como fallback al final para
+        reconciliación interna, no como label primario.
+        """
         try:
-            # OC principal (FK directa al expediente) — codigo de la tabla oc
+            # OCs subidas como documentos — preferimos audience=CLIENT,
+            # caemos a ADMIN_ONLY si no hay versión cliente. Aceptamos
+            # cualquier variante de kind que empiece por 'OC' para
+            # tolerar 'OC', 'OC Cliente', 'OC_CLIENTE', etc.
+            doc_qs = (
+                Documento.objects
+                .filter(expediente_id=obj.id, is_active=True)
+                .filter(kind__iregex=r"^OC(\s|_|$)")
+                .exclude(codigo__isnull=True)
+                .exclude(codigo__exact="")
+                .order_by(
+                    # CLIENT primero, luego ADMIN_ONLY, luego otros
+                    "audience", "-created_at",
+                )
+                .values_list("codigo", flat=True)
+            )
+            doc_codes = list(doc_qs)
+
+            # OC principal (FK directa al expediente) — codigo auto-
+            # generado por el wizard. Solo como fallback.
             principal_codes = list(
                 Oc.objects.filter(id=obj.oc_id, is_active=True)
                 .exclude(codigo__isnull=True)
@@ -120,19 +147,8 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
                 .values_list("codigo", flat=True)
             ) if obj.oc_id else []
 
-            # OCs subidas como documentos (kind='OC Cliente')
-            doc_codes = list(
-                Documento.objects
-                .filter(expediente_id=obj.id, kind__iexact="OC Cliente",
-                        is_active=True)
-                .exclude(codigo__isnull=True)
-                .exclude(codigo__exact="")
-                .order_by("-created_at")
-                .values_list("codigo", flat=True)
-            )
-
             seen, out = set(), []
-            for c in (principal_codes + doc_codes):
+            for c in (doc_codes + principal_codes):
                 if c and c not in seen:
                     out.append(c); seen.add(c)
             return out
