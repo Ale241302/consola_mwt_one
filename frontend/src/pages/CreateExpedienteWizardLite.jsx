@@ -645,7 +645,8 @@ export default function CreateExpedienteWizardLite() {
         // Sprint 2026-05-24 (fix v2) · si el user no toca el bloque MWT,
         // paymentDaysMwt queda 0 y antes caia a paymentDays (cliente). Ahora
         // cae a 90 (base) — coherente con el default del sync hook.
-        credit_days_mwt:     Number(paymentDaysMwt)     > 0 ? Number(paymentDaysMwt)     : (Number(paymentDays) || 90),
+        // Sprint 2026-05-24 (fix v3) · credit_days_mwt nunca cae a paymentDays.
+        credit_days_mwt:     Number(paymentDaysMwt)     > 0 ? Number(paymentDaysMwt)     : 90,
         credit_days_cliente: Number(paymentDaysCliente) > 0 ? Number(paymentDaysCliente) : (Number(paymentDays) || 90),
         // Sprint Commit 9 · forma_pago obligatorio (CREDITO|CONTADO).
         // canAdvance ya bloqueó este submit si el usuario no eligió uno.
@@ -672,6 +673,8 @@ export default function CreateExpedienteWizardLite() {
           // == paymentDaysMwt == paymentDaysCliente por el sync hook, asi
           // que este fallback solo se activa en operacion con operador y
           // user que no tocó el bloque MWT (asume 90d base).
+          // Sprint 2026-05-24 (fix v3) · _mwtDays nunca cae a paymentDays
+          // (que es el plazo del bloque cliente). Default base 90d.
           const _clientDays = Number(paymentDaysCliente) > 0 ? Number(paymentDaysCliente) : (Number(paymentDays) || 90);
           const _mwtDays    = Number(paymentDaysMwt)     > 0 ? Number(paymentDaysMwt)     : 90;
           const unitPriceClient = _pickFromMatrix(matrixClient, _clientDays);
@@ -1731,13 +1734,18 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       if (Number(paymentDaysMwt) !== Number(paymentDays)) setPaymentDaysMwt(Number(paymentDays) || 0);
       if (Number(paymentDaysCliente) !== Number(paymentDays)) setPaymentDaysCliente(Number(paymentDays) || 0);
     } else {
-      // Sprint 2026-05-24 (fix v2) · con operador intermedio, los plazos son
-      // INDEPENDIENTES pero deben tener default razonable (90d = base).
-      // Antes: solo se inicializaba si AMBOS estaban en 0. Si el cliente
-      // clickeaba 8d primero y nunca tocaba el bloque MWT, paymentDaysMwt
-      // quedaba en 0 y el handleCreate guardaba unit_price_mwt con plazo
-      // cliente (bug: $14.91 a 8d en vez de $15.33 a 90d).
-      if (Number(paymentDaysMwt) === 0)     setPaymentDaysMwt(Number(paymentDays) || 90);
+      // Sprint 2026-05-24 (fix v3) · con operador intermedio los plazos son
+      // INDEPENDIENTES. Race condition descubierta: si el usuario clickea
+      // un plazo del bloque cliente ANTES de que el sync hook dispare,
+      // paymentDays cambia a (por ej.) 8 ANTES de que paymentDaysMwt
+      // se inicialice. Cuando el sync dispara despues, ve
+      // paymentDaysMwt===0 y lo seteaba a (paymentDays || 90) = 8.
+      // Resultado: ambos plazos terminaban en 8, y handleCreate guardaba
+      // unit_price_mwt al precio 8d MWT en vez de al base 90d MWT.
+      //
+      // Fix: paymentDaysMwt SIEMPRE inicializa a 90 (base), NUNCA copia
+      // de paymentDays (que es el bloque cliente).
+      if (Number(paymentDaysMwt) === 0)     setPaymentDaysMwt(90);
       if (Number(paymentDaysCliente) === 0) setPaymentDaysCliente(Number(paymentDays) || 90);
     }
   }, [paymentDays, _operatedByMwtSync]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2313,7 +2321,10 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
             gap: 10,
           }}>
             {effectiveTiers.map((tier) => {
-              const isSelected   = Number(paymentDays) === tier.days;
+              // Sprint 2026-05-24 (fix v3) · usar paymentDaysCliente para
+              // isSelected en el bloque cliente (antes usaba paymentDays legacy
+              // que podia estar desincronizado).
+              const isSelected   = Number(paymentDaysCliente || paymentDays) === tier.days;
               const tierDiscount = tier.pct / 100;
               const baseTier     = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
               // Sprint 2026-05-24 · este bloque (CLIENTE) usa tierTotalsCliente.
