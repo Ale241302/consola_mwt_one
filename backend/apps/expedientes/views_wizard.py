@@ -62,6 +62,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.ocr.services import parse_oc_auto
+# Sprint 2026-05-24 (fix v4 backend) · defense in depth: re-derivamos
+# unit_price_mwt y unit_price_client del motor de pricing canonico
+# (apps.commercial.services), ignorando lo que mande el frontend.
+# Esto blinda el sistema contra cualquier bug del wizard (race conditions,
+# bundles cacheados, etc.) — los precios siempre coinciden con la matriz.
+from apps.commercial.services import get_client_price_matrix
+from apps.core.constants import MWT_OPERATING_CLIENT_ID
 
 log = logging.getLogger(__name__)
 
@@ -495,6 +502,97 @@ def create_from_oc(request):
                     str(submitted_by_id) if submitted_by_id else None,
                     is_client,
                 ])
+
+                # 7.3 — Re-derivar precios desde el motor de pricing (defense in depth)
+                # Sprint 2026-05-24 (fix v4) · NO confiamos en el unit_price_mwt
+                # / unit_price_client que mande el frontend. Para cada linea
+                # llamamos a get_client_price_matrix() del motor canonico y
+                # usamos el precio del plazo correspondiente (credit_days_mwt
+                # para MWT, credit_days_cliente para cliente).
+                #
+                # Si la matriz no encuentra precio para algun sku, caemos al
+                # valor que vino del frontend como fallback. Asi el wizard
+                # sigue funcionando aunque el motor tenga gap.
+                _tc_payload = request.data.get("tc_usd_brl")
+                try:
+                    _tc_val = float(_tc_payload) if _tc_payload else None
+                except (TypeError, ValueError):
+                    _tc_val = None
+                _cd_mwt    = int(credit_days_mwt    or credit_days or 90)
+                _cd_client = int(credit_days_cliente or credit_days or 90)
+                _is_mwt_op = (
+                    operating_company_id_val is not None and
+                    str(operating_company_id_val).lower() == str(MWT_OPERATING_CLIENT_ID).lower()
+                ) if 'operating_company_id_val' in dir() else True  # default: asumir MWT operador
+
+                def _pick_plazo_price(matrix, days):
+                    if not matrix or not matrix.get("ok"):
+                        return None
+                    for p in (matrix.get("plazos") or []):
+                        if int(p.get("dias") or 0) == int(days):
+                            try:
+                                v = Decimal(str(p.get("price") or 0))
+                                return v if v > 0 else None
+                            except (TypeError, ValueError, InvalidOperation):
+                                return None
+                    return None
+
+                # Para cada SKU, hacemos UN solo lookup a la matriz y cacheamos
+                # (matrix_client por sku, matrix_mwt por sku) para evitar N+1.
+                _sku_cache_client = {}
+                _sku_cache_mwt    = {}
+                for ln in ocr_lines:
+                    _sku = (ln.get("sku") or "").strip()
+                    _pid = ln.get("producto_id")
+                    if not (_sku and _pid):
+                        continue
+                    # Brand_id del producto (necesario para el motor)
+                    _brand_id = None
+                    try:
+                        with connection.cursor() as _c:
+                            _c.execute(
+                                "SELECT brand_id FROM productos.producto WHERE id = %s::uuid",
+                                [str(_pid)],
+                            )
+                            _row = _c.fetchone()
+                            _brand_id = _row[0] if _row else None
+                    except Exception as _e:
+                        log.warning("[wizard.create] brand_id lookup falló sku=%s: %s", _sku, _e)
+                    if not _brand_id:
+                        continue
+
+                    # Re-derivar precio CLIENTE (al credit_days_cliente)
+                    if _sku not in _sku_cache_client:
+                        try:
+                            _sku_cache_client[_sku] = get_client_price_matrix(
+                                client_id=client_id, brand_id=_brand_id,
+                                product_sku=_sku, tc_usd_brl=_tc_val,
+                            )
+                        except Exception as _e:
+                            log.warning("[wizard.create] matrix cliente falló sku=%s: %s", _sku, _e)
+                            _sku_cache_client[_sku] = None
+                    _price_client = _pick_plazo_price(_sku_cache_client.get(_sku), _cd_client)
+                    if _price_client is not None:
+                        ln["unit_price_client"] = str(_price_client)
+
+                    # Re-derivar precio MWT (al credit_days_mwt) solo si hay operador intermedio
+                    if _is_mwt_op:
+                        if _sku not in _sku_cache_mwt:
+                            try:
+                                _sku_cache_mwt[_sku] = get_client_price_matrix(
+                                    client_id=MWT_OPERATING_CLIENT_ID, brand_id=_brand_id,
+                                    product_sku=_sku, tc_usd_brl=_tc_val,
+                                )
+                            except Exception as _e:
+                                log.warning("[wizard.create] matrix MWT falló sku=%s: %s", _sku, _e)
+                                _sku_cache_mwt[_sku] = None
+                        _price_mwt = _pick_plazo_price(_sku_cache_mwt.get(_sku), _cd_mwt)
+                        if _price_mwt is not None:
+                            ln["unit_price_mwt"] = str(_price_mwt)
+                    else:
+                        # Sin operador intermedio: unit_price_mwt = unit_price_client
+                        if _price_client is not None:
+                            ln["unit_price_mwt"] = str(_price_client)
 
                 # 7.3 — Insertar Líneas (expedientes.linea)
                 # Sprint 2026-05-24 · persistir unit_price_mwt y unit_price_client
