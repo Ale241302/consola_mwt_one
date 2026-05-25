@@ -102,24 +102,33 @@ class PaymentViewSet(viewsets.ViewSet):
                 nodo_id=nodo_id,
                 oc_id=oc_id,
             )
-            if cost_line_ids is not None:
-                # PaymentApplication.payment_id es UUIDField (no FK), así
-                # que NO existe la relación inversa `payment.applications`.
-                # Resolvemos por subquery explícito sobre payment_id para
-                # evitar FieldError → 500.
-                if cost_line_ids:
-                    payment_ids = list(
-                        PaymentApplication.objects.filter(
-                            applicable_type="COSTO",
-                            applicable_id__in=cost_line_ids,
-                        ).values_list("payment_id", flat=True).distinct()
-                    )
-                else:
-                    # scope existe pero sin costos → 0 pagos
-                    payment_ids = []
-                qs = qs.filter(id__in=payment_ids)
-            # Si _resolve_cost_line_ids devuelve None fue un error SQL;
-            # seguimos sin filtrar cross-transfers (fail-open, logeado).
+            # _resolve_cost_line_ids ahora devuelve [] en lugar de None
+            # en todos los casos de error (UUID inválido, error SQL).
+            # PaymentApplication.payment_id es UUIDField (no FK), así
+            # que NO existe la relación inversa `payment.applications`.
+            # Resolvemos por subquery explícito sobre payment_id para
+            # evitar FieldError → 500.
+            if cost_line_ids:
+                payment_ids = list(
+                    PaymentApplication.objects.filter(
+                        applicable_type="COSTO",
+                        applicable_id__in=cost_line_ids,
+                    ).values_list("payment_id", flat=True).distinct()
+                )
+            else:
+                # scope existe pero sin costos → 0 pagos
+                payment_ids = []
+            qs = qs.filter(id__in=payment_ids)
+
+        # Sprint 2026-05-25 · filtro por tipo de aplicación (COSTO/PRODUCTO/…)
+        payment_target_type = request.query_params.get("payment_target_type")
+        if payment_target_type:
+            payment_ids_by_type = list(
+                PaymentApplication.objects.filter(
+                    applicable_type=payment_target_type.upper(),
+                ).values_list("payment_id", flat=True).distinct()
+            )
+            qs = qs.filter(id__in=payment_ids_by_type)
 
         qs = qs.order_by("-created_at")[:200]
         return Response(PaymentDetailSerializer(qs, many=True).data)
@@ -222,18 +231,18 @@ class PaymentViewSet(viewsets.ViewSet):
         oc_id            = request.query_params.get("oc_id")
 
         # Para PROFORMA/FACTURA expediente sigue siendo obligatorio.
-        # Para COSTO se acepta cualquiera de los 4 filtros.
+        # Para COSTO/PRODUCTO se acepta cualquiera de los 4 filtros.
         has_scope = bool(exp_id or nodo_id or transferencia_id or oc_id)
         if kind in ("PROFORMA", "FACTURA") and not exp_id:
             return Response({"detail": "expediente requerido para PROFORMA/FACTURA"}, status=400)
-        if kind == "COSTO" and not has_scope:
+        if kind in ("COSTO", "PRODUCTO") and not has_scope:
             return Response(
                 {"detail": "Se requiere al menos uno de: expediente, nodo_id, transferencia_id, oc_id"},
                 status=400,
             )
-        if kind not in ("PROFORMA", "FACTURA", "COSTO"):
+        if kind not in ("PROFORMA", "FACTURA", "COSTO", "PRODUCTO"):
             return Response(
-                {"detail": f"type inválido: {kind!r} (PROFORMA/FACTURA/COSTO)"},
+                {"detail": f"type inválido: {kind!r} (PROFORMA/FACTURA/COSTO/PRODUCTO)"},
                 status=400,
             )
 
@@ -540,6 +549,34 @@ class PaymentViewSet(viewsets.ViewSet):
                     },
                 })
 
+        # ── PRODUCTO ──────────────────────────────────────────────────
+        # Sprint 2026-05-25: multi-select de productos con qty pagada y saldo.
+        # applicable_id = expedientes.linea.id (donde se trackea el pago).
+        # Soporta 4 scopes: expediente, nodo_id, transferencia_id, oc_id.
+        # Devuelve solo items con saldo_qty > 0 salvo ?include_paid=true.
+        elif kind == "PRODUCTO":
+            include_paid = (
+                request.query_params.get("include_paid", "").lower()
+                in ("1", "true", "yes")
+            )
+            from .services import _is_operated_by_mwt as _mwt_check
+
+            try:
+                items = _build_producto_applicables(
+                    connection=connection,
+                    exp_id=exp_id,
+                    nodo_id=nodo_id,
+                    transferencia_id=transferencia_id,
+                    oc_id=oc_id,
+                    include_paid=include_paid,
+                    is_operated_by_mwt_fn=_mwt_check,
+                )
+            except Exception as exc:
+                log.exception("applicables(PRODUCTO) falló: %s", exc)
+                return Response({"applicables": [], "error_detail": str(exc)})
+
+            return Response({"applicables": items})
+
         return Response(items)
 
     # ── Re-analyze (Fase 3) ───────────────────────────────
@@ -661,8 +698,21 @@ def _resolve_cost_line_ids(connection, *, transferencia_id, nodo_id, oc_id):
     Devuelve una lista (posiblemente vacía) de UUIDs de transfers.cost_line
     que pertenecen al scope pedido (nodo/transferencia/OC).
 
-    Retorna None si hubo un error SQL (fail-open para el caller).
+    Retorna [] (lista vacía) si el UUID es inválido o hay un error SQL,
+    para que el caller nunca reciba None y nunca levante una excepción 500.
+    Loguea el error internamente con log.exception.
     """
+    # Validación defensiva de UUIDs antes de tocar la DB.
+    import uuid as _uuid_mod
+    for label, val in (("transferencia_id", transferencia_id),
+                        ("nodo_id", nodo_id), ("oc_id", oc_id)):
+        if val is not None:
+            try:
+                _uuid_mod.UUID(str(val))
+            except (ValueError, AttributeError, TypeError):
+                log.warning("_resolve_cost_line_ids: %s UUID inválido=%r → []", label, val)
+                return []
+
     cte, params = _build_transfers_scope_cte(
         nodo_id=nodo_id,
         transferencia_id=transferencia_id,
@@ -681,7 +731,310 @@ def _resolve_cost_line_ids(connection, *, transferencia_id, nodo_id, oc_id):
             return [row[0] for row in cur.fetchall()]
     except Exception as exc:
         log.exception("_resolve_cost_line_ids SQL failed: %s", exc)
-        return None
+        return []
+
+
+# ════════════════════════════════════════════════════════════
+# Helper · construir lista de applicables tipo PRODUCTO
+# ════════════════════════════════════════════════════════════
+def _build_producto_applicables(
+    *,
+    connection,
+    exp_id,
+    nodo_id,
+    transferencia_id,
+    oc_id,
+    include_paid: bool,
+    is_operated_by_mwt_fn,
+) -> list:
+    """
+    Construye la lista de items de tipo PRODUCTO para el endpoint
+    GET /api/finance/payments/applicables/?type=PRODUCTO.
+
+    Cada item representa una línea de expedientes.linea.
+    applicable_id = expedientes.linea.id (donde se trackea el pago).
+
+    Scopes soportados (mutuamente excluyentes, primer match gana):
+      1. nodo_id         → via inventario.expediente_nodo_assignment
+      2. transferencia_id → via inventario.expediente_nodo_assignment
+      3. oc_id           → expedientes.linea JOIN expedientes.expediente
+      4. exp_id          → expedientes.linea directamente
+
+    Devuelve [] (lista vacía) ante cualquier error SQL (fail-soft).
+    """
+    from decimal import Decimal, InvalidOperation
+
+    items: list = []
+
+    # ── Determinar qué SQL usar según el scope ────────────────────
+    #
+    # Para scopes nodo_id y transferencia_id: usamos
+    # inventario.expediente_nodo_assignment para obtener
+    # (expediente_id, producto_id, talla, nodo_id, transferencia_id,
+    #  qty_asignada), luego JOINamos expedientes.linea para obtener
+    # el applicable_id canónico (linea.id) y los precios.
+    #
+    # Para scopes oc_id y exp_id: leemos expedientes.linea directamente.
+
+    if nodo_id or transferencia_id:
+        # Validación previa de UUID
+        import uuid as _uuid_mod
+        _scope_label = "nodo_id" if nodo_id else "transferencia_id"
+        _scope_val   = nodo_id   if nodo_id else transferencia_id
+        try:
+            _uuid_mod.UUID(str(_scope_val))
+        except (ValueError, AttributeError, TypeError):
+            log.warning(
+                "_build_producto_applicables: %s UUID inválido=%r → []",
+                _scope_label, _scope_val,
+            )
+            return []
+
+        # Filtro de assignment
+        if nodo_id:
+            assign_filter_sql  = "a.nodo_id = %s::uuid"
+            assign_filter_param = str(nodo_id)
+        else:
+            assign_filter_sql  = "a.transferencia_id = %s::uuid"
+            assign_filter_param = str(transferencia_id)
+
+        sql = f"""
+        WITH agg AS (
+            -- Suma qty_asignada por (expediente_id, producto_id, talla, nodo_id, transferencia_id).
+            -- Varios registros de assignment (append-only) se colapsan aquí.
+            SELECT
+                a.expediente_id,
+                a.producto_id,
+                a.talla,
+                a.nodo_id,
+                a.transferencia_id,
+                SUM(a.qty_asignada)   AS qty_asignada
+            FROM inventario.expediente_nodo_assignment a
+            WHERE {assign_filter_sql}
+              AND a.is_active = TRUE
+            GROUP BY a.expediente_id, a.producto_id, a.talla, a.nodo_id, a.transferencia_id
+        )
+        SELECT
+            l.id::text                                      AS linea_id,
+            l.expediente_id::text                           AS expediente_id,
+            e.codigo                                        AS expediente_codigo,
+            e.operating_company_id::text                    AS operating_company_id,
+            l.producto_id::text                             AS producto_id,
+            l.sku,
+            l.size                                          AS talla,
+            agg.qty_asignada                                AS cantidad_total,
+            l.unit_price,
+            l.unit_price_mwt,
+            l.unit_price_client,
+            e.moneda                                        AS currency,
+            COALESCE(agg.nodo_id::text,      '')            AS nodo_id,
+            COALESCE(nd.codigo,              '')            AS nodo_codigo,
+            COALESCE(agg.transferencia_id::text, '')        AS transferencia_id,
+            COALESCE(t.codigo,               '')            AS transferencia_codigo,
+            COALESCE(
+                SUM(pa.cantidad_producto) FILTER (
+                    WHERE pa.applicable_type = 'PRODUCTO'
+                      AND pa.applicable_id   = l.id
+                ), 0
+            )                                               AS paid_qty
+        FROM agg
+        JOIN expedientes.linea l
+          ON l.expediente_id = agg.expediente_id
+         AND l.producto_id   = agg.producto_id
+         AND COALESCE(l.size, '') = COALESCE(agg.talla, '')
+         AND l.is_active = TRUE
+        JOIN expedientes.expediente e
+          ON e.id = l.expediente_id
+         AND e.is_active = TRUE
+        LEFT JOIN nodos.nodo nd
+          ON nd.id = agg.nodo_id
+        LEFT JOIN transfers.transferencia t
+          ON t.id = agg.transferencia_id
+        LEFT JOIN finance.payment_application pa
+          ON pa.applicable_id   = l.id
+         AND pa.applicable_type = 'PRODUCTO'
+        GROUP BY
+            l.id, l.expediente_id, e.codigo, e.operating_company_id,
+            l.producto_id, l.sku, l.size,
+            agg.qty_asignada, l.unit_price, l.unit_price_mwt,
+            l.unit_price_client, e.moneda,
+            agg.nodo_id, nd.codigo, agg.transferencia_id, t.codigo
+        ORDER BY e.codigo, l.sku, l.size
+        """
+        params = [assign_filter_param]
+
+    elif oc_id:
+        # Todas las líneas de todos los expedientes de la OC
+        import uuid as _uuid_mod
+        try:
+            _uuid_mod.UUID(str(oc_id))
+        except (ValueError, AttributeError, TypeError):
+            log.warning("_build_producto_applicables: oc_id UUID inválido=%r → []", oc_id)
+            return []
+
+        sql = """
+        SELECT
+            l.id::text                                      AS linea_id,
+            l.expediente_id::text                           AS expediente_id,
+            e.codigo                                        AS expediente_codigo,
+            e.operating_company_id::text                    AS operating_company_id,
+            l.producto_id::text                             AS producto_id,
+            l.sku,
+            l.size                                          AS talla,
+            l.qty::integer                                  AS cantidad_total,
+            l.unit_price,
+            l.unit_price_mwt,
+            l.unit_price_client,
+            e.moneda                                        AS currency,
+            NULL::text                                      AS nodo_id,
+            NULL::text                                      AS nodo_codigo,
+            NULL::text                                      AS transferencia_id,
+            NULL::text                                      AS transferencia_codigo,
+            COALESCE(
+                SUM(pa.cantidad_producto) FILTER (
+                    WHERE pa.applicable_type = 'PRODUCTO'
+                      AND pa.applicable_id   = l.id
+                ), 0
+            )                                               AS paid_qty
+        FROM expedientes.linea l
+        JOIN expedientes.expediente e
+          ON e.id       = l.expediente_id
+         AND e.oc_id    = %s::uuid
+         AND e.is_active = TRUE
+        LEFT JOIN finance.payment_application pa
+          ON pa.applicable_id   = l.id
+         AND pa.applicable_type = 'PRODUCTO'
+        WHERE l.is_active = TRUE
+        GROUP BY
+            l.id, l.expediente_id, e.codigo, e.operating_company_id,
+            l.producto_id, l.sku, l.size, l.qty, l.unit_price,
+            l.unit_price_mwt, l.unit_price_client, e.moneda
+        ORDER BY e.codigo, l.sku, l.size
+        """
+        params = [str(oc_id)]
+
+    else:
+        # exp_id scope — líneas directas del expediente
+        import uuid as _uuid_mod
+        try:
+            _uuid_mod.UUID(str(exp_id))
+        except (ValueError, AttributeError, TypeError):
+            log.warning("_build_producto_applicables: exp_id UUID inválido=%r → []", exp_id)
+            return []
+
+        sql = """
+        SELECT
+            l.id::text                                      AS linea_id,
+            l.expediente_id::text                           AS expediente_id,
+            e.codigo                                        AS expediente_codigo,
+            e.operating_company_id::text                    AS operating_company_id,
+            l.producto_id::text                             AS producto_id,
+            l.sku,
+            l.size                                          AS talla,
+            l.qty::integer                                  AS cantidad_total,
+            l.unit_price,
+            l.unit_price_mwt,
+            l.unit_price_client,
+            e.moneda                                        AS currency,
+            NULL::text                                      AS nodo_id,
+            NULL::text                                      AS nodo_codigo,
+            NULL::text                                      AS transferencia_id,
+            NULL::text                                      AS transferencia_codigo,
+            COALESCE(
+                SUM(pa.cantidad_producto) FILTER (
+                    WHERE pa.applicable_type = 'PRODUCTO'
+                      AND pa.applicable_id   = l.id
+                ), 0
+            )                                               AS paid_qty
+        FROM expedientes.linea l
+        JOIN expedientes.expediente e
+          ON e.id        = l.expediente_id
+         AND e.id        = %s::uuid
+         AND e.is_active = TRUE
+        LEFT JOIN finance.payment_application pa
+          ON pa.applicable_id   = l.id
+         AND pa.applicable_type = 'PRODUCTO'
+        WHERE l.is_active = TRUE
+        GROUP BY
+            l.id, l.expediente_id, e.codigo, e.operating_company_id,
+            l.producto_id, l.sku, l.size, l.qty, l.unit_price,
+            l.unit_price_mwt, l.unit_price_client, e.moneda
+        ORDER BY l.sku, l.size
+        """
+        params = [str(exp_id)]
+
+    # ── Ejecutar query ────────────────────────────────────────────
+    try:
+        with connection.cursor() as cur:
+            cur.execute(sql, params)
+            cols  = [d[0] for d in cur.description]
+            rows  = [dict(zip(cols, row)) for row in cur.fetchall()]
+    except Exception as exc:
+        log.exception("_build_producto_applicables SQL failed: %s", exc)
+        return []
+
+    # ── Serializar filas → items ──────────────────────────────────
+    for row in rows:
+        try:
+            op_co_id = row.get("operating_company_id")
+            operated = is_operated_by_mwt_fn(op_co_id)
+
+            cantidad_total = int(row.get("cantidad_total") or 0)
+            paid_qty       = int(row.get("paid_qty") or 0)
+            saldo_qty      = cantidad_total - paid_qty
+
+            # Respetar include_paid: filtrar filas con saldo agotado.
+            if not include_paid and saldo_qty <= 0:
+                continue
+
+            try:
+                unit_price = Decimal(str(row.get("unit_price") or 0))
+            except InvalidOperation:
+                unit_price = Decimal("0")
+
+            try:
+                unit_price_mwt = Decimal(str(row.get("unit_price_mwt") or 0))
+            except InvalidOperation:
+                unit_price_mwt = Decimal("0")
+
+            try:
+                unit_price_client = Decimal(str(row.get("unit_price_client") or 0))
+            except InvalidOperation:
+                unit_price_client = Decimal("0")
+
+            subtotal_pendiente = unit_price * saldo_qty
+
+            item = {
+                "id":                  row.get("linea_id"),
+                "type":                "PRODUCTO",
+                "expediente_id":       row.get("expediente_id"),
+                "expediente_codigo":   row.get("expediente_codigo"),
+                "producto_id":         row.get("producto_id"),
+                "sku":                 row.get("sku") or "",
+                "nombre":              row.get("sku") or "",  # nombre = sku snapshot
+                "talla":               row.get("talla") or "",
+                "cantidad_total":      cantidad_total,
+                "paid_qty":            paid_qty,
+                "saldo_qty":           saldo_qty,
+                "precio_unitario":     str(unit_price),
+                "currency":            row.get("currency") or "USD",
+                # Precios duales MWT: solo visibles cuando operated_by_mwt
+                "precio_mwt":    str(unit_price_mwt)    if operated else None,
+                "precio_cliente": str(unit_price_client) if operated else None,
+                "operated_by_mwt":     operated,
+                "subtotal_pendiente_usd": str(subtotal_pendiente),
+                # Contexto de nodo/transferencia (null cuando scope es exp/oc)
+                "nodo_id":             row.get("nodo_id") or None,
+                "nodo_codigo":         row.get("nodo_codigo") or None,
+                "transferencia_id":    row.get("transferencia_id") or None,
+                "transferencia_codigo": row.get("transferencia_codigo") or None,
+            }
+            items.append(item)
+        except Exception as exc:
+            log.warning("_build_producto_applicables: error serializando fila: %s", exc)
+            continue
+
+    return items
 
 
 # ════════════════════════════════════════════════════════════

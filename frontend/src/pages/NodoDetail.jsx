@@ -196,11 +196,9 @@ export default function ScreenNodoDetail() {
   // Sprint Pagos Transfers — wizard de pago para tab Pagos + botones "Pagar".
   const [wizardOpen,          setWizardOpen]          = useState(false);
   const [wizardScope,         setWizardScope]          = useState(null);
-  const [wizardPreloadLines,  setWizardPreloadLines]   = useState(null);
   const [pagosRefreshKey,     setPagosRefreshKey]      = useState(0);
-  const openWizard = (scope, preloadLines = null) => {
+  const openWizard = (scope) => {
     setWizardScope(scope);
-    setWizardPreloadLines(preloadLines);
     setWizardOpen(true);
   };
 
@@ -449,7 +447,7 @@ export default function ScreenNodoDetail() {
                 que llegaron a este nodo (filtrados por scope_json).
                 Click en transferencia → /transferencias/{id}.
                 Cada cost_line tiene botón "Pagar este costo" (solo !isClient). */}
-            {tab === 'costos'      && <NodoCostosTab nodeId={nodeId} lang={lang} navigate={navigate} isClient={isClient} onPayCost={(cl) => openWizard({ type:'NODO', id:nodeId, label:'Nodo' }, [cl])}/>}
+            {tab === 'costos'      && <NodoCostosTab nodeId={nodeId} lang={lang} navigate={navigate} isClient={isClient} onPayCost={() => openWizard({ type:'NODO', id:nodeId, label:'Nodo' })}/>}
             {/* Sprint Pagos Transfers · tab Pagos del nodo */}
             {tab === 'pagos'       && (
               <NodoPagosTab
@@ -471,7 +469,6 @@ export default function ScreenNodoDetail() {
         onSuccess={() => { setWizardOpen(false); setPagosRefreshKey((k) => k + 1); }}
         lang={lang}
         preselectedScope={wizardScope}
-        preselectedCostLines={wizardPreloadLines}
       />
 
       {/* ── Drawer de edición ───────────── */}

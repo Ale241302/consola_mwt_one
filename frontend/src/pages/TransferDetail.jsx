@@ -164,10 +164,8 @@ export default function ScreenTransferDetail() {
   const [addItemsOpen, setAddItemsOpen] = useState(false);
   // Sprint Pagos Transfers — wizard de pago en TransferDetail.
   const [wizardOpen,         setWizardOpen]         = useState(false);
-  const [wizardPreloadLines, setWizardPreloadLines]  = useState(null);
   const [pagosRefreshKey,    setPagosRefreshKey]     = useState(0);
-  const openTransferPayWizard = (preloadLines = null) => {
-    setWizardPreloadLines(preloadLines || null);
+  const openTransferPayWizard = () => {
     setWizardOpen(true);
   };
 
@@ -767,7 +765,6 @@ export default function ScreenTransferDetail() {
           id:    transferBase?._backend_id || transferBase?.id || '',
           label: transferBase?.codigo || transferBase?.id || 'Transferencia',
         }}
-        preselectedCostLines={wizardPreloadLines}
       />
 
       {/* ── Modal full-screen del Print View (sprint v4) ── */}

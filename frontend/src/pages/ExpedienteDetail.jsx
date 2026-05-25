@@ -305,12 +305,10 @@ export default function ScreenExpedienteDetail() {
   const [showAdvance, setShowAdvance] = useState(false);
   const [showCostDrawer, setShowCostDrawer] = useState(false);
   const [showPaymentDrawer, setShowPaymentDrawer] = useState(false);
-  // Sprint Pagos Transfers — wizard de pago con cost_line preseleccionada.
+  // Sprint Pagos Transfers — wizard de pago (scope=EXPEDIENTE).
   const [costPayWizardOpen,       setCostPayWizardOpen]       = useState(false);
-  const [costPayWizardLines,      setCostPayWizardLines]       = useState(null);
   const [costPayRefreshKey,       setCostPayRefreshKey]        = useState(0);
-  const openCostPayWizard = (lines) => {
-    setCostPayWizardLines(lines);
+  const openCostPayWizard = () => {
     setCostPayWizardOpen(true);
   };
   // Sprint Registrar Pago (Fase 3) · drawer detalle de pago + refresh key.
@@ -637,7 +635,7 @@ export default function ScreenExpedienteDetail() {
           expedienteId={exp.id}
           lang={lang}
           navigate={navigate}
-          onPayCost={(cl) => openCostPayWizard([cl])}
+          onPayCost={() => openCostPayWizard()}
         />
       )}
 
@@ -648,7 +646,6 @@ export default function ScreenExpedienteDetail() {
         onSuccess={() => { setCostPayWizardOpen(false); setCostPayRefreshKey((k) => k + 1); }}
         lang={lang}
         preselectedScope={{ type: 'EXPEDIENTE', id: exp?.id || '', label: exp?.codigo || '' }}
-        preselectedCostLines={costPayWizardLines}
       />
 
       {showAdvance     && (
