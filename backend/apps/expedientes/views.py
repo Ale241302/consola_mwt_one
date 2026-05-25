@@ -482,6 +482,21 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 paymentDays_val = int(payload.get("credit_days") or 0)
             except (TypeError, ValueError):
                 paymentDays_val = 0
+            # Sprint 2026-05-24 (fix v4 backend) · plazos duales separados.
+            # paymentDays_val (legacy) se mantiene como espejo del cliente.
+            # paymentDaysMwt_val   → plazo MWT (credit_days_mwt del payload).
+            # paymentDaysClient_val → plazo cliente (credit_days_cliente).
+            # Si el payload no los manda, fallback al credit_days legacy.
+            paymentDaysMwt_val = 0
+            try:
+                paymentDaysMwt_val = int(payload.get("credit_days_mwt") or paymentDays_val or 90)
+            except (TypeError, ValueError):
+                paymentDaysMwt_val = paymentDays_val or 90
+            paymentDaysClient_val = 0
+            try:
+                paymentDaysClient_val = int(payload.get("credit_days_cliente") or paymentDays_val or 90)
+            except (TypeError, ValueError):
+                paymentDaysClient_val = paymentDays_val or 90
             # Sprint 2026-05-06 · "snapshot dual" de precios.
             # price_map_mwt    → precio para Muito Work Limitada (visible
             #                    a Admin/CEO/staff).
@@ -673,9 +688,10 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                         # (credit_days). Si no existe en la banda
                                         # MWT, caemos al base del snapshot MWT.
                                         plazos = mwt_matrix.get("plazos") or []
+                                        # Sprint 2026-05-24 (fix v4) · usar plazo MWT, NO el del cliente.
                                         wanted = next(
                                             (p for p in plazos
-                                             if int(p.get("dias") or 0) == paymentDays_val),
+                                             if int(p.get("dias") or 0) == paymentDaysMwt_val),
                                             None,
                                         )
                                         base = next(
@@ -693,9 +709,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
                             except Exception as e:
                                 log.warning(
                                     "[expediente.create] snapshot MWT falló para "
-                                    "sku=%s brand=%s tc=%s plazo=%s · %s",
+                                    "sku=%s brand=%s tc=%s plazo_mwt=%s · %s",
                                     sku, brand_by_pid.get(pid), tc_usd_brl_val,
-                                    paymentDays_val, e,
+                                    paymentDaysMwt_val, e,
                                 )
 
                     # Legacy unit_price = el precio que le toca al OPERADOR.
