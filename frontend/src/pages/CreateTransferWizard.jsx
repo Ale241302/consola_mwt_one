@@ -301,9 +301,7 @@ export default function CreateTransferWizard() {
           amount:         Number(l.amount || 0),
           currency:       l.currency || "USD",
           // Sprint 2026-05-25 · ocr_customs ahora calcula fx_to_usd
-          // implícito (amount_usd / amount). Si viene, lo usamos; si
-          // no, fallback a 1 (CRC=1 sería incorrecto pero el CEO lo
-          // puede ajustar manualmente en la tabla).
+          // implícito (amount_usd / amount). Si viene, lo usamos.
           fx_to_usd:      Number(l.fx_to_usd) > 0 ? Number(l.fx_to_usd) : 1,
           source:         "OCR_DUA",
           ocr_confidence: Number(l.confidence || 0),
@@ -612,10 +610,7 @@ export default function CreateTransferWizard() {
             // Step2Costs recibe `transferItems` para que cada cost-line
             // pueda restringir su aplicación a un subconjunto de los
             // expedientes / líneas ya elegidos en el paso 2.
-            // Sprint 2026-05-25 · pasamos también el dropzone DUA al paso 3
-            // (antes solo estaba en paso 1) para que el operador pueda
-            // subir la liquidación aquí mismo y dejar que la IA llene la
-            // tabla automáticamente.
+            // Sprint 2026-05-25 · pasamos también el dropzone DUA al paso 3.
             <Step2Costs
               lang={lang}
               costKinds={costKinds}
@@ -1405,7 +1400,6 @@ function Step2Costs({
   lang, costKinds, costLines,
   addCostLine, updateCostLine, removeCostLine,
   totals, currencies = [], transferItems = [],
-  // Sprint 2026-05-25 · uploader DUA en paso 3
   legalContext = "INTERNAL",
   docFile = null,
   onDocFile = () => {},
@@ -1468,11 +1462,11 @@ function Step2Costs({
                 className="btn btn-secondary btn-sm"
                 onClick={() => ocrInputRef.current && ocrInputRef.current.click()}
                 disabled={ocrLoading}
-                title={lang==="es"
-                  ? "Sube el DUA / liquidación y la IA llenará la tabla automáticamente"
+                title={lang === "es"
+                  ? "Sube el DUA / liquidacion y la IA llenara la tabla automaticamente"
                   : "Upload the DUA / liquidation and AI will fill the table automatically"}>
                 {ocrLoading
-                  ? (lang === "es" ? "Analizando…" : "Analyzing…")
+                  ? (lang === "es" ? "Analizando..." : "Analyzing...")
                   : (lang === "es" ? "Subir documento (IA)" : "Upload doc (AI)")}
               </button>
             </>
@@ -1484,10 +1478,6 @@ function Step2Costs({
         </div>
       </div>
 
-      {/* Dropzone DUA · solo visible cuando el motivo legal requiere
-          aduana (NATIONALIZATION / EXPORT). El paso 1 también lo
-          ofrece, pero replicarlo aquí ahorra ir y venir cuando el
-          operador olvidó adjuntar el documento al principio. */}
       {showOcrUploader && (
         <div
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -1502,7 +1492,7 @@ function Step2Costs({
           role="button"
           tabIndex={0}
           style={{
-            border: `2px dashed ${dragOver ? "var(--brand-primary)" : "var(--border-subtle, var(--divider))"}`,
+            border: "2px dashed " + (dragOver ? "var(--brand-primary)" : "var(--border-subtle, var(--divider))"),
             borderRadius: 10,
             padding: "16px 14px",
             marginBottom: 14,
@@ -1522,7 +1512,7 @@ function Step2Costs({
               display:"flex", alignItems:"center", justifyContent:"center",
               background:"color-mix(in oklab, var(--brand-primary), transparent 88%)",
               color:"var(--brand-primary)",
-              fontSize: 18, fontWeight: 700,
+              fontSize: 14, fontWeight: 700, letterSpacing: 0.5,
             }}>
               IA
             </div>
@@ -1531,19 +1521,19 @@ function Step2Costs({
                 {docFile
                   ? docFile.name
                   : (lang === "es"
-                      ? "Arrastra el DUA, liquidación o factura aduanal aquí"
+                      ? "Arrastra el DUA, liquidacion o factura aduanal aqui"
                       : "Drag the DUA, liquidation or customs invoice here")}
               </div>
               <div className="caption" style={{color:"var(--text-tertiary)"}}>
                 {ocrLoading
-                  ? (lang === "es" ? "Analizando con IA…" : "Analyzing with AI…")
-                  : ocrResult && Array.isArray(ocrResult.lines) && ocrResult.lines.length > 0
-                    ? (lang === "es"
-                        ? `${ocrResult.lines.length} costo(s) detectado(s) por la IA · revísalos abajo`
-                        : `${ocrResult.lines.length} cost(s) detected by AI · review below`)
-                    : (lang === "es"
-                        ? "PDF, JPG o PNG · máx 25 MB · la IA detectará DAI, IVA, PROCOMER, timbres y Ley 6946"
-                        : "PDF, JPG or PNG · max 25 MB · AI will detect DAI, IVA, PROCOMER, stamps and Law 6946")}
+                  ? (lang === "es" ? "Analizando con IA..." : "Analyzing with AI...")
+                  : (ocrResult && Array.isArray(ocrResult.lines) && ocrResult.lines.length > 0
+                      ? (lang === "es"
+                          ? (ocrResult.lines.length + " costo(s) detectado(s) por la IA - revisalos abajo")
+                          : (ocrResult.lines.length + " cost(s) detected by AI - review below"))
+                      : (lang === "es"
+                          ? "PDF, JPG o PNG - max 25 MB - la IA detectara DAI, IVA, PROCOMER, timbres y Ley 6946"
+                          : "PDF, JPG or PNG - max 25 MB - AI will detect DAI, IVA, PROCOMER, stamps and Law 6946"))}
               </div>
             </div>
           </div>
@@ -2741,4 +2731,11 @@ function SummaryBox({ title, children }) {
   );
 }
 
-function
+function Row({ k, v }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px dashed #F1F4F9" }}>
+      <span className="caption" style={{ color: "var(--text-tertiary)" }}>{k}</span>
+      <span style={{ color: "#0B1E3A" }}>{v}</span>
+    </div>
+  );
+}
