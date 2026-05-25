@@ -1064,39 +1064,46 @@ class ExpedienteViewSet(viewsets.ViewSet):
                     "expediente": ExpedienteSerializer(exp).data,
                 }, status=200)
 
-        # Validación contra catálogo de transiciones
-        try:
-            t = TransicionCat.objects.get(
-                fase_from=exp.estado, fase_to=fase_to, is_active=True,
-            )
-        except TransicionCat.DoesNotExist:
-            return Response({
-                "detail": f"Transición inválida: {exp.estado} → {fase_to}",
-                "current_state": exp.estado,
-                "requested_state": fase_to,
-            }, status=409)
+        # Validación flexible contra catálogo de transiciones.
+        # Política operativa: el avance de estado es DINÁMICO. No se
+        # exige `documento_id` aunque la fila del catálogo lo marque,
+        # y si la fila no existe en `transicion_cat` permitimos
+        # igualmente el avance con defaults (no es bloqueante). Esto
+        # alinea el backend con el modal del frontend, que ya no
+        # impone checklist obligatorio.
+        t = TransicionCat.objects.filter(
+            fase_from=exp.estado, fase_to=fase_to, is_active=True,
+        ).first()
 
-        if t.requiere_documento and not documento_id:
-            return Response({
-                "detail": f"Transición requiere documento {t.requiere_documento}",
-                "required_doc": t.requiere_documento,
-            }, status=400)
+        t_label       = (t.label if t else f"{exp.estado} → {fase_to}")
+        t_is_rollback = bool(t and t.is_rollback)
+        t_required    = (t.requiere_documento if t else None)
+
+        if t_required and not documento_id:
+            # Antes era 400 bloqueante. Ahora solo logueamos para
+            # mantener telemetría de cumplimiento sin frenar al CEO.
+            log.info(
+                "transition.skip_required_doc exp=%s from=%s to=%s required=%s",
+                exp.id, exp.estado, fase_to, t_required,
+            )
 
         previous_state  = exp.estado
         correlation_id  = uuid.uuid4()
         event_id        = uuid.uuid4()
         emitter_id      = getattr(request.user, "id", None)
         emitter_id      = str(emitter_id) if emitter_id else None
-        emitter_role    = ("admin" if t.is_rollback else
+        emitter_role    = ("admin" if t_is_rollback else
                            (getattr(request.user, "role", None) or "system"))
 
         payload = {
             "from":         previous_state,
             "to":           fase_to,
-            "label":        t.label,
-            "is_rollback":  t.is_rollback,
+            "label":        t_label,
+            "is_rollback":  t_is_rollback,
             "note":         note,
             "documento_id": documento_id,
+            "catalog_hit":  bool(t),
+            "required_doc": t_required,
         }
 
         try:

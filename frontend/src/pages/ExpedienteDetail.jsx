@@ -1937,9 +1937,10 @@ function AdvanceStateModal({ exp, lang, onClose, onTransitioned }) {
         onTransitioned?.(null);
       }
     } catch (e) {
-      // 409 si la transición no existe en transicion_cat, 400 si falta
-      // documento_id requerido. Mostramos el `detail` que el backend
-      // devuelve, sin colapsar a un genérico.
+      // El avance es dinámico: el backend ya no devuelve 400 por
+      // documento requerido. Solo capturamos errores de transporte
+      // o 500 inesperados. Mostramos el `detail` que el backend
+      // devuelva, sin colapsar a un genérico.
       const msg = e?.response?.detail
               ||  e?.detail
               ||  e?.message
@@ -1973,16 +1974,17 @@ function AdvanceStateModal({ exp, lang, onClose, onTransitioned }) {
           </div>
           <div className="body-md text-sec mb-4">
             {lang==='es'
-              ? 'Confirma que el expediente cumple los requisitos del siguiente estado. Esto notificará al cliente si las notificaciones están activas.'
-              : 'Confirm the file meets the next state\'s requirements. This will notify the client if notifications are active.'}
+              ? 'El avance de estado es flexible: ningún documento es obligatorio. Si las notificaciones están activas, el cliente será informado del cambio.'
+              : 'State advancement is flexible: no document is mandatory. If notifications are active, the client will be notified of the change.'}
           </div>
           {next && (
             <div className="card card-pad" style={{background: 'var(--bg-alt)'}}>
-              <div className="micro mb-2">{lang==='es' ? 'CHECKLIST PARA ' : 'CHECKLIST FOR '}{tr(lang,next)}</div>
-              <div style={{display:'flex', flexDirection:'column', gap: 6}}>
-                <div className="flex ai-center gap-2" style={{fontSize:13}}><IconCheck size={14} style={{color:'var(--success)'}}/>{lang==='es'?'Bill of Lading preliminar cargado':'Preliminary BL uploaded'}</div>
-                <div className="flex ai-center gap-2" style={{fontSize:13}}><IconCheck size={14} style={{color:'var(--success)'}}/>{lang==='es'?'50% de cobro aplicado':'50% payment applied'}</div>
-                <div className="flex ai-center gap-2" style={{fontSize:13}}><IconClock size={14} style={{color:'var(--warning)'}}/>{lang==='es'?'Falta confirmación de zarpe':'Missing departure confirmation'}</div>
+              <div className="micro mb-2">{lang==='es' ? 'TRANSICIÓN' : 'TRANSITION'}</div>
+              <div className="flex ai-center gap-2" style={{fontSize:13, color:'var(--text-secondary)'}}>
+                <IconArrow size={14} style={{color:'var(--text-tertiary)'}}/>
+                {lang==='es'
+                  ? <>El expediente pasará de <strong style={{color:'var(--text-primary)'}}>{tr(lang,exp.status)}</strong> a <strong style={{color:'var(--text-primary)'}}>{tr(lang,next)}</strong>.</>
+                  : <>The file will move from <strong style={{color:'var(--text-primary)'}}>{tr(lang,exp.status)}</strong> to <strong style={{color:'var(--text-primary)'}}>{tr(lang,next)}</strong>.</>}
               </div>
             </div>
           )}
