@@ -1311,59 +1311,155 @@ export default function ScreenProductFormView() {
                   ? clientOverrides[c.id] === true
                   : (inherited === true);
                 const isInherited = isSubsidiary && !hasExplicit;
+                // Alias state · persistimos cuando el toggle está ON y
+                // el producto ya existe (productId presente).
+                const aliasState  = clientAliases[c.id] || {};
+                const aliasValue  = aliasState.alias || '';
+                const aliasStatus = aliasState.status;
+                const aliasError  = aliasState.error;
                 return (
-                  <button type="button" key={c.id}
-                          className={`client-switch ${on ? 'client-switch-on' : ''}`}
-                          data-subsidiary={isSubsidiary || undefined}
-                          data-inherited={isInherited || undefined}
-                          onClick={()=>setClientOverrides({...clientOverrides, [c.id]: !on})}
-                          style={isSubsidiary ? { paddingLeft: 22 } : undefined}>
-                    <span className="client-switch-body" style={{flex:1}}>
-                      <span className="heading-sm">
-                        {isSubsidiary && (
-                          <span style={{
-                            display:'inline-block', marginRight:6,
-                            color:'#00B286', fontWeight:700,
-                          }} title={lang==='es'?'Subsidiaria':'Subsidiary'}>↳</span>
+                  <div key={c.id}
+                       className={`client-switch-cell ${on ? 'client-switch-cell-on' : ''}`}
+                       style={{display:'flex', flexDirection:'column', gap:0}}>
+                    <button type="button"
+                            className={`client-switch ${on ? 'client-switch-on' : ''}`}
+                            data-subsidiary={isSubsidiary || undefined}
+                            data-inherited={isInherited || undefined}
+                            onClick={()=>setClientOverrides({...clientOverrides, [c.id]: !on})}
+                            style={isSubsidiary ? { paddingLeft: 22 } : undefined}>
+                      <span className="client-switch-body" style={{flex:1}}>
+                        <span className="heading-sm">
+                          {isSubsidiary && (
+                            <span style={{
+                              display:'inline-block', marginRight:6,
+                              color:'var(--brand-accent, #00B286)', fontWeight:700,
+                            }} title={lang==='es'?'Subsidiaria':'Subsidiary'}>↳</span>
+                          )}
+                          {c.name}
+                        </span>
+                        {isSubsidiary && c.parent_name && (
+                          <span className="caption" style={{color:'var(--text-tertiary)'}}>
+                            {isInherited
+                              ? (lang==='es'
+                                  ? `Hereda de ${c.parent_name}`
+                                  : `Inherits from ${c.parent_name}`)
+                              : (lang==='es'
+                                  ? `Hijo de ${c.parent_name} · override propio`
+                                  : `Child of ${c.parent_name} · own override`)}
+                          </span>
                         )}
-                        {c.name}
                       </span>
-                      {isSubsidiary && c.parent_name && (
-                        <span className="caption" style={{color:'var(--text-tertiary)'}}>
-                          {isInherited
-                            ? (lang==='es'
-                                ? `Hereda de ${c.parent_name}`
-                                : `Inherits from ${c.parent_name}`)
-                            : (lang==='es'
-                                ? `Hijo de ${c.parent_name} · override propio`
-                                : `Child of ${c.parent_name} · own override`)}
+                      {isSubsidiary && hasExplicit && (
+                        <span
+                          title={lang==='es'?'Volver a heredar del padre':'Revert to parent inheritance'}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const next = { ...clientOverrides };
+                            delete next[c.id];
+                            setClientOverrides(next);
+                          }}
+                          style={{
+                            fontSize: 10, padding: '2px 6px',
+                            borderRadius: 4, marginRight: 6,
+                            background: 'color-mix(in oklab, var(--brand-accent, #00B286), transparent 90%)',
+                            color: 'var(--brand-accent, #00B286)', fontWeight: 600,
+                            cursor: 'pointer',
+                          }}>
+                          ↺ {lang==='es'?'heredar':'inherit'}
                         </span>
                       )}
-                    </span>
-                    {isSubsidiary && hasExplicit && (
-                      <span
-                        title={lang==='es'?'Volver a heredar del padre':'Revert to parent inheritance'}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const next = { ...clientOverrides };
-                          delete next[c.id];
-                          setClientOverrides(next);
-                        }}
-                        style={{
-                          fontSize: 10, padding: '2px 6px',
-                          borderRadius: 4, marginRight: 6,
-                          background: 'rgba(0,178,134,0.10)',
-                          color: '#00B286', fontWeight: 600,
-                          cursor: 'pointer',
-                        }}>
-                        ↺ {lang==='es'?'heredar':'inherit'}
+                      <span className={`mini-switch ${on ? 'mini-on' : ''}`}
+                            style={isInherited ? { opacity: 0.55 } : undefined}>
+                        <span className="mini-thumb"/>
                       </span>
+                    </button>
+
+                    {/* Alias del producto para este cliente. Solo visible
+                        cuando el toggle está ON y el producto ya existe
+                        (en modo creación no podemos persistir hasta tener
+                        productId). */}
+                    {on && isEdit && productId && (
+                      <div
+                        className="client-alias-row"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                          display:'flex', alignItems:'center', gap:8,
+                          padding:'8px 12px 10px',
+                          background:'var(--surface-alt, var(--bg-alt))',
+                          borderTop:'1px solid var(--border-subtle, var(--divider))',
+                          borderRadius:'0 0 8px 8px',
+                        }}>
+                        <span
+                          className="caption"
+                          style={{
+                            color:'var(--text-tertiary)',
+                            fontSize:10, fontWeight:600,
+                            letterSpacing:0.4, textTransform:'uppercase',
+                            whiteSpace:'nowrap',
+                          }}>
+                          {lang==='es' ? 'Alias para este cliente' : 'Alias for this client'}
+                        </span>
+                        <input
+                          type="text"
+                          className="input client-alias-input tabular-nums"
+                          value={aliasValue}
+                          maxLength={255}
+                          placeholder={lang==='es'
+                            ? 'Ej. SKU interno del cliente'
+                            : 'E.g. client internal SKU'}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setClientAliases(prev => ({
+                              ...prev,
+                              [c.id]: { ...(prev[c.id] || {}),
+                                         alias: v, status: 'editing', error: null },
+                            }));
+                          }}
+                          onBlur={(e) => persistClientAlias(c.id, e.target.value)}
+                          style={{
+                            flex:1, height:30, fontSize:13,
+                            background:'var(--surface-raised, var(--surface))',
+                          }}
+                        />
+                        {aliasStatus === 'saving' && (
+                          <span className="caption" style={{
+                            color:'var(--text-tertiary)', fontSize:11, whiteSpace:'nowrap',
+                          }}>
+                            {lang==='es'?'Guardando…':'Saving…'}
+                          </span>
+                        )}
+                        {aliasStatus === 'saved' && (
+                          <span className="caption" style={{
+                            color:'var(--success, #00B286)', fontSize:11, whiteSpace:'nowrap',
+                            fontWeight:600,
+                          }}>
+                            {lang==='es'?'Guardado':'Saved'}
+                          </span>
+                        )}
+                        {aliasStatus === 'error' && (
+                          <span className="caption" style={{
+                            color:'var(--critical, #E5484D)', fontSize:11, whiteSpace:'nowrap',
+                            fontWeight:600,
+                          }} title={aliasError || ''}>
+                            {lang==='es'?'Error':'Error'}
+                          </span>
+                        )}
+                      </div>
                     )}
-                    <span className={`mini-switch ${on ? 'mini-on' : ''}`}
-                          style={isInherited ? { opacity: 0.55 } : undefined}>
-                      <span className="mini-thumb"/>
-                    </span>
-                  </button>
+                    {on && !isEdit && (
+                      <div
+                        className="caption"
+                        style={{
+                          padding:'6px 12px 10px',
+                          color:'var(--text-tertiary)',
+                          fontSize:11, fontStyle:'italic',
+                        }}>
+                        {lang==='es'
+                          ? 'Guarda el producto para poder asignar un alias por cliente.'
+                          : 'Save the product to assign a per-client alias.'}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
