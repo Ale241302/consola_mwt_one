@@ -111,7 +111,21 @@ def _fetch_expedientes_mwt() -> list[dict]:
             SELECT
                 e.id::text                                        AS expediente_id,
                 e.codigo                                          AS codigo,
-                e.proforma_codigo                                 AS proforma_codigo,
+                -- Sprint 2026-05-24 fix · proforma_codigo NO es columna SQL,
+                -- es un SerializerMethodField (computed en Python). Lo derivamos
+                -- aqui leyendo el codigo del documento PROFORMA mas reciente
+                -- via subquery LATERAL (devuelve NULL si no hay proforma).
+                (
+                    SELECT d.codigo
+                      FROM expedientes.documento d
+                     WHERE d.expediente_id = e.id
+                       AND d.kind = 'PROFORMA'
+                       AND d.is_active = TRUE
+                       AND d.codigo IS NOT NULL
+                       AND d.codigo <> ''
+                     ORDER BY d.created_at DESC
+                     LIMIT 1
+                )                                                 AS proforma_codigo,
                 e.client_id::text                                 AS client_id,
                 e.operating_company_id::text                      AS operating_company_id,
                 e.shipment_date                                   AS shipment_date,
