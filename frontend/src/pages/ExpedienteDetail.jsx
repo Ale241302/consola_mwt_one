@@ -46,6 +46,8 @@ import {
 } from "../lib/operatingCompany.js";
 // Sprint Registrar Pago (Fase 3) · drawer detalle + i18n labels reales.
 import PaymentDetailDrawer from "../components/finance/PaymentDetailDrawer.jsx";
+// Sprint Pagos Transfers — wizard para pagar cost_lines desde expediente.
+import RegisterPaymentWizard from "../components/finance/RegisterPaymentWizard.jsx";
 import {
   PAYMENT_STATUS_LABELS, PAYMENT_STATUS_COLORS,
   getEnumLabel as _getPayEnum,
@@ -303,6 +305,14 @@ export default function ScreenExpedienteDetail() {
   const [showAdvance, setShowAdvance] = useState(false);
   const [showCostDrawer, setShowCostDrawer] = useState(false);
   const [showPaymentDrawer, setShowPaymentDrawer] = useState(false);
+  // Sprint Pagos Transfers — wizard de pago con cost_line preseleccionada.
+  const [costPayWizardOpen,       setCostPayWizardOpen]       = useState(false);
+  const [costPayWizardLines,      setCostPayWizardLines]       = useState(null);
+  const [costPayRefreshKey,       setCostPayRefreshKey]        = useState(0);
+  const openCostPayWizard = (lines) => {
+    setCostPayWizardLines(lines);
+    setCostPayWizardOpen(true);
+  };
   // Sprint Registrar Pago (Fase 3) · drawer detalle de pago + refresh key.
   const [openPaymentId, setOpenPaymentId] = useState(null);
   const [pagosRefreshKey, setPagosRefreshKey] = useState(0);
@@ -619,6 +629,28 @@ export default function ScreenExpedienteDetail() {
         </div>
       </div>
 
+      {/* Sprint Pagos Transfers — sección "Costos asignados" (solo staff).
+          Llama a transferenciaCostosPorExpediente para listar cost_lines
+          con opción de pagar cada una individualmente. */}
+      {!isClient && exp?.id && (
+        <ExpedienteCostosAsignados
+          expedienteId={exp.id}
+          lang={lang}
+          navigate={navigate}
+          onPayCost={(cl) => openCostPayWizard([cl])}
+        />
+      )}
+
+      {/* Sprint Pagos Transfers — RegisterPaymentWizard para costos desde exp */}
+      <RegisterPaymentWizard
+        open={costPayWizardOpen}
+        onClose={() => setCostPayWizardOpen(false)}
+        onSuccess={() => { setCostPayWizardOpen(false); setCostPayRefreshKey((k) => k + 1); }}
+        lang={lang}
+        preselectedScope={{ type: 'EXPEDIENTE', id: exp?.id || '', label: exp?.codigo || '' }}
+        preselectedCostLines={costPayWizardLines}
+      />
+
       {showAdvance     && (
         <AdvanceStateModal
           exp={exp}
@@ -652,6 +684,130 @@ export default function ScreenExpedienteDetail() {
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sprint Pagos Transfers — Sección "Costos asignados" del ExpedienteDetail.
+// Lista cost_lines de transferencias que tocaron este expediente,
+// con columna "Pagar" que abre el RegisterPaymentWizard (staff only).
+// ─────────────────────────────────────────────────────────────────────────────
+function ExpedienteCostosAsignados({ expedienteId, lang, navigate, onPayCost }) {
+  const [rows,    setRows]    = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState(null);
+
+  useEffect(() => {
+    if (!expedienteId) return;
+    let cancel = false;
+    setLoading(true); setError(null);
+    nodoAssignmentsApi.transferenciaCostosPorExpediente(expedienteId)
+      .then((data) => {
+        if (cancel) return;
+        const arr = Array.isArray(data) ? data : (data?.results || []);
+        // Dedupar por cost_line_id (el backend devuelve 1 fila por producto)
+        const seen = new Set();
+        const deduped = arr.filter((r) => {
+          if (seen.has(r.cost_line_id)) return false;
+          seen.add(r.cost_line_id);
+          return true;
+        });
+        setRows(deduped);
+      })
+      .catch((e) => { if (!cancel) setError(e?.message || 'Error'); })
+      .finally(() => { if (!cancel) setLoading(false); });
+    return () => { cancel = true; };
+  }, [expedienteId]);
+
+  if (!loading && !error && rows.length === 0) return null;  // nada que mostrar
+
+  return (
+    <div className="card card-pad-lg" style={{ marginTop: 16 }}>
+      <div className="flex ai-center jc-between" style={{ marginBottom: 12 }}>
+        <div>
+          <h3 className="heading-md" style={{ margin: 0 }}>
+            {lang === 'es' ? 'Costos asignados' : 'Assigned costs'}
+          </h3>
+          <div className="caption" style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>
+            {lang === 'es'
+              ? 'Costos de transferencias registrados en las que participó este expediente.'
+              : 'Transfer costs registered on transfers that involved this expediente.'}
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
+          {lang === 'es' ? 'Cargando costos…' : 'Loading costs…'}
+        </div>
+      ) : error ? (
+        <div className="body-sm" style={{ color: 'var(--critical)' }}>{error}</div>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>{lang === 'es' ? 'Transferencia' : 'Transfer'}</th>
+              <th>{lang === 'es' ? 'Tipo' : 'Kind'}</th>
+              <th>{lang === 'es' ? 'Detalle' : 'Label'}</th>
+              <th style={{ textAlign: 'right' }}>{lang === 'es' ? 'Monto' : 'Amount'}</th>
+              <th style={{ textAlign: 'center' }}>{lang === 'es' ? 'Mon.' : 'Curr.'}</th>
+              <th style={{ textAlign: 'right' }}>USD</th>
+              <th style={{ textAlign: 'center' }}>{lang === 'es' ? 'Origen' : 'Source'}</th>
+              <th style={{ textAlign: 'center' }}>{lang === 'es' ? 'Acción' : 'Action'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.cost_line_id}>
+                <td className="mono-sm"
+                    style={{ color: 'var(--brand-accent)', fontWeight: 700, cursor: 'pointer' }}
+                    onClick={() => navigate && navigate(`/transferencias/${r.transferencia_id}`)}>
+                  {r.transferencia_codigo || '—'}
+                </td>
+                <td>{r.kind_label || r.kind}</td>
+                <td>{r.label || '—'}</td>
+                <td className="tabular-nums" style={{ textAlign: 'right' }}>
+                  {Number(r.amount || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                </td>
+                <td className="mono-sm" style={{ textAlign: 'center' }}>{r.currency}</td>
+                <td className="tabular-nums" style={{ textAlign: 'right', fontWeight: 700,
+                                                       color: 'var(--brand-accent)' }}>
+                  ${Number(r.amount_usd || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                </td>
+                <td style={{ textAlign: 'center' }}>
+                  <span style={{
+                    padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+                    background: r.source === 'OCR_DUA' ? 'rgba(0,178,134,0.12)' : 'var(--bg-alt)',
+                    color: r.source === 'OCR_DUA' ? '#00B286' : 'var(--text-secondary)',
+                  }}>
+                    {r.source || 'MANUAL'}
+                  </span>
+                </td>
+                <td style={{ textAlign: 'center' }}>
+                  {onPayCost && (
+                    <button
+                      type="button"
+                      className="btn btn-accent btn-sm"
+                      onClick={() => onPayCost({
+                        id:                   r.cost_line_id,
+                        label:                r.label || r.kind_label || r.kind,
+                        amount_usd:           Number(r.amount_usd || 0),
+                        saldo_usd:            Number(r.amount_usd || 0),
+                        currency:             r.currency,
+                        transferencia_codigo: r.transferencia_codigo,
+                      })}
+                    >
+                      {lang === 'es' ? 'Pagar' : 'Pay'}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 
 function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, productoNombreMap, isClient = false, onLineAdded, nodoByLineKey = {}, navigate }) {
   // Sprint 2026-05-17 · isMwtOp para mostrar columna "Precio MWT" en

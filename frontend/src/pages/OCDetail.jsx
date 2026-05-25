@@ -44,7 +44,9 @@ import { useRole } from "../context/RoleContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
          productosApi, documentosApi, storageApi, getToken,
-         nodoAssignmentsApi } from "../lib/api.js";
+         nodoAssignmentsApi, financePaymentsApi } from "../lib/api.js";
+// Sprint Pagos Transfers — wizard de registro de pago en OC.
+import RegisterPaymentWizard from "../components/finance/RegisterPaymentWizard.jsx";
 import {
   MWT_OPERATING_CLIENT_ID, MWT_OPERATOR_NAME, isMwtOperated, isClientRole,
 } from "../lib/operatingCompany.js";
@@ -117,6 +119,10 @@ export default function ScreenOCDetail() {
   const { lang } = useOutletContext();
   // Viewport efectivo + capability gates (ver POL_VISIBILIDAD).
   const { isAdmin, isClient, can } = useRole();
+  // Sprint Pagos Transfers — wizard de pago en OCDetail.
+  const [wizardOpen,         setWizardOpen]         = useState(false);
+  const [pagosRefreshKey,    setPagosRefreshKey]     = useState(0);
+  const openOcPayWizard = () => setWizardOpen(true);
   // Rev 2026-05-21f · Visibilidad de "Precio MWT" por rol.
   //   · ADMIN/CEO  → siempre ve Precio MWT (cuando la OC la opera MWT).
   //   · CLIENT_*   → NO ve Precio MWT (es el costo interno de MWT).
@@ -2233,6 +2239,25 @@ export default function ScreenOCDetail() {
         <OCTransferCostsCard ocId={ocId} lang={lang} navigate={navigate} />
       )}
 
+      {/* Sprint Pagos Transfers — card Pagos al pie de OCDetail (solo staff) */}
+      {!isClient && (
+        <OCPagosCard
+          ocId={ocId}
+          lang={lang}
+          refreshKey={pagosRefreshKey}
+          onOpenWizard={openOcPayWizard}
+        />
+      )}
+
+      {/* Sprint Pagos Transfers — wizard de pago en OC */}
+      <RegisterPaymentWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onSuccess={() => { setWizardOpen(false); setPagosRefreshKey((k) => k + 1); }}
+        lang={lang}
+        preselectedScope={{ type: 'OC', id: ocId, label: oc?.codigo || ocId || 'OC' }}
+      />
+
       {/* Modal "Agregar producto" solo se monta si ADMIN puede agregar línea. */}
       {can('add_oc_line') && showAddProduct && (
         <AddOCProductModal
@@ -2251,6 +2276,133 @@ export default function ScreenOCDetail() {
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────
+// Sprint Pagos Transfers — OCPagosCard
+// Card al pie de OCDetail con la lista de pagos cuyo oc_id = ocId.
+// Solo visible para roles internos (isAdmin).
+// ─────────────────────────────────────────────────────────────
+function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
+  const [pagos,   setPagos]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState(null);
+
+  useEffect(() => {
+    if (!ocId) return;
+    let cancel = false;
+    setLoading(true); setError(null);
+    financePaymentsApi.list({ oc_id: ocId })
+      .then((data) => {
+        if (cancel) return;
+        const arr = Array.isArray(data) ? data : (data?.results || []);
+        setPagos(arr);
+      })
+      .catch((e) => { if (!cancel) setError(e?.message || 'Error'); })
+      .finally(() => { if (!cancel) setLoading(false); });
+    return () => { cancel = true; };
+  }, [ocId, refreshKey]);
+
+  return (
+    <div className="card card-pad-lg" style={{ marginTop: 16 }}>
+      <div className="flex ai-center jc-between" style={{ marginBottom: 12 }}>
+        <div>
+          <h3 className="heading-md" style={{ margin: 0 }}>
+            {lang === 'es' ? 'Pagos de costos logísticos' : 'Logistics cost payments'}
+          </h3>
+          <div className="caption" style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>
+            {lang === 'es'
+              ? 'Pagos registrados contra costos de transferencias de esta OC.'
+              : 'Payments registered against transfer costs of this OC.'}
+          </div>
+        </div>
+        {onOpenWizard && (
+          <button type="button" className="btn btn-primary btn-sm"
+                  onClick={onOpenWizard}>
+            + {lang === 'es' ? 'Registrar pago' : 'Register payment'}
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
+          {lang === 'es' ? 'Cargando pagos…' : 'Loading payments…'}
+        </div>
+      ) : error ? (
+        <div className="body-sm" style={{ color: 'var(--critical)' }}>{error}</div>
+      ) : pagos.length === 0 ? (
+        <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
+          {lang === 'es'
+            ? 'Sin pagos registrados contra costos de esta OC.'
+            : 'No payments registered against costs of this OC.'}
+        </div>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>{lang === 'es' ? 'Código' : 'Code'}</th>
+              <th>{lang === 'es' ? 'Fecha' : 'Date'}</th>
+              <th>{lang === 'es' ? 'Dirección' : 'Direction'}</th>
+              <th>{lang === 'es' ? 'Método' : 'Method'}</th>
+              <th>{lang === 'es' ? 'Referencia' : 'Reference'}</th>
+              <th style={{ textAlign: 'right' }}>{lang === 'es' ? 'Monto' : 'Amount'}</th>
+              <th style={{ textAlign: 'right' }}>USD</th>
+              <th>{lang === 'es' ? 'Estado' : 'Status'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagos.map((p) => {
+              const dir = p.direction || 'OUT';
+              return (
+                <tr key={p.id}>
+                  <td className="mono-sm" style={{ fontWeight: 600 }}>
+                    {p.codigo || (p.id ? String(p.id).slice(0, 8) : '—')}
+                  </td>
+                  <td className="tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+                    {p.fecha ? new Date(p.fecha).toLocaleDateString(
+                      lang === 'es' ? 'es-PE' : 'en-US',
+                      { day: '2-digit', month: 'short', year: 'numeric' }
+                    ) : '—'}
+                  </td>
+                  <td>
+                    <span style={{
+                      display: 'inline-block', padding: '2px 8px', borderRadius: 4,
+                      font: '600 10px/1.4 var(--font-mono)', letterSpacing: '0.06em',
+                      background: dir === 'IN'
+                        ? 'color-mix(in oklab, var(--success) 10%, transparent)'
+                        : 'color-mix(in oklab, var(--warning) 10%, transparent)',
+                      color: dir === 'IN' ? 'var(--success)' : 'var(--warning)',
+                    }}>
+                      {dir}
+                    </span>
+                  </td>
+                  <td>{p.metodo || '—'}</td>
+                  <td className="mono-sm" style={{ fontWeight: 600 }}>{p.referencia || '—'}</td>
+                  <td className="tabular-nums" style={{ textAlign: 'right' }}>
+                    {Number(p.monto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {' '}<span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>{p.moneda || 'USD'}</span>
+                  </td>
+                  <td className="tabular-nums" style={{ textAlign: 'right', fontWeight: 700,
+                                                         color: 'var(--brand-accent)' }}>
+                    ${Number(p.monto_usd ?? p.monto ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td>
+                    <span style={{
+                      padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                      background: 'var(--bg-alt)', color: 'var(--text-secondary)',
+                    }}>
+                      {p.estado || '—'}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // Sprint 2026-05-13 · Fase 10 — OCTransferCostsCard

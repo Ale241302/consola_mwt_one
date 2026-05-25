@@ -782,19 +782,30 @@ export const transferBuilderArtifactsApi = {
 // ---------------------------------------------------------------------
 const _financeListGet = resource("finance/payments");
 export const financePaymentsApi = {
-  list:    _financeListGet.list,
+  // GET /api/finance/payments/ — soporta filtros: expediente_id, client_id,
+  // estado, nodo_id, transferencia_id, oc_id (Sprint Pagos Transfers).
+  list: (params) => _financeListGet.list(params),
   get:     _financeListGet.get,
   selectMetodos: () => apiFetch("/finance/payments/select_metodos/", { token: getToken() }),
   selectTipos:   () => apiFetch("/finance/payments/select_tipos/",   { token: getToken() }),
   selectEstados: () => apiFetch("/finance/payments/select_estados/", { token: getToken() }),
 
-  // Lista de items "Aplicar a" reales del expediente (Fase 5A.5).
-  // Reemplaza los mocks · GET /finance/payments/applicables/?expediente=&type=
-  listApplicables: ({ expediente, type }) => apiFetch(
-    `/finance/payments/applicables/?expediente=${encodeURIComponent(expediente)}` +
-    `&type=${encodeURIComponent(type)}`,
-    { token: getToken() },
-  ),
+  // Lista de items "Aplicar a" reales. Acepta:
+  //   expediente (UUID) · nodo_id · transferencia_id · oc_id
+  // Ejemplo: listApplicables({ nodo_id: uuid, type: 'COSTO' })
+  // GET /finance/payments/applicables/?<scope>=<id>&type=<type>
+  listApplicables: ({ expediente, type, nodo_id, transferencia_id, oc_id }) => {
+    const qs = new URLSearchParams();
+    if (expediente)      qs.set("expediente",      expediente);
+    if (nodo_id)         qs.set("nodo_id",         nodo_id);
+    if (transferencia_id) qs.set("transferencia_id", transferencia_id);
+    if (oc_id)           qs.set("oc_id",           oc_id);
+    qs.set("type", type);
+    return apiFetch(
+      `/finance/payments/applicables/?${qs.toString()}`,
+      { token: getToken() },
+    );
+  },
 
   register: async ({
     expediente_id, monto, moneda, fecha, metodo, tipo_pago,

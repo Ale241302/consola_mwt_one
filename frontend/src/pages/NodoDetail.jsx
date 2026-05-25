@@ -53,12 +53,17 @@ const STATUS_OPTIONS = [
 import { tr, fmtMoney } from "../lib/i18n.js";
 import {
   nodosApi, stockApi, transferenciasApi, nodoAssignmentsApi,
+  financePaymentsApi,
   // Sprint 2026-05-11 fase 4 · nodoArtefactosApi (legacy de fase 2)
   // ya no se usa en esta page — el nuevo NodoArtifactsTab consume
   // nodoBuilderArtifactsApi internamente.
 } from "../lib/api.js";
 // Sprint 2026-05-11 · Fase 2 · tab Artefactos.
 import NodoArtifactsTab from "../components/nodos/NodoArtifactsTab.jsx";
+// Sprint Pagos Transfers — wizard de registro de pago con preselección.
+import RegisterPaymentWizard from "../components/finance/RegisterPaymentWizard.jsx";
+// Sprint Pagos Transfers — visibilidad por rol.
+import { useRole } from "../context/RoleContext.jsx";
 import {
   NODES, NODE_INVENTORY, NODE_TRANSFERS, NODE_AUTOMATIONS,
   LEGAL_ENTITIES, OPERATORS, PRODUCTS, EXPEDIENTES, OCS,
@@ -168,12 +173,16 @@ const TABS = [
   // Sprint 2026-05-14 · Fase 13 · tab "Costos" — costos de transferencias
   // que llegaron a este nodo, desglosados por expediente y producto.
   { k: 'costos',      l: 'Costos' },
+  // Sprint Pagos Transfers · tab "Pagos" — payments donde nodo_id = nodeId.
+  { k: 'pagos',       l: 'Pagos' },
 ];
 
 export default function ScreenNodoDetail() {
   const navigate = useNavigate();
   const { nodeId } = useParams();
   const { lang } = useOutletContext();
+  // Sprint Pagos Transfers — gating CLIENT_* (R3).
+  const { isClient } = useRole();
   const [tab, setTab] = useState('overview');
   // Sprint 2026-05-11 fix · contador para forzar refetch cross-tab.
   // InventoryTab lo incrementa después de adjust/delete; FilesTab lo
@@ -184,6 +193,16 @@ export default function ScreenNodoDetail() {
   const [nodeRefreshKey, setNodeRefreshKey] = useState(0);
   const bumpRefresh = useCallback(() => setNodeRefreshKey((k) => k + 1), []);
   const [showEdit, setShowEdit] = useState(false);
+  // Sprint Pagos Transfers — wizard de pago para tab Pagos + botones "Pagar".
+  const [wizardOpen,          setWizardOpen]          = useState(false);
+  const [wizardScope,         setWizardScope]          = useState(null);
+  const [wizardPreloadLines,  setWizardPreloadLines]   = useState(null);
+  const [pagosRefreshKey,     setPagosRefreshKey]      = useState(0);
+  const openWizard = (scope, preloadLines = null) => {
+    setWizardScope(scope);
+    setWizardPreloadLines(preloadLines);
+    setWizardOpen(true);
+  };
 
   // ── Fetch real al backend (antes leía NODES de mockData.js,
   //    por eso nodos creados vía API daban "Nodo no encontrado") ──
@@ -428,11 +447,32 @@ export default function ScreenNodoDetail() {
             {tab === 'artefactos'  && <NodoArtifactsTab nodeId={nodeId} lang={lang}/>}
             {/* Sprint 2026-05-14 · Fase 13 · Costos de transferencias
                 que llegaron a este nodo (filtrados por scope_json).
-                Click en transferencia → /transferencias/{id}. */}
-            {tab === 'costos'      && <NodoCostosTab nodeId={nodeId} lang={lang} navigate={navigate}/>}
+                Click en transferencia → /transferencias/{id}.
+                Cada cost_line tiene botón "Pagar este costo" (solo !isClient). */}
+            {tab === 'costos'      && <NodoCostosTab nodeId={nodeId} lang={lang} navigate={navigate} isClient={isClient} onPayCost={(cl) => openWizard({ type:'NODO', id:nodeId, label:'Nodo' }, [cl])}/>}
+            {/* Sprint Pagos Transfers · tab Pagos del nodo */}
+            {tab === 'pagos'       && (
+              <NodoPagosTab
+                nodeId={nodeId}
+                lang={lang}
+                isClient={isClient}
+                refreshKey={pagosRefreshKey}
+                onOpenWizard={() => openWizard({ type:'NODO', id:nodeId, label:'Nodo' })}
+              />
+            )}
           </motion.div>
         </AnimatePresence>
       </div>
+
+      {/* ── RegisterPaymentWizard (Sprint Pagos Transfers) ────── */}
+      <RegisterPaymentWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onSuccess={() => { setWizardOpen(false); setPagosRefreshKey((k) => k + 1); }}
+        lang={lang}
+        preselectedScope={wizardScope}
+        preselectedCostLines={wizardPreloadLines}
+      />
 
       {/* ── Drawer de edición ───────────── */}
       <AnimatePresence>
@@ -1100,7 +1140,7 @@ function TransferStatus({ status, lang }) {
    (como destino), desglosados por expediente · producto · talla.
    Cada fila es clickable y navega al detalle de la transferencia.
    ───────────────────────────────────────────────────────────── */
-function NodoCostosTab({ nodeId, lang, navigate }) {
+function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
@@ -1308,15 +1348,38 @@ function NodoCostosTab({ nodeId, lang, navigate }) {
                         {cost.source || 'MANUAL'}
                       </span>
                     </div>
-                    <div className="tabular-nums" style={{
-                      fontWeight: 700, color: 'var(--brand-accent, #0E8A6D)',
-                    }}>
-                      ${Number(cost.amount_usd || 0).toLocaleString('en-US',
-                        { maximumFractionDigits: 2 })}
-                      <span style={{ color: 'var(--text-tertiary)', fontWeight: 400, marginLeft: 6 }}>
-                        ({Number(cost.amount || 0).toLocaleString('en-US',
-                          { maximumFractionDigits: 2 })} {cost.currency})
-                      </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div className="tabular-nums" style={{
+                        fontWeight: 700, color: 'var(--brand-accent, #0E8A6D)',
+                      }}>
+                        ${Number(cost.amount_usd || 0).toLocaleString('en-US',
+                          { maximumFractionDigits: 2 })}
+                        <span style={{ color: 'var(--text-tertiary)', fontWeight: 400, marginLeft: 6 }}>
+                          ({Number(cost.amount || 0).toLocaleString('en-US',
+                            { maximumFractionDigits: 2 })} {cost.currency})
+                        </span>
+                      </div>
+                      {/* Sprint Pagos Transfers — botón "Pagar este costo" (solo staff) */}
+                      {!isClient && onPayCost && (
+                        <button
+                          type="button"
+                          className="btn btn-accent btn-sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onPayCost({
+                              id:                   cost.cost_line_id,
+                              label:                cost.label || cost.kind_label || cost.kind,
+                              amount_usd:           Number(cost.amount_usd || 0),
+                              saldo_usd:            Number(cost.amount_usd || 0),
+                              currency:             cost.currency,
+                              transferencia_codigo: trf.transferencia_codigo,
+                            });
+                          }}
+                          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                        >
+                          {lang === 'es' ? 'Pagar este costo' : 'Pay this cost'}
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -1436,6 +1499,141 @@ function NodoCostosTab({ nodeId, lang, navigate }) {
     </div>
   );
 }
+
+/* ─────────────── Tab: Pagos (Sprint Pagos Transfers) ─────────────── */
+function NodoPagosTab({ nodeId, lang, isClient, refreshKey, onOpenWizard }) {
+  const [pagos,   setPagos]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState(null);
+
+  useEffect(() => {
+    if (!nodeId) return;
+    let cancel = false;
+    setLoading(true); setError(null);
+    financePaymentsApi.list({ nodo_id: nodeId })
+      .then((data) => {
+        if (cancel) return;
+        const arr = Array.isArray(data) ? data : (data?.results || []);
+        setPagos(arr);
+      })
+      .catch((e) => { if (!cancel) setError(e?.message || 'Error'); })
+      .finally(() => { if (!cancel) setLoading(false); });
+    return () => { cancel = true; };
+  }, [nodeId, refreshKey]);
+
+  return (
+    <div className="card card-pad" style={{ marginTop: 12 }}>
+      <div className="flex ai-center jc-between" style={{ marginBottom: 12 }}>
+        <div>
+          <div className="card-title">
+            {lang === 'es' ? 'Pagos de costos logísticos' : 'Logistics cost payments'}
+          </div>
+          <div className="card-subtitle">
+            {lang === 'es'
+              ? 'Pagos registrados contra costos de transferencias en este nodo.'
+              : 'Payments registered against transfer costs at this node.'}
+          </div>
+        </div>
+        {/* Botón "Registrar pago" — solo staff */}
+        {!isClient && onOpenWizard && (
+          <button type="button" className="btn btn-primary btn-sm"
+                  onClick={onOpenWizard}>
+            + {lang === 'es' ? 'Registrar pago' : 'Register payment'}
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
+          {lang === 'es' ? 'Cargando pagos…' : 'Loading payments…'}
+        </div>
+      ) : error ? (
+        <div className="body-sm" style={{ color: 'var(--critical)' }}>{error}</div>
+      ) : pagos.length === 0 ? (
+        <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
+          {lang === 'es'
+            ? 'Sin pagos registrados en este nodo.'
+            : 'No payments registered for this node.'}
+        </div>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>{lang === 'es' ? 'Código' : 'Code'}</th>
+              <th>{lang === 'es' ? 'Fecha' : 'Date'}</th>
+              <th>{lang === 'es' ? 'Dirección' : 'Direction'}</th>
+              <th>{lang === 'es' ? 'Método' : 'Method'}</th>
+              <th>{lang === 'es' ? 'Referencia' : 'Reference'}</th>
+              {!isClient && (
+                <>
+                  <th style={{ textAlign: 'right' }}>{lang === 'es' ? 'Monto' : 'Amount'}</th>
+                  <th style={{ textAlign: 'right' }}>USD</th>
+                </>
+              )}
+              <th>{lang === 'es' ? 'Estado' : 'Status'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagos.map((p) => {
+              const dir = p.direction || 'OUT';
+              return (
+                <tr key={p.id}>
+                  <td className="mono-sm" style={{ fontWeight: 600 }}>
+                    {p.codigo || (p.id ? String(p.id).slice(0, 8) : '—')}
+                  </td>
+                  <td className="tabular-nums text-sec">
+                    {p.fecha ? new Date(p.fecha).toLocaleDateString(
+                      lang === 'es' ? 'es-PE' : 'en-US',
+                      { day: '2-digit', month: 'short', year: 'numeric' }
+                    ) : '—'}
+                  </td>
+                  <td>
+                    <span style={{
+                      display: 'inline-block', padding: '2px 8px', borderRadius: 4,
+                      font: '600 10px/1.4 var(--font-mono)', letterSpacing: '0.06em',
+                      background: dir === 'IN'
+                        ? 'color-mix(in oklab, var(--success) 10%, transparent)'
+                        : 'color-mix(in oklab, var(--warning) 10%, transparent)',
+                      color: dir === 'IN' ? 'var(--success)' : 'var(--warning)',
+                      border: `1px solid color-mix(in oklab, ${dir === 'IN' ? 'var(--success)' : 'var(--warning)'} 32%, transparent)`,
+                    }}>
+                      {dir}
+                    </span>
+                  </td>
+                  <td>{p.metodo || '—'}</td>
+                  <td className="mono-sm" style={{ fontWeight: 600 }}>
+                    {p.referencia || '—'}
+                  </td>
+                  {!isClient && (
+                    <>
+                      <td className="tabular-nums" style={{ textAlign: 'right' }}>
+                        {Number(p.monto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {' '}<span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>{p.moneda || 'USD'}</span>
+                      </td>
+                      <td className="tabular-nums" style={{ textAlign: 'right', fontWeight: 700,
+                                                             color: 'var(--brand-accent)' }}>
+                        ${Number(p.monto_usd ?? p.monto ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </>
+                  )}
+                  <td>
+                    <span style={{
+                      padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                      background: 'var(--bg-alt)', color: 'var(--text-secondary)',
+                    }}>
+                      {p.estado || '—'}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 
 /* ─────────────── Tab: Automatizaciones ─────────────── */
 function AutomationsTab({ autos, lang }) {

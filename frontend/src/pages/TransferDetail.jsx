@@ -27,7 +27,9 @@ import {
 import {
   TRANSFERS, TRANSFER_STATUS_META, LEGAL_CONTEXT_META, getTransferTotals,
 } from "../data/mockData.js";
-import { transferenciasApi, transferLineasApi } from "../lib/api.js";
+import { transferenciasApi, transferLineasApi, financePaymentsApi } from "../lib/api.js";
+// Sprint Pagos Transfers — wizard de registro de pago.
+import RegisterPaymentWizard from "../components/finance/RegisterPaymentWizard.jsx";
 import TransferLiquidationPanel from "../components/transfers/TransferLiquidationPanel.jsx";
 import TransferStateStepper from "../components/transfers/TransferStateStepper.jsx";
 import TransferInvoicePrintView from "../components/transfers/TransferInvoicePrintView.jsx";
@@ -160,6 +162,14 @@ export default function ScreenTransferDetail() {
   const { isAdmin, isClient } = useRole();
   const canEdit = isAdmin && !isClient;
   const [addItemsOpen, setAddItemsOpen] = useState(false);
+  // Sprint Pagos Transfers — wizard de pago en TransferDetail.
+  const [wizardOpen,         setWizardOpen]         = useState(false);
+  const [wizardPreloadLines, setWizardPreloadLines]  = useState(null);
+  const [pagosRefreshKey,    setPagosRefreshKey]     = useState(0);
+  const openTransferPayWizard = (preloadLines = null) => {
+    setWizardPreloadLines(preloadLines || null);
+    setWizardOpen(true);
+  };
 
   const isUuid = typeof transferId === "string" && UUID_RE.test(transferId);
 
@@ -734,6 +744,32 @@ export default function ScreenTransferDetail() {
       />
       {/* Quitamos el import directo de TransferCostsPanel — la sección
           de costos vive en TransferLiquidationPanel arriba. */}
+
+      {/* ── Pagos asociados a esta transferencia (Sprint Pagos Transfers) ── */}
+      {!isMockOnly && (
+        <TransferPagosCard
+          transferId={transferBase._backend_id || transferBase.id}
+          lang={lang}
+          isClient={isClient}
+          refreshKey={pagosRefreshKey}
+          onOpenWizard={() => openTransferPayWizard()}
+        />
+      )}
+
+      {/* ── RegisterPaymentWizard (Sprint Pagos Transfers) ── */}
+      <RegisterPaymentWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onSuccess={() => { setWizardOpen(false); setPagosRefreshKey((k) => k + 1); }}
+        lang={lang}
+        preselectedScope={{
+          type:  'TRANSFERENCIA',
+          id:    transferBase?._backend_id || transferBase?.id || '',
+          label: transferBase?.codigo || transferBase?.id || 'Transferencia',
+        }}
+        preselectedCostLines={wizardPreloadLines}
+      />
+
       {/* ── Modal full-screen del Print View (sprint v4) ── */}
       {printingPayload && (
         <div style={{
@@ -758,6 +794,135 @@ export default function ScreenTransferDetail() {
         onClose={() => setAddItemsOpen(false)}
         onSaved={() => { setAddItemsOpen(false); loadBackend(); }}
       />
+    </div>
+  );
+}
+
+// ── TransferPagosCard (Sprint Pagos Transfers) ──────────────────
+function TransferPagosCard({ transferId, lang, isClient, refreshKey, onOpenWizard }) {
+  const [pagos,   setPagos]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState(null);
+
+  useEffect(() => {
+    if (!transferId) return;
+    let cancel = false;
+    setLoading(true); setError(null);
+    financePaymentsApi.list({ transferencia_id: transferId })
+      .then((data) => {
+        if (cancel) return;
+        const arr = Array.isArray(data) ? data : (data?.results || []);
+        setPagos(arr);
+      })
+      .catch((e) => { if (!cancel) setError(e?.message || 'Error'); })
+      .finally(() => { if (!cancel) setLoading(false); });
+    return () => { cancel = true; };
+  }, [transferId, refreshKey]);
+
+  return (
+    <div className="card card-pad-md" style={{ marginTop: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    marginBottom: 12 }}>
+        <div>
+          <div className="heading-sm" style={{ margin: 0 }}>
+            {lang === 'es' ? 'Pagos de costos' : 'Cost payments'}
+          </div>
+          <div className="caption" style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>
+            {lang === 'es'
+              ? 'Pagos registrados contra los costos de esta transferencia.'
+              : 'Payments registered against the costs of this transfer.'}
+          </div>
+        </div>
+        {!isClient && onOpenWizard && (
+          <button type="button" className="btn btn-primary btn-sm"
+                  onClick={onOpenWizard}>
+            + {lang === 'es' ? 'Registrar pago' : 'Register payment'}
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '12px 0' }}>
+          {lang === 'es' ? 'Cargando pagos…' : 'Loading payments…'}
+        </div>
+      ) : error ? (
+        <div className="body-sm" style={{ color: 'var(--critical)' }}>{error}</div>
+      ) : pagos.length === 0 ? (
+        <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '12px 0' }}>
+          {lang === 'es'
+            ? 'Sin pagos registrados en esta transferencia.'
+            : 'No payments registered for this transfer.'}
+        </div>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>{lang === 'es' ? 'Código' : 'Code'}</th>
+              <th>{lang === 'es' ? 'Fecha' : 'Date'}</th>
+              <th>{lang === 'es' ? 'Dirección' : 'Direction'}</th>
+              <th>{lang === 'es' ? 'Método' : 'Method'}</th>
+              {!isClient && (
+                <>
+                  <th style={{ textAlign: 'right' }}>{lang === 'es' ? 'Monto' : 'Amount'}</th>
+                  <th style={{ textAlign: 'right' }}>USD</th>
+                </>
+              )}
+              <th>{lang === 'es' ? 'Estado' : 'Status'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagos.map((p) => {
+              const dir = p.direction || 'OUT';
+              return (
+                <tr key={p.id}>
+                  <td className="mono-sm" style={{ fontWeight: 600 }}>
+                    {p.codigo || (p.id ? String(p.id).slice(0, 8) : '—')}
+                  </td>
+                  <td className="tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+                    {p.fecha ? new Date(p.fecha).toLocaleDateString(
+                      lang === 'es' ? 'es-PE' : 'en-US',
+                      { day: '2-digit', month: 'short', year: 'numeric' }
+                    ) : '—'}
+                  </td>
+                  <td>
+                    <span style={{
+                      display: 'inline-block', padding: '2px 8px', borderRadius: 4,
+                      font: '600 10px/1.4 var(--font-mono)', letterSpacing: '0.06em',
+                      background: dir === 'IN'
+                        ? 'color-mix(in oklab, var(--success) 10%, transparent)'
+                        : 'color-mix(in oklab, var(--warning) 10%, transparent)',
+                      color: dir === 'IN' ? 'var(--success)' : 'var(--warning)',
+                    }}>
+                      {dir}
+                    </span>
+                  </td>
+                  <td>{p.metodo || '—'}</td>
+                  {!isClient && (
+                    <>
+                      <td className="tabular-nums" style={{ textAlign: 'right' }}>
+                        {Number(p.monto || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {' '}<span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>{p.moneda || 'USD'}</span>
+                      </td>
+                      <td className="tabular-nums" style={{ textAlign: 'right', fontWeight: 700,
+                                                             color: 'var(--brand-accent)' }}>
+                        ${Number(p.monto_usd ?? p.monto ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </>
+                  )}
+                  <td>
+                    <span style={{
+                      padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                      background: 'var(--bg-alt)', color: 'var(--text-secondary)',
+                    }}>
+                      {p.estado || '—'}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

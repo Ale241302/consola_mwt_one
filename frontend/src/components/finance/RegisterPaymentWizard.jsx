@@ -61,6 +61,8 @@ const STEPS = [
  *   onClose: () => void,
  *   onSuccess?: (payment: object) => void,
  *   lang?: 'es'|'en',
+ *   preselectedScope?: { type: 'NODO'|'TRANSFERENCIA'|'OC'|'EXPEDIENTE', id: string, label: string },
+ *   preselectedCostLines?: Array<{ id: string, label: string, amount_usd: number, saldo_usd: number, currency: string, transferencia_codigo?: string }>,
  * }} props
  */
 export default function RegisterPaymentWizard({
@@ -68,13 +70,42 @@ export default function RegisterPaymentWizard({
   onClose,
   onSuccess,
   lang = "es",
+  preselectedScope = null,
+  preselectedCostLines = null,
 }) {
+  // ── Preload de cost-lines ──────────────────────────────────────
+  // Cuando el padre pasa preselectedCostLines, el wizard arranca
+  // en el paso 1 con direction=OUT y counterparty tipo PROVEEDOR.
+  // Las cost_lines se tratan como obligation_ids en el paso 2.
+  const hasPreload = Array.isArray(preselectedCostLines) && preselectedCostLines.length > 0;
+  const preloadSubtotal = hasPreload
+    ? preselectedCostLines.reduce((s, cl) => s + Number(cl.saldo_usd || cl.amount_usd || 0), 0)
+    : 0;
+
   // ── State del wizard ───────────────────────────────────────────
+  // Si hay preload comenzamos en el paso 1 (el usuario aún debe elegir
+  // contraparte), pero con direction=OUT y payment_target_type=COST
+  // pre-rellenados para reducir clicks.
   const [step, setStep] = useState(0);
   // formData unico para todo el wizard. Cada Paso lee y escribe sus
   // campos. Mantenemos shape plano (sin nested) para facilitar la
   // serializacion a sessionStorage y al backend.
-  const [formData, setFormData] = useState(() => _emptyFormData());
+  const [formData, setFormData] = useState(() => {
+    const empty = _emptyFormData();
+    if (Array.isArray(preselectedCostLines) && preselectedCostLines.length > 0) {
+      const sub = preselectedCostLines.reduce((s, cl) => s + Number(cl.saldo_usd || cl.amount_usd || 0), 0);
+      return {
+        ...empty,
+        direction:           "OUT",
+        payment_target_type: "COST",
+        obligation_ids:      preselectedCostLines.map((cl) => cl.id),
+        subtotal:            sub,
+        monto:               sub,
+        _preloaded_cost_lines: preselectedCostLines,
+      };
+    }
+    return empty;
+  });
 
   // ── Submit hook ────────────────────────────────────────────────
   const { submit, submitting, error: submitError, lastResult, reset: resetSubmit } = usePaymentSubmit();
@@ -119,7 +150,19 @@ export default function RegisterPaymentWizard({
   const update = (patch) => setFormData((prev) => ({ ...prev, ...patch }));
 
   const reset = () => {
-    setFormData(_emptyFormData());
+    if (hasPreload) {
+      setFormData({
+        ..._emptyFormData(),
+        direction:           "OUT",
+        payment_target_type: "COST",
+        obligation_ids:      preselectedCostLines.map((cl) => cl.id),
+        subtotal:            preloadSubtotal,
+        monto:               preloadSubtotal,
+        _preloaded_cost_lines: preselectedCostLines,
+      });
+    } else {
+      setFormData(_emptyFormData());
+    }
     setStep(0);
     resetSubmit();
   };
@@ -216,9 +259,21 @@ export default function RegisterPaymentWizard({
                 <div className="micro" style={{ color: "var(--text-tertiary)",
                                                  marginBottom: 2 }}>
                   {lang === "es" ? "FINANCIERO" : "FINANCE"}
+                  {preselectedScope && (
+                    <span style={{ marginLeft: 8, color: "var(--brand-primary)",
+                                   fontWeight: 700 }}>
+                      · {preselectedScope.type}: {preselectedScope.label}
+                    </span>
+                  )}
                 </div>
                 <div style={{ font: "var(--heading-md)", color: "var(--text-primary)" }}>
                   {lang === "es" ? "Registrar pago" : "Register payment"}
+                  {hasPreload && (
+                    <span style={{ marginLeft: 8, fontSize: 13, fontWeight: 500,
+                                   color: "var(--text-secondary)" }}>
+                      — {preselectedCostLines.length} {lang === "es" ? "costo(s) preseleccionado(s)" : "cost(s) preselected"}
+                    </span>
+                  )}
                 </div>
               </div>
               <button
@@ -289,10 +344,12 @@ export default function RegisterPaymentWizard({
               background: "var(--bg)",
             }}>
               {step === 0 && (
-                <Step1 formData={formData} update={update} lang={lang}/>
+                <Step1 formData={formData} update={update} lang={lang} hasPreload={hasPreload}/>
               )}
               {step === 1 && (
-                <Step2 formData={formData} update={update} lang={lang}/>
+                hasPreload
+                  ? <Step2Preloaded formData={formData} lang={lang}/>
+                  : <Step2 formData={formData} update={update} lang={lang}/>
               )}
               {step === 2 && (
                 <Step3 formData={formData} update={update} lang={lang}/>
@@ -366,7 +423,7 @@ export default function RegisterPaymentWizard({
 // ════════════════════════════════════════════════════════════════════
 // Paso 1 — Direction + Target type + Counterparty
 // ════════════════════════════════════════════════════════════════════
-function Step1({ formData, update, lang }) {
+function Step1({ formData, update, lang, hasPreload = false }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
       <_FieldGroup
@@ -375,28 +432,45 @@ function Step1({ formData, update, lang }) {
           ? "¿MWT está cobrando o pagando?"
           : "Is MWT collecting or paying?"}
       >
-        <div style={{ display: "flex", gap: 10 }}>
-          {["IN", "OUT"].map((d) => (
-            <_RadioCard
-              key={d}
-              checked={formData.direction === d}
-              onClick={() => update({
-                direction: d,
-                // Reset counterparty al cambiar direction
-                counterparty_id: null,
-                counterparty_type: null,
-                counterparty_label: null,
-                // Reset obligation_ids
-                obligation_ids: [],
-                subtotal: 0,
-              })}
-            >
-              <div style={{ fontWeight: 700 }}>
-                {getEnumLabel(PAYMENT_DIRECTION_LABELS, d, lang)}
-              </div>
-            </_RadioCard>
-          ))}
-        </div>
+        {hasPreload ? (
+          /* Preloaded: direction bloqueada en OUT */
+          <div style={{
+            padding: "10px 14px", borderRadius: "var(--radius-md)",
+            border: "2px solid var(--brand-primary)",
+            background: "color-mix(in oklab, var(--brand-primary) 6%, transparent)",
+            display: "inline-flex", alignItems: "center", gap: 8,
+            fontSize: 13, fontWeight: 700, color: "var(--brand-primary)",
+          }}>
+            {getEnumLabel(PAYMENT_DIRECTION_LABELS, "OUT", lang)}
+            <span style={{ fontSize: 11, fontWeight: 400,
+                           color: "var(--text-secondary)" }}>
+              ({lang === "es" ? "preseleccionada" : "preselected"})
+            </span>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 10 }}>
+            {["IN", "OUT"].map((d) => (
+              <_RadioCard
+                key={d}
+                checked={formData.direction === d}
+                onClick={() => update({
+                  direction: d,
+                  // Reset counterparty al cambiar direction
+                  counterparty_id: null,
+                  counterparty_type: null,
+                  counterparty_label: null,
+                  // Reset obligation_ids
+                  obligation_ids: [],
+                  subtotal: 0,
+                })}
+              >
+                <div style={{ fontWeight: 700 }}>
+                  {getEnumLabel(PAYMENT_DIRECTION_LABELS, d, lang)}
+                </div>
+              </_RadioCard>
+            ))}
+          </div>
+        )}
       </_FieldGroup>
 
       <_FieldGroup
@@ -405,31 +479,50 @@ function Step1({ formData, update, lang }) {
           ? "Producto (mercancía) o costo (DUA, flete, seguro, etc)"
           : "Product (merchandise) or cost (DUA, freight, insurance, etc)"}
       >
-        <div style={{ display: "flex", gap: 10 }}>
-          {["PRODUCT", "COST"].map((t) => (
-            <_RadioCard
-              key={t}
-              checked={formData.payment_target_type === t}
-              onClick={() => update({
-                payment_target_type: t,
-                obligation_ids: [],
-                subtotal: 0,
-              })}
-            >
-              <div style={{ fontWeight: 700 }}>
-                {t === "PRODUCT"
-                  ? (lang === "es" ? "Producto" : "Product")
-                  : (lang === "es" ? "Costo"    : "Cost")}
+        {hasPreload ? (
+          /* Preloaded: tipo bloqueado en COSTO */
+          <div style={{
+            padding: "10px 14px", borderRadius: "var(--radius-md)",
+            border: "2px solid var(--brand-primary)",
+            background: "color-mix(in oklab, var(--brand-primary) 6%, transparent)",
+            display: "inline-flex", alignItems: "center", gap: 8,
+          }}>
+            <div>
+              <div style={{ fontWeight: 700, color: "var(--brand-primary)" }}>
+                {lang === "es" ? "Costo" : "Cost"}
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-secondary)",
-                            marginTop: 2 }}>
-                {t === "PRODUCT"
-                  ? (lang === "es" ? "Factura / proforma / producto" : "Invoice / proforma / product")
-                  : (lang === "es" ? "DUA / flete / seguro / etc"   : "DUA / freight / insurance / etc")}
+              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2 }}>
+                {lang === "es" ? "preseleccionado" : "preselected"}
               </div>
-            </_RadioCard>
-          ))}
-        </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 10 }}>
+            {["PRODUCT", "COST"].map((t) => (
+              <_RadioCard
+                key={t}
+                checked={formData.payment_target_type === t}
+                onClick={() => update({
+                  payment_target_type: t,
+                  obligation_ids: [],
+                  subtotal: 0,
+                })}
+              >
+                <div style={{ fontWeight: 700 }}>
+                  {t === "PRODUCT"
+                    ? (lang === "es" ? "Producto" : "Product")
+                    : (lang === "es" ? "Costo"    : "Cost")}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text-secondary)",
+                              marginTop: 2 }}>
+                  {t === "PRODUCT"
+                    ? (lang === "es" ? "Factura / proforma / producto" : "Invoice / proforma / product")
+                    : (lang === "es" ? "DUA / flete / seguro / etc"   : "DUA / freight / insurance / etc")}
+                </div>
+              </_RadioCard>
+            ))}
+          </div>
+        )}
       </_FieldGroup>
 
       <_FieldGroup
@@ -504,6 +597,80 @@ function Step2({ formData, update, lang }) {
         })}
         lang={lang}
       />
+    </div>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════════════
+// Paso 2 (preloaded) — Cost-lines fijas, sin tabla genérica
+// ════════════════════════════════════════════════════════════════════
+function Step2Preloaded({ formData, lang }) {
+  const lines = formData._preloaded_cost_lines || [];
+  const total = lines.reduce((s, cl) => s + Number(cl.saldo_usd || cl.amount_usd || 0), 0);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 4 }}>
+        {lang === "es"
+          ? "Costos preseleccionados que este pago va a saldar:"
+          : "Preselected costs this payment will settle:"}
+      </div>
+      <div className="card card-pad"
+           style={{ border: "1px solid var(--border-subtle)" }}>
+        <table className="table" style={{ width: "100%" }}>
+          <thead>
+            <tr>
+              {lines[0]?.transferencia_codigo !== undefined && (
+                <th style={{ fontSize: 11 }}>
+                  {lang === "es" ? "Transferencia" : "Transfer"}
+                </th>
+              )}
+              <th style={{ fontSize: 11 }}>{lang === "es" ? "Detalle" : "Detail"}</th>
+              <th style={{ textAlign: "right", fontSize: 11 }}>
+                {lang === "es" ? "Saldo USD" : "Balance USD"}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((cl) => (
+              <tr key={cl.id}>
+                {cl.transferencia_codigo !== undefined && (
+                  <td className="mono-sm" style={{ fontWeight: 600,
+                                                    color: "var(--brand-accent)" }}>
+                    {cl.transferencia_codigo || "\u2014"}
+                  </td>
+                )}
+                <td>{cl.label || "\u2014"}</td>
+                <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700,
+                                                       color: "var(--brand-accent)" }}>
+                  ${Number(cl.saldo_usd ?? cl.amount_usd ?? 0).toLocaleString("en-US",
+                    { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{
+          marginTop: 10, paddingTop: 10,
+          borderTop: "1px dashed var(--divider)",
+          display: "flex", justifyContent: "flex-end", alignItems: "center",
+          gap: 10,
+        }}>
+          <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500 }}>
+            TOTAL
+          </span>
+          <span className="tabular-nums" style={{ fontWeight: 700, fontSize: 15,
+                                                   color: "var(--brand-accent)" }}>
+            ${total.toLocaleString("en-US",
+              { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+          </span>
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+        {lang === "es"
+          ? "El monto sugerido en el Paso 3 es la suma de los saldos arriba. Puedes editarlo."
+          : "The suggested amount in Step 3 is the sum of the balances above. You can edit it."}
+      </div>
     </div>
   );
 }
@@ -850,6 +1017,23 @@ function _buildDryRunPayload(f) {
 function _buildSubmitPayload(f) {
   // Payload para POST /api/finance/payments/ (multipart).
   // financePaymentsApi.register se encarga de construir el FormData.
+  //
+  // Si _preloaded_cost_lines existe (flujo preseleccionado desde nodo/OC/trf),
+  // las aplicaciones son siempre tipo COSTO con monto_aplicado = saldo_usd.
+  const aplicaciones = f._preloaded_cost_lines
+    ? f._preloaded_cost_lines.map((cl) => ({
+        applicable_type: "COSTO",
+        applicable_id:   cl.id,
+        monto_aplicado:  Number(cl.saldo_usd ?? cl.amount_usd ?? 0),
+      }))
+    : f.obligation_ids.map((id) => ({
+        applicable_type:
+          f.payment_target_type === "COST" ? "COSTO" : "FACTURA",
+        applicable_id:    id,
+        monto_aplicado:   0,  // TODO: distribuir cuando OpenDebtsTable
+                              //       devuelva monto por obligation
+      }));
+
   return {
     expediente_id:  null,  // se infiere de la primera obligation_id en backend
     monto:          Number(f.monto || 0),
@@ -863,13 +1047,7 @@ function _buildSubmitPayload(f) {
     counterparty_type: f.counterparty_type,
     counterparty_id:   f.counterparty_id,
     tasa_cambio_a_usd: f.tasa_cambio_a_usd,
-    aplicaciones: f.obligation_ids.map((id) => ({
-      applicable_type:
-        f.payment_target_type === "COST" ? "COSTO" : "FACTURA",
-      applicable_id:    id,
-      monto_aplicado:   0,  // TODO: distribuir cuando OpenDebtsTable
-                            //       devuelva monto por obligation
-    })),
+    aplicaciones,
     evidencia: f.evidencia,
   };
 }

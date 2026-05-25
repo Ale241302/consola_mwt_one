@@ -66,6 +66,8 @@ class PaymentViewSet(viewsets.ViewSet):
 
     # ── List ──────────────────────────────────────────────
     def list(self, request):
+        from django.db import connection
+
         qs = Payment.objects.filter(is_active=True)
         # Sprint 2026-05-22 · scope multi-tenant por client_id.
         qs = filter_by_user_clients(qs, request.user, client_field="client_id")
@@ -84,6 +86,30 @@ class PaymentViewSet(viewsets.ViewSet):
         q = request.query_params.get("q")
         if q:
             qs = qs.filter(referencia__icontains=q)
+
+        # ── Sprint 2026-05-25 · filtros cross-transfers ──────────
+        # nodo_id / transferencia_id / oc_id → filtra por pagos que
+        # tienen al menos una application de tipo COSTO a una cost_line
+        # de transfers.cost_line cuya transferencia tocó ese nodo/OC/exp.
+        transferencia_id = request.query_params.get("transferencia_id")
+        nodo_id          = request.query_params.get("nodo_id")
+        oc_id            = request.query_params.get("oc_id")
+
+        if transferencia_id or nodo_id or oc_id:
+            cost_line_ids = _resolve_cost_line_ids(
+                connection,
+                transferencia_id=transferencia_id,
+                nodo_id=nodo_id,
+                oc_id=oc_id,
+            )
+            if cost_line_ids is not None:
+                # cost_line_ids puede ser lista vacía (no hay costos → 0 pagos)
+                qs = qs.filter(
+                    applications__applicable_type="COSTO",
+                    applications__applicable_id__in=cost_line_ids,
+                ).distinct()
+            # Si _resolve_cost_line_ids devuelve None fue un error SQL;
+            # seguimos sin filtrar cross-transfers (fail-open, logeado).
 
         qs = qs.order_by("-created_at")[:200]
         return Response(PaymentDetailSerializer(qs, many=True).data)
@@ -179,11 +205,22 @@ class PaymentViewSet(viewsets.ViewSet):
     def applicables(self, request):
         from django.db import connection
 
-        exp_id = request.query_params.get("expediente")
-        kind   = (request.query_params.get("type") or "").upper().strip()
+        exp_id           = request.query_params.get("expediente")
+        kind             = (request.query_params.get("type") or "").upper().strip()
+        nodo_id          = request.query_params.get("nodo_id")
+        transferencia_id = request.query_params.get("transferencia_id")
+        oc_id            = request.query_params.get("oc_id")
 
-        if not exp_id:
-            return Response({"detail": "expediente requerido"}, status=400)
+        # Para PROFORMA/FACTURA expediente sigue siendo obligatorio.
+        # Para COSTO se acepta cualquiera de los 4 filtros.
+        has_scope = bool(exp_id or nodo_id or transferencia_id or oc_id)
+        if kind in ("PROFORMA", "FACTURA") and not exp_id:
+            return Response({"detail": "expediente requerido para PROFORMA/FACTURA"}, status=400)
+        if kind == "COSTO" and not has_scope:
+            return Response(
+                {"detail": "Se requiere al menos uno de: expediente, nodo_id, transferencia_id, oc_id"},
+                status=400,
+            )
         if kind not in ("PROFORMA", "FACTURA", "COSTO"):
             return Response(
                 {"detail": f"type inválido: {kind!r} (PROFORMA/FACTURA/COSTO)"},
@@ -330,49 +367,166 @@ class PaymentViewSet(viewsets.ViewSet):
                 })
 
         # ── COSTO ─────────────────────────────────────────────────
+        # Sprint 2026-05-25: soporta 4 filtros mutuamente excluyentes.
+        # Si se pasa expediente= (y nada más), combinamos:
+        #   1. financiero.cost_line legacy (backward-compat)
+        #   2. transfers.cost_line cuya transferencia tocó ese expediente
+        # Si se pasa nodo_id / transferencia_id / oc_id: solo transfers.cost_line.
         elif kind == "COSTO":
+            use_new_only = bool(nodo_id or transferencia_id or oc_id)
+
+            # ── 1. Legacy financiero.cost_line (solo si filtramos por expediente) ──
+            if exp_id and not use_new_only:
+                try:
+                    with connection.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT
+                                id::text,
+                                cost_type,
+                                COALESCE(amount, 0)         AS amount,
+                                currency,
+                                COALESCE(amount_usd, 0)     AS amount_usd,
+                                description,
+                                created_at
+                              FROM financiero.cost_line
+                             WHERE expediente_id = %s
+                               AND COALESCE(is_active, TRUE) = TRUE
+                             ORDER BY created_at DESC NULLS LAST
+                            """,
+                            [exp_id],
+                        )
+                        legacy_rows = cur.fetchall()
+                except Exception as e:
+                    log.info("applicables(COSTO) legacy query falló: %s", e)
+                    legacy_rows = []
+
+                for (cost_id, cost_type, amount, currency, amount_usd,
+                     description, created_at) in legacy_rows:
+                    code  = (cost_type or "COSTO").upper()
+                    label = description or cost_type or "Costo"
+                    items.append({
+                        "id":      str(cost_id),
+                        "type":    "COSTO",
+                        "kind":    code,
+                        "code":    code,
+                        "label":   label,
+                        "amount":  str(amount or 0),
+                        "currency": currency or "USD",
+                        "amount_usd": str(amount_usd or amount or 0),
+                        "paid_usd":  "0.00",
+                        "saldo_usd": str(amount_usd or amount or 0),
+                        "balance": float(amount_usd or amount or 0),
+                        "transferencia_id": None,
+                        "transferencia_codigo": None,
+                        "scope_summary": None,
+                        "meta": {
+                            "cost_type": cost_type,
+                            "currency":  currency,
+                            "amount":    float(amount or 0),
+                        },
+                    })
+
+            # ── 2. transfers.cost_line (real) ────────────────────────────────
+            # Construye el CTE de filtro según el scope pasado.
+            if use_new_only:
+                scope_cte, scope_params = _build_transfers_scope_cte(
+                    nodo_id=nodo_id,
+                    transferencia_id=transferencia_id,
+                    oc_id=oc_id,
+                    exp_id=None,
+                )
+            else:
+                # expediente= → añadimos cost_lines de transfers.cost_line
+                # que tocaron ese expediente (via nodo_assignment O scope_json).
+                scope_cte, scope_params = _build_transfers_scope_cte(
+                    nodo_id=None,
+                    transferencia_id=None,
+                    oc_id=None,
+                    exp_id=exp_id,
+                )
+
+            trf_sql = scope_cte + """
+            SELECT
+                cl.id::text                                       AS id,
+                cl.kind,
+                COALESCE(ck.label, cl.kind)                       AS kind_label,
+                COALESCE(cl.label, cl.kind, 'Costo')              AS label,
+                cl.amount::text                                   AS amount,
+                cl.currency,
+                COALESCE(cl.amount_usd, cl.amount, 0)::text      AS amount_usd,
+                cl.scope_json,
+                cl.transferencia_id::text                         AS transferencia_id,
+                t.codigo                                          AS transferencia_codigo,
+                COALESCE(
+                    SUM(pa.monto_aplicado) FILTER (
+                        WHERE pa.applicable_type = 'COSTO'
+                          AND pa.applicable_id   = cl.id
+                    ), 0
+                )::text                                           AS paid_usd
+            FROM transfers.cost_line cl
+            JOIN transfers.transferencia t        ON t.id = cl.transferencia_id
+            JOIN _scope_trf s                     ON s.transferencia_id = cl.transferencia_id
+            LEFT JOIN transfers.cost_kind_cat ck  ON ck.codigo = cl.kind
+            LEFT JOIN finance.payment_application pa
+                   ON pa.applicable_id   = cl.id
+                  AND pa.applicable_type = 'COSTO'
+            WHERE cl.is_active = TRUE
+            GROUP BY
+                cl.id, cl.kind, ck.label, cl.label,
+                cl.amount, cl.currency, cl.amount_usd,
+                cl.scope_json, cl.transferencia_id, t.codigo
+            ORDER BY cl.transferencia_id, cl.kind
+            """
+
             try:
                 with connection.cursor() as cur:
-                    # `financiero.cost_line` se crea en
-                    # backend/sql/94_pipeline_financiero_portal.sql.
-                    # Si la tabla no existe en este DB, devolvemos [] sin
-                    # crashear (defensivo · permite ambientes nuevos).
-                    cur.execute(
-                        """
-                        SELECT
-                            id::text,
-                            cost_type,
-                            COALESCE(amount, 0)         AS amount,
-                            currency,
-                            COALESCE(amount_usd, 0)     AS amount_usd,
-                            description,
-                            created_at
-                          FROM financiero.cost_line
-                         WHERE expediente_id = %s
-                           AND COALESCE(is_active, TRUE) = TRUE
-                         ORDER BY created_at DESC NULLS LAST
-                        """,
-                        [exp_id],
-                    )
-                    rows = cur.fetchall()
+                    cur.execute(trf_sql, scope_params)
+                    trf_cols = [d[0] for d in cur.description]
+                    trf_rows = [dict(zip(trf_cols, r)) for r in cur.fetchall()]
             except Exception as e:
-                # La tabla puede no existir en algunos environments.
-                log.info("applicables(COSTO) query falló (probable schema): %s", e)
-                rows = []
+                log.exception("applicables(COSTO) transfers.cost_line query falló: %s", e)
+                trf_rows = []
 
-            for (cost_id, cost_type, amount, currency, amount_usd,
-                 description, created_at) in rows:
-                code  = (cost_type or "COSTO").upper()
-                label = description or cost_type or "Costo"
+            for row in trf_rows:
+                scope_j = row.get("scope_json")
+                if scope_j is None or (isinstance(scope_j, dict) and scope_j.get("applies_to_all", True)):
+                    scope_summary = "Toda la transferencia"
+                elif isinstance(scope_j, dict):
+                    exp_ids = scope_j.get("expediente_ids") or []
+                    n = len(exp_ids)
+                    scope_summary = f"{n} expediente{'s' if n != 1 else ''}"
+                else:
+                    scope_summary = "Toda la transferencia"
+
+                amount_usd_val = row.get("amount_usd") or "0.00"
+                paid_usd_val   = row.get("paid_usd")   or "0.00"
+                try:
+                    from decimal import Decimal
+                    saldo = Decimal(str(amount_usd_val)) - Decimal(str(paid_usd_val))
+                except Exception:
+                    saldo = 0
+
                 items.append({
-                    "id":      str(cost_id),
-                    "code":    code,
-                    "label":   label,
-                    "balance": float(amount_usd or amount or 0),
+                    "id":                   row["id"],
+                    "type":                 "COSTO",
+                    "kind":                 row.get("kind") or "COSTO",
+                    "code":                 row.get("kind") or "COSTO",
+                    "label":                row.get("label") or "Costo",
+                    "amount":               row.get("amount") or "0.00",
+                    "currency":             row.get("currency") or "USD",
+                    "amount_usd":           amount_usd_val,
+                    "paid_usd":             paid_usd_val,
+                    "saldo_usd":            str(saldo),
+                    "balance":              float(saldo),
+                    "transferencia_id":     row.get("transferencia_id"),
+                    "transferencia_codigo": row.get("transferencia_codigo"),
+                    "scope_summary":        scope_summary,
+                    # kept for backward compat with legacy consumers
                     "meta": {
-                        "cost_type": cost_type,
-                        "currency":  currency,
-                        "amount":    float(amount or 0),
+                        "cost_type": row.get("kind"),
+                        "currency":  row.get("currency"),
+                        "amount":    float(row.get("amount") or 0),
                     },
                 })
 
@@ -413,6 +567,111 @@ class PaymentViewSet(viewsets.ViewSet):
             "payment_id": str(p.id),
             "outcome": outcome,  # queued / sync / skipped
         }, status=202)
+
+
+# ════════════════════════════════════════════════════════════
+# Helpers · resolución de cost_line ids para filtros cross-transfers
+# ════════════════════════════════════════════════════════════
+
+def _build_transfers_scope_cte(*, nodo_id, transferencia_id, oc_id, exp_id):
+    """
+    Construye el CTE SQL `_scope_trf (transferencia_id)` y la lista de
+    params para filtrar transfers.cost_line según el filtro activo.
+
+    Retorna (cte_sql_str, params_list).
+    El CTE se llama `_scope_trf` y tiene una sola columna `transferencia_id`.
+    """
+    if transferencia_id:
+        cte = """
+        WITH _scope_trf AS (
+            SELECT id AS transferencia_id
+              FROM transfers.transferencia
+             WHERE id = %s::uuid
+               AND is_active = TRUE
+        )
+        """
+        params = [str(transferencia_id)]
+
+    elif nodo_id:
+        # Transferencias que asignaron mercancía a este nodo.
+        cte = """
+        WITH _scope_trf AS (
+            SELECT DISTINCT transferencia_id
+              FROM inventario.expediente_nodo_assignment
+             WHERE nodo_id          = %s::uuid
+               AND transferencia_id IS NOT NULL
+               AND is_active        = TRUE
+        )
+        """
+        params = [str(nodo_id)]
+
+    elif oc_id:
+        # Transferencias que tocaron algún expediente de esta OC.
+        cte = """
+        WITH _scope_trf AS (
+            SELECT DISTINCT a.transferencia_id
+              FROM inventario.expediente_nodo_assignment a
+              JOIN expedientes.expediente e
+                ON e.id       = a.expediente_id
+               AND e.oc_id    = %s::uuid
+               AND e.is_active = TRUE
+             WHERE a.transferencia_id IS NOT NULL
+               AND a.is_active        = TRUE
+        )
+        """
+        params = [str(oc_id)]
+
+    elif exp_id:
+        # Transferencias que tocaron este expediente vía nodo_assignment.
+        cte = """
+        WITH _scope_trf AS (
+            SELECT DISTINCT transferencia_id
+              FROM inventario.expediente_nodo_assignment
+             WHERE expediente_id    = %s::uuid
+               AND transferencia_id IS NOT NULL
+               AND is_active        = TRUE
+        )
+        """
+        params = [str(exp_id)]
+
+    else:
+        # Sin scope → CTE vacío (ningún cost_line).
+        cte = """
+        WITH _scope_trf AS (
+            SELECT NULL::uuid AS transferencia_id WHERE FALSE
+        )
+        """
+        params = []
+
+    return cte, params
+
+
+def _resolve_cost_line_ids(connection, *, transferencia_id, nodo_id, oc_id):
+    """
+    Devuelve una lista (posiblemente vacía) de UUIDs de transfers.cost_line
+    que pertenecen al scope pedido (nodo/transferencia/OC).
+
+    Retorna None si hubo un error SQL (fail-open para el caller).
+    """
+    cte, params = _build_transfers_scope_cte(
+        nodo_id=nodo_id,
+        transferencia_id=transferencia_id,
+        oc_id=oc_id,
+        exp_id=None,
+    )
+    sql = cte + """
+    SELECT cl.id
+      FROM transfers.cost_line cl
+      JOIN _scope_trf s ON s.transferencia_id = cl.transferencia_id
+     WHERE cl.is_active = TRUE
+    """
+    try:
+        with connection.cursor() as cur:
+            cur.execute(sql, params)
+            return [row[0] for row in cur.fetchall()]
+    except Exception as exc:
+        log.exception("_resolve_cost_line_ids SQL failed: %s", exc)
+        return None
 
 
 # ════════════════════════════════════════════════════════════
