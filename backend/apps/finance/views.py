@@ -49,6 +49,7 @@ from apps.core.scoped_querysets import (
     filter_by_user_clients,
     _is_bypass,
 )
+from apps.core.fx_service import get_fx_to_usd
 
 log = logging.getLogger(__name__)
 
@@ -581,6 +582,25 @@ class PaymentViewSet(viewsets.ViewSet):
                 log.exception("applicables(COSTO) transfers.cost_line query falló: %s", e)
                 trf_rows = []
 
+            # Sprint 2026-05-25 - Bug detectado: muchas cost_lines
+            # historicas tienen fx_to_usd=1.0 y currency != USD, asi
+            # que amount_usd (columna persistida) es igual al amount
+            # local (CRC, BRL, etc.) tratado como USD. El frontend
+            # mostraba "$1,422,888.96 USD" para un DUA de 1.4M CRC
+            # (real ~$3,107 USD). Aqui detectamos ese caso y
+            # recalculamos amount_usd y saldo_usd con la tasa real
+            # de Frankfurter (cacheada 1h en Redis).
+            from decimal import Decimal
+
+            # Cache local del FX rate por currency dentro de este request
+            _fx_cache = {}
+            def _resolve_fx(ccy):
+                if ccy in _fx_cache:
+                    return _fx_cache[ccy]
+                fx = get_fx_to_usd(ccy)
+                _fx_cache[ccy] = fx
+                return fx
+
             for row in trf_rows:
                 scope_j = row.get("scope_json")
                 if scope_j is None or (isinstance(scope_j, dict) and scope_j.get("applies_to_all", True)):
@@ -592,13 +612,42 @@ class PaymentViewSet(viewsets.ViewSet):
                 else:
                     scope_summary = "Toda la transferencia"
 
-                amount_usd_val = row.get("amount_usd") or "0.00"
-                paid_usd_val   = row.get("paid_usd")   or "0.00"
-                try:
-                    from decimal import Decimal
-                    saldo = Decimal(str(amount_usd_val)) - Decimal(str(paid_usd_val))
-                except Exception:
-                    saldo = 0
+                amount_local = Decimal(str(row.get("amount") or "0"))
+                currency     = (row.get("currency") or "USD").upper()
+                amount_usd_persisted = Decimal(str(row.get("amount_usd") or "0"))
+                paid_usd_persisted   = Decimal(str(row.get("paid_usd")   or "0"))
+
+                # Heuristica de deteccion del bug:
+                #   currency != USD AND amount_usd == amount (ratio 1.0)
+                # significa que se persistio sin convertir. Recalculamos
+                # con tasa Frankfurter en vivo.
+                needs_recalc = (
+                    currency != "USD"
+                    and amount_local > 0
+                    and abs(amount_usd_persisted - amount_local) < Decimal("0.01")
+                )
+
+                fx_real = None
+                if needs_recalc:
+                    fx_real = _resolve_fx(currency)
+                    if fx_real and fx_real > 0:
+                        amount_usd_val = (amount_local * Decimal(str(fx_real))).quantize(Decimal("0.01"))
+                        # paid_usd persistido tambien podria estar mal;
+                        # asumimos que SI esta correcto en USD ya que el
+                        # registro de pago siempre normaliza a USD (no
+                        # arrastra el bug del cost_line). Si en el futuro
+                        # se detectara que tampoco, aplicar misma heuristica.
+                        paid_usd_val = paid_usd_persisted
+                    else:
+                        # FX no disponible -> dejamos los valores como estan,
+                        # marcamos en meta para que el FE pueda warning.
+                        amount_usd_val = amount_usd_persisted
+                        paid_usd_val   = paid_usd_persisted
+                else:
+                    amount_usd_val = amount_usd_persisted
+                    paid_usd_val   = paid_usd_persisted
+
+                saldo = amount_usd_val - paid_usd_val
 
                 items.append({
                     "id":                   row["id"],
@@ -606,20 +655,24 @@ class PaymentViewSet(viewsets.ViewSet):
                     "kind":                 row.get("kind") or "COSTO",
                     "code":                 row.get("kind") or "COSTO",
                     "label":                row.get("label") or "Costo",
-                    "amount":               row.get("amount") or "0.00",
-                    "currency":             row.get("currency") or "USD",
-                    "amount_usd":           amount_usd_val,
-                    "paid_usd":             paid_usd_val,
+                    "amount":               str(amount_local),
+                    "currency":             currency,
+                    "amount_usd":           str(amount_usd_val),
+                    "paid_usd":             str(paid_usd_val),
                     "saldo_usd":            str(saldo),
                     "balance":              float(saldo),
                     "transferencia_id":     row.get("transferencia_id"),
                     "transferencia_codigo": row.get("transferencia_codigo"),
                     "scope_summary":        scope_summary,
+                    "fx_to_usd":            fx_real if fx_real else (1.0 if currency == "USD" else None),
+                    "fx_recalculated":      bool(needs_recalc and fx_real),
+                    "fx_source":            "frankfurter" if (needs_recalc and fx_real) else "persisted",
                     # kept for backward compat with legacy consumers
                     "meta": {
                         "cost_type": row.get("kind"),
-                        "currency":  row.get("currency"),
-                        "amount":    float(row.get("amount") or 0),
+                        "currency":  currency,
+                        "amount":    float(amount_local),
+                        "fx_warning": (currency != "USD" and not fx_real and needs_recalc),
                     },
                 })
 
