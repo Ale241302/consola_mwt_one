@@ -110,6 +110,51 @@ Devuelve ÚNICAMENTE el JSON. Sin texto adicional, sin markdown, sin comentarios
 """
 
 
+# ── Re-clasificador de respaldo basado en el `label` ──────────────
+# El modelo a veces devuelve kind="OTRO" para tributos CR pequeños
+# (timbres, PROCOMER, Ley 6946) aunque el SYSTEM_PROMPT los menciona.
+# Este post-proceso aplica una segunda capa de matching por palabras
+# clave sobre el label/descripcion. Funciona como red de seguridad
+# sin acoplarse a un modelo específico de OpenAI.
+_LABEL_PATTERNS = (
+    # (regex insensitive, kind canónico)
+    (r"\bPROCOMER\b",                                            "PROCOMER"),
+    (r"\bLEY\s*6946\b|SEGURIDAD\s+CIUDADANA",                   "LEY_6946"),
+    (r"TIMBRE.*ARCHIVO\s+NACIONAL|ARCHIVO\s+NACIONAL",            "TIMBRE_ARCHIVO"),
+    (r"TIMBRE.*AGENTE|AGENTES?\s+DE\s+ADUANA|LEY\s*7017",         "TIMBRE_AGENTES"),
+    (r"TIMBRE.*CONTADOR|COLEGIO\s+DE\s+CONTADORES",                "TIMBRE_CONTADORES"),
+    (r"\b(DAI|DERECHOS?\s+ARANCELARIOS?|IMPORT\s*DUTY)\b",       "DAI"),
+    (r"\b(IVA|IGV|VAT|ITBIS|IMPUESTO\s+SOBRE\s+EL\s+VALOR|LEY\s*9635)\b", "IVA"),
+    (r"\b(ALMACENAJE|BODEGAJE|DEP\.?\s*FISCAL)\b",               "ALMACENAJE"),
+    (r"\b(AGENCIAMIENTO|HONORARIOS?\s+AGEN)",                     "AGENCIAMIENTO"),
+    (r"\b(MANIPULEO|HANDLING|PALETIZ|FUMIG)",                      "MANIPULEO"),
+    (r"\b(FLETE|FREIGHT)\b",                                       "FLETE"),
+    (r"\b(SEGURO|INSURANCE)\b",                                    "SEGURO"),
+    (r"\b(CONSOLIDACI[ÓO]N|LCL|LTL)\b",                            "CONSOLIDACION"),
+)
+
+import re as _re
+_COMPILED_LABEL_PATTERNS = [(_re.compile(p, _re.IGNORECASE | _re.UNICODE), k)
+                            for p, k in _LABEL_PATTERNS]
+
+
+def _reclassify_kind(kind: str, label: str) -> str:
+    """Si el kind es OTRO o desconocido, intenta deducirlo por el label.
+
+    Si el modelo ya devolvió un kind válido distinto de OTRO, lo
+    respetamos. Esto solo actúa como red de seguridad para los casos
+    en que la IA fue conservadora.
+    """
+    if kind and kind != "OTRO":
+        return kind
+    if not label:
+        return kind or "OTRO"
+    for pattern, target_kind in _COMPILED_LABEL_PATTERNS:
+        if pattern.search(label):
+            return target_kind
+    return kind or "OTRO"
+
+
 def extract_customs_costs(
     file_bytes: bytes,
     filename: str,
@@ -264,28 +309,76 @@ def extract_customs_costs(
         "OTRO",
     )
 
-    for line in (data.get("lines") or []):
+    raw_lines = data.get("lines") or []
+
+    # ── Pass 1: estimar FX implícito por moneda ───────────────────
+    # El DUA CR trae las columnas "Valor en Dólares" y "Valor en MN"
+    # paralelas: el modelo puede devolver amount_usd para los rubros
+    # grandes (DAI, IVA) y dejar amount_usd=null para los pequeños
+    # (timbres) porque la celda USD aparece como 0.00. Si NO derivamos
+    # un FX único por moneda y lo propagamos, los timbres muestran
+    # fx=1.0 → $20 USD en vez de $0.04 USD y el total se rompe.
+    # Estrategia: tomamos el FX de las líneas con datos confiables
+    # (amount_usd > 0 AND amount > 0) y lo usamos como FX dominante
+    # por currency. Si hay varias, ganamos la del mayor monto local.
+    fx_by_currency = {}      # {currency: fx_to_usd}
+    best_anchor    = {}      # {currency: amount_local de la línea ancla}
+    for line in raw_lines:
+        try:
+            ccy = str(line.get("currency") or "USD").upper()[:3]
+            if ccy == "USD":
+                continue
+            amt = float(line.get("amount") or 0)
+            au_raw = line.get("amount_usd")
+            au = float(au_raw) if au_raw not in (None, "", 0, 0.0) else None
+            if au is None or amt <= 0 or au <= 0:
+                continue
+            # Anclamos en la línea con mayor amount local de esa moneda
+            if amt > best_anchor.get(ccy, 0):
+                fx_by_currency[ccy] = round(au / amt, 6)
+                best_anchor[ccy] = amt
+        except (TypeError, ValueError):
+            continue
+
+    # ── Pass 2: armar la salida con FX propagado ──────────────────
+    for line in raw_lines:
         try:
             kind = str(line.get("kind") or "OTRO").upper().replace(" ", "_")
+            label = str(line.get("label") or "")
+            # Reclasificación de respaldo: si la IA puso OTRO o un kind
+            # desconocido pero el label matchea un patrón CR conocido,
+            # lo promovemos al kind canónico (PROCOMER, TIMBRE_*, …).
+            if kind not in _VALID_KINDS or kind == "OTRO":
+                kind = _reclassify_kind(kind, label)
             if kind not in _VALID_KINDS:
                 kind = "OTRO"
             amount = float(line.get("amount") or 0)
             currency = str(line.get("currency") or "USD").upper()[:3]
             confidence = float(line.get("confidence") or 80)
 
-            # FX implícito: si la línea trae amount_usd además de amount
-            # local, calculamos fx_to_usd = amount_usd / amount. Esto
-            # ahorra al CEO el paso manual de tipear el tipo de cambio
-            # en la tabla del wizard. Si currency=USD el fx queda 1.0.
             amount_usd_raw = line.get("amount_usd")
             try:
                 amount_usd = float(amount_usd_raw) if amount_usd_raw is not None else None
             except (TypeError, ValueError):
                 amount_usd = None
+
+            # FX en cascada:
+            #   1) USD → 1.0
+            #   2) la propia línea trae amount_usd > 0 → fx exacto
+            #   3) hay otra línea de la misma moneda con FX detectado
+            #      → usamos el FX ancla (caso típico: timbres CR)
+            #   4) fallback 1.0 (warning implícito: total final saldrá mal,
+            #      el CEO lo ajusta manualmente)
             if currency == "USD":
                 fx_to_usd = 1.0
-            elif amount_usd is not None and amount > 0:
+            elif amount_usd is not None and amount_usd > 0 and amount > 0:
                 fx_to_usd = round(amount_usd / amount, 6)
+            elif currency in fx_by_currency:
+                fx_to_usd = fx_by_currency[currency]
+                # Si no vino amount_usd, lo derivamos del FX ancla para
+                # mantener la columna USD coherente en la UI.
+                if amount_usd is None and amount > 0:
+                    amount_usd = round(amount * fx_to_usd, 4)
             else:
                 fx_to_usd = 1.0
 
