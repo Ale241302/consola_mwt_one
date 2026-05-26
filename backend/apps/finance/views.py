@@ -610,7 +610,20 @@ class PaymentViewSet(viewsets.ViewSet):
                 return fx
 
             for row in trf_rows:
-                scope_j = row.get("scope_json")
+                # Sprint 2026-05-25 - scope_json puede venir como str
+                # (columna TEXT) o dict (JSONB). Parsear defensivo.
+                scope_j_raw = row.get("scope_json")
+                if isinstance(scope_j_raw, str) and scope_j_raw.strip():
+                    try:
+                        import json as _json
+                        scope_j = _json.loads(scope_j_raw)
+                    except (ValueError, TypeError):
+                        scope_j = None
+                elif isinstance(scope_j_raw, dict):
+                    scope_j = scope_j_raw
+                else:
+                    scope_j = None
+
                 if scope_j is None or (isinstance(scope_j, dict) and scope_j.get("applies_to_all", True)):
                     scope_summary = "Toda la transferencia"
                 elif isinstance(scope_j, dict):
@@ -684,7 +697,7 @@ class PaymentViewSet(viewsets.ViewSet):
                     "transferencia_id":     row.get("transferencia_id"),
                     "transferencia_codigo": row.get("transferencia_codigo"),
                     "scope_summary":        scope_summary,
-                    "scope_json":           scope_j,
+                    "scope_json":           scope_j,  # dict parseado (no str)
                     "expediente_id":        derived_exp_id,
                     "expediente_ids":       derived_exp_ids,
                     "fx_to_usd":            fx_real if fx_real else (1.0 if currency == "USD" else None),

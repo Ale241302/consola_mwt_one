@@ -941,6 +941,19 @@ function _resolveExpedienteId(f) {
     const ids = a && (a._scope_expediente_ids || a._expediente_ids);
     if (Array.isArray(ids) && ids.length > 0) return ids[0];
   }
+  // Sprint 2026-05-25 - ultimo fallback: parsear _scope_json si vino
+  // como string desde el backend (compat con respuestas viejas).
+  for (const a of apps) {
+    const raw = a && a._scope_json;
+    if (raw) {
+      let obj = raw;
+      if (typeof raw === "string") {
+        try { obj = JSON.parse(raw); } catch (_) { obj = null; }
+      }
+      const ids = obj && obj.expediente_ids;
+      if (Array.isArray(ids) && ids.length > 0) return ids[0];
+    }
+  }
   return null;
 }
 
