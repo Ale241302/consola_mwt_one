@@ -217,18 +217,20 @@ class PaymentRegisterSerializer(serializers.Serializer):
 
     # ── Cross-field validation ─────────────────────────────
     def validate(self, attrs):
-        # Σ aplicaciones == monto (tolerancia 1 centavo por redondeo decimal)
+        # Sprint 2026-05-25 (CEO) - la validacion Σ aplicaciones == monto
+        # fue REMOVIDA. El CEO necesita registrar pagos donde:
+        #   - el monto del comprobante es mayor que la deuda
+        #     (overpayment / saldo a favor del cliente)
+        #   - el monto es menor (pago parcial)
+        #   - hay diferencias por redondeo de FX (CRC->USD)
+        # En todos estos casos el pago se persiste y la diferencia
+        # queda como saldo libre asociado al payment, util para
+        # conciliacion posterior.
+        # Solo validamos formato numerico para evitar 500 downstream.
         try:
-            monto = Decimal(str(attrs["monto"]))
-            suma  = sum(Decimal(str(a["monto_aplicado"])) for a in attrs["aplicaciones"])
-        except (InvalidOperation, KeyError):
+            Decimal(str(attrs.get("monto", 0)))
+            for a in attrs.get("aplicaciones", []) or []:
+                Decimal(str(a.get("monto_aplicado", 0)))
+        except (InvalidOperation, KeyError, TypeError):
             raise serializers.ValidationError("Montos numéricos inválidos")
-
-        if abs(monto - suma) > Decimal("0.01"):
-            raise serializers.ValidationError({
-                "aplicaciones": (
-                    f"La suma de las aplicaciones ({suma}) debe ser igual al monto "
-                    f"del pago ({monto}). Diferencia: {monto - suma}."
-                ),
-            })
         return attrs
