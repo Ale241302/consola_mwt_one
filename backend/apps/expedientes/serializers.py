@@ -147,8 +147,14 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
                 .values_list("codigo", flat=True)
             ) if obj.oc_id else []
 
+            # Sprint 2026-05-26 (CEO) - cuando el cliente SI subio un
+            # documento OC, el codigo auto-generado por el wizard
+            # ('PO-2026-XXXXX') es ruido visual. Mostramos UNICAMENTE
+            # los codigos del cliente. Solo cuando no hay doc subido
+            # caemos al codigo principal interno como fallback.
+            codes_to_use = doc_codes if doc_codes else principal_codes
             seen, out = set(), []
-            for c in (doc_codes + principal_codes):
+            for c in codes_to_use:
                 if c and c not in seen:
                     out.append(c); seen.add(c)
             return out
