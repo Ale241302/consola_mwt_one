@@ -883,6 +883,38 @@ export const financePaymentsApi = {
     apiFetch("/finance/payments/select_rejection_reasons/", { token: getToken() }),
   selectCounterpartyTypes: () =>
     apiFetch("/finance/payments/select_counterparty_types/", { token: getToken() }),
+
+  // DELETE /api/finance/payments/{id}/delete/
+  // Soft-delete + credit reversal si CONFIRMADO_HUMANO.
+  // body: { reverted_reason?: string }
+  // 204 No Content (ok) · 409 ya revertido/rechazado · 403 no CEO
+  delete: (id, body = {}) =>
+    apiFetch(`/finance/payments/${encodeURIComponent(id)}/delete/`, {
+      method: "DELETE",
+      body,
+      token: getToken(),
+    }),
+
+  // POST /api/finance/payments/analyze-evidence/  (multipart)
+  // Analiza el comprobante con IA y devuelve campos extraídos + veredicto.
+  // body: FormData con evidencia (File) + opcionales: monto, moneda, fecha,
+  //        referencia, metodo, tipo_pago.
+  // response 200: { status, confianza, monto_extraido, moneda_extraida,
+  //                 fecha_extraida, referencia_extraida, beneficiario_extraido,
+  //                 ordenante_extraido, banco_emisor, banco_receptor, concepto,
+  //                 metodo_sugerido, razon_humana, alertas_fraude, mismatch_fields,
+  //                 duration_ms, model_version, error_code, error_message }
+  analyzeEvidence: ({ evidencia, monto, moneda, fecha, referencia, metodo, tipo_pago }) => {
+    const fd = new FormData();
+    fd.append("evidencia", evidencia);
+    if (monto      != null) fd.append("monto",      String(monto));
+    if (moneda     != null) fd.append("moneda",     moneda);
+    if (fecha      != null) fd.append("fecha",      fecha);
+    if (referencia != null) fd.append("referencia", referencia);
+    if (metodo     != null) fd.append("metodo",     metodo);
+    if (tipo_pago  != null) fd.append("tipo_pago",  tipo_pago);
+    return postMultipart("/finance/payments/analyze-evidence/", fd, { token: getToken() });
+  },
 };
 
 // =====================================================================

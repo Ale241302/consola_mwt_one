@@ -169,6 +169,12 @@ class PaymentRegisterSerializer(serializers.Serializer):
     aplicaciones  = serializers.CharField()  # JSON string, validado en validate()
     evidencia     = serializers.FileField()
     event_id      = serializers.UUIDField(required=False)
+    pre_verdict   = serializers.CharField(required=False, allow_blank=True,
+                                          help_text=(
+                                              "JSON string del resultado de /analyze-evidence. "
+                                              "Si viene con status=MATCH y confianza>=90, el pago "
+                                              "se crea directamente en CONFIRMADO_AI."
+                                          ))
 
     # ── Validators de campo ────────────────────────────────
     def validate_monto(self, value):
@@ -214,6 +220,35 @@ class PaymentRegisterSerializer(serializers.Serializer):
                 })
             cleaned.append(sub.validated_data)
         return cleaned
+
+    def validate_pre_verdict(self, raw: str) -> "dict | None":
+        """Parsea y valida mínimamente el JSON de pre_verdict.
+        
+        Si viene vacío/None → devuelve None (se ignorará en register()).
+        Si viene pero es JSON inválido → ValidationError.
+        Si el dict no tiene status/confianza → ValidationError.
+        """
+        if not raw or not raw.strip():
+            return None
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise serializers.ValidationError(
+                f"pre_verdict debe ser JSON válido: {exc}"
+            )
+        if not isinstance(obj, dict):
+            raise serializers.ValidationError("pre_verdict debe ser un objeto JSON")
+        status = (obj.get("status") or "").strip().upper()
+        if status not in {"MATCH", "PARTIAL", "MISMATCH", "UNREADABLE", "SUSPICIOUS"}:
+            raise serializers.ValidationError(
+                f"pre_verdict.status inválido: {status!r}. "
+                f"Permitidos: MATCH, PARTIAL, MISMATCH, UNREADABLE, SUSPICIOUS"
+            )
+        try:
+            float(obj.get("confianza", 0))
+        except (TypeError, ValueError):
+            raise serializers.ValidationError("pre_verdict.confianza debe ser numérico")
+        return obj
 
     # ── Cross-field validation ─────────────────────────────
     def validate(self, attrs):

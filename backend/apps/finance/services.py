@@ -102,6 +102,7 @@ class PaymentService:
         validated: Dict[str, Any],
         actor_id: Optional[uuid.UUID],
         actor_role: Optional[str] = None,
+        pre_verdict: Optional[Dict[str, Any]] = None,
     ) -> RegisterResult:
         """
         Crea Payment + applications + evidence en una transacción.
@@ -287,15 +288,115 @@ class PaymentService:
             },
         )
 
-        # ── 8. Encolar el AIPaymentAnalyzer (Fase 3) ────────────
+        # ── 8. Pre-verdict: si se recibió un verdict ya hecho (Feature C) ─
+        # Si pre_verdict viene de /analyze-evidence:
+        #   · MATCH + confianza >= 90  → CONFIRMADO_AI + insertar verdict + NO encolar task
+        #   · MATCH + confianza < 90 o cualquier otro status → NEEDS_REVIEW + insertar verdict + NO encolar task
+        #   · None                     → PENDIENTE_AI + encolar task (comportamiento original)
+        _should_enqueue_ai = True
+        if pre_verdict and isinstance(pre_verdict, dict):
+            _should_enqueue_ai = False
+            _pv_status    = (pre_verdict.get("status") or "").strip().upper()
+            _pv_confianza = float(pre_verdict.get("confianza") or 0)
+            _pv_auto      = (_pv_status == "MATCH" and _pv_confianza >= 90.0)
+            _new_estado   = (PaymentStatus.CONFIRMADO_AI if _pv_auto
+                             else PaymentStatus.NEEDS_REVIEW)
+
+            import json as _json
+            from datetime import datetime as _dt, timezone as _tzz
+            from decimal import Decimal as _D
+            _verdict_id = uuid.uuid4()
+            _now_v      = _dt.now(tz=_tzz.utc)
+            def _to_dec(v):
+                if v is None or v == "":
+                    return None
+                try:
+                    return _D(str(v))
+                except Exception:
+                    return None
+
+            with connection.cursor() as _cur:
+                _cur.execute(
+                    """
+                    INSERT INTO finance.payment_ai_verdict (
+                        id, payment_id, is_current, status, confianza,
+                        monto_extraido, moneda_extraida, fecha_extraida,
+                        referencia_extraida, beneficiario_extraido,
+                        ordenante_extraido, banco_emisor, banco_receptor,
+                        concepto, mismatch_fields, razon_humana, alertas_fraude,
+                        raw_claude_response, model_version, skill_version,
+                        duration_ms, tokens_input, tokens_output, cost_usd,
+                        error_code, error_message, analyzed_at
+                    ) VALUES (
+                        %s, %s, TRUE, %s, %s,
+                        %s, %s, %s,
+                        %s, %s,
+                        %s, %s, %s,
+                        %s, %s::jsonb, %s, %s::jsonb,
+                        %s::jsonb, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s
+                    )
+                    """,
+                    [
+                        str(_verdict_id), str(payment_id),
+                        _pv_status, _to_dec(_pv_confianza),
+                        _to_dec(pre_verdict.get("monto_extraido")),
+                        pre_verdict.get("moneda_extraida"),
+                        pre_verdict.get("fecha_extraida"),
+                        pre_verdict.get("referencia_extraida"),
+                        pre_verdict.get("beneficiario_extraido"),
+                        pre_verdict.get("ordenante_extraido"),
+                        pre_verdict.get("banco_emisor"),
+                        pre_verdict.get("banco_receptor"),
+                        pre_verdict.get("concepto"),
+                        _json.dumps(list(pre_verdict.get("mismatch_fields") or [])),
+                        pre_verdict.get("razon_humana") or "",
+                        _json.dumps(list(pre_verdict.get("alertas_fraude") or [])),
+                        _json.dumps({"source": "analyze_bytes",
+                                     "status": _pv_status,
+                                     "confianza": _pv_confianza}),
+                        pre_verdict.get("model_version") or "unknown",
+                        None,   # skill_version
+                        pre_verdict.get("duration_ms"),
+                        None,   # tokens_input
+                        None,   # tokens_output
+                        None,   # cost_usd
+                        pre_verdict.get("error_code"),
+                        pre_verdict.get("error_message"),
+                        _now_v,
+                    ],
+                )
+            # Transicionar estado del payment al valor correcto.
+            with connection.cursor() as _cur:
+                _cur.execute(
+                    """
+                    UPDATE finance.payment
+                       SET estado       = %s,
+                           confirmed_at = CASE WHEN %s THEN NOW() ELSE confirmed_at END,
+                           updated_at   = NOW()
+                     WHERE id = %s::uuid
+                    """,
+                    [_new_estado,
+                     _pv_auto,
+                     str(payment_id)],
+                )
+            log.info(
+                "[PaymentService.register] pre_verdict branch: status=%s confianza=%.1f "
+                "→ estado=%s payment=%s",
+                _pv_status, _pv_confianza, _new_estado, payment_id,
+            )
+
+        # ── 9. Encolar el AIPaymentAnalyzer (solo si no había pre_verdict) ─
         # IMPORTANTE: lo hacemos en `transaction.on_commit()` para
         # garantizar que el worker no lea el Payment ANTES de que la
         # transacción esté visible en la DB. Sin esto, una race
         # condition haría que el task no encuentre la fila recién
         # creada (lectura previa al COMMIT).
-        from django.db.transaction import on_commit
-        from .tasks import enqueue_ai_analyzer
-        on_commit(lambda: enqueue_ai_analyzer(payment_id))
+        if _should_enqueue_ai:
+            from django.db.transaction import on_commit
+            from .tasks import enqueue_ai_analyzer
+            on_commit(lambda: enqueue_ai_analyzer(payment_id))
 
         return RegisterResult(
             payment      = payment,

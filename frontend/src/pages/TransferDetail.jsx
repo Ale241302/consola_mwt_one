@@ -30,6 +30,7 @@ import {
 import { transferenciasApi, transferLineasApi, financePaymentsApi } from "../lib/api.js";
 // Sprint Pagos Transfers — wizard de registro de pago.
 import RegisterPaymentWizard from "../components/finance/RegisterPaymentWizard.jsx";
+import PaymentDetailDrawer   from "../components/finance/PaymentDetailDrawer.jsx";
 import TransferLiquidationPanel from "../components/transfers/TransferLiquidationPanel.jsx";
 import TransferStateStepper from "../components/transfers/TransferStateStepper.jsx";
 import TransferInvoicePrintView from "../components/transfers/TransferInvoicePrintView.jsx";
@@ -797,9 +798,16 @@ export default function ScreenTransferDetail() {
 
 // ── TransferPagosCard (Sprint Pagos Transfers) ──────────────────
 function TransferPagosCard({ transferId, lang, isClient, refreshKey, onOpenWizard }) {
-  const [pagos,   setPagos]   = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState(null);
+  const [pagos,        setPagos]        = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [error,        setError]        = useState(null);
+  const [openPaymentId, setOpenPaymentId] = useState(null);
+
+  const refresh = () => {
+    // Re-trigger the effect by incrementing an internal key.
+    setInternalKey((k) => k + 1);
+  };
+  const [internalKey, setInternalKey] = useState(0);
 
   useEffect(() => {
     if (!transferId) return;
@@ -814,7 +822,7 @@ function TransferPagosCard({ transferId, lang, isClient, refreshKey, onOpenWizar
       .catch((e) => { if (!cancel) setError(e?.message || 'Error'); })
       .finally(() => { if (!cancel) setLoading(false); });
     return () => { cancel = true; };
-  }, [transferId, refreshKey]);
+  }, [transferId, refreshKey, internalKey]);
 
   return (
     <div className="card card-pad-md" style={{ marginTop: 16 }}>
@@ -865,6 +873,7 @@ function TransferPagosCard({ transferId, lang, isClient, refreshKey, onOpenWizar
                 </>
               )}
               <th>{lang === 'es' ? 'Estado' : 'Status'}</th>
+              <th>{lang === 'es' ? 'Acciones' : 'Actions'}</th>
             </tr>
           </thead>
           <tbody>
@@ -914,11 +923,35 @@ function TransferPagosCard({ transferId, lang, isClient, refreshKey, onOpenWizar
                       {p.estado || '—'}
                     </span>
                   </td>
+                  <td>
+                    <button
+                      className="btn-sm"
+                      style={{
+                        padding: '3px 10px', fontSize: 12, fontWeight: 600,
+                        background: 'var(--bg-alt)', color: 'var(--brand-primary)',
+                        border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+                        cursor: 'pointer',
+                      }}
+                      onClick={(e) => { e.stopPropagation(); setOpenPaymentId(p.id); }}
+                    >
+                      {lang === 'es' ? 'Ver' : 'View'}
+                    </button>
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+      )}
+
+      {openPaymentId && (
+        <PaymentDetailDrawer
+          paymentId={openPaymentId}
+          open={!!openPaymentId}
+          onClose={() => setOpenPaymentId(null)}
+          onChange={() => { setOpenPaymentId(null); refresh(); }}
+          lang={lang}
+        />
       )}
     </div>
   );

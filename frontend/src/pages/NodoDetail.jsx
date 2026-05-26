@@ -62,6 +62,7 @@ import {
 import NodoArtifactsTab from "../components/nodos/NodoArtifactsTab.jsx";
 // Sprint Pagos Transfers — wizard de registro de pago con preselección.
 import RegisterPaymentWizard from "../components/finance/RegisterPaymentWizard.jsx";
+import PaymentDetailDrawer   from "../components/finance/PaymentDetailDrawer.jsx";
 // Sprint Pagos Transfers — visibilidad por rol.
 import { useRole } from "../context/RoleContext.jsx";
 import {
@@ -1499,9 +1500,13 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
 
 /* ─────────────── Tab: Pagos (Sprint Pagos Transfers) ─────────────── */
 function NodoPagosTab({ nodeId, lang, isClient, refreshKey, onOpenWizard }) {
-  const [pagos,   setPagos]   = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState(null);
+  const [pagos,        setPagos]        = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [error,        setError]        = useState(null);
+  const [openPaymentId, setOpenPaymentId] = useState(null);
+  const [internalKey, setInternalKey] = useState(0);
+
+  const refresh = () => setInternalKey((k) => k + 1);
 
   useEffect(() => {
     if (!nodeId) return;
@@ -1516,7 +1521,7 @@ function NodoPagosTab({ nodeId, lang, isClient, refreshKey, onOpenWizard }) {
       .catch((e) => { if (!cancel) setError(e?.message || 'Error'); })
       .finally(() => { if (!cancel) setLoading(false); });
     return () => { cancel = true; };
-  }, [nodeId, refreshKey]);
+  }, [nodeId, refreshKey, internalKey]);
 
   return (
     <div className="card card-pad" style={{ marginTop: 12 }}>
@@ -1568,6 +1573,7 @@ function NodoPagosTab({ nodeId, lang, isClient, refreshKey, onOpenWizard }) {
                 </>
               )}
               <th>{lang === 'es' ? 'Estado' : 'Status'}</th>
+              <th>{lang === 'es' ? 'Acciones' : 'Actions'}</th>
             </tr>
           </thead>
           <tbody>
@@ -1621,11 +1627,35 @@ function NodoPagosTab({ nodeId, lang, isClient, refreshKey, onOpenWizard }) {
                       {p.estado || '—'}
                     </span>
                   </td>
+                  <td>
+                    <button
+                      className="btn-sm"
+                      style={{
+                        padding: '3px 10px', fontSize: 12, fontWeight: 600,
+                        background: 'var(--bg-alt)', color: 'var(--brand-primary)',
+                        border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+                        cursor: 'pointer',
+                      }}
+                      onClick={(e) => { e.stopPropagation(); setOpenPaymentId(p.id); }}
+                    >
+                      {lang === 'es' ? 'Ver' : 'View'}
+                    </button>
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+      )}
+
+      {openPaymentId && (
+        <PaymentDetailDrawer
+          paymentId={openPaymentId}
+          open={!!openPaymentId}
+          onClose={() => setOpenPaymentId(null)}
+          onChange={() => { setOpenPaymentId(null); refresh(); }}
+          lang={lang}
+        />
       )}
     </div>
   );

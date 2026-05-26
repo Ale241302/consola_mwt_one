@@ -39,6 +39,7 @@ const EVIDENCE_ALLOWED_MIMES = [
 const EVIDENCE_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
 const STEPS = [
+  { key: "step0", label_es: "Comprobante",  label_en: "Receipt" },
   { key: "step1", label_es: "Dirección",    label_en: "Direction" },
   { key: "step2", label_es: "Obligaciones", label_en: "Debts" },
   { key: "step3", label_es: "Detalle pago", label_en: "Payment detail" },
@@ -67,6 +68,9 @@ export default function RegisterPaymentWizard({
   // ── State del wizard ───────────────────────────────────────────
   const [step, setStep] = useState(0);
   const [formData, setFormData] = useState(() => _emptyFormData(preselectedScope));
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [aiVerdict,   setAiVerdict]   = useState(null);
+  const [aiError,     setAiError]     = useState(null);
 
   // ── Submit hook ────────────────────────────────────────────────
   const { submit, submitting, error: submitError, reset: resetSubmit } = usePaymentSubmit();
@@ -101,7 +105,11 @@ export default function RegisterPaymentWizard({
 
   // ── Validaciones por paso ──────────────────────────────────────
   const stepErrors = useMemo(() => _validateAllSteps(formData, lang), [formData, lang]);
-  const canAdvance = !stepErrors[`step${step + 1}`]?.length;
+  // step 0: Comprobante — can advance when file is attached (even if AI failed).
+  // steps 1–4: use existing validation keys (step1..step4) which are now offset by 1.
+  const canAdvance = step === 0
+    ? !!formData.evidencia && !aiAnalyzing
+    : !stepErrors[`step${step}`]?.length;
 
   // ── Handlers ───────────────────────────────────────────────────
   const update = (patch) => setFormData((prev) => ({ ...prev, ...patch }));
@@ -109,7 +117,51 @@ export default function RegisterPaymentWizard({
   const reset = () => {
     setFormData(_emptyFormData(preselectedScope));
     setStep(0);
+    setAiAnalyzing(false);
+    setAiVerdict(null);
+    setAiError(null);
     resetSubmit();
+  };
+
+  // ── Analyze evidence with AI (Paso 0) ─────────────────────────
+  const handleAnalyzeEvidence = async (file) => {
+    if (!file) { update({ evidencia: null }); return; }
+    // Basic client-side validation first
+    if (!EVIDENCE_ALLOWED_MIMES.includes(file.type)) {
+      update({ _file_error: lang === "es"
+        ? "Tipo no permitido. PDF / PNG / JPG / WebP."
+        : "Type not allowed. PDF / PNG / JPG / WebP.", evidencia: null });
+      return;
+    }
+    if (file.size > EVIDENCE_MAX_BYTES) {
+      update({ _file_error: lang === "es"
+        ? "Archivo demasiado grande. Máx 10 MB."
+        : "File too large. Max 10 MB.", evidencia: null });
+      return;
+    }
+    update({ evidencia: file, _file_error: null });
+    setAiAnalyzing(true);
+    setAiError(null);
+    setAiVerdict(null);
+    try {
+      const v = await financePaymentsApi.analyzeEvidence({ evidencia: file });
+      setAiVerdict(v);
+      // Pre-fill formData with extracted fields
+      update({
+        evidencia:   file,
+        monto:       v.monto_extraido     != null ? v.monto_extraido     : formData.monto,
+        moneda:      v.moneda_extraida    ?? formData.moneda,
+        fecha:       v.fecha_extraida     ?? formData.fecha,
+        referencia:  v.referencia_extraida?? formData.referencia,
+        metodo:      v.metodo_sugerido    ?? formData.metodo,
+        _ai_verdict: v,
+      });
+    } catch (e) {
+      setAiError(e?.message || (lang === "es" ? "Error analizando el comprobante" : "Error analyzing the receipt"));
+      update({ evidencia: file });   // at least save the file
+    } finally {
+      setAiAnalyzing(false);
+    }
   };
 
   const handleClose = () => {
@@ -154,7 +206,7 @@ export default function RegisterPaymentWizard({
 
   // ── Payload para dry-run del Paso 4 ────────────────────────────
   const dryRunPayload = useMemo(() => {
-    if (step !== 3) return null;
+    if (step !== 4) return null;
     if (!formData.selected_applicables?.length) return null;
     return _buildDryRunPayload(formData);
   }, [step, formData]);
@@ -296,9 +348,19 @@ export default function RegisterPaymentWizard({
               background: "var(--bg)",
             }}>
               {step === 0 && (
-                <Step1 formData={formData} update={update} lang={lang}/>
+                <Step0
+                  formData={formData}
+                  onFile={handleAnalyzeEvidence}
+                  aiAnalyzing={aiAnalyzing}
+                  aiVerdict={aiVerdict}
+                  aiError={aiError}
+                  lang={lang}
+                />
               )}
               {step === 1 && (
+                <Step1 formData={formData} update={update} lang={lang}/>
+              )}
+              {step === 2 && (
                 <Step2
                   formData={formData}
                   update={update}
@@ -306,10 +368,10 @@ export default function RegisterPaymentWizard({
                   preselectedScope={preselectedScope}
                 />
               )}
-              {step === 2 && (
-                <Step3 formData={formData} update={update} lang={lang}/>
-              )}
               {step === 3 && (
+                <Step3 formData={formData} update={update} lang={lang} aiVerdict={aiVerdict}/>
+              )}
+              {step === 4 && (
                 <Step4
                   formData={formData}
                   preselectedScope={preselectedScope}
@@ -374,6 +436,236 @@ export default function RegisterPaymentWizard({
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════════════
+// Paso 0 — Comprobante (nuevo): dropzone + análisis IA
+// El usuario adjunta el comprobante bancario. El backend IA extrae
+// campos y pre-llena el formulario. El paso siempre es opcional en el
+// sentido de que el usuario puede continuar aunque la IA falle.
+// ════════════════════════════════════════════════════════════════════
+function Step0({ formData, onFile, aiAnalyzing, aiVerdict, aiError, lang }) {
+  const [dragging, setDragging] = useState(false);
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) onFile(file);
+  };
+
+  const statusColor = aiVerdict
+    ? aiVerdict.status === "MATCH"    ? "var(--success)"
+    : aiVerdict.status === "PARTIAL"  ? "var(--warning)"
+    : aiVerdict.status === "SUSPICIOUS" ? "var(--critical)"
+    : "var(--text-tertiary)"
+    : "var(--text-tertiary)";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 560 }}>
+      <div>
+        <div style={{ font: "var(--heading-sm)", color: "var(--text-primary)",
+                      marginBottom: 6 }}>
+          {lang === "es" ? "Adjunta el comprobante de pago" : "Attach the payment proof"}
+        </div>
+        <div style={{ font: "var(--body-sm)", color: "var(--text-secondary)" }}>
+          {lang === "es"
+            ? "La IA extraerá automáticamente monto, fecha, referencia y método para pre-llenar el formulario."
+            : "AI will automatically extract amount, date, reference, and method to pre-fill the form."}
+        </div>
+      </div>
+
+      {/* Dropzone */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+        style={{
+          border: `2px dashed ${dragging ? "var(--brand-primary)" : "var(--border)"}`,
+          borderRadius: "var(--radius-md)",
+          background: dragging
+            ? "color-mix(in oklab, var(--brand-primary) 5%, transparent)"
+            : "var(--surface)",
+          padding: "32px 20px",
+          textAlign: "center",
+          transition: "all 150ms ease",
+          cursor: "pointer",
+        }}
+        onClick={() => document.getElementById("step0-file-input")?.click()}
+      >
+        <div style={{ fontSize: 36, marginBottom: 10 }}>📄</div>
+        <div style={{ font: "var(--body-sm)", color: "var(--text-secondary)",
+                      marginBottom: 8 }}>
+          {lang === "es"
+            ? "Arrastra aquí o haz clic para seleccionar"
+            : "Drag here or click to select"}
+        </div>
+        <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+          PDF · PNG · JPG · WebP — {lang === "es" ? "máx 10 MB" : "max 10 MB"}
+        </div>
+        <input
+          id="step0-file-input"
+          type="file"
+          accept={EVIDENCE_ALLOWED_MIMES.join(",")}
+          style={{ display: "none" }}
+          onChange={(e) => onFile(e.target.files?.[0])}
+        />
+      </div>
+
+      {/* File error */}
+      {formData._file_error && (
+        <div style={{ padding: "8px 12px", borderRadius: "var(--radius-sm)",
+                      background: "color-mix(in oklab, var(--critical) 8%, transparent)",
+                      border: "1px solid color-mix(in oklab, var(--critical) 30%, transparent)",
+                      color: "var(--critical)", fontSize: 13 }}>
+          {formData._file_error}
+        </div>
+      )}
+
+      {/* Archivo adjunto */}
+      {formData.evidencia && !formData._file_error && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10,
+                      padding: "10px 14px", borderRadius: "var(--radius-sm)",
+                      background: "var(--bg-alt)", border: "1px solid var(--border)" }}>
+          <span style={{ fontSize: 20 }}>📎</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {formData.evidencia.name}
+            </div>
+            <div className="caption tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+              {(formData.evidencia.size / 1024).toFixed(1)} KB
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onFile(null); }}
+            style={{ background: "none", border: "none", cursor: "pointer",
+                     color: "var(--text-tertiary)", fontSize: 18, lineHeight: 1 }}
+          >×</button>
+        </div>
+      )}
+
+      {/* AI analyzing spinner */}
+      {aiAnalyzing && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10,
+                      padding: "12px 16px", borderRadius: "var(--radius-md)",
+                      background: "color-mix(in oklab, var(--brand-primary) 6%, transparent)",
+                      border: "1px solid color-mix(in oklab, var(--brand-primary) 24%, transparent)" }}>
+          <div style={{
+            width: 16, height: 16, borderRadius: "50%",
+            border: "2px solid var(--brand-primary)",
+            borderTopColor: "transparent",
+            animation: "spin 0.8s linear infinite",
+          }}/>
+          <span style={{ fontSize: 13, color: "var(--brand-primary)", fontWeight: 500 }}>
+            {lang === "es" ? "Analizando con IA…" : "Analyzing with AI…"}
+          </span>
+        </div>
+      )}
+
+      {/* AI verdict card */}
+      {!aiAnalyzing && aiVerdict && (
+        <div style={{
+          padding: "14px 16px", borderRadius: "var(--radius-md)",
+          background: `color-mix(in oklab, ${statusColor} 7%, transparent)`,
+          border: `1px solid color-mix(in oklab, ${statusColor} 28%, transparent)`,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 16 }}>
+              {aiVerdict.status === "MATCH" ? "✓" : aiVerdict.status === "SUSPICIOUS" ? "⚠" : "~"}
+            </span>
+            <span style={{ fontWeight: 700, fontSize: 13, color: statusColor }}>
+              {lang === "es" ? "Comprobante analizado" : "Receipt analyzed"}
+              {" · "}
+              {lang === "es" ? "confianza" : "confidence"}{" "}
+              <span className="tabular-nums">{aiVerdict.confianza ?? "—"}%</span>
+            </span>
+          </div>
+          {/* Extracted fields summary */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px",
+                        fontSize: 12 }}>
+            {aiVerdict.monto_extraido    != null && (
+              <div><span style={{ color: "var(--text-tertiary)" }}>
+                {lang === "es" ? "Monto:" : "Amount:"}</span>{" "}
+                <span className="tabular-nums" style={{ fontWeight: 600 }}>
+                  {aiVerdict.moneda_extraida || ""}{" "}{aiVerdict.monto_extraido}
+                </span>
+              </div>
+            )}
+            {aiVerdict.fecha_extraida && (
+              <div><span style={{ color: "var(--text-tertiary)" }}>
+                {lang === "es" ? "Fecha:" : "Date:"}</span>{" "}
+                <span className="tabular-nums">{aiVerdict.fecha_extraida}</span>
+              </div>
+            )}
+            {aiVerdict.referencia_extraida && (
+              <div><span style={{ color: "var(--text-tertiary)" }}>
+                {lang === "es" ? "Referencia:" : "Reference:"}</span>{" "}
+                <span className="tabular-nums font-mono">{aiVerdict.referencia_extraida}</span>
+              </div>
+            )}
+            {aiVerdict.metodo_sugerido && (
+              <div><span style={{ color: "var(--text-tertiary)" }}>
+                {lang === "es" ? "Método:" : "Method:"}</span>{" "}
+                {aiVerdict.metodo_sugerido}
+              </div>
+            )}
+            {aiVerdict.beneficiario_extraido && (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <span style={{ color: "var(--text-tertiary)" }}>
+                  {lang === "es" ? "Beneficiario:" : "Beneficiary:"}</span>{" "}
+                {aiVerdict.beneficiario_extraido}
+              </div>
+            )}
+          </div>
+          {aiVerdict.razon_humana && (
+            <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-secondary)",
+                          fontStyle: "italic" }}>
+              "{aiVerdict.razon_humana}"
+            </div>
+          )}
+          {aiVerdict.alertas_fraude?.length > 0 && (
+            <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: "var(--radius-sm)",
+                          background: "color-mix(in oklab, var(--critical) 8%, transparent)",
+                          border: "1px solid color-mix(in oklab, var(--critical) 30%, transparent)" }}>
+              <span style={{ fontSize: 12, color: "var(--critical)", fontWeight: 600 }}>
+                {lang === "es" ? "Alertas: " : "Alerts: "}
+                {aiVerdict.alertas_fraude.join(" · ")}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* AI error — non-blocking */}
+      {!aiAnalyzing && aiError && (
+        <div style={{
+          padding: "10px 14px", borderRadius: "var(--radius-sm)",
+          background: "color-mix(in oklab, var(--warning) 8%, transparent)",
+          border: "1px solid color-mix(in oklab, var(--warning) 30%, transparent)",
+          color: "var(--text-primary)", fontSize: 13,
+        }}>
+          <span style={{ fontWeight: 600, color: "var(--warning)" }}>
+            {lang === "es" ? "No se pudo analizar" : "Could not analyze"}
+          </span>
+          {" — "}
+          {lang === "es"
+            ? "Puedes continuar y llenar los campos manualmente."
+            : "You can continue and fill in the fields manually."}
+          {aiError && (
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>
+              {aiError}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* CSS keyframe for spinner */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
   );
 }
 
@@ -490,7 +782,7 @@ function Step2({ formData, update, lang, preselectedScope }) {
 // ════════════════════════════════════════════════════════════════════
 // Paso 3 — Detalle del pago
 // ════════════════════════════════════════════════════════════════════
-function Step3({ formData, update, lang }) {
+function Step3({ formData, update, lang, aiVerdict }) {
   const [metodos, setMetodos] = useState([]);
   const [tipos,   setTipos]   = useState([]);
   useEffect(() => {
@@ -523,7 +815,24 @@ function Step3({ formData, update, lang }) {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* AI pre-fill banner */}
+      {aiVerdict && (
+        <div style={{
+          padding: "10px 14px", borderRadius: "var(--radius-sm)",
+          background: "color-mix(in oklab, var(--brand-primary) 6%, transparent)",
+          border: "1px solid color-mix(in oklab, var(--brand-primary) 22%, transparent)",
+          display: "flex", alignItems: "center", gap: 10, fontSize: 13,
+        }}>
+          <span style={{ fontSize: 16 }}>✨</span>
+          <span style={{ color: "var(--brand-primary)", fontWeight: 600 }}>
+            {lang === "es"
+              ? `Campos pre-llenados por IA (confianza ${aiVerdict.confianza ?? "—"}%). Revísalos.`
+              : `Fields pre-filled by AI (confidence ${aiVerdict.confianza ?? "—"}%). Please review.`}
+          </span>
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
       <_FieldGroup label={lang === "es" ? "Método" : "Method"} required>
         <select
           className="select"
@@ -631,10 +940,9 @@ function Step3({ formData, update, lang }) {
       </_FieldGroup>
 
       <_FieldGroup
-        label={lang === "es" ? "Comprobante (PDF/imagen)" : "Proof (PDF/image)"}
-        required
+        label={lang === "es" ? "Cambiar comprobante (opcional)" : "Change proof (optional)"}
         fullWidth
-        hint={lang === "es" ? "Máx 10 MB. PDF / PNG / JPG / WebP." : "Max 10 MB."}
+        hint={lang === "es" ? "Ya adjunto en Paso 0. Cambia solo si es necesario." : "Already attached in Step 0. Change only if needed."}
       >
         <input
           type="file"
@@ -653,6 +961,7 @@ function Step3({ formData, update, lang }) {
           </div>
         )}
       </_FieldGroup>
+      </div>
     </div>
   );
 }
@@ -828,6 +1137,7 @@ function _emptyFormData(scope = null) {
     notas:                 "",
     evidencia:             null,
     _file_error:           null,
+    _ai_verdict:           null,
   };
 }
 
@@ -917,6 +1227,10 @@ function _buildSubmitPayload(f) {
     tasa_cambio_a_usd: f.tasa_cambio_a_usd,
     aplicaciones,
     evidencia:         f.evidencia,
+    // Sprint Comprobante IA — si el backend recibe pre_verdict con
+    // status === "MATCH" y confianza >= 90, crea el pago directamente
+    // en CONFIRMADO_AI (sin re-encolar task IA).
+    ...(f._ai_verdict ? { pre_verdict: JSON.stringify(f._ai_verdict) } : {}),
   };
 }
 

@@ -47,6 +47,7 @@ import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
          nodoAssignmentsApi, financePaymentsApi } from "../lib/api.js";
 // Sprint Pagos Transfers — wizard de registro de pago en OC.
 import RegisterPaymentWizard from "../components/finance/RegisterPaymentWizard.jsx";
+import PaymentDetailDrawer   from "../components/finance/PaymentDetailDrawer.jsx";
 import {
   MWT_OPERATING_CLIENT_ID, MWT_OPERATOR_NAME, isMwtOperated, isClientRole,
 } from "../lib/operatingCompany.js";
@@ -2283,9 +2284,13 @@ export default function ScreenOCDetail() {
 // Solo visible para roles internos (isAdmin).
 // ─────────────────────────────────────────────────────────────
 function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
-  const [pagos,   setPagos]   = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState(null);
+  const [pagos,        setPagos]        = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [error,        setError]        = useState(null);
+  const [openPaymentId, setOpenPaymentId] = useState(null);
+  const [internalKey, setInternalKey]   = useState(0);
+
+  const refresh = () => setInternalKey((k) => k + 1);
 
   useEffect(() => {
     if (!ocId) return;
@@ -2300,7 +2305,7 @@ function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
       .catch((e) => { if (!cancel) setError(e?.message || 'Error'); })
       .finally(() => { if (!cancel) setLoading(false); });
     return () => { cancel = true; };
-  }, [ocId, refreshKey]);
+  }, [ocId, refreshKey, internalKey]);
 
   return (
     <div className="card card-pad-lg" style={{ marginTop: 16 }}>
@@ -2347,6 +2352,7 @@ function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
               <th style={{ textAlign: 'right' }}>{lang === 'es' ? 'Monto' : 'Amount'}</th>
               <th style={{ textAlign: 'right' }}>USD</th>
               <th>{lang === 'es' ? 'Estado' : 'Status'}</th>
+              <th>{lang === 'es' ? 'Acciones' : 'Actions'}</th>
             </tr>
           </thead>
           <tbody>
@@ -2393,11 +2399,35 @@ function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
                       {p.estado || '—'}
                     </span>
                   </td>
+                  <td>
+                    <button
+                      className="btn-sm"
+                      style={{
+                        padding: '3px 10px', fontSize: 12, fontWeight: 600,
+                        background: 'var(--bg-alt)', color: 'var(--brand-primary)',
+                        border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+                        cursor: 'pointer',
+                      }}
+                      onClick={(e) => { e.stopPropagation(); setOpenPaymentId(p.id); }}
+                    >
+                      {lang === 'es' ? 'Ver' : 'View'}
+                    </button>
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+      )}
+
+      {openPaymentId && (
+        <PaymentDetailDrawer
+          paymentId={openPaymentId}
+          open={!!openPaymentId}
+          onClose={() => setOpenPaymentId(null)}
+          onChange={() => { setOpenPaymentId(null); refresh(); }}
+          lang={lang}
+        />
       )}
     </div>
   );

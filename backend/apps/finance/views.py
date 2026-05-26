@@ -202,21 +202,36 @@ class PaymentViewSet(viewsets.ViewSet):
         actor_id   = _safe_user_uuid(request)
         actor_role = (request.auth.get("role") if request.auth else None)
 
+        # Feature C: si viene pre_verdict del análisis previo, pasarlo a register()
+        pre_verdict = s.validated_data.get("pre_verdict") or None
+
         try:
             result = PaymentService.register(
-                validated  = s.validated_data,
-                actor_id   = actor_id,
-                actor_role = actor_role,
+                validated   = s.validated_data,
+                actor_id    = actor_id,
+                actor_role  = actor_role,
+                pre_verdict = pre_verdict,
             )
         except RuntimeError as exc:
             log.error("PaymentService.register falló: %s", exc)
             return Response({"detail": str(exc)}, status=502)
 
         body = PaymentDetailSerializer(result.payment).data
-        body["next_action"] = (
-            "Pago registrado en estado PENDIENTE_AI. La validación IA "
-            "del comprobante se conecta en Fase 3 (ai_analyzer_task)."
-        )
+        # Ajustar next_action según el estado resultante del pago.
+        _estado = body.get("estado") or ""
+        if _estado == "CONFIRMADO_AI":
+            body["next_action"] = (
+                "Pago creado y confirmado por IA (confianza alta del comprobante previo)."
+            )
+        elif _estado == "NEEDS_REVIEW":
+            body["next_action"] = (
+                "Pago creado en revisión humana (comprobante pre-analizado con confianza baja)."
+            )
+        else:
+            body["next_action"] = (
+                "Pago registrado en estado PENDIENTE_AI. La validación IA "
+                "del comprobante se conecta en Fase 3 (ai_analyzer_task)."
+            )
         return Response(body, status=201)
 
     # ── Selects (catálogos) ───────────────────────────────
@@ -1510,6 +1525,156 @@ def _payments_select_rejection_reasons(self, request):
     ])
 _payments_select_rejection_reasons.__name__ = "select_rejection_reasons"
 PaymentViewSet.select_rejection_reasons = _payments_select_rejection_reasons
+
+
+
+
+@action(detail=True, methods=["delete"], url_path="delete")
+def _payments_delete(self, request, pk=None):
+    """DELETE /api/finance/payments/{id}/delete/
+
+    CEO-only. Soft-delete de un pago:
+      · is_active = FALSE
+      · estado   = REVERTIDO
+      · reverted_at/reverted_by/reverted_reason poblados
+    
+    Si el pago estaba en CONFIRMADO_HUMANO, primero devuelve el credito
+    al cliente via CreditEffectService.revert() antes de marcar REVERTIDO.
+    Si ya esta REVERTIDO → 409 idempotente.
+    Si esta RECHAZADO    → 409 (usar /reject para pagos rechazados).
+    """
+    deny = _require_ceo(request)
+    if deny is not None:
+        return deny
+
+    try:
+        p = Payment.objects.get(pk=pk)
+    except Payment.DoesNotExist:
+        return Response({"detail": "Payment no existe"}, status=404)
+
+    # Idempotencia: ya revertido → 409 limpio (segunda llamada no rompe).
+    if p.estado == PaymentStatus.REVERTIDO.value:
+        return Response(
+            {"detail": "Pago ya está revertido.",
+             "code": PaymentErrorCode.INVALID_STATE_TRANSITION},
+            status=409,
+        )
+    if p.estado == PaymentStatus.RECHAZADO.value:
+        return Response(
+            {"detail": "Pago rechazado — no se puede eliminar. Usa /reject para gestionar rechazos.",
+             "code": PaymentErrorCode.INVALID_STATE_TRANSITION},
+            status=409,
+        )
+
+    actor_id  = _safe_user_uuid(request)
+    prev_state = p.estado
+    reason    = (request.data.get("reason") or "").strip() or "Eliminado por CEO"
+
+    from django.db import connection, transaction as db_tx
+
+    with db_tx.atomic():
+        # Si tenía crédito liberado, revertirlo PRIMERO (dentro de la tx,
+        # el revert encola un Celery task vía on_commit para que el
+        # recompute sea ACID con el UPDATE que sigue).
+        if prev_state == PaymentStatus.CONFIRMADO_HUMANO.value:
+            try:
+                CreditEffectService.revert(p, actor_id=actor_id)
+            except Exception as exc:  # noqa: BLE001 — fail-soft
+                log.warning("[delete] revert() fallo payment=%s err=%s", p.id, exc)
+
+        with connection.cursor() as c:
+            c.execute("""
+                UPDATE finance.payment
+                   SET is_active      = FALSE,
+                       estado         = %s,
+                       reverted_at    = NOW(),
+                       reverted_by    = %s::uuid,
+                       reverted_reason = %s,
+                       updated_at     = NOW()
+                 WHERE id = %s::uuid
+            """, [PaymentStatus.REVERTIDO.value,
+                  str(actor_id) if actor_id else None,
+                  reason[:500],
+                  str(pk)])
+
+    p.refresh_from_db()
+
+    ActivityLogger.log(
+        action="payment.deleted",
+        target_type="payment", target_id=p.id,
+        actor_id=actor_id,
+        actor_role=(request.auth.get("role") if request.auth else None),
+        payload_diff={"estado": {"from": prev_state, "to": p.estado},
+                      "is_active": False},
+        metadata={"reverted_reason": reason,
+                  "was_credit_released": (prev_state == PaymentStatus.CONFIRMADO_HUMANO.value)},
+    )
+    return Response(status=204)
+
+_payments_delete.__name__ = "delete_payment"
+PaymentViewSet.delete_payment = _payments_delete
+
+
+@action(detail=False, methods=["post"], url_path="analyze-evidence",
+        parser_classes=[MultiPartParser, FormParser])
+def _payments_analyze_evidence(self, request):
+    """POST /api/finance/payments/analyze-evidence/
+
+    Analiza un comprobante con IA SIN persistir nada (pre-creación).
+    Alimenta el wizard para pre-rellenar campos antes del POST definitivo.
+
+    Multipart form fields:
+      · evidencia   (File, requerido) — PDF/PNG/JPG/WEBP ≤ 10 MB
+      · monto       (decimal, opcional)
+      · moneda      (str 3 chars, opcional)
+      · fecha       (YYYY-MM-DD, opcional)
+      · referencia  (str, opcional)
+      · metodo      (str, opcional)
+      · tipo_pago   (str, opcional)
+
+    Returns 200 con el dict de AIPaymentAnalyzer.analyze_bytes().
+    Returns 400 si el archivo falla validación de tipo/tamaño.
+    """
+    from .enums import EVIDENCE_ALLOWED_MIMES, EVIDENCE_MAX_BYTES
+    from apps.ai_hub.payment_analyzer import AIPaymentAnalyzer
+
+    # ── Validar archivo ───────────────────────────────────────
+    evidencia = request.FILES.get("evidencia")
+    if not evidencia:
+        return Response({"detail": "Campo 'evidencia' requerido (file)."}, status=400)
+
+    mime = (getattr(evidencia, "content_type", "") or "").lower()
+    if mime not in EVIDENCE_ALLOWED_MIMES:
+        return Response(
+            {"detail": f"Tipo de archivo no permitido: {mime!r}. "
+                       f"Permitidos: {list(EVIDENCE_ALLOWED_MIMES)}"},
+            status=400,
+        )
+    size = getattr(evidencia, "size", 0) or 0
+    if size > EVIDENCE_MAX_BYTES:
+        return Response(
+            {"detail": f"Archivo demasiado grande ({size} bytes). "
+                       f"Máximo {EVIDENCE_MAX_BYTES // (1024*1024)} MB."},
+            status=400,
+        )
+
+    # ── Leer bytes ─────────────────────────────────────────────
+    evidencia.seek(0)
+    file_bytes = evidencia.read()
+
+    # ── Construir declared dict desde POST data ────────────────
+    data = request.data
+    declared: dict | None = None
+    declared_keys = ("monto", "moneda", "fecha", "referencia", "metodo", "tipo_pago")
+    if any(data.get(k) for k in declared_keys):
+        declared = {k: data.get(k) for k in declared_keys if data.get(k)}
+
+    # ── Llamar al analyzer (no persiste nada) ─────────────────
+    verdict = AIPaymentAnalyzer.analyze_bytes(file_bytes, mime, declared)
+    return Response(verdict)
+
+_payments_analyze_evidence.__name__ = "analyze_evidence"
+PaymentViewSet.analyze_evidence = _payments_analyze_evidence
 
 
 @action(detail=False, methods=["get"], url_path="select_counterparty_types")

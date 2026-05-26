@@ -58,9 +58,11 @@ export default function PaymentDetailDrawer({
   const [data,    setData]    = useState(null);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
-  const [actionBusy, setActionBusy] = useState(null);  // 'reconcile' | 'release' | 'reject'
+  const [actionBusy, setActionBusy] = useState(null);  // 'reconcile' | 'release' | 'reject' | 'delete'
   const [actionError, setActionError] = useState(null);
   const [rejectOpen,  setRejectOpen]  = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteReason, setDeleteReason] = useState("");
 
   // Fetch detalle del pago.
   const reload = useCallback(async () => {
@@ -97,6 +99,15 @@ export default function PaymentDetailDrawer({
       setActionBusy(null);
     }
   };
+
+  const handleDelete = () => doAction("delete", async () => {
+    await financePaymentsApi.delete(data.id, {
+      ...(deleteReason.trim() ? { reverted_reason: deleteReason.trim() } : {}),
+    });
+    setDeleteConfirmOpen(false);
+    setDeleteReason("");
+    onClose?.();
+  });
 
   const handleReconcile = () => doAction("reconcile",
     () => financePaymentsApi.reconcile(paymentId));
@@ -389,7 +400,85 @@ export default function PaymentDetailDrawer({
                               : "No actions available in this state."}
                           </span>
                         )}
+                        {/* Eliminar pago — R3: solo isAdmin, no REVERTIDO ni RECHAZADO */}
+                        {data.estado !== "REVERTIDO" && data.estado !== "RECHAZADO" && (
+                          <button
+                            type="button"
+                            disabled={!!actionBusy}
+                            onClick={() => { setDeleteConfirmOpen(true); setDeleteReason(""); }}
+                            style={_actionBtn("danger-outline", !!actionBusy)}
+                          >
+                            {actionBusy === "delete"
+                              ? (lang === "es" ? "Eliminando..." : "Deleting...")
+                              : (lang === "es" ? "Eliminar pago" : "Delete payment")}
+                          </button>
+                        )}
                       </div>
+
+                      {/* ── Confirm delete inline ─────────────────────────── */}
+                      {deleteConfirmOpen && (
+                        <div style={{
+                          marginTop: 12,
+                          padding: "14px 16px",
+                          borderRadius: "var(--radius-md)",
+                          border: "1px solid color-mix(in oklab, var(--critical) 40%, transparent)",
+                          background: "color-mix(in oklab, var(--critical) 6%, transparent)",
+                        }}>
+                          {/* Warning contextual */}
+                          {data.estado === "CONFIRMADO_HUMANO" ? (
+                            <p style={{ fontSize: 13, color: "var(--critical)",
+                                        fontWeight: 600, margin: "0 0 10px" }}>
+                              {lang === "es"
+                                ? `Este pago ya liberó crédito a ${data.counterparty_name || data.counterparty_id || "la contraparte"}. Al eliminar, el crédito se devolverá automáticamente.`
+                                : `This payment already released credit to ${data.counterparty_name || data.counterparty_id || "the counterparty"}. Deleting will automatically reverse the credit.`}
+                            </p>
+                          ) : (
+                            <p style={{ fontSize: 13, color: "var(--text-secondary)",
+                                        margin: "0 0 10px" }}>
+                              {lang === "es"
+                                ? "El pago se marcará como REVERTIDO. ¿Confirmas?"
+                                : "The payment will be marked as REVERTED. Confirm?"}
+                            </p>
+                          )}
+                          {/* Motivo opcional */}
+                          <textarea
+                            rows={2}
+                            value={deleteReason}
+                            onChange={(e) => setDeleteReason(e.target.value)}
+                            placeholder={lang === "es"
+                              ? "Motivo (opcional)…"
+                              : "Reason (optional)…"}
+                            style={{
+                              width: "100%", padding: "6px 8px",
+                              border: "1px solid var(--border)",
+                              borderRadius: "var(--radius-sm)",
+                              font: "var(--body-sm)", color: "var(--text-primary)",
+                              background: "var(--surface)",
+                              resize: "vertical", marginBottom: 10, boxSizing: "border-box",
+                            }}
+                          />
+                          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                            <button
+                              type="button"
+                              disabled={!!actionBusy}
+                              onClick={() => { setDeleteConfirmOpen(false); setDeleteReason(""); }}
+                              style={_actionBtn("secondary", !!actionBusy)}
+                            >
+                              {lang === "es" ? "Cancelar" : "Cancel"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!!actionBusy}
+                              onClick={handleDelete}
+                              style={_actionBtn("danger", !!actionBusy)}
+                            >
+                              {actionBusy === "delete"
+                                ? (lang === "es" ? "Eliminando..." : "Deleting...")
+                                : (lang === "es" ? "Sí, eliminar" : "Yes, delete")}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </_Section>
                   )}
                 </>
@@ -597,6 +686,18 @@ function _fmtTs(ts) {
 }
 
 function _actionBtn(kind, disabled) {
+  if (kind === "danger-outline") {
+    return {
+      padding: "8px 14px",
+      background: disabled ? "var(--bg-alt)" : "transparent",
+      color: disabled ? "var(--text-tertiary)" : "var(--critical)",
+      border: `1px solid ${disabled ? "var(--border)" : "var(--critical)"}`,
+      borderRadius: "var(--radius-sm)",
+      font: "var(--body-sm)", fontWeight: 600,
+      cursor: disabled ? "not-allowed" : "pointer",
+      transition: "opacity 120ms ease",
+    };
+  }
   const colors = {
     primary:   { bg: "var(--brand-primary)", fg: "var(--text-inverse)" },
     secondary: { bg: "var(--bg-alt)",        fg: "var(--text-primary)" },

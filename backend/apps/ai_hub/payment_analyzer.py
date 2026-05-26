@@ -268,6 +268,208 @@ class AIPaymentAnalyzer:
             cost_usd              = self._estimate_cost(tokens_in, tokens_out),
         )
 
+
+    @staticmethod
+    def analyze_bytes(
+        file_bytes: bytes,
+        mime: str,
+        declared: "dict | None" = None,
+    ) -> "dict":
+        """Analiza un comprobante SIN persistir Payment ni Verdict.
+
+        Útil como endpoint de pre-análisis antes de crear el Payment
+        (wizard paso 1: el usuario sube el comprobante y el sistema
+        intenta auto-rellenar monto/fecha/referencia).
+
+        Args:
+            file_bytes: bytes crudos del PDF o imagen.
+            mime:       MIME type — debe ser uno de EVIDENCE_ALLOWED_MIMES.
+            declared:   dict opcional con campos que el usuario ya declaró
+                        para que la IA los compare.
+                        Ejemplo: {"monto": "3407.40", "moneda": "USD",
+                                  "fecha": "2026-05-26",
+                                  "referencia": "714226364",
+                                  "metodo": "TRANSFERENCIA_BANCARIA"}
+
+        Returns:
+            dict con shape:
+            {
+              "status":              "MATCH"|"PARTIAL"|"MISMATCH"|"UNREADABLE"|"SUSPICIOUS",
+              "confianza":           0..100,
+              "monto_extraido":      float|null,
+              "moneda_extraida":     str|null,
+              "fecha_extraida":      "YYYY-MM-DD"|null,
+              "referencia_extraida": str|null,
+              "beneficiario_extraido": str|null,
+              "ordenante_extraido":  str|null,
+              "banco_emisor":        str|null,
+              "banco_receptor":      str|null,
+              "concepto":            str|null,
+              "metodo_sugerido":     "TRANSFERENCIA_BANCARIA"|"NOTA_CREDITO"|null,
+              "razon_humana":        str,
+              "alertas_fraude":      [],
+              "mismatch_fields":     [],
+              "duration_ms":         int,
+              "model_version":       str,
+              "error_code":          str|null,
+              "error_message":       str|null
+            }
+
+        Nunca lanza excepciones: ante cualquier error devuelve un dict
+        con status=UNREADABLE y los campos de error poblados.
+        """
+        import time as _time
+
+        t0 = _time.time()
+        instance = AIPaymentAnalyzer()
+
+        def _err_dict(code: str, msg: str) -> dict:
+            return {
+                "status":               "UNREADABLE",
+                "confianza":            0,
+                "monto_extraido":       None,
+                "moneda_extraida":      None,
+                "fecha_extraida":       None,
+                "referencia_extraida":  None,
+                "beneficiario_extraido": None,
+                "ordenante_extraido":   None,
+                "banco_emisor":         None,
+                "banco_receptor":       None,
+                "concepto":             None,
+                "metodo_sugerido":      None,
+                "razon_humana": (
+                    f"No se pudo analizar el comprobante ({code}). "
+                    f"Verifica el archivo e intenta de nuevo."
+                ),
+                "alertas_fraude":  [],
+                "mismatch_fields": [],
+                "duration_ms":     int((_time.time() - t0) * 1000),
+                "model_version":   DEFAULT_MODEL,
+                "error_code":      code,
+                "error_message":   msg[:1000] if msg else "",
+            }
+
+        # ── 1. Construir attachment block ─────────────────────────
+        try:
+            attachment_block = instance._build_attachment_block(file_bytes, mime)
+        except Exception as exc:  # noqa: BLE001
+            return _err_dict("BUILD_ATTACHMENT_ERROR", str(exc))
+
+        # ── 2. Construir declared block (dict-based, no Payment ORM) ─
+        declared_block = None
+        if declared:
+            declared_payload = {
+                "monto_declarado":      str(declared.get("monto") or ""),
+                "moneda":               declared.get("moneda") or "",
+                "fecha_declarada":      declared.get("fecha") or "",
+                "referencia_declarada": declared.get("referencia") or "",
+                "metodo":               declared.get("metodo") or "",
+                "beneficiario_esperado": BENEFICIARIOS,
+            }
+            declared_block = {
+                "type": "text",
+                "text": json.dumps(declared_payload, ensure_ascii=False),
+            }
+        else:
+            # Sin datos declarados: pedimos sólo extracción cruda
+            declared_block = {
+                "type": "text",
+                "text": json.dumps({
+                    "instruccion": "Extrae toda la información del comprobante sin comparar.",
+                    "beneficiario_esperado": BENEFICIARIOS,
+                }, ensure_ascii=False),
+            }
+
+        # ── 3. Cliente Anthropic ──────────────────────────────────
+        api_key = _cfg("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key or _cfg("DRY_RUN", False):
+            return _err_dict("DRY_RUN", "ANTHROPIC_API_KEY no configurada.")
+
+        try:
+            import anthropic  # type: ignore
+        except ImportError as e:
+            return _err_dict("SDK_MISSING", f"anthropic SDK no instalado: {e}")
+
+        client = anthropic.Anthropic(api_key=api_key)
+
+        # ── 4. Llamada con retry/backoff ──────────────────────────
+        try:
+            system_prompt = instance.system_prompt()
+        except Exception as exc:  # noqa: BLE001
+            return _err_dict("SKILL_LOAD_ERROR", str(exc))
+
+        text, tokens_in, tokens_out, err_code, err_msg = instance._call_with_retry(
+            client,
+            system   = system_prompt,
+            messages = [{
+                "role": "user",
+                "content": [attachment_block, declared_block],
+            }],
+        )
+
+        duration_ms = int((_time.time() - t0) * 1000)
+
+        if err_code:
+            result = _err_dict(err_code, err_msg or "")
+            result["duration_ms"] = duration_ms
+            return result
+
+        # ── 5. Parse JSON ─────────────────────────────────────────
+        try:
+            parsed = instance._parse_verdict_json(text)
+        except ValueError as exc:
+            result = _err_dict("PARSE_ERROR", str(exc))
+            result["duration_ms"] = duration_ms
+            return result
+
+        # ── 6. Validar schema mínimo ──────────────────────────────
+        try:
+            instance._validate_schema(parsed)
+        except ValueError as exc:
+            result = _err_dict("SCHEMA_ERROR", str(exc))
+            result["duration_ms"] = duration_ms
+            return result
+
+        # ── 7. Inferir metodo_sugerido desde los datos extraídos ─
+        metodo_sugerido = None
+        raw_metodo = str(parsed.get("metodo_extraido") or "").upper()
+        if "NOTA" in raw_metodo or "CREDIT" in raw_metodo:
+            metodo_sugerido = "NOTA_CREDITO"
+        elif raw_metodo or parsed.get("banco_emisor"):
+            metodo_sugerido = "TRANSFERENCIA_BANCARIA"
+
+        # ── 8. Normalizar monto_extraido a float|null ─────────────
+        monto_raw = parsed.get("monto_extraido")
+        monto_float = None
+        if monto_raw is not None:
+            try:
+                monto_float = float(str(monto_raw).replace(",", "").strip())
+            except (ValueError, TypeError):
+                monto_float = None
+
+        return {
+            "status":               parsed.get("status", "UNREADABLE"),
+            "confianza":            float(parsed.get("confianza", 0)),
+            "monto_extraido":       monto_float,
+            "moneda_extraida":      parsed.get("moneda_extraida") or None,
+            "fecha_extraida":       parsed.get("fecha_extraida") or None,
+            "referencia_extraida":  parsed.get("referencia_extraida") or None,
+            "beneficiario_extraido": parsed.get("beneficiario_extraido") or None,
+            "ordenante_extraido":   parsed.get("ordenante_extraido") or None,
+            "banco_emisor":         parsed.get("banco_emisor") or None,
+            "banco_receptor":       parsed.get("banco_receptor") or None,
+            "concepto":             parsed.get("concepto") or None,
+            "metodo_sugerido":      metodo_sugerido,
+            "razon_humana":         parsed.get("razon_humana") or "",
+            "alertas_fraude":       list(parsed.get("alertas_fraude") or []),
+            "mismatch_fields":      list(parsed.get("mismatch_fields") or []),
+            "duration_ms":          duration_ms,
+            "model_version":        DEFAULT_MODEL,
+            "error_code":           None,
+            "error_message":        None,
+        }
+
+
     # ════════════════════════════════════════════════════════
     # Helpers privados
     # ════════════════════════════════════════════════════════
