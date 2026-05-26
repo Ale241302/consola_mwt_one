@@ -93,6 +93,10 @@ export default function ScreenExpedienteDetail() {
   // Mapa nombre del producto por producto_id — fallback de la columna
   // 'Descripción' cuando la línea no trae l.name. Fuente: productosApi.get().
   const [productoNombreMap, setProductoNombreMap] = useState({});
+  // Sprint 2026-05-26 (CEO) - shipping info extraida del artefacto
+  // ART-05 (template_id=9) AWB/BL. Cargado por useEffect lazy mas
+  // abajo. Se renderiza como chip visible en el header del expediente.
+  const [shippingInfo, setShippingInfo] = useState(null);
   const [loading,   setLoading]   = useState(!isHeroOrMock);
   const [notFound,  setNotFound]  = useState(false);
 
@@ -153,6 +157,35 @@ export default function ScreenExpedienteDetail() {
       .finally(() => { if (!cancel) setLoading(false); });
     return () => { cancel = true; };
   }, [expedienteId, isHeroOrMock, linesReload]);
+
+  // Sprint 2026-05-26 (CEO) · fetch lazy de shipping info desde el
+  // artefacto ART-05 (template_id=9). Cuando el endpoint nuevo
+  // /api/inventario/expedientes/{id}/artifacts/ devuelve un row con
+  // template_id=9, extraemos transport_mode/carrier/tracking y los
+  // exponemos como objeto shippingInfo para el chip del header.
+  useEffect(() => {
+    const eid = apiExp?.id;
+    if (!eid || isHeroOrMock) { setShippingInfo(null); return; }
+    let cancel = false;
+    nodoAssignmentsApi.artifactsPorExpediente(eid)
+      .then((rows) => {
+        if (cancel) return;
+        const arr = Array.isArray(rows) ? rows : [];
+        const art05 = arr.find((r) => Number(r?.template_id) === 9);
+        if (!art05) { setShippingInfo(null); return; }
+        setShippingInfo({
+          doc_type:        art05.doc_type        || null,
+          transport_mode:  art05.transport_mode  || null,
+          freight_mode:    art05.freight_mode    || null,
+          dispatch_mode:   art05.dispatch_mode   || null,
+          tracking:        art05.tracking        || null,
+          consolidation:   art05.consolidation   || null,
+          carrier:         art05.carrier         || null,
+        });
+      })
+      .catch(() => { if (!cancel) setShippingInfo(null); });
+    return () => { cancel = true; };
+  }, [apiExp?.id, isHeroOrMock]);
 
   // Sprint 2026-05-11 fase 6 · fetch del mapa (producto_id::talla) → nodos.
   // Se dispara cuando apiExp.id está disponible (no antes — necesitamos
@@ -482,12 +515,55 @@ export default function ScreenExpedienteDetail() {
               {exp.brand}
             </span>
           </div>
-          <div className="flex ai-center gap-4" style={{ marginTop: 14, flexWrap: 'wrap', fontSize: 13, opacity: 0.86 }}>
-            <span className="flex ai-center gap-2"><IconMapPin size={13}/>{exp.origin} → {exp.destination}</span>
-            <span className="flex ai-center gap-2">{exp.freight_mode === 'SEA' ? <IconShip size={13}/> : <IconPlane size={13}/>}{exp.mode} · {exp.freight_mode} · {exp.dispatch_mode}</span>
-            <span className="flex ai-center gap-2"><IconPackage size={13}/>{exp.container_count} {lang==='es' ? 'contenedores' : 'containers'} · {exp.product_count} {lang==='es' ? 'SKUs' : 'SKUs'}</span>
-            <span className="flex ai-center gap-2"><IconClock size={13}/>ETA {fmtDate(exp.eta, lang)}</span>
-          </div>
+          {/* Sprint 2026-05-26 (CEO) - linea de metadatos del expediente.
+              Si el artefacto ART-05 (AWB/BL) tiene datos, los usamos como
+              fuente de verdad para el modo de transporte / carrier / tracking. */}
+          {(() => {
+            const si = shippingInfo;
+            const transportRaw = String(si?.transport_mode || '').toLowerCase();
+            const isSea = transportRaw.startsWith('mar') || (exp.freight_mode === 'SEA');
+            const isAir = transportRaw.startsWith('aer') || transportRaw.startsWith('aér') || (exp.freight_mode === 'AIR');
+            const transportLabel = isSea
+              ? (lang === 'es' ? 'Marítimo' : 'Sea')
+              : isAir
+                ? (lang === 'es' ? 'Aéreo' : 'Air')
+                : (exp.mode || '—');
+            const docType = (si?.doc_type || '').toUpperCase();
+            const carrier = si?.carrier || null;
+            const tracking = si?.tracking || null;
+            const freightModeLabel = si?.freight_mode ? si.freight_mode.toUpperCase() : (exp.freight_mode || null);
+            const dispatchModeLabel = si?.dispatch_mode
+              ? (si.dispatch_mode === 'mwt' ? 'MWT' : (lang === 'es' ? 'Cliente' : 'Client'))
+              : (exp.dispatch_mode || null);
+            const tipChip = si
+              ? `${transportLabel}${docType ? ' · ' + docType : ''}${carrier ? ' · ' + carrier : ''}${tracking ? ' · ' + tracking : ''}${freightModeLabel ? ' · ' + freightModeLabel : ''}${dispatchModeLabel ? ' · ' + dispatchModeLabel : ''}`
+              : (lang === 'es' ? 'Sin ART-05 (AWB/BL)' : 'No ART-05 (AWB/BL) yet');
+            return (
+              <div className="flex ai-center gap-4" style={{ marginTop: 14, flexWrap: 'wrap', fontSize: 13, opacity: 0.86 }}>
+                <span className="flex ai-center gap-2"><IconMapPin size={13}/>{exp.origin} → {exp.destination}</span>
+                <span className="flex ai-center gap-2 tabular-nums" title={tipChip}>
+                  {isSea ? <IconShip size={13}/> : <IconPlane size={13}/>}
+                  <strong style={{ fontWeight: 700 }}>{transportLabel}</strong>
+                  {docType && <span style={{ opacity: 0.85 }}>· {docType}</span>}
+                  {carrier && <span style={{ opacity: 0.85 }}>· {carrier}</span>}
+                  {tracking && (
+                    <span className="mono" style={{
+                      padding: '1px 8px',
+                      borderRadius: 999,
+                      background: 'rgba(255,255,255,0.18)',
+                      border: '1px solid rgba(255,255,255,0.30)',
+                      fontSize: 11,
+                      letterSpacing: 0.3,
+                    }}>{tracking}</span>
+                  )}
+                  {!si && freightModeLabel && (<span style={{ opacity: 0.7 }}>· {freightModeLabel}</span>)}
+                  {!si && dispatchModeLabel && (<span style={{ opacity: 0.7 }}>· {dispatchModeLabel}</span>)}
+                </span>
+                <span className="flex ai-center gap-2"><IconPackage size={13}/>{exp.container_count} {lang==='es' ? 'contenedores' : 'containers'} · {exp.product_count} {lang==='es' ? 'SKUs' : 'SKUs'}</span>
+                <span className="flex ai-center gap-2"><IconClock size={13}/>ETA {fmtDate(exp.eta, lang)}</span>
+              </div>
+            );
+          })()}
         </div>
 
         {/* State timeline strip */}

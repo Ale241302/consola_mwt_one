@@ -789,6 +789,17 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
         except (TypeError, ValueError):
             return Response({"detail": "exp_id inválido"}, status=400)
 
+        # Sprint 2026-05-26 (CEO) - enriquecer la respuesta con shipping
+        # summary cuando el artefacto es ART-05 AWB/BL (template_id=9).
+        # Los campos del JSONB `data` son:
+        #   field-0052  -> doc_type        (awb | bl)
+        #   field-0055  -> transport_mode  (aereo | maritimo)
+        #   field-0061  -> freight_mode    (prepaid | postpaid)
+        #   field-0064  -> dispatch_mode   (mwt | client)
+        #   field-0072  -> tracking        (string)
+        #   field-0081  -> consolidation   (si | no)
+        #   field-1778635869890 -> carrier (string libre)
+        # Para otros template_id estos campos vienen como NULL.
         sql = """
             WITH lines_agg AS (
                 SELECT
@@ -811,7 +822,21 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                 n.codigo                                    AS nodo_codigo,
                 n.nombre                                    AS nodo_nombre,
                 la.lines_count,
-                la.total_qty
+                la.total_qty,
+                CASE WHEN bai.template_id = 9
+                     THEN bai.data->>'field-0052' END       AS doc_type,
+                CASE WHEN bai.template_id = 9
+                     THEN bai.data->>'field-0055' END       AS transport_mode,
+                CASE WHEN bai.template_id = 9
+                     THEN bai.data->>'field-0061' END       AS freight_mode,
+                CASE WHEN bai.template_id = 9
+                     THEN bai.data->>'field-0064' END       AS dispatch_mode,
+                CASE WHEN bai.template_id = 9
+                     THEN bai.data->>'field-0072' END       AS tracking,
+                CASE WHEN bai.template_id = 9
+                     THEN bai.data->>'field-0081' END       AS consolidation,
+                CASE WHEN bai.template_id = 9
+                     THEN bai.data->>'field-1778635869890' END AS carrier
             FROM lines_agg la
             JOIN nodos.builder_artifact_instance bai
               ON bai.id = la.iid
