@@ -808,9 +808,12 @@ function _emptyFormData() {
     // Paso 1
     direction:             null,
     payment_target_type:   null,
-    // Paso 2 — items seleccionados (shape: [{id, monto_aplicado, cantidad_producto?, _label, _currency}])
+    // Paso 2 - items seleccionados [{id, monto_aplicado, ...}]
     selected_applicables:  [],
     subtotal:              0,
+    // Sprint 2026-05-25 - referencia al scope para que
+    // _resolveExpedienteId pueda derivar el expediente_id.
+    _preselectedScope:     preselectedScope || null,
     // Paso 3
     metodo:                null,
     tipo_pago:             null,
@@ -865,29 +868,39 @@ function _validateAllSteps(formData, lang) {
 }
 
 function _buildDryRunPayload(f) {
-  return {
-    direction:       f.direction,
-    monto:           Number(f.monto || 0),
-    moneda:          f.moneda || "USD",
-    aplicaciones: (f.selected_applicables || []).map((a) => ({
+  // Sprint 2026-05-25 - filtrar items con monto <= 0 (timbres de
+  // centavos que el backend rechaza con "Debe ser mayor a cero").
+  const aplicaciones = (f.selected_applicables || [])
+    .map((a) => ({
       applicable_type: a.applicable_type || (f.payment_target_type === "COST" ? "COSTO" : "PRODUCTO"),
       applicable_id:   a.id,
       monto_aplicado:  Number(a.monto_aplicado || 0),
       cantidad_producto: a.cantidad_producto || undefined,
-    })),
+    }))
+    .filter((a) => a.monto_aplicado > 0.005);
+  return {
+    direction:       f.direction,
+    monto:           Number(f.monto || 0),
+    moneda:          f.moneda || "USD",
+    expediente_id:   _resolveExpedienteId(f),
+    aplicaciones,
   };
 }
 
 function _buildSubmitPayload(f) {
-  const aplicaciones = (f.selected_applicables || []).map((a) => ({
-    applicable_type: a.applicable_type || (f.payment_target_type === "COST" ? "COSTO" : "PRODUCTO"),
-    applicable_id:   a.id,
-    monto_aplicado:  Number(a.monto_aplicado || 0),
-    ...(a.cantidad_producto != null ? { cantidad_producto: a.cantidad_producto } : {}),
-  }));
+  // Sprint 2026-05-25 - filtrar items con monto <= 0 (timbres
+  // <= medio centavo el backend los rechaza con "Debe ser mayor a cero").
+  const aplicaciones = (f.selected_applicables || [])
+    .map((a) => ({
+      applicable_type: a.applicable_type || (f.payment_target_type === "COST" ? "COSTO" : "PRODUCTO"),
+      applicable_id:   a.id,
+      monto_aplicado:  Number(a.monto_aplicado || 0),
+      ...(a.cantidad_producto != null ? { cantidad_producto: a.cantidad_producto } : {}),
+    }))
+    .filter((a) => a.monto_aplicado > 0.005);
 
   return {
-    expediente_id:     null,
+    expediente_id:     _resolveExpedienteId(f),
     monto:             Number(f.monto || 0),
     moneda:            f.moneda || "USD",
     fecha:             f.fecha,
@@ -902,6 +915,30 @@ function _buildSubmitPayload(f) {
     aplicaciones,
     evidencia:         f.evidencia,
   };
+}
+
+
+// Sprint 2026-05-25 - resuelve el expediente_id que el backend exige
+// como UUID en POST /api/finance/payments/. Cascada de fuentes:
+//   1. f.expediente_id explicito.
+//   2. preselectedScope.id si type === "EXPEDIENTE".
+//   3. primer selected_applicables[i]._expediente_id (el item conoce
+//      su expediente cuando el backend lo devuelve en applicables).
+//   4. primer selected_applicables[i]._scope_expediente_ids[0].
+//   5. null (el backend exige UUID, sin esta cadena fallaria 400).
+function _resolveExpedienteId(f) {
+  if (f && f.expediente_id) return f.expediente_id;
+  const ps = f && f._preselectedScope;
+  if (ps && ps.type === "EXPEDIENTE" && ps.id) return ps.id;
+  const apps = (f && f.selected_applicables) || [];
+  for (const a of apps) {
+    if (a && a._expediente_id) return a._expediente_id;
+  }
+  for (const a of apps) {
+    const ids = a && (a._scope_expediente_ids || a._expediente_ids);
+    if (Array.isArray(ids) && ids.length > 0) return ids[0];
+  }
+  return null;
 }
 
 

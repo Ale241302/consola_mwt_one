@@ -122,9 +122,14 @@ export default function ScopeApplicablesTable({
       const newQty = applicableType === "PRODUCTO"
         ? Number(fresh.saldo_qty || 0)
         : undefined;
+      const newExpId = fresh.expediente_id || s._expediente_id || null;
+      const newScopeIds = Array.isArray(fresh.scope_json && fresh.scope_json.expediente_ids)
+        ? fresh.scope_json.expediente_ids
+        : (Array.isArray(fresh.expediente_ids) ? fresh.expediente_ids : s._scope_expediente_ids || []);
       if (
         newMonto !== s.monto_aplicado ||
         newCcy !== s._currency ||
+        newExpId !== s._expediente_id ||
         (newQty !== undefined && newQty !== s.cantidad_producto)
       ) {
         changed = true;
@@ -132,6 +137,8 @@ export default function ScopeApplicablesTable({
           ...s,
           monto_aplicado: newMonto,
           _currency:      newCcy,
+          _expediente_id: newExpId,
+          _scope_expediente_ids: newScopeIds,
           ...(applicableType === "PRODUCTO" ? { cantidad_producto: newQty } : {}),
         };
       }
@@ -172,6 +179,12 @@ export default function ScopeApplicablesTable({
         monto_aplicado:    montoAplicado,
         _label:            labelParts || item.id,
         _currency:         item.currency || "USD",
+        // Sprint 2026-05-25 - guardar expediente_id derivable
+        // para que el wizard arme bien el POST.
+        _expediente_id:    item.expediente_id || null,
+        _scope_expediente_ids: Array.isArray(item.scope_json && item.scope_json.expediente_ids)
+          ? item.scope_json.expediente_ids
+          : (Array.isArray(item.expediente_ids) ? item.expediente_ids : []),
         ...(applicableType === "PRODUCTO"
           ? { cantidad_producto: Number(item.saldo_qty || 0) }
           : {}),
@@ -199,6 +212,10 @@ export default function ScopeApplicablesTable({
           monto_aplicado:  montoAplicado,
           _label:          labelParts || item.id,
           _currency:       item.currency || "USD",
+          _expediente_id:  item.expediente_id || null,
+          _scope_expediente_ids: Array.isArray(item.scope_json && item.scope_json.expediente_ids)
+            ? item.scope_json.expediente_ids
+            : (Array.isArray(item.expediente_ids) ? item.expediente_ids : []),
           ...(applicableType === "PRODUCTO"
             ? { cantidad_producto: Number(item.saldo_qty || 0) }
             : {}),

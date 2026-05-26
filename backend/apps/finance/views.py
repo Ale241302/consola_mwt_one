@@ -657,6 +657,18 @@ class PaymentViewSet(viewsets.ViewSet):
 
                 saldo = amount_usd_val - paid_usd_val
 
+                # Sprint 2026-05-25 - exponer expediente_id derivado
+                # de scope_json para que el wizard arme bien el POST.
+                # Si scope_json.applies_to_all=true o no hay expediente_ids,
+                # cae a None (el wizard buscara otra fuente).
+                derived_exp_id = None
+                derived_exp_ids = []
+                if isinstance(scope_j, dict):
+                    exp_ids = scope_j.get("expediente_ids") or []
+                    if exp_ids:
+                        derived_exp_ids = [str(x) for x in exp_ids]
+                        derived_exp_id = derived_exp_ids[0]
+
                 items.append({
                     "id":                   row["id"],
                     "type":                 "COSTO",
@@ -672,6 +684,9 @@ class PaymentViewSet(viewsets.ViewSet):
                     "transferencia_id":     row.get("transferencia_id"),
                     "transferencia_codigo": row.get("transferencia_codigo"),
                     "scope_summary":        scope_summary,
+                    "scope_json":           scope_j,
+                    "expediente_id":        derived_exp_id,
+                    "expediente_ids":       derived_exp_ids,
                     "fx_to_usd":            fx_real if fx_real else (1.0 if currency == "USD" else None),
                     "fx_recalculated":      bool(needs_recalc and fx_real),
                     "fx_source":            "frankfurter" if (needs_recalc and fx_real) else "persisted",
