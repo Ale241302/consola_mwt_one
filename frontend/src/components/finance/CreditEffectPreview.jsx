@@ -33,9 +33,23 @@ import {
  * }} props
  */
 export default function CreditEffectPreview({ payload, lang = "es" }) {
+  // Sprint 2026-05-25 - Reglas locales antes de llamar al backend.
+  // El backend tiene 4 reglas (CreditEffectService matriz §2):
+  //   COST                              -> nunca afecta credito
+  //   PRODUCT + CONTADO                 -> no afecta
+  //   PRODUCT + CREDITO + MWT_op        -> libera MWT
+  //   PRODUCT + CREDITO + cliente_op    -> libera cliente
+  //
+  // Los pagos a COSTO no necesitan dry-run (siempre "no afecta").
+  // Esto ahorra una llamada de red, evita el error 'POST no
+  // permitido' que aparecia en pagos a costos, y muestra al CEO un
+  // mensaje claro de regla 1 sin red.
+  const applicationType = _deriveApplicationType(payload);
+  const isCostPayment = applicationType === "COSTO";
+
   const { data, loading, error } = usePaymentDryRun(payload, {
     debounceMs: 400,
-    enabled:    !!payload,
+    enabled:    !!payload && !isCostPayment,
   });
 
   // Estado inicial / sin payload.
@@ -46,6 +60,34 @@ export default function CreditEffectPreview({ payload, lang = "es" }) {
           {lang === "es"
             ? "Completa los pasos anteriores para ver el efecto sobre crédito."
             : "Complete previous steps to see the credit effect."}
+        </div>
+      </_Card>
+    );
+  }
+
+  // Regla local 1: pago a COSTOS - nunca afecta credito.
+  if (isCostPayment) {
+    return (
+      <_Card kind="neutral">
+        <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+          <span style={{ fontSize:18, lineHeight:1 }} aria-hidden>ℹ</span>
+          <div style={{ flex:1 }}>
+            <div style={{ fontWeight:600, marginBottom:4,
+                          color:"var(--text-primary)" }}>
+              {lang === "es"
+                ? "Pago a costos logísticos"
+                : "Logistics cost payment"}
+            </div>
+            <div style={{ fontSize:13, color:"var(--text-secondary)" }}>
+              {lang === "es"
+                ? "Los pagos a costos (DAI, IVA, fletes, agenciamiento, "
+                  + "timbres, etc.) nunca afectan el crédito de ningún cliente. "
+                  + "Este pago quedará registrado sin tocar líneas de crédito."
+                : "Cost payments (duties, VAT, freight, agency fees, stamps, "
+                  + "etc.) never affect any client's credit. This payment will "
+                  + "be registered without touching credit lines."}
+            </div>
+          </div>
         </div>
       </_Card>
     );
@@ -202,6 +244,33 @@ export default function CreditEffectPreview({ payload, lang = "es" }) {
 
 
 // ── Subcomponentes internos ──────────────────────────────────────────
+// Sprint 2026-05-25 - deriva el applicable_type del payload.
+// El wizard guarda los items en payload.selected_applicables, y cada
+// uno trae applicable_type. Si TODOS son COSTO -> "COSTO". Si todos
+// son no-COSTO -> "PRODUCTO". Si vacio o mezcla -> null (deja que
+// el backend decida via dry-run).
+function _deriveApplicationType(payload) {
+  if (!payload) return null;
+  // Fuente A: payment_target_type del Step 1.
+  if (payload.payment_target_type === "COST") return "COSTO";
+  if (payload.payment_target_type === "PRODUCT") return "PRODUCTO";
+  // Fuente B: aplicaciones array
+  const apps = Array.isArray(payload.aplicaciones)
+    ? payload.aplicaciones
+    : Array.isArray(payload.selected_applicables)
+    ? payload.selected_applicables
+    : [];
+  if (apps.length === 0) return null;
+  const types = new Set(apps.map((a) => a.applicable_type).filter(Boolean));
+  if (types.size === 1) {
+    const only = [...types][0];
+    if (only === "COSTO") return "COSTO";
+    return "PRODUCTO";  // PRODUCTO, PROFORMA, FACTURA -> grupo "no costo"
+  }
+  return null;  // mezcla
+}
+
+
 function _Card({ kind = "neutral", children }) {
   const styles = {
     neutral:  {
