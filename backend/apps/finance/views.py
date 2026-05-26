@@ -580,7 +580,7 @@ class PaymentViewSet(viewsets.ViewSet):
                         WHERE pa.applicable_type = 'COSTO'
                           AND pa.applicable_id   = cl.id
                           AND p.is_active = TRUE
-                          AND p.estado NOT IN ('REVERTIDO', 'RECHAZADO')
+                          AND p.estado = 'CONFIRMADO_HUMANO'
                     ), 0
                 )::text                                           AS paid_usd
             FROM transfers.cost_line cl
@@ -1038,7 +1038,7 @@ def _build_producto_applicables(
         LEFT JOIN finance.payment p
           ON p.id = pa.payment_id
          AND p.is_active = TRUE
-         AND p.estado NOT IN ('REVERTIDO', 'RECHAZADO')
+         AND p.estado = 'CONFIRMADO_HUMANO'
         GROUP BY
             l.id, l.expediente_id, e.codigo, e.operating_company_id,
             l.producto_id, l.sku, l.size,
@@ -1093,7 +1093,7 @@ def _build_producto_applicables(
         LEFT JOIN finance.payment p
           ON p.id = pa.payment_id
          AND p.is_active = TRUE
-         AND p.estado NOT IN ('REVERTIDO', 'RECHAZADO')
+         AND p.estado = 'CONFIRMADO_HUMANO'
         WHERE l.is_active = TRUE
         GROUP BY
             l.id, l.expediente_id, e.codigo, e.operating_company_id,
@@ -1147,7 +1147,7 @@ def _build_producto_applicables(
         LEFT JOIN finance.payment p
           ON p.id = pa.payment_id
          AND p.is_active = TRUE
-         AND p.estado NOT IN ('REVERTIDO', 'RECHAZADO')
+         AND p.estado = 'CONFIRMADO_HUMANO'
         WHERE l.is_active = TRUE
         GROUP BY
             l.id, l.expediente_id, e.codigo, e.operating_company_id,
@@ -1334,36 +1334,88 @@ PaymentViewSet.dry_run = _payments_dry_run
 def _payments_reconcile(self, request, pk=None):
     """PATCH /api/finance/payments/{id}/reconcile
 
-    Marca reconciled_with_bank=True. No cambia el estado del pago.
-    Payload opcional: { bank_reference, bank_statement_id }
+    Sprint 2026-05-26 (CEO): conciliar con banco es el UNICO trigger
+    que efectivamente "aplica" el pago. Hace 3 cosas atomicas:
+      1. reconciled_with_bank = TRUE
+      2. estado -> CONFIRMADO_HUMANO (esto hace que applicables
+         reste el saldo y cuente como pagado).
+      3. CreditEffectService.apply() - libera credito segun matriz
+         (solo PRODUCTO + CREDITO; COSTO y CONTADO no afectan).
+
+    Antes de este sprint, reconcile solo marcaba la bandera y el
+    credito se liberaba en un endpoint separado /release-credit/.
+    Ahora reconcile = "este pago entro al banco y por tanto descuenta
+    saldo de obligaciones, libera credito si aplica, queda confirmado".
     """
     try:
         p = Payment.objects.get(pk=pk, is_active=True)
     except Payment.DoesNotExist:
         return Response({"detail": "Payment no existe"}, status=404)
+    if p.estado in ("REVERTIDO", "RECHAZADO"):
+        return Response(
+            {"detail": f"Pago en estado {p.estado} no puede conciliarse"},
+            status=409,
+        )
 
     bank_ref = (request.data.get("bank_reference") or "").strip()
-    from django.db import connection
-    with connection.cursor() as c:
-        c.execute("""
-            UPDATE finance.payment
-               SET reconciled_with_bank = TRUE,
-                   updated_at = NOW()
-                   {ref_clause}
-             WHERE id = %s::uuid
-        """.format(ref_clause=", referencia = COALESCE(NULLIF(%s,''), referencia)"
-                              if bank_ref else ""),
-            ([bank_ref, str(pk)] if bank_ref else [str(pk)])
-        )
-    p.refresh_from_db()
-
     actor_id = _safe_user_uuid(request)
+    prev_state = p.estado
+
+    from django.db import connection, transaction as _tx
+    try:
+        with _tx.atomic():
+            with connection.cursor() as c:
+                if bank_ref:
+                    c.execute("""
+                        UPDATE finance.payment
+                           SET reconciled_with_bank = TRUE,
+                               estado       = 'CONFIRMADO_HUMANO',
+                               confirmed_at = COALESCE(confirmed_at, NOW()),
+                               confirmed_by = COALESCE(confirmed_by, %s::uuid),
+                               referencia   = COALESCE(NULLIF(%s, ''), referencia),
+                               updated_at   = NOW()
+                         WHERE id = %s::uuid
+                    """, [actor_id, bank_ref, str(pk)])
+                else:
+                    c.execute("""
+                        UPDATE finance.payment
+                           SET reconciled_with_bank = TRUE,
+                               estado       = 'CONFIRMADO_HUMANO',
+                               confirmed_at = COALESCE(confirmed_at, NOW()),
+                               confirmed_by = COALESCE(confirmed_by, %s::uuid),
+                               updated_at   = NOW()
+                         WHERE id = %s::uuid
+                    """, [actor_id, str(pk)])
+            p.refresh_from_db()
+
+            # CreditEffectService.apply decide internamente segun la
+            # matriz si afecta credito (no-op para COSTO o CONTADO).
+            try:
+                CreditEffectService.apply(p, actor_id=actor_id)
+            except ExpedienteTermsUndefinedError as e:
+                # No-bloqueante: el pago queda confirmado igual,
+                # el credito se reaplica luego cuando se defina
+                # forma_pago del expediente.
+                log.warning(
+                    "[reconcile] CreditEffectService skip payment=%s err=%s",
+                    p.id, e,
+                )
+    except Exception as exc:
+        log.exception("[reconcile] payment=%s err=%s", p.id, exc)
+        return Response(
+            {"detail": "Reconcile fallo", "error": f"{type(exc).__name__}: {exc}"},
+            status=500,
+        )
+
     ActivityLogger.log(
         action="payment.reconciled",
         target_type="payment", target_id=p.id,
         actor_id=actor_id,
         actor_role=(request.auth.get("role") if request.auth else None),
-        payload_diff={"reconciled_with_bank": True},
+        payload_diff={
+            "reconciled_with_bank": True,
+            "estado": {"from": prev_state, "to": "CONFIRMADO_HUMANO"},
+        },
         metadata={"bank_reference": bank_ref or None},
     )
     return Response(PaymentDetailSerializer(p).data)
