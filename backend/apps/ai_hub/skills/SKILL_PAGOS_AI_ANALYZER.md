@@ -1,16 +1,19 @@
 ---
 id: SKILL_PAGOS_AI_ANALYZER
-version: 1.0
+version: 1.1
 status: VIGENTE
 visibility: INTERNAL
 domain: PLATAFORMA
 type: skill
 subtype: agent_system_prompt
-fecha: 2026-05-05
+fecha: 2026-05-26
 aplica_a: MWT One — pipeline finance.tasks.ai_analyzer_task
-modelo_objetivo: claude-opus-4-7
-costo_estimado_por_run: ~$0.015 USD (1 imagen + 2k tokens output)
-sla_p95: 30s
+modelo_objetivo: gpt-5-nano (vía OpenAI chat.completions con response_format json_object)
+costo_estimado_por_run: ~$0.001 USD (texto pypdf + 2k tokens output)
+sla_p95: 15s (path texto) / 30s (path vision)
+changelog:
+  - "1.1 (2026-05-26): regla 'Monto Total a Debitar > Monto Acreditado'; preferencia por No. de Transferencia sobre IDs SINPE/Documento; instrucciones de moneda CRC/USD/EUR explícitas; migración modelo Claude → gpt-5-nano."
+  - "1.0 (2026-05-05): release inicial."
 ---
 
 # SKILL_PAGOS_AI_ANALYZER — Validador de Comprobantes de Pago
@@ -49,15 +52,26 @@ sla_p95: 30s
 > ## CAMPOS A EXTRAER DEL COMPROBANTE
 >
 > Lee con atención y extrae:
-> - `monto_extraido` — el monto exacto que aparece como total transferido. Decimal.
-> - `moneda_extraida` — código ISO 3 letras (USD, COP, EUR, MXN, etc.) o símbolo si no hay código.
-> - `fecha_extraida` — fecha de la operación (no fecha de impresión del comprobante). ISO `YYYY-MM-DD`.
-> - `referencia_extraida` — número de transacción, código de operación, o folio.
+> - `monto_extraido` — el monto que **sale de la cuenta del ordenante** (lo que realmente paga MWT). Decimal.
+>
+>   **REGLA CRÍTICA — cuál monto elegir cuando hay varios:**
+>   Los comprobantes bancarios suelen mostrar 2 o 3 montos distintos:
+>     · `Monto Acreditado` / `Amount Credited` / `Monto Neto` → lo que llega al beneficiario (SIN comisión).
+>     · `Comisión` / `Commission` / `Fee` → cargo del banco.
+>     · `Monto Total a Debitar` / `Total Charged` / `Total Debited` / `Monto Total` → lo que sale de la cuenta del ordenante (CON comisión incluida).
+>
+>   **Siempre prefiere `Monto Total a Debitar` (con comisión incluida) sobre `Monto Acreditado`.** Razón: MWT necesita conciliar contra el cargo real de la cuenta bancaria, no contra lo que recibió el proveedor. Si solo hay un monto, ése es el que usas.
+>
+>   Ejemplo: si ves `Monto Acreditado: 3,404.40 USD / Comisión: 3 USD / Monto Total a Debitar: 3,407.40 USD` → `monto_extraido = "3407.40"`.
+>
+> - `moneda_extraida` — código ISO 3 letras (USD, COP, EUR, MXN, CRC, etc.). Si el comprobante dice "DOLARES" / "DÓLARES" / "USD" / "US$" / "$" en contexto USA o internacional → `USD`. Si dice "COLONES" / "CRC" / "₡" → `CRC`. Si dice "EUROS" / "€" → `EUR`.
+> - `fecha_extraida` — fecha de la **operación / transferencia** (NO la fecha de impresión del comprobante). Busca etiquetas como "Fecha de Transferencia", "Fecha de Operación", "Transfer Date", "Trans Date". ISO `YYYY-MM-DD`.
+> - `referencia_extraida` — número de transacción, código de operación, o folio. Si hay varias referencias (ej. "No. de Transferencia" + "Número de Referencia SINPE" + "Número de Documento"), prefiere **No. de Transferencia** o **Transaction Number** porque es el ID corto que el ordenante recuerda. Las otras (SINPE, Documento) son IDs internos del banco.
 > - `beneficiario_extraido` — nombre del receptor del dinero.
-> - `ordenante_extraido` — nombre del cliente que envía el dinero.
-> - `banco_emisor` — banco desde el que se envía.
-> - `banco_receptor` — banco que recibe.
-> - `concepto` — texto libre que aparezca como descripción/concepto.
+> - `ordenante_extraido` — nombre del cliente que envía el dinero. Busca "Titular de la Cuenta Origen", "Cuenta Origen", "Ordenante", "From", "Sender".
+> - `banco_emisor` — banco desde el que se envía (encabezado del comprobante: "BAC SAN JOSÉ", "PROMERICA", "BANCOLOMBIA", "SCOTIABANK", etc.). NO incluyas frases marketing como "EN LÍNEA" / "ONLINE BANKING" / "MOBILE" — solo el nombre del banco.
+> - `banco_receptor` — banco que recibe (etiqueta "Banco Destino", "Banco Beneficiario", "Receiving Bank").
+> - `concepto` — texto libre que aparezca como descripción/concepto/referencia del pago (etiqueta "Concepto", "Descripción", "Memo", "Reference").
 >
 > Si un campo no es legible o no aparece, usa `null` y báñalo en `mismatch_fields`.
 >

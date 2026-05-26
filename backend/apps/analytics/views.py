@@ -261,16 +261,20 @@ class AnalyticsViewSet(viewsets.ViewSet):
         """)
 
         # — Agregado por marca —
+        # Sprint 2026-05-26 (CEO) - mismo fix que by_status_by_brand:
+        # heredar brand_id de la OC padre cuando el expediente lo tenga NULL.
         out["by_brand"] = _fetchall("""
             SELECT
-              brand_id,
-              COUNT(*)                        AS count,
-              COALESCE(SUM(total_cost),0)     AS total_cost,
-              COALESCE(SUM(total_invoiced),0) AS total_invoiced,
-              COALESCE(SUM(total_paid),0)     AS total_paid
-            FROM expedientes.expediente
-            WHERE is_active = TRUE AND brand_id IS NOT NULL
-            GROUP BY brand_id
+              COALESCE(e.brand_id, o.brand_id)  AS brand_id,
+              COUNT(*)                          AS count,
+              COALESCE(SUM(e.total_cost),0)     AS total_cost,
+              COALESCE(SUM(e.total_invoiced),0) AS total_invoiced,
+              COALESCE(SUM(e.total_paid),0)     AS total_paid
+            FROM expedientes.expediente e
+            LEFT JOIN expedientes.oc o ON o.id = e.oc_id
+            WHERE e.is_active = TRUE
+              AND COALESCE(e.brand_id, o.brand_id) IS NOT NULL
+            GROUP BY COALESCE(e.brand_id, o.brand_id)
             ORDER BY total_invoiced DESC
         """)
 
@@ -881,24 +885,41 @@ class AnalyticsViewSet(viewsets.ViewSet):
         # ── Crosstab status × brand_id ────────────────────────────
     @action(detail=False, methods=["get"], url_path="by_status_by_brand")
     def by_status_by_brand(self, request):
-        """Crosstab estado × brand_id.
+        """Crosstab estado x brand (heredada de OC si el expediente no la tiene).
+
+        Sprint 2026-05-26 (CEO) - fix dashboard "Pipeline operativo":
+        el wizard de creacion de expediente NO popula brand_id en
+        expedientes.expediente; solo lo guarda en expedientes.oc.
+        Resultado: con el SQL anterior (filtro brand_id IS NOT NULL
+        sobre expediente) el endpoint devolvia [] y el widget mostraba
+        el placeholder "Sin pipeline por marca".
+
+        Fix: LEFT JOIN con expedientes.oc y COALESCE para derivar la
+        marca del expediente desde la OC padre cuando expediente.brand_id
+        es NULL. Tambien se aplican Cache-Control headers para evitar
+        cache stale en el navegador.
 
         Shape:
           [{ brand_id, status, count, total_invoiced }]
         """
         rows = _fetchall("""
             SELECT
-              brand_id,
-              estado                          AS status,
-              COUNT(*)                        AS count,
-              COALESCE(SUM(total_invoiced),0) AS total_invoiced
-            FROM expedientes.expediente
-            WHERE is_active = TRUE
-              AND brand_id IS NOT NULL
-            GROUP BY brand_id, estado
-            ORDER BY brand_id, count DESC
+              COALESCE(e.brand_id, o.brand_id)  AS brand_id,
+              e.estado                          AS status,
+              COUNT(*)                          AS count,
+              COALESCE(SUM(e.total_invoiced),0) AS total_invoiced
+            FROM expedientes.expediente e
+            LEFT JOIN expedientes.oc o ON o.id = e.oc_id
+            WHERE e.is_active = TRUE
+              AND COALESCE(e.brand_id, o.brand_id) IS NOT NULL
+            GROUP BY COALESCE(e.brand_id, o.brand_id), e.estado
+            ORDER BY COALESCE(e.brand_id, o.brand_id), count DESC
         """)
-        return Response(rows)
+        resp = Response(rows)
+        # Anti-cache: el dashboard cambia con cada nuevo expediente.
+        resp["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp["Pragma"]        = "no-cache"
+        return resp
 
     # ── Cobertura de inventario por nodo ──────────────────────
     @action(detail=False, methods=["get"], url_path="inventory_coverage_by_node")

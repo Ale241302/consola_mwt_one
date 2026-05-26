@@ -63,8 +63,15 @@ def _cfg(name: str, default=None):
 
 
 SKILL_PATH = Path(settings.BASE_DIR) / "apps" / "ai_hub" / "skills" / "SKILL_PAGOS_AI_ANALYZER.md"
-SKILL_VERSION = "1.0"  # bump cuando cambie el schema del verdict
-DEFAULT_MODEL = os.environ.get("FINANCE_AI_MODEL") or _cfg("DEFAULT_MODEL") or "claude-opus-4-7"
+SKILL_VERSION = "1.1"  # bump cuando cambie el schema del verdict
+# Sprint 2026-05-26 (CEO) - migracion Claude -> OpenAI gpt-5-nano.
+# DEFAULT_MODEL define el modelo "reportado" en model_version. El
+# modelo real usado en analyze_bytes() se toma de
+# OPENAI_PAYMENT_ANALYZER_MODEL (linea 414) y se devuelve en el dict.
+DEFAULT_MODEL = (os.environ.get("OPENAI_PAYMENT_ANALYZER_MODEL")
+                 or os.environ.get("FINANCE_AI_MODEL")
+                 or _cfg("DEFAULT_MODEL")
+                 or "gpt-5-nano")
 MAX_TOKENS    = 2000
 TEMPERATURE   = 0.0           # determinismo · estamos validando datos, no escribiendo prosa
 MAX_RETRIES   = int(_cfg("MAX_RETRIES", 5))
@@ -333,6 +340,12 @@ class AIPaymentAnalyzer:
         t0 = _time.time()
         instance = AIPaymentAnalyzer()
 
+        # Sprint 2026-05-26 (CEO) - reporta el modelo objetivo real,
+        # no el DEFAULT_MODEL del modulo (puede estar contaminado por
+        # FINANCE_AI_MODEL legacy con valor de Claude).
+        _target_model = (os.environ.get("OPENAI_PAYMENT_ANALYZER_MODEL")
+                         or "gpt-5-nano")
+
         def _err_dict(code: str, msg: str) -> dict:
             return {
                 "status":               "UNREADABLE",
@@ -354,7 +367,8 @@ class AIPaymentAnalyzer:
                 "alertas_fraude":  [],
                 "mismatch_fields": [],
                 "duration_ms":     int((_time.time() - t0) * 1000),
-                "model_version":   DEFAULT_MODEL,
+                "model_version":   _target_model,
+                "skill_version":   SKILL_VERSION,
                 "error_code":      code,
                 "error_message":   msg[:1000] if msg else "",
             }
@@ -611,7 +625,11 @@ class AIPaymentAnalyzer:
             "alertas_fraude":       list(parsed.get("alertas_fraude") or []),
             "mismatch_fields":      list(parsed.get("mismatch_fields") or []),
             "duration_ms":          duration_ms,
-            "model_version":        DEFAULT_MODEL,
+            # Sprint 2026-05-26 (CEO) - reportar modelo REAL usado, no
+            # el DEFAULT_MODEL del modulo (que podia venir cacheado del
+            # legacy FINANCE_AI_MODEL=claude-... en el env del VPS).
+            "model_version":        model_name,
+            "skill_version":        SKILL_VERSION,
             "error_code":           None,
             "error_message":        None,
         }
