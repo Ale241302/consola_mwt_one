@@ -414,62 +414,67 @@ class AIPaymentAnalyzer:
         model_name = os.environ.get("OPENAI_PAYMENT_ANALYZER_MODEL", "gpt-5-nano")
         client = OpenAI(api_key=api_key, timeout=60.0)
 
-        # Construir user content para Responses API (gpt-5-nano).
-        # attachment_block tiene shape {"type": "image", "source": {...}}
-        # heredado de Anthropic. Lo reconstruimos para OpenAI.
+        # Sprint 2026-05-26 (CEO) - replicamos el patron de
+        # document_matchmaker.py upload-match que funciona en
+        # produccion para PDFs OC/proformas:
+        #   1. Si es PDF: extraer texto con pypdf y mandarlo como
+        #      string a chat.completions (5-10s, robusto).
+        #   2. Si es imagen: mandar como image_url a vision.
+        #   3. Si pypdf no extrae nada (PDF escaneado/OCR-only):
+        #      fallback a convertir con PyMuPDF a PNG y vision.
+        # Esto evita el bug "Invalid MIME type" que ocurre al
+        # mandar PDF como image_url, y Responses API que no esta
+        # bien soportada en el SDK del container.
+        text = None
+        tokens_in = 0
+        tokens_out = 0
+        err_code = None
+        err_msg = None
+        text_payload = None  # texto extraido del PDF si pypdf funciona
         try:
             import base64 as _b64
-            b64 = _b64.b64encode(file_bytes).decode("ascii")
-            data_url = f"data:{mime};base64,{b64}"
+            user_text = declared_block.get("text", "") if isinstance(declared_block, dict) else ""
             is_image_mime = (mime or "").startswith("image/")
+            is_pdf = (mime == "application/pdf") or (
+                isinstance(mime, str) and mime.lower().endswith("pdf")
+            )
 
-            user_content = [
-                {"type": "input_text", "text": declared_block.get("text", "")},
-            ]
-            if is_image_mime:
-                user_content.append({
-                    "type": "input_image",
-                    "image_url": data_url,
-                })
-            else:
-                user_content.append({
-                    "type": "input_file",
-                    "filename": "comprobante.pdf",
-                    "file_data": data_url,
-                })
+            # ─── PDF: extraer texto con pypdf ────────────────────
+            if is_pdf:
+                try:
+                    from pypdf import PdfReader
+                    import io as _io
+                    reader = PdfReader(_io.BytesIO(file_bytes))
+                    pages = []
+                    for page in reader.pages:
+                        t = (page.extract_text() or "").strip()
+                        if t:
+                            pages.append(t)
+                    if pages:
+                        text_payload = "\n\n--- PAGE BREAK ---\n\n".join(pages)[:18000]
+                        log.info(
+                            "[payment_analyzer] pypdf extrajo %d paginas (%d chars)",
+                            len(pages), len(text_payload),
+                        )
+                except Exception as exc_pdf_text:
+                    log.warning(
+                        "[payment_analyzer] pypdf extraccion fallo: %s; intentare vision",
+                        exc_pdf_text,
+                    )
 
-            text = None
-            tokens_in = 0
-            tokens_out = 0
-            err_code = None
-            err_msg = None
+            # ─── Construir el llamado ────────────────────────────
             try:
-                response = client.responses.create(
-                    model        = model_name,
-                    instructions = system_prompt,
-                    input=[{"role": "user", "content": user_content}],
-                    response_format={"type": "json_object"},
-                )
-                text = response.output_text
-                try:
-                    tokens_in  = int(getattr(response.usage, "input_tokens", 0) or 0)
-                    tokens_out = int(getattr(response.usage, "output_tokens", 0) or 0)
-                except Exception:
-                    pass
-            except Exception as exc_resp:
-                # Fallback a chat.completions con vision (compat SDK viejo)
-                log.warning("[payment_analyzer] responses.create fallo (%s) - fallback chat", exc_resp)
-                content_parts = [{"type": "text", "text": declared_block.get("text", "")}]
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": data_url},
-                })
-                try:
+                if text_payload is not None:
+                    # Path TEXT - chat.completions con string puro
                     chat = client.chat.completions.create(
                         model    = model_name,
                         messages = [
                             {"role": "system", "content": system_prompt},
-                            {"role": "user",   "content": content_parts},
+                            {"role": "user",   "content":
+                                user_text + "\n\n"
+                                "Analiza el siguiente comprobante de pago y "
+                                "devuelve solo JSON segun el schema:\n\n"
+                                + text_payload},
                         ],
                         response_format = {"type": "json_object"},
                     )
@@ -479,9 +484,71 @@ class AIPaymentAnalyzer:
                         tokens_out = int(chat.usage.completion_tokens or 0)
                     except Exception:
                         pass
-                except Exception as exc_chat:
-                    err_code = f"OPENAI_{type(exc_chat).__name__}"
-                    err_msg  = str(exc_chat)
+                elif is_image_mime:
+                    # Path VISION (imagen) - chat.completions con image_url
+                    b64 = _b64.b64encode(file_bytes).decode("ascii")
+                    data_url = f"data:{mime};base64,{b64}"
+                    chat = client.chat.completions.create(
+                        model    = model_name,
+                        messages = [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user",   "content": [
+                                {"type": "text",      "text": user_text},
+                                {"type": "image_url", "image_url": {"url": data_url}},
+                            ]},
+                        ],
+                        response_format = {"type": "json_object"},
+                    )
+                    text = chat.choices[0].message.content
+                    try:
+                        tokens_in  = int(chat.usage.prompt_tokens or 0)
+                        tokens_out = int(chat.usage.completion_tokens or 0)
+                    except Exception:
+                        pass
+                else:
+                    # Path VISION fallback (PDF escaneado): pypdf no
+                    # extrajo nada -> convertir pagina 1 a PNG con
+                    # PyMuPDF y mandar como image.
+                    try:
+                        import fitz
+                        pdf_doc = fitz.open(stream=file_bytes, filetype="pdf")
+                        if pdf_doc.page_count == 0:
+                            raise RuntimeError("PDF sin paginas")
+                        page = pdf_doc.load_page(0)
+                        mat = fitz.Matrix(2.0, 2.0)
+                        pix = page.get_pixmap(matrix=mat, alpha=False)
+                        png_bytes = pix.tobytes("png")
+                        pdf_doc.close()
+                        log.info(
+                            "[payment_analyzer] PDF->PNG fallback ok (%d bytes png)",
+                            len(png_bytes),
+                        )
+                        b64 = _b64.b64encode(png_bytes).decode("ascii")
+                        data_url = f"data:image/png;base64,{b64}"
+                        chat = client.chat.completions.create(
+                            model    = model_name,
+                            messages = [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user",   "content": [
+                                    {"type": "text",      "text": user_text},
+                                    {"type": "image_url", "image_url": {"url": data_url}},
+                                ]},
+                            ],
+                            response_format = {"type": "json_object"},
+                        )
+                        text = chat.choices[0].message.content
+                        try:
+                            tokens_in  = int(chat.usage.prompt_tokens or 0)
+                            tokens_out = int(chat.usage.completion_tokens or 0)
+                        except Exception:
+                            pass
+                    except Exception as exc_conv:
+                        err_code = f"PDF_CONVERT_{type(exc_conv).__name__}"
+                        err_msg  = (f"PDF no pudo extraerse con pypdf ni "
+                                    f"convertirse a imagen: {exc_conv}")
+            except Exception as exc_chat:
+                err_code = f"OPENAI_{type(exc_chat).__name__}"
+                err_msg  = str(exc_chat)
         except Exception as exc_outer:  # noqa: BLE001
             err_code = f"OPENAI_{type(exc_outer).__name__}"
             err_msg  = str(exc_outer)
