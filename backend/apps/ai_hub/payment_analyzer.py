@@ -199,7 +199,17 @@ class AIPaymentAnalyzer:
                 payment, duration_ms=int((time.time() - t0) * 1000)
             )
 
-        client = anthropic.Anthropic(api_key=api_key)
+        # Sprint 2026-05-26 - el SDK viejo de anthropic pasa
+        # kwargs 'proxies' al constructor de httpx.Client, y
+        # httpx>=0.28 los removio causando TypeError. Pasamos un
+        # http_client explicito sin proxies para bypassear esa ruta.
+        try:
+            import httpx
+            _http = httpx.Client(timeout=60.0)
+            client = anthropic.Anthropic(api_key=api_key, http_client=_http)
+        except Exception as exc_init:
+            log.warning("[payment_analyzer] httpx custom fallo (%s); fallback default", exc_init)
+            client = anthropic.Anthropic(api_key=api_key)
 
         # 4. Llamada con retry/backoff
         text, tokens_in, tokens_out, err_code, err_msg = self._call_with_retry(
@@ -390,7 +400,17 @@ class AIPaymentAnalyzer:
         except ImportError as e:
             return _err_dict("SDK_MISSING", f"anthropic SDK no instalado: {e}")
 
-        client = anthropic.Anthropic(api_key=api_key)
+        # Sprint 2026-05-26 - el SDK viejo de anthropic pasa
+        # kwargs 'proxies' al constructor de httpx.Client, y
+        # httpx>=0.28 los removio causando TypeError. Pasamos un
+        # http_client explicito sin proxies para bypassear esa ruta.
+        try:
+            import httpx
+            _http = httpx.Client(timeout=60.0)
+            client = anthropic.Anthropic(api_key=api_key, http_client=_http)
+        except Exception as exc_init:
+            log.warning("[payment_analyzer] httpx custom fallo (%s); fallback default", exc_init)
+            client = anthropic.Anthropic(api_key=api_key)
 
         # ── 4. Llamada con retry/backoff ──────────────────────────
         try:
