@@ -14,6 +14,7 @@ El permiso se activa a nivel global vía
 REST_FRAMEWORK.DEFAULT_PERMISSION_CLASSES en settings.py.
 =====================================================================
 """
+import json
 import logging
 
 from rest_framework.permissions import BasePermission
@@ -21,6 +22,54 @@ from rest_framework.permissions import BasePermission
 from django.db import connection
 
 log = logging.getLogger(__name__)
+
+
+def _normalize_perms(value) -> dict:
+    """Convierte el valor de core.roles.permissions a dict canonico.
+
+    Bug original (HTML 500 'str object has no attribute get'): la
+    columna permissions esta declarada en algunos schemas como TEXT
+    en vez de JSONB, asi que psycopg2 devuelve un string JSON sin
+    parsear. En otros entornos viene como dict nativo (JSONB ->
+    psycopg2 lo parsea automaticamente). Manejamos ambos casos.
+
+    Casos cubiertos:
+      - None / '' -> {}
+      - dict -> tal cual
+      - list (legacy de seeds antiguos) -> {'modules': list}
+      - str JSON valido -> json.loads (acepta dict, list, escalar)
+      - str JSON invalido o tipo raro -> {} con warning
+    """
+    if value is None or value == "":
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        return {"modules": value}
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, ValueError) as exc:
+            log.warning(
+                "[_normalize_perms] permissions string no parseable "
+                "como JSON (value[:80]=%r err=%s) -> fail-closed {}",
+                value[:80], exc,
+            )
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, list):
+            return {"modules": parsed}
+        log.warning(
+            "[_normalize_perms] permissions JSON de tipo inesperado %s -> {}",
+            type(parsed).__name__,
+        )
+        return {}
+    log.warning(
+        "[_normalize_perms] permissions de tipo inesperado %s -> {}",
+        type(value).__name__,
+    )
+    return {}
 
 
 def _permissions_for_role(role_slug: str) -> dict:
@@ -48,7 +97,9 @@ def _permissions_for_role(role_slug: str) -> dict:
             row = cur.fetchone()
         if not row:
             return {"modules": ["*"]} if role_slug in ("admin", "superadmin") else {}
-        return row[0] or {}
+        # row[0] puede venir como dict (JSONB) o str (TEXT) segun el
+        # schema del entorno. _normalize_perms acepta ambos.
+        return _normalize_perms(row[0])
     except Exception as exc:  # noqa: BLE001 - blindaje contra HTML 500
         log.exception(
             "[_permissions_for_role] DB query failed for role_slug=%r: %s",
@@ -75,8 +126,24 @@ class RoleBasedPermission(BasePermission):
         if not required_module:
             return True
 
-        role_slug = request.auth.get("role")
+        # request.auth puede ser dict (JWT decoded) o str (token raw).
+        # En el segundo caso .get() rompe igual; defensivo:
+        if isinstance(request.auth, dict):
+            role_slug = request.auth.get("role")
+        else:
+            role_slug = (getattr(request.user, "role", None)
+                         or getattr(request.user, "role_default", None))
+
         perms = _permissions_for_role(role_slug)
+        # Defensa adicional: _permissions_for_role ya normaliza, pero
+        # si algo raro pasara, garantizamos que .get() no explote.
+        if not isinstance(perms, dict):
+            log.warning(
+                "[RoleBasedPermission] perms no es dict (tipo=%s) -> negando",
+                type(perms).__name__,
+            )
+            return False
+
         modules = perms.get("modules") or []
         actions = perms.get("actions") or []
 
