@@ -114,6 +114,11 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Sprint 2026-05-25 — captura cualquier excepcion no manejada
+    # en endpoints /api/ y la devuelve como JSON con traceback en
+    # lugar del HTML 500 generico de Django. Debe ir AL FINAL para
+    # solo atrapar lo que escape de los middlewares anteriores.
+    "apps.core.json_error_middleware.JsonErrorMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
