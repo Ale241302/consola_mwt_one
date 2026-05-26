@@ -46,7 +46,11 @@ import TransferNotesPanel  from "../components/transfers/TransferNotesPanel.jsx"
 // ── Helpers format ─────────────────────────
 function fmtDate(s) {
   if (!s) return '—';
-  const d = new Date(s);
+  // Sprint 2026-05-26 (CEO) - fix timezone: cuando s es "YYYY-MM-DD" (date-only),
+  // new Date(s) lo parsea como UTC midnight y al renderizar en TZ Costa Rica
+  // (UTC-6) muestra el dia anterior. Forzamos parse local con T12:00:00.
+  const isDateOnly = typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const d = new Date(isDateOnly ? `${s}T12:00:00` : s);
   if (isNaN(d.getTime())) return s;
   return d.toLocaleDateString('es-PE', { day:'2-digit', month:'short', year:'numeric' });
 }

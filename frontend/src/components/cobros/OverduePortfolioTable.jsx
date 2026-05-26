@@ -27,7 +27,9 @@ function fmtMoney(v, cur = "USD") {
 }
 function fmtDate(s) {
   if (!s) return "—";
-  const d = new Date(s);
+  // Sprint 2026-05-26 (CEO) - fix timezone (ver TransferDetail.jsx).
+  const isDateOnly = typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const d = new Date(isDateOnly ? `${s}T12:00:00` : s);
   if (isNaN(d)) return "—";
   return d.toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "2-digit" });
 }

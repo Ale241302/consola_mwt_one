@@ -28,7 +28,9 @@ const fmt2 = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigi
 const fmt4 = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 const fmtDate = (s) => {
   if (!s) return "—";
-  const d = new Date(s);
+  // Sprint 2026-05-26 (CEO) - fix timezone (ver TransferDetail.jsx).
+  const isDateOnly = typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const d = new Date(isDateOnly ? `${s}T12:00:00` : s);
   return isNaN(d.getTime()) ? s : d.toLocaleDateString("es-PE", { day: "2-digit", month: "long", year: "numeric" });
 };
 
