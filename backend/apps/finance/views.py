@@ -266,17 +266,40 @@ class PaymentViewSet(viewsets.ViewSet):
     #      meta: { kind, fecha, cost_type, currency, ... } }]
     @action(detail=False, methods=["get"], url_path="applicables")
     def applicables(self, request):
+        """Lista de items con saldo pendiente para asignar a un pago.
+
+        Sprint 2026-05-25 (defensivo): TODO el body envuelto en
+        try/except superior que captura excepciones inesperadas y
+        devuelve JSON {"detail": ..., "error": ...} en lugar de HTML
+        500 generico de Django. Mantiene los try/except internos para
+        granularidad de errores.
+        """
         from django.db import connection
 
+        try:
+            return self._applicables_impl(request, connection)
+        except Exception as exc:  # noqa: BLE001 - blindaje contra HTML 500
+            log.exception(
+                "[PaymentViewSet.applicables] uncaught error params=%s err=%s",
+                dict(request.query_params), exc,
+            )
+            return Response(
+                {"applicables": [],
+                 "detail": "applicables failed",
+                 "error":  f"{type(exc).__name__}: {exc}"},
+                status=500,
+            )
+
+    def _applicables_impl(self, request, connection):
         exp_id           = request.query_params.get("expediente")
         kind             = (request.query_params.get("type") or "").upper().strip()
         nodo_id          = request.query_params.get("nodo_id")
         transferencia_id = request.query_params.get("transferencia_id")
-        oc_id            = request.query_params.get("oc_id")
+        oc_id_param      = request.query_params.get("oc_id")
 
         # Para PROFORMA/FACTURA expediente sigue siendo obligatorio.
         # Para COSTO/PRODUCTO se acepta cualquiera de los 4 filtros.
-        has_scope = bool(exp_id or nodo_id or transferencia_id or oc_id)
+        has_scope = bool(exp_id or nodo_id or transferencia_id or oc_id_param)
         if kind in ("PROFORMA", "FACTURA") and not exp_id:
             return Response({"detail": "expediente requerido para PROFORMA/FACTURA"}, status=400)
         if kind in ("COSTO", "PRODUCTO") and not has_scope:
@@ -286,60 +309,67 @@ class PaymentViewSet(viewsets.ViewSet):
             )
         if kind not in ("PROFORMA", "FACTURA", "COSTO", "PRODUCTO"):
             return Response(
-                {"detail": f"type inválido: {kind!r} (PROFORMA/FACTURA/COSTO/PRODUCTO)"},
+                {"detail": f"type invalido: {kind!r} (PROFORMA/FACTURA/COSTO/PRODUCTO)"},
                 status=400,
             )
 
         items = []
 
         # Resolver OC y montos del expediente (best-effort, defensivo).
-        # Los documentos suelen estar asociados a la OC, NO directamente
-        # al expediente, así que necesitamos el oc_id para hacer match.
-        # Hacemos 2 queries separadas para que si una columna no existe
-        # (ej. balance/total_invoiced en algunos schemas viejos), la otra
-        # siga funcionando.
-        oc_id = None
+        # IMPORTANTE: oc_id como variable local se usa para 2 cosas:
+        #   1. El query param explicito (oc_id_param) -> scope filter.
+        #   2. El oc_id derivado del expediente (cuando exp_id viene)
+        #      para hacer JOIN con cobros.cobro en PROFORMA/FACTURA.
+        # Antes esto era una sola variable que se sobrescribia a None,
+        # borrando el query param. Ahora separamos:
+        #   - oc_id_param  = lo que vino por URL (no se modifica nunca).
+        #   - oc_id_lookup = derivado del expediente para JOIN docs.
+        # Para la rama COSTO/PRODUCTO usamos oc_id_param como scope.
+        oc_id_lookup = None
         exp_balance_fallback = 0.0
         exp_total_fallback   = 0.0
 
-        # Query 1: solo oc_id (mínimo absoluto). Si esto falla, las
+        # Query 1: solo oc_id (minimo absoluto). Si esto falla, las
         # tabs Proforma/Factura no van a poder hacer JOIN por OC.
-        try:
-            with connection.cursor() as cur:
-                cur.execute(
-                    "SELECT oc_id FROM expedientes.expediente WHERE id = %s LIMIT 1",
-                    [exp_id],
-                )
-                row = cur.fetchone()
-                if row and row[0]:
-                    oc_id = row[0]
-        except Exception as e:
-            log.info("expediente.oc_id lookup falló: %s", e)
+        # Solo tiene sentido si exp_id vino por URL.
+        if exp_id:
+            try:
+                with connection.cursor() as cur:
+                    cur.execute(
+                        "SELECT oc_id FROM expedientes.expediente WHERE id = %s LIMIT 1",
+                        [exp_id],
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        oc_id_lookup = row[0]
+            except Exception as e:
+                log.info("expediente.oc_id lookup fallo: %s", e)
 
         # Query 2: balance/total como fallback opcional. Tolerante a
         # cualquier mismatch de columnas; si falla, queda en 0.
-        try:
-            with connection.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT COALESCE(balance, 0),
-                           COALESCE(total_invoiced, 0)
-                      FROM expedientes.expediente
-                     WHERE id = %s LIMIT 1
-                    """,
-                    [exp_id],
-                )
-                row = cur.fetchone()
-                if row:
-                    exp_balance_fallback = float(row[0] or 0)
-                    exp_total_fallback   = float(row[1] or 0)
-        except Exception as e:
-            # Schema sin balance/total_invoiced — silenciar y seguir
-            log.debug("expediente.balance/total_invoiced no disponibles: %s", e)
+        if exp_id:
+            try:
+                with connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(balance, 0),
+                               COALESCE(total_invoiced, 0)
+                          FROM expedientes.expediente
+                         WHERE id = %s LIMIT 1
+                        """,
+                        [exp_id],
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        exp_balance_fallback = float(row[0] or 0)
+                        exp_total_fallback   = float(row[1] or 0)
+            except Exception as e:
+                # Schema sin balance/total_invoiced - silenciar y seguir
+                log.debug("expediente.balance/total_invoiced no disponibles: %s", e)
 
         log.info(
-            "applicables · exp=%s · type=%s · oc_id=%s · exp_balance=%s",
-            exp_id, kind, oc_id, exp_balance_fallback,
+            "applicables type=%s exp=%s nodo=%s trf=%s oc=%s",
+            kind, exp_id, nodo_id, transferencia_id, oc_id_param,
         )
 
         # ── PROFORMA / FACTURA ────────────────────────────────────
@@ -368,13 +398,13 @@ class PaymentViewSet(viewsets.ViewSet):
                                 OR (%s::uuid IS NOT NULL AND d.oc_id = %s::uuid))
                          ORDER BY d.fecha DESC NULLS LAST, d.created_at DESC
                         """,
-                        [kind, exp_id, str(oc_id) if oc_id else None,
-                         str(oc_id) if oc_id else None],
+                        [kind, exp_id, str(oc_id_lookup) if oc_id_lookup else None,
+                         str(oc_id_lookup) if oc_id_lookup else None],
                     )
                     rows = cur.fetchall()
             except Exception as e:
-                log.warning("applicables(%s) query falló: %s", kind, e)
-                # Fallback más permisivo: SOLO documentos, sin JOINs.
+                log.warning("applicables(%s) query fallo: %s", kind, e)
+                # Fallback mas permisivo: SOLO documentos, sin JOINs.
                 try:
                     with connection.cursor() as cur:
                         cur.execute(
@@ -388,14 +418,14 @@ class PaymentViewSet(viewsets.ViewSet):
                              ORDER BY fecha DESC NULLS LAST, created_at DESC
                             """,
                             [kind, exp_id,
-                             str(oc_id) if oc_id else None,
-                             str(oc_id) if oc_id else None],
+                             str(oc_id_lookup) if oc_id_lookup else None,
+                             str(oc_id_lookup) if oc_id_lookup else None],
                         )
                         rows_simple = cur.fetchall()
                     rows = [(r[0], r[1], r[2], r[3], r[4], r[5], 0, 0, None)
                             for r in rows_simple]
                 except Exception as e2:
-                    log.error("applicables fallback falló: %s", e2)
+                    log.error("applicables fallback fallo: %s", e2)
                     rows = []
 
             for (doc_id, codigo, k, fecha, size_bytes, author,
@@ -436,7 +466,7 @@ class PaymentViewSet(viewsets.ViewSet):
         #   2. transfers.cost_line cuya transferencia tocó ese expediente
         # Si se pasa nodo_id / transferencia_id / oc_id: solo transfers.cost_line.
         elif kind == "COSTO":
-            use_new_only = bool(nodo_id or transferencia_id or oc_id)
+            use_new_only = bool(nodo_id or transferencia_id or oc_id_param)
 
             # ── 1. Legacy financiero.cost_line (solo si filtramos por expediente) ──
             if exp_id and not use_new_only:
@@ -491,12 +521,12 @@ class PaymentViewSet(viewsets.ViewSet):
                     })
 
             # ── 2. transfers.cost_line (real) ────────────────────────────────
-            # Construye el CTE de filtro según el scope pasado.
+            # Construye el CTE de filtro segun el scope pasado.
             if use_new_only:
                 scope_cte, scope_params = _build_transfers_scope_cte(
                     nodo_id=nodo_id,
                     transferencia_id=transferencia_id,
-                    oc_id=oc_id,
+                    oc_id=oc_id_param,
                     exp_id=None,
                 )
             else:
@@ -611,7 +641,7 @@ class PaymentViewSet(viewsets.ViewSet):
                     exp_id=exp_id,
                     nodo_id=nodo_id,
                     transferencia_id=transferencia_id,
-                    oc_id=oc_id,
+                    oc_id=oc_id_param,
                     include_paid=include_paid,
                     is_operated_by_mwt_fn=_mwt_check,
                 )
