@@ -390,42 +390,102 @@ class AIPaymentAnalyzer:
                 }, ensure_ascii=False),
             }
 
-        # ── 3. Cliente Anthropic ──────────────────────────────────
-        api_key = _cfg("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+        # ── 3. Cliente OpenAI (gpt-5-nano, mismo patron que ocr_customs)
+        # Sprint 2026-05-26 (CEO) - migracion Anthropic -> OpenAI.
+        # El skill PAGOS_AI_ANALYZER ahora corre en gpt-5-nano via
+        # Responses API (mismo modelo y client que ocr_customs.py).
+        api_key = (_cfg("OPENAI_API_KEY")
+                   or os.environ.get("OPENAI_API_KEY")
+                   or _cfg("ANTHROPIC_API_KEY")  # legacy compat
+                   or os.environ.get("ANTHROPIC_API_KEY"))
         if not api_key or _cfg("DRY_RUN", False):
-            return _err_dict("DRY_RUN", "ANTHROPIC_API_KEY no configurada.")
+            return _err_dict("DRY_RUN", "OPENAI_API_KEY no configurada.")
 
         try:
-            import anthropic  # type: ignore
+            from openai import OpenAI
         except ImportError as e:
-            return _err_dict("SDK_MISSING", f"anthropic SDK no instalado: {e}")
+            return _err_dict("SDK_MISSING", f"openai SDK no instalado: {e}")
 
-        # Sprint 2026-05-26 - el SDK viejo de anthropic pasa
-        # kwargs 'proxies' al constructor de httpx.Client, y
-        # httpx>=0.28 los removio causando TypeError. Pasamos un
-        # http_client explicito sin proxies para bypassear esa ruta.
-        try:
-            import httpx
-            _http = httpx.Client(timeout=60.0)
-            client = anthropic.Anthropic(api_key=api_key, http_client=_http)
-        except Exception as exc_init:
-            log.warning("[payment_analyzer] httpx custom fallo (%s); fallback default", exc_init)
-            client = anthropic.Anthropic(api_key=api_key)
-
-        # ── 4. Llamada con retry/backoff ──────────────────────────
         try:
             system_prompt = instance.system_prompt()
         except Exception as exc:  # noqa: BLE001
             return _err_dict("SKILL_LOAD_ERROR", str(exc))
 
-        text, tokens_in, tokens_out, err_code, err_msg = instance._call_with_retry(
-            client,
-            system   = system_prompt,
-            messages = [{
-                "role": "user",
-                "content": [attachment_block, declared_block],
-            }],
-        )
+        model_name = os.environ.get("OPENAI_PAYMENT_ANALYZER_MODEL", "gpt-5-nano")
+        client = OpenAI(api_key=api_key, timeout=60.0)
+
+        # Construir user content para Responses API (gpt-5-nano).
+        # attachment_block tiene shape {"type": "image", "source": {...}}
+        # heredado de Anthropic. Lo reconstruimos para OpenAI.
+        try:
+            import base64 as _b64
+            b64 = _b64.b64encode(file_bytes).decode("ascii")
+            data_url = f"data:{mime};base64,{b64}"
+            is_image_mime = (mime or "").startswith("image/")
+
+            user_content = [
+                {"type": "input_text", "text": declared_block.get("text", "")},
+            ]
+            if is_image_mime:
+                user_content.append({
+                    "type": "input_image",
+                    "image_url": data_url,
+                })
+            else:
+                user_content.append({
+                    "type": "input_file",
+                    "filename": "comprobante.pdf",
+                    "file_data": data_url,
+                })
+
+            text = None
+            tokens_in = 0
+            tokens_out = 0
+            err_code = None
+            err_msg = None
+            try:
+                response = client.responses.create(
+                    model        = model_name,
+                    instructions = system_prompt,
+                    input=[{"role": "user", "content": user_content}],
+                    response_format={"type": "json_object"},
+                )
+                text = response.output_text
+                try:
+                    tokens_in  = int(getattr(response.usage, "input_tokens", 0) or 0)
+                    tokens_out = int(getattr(response.usage, "output_tokens", 0) or 0)
+                except Exception:
+                    pass
+            except Exception as exc_resp:
+                # Fallback a chat.completions con vision (compat SDK viejo)
+                log.warning("[payment_analyzer] responses.create fallo (%s) - fallback chat", exc_resp)
+                content_parts = [{"type": "text", "text": declared_block.get("text", "")}]
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": data_url},
+                })
+                try:
+                    chat = client.chat.completions.create(
+                        model    = model_name,
+                        messages = [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user",   "content": content_parts},
+                        ],
+                        response_format = {"type": "json_object"},
+                    )
+                    text = chat.choices[0].message.content
+                    try:
+                        tokens_in  = int(chat.usage.prompt_tokens or 0)
+                        tokens_out = int(chat.usage.completion_tokens or 0)
+                    except Exception:
+                        pass
+                except Exception as exc_chat:
+                    err_code = f"OPENAI_{type(exc_chat).__name__}"
+                    err_msg  = str(exc_chat)
+        except Exception as exc_outer:  # noqa: BLE001
+            err_code = f"OPENAI_{type(exc_outer).__name__}"
+            err_msg  = str(exc_outer)
+            text = None
 
         duration_ms = int((_time.time() - t0) * 1000)
 
