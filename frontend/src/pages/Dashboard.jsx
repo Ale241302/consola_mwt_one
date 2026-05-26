@@ -29,7 +29,7 @@ import { OCS } from "../data/mockData.js";
 import {
   KpiCard,
   TimeseriesChart,
-  PipelineByBrandTimeline,
+  // PipelineByBrandTimeline removido 2026-05-26 (CEO) - widget Pipeline operativo retirado.
   UrgentExpedientesTable,
   MarginScatter,
   TopClientsTable,
@@ -85,46 +85,9 @@ function cashflowToSeries(cashflow, accessor) {
     .map((p) => ({ date: p.week, value: Number(p[accessor]) || 0 }));
 }
 
-// Derivar pipeline por marca cruzando byStatusByBrand (cuando exista)
-// con byStatus + by_brand (fallback consolidado).
-function deriveBrandPipeline(byStatusByBrand, byBrandKpis, resolveBrand) {
-  // Si el endpoint nuevo respondió con datos, usarlo directamente.
-  if (Array.isArray(byStatusByBrand) && byStatusByBrand.length) {
-    const grouped = new Map();
-    for (const row of byStatusByBrand) {
-      if (!row.brand_id) continue;
-      if (!grouped.has(row.brand_id)) {
-        const brand = resolveBrand(row.brand_id) || {};
-        grouped.set(row.brand_id, {
-          brandId:    row.brand_id,
-          brandName:  brand.name || row.brand_id,
-          brandColor: brand.color || "var(--brand-primary)",
-          total:      0,
-          byStatus:   {},
-        });
-      }
-      const g = grouped.get(row.brand_id);
-      const status = row.status || row.estado || "TRANSITO";
-      const cnt = Number(row.count) || 0;
-      g.byStatus[status] = (g.byStatus[status] || 0) + cnt;
-      g.total += cnt;
-    }
-    return Array.from(grouped.values()).filter((r) => r.total > 0);
-  }
-
-  // Fallback: kpis.by_brand sin desglose por status — agrupamos como TRANSITO.
-  if (!Array.isArray(byBrandKpis) || !byBrandKpis.length) return [];
-  return byBrandKpis.map((b) => {
-    const brand = resolveBrand(b.brand_id) || {};
-    return {
-      brandId:    b.brand_id,
-      brandName:  brand.name || b.brand_id,
-      brandColor: brand.color || "var(--border-strong)",
-      total:      Number(b.count) || 0,
-      byStatus:   { TRANSITO: Number(b.count) || 0 },
-    };
-  }).filter((r) => r.total > 0);
-}
+// Sprint 2026-05-26 (CEO) - deriveBrandPipeline removido junto con el
+// widget "Pipeline operativo". Si en el futuro se reactiva, recuperarse
+// del git history (commit del 2026-05-26).
 
 function FxFooter({ market, lang, fx }) {
   if (market === "BR") {
@@ -246,10 +209,11 @@ export default function ScreenDashboard() {
   // ── Data del backend ─────
   const {
     kpis, cashflow, aging, exposicion, margenMarcas, byStatus, urgent,
-    creditClock, r1Ratio, byStatusByBrand, inventoryByNode, topSkus, marginScatter,
+    creditClock, r1Ratio, inventoryByNode, topSkus, marginScatter,
     sizeMarket, tacosFba,
     loading, error, reload,
   } = useDashboardKpis();
+  // byStatusByBrand removido 2026-05-26 (CEO) - widget Pipeline operativo retirado.
   const { brands, resolveBrand } = useBrandsLight();
 
   // ── Navegación de drill-downs ─────
@@ -295,11 +259,7 @@ export default function ScreenDashboard() {
   // eslint-disable-next-line no-unused-vars
   const _cashflowSeriesProyectado = useMemo(() => cashflowToSeries(cashflow, "proyectado"), [cashflow]);
 
-  // ── Pipeline por marca ─────
-  const brandPipelineRows = useMemo(
-    () => deriveBrandPipeline(byStatusByBrand, k.by_brand || [], resolveBrand),
-    [byStatusByBrand, k.by_brand, resolveBrand]
-  );
+  // Pipeline por marca removido 2026-05-26 (CEO).
 
   // ── Scatter por expediente (preferido) o por marca (fallback) ─────
   const scatterPoints = useMemo(() => {
@@ -646,29 +606,9 @@ export default function ScreenDashboard() {
         className="grid gap-3 mb-6"
         style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}
       >
-        {/* 3A · Pipeline por marca */}
-        <DashboardCard
-          title={tr(lang, "operational_pipeline")}
-          subtitle={lang === "en"
-            ? "Active files by brand · click a segment to filter"
-            : "Expedientes activos por marca · click en segmento para filtrar"}
-          action={
-            <Badge kind="info">
-              {brandPipelineRows.reduce((a, r) => a + r.total, 0)} {lang === "en" ? "files" : "exp."}
-            </Badge>
-          }
-        >
-          <SafeWidget lang={lang} endpoint="/api/analytics/by_status_by_brand/">
-            {loading
-              ? <Skeleton height={140} />
-              : <PipelineByBrandTimeline
-                  rows={brandPipelineRows}
-                  lang={lang}
-                  onClick={(brandId) => navigate(`/expedientes?brand=${brandId}`)}
-                  emptyEndpoint="/api/analytics/by_status_by_brand/"
-                />}
-          </SafeWidget>
-        </DashboardCard>
+        {/* 3A - Pipeline por marca removido 2026-05-26 (CEO):
+            el widget mostraba siempre placeholder por brand_id NULL.
+            Si se requiere reactivar, recuperar del git history. */}
 
         {/* 3B · Top urgentes (hasta 10) */}
         <DashboardCard

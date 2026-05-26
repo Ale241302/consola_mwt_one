@@ -1,0 +1,32 @@
+feat(dashboard): quita 'Pipeline operativo' y arregla 'Inventario por nodo'
+
+Cambios:
+
+1) frontend/src/pages/Dashboard.jsx
+   Removido completamente el widget 'Pipeline operativo' (card 3A)
+   por decision del CEO: el endpoint /by_status_by_brand devolvia
+   siempre vacio (brand_id NULL en expedientes), y el placeholder
+   resultante era ruido visual. Removidos en cadena:
+     - PipelineByBrandTimeline del import
+     - deriveBrandPipeline helper
+     - brandPipelineRows useMemo
+     - byStatusByBrand del destructure de useDashboardKpis
+
+2) backend/apps/analytics/views.py · inventory_coverage_by_node
+   El widget 'Inventario por nodo' mostraba 0 uds para todos los
+   nodos cuando /api/nodos/<id>/inventory-allocated/ devolvia 260 uds
+   reales en Sondel CR (SKU 701340 / EXP-2026-0001).
+   Causa raiz: el SQL sumaba desde inventario.stock.cantidad_disponible
+   que esta vacio en produccion (tabla legacy no usada). Los datos
+   reales viven en inventario.expediente_nodo_assignment.qty_asignada.
+   Fix: cambiar la fuente de la CTE 'stock_por_nodo' a
+   expediente_nodo_assignment con SUM(qty_asignada). La logica de
+   velocity_30d y coverage_days (basada en inventario.movimiento)
+   no cambia.
+
+3) backend/sql/D7_backfill_expediente_brand_id.sql (NUEVO)
+   Migracion idempotente que pobla expedientes.expediente.brand_id
+   desde expedientes.oc.brand_id para todos los expedientes
+   historicos. Se aplica auto al deploy via docker-entrypoint.sh.
+
+Refs: CEO 2026-05-26 (pantallazos Inventario por nodo + Pipeline operativo).

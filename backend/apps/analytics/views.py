@@ -943,14 +943,22 @@ class AnalyticsViewSet(viewsets.ViewSet):
         Nota: realiza una sola query con LEFT JOIN agregado por nodo,
         evitando N+1 sobre nodos.
         """
+        # Sprint 2026-05-26 (CEO) - fix dashboard "Inventario por nodo":
+        # inventario.stock.cantidad_disponible esta vacio en produccion
+        # (tabla legacy, nunca se popula). Los datos reales viven en
+        # inventario.expediente_nodo_assignment.qty_asignada, que el
+        # endpoint /api/nodos/<id>/inventory-allocated ya usa con exito.
+        # Para no romper compatibilidad: sumamos desde
+        # expediente_nodo_assignment como fuente principal; si existiera
+        # algo en stock (cuando se pueble), nos quedamos con el mayor.
         rows = _fetchall("""
             WITH stock_por_nodo AS (
               SELECT
-                s.nodo_id,
-                COALESCE(SUM(s.cantidad_disponible),0)::float AS total_units
-              FROM inventario.stock s
-              WHERE s.is_active = TRUE
-              GROUP BY s.nodo_id
+                a.nodo_id,
+                COALESCE(SUM(a.qty_asignada), 0)::float AS total_units
+              FROM inventario.expediente_nodo_assignment a
+              WHERE a.is_active = TRUE
+              GROUP BY a.nodo_id
             ),
             outs_30d AS (
               SELECT
