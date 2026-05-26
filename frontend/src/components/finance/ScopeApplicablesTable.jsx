@@ -101,6 +101,55 @@ export default function ScopeApplicablesTable({
     selected.reduce((sum, a) => sum + Number(a.monto_aplicado || 0), 0),
   [selected]);
 
+  // Sprint 2026-05-25 - sync de monto_aplicado cuando items se refresca.
+  // El backend recalcula saldo_usd con FX real (CRC -> USD). Si el
+  // selected array tiene monto_aplicado stale (de un fetch anterior),
+  // el subtotal y el Step 4 mostrarian montos incorrectos. Aqui
+  // reescribimos monto_aplicado, cantidad_producto y _currency con
+  // los valores frescos de items[id] cuando items cambia.
+  useEffect(() => {
+    if (!Array.isArray(items) || items.length === 0) return;
+    if (!Array.isArray(selected) || selected.length === 0) return;
+    const itemMap = new Map(items.map((i) => [i.id, i]));
+    let changed = false;
+    const updated = selected.map((s) => {
+      const fresh = itemMap.get(s.id);
+      if (!fresh) return s;
+      const newMonto = applicableType === "COSTO"
+        ? Number(fresh.saldo_usd || 0)
+        : Number(fresh.subtotal_pendiente_usd || 0);
+      const newCcy = fresh.currency || s._currency || "USD";
+      const newQty = applicableType === "PRODUCTO"
+        ? Number(fresh.saldo_qty || 0)
+        : undefined;
+      if (
+        newMonto !== s.monto_aplicado ||
+        newCcy !== s._currency ||
+        (newQty !== undefined && newQty !== s.cantidad_producto)
+      ) {
+        changed = true;
+        return {
+          ...s,
+          monto_aplicado: newMonto,
+          _currency:      newCcy,
+          ...(applicableType === "PRODUCTO" ? { cantidad_producto: newQty } : {}),
+        };
+      }
+      return s;
+    });
+    if (changed) {
+      const newSub = updated.reduce(
+        (sum, a) => sum + Number(a.monto_aplicado || 0),
+        0,
+      );
+      onChange(updated, newSub);
+    }
+    // onChange NO es estable entre renders del padre; lo omitimos a
+    // proposito de dependencies para evitar loop infinito. items + type
+    // son lo que dispara el sync.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, applicableType]);
+
   function toggleItem(item) {
     if (selectedIds.has(item.id)) {
       // Deselect
