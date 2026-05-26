@@ -66,26 +66,41 @@ class PaymentViewSet(viewsets.ViewSet):
 
     # ── List ──────────────────────────────────────────────
     def list(self, request):
+        """List payments con filtros multi-tenant + cross-transfers.
+
+        Sprint 2026-05-25 (defensivo): cada bloque está envuelto en
+        try/except específico que loguea el traceback completo y
+        devuelve JSON {"detail": "..."} en lugar del HTML 500 genérico
+        de Django. Esto facilita diagnosticar en producción (el HTML
+        500 oculta la causa raíz tras el proxy de Cloudflare).
+        """
         from django.db import connection
 
-        qs = Payment.objects.filter(is_active=True)
-        # Sprint 2026-05-22 · scope multi-tenant por client_id.
-        qs = filter_by_user_clients(qs, request.user, client_field="client_id")
-        for param, field in (
-            ("expediente_id", "expediente_id"),
-            ("client_id",     "client_id"),
-            ("estado",        "estado"),
-            ("metodo",        "metodo"),
-            ("tipo_pago",     "tipo_pago"),
-            ("moneda",        "moneda"),
-        ):
-            v = request.query_params.get(param)
-            if v:
-                qs = qs.filter(**{field: v})
+        try:
+            qs = Payment.objects.filter(is_active=True)
+            # Sprint 2026-05-22 · scope multi-tenant por client_id.
+            qs = filter_by_user_clients(qs, request.user, client_field="client_id")
+            for param, field in (
+                ("expediente_id", "expediente_id"),
+                ("client_id",     "client_id"),
+                ("estado",        "estado"),
+                ("metodo",        "metodo"),
+                ("tipo_pago",     "tipo_pago"),
+                ("moneda",        "moneda"),
+            ):
+                v = request.query_params.get(param)
+                if v:
+                    qs = qs.filter(**{field: v})
 
-        q = request.query_params.get("q")
-        if q:
-            qs = qs.filter(referencia__icontains=q)
+            q = request.query_params.get("q")
+            if q:
+                qs = qs.filter(referencia__icontains=q)
+        except Exception as exc:  # noqa: BLE001 — defensa contra 500 genérico
+            log.exception("[PaymentViewSet.list] base filter failed: %s", exc)
+            return Response(
+                {"detail": "Base filter failed", "error": f"{type(exc).__name__}: {exc}"},
+                status=500,
+            )
 
         # ── Sprint 2026-05-25 · filtros cross-transfers ──────────
         # nodo_id / transferencia_id / oc_id → filtra por pagos que
@@ -96,42 +111,71 @@ class PaymentViewSet(viewsets.ViewSet):
         oc_id            = request.query_params.get("oc_id")
 
         if transferencia_id or nodo_id or oc_id:
-            cost_line_ids = _resolve_cost_line_ids(
-                connection,
-                transferencia_id=transferencia_id,
-                nodo_id=nodo_id,
-                oc_id=oc_id,
-            )
-            # _resolve_cost_line_ids ahora devuelve [] en lugar de None
-            # en todos los casos de error (UUID inválido, error SQL).
-            # PaymentApplication.payment_id es UUIDField (no FK), así
-            # que NO existe la relación inversa `payment.applications`.
-            # Resolvemos por subquery explícito sobre payment_id para
-            # evitar FieldError → 500.
-            if cost_line_ids:
-                payment_ids = list(
-                    PaymentApplication.objects.filter(
-                        applicable_type="COSTO",
-                        applicable_id__in=cost_line_ids,
-                    ).values_list("payment_id", flat=True).distinct()
+            try:
+                cost_line_ids = _resolve_cost_line_ids(
+                    connection,
+                    transferencia_id=transferencia_id,
+                    nodo_id=nodo_id,
+                    oc_id=oc_id,
                 )
-            else:
-                # scope existe pero sin costos → 0 pagos
-                payment_ids = []
-            qs = qs.filter(id__in=payment_ids)
+                # PaymentApplication.payment_id es UUIDField (no FK), así
+                # que NO existe la relación inversa `payment.applications`.
+                # Subquery explícito sobre payment_id.
+                if cost_line_ids:
+                    payment_ids = list(
+                        PaymentApplication.objects.filter(
+                            applicable_type="COSTO",
+                            applicable_id__in=cost_line_ids,
+                        ).values_list("payment_id", flat=True).distinct()
+                    )
+                else:
+                    payment_ids = []
+                qs = qs.filter(id__in=payment_ids)
+            except Exception as exc:  # noqa: BLE001
+                log.exception(
+                    "[PaymentViewSet.list] cross-transfers filter failed: "
+                    "transferencia_id=%s nodo_id=%s oc_id=%s err=%s",
+                    transferencia_id, nodo_id, oc_id, exc,
+                )
+                return Response(
+                    {"detail": "Cross-transfers filter failed",
+                     "error":  f"{type(exc).__name__}: {exc}",
+                     "scope":  {"transferencia_id": transferencia_id,
+                                "nodo_id": nodo_id,
+                                "oc_id": oc_id}},
+                    status=500,
+                )
 
         # Sprint 2026-05-25 · filtro por tipo de aplicación (COSTO/PRODUCTO/…)
         payment_target_type = request.query_params.get("payment_target_type")
         if payment_target_type:
-            payment_ids_by_type = list(
-                PaymentApplication.objects.filter(
-                    applicable_type=payment_target_type.upper(),
-                ).values_list("payment_id", flat=True).distinct()
-            )
-            qs = qs.filter(id__in=payment_ids_by_type)
+            try:
+                payment_ids_by_type = list(
+                    PaymentApplication.objects.filter(
+                        applicable_type=payment_target_type.upper(),
+                    ).values_list("payment_id", flat=True).distinct()
+                )
+                qs = qs.filter(id__in=payment_ids_by_type)
+            except Exception as exc:  # noqa: BLE001
+                log.exception(
+                    "[PaymentViewSet.list] payment_target_type filter failed: %s",
+                    exc,
+                )
+                return Response(
+                    {"detail": "payment_target_type filter failed",
+                     "error":  f"{type(exc).__name__}: {exc}"},
+                    status=500,
+                )
 
-        qs = qs.order_by("-created_at")[:200]
-        return Response(PaymentDetailSerializer(qs, many=True).data)
+        try:
+            qs = qs.order_by("-created_at")[:200]
+            return Response(PaymentDetailSerializer(qs, many=True).data)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("[PaymentViewSet.list] serializer/render failed: %s", exc)
+            return Response(
+                {"detail": "Serializer failed", "error": f"{type(exc).__name__}: {exc}"},
+                status=500,
+            )
 
     # ── Retrieve ──────────────────────────────────────────
     def retrieve(self, request, pk=None):
