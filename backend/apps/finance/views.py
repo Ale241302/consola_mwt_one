@@ -278,18 +278,26 @@ class PaymentViewSet(viewsets.ViewSet):
         from django.db import connection
 
         try:
-            return self._applicables_impl(request, connection)
+            resp = self._applicables_impl(request, connection)
         except Exception as exc:  # noqa: BLE001 - blindaje contra HTML 500
             log.exception(
                 "[PaymentViewSet.applicables] uncaught error params=%s err=%s",
                 dict(request.query_params), exc,
             )
-            return Response(
+            resp = Response(
                 {"applicables": [],
                  "detail": "applicables failed",
                  "error":  f"{type(exc).__name__}: {exc}"},
                 status=500,
             )
+        # Sprint 2026-05-25 - anti-cache: Cloudflare/proxies estaban
+        # sirviendo respuestas viejas con el bug del fx=1.0 incluso
+        # despues del deploy. Forzar no-store en este endpoint
+        # dinamico (cada cost_line cambia con pagos, no cachear).
+        resp["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+        resp["Pragma"] = "no-cache"
+        resp["Expires"] = "0"
+        return resp
 
     def _applicables_impl(self, request, connection):
         exp_id           = request.query_params.get("expediente")
