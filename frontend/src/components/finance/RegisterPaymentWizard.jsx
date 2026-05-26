@@ -66,7 +66,7 @@ export default function RegisterPaymentWizard({
 }) {
   // ── State del wizard ───────────────────────────────────────────
   const [step, setStep] = useState(0);
-  const [formData, setFormData] = useState(() => _emptyFormData());
+  const [formData, setFormData] = useState(() => _emptyFormData(preselectedScope));
 
   // ── Submit hook ────────────────────────────────────────────────
   const { submit, submitting, error: submitError, reset: resetSubmit } = usePaymentSubmit();
@@ -83,7 +83,8 @@ export default function RegisterPaymentWizard({
         const raw = sessionStorage.getItem(lastKey);
         if (raw) {
           const parsed = JSON.parse(raw);
-          setFormData({ ..._emptyFormData(), ...parsed, evidencia: null });
+          setFormData({ ..._emptyFormData(preselectedScope), ...parsed, evidencia: null,
+                        _preselectedScope: preselectedScope || null });
         }
       }
     } catch { /* ignore */ }
@@ -106,7 +107,7 @@ export default function RegisterPaymentWizard({
   const update = (patch) => setFormData((prev) => ({ ...prev, ...patch }));
 
   const reset = () => {
-    setFormData(_emptyFormData());
+    setFormData(_emptyFormData(preselectedScope));
     setStep(0);
     resetSubmit();
   };
@@ -803,7 +804,7 @@ function Step4({ formData, preselectedScope, dryRunPayload, submitError, lang })
 // Helpers
 // ════════════════════════════════════════════════════════════════════
 
-function _emptyFormData() {
+function _emptyFormData(scope = null) {
   return {
     // Paso 1
     direction:             null,
@@ -813,7 +814,9 @@ function _emptyFormData() {
     subtotal:              0,
     // Sprint 2026-05-25 - referencia al scope para que
     // _resolveExpedienteId pueda derivar el expediente_id.
-    _preselectedScope:     preselectedScope || null,
+    // scope debe pasarse explicitamente: la funcion es externa al
+    // componente y no tiene closure sobre props.
+    _preselectedScope:     scope || null,
     // Paso 3
     metodo:                null,
     tipo_pago:             null,
