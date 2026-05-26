@@ -777,6 +777,110 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             return Response({"detail": f"SQL error: {exc}"}, status=500)
         return Response(rows)
 
+    # ── 9bis) Shipping summary consolidado por expediente ──
+    # Sprint 2026-05-26 (CEO) · Un solo endpoint que devuelve toda la
+    # info de envio necesaria para el header del expediente y la lista
+    # de OC: modo de transporte (aereo/maritimo) + ETA + tracking.
+    # Fuentes:
+    #   · ART-05 (template_id=9) del Builder       -> transport_mode,
+    #     carrier, tracking, doc_type, freight_mode, dispatch_mode, etc.
+    #   · transfers.transferencia mas reciente     -> eta,
+    #     dispatched_at, received_at, estado.
+    # Si no existen, los campos vienen null y el frontend cae al
+    # estado "Sin ART-05" / "ETA pendiente".
+    @action(detail=False, methods=["get"],
+            url_path=r"expedientes/(?P<exp_id>[^/.]+)/shipping-summary")
+    def shipping_summary(self, request, exp_id=None):
+        try:
+            uuid.UUID(str(exp_id))
+        except (TypeError, ValueError):
+            return Response({"detail": "exp_id invalido"}, status=400)
+
+        out = {
+            "expediente_id":  str(exp_id),
+            "transport_mode": None,
+            "carrier":        None,
+            "tracking":       None,
+            "doc_type":       None,
+            "freight_mode":   None,
+            "dispatch_mode":  None,
+            "consolidation":  None,
+            "transferencia":  None,
+        }
+
+        try:
+            with connection.cursor() as c:
+                # 1) ART-05 mas reciente con linea apuntando a este expediente.
+                c.execute("""
+                    SELECT bai.data->>'field-0052' AS doc_type,
+                           bai.data->>'field-0055' AS transport_mode,
+                           bai.data->>'field-0061' AS freight_mode,
+                           bai.data->>'field-0064' AS dispatch_mode,
+                           bai.data->>'field-0072' AS tracking,
+                           bai.data->>'field-0081' AS consolidation,
+                           bai.data->>'field-1778635869890' AS carrier
+                    FROM nodos.builder_artifact_instance bai
+                    JOIN nodos.builder_artifact_line bal
+                      ON bal.builder_artifact_instance_id = bai.id
+                     AND bal.is_active = TRUE
+                    WHERE bai.template_id = 9
+                      AND bai.is_active   = TRUE
+                      AND bal.expediente_id = %(exp_id)s::uuid
+                    ORDER BY bai.created_at DESC
+                    LIMIT 1
+                """, {"exp_id": exp_id})
+                row = c.fetchone()
+                if row:
+                    out["doc_type"]       = row[0]
+                    out["transport_mode"] = row[1]
+                    out["freight_mode"]   = row[2]
+                    out["dispatch_mode"]  = row[3]
+                    out["tracking"]       = row[4]
+                    out["consolidation"]  = row[5]
+                    out["carrier"]        = row[6]
+
+                # 2) Transferencia mas reciente asociada al expediente
+                #    via expediente_nodo_assignment.transferencia_id.
+                c.execute("""
+                    SELECT DISTINCT ON (t.id)
+                           t.id::text   AS id,
+                           t.codigo     AS codigo,
+                           t.estado     AS estado,
+                           t.eta        AS eta,
+                           t.dispatched_at AS dispatched_at,
+                           t.received_at   AS received_at,
+                           t.ref_tracking  AS ref_tracking
+                    FROM transfers.transferencia t
+                    JOIN inventario.expediente_nodo_assignment a
+                      ON a.transferencia_id = t.id
+                    WHERE a.expediente_id = %(exp_id)s::uuid
+                      AND a.is_active     = TRUE
+                      AND t.is_active     = TRUE
+                    ORDER BY t.id, t.created_at DESC
+                """, {"exp_id": exp_id})
+                rows = c.fetchall()
+                if rows:
+                    r = rows[0]
+                    out["transferencia"] = {
+                        "id":            r[0],
+                        "codigo":        r[1],
+                        "estado":        r[2],
+                        "eta":           r[3].isoformat() if r[3] else None,
+                        "dispatched_at": r[4].isoformat() if r[4] else None,
+                        "received_at":   r[5].isoformat() if r[5] else None,
+                        "ref_tracking":  r[6],
+                    }
+                    if not out["tracking"] and r[6]:
+                        out["tracking"] = r[6]
+        except Exception as exc:
+            log.exception("shipping_summary fallo para %s", exp_id)
+            return Response({"detail": f"SQL error: {exc}"}, status=500)
+
+        resp = Response(out)
+        resp["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp["Pragma"]        = "no-cache"
+        return resp
+
     # ── 9) Artefactos del Builder relacionados a un expediente ──
     # Sprint 2026-05-11 fase 6 · La tab "Artefactos" del detalle de
     # expediente lista todas las instancias de Builder (de cualquier

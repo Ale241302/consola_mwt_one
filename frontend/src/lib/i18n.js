@@ -320,7 +320,12 @@ export function fmtMoneyDetail(n, currency='USD') {
 export function fmtDate(iso, lang='es') {
   if (!iso) return '—';
   try {
-    const d = new Date(iso);
+    // Sprint 2026-05-26 (CEO) - fix timezone: cuando iso es "YYYY-MM-DD"
+    // (date-only, sin hora), new Date(iso) lo parsea como UTC midnight
+    // y al renderizar con TZ Costa Rica (UTC-6) muestra el dia anterior
+    // (ej. "2026-05-05" -> "4 may"). Forzamos parse local agregando T12:00:00.
+    const isDateOnly = typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso);
+    const d = new Date(isDateOnly ? `${iso}T12:00:00` : iso);
     return d.toLocaleDateString(lang === 'es' ? 'es-PE' : 'en-US', { day: '2-digit', month: 'short', year: 'numeric' });
   } catch { return '—'; }
 }

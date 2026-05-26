@@ -162,6 +162,10 @@ export default function ScreenOCDetail() {
   const [apiOcBrand,    setApiOcBrand]    = useState(null);
   const [apiOcExpedientes, setApiOcExpedientes] = useState([]);
   const [apiOcLines,    setApiOcLines]    = useState([]);
+  // Sprint 2026-05-26 (CEO) - mapa expediente_id -> transport_mode
+  // (aereo/maritimo) leido del ART-05 via shipping-summary. Sustituye
+  // el chip "MODO PENDIENTE" cuando el dato esta disponible.
+  const [transportByExp, setTransportByExp] = useState({});
   // Sprint 2026-05-02 (AG-03): documentos comerciales reales del backend.
   // Antes el adapter ponía `docs: []` hardcodeado y la sección
   // "Documentos comerciales" siempre mostraba "0 archivos".
@@ -237,6 +241,35 @@ export default function ScreenOCDetail() {
         setApiOcExpedientes(Array.isArray(exps) ? exps : (exps?.results || []));
         const lineasArr = Array.isArray(lns) ? lns : (lns?.results || []);
         setApiOcLines(lineasArr);
+
+        // Sprint 2026-05-26 (CEO) - leer transport_mode por expediente
+        // via /api/inventario/expedientes/{id}/shipping-summary/. Hace
+        // fetch en paralelo para todos los expedientes unicos de la OC.
+        try {
+          const uniqExpIds = Array.from(new Set(
+            lineasArr
+              .map((l) => l.expediente_id)
+              .filter(Boolean)
+          ));
+          if (uniqExpIds.length > 0) {
+            const summaries = await Promise.all(
+              uniqExpIds.map((eid) =>
+                nodoAssignmentsApi.shippingSummary(eid)
+                  .then((s) => ({ eid, s }))
+                  .catch(() => ({ eid, s: null }))
+              )
+            );
+            if (!cancel) {
+              const map = {};
+              for (const { eid, s } of summaries) {
+                if (s && s.transport_mode) {
+                  map[eid] = s.transport_mode;
+                }
+              }
+              setTransportByExp(map);
+            }
+          }
+        } catch { /* swallow */ }
         setApiOcDocs(Array.isArray(docs) ? docs : (docs?.results || []));
 
         // ── Resolver precio cliente desde productos ──────────────
@@ -1638,8 +1671,15 @@ export default function ScreenOCDetail() {
                               seteo), mostramos "Modo pendiente" con borde
                               dashed en lugar de asumir transporte por defecto. */}
                           {(() => {
-                            const tm = (g.transport_mode || '').toUpperCase();
-                            if (tm === 'AEREO' || tm === 'AIR') {
+                            // Sprint 2026-05-26 (CEO) - preferir transport_mode del
+                            // ART-05 (transportByExp[expediente_id]) sobre el campo
+                            // legacy g.transport_mode (que casi siempre es NULL).
+                            const expIdForTm = (g.lines && g.lines[0]?.expediente_id) || g.expediente_id || null;
+                            const tmFromArt = expIdForTm ? transportByExp[expIdForTm] : null;
+                            const tm = (tmFromArt || g.transport_mode || '').toUpperCase();
+                            // Normalizar acentos: ART-05 guarda "aéreo" / "marítimo".
+                            const tmNorm = tm.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                            if (tmNorm === 'AEREO' || tmNorm === 'AIR' || tmNorm.startsWith('AER')) {
                               return (
                                 <span className="transport-chip air">
                                   <IconPlane size={11}/>
@@ -1647,7 +1687,7 @@ export default function ScreenOCDetail() {
                                 </span>
                               );
                             }
-                            if (tm === 'MARITIMO' || tm === 'SEA') {
+                            if (tmNorm === 'MARITIMO' || tmNorm === 'SEA' || tmNorm.startsWith('MAR')) {
                               return (
                                 <span className="transport-chip sea">
                                   <IconShip size={11}/>

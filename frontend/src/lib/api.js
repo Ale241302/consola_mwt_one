@@ -566,6 +566,13 @@ export const nodoAssignmentsApi = {
   artifactsPorExpediente: (expedienteId) =>
     apiFetch(`/inventario/expedientes/${expedienteId}/artifacts/`,
              { token: getToken() }),
+  // Sprint 2026-05-26 (CEO) · resumen de envío consolidado (ART-05
+  // + transferencia mas reciente). Devuelve { transport_mode, carrier,
+  // tracking, doc_type, freight_mode, dispatch_mode, consolidation,
+  // transferencia: { eta, dispatched_at, received_at, codigo, estado, ... } }.
+  shippingSummary: (expedienteId) =>
+    apiFetch(`/inventario/expedientes/${expedienteId}/shipping-summary/`,
+             { token: getToken() }),
   // Sprint 2026-05-13 fase 8 · líneas con stock en un nodo. Para el
   // wizard de transferencias paso 3. Filtro opcional por expediente_ids
   // (CSV) — sin filtro devuelve todas las líneas del nodo.

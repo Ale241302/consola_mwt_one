@@ -167,20 +167,25 @@ export default function ScreenExpedienteDetail() {
     const eid = apiExp?.id;
     if (!eid || isHeroOrMock) { setShippingInfo(null); return; }
     let cancel = false;
-    nodoAssignmentsApi.artifactsPorExpediente(eid)
-      .then((rows) => {
+    // Sprint 2026-05-26 (CEO) - shippingSummary devuelve ART-05 + transferencia.
+    nodoAssignmentsApi.shippingSummary(eid)
+      .then((obj) => {
         if (cancel) return;
-        const arr = Array.isArray(rows) ? rows : [];
-        const art05 = arr.find((r) => Number(r?.template_id) === 9);
-        if (!art05) { setShippingInfo(null); return; }
+        if (!obj || typeof obj !== 'object') { setShippingInfo(null); return; }
+        const t = obj.transferencia || null;
         setShippingInfo({
-          doc_type:        art05.doc_type        || null,
-          transport_mode:  art05.transport_mode  || null,
-          freight_mode:    art05.freight_mode    || null,
-          dispatch_mode:   art05.dispatch_mode   || null,
-          tracking:        art05.tracking        || null,
-          consolidation:   art05.consolidation   || null,
-          carrier:         art05.carrier         || null,
+          doc_type:        obj.doc_type        || null,
+          transport_mode:  obj.transport_mode  || null,
+          freight_mode:    obj.freight_mode    || null,
+          dispatch_mode:   obj.dispatch_mode   || null,
+          tracking:        obj.tracking        || null,
+          consolidation:   obj.consolidation   || null,
+          carrier:         obj.carrier         || null,
+          eta:             t?.eta              || null,
+          dispatched_at:   t?.dispatched_at    || null,
+          received_at:     t?.received_at      || null,
+          transferencia_codigo: t?.codigo      || null,
+          transferencia_estado: t?.estado      || null,
         });
       })
       .catch(() => { if (!cancel) setShippingInfo(null); });
@@ -559,8 +564,17 @@ export default function ScreenExpedienteDetail() {
                   {!si && freightModeLabel && (<span style={{ opacity: 0.7 }}>· {freightModeLabel}</span>)}
                   {!si && dispatchModeLabel && (<span style={{ opacity: 0.7 }}>· {dispatchModeLabel}</span>)}
                 </span>
-                <span className="flex ai-center gap-2"><IconPackage size={13}/>{exp.container_count} {lang==='es' ? 'contenedores' : 'containers'} · {exp.product_count} {lang==='es' ? 'SKUs' : 'SKUs'}</span>
-                <span className="flex ai-center gap-2"><IconClock size={13}/>ETA {fmtDate(exp.eta, lang)}</span>
+                {/* Sprint 2026-05-26 (CEO) - ocultar contenedores cuando count<=0. */}
+                {Number(exp.container_count) > 0 && (
+                  <span className="flex ai-center gap-2"><IconPackage size={13}/>{exp.container_count} {lang==='es' ? 'contenedores' : 'containers'} · {exp.product_count} {lang==='es' ? 'SKUs' : 'SKUs'}</span>
+                )}
+                {Number(exp.container_count) <= 0 && Number(exp.product_count) > 0 && (
+                  <span className="flex ai-center gap-2"><IconPackage size={13}/>{exp.product_count} {lang==='es' ? 'SKUs' : 'SKUs'}</span>
+                )}
+                {/* Sprint 2026-05-26 (CEO) - ETA viene de la transferencia
+                    asociada al expediente (shippingInfo.eta). Fallback al
+                    campo legacy exp.eta. Si ninguno existe, render "ETA —". */}
+                <span className="flex ai-center gap-2"><IconClock size={13}/>ETA {fmtDate(si?.eta || exp.eta, lang)}</span>
               </div>
             );
           })()}
