@@ -38,12 +38,27 @@ const EVIDENCE_ALLOWED_MIMES = [
 ];
 const EVIDENCE_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
+// Sprint 2026-05-25 (CEO reorder): Direccion -> Obligaciones ->
+// Comprobante -> Detalle -> Confirmacion. El CEO primero define
+// QUE va a pagar (dir, target, items) y luego sube el PDF para
+// que la IA prellene el Detalle.
+//   wizard index 0 -> Direccion          (Step1 component)
+//   wizard index 1 -> Obligaciones       (Step2 component)
+//   wizard index 2 -> Comprobante + IA   (Step0 component)
+//   wizard index 3 -> Detalle pago       (Step3 component)
+//   wizard index 4 -> Confirmacion       (Step4 component)
+// Las claves de error stepN siguen historicas:
+//   index 0 -> stepErrors.step1
+//   index 1 -> stepErrors.step2
+//   index 2 -> aiError (manejado en Step0)
+//   index 3 -> stepErrors.step3
+//   index 4 -> stepErrors.step4
 const STEPS = [
-  { key: "step0", label_es: "Comprobante",  label_en: "Receipt" },
   { key: "step1", label_es: "Dirección",    label_en: "Direction" },
   { key: "step2", label_es: "Obligaciones", label_en: "Debts" },
-  { key: "step3", label_es: "Detalle pago", label_en: "Payment detail" },
-  { key: "step4", label_es: "Confirmación", label_en: "Confirmation" },
+  { key: "step3", label_es: "Comprobante",  label_en: "Receipt" },
+  { key: "step4", label_es: "Detalle pago", label_en: "Payment detail" },
+  { key: "step5", label_es: "Confirmación", label_en: "Confirmation" },
 ];
 
 /**
@@ -105,11 +120,14 @@ export default function RegisterPaymentWizard({
 
   // ── Validaciones por paso ──────────────────────────────────────
   const stepErrors = useMemo(() => _validateAllSteps(formData, lang), [formData, lang]);
-  // step 0: Comprobante — can advance when file is attached (even if AI failed).
-  // steps 1–4: use existing validation keys (step1..step4) which are now offset by 1.
-  const canAdvance = step === 0
-    ? !!formData.evidencia && !aiAnalyzing
-    : !stepErrors[`step${step}`]?.length;
+  let canAdvance;
+  if (step === 2) {
+    canAdvance = !!formData.evidencia && !aiAnalyzing;
+  } else if (step <= 1) {
+    canAdvance = !stepErrors[`step${step + 1}`]?.length;
+  } else {
+    canAdvance = !stepErrors[`step${step}`]?.length;
+  }
 
   // ── Handlers ───────────────────────────────────────────────────
   const update = (patch) => setFormData((prev) => ({ ...prev, ...patch }));
@@ -206,6 +224,7 @@ export default function RegisterPaymentWizard({
 
   // ── Payload para dry-run del Paso 4 ────────────────────────────
   const dryRunPayload = useMemo(() => {
+    // index 4 sigue siendo Confirmacion tras el reorder.
     if (step !== 4) return null;
     if (!formData.selected_applicables?.length) return null;
     return _buildDryRunPayload(formData);
@@ -347,7 +366,21 @@ export default function RegisterPaymentWizard({
               padding: "20px",
               background: "var(--bg)",
             }}>
+              {/* Reorder Sprint 2026-05-25:
+                  index 0 -> Step1, 1 -> Step2, 2 -> Step0 (IA),
+                  3 -> Step3, 4 -> Step4 */}
               {step === 0 && (
+                <Step1 formData={formData} update={update} lang={lang}/>
+              )}
+              {step === 1 && (
+                <Step2
+                  formData={formData}
+                  update={update}
+                  lang={lang}
+                  preselectedScope={preselectedScope}
+                />
+              )}
+              {step === 2 && (
                 <Step0
                   formData={formData}
                   onFile={handleAnalyzeEvidence}
@@ -355,17 +388,6 @@ export default function RegisterPaymentWizard({
                   aiVerdict={aiVerdict}
                   aiError={aiError}
                   lang={lang}
-                />
-              )}
-              {step === 1 && (
-                <Step1 formData={formData} update={update} lang={lang}/>
-              )}
-              {step === 2 && (
-                <Step2
-                  formData={formData}
-                  update={update}
-                  lang={lang}
-                  preselectedScope={preselectedScope}
                 />
               )}
               {step === 3 && (
@@ -391,11 +413,21 @@ export default function RegisterPaymentWizard({
               background: "var(--surface)",
             }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                {stepErrors[`step${step + 1}`]?.length > 0 && (
-                  <div style={{ color: "var(--critical)", fontSize: 12 }}>
-                    {stepErrors[`step${step + 1}`][0]}
-                  </div>
-                )}
+                {(() => {
+                  let errKey = null;
+                  if (step <= 1) errKey = `step${step + 1}`;
+                  else if (step === 2) errKey = null;
+                  else errKey = `step${step}`;
+                  const arr = errKey ? stepErrors[errKey] : null;
+                  if (arr && arr.length > 0) {
+                    return (
+                      <div style={{ color: "var(--critical)", fontSize: 12 }}>
+                        {arr[0]}
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button
