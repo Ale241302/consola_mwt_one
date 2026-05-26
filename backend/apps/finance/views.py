@@ -579,6 +579,8 @@ class PaymentViewSet(viewsets.ViewSet):
                     SUM(pa.monto_aplicado) FILTER (
                         WHERE pa.applicable_type = 'COSTO'
                           AND pa.applicable_id   = cl.id
+                          AND p.is_active = TRUE
+                          AND p.estado NOT IN ('REVERTIDO', 'RECHAZADO')
                     ), 0
                 )::text                                           AS paid_usd
             FROM transfers.cost_line cl
@@ -588,6 +590,8 @@ class PaymentViewSet(viewsets.ViewSet):
             LEFT JOIN finance.payment_application pa
                    ON pa.applicable_id   = cl.id
                   AND pa.applicable_type = 'COSTO'
+            LEFT JOIN finance.payment p
+                   ON p.id = pa.payment_id
             WHERE cl.is_active = TRUE
             GROUP BY
                 cl.id, cl.kind, ck.label, cl.label,
@@ -1031,6 +1035,10 @@ def _build_producto_applicables(
         LEFT JOIN finance.payment_application pa
           ON pa.applicable_id   = l.id
          AND pa.applicable_type = 'PRODUCTO'
+        LEFT JOIN finance.payment p
+          ON p.id = pa.payment_id
+         AND p.is_active = TRUE
+         AND p.estado NOT IN ('REVERTIDO', 'RECHAZADO')
         GROUP BY
             l.id, l.expediente_id, e.codigo, e.operating_company_id,
             l.producto_id, l.sku, l.size,
@@ -1082,6 +1090,10 @@ def _build_producto_applicables(
         LEFT JOIN finance.payment_application pa
           ON pa.applicable_id   = l.id
          AND pa.applicable_type = 'PRODUCTO'
+        LEFT JOIN finance.payment p
+          ON p.id = pa.payment_id
+         AND p.is_active = TRUE
+         AND p.estado NOT IN ('REVERTIDO', 'RECHAZADO')
         WHERE l.is_active = TRUE
         GROUP BY
             l.id, l.expediente_id, e.codigo, e.operating_company_id,
@@ -1132,6 +1144,10 @@ def _build_producto_applicables(
         LEFT JOIN finance.payment_application pa
           ON pa.applicable_id   = l.id
          AND pa.applicable_type = 'PRODUCTO'
+        LEFT JOIN finance.payment p
+          ON p.id = pa.payment_id
+         AND p.is_active = TRUE
+         AND p.estado NOT IN ('REVERTIDO', 'RECHAZADO')
         WHERE l.is_active = TRUE
         GROUP BY
             l.id, l.expediente_id, e.codigo, e.operating_company_id,
