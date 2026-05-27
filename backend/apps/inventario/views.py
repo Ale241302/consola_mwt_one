@@ -1308,7 +1308,53 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
         except Exception as exc:
             log.exception("transferencia_costos_por_expediente SQL failed")
             return Response({"detail": f"SQL error: {exc}"}, status=500)
+        rows = self._recalculate_fx_on_cost_rows(rows)
         return Response(rows)
+
+    # ── Helper compartido: recalcular FX en costos de transferencia ──
+    # Sprint 2026-05-26 (CEO) · Los cost_line en transfers.cost_line
+    # guardan fx_to_usd=1.0 y amount_usd=amount al crearse (la app no
+    # hace conversion en POST). Eso es OK para almacenar el monto en su
+    # moneda nativa, pero la UI necesita el equivalente en USD.
+    # Este helper itera las filas y, cuando currency!=USD y fx_to_usd
+    # es 1.0 (default no convertido), recalcula con apps.core.fx_service
+    # (Frankfurter con cache + fallback hardcoded por currency).
+    @staticmethod
+    def _recalculate_fx_on_cost_rows(rows):
+        try:
+            from decimal import Decimal
+            from apps.core.fx_service import get_fx_to_usd
+        except ImportError:
+            return rows
+        cache = {}
+        def _fx_for(ccy):
+            if ccy in cache:
+                return cache[ccy]
+            try:
+                v = get_fx_to_usd(ccy)
+            except Exception:
+                v = None
+            cache[ccy] = v
+            return v
+        for r in rows:
+            try:
+                ccy = (r.get("currency") or "USD").upper()
+                stored_fx = r.get("fx_to_usd")
+                stored_fx_f = float(stored_fx) if stored_fx is not None else 1.0
+                amount = r.get("amount")
+                amount_f = float(amount) if amount is not None else 0.0
+                # Trigger: moneda != USD y el fx parece default (1.0).
+                if ccy != "USD" and abs(stored_fx_f - 1.0) < 1e-9 and amount_f > 0:
+                    fx_real = _fx_for(ccy)
+                    if fx_real and float(fx_real) > 0 and float(fx_real) != 1.0:
+                        new_usd = round(amount_f * float(fx_real), 2)
+                        r["fx_to_usd"]      = float(fx_real)
+                        r["amount_usd"]     = new_usd
+                        r["fx_recalculated"] = True
+                        r["fx_source"]       = "fx_service"
+            except (ValueError, TypeError):
+                pass
+        return rows
 
     # ── 10) Sprint 2026-05-13 · Fase 10 · costos de transferencias ──
     #          agregados a nivel OC. La OC tiene N expedientes; cada
@@ -1376,6 +1422,7 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
         except Exception as exc:
             log.exception("transferencia_costos_por_oc SQL failed")
             return Response({"detail": f"SQL error: {exc}"}, status=500)
+        rows = self._recalculate_fx_on_cost_rows(rows)
         return Response(rows)
 
     # ── 11) Sprint 2026-05-14 · Fase 13 · costos de transferencias que ──
@@ -1489,6 +1536,7 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
         except Exception as exc:
             log.exception("transferencia_costos_por_nodo SQL failed")
             return Response({"detail": f"SQL error: {exc}"}, status=500)
+        rows = self._recalculate_fx_on_cost_rows(rows)
         return Response(rows)
 
     # ── 7) Sprint 2026-05-13 · Fase 8 · líneas con stock en un nodo ──
