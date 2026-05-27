@@ -294,11 +294,23 @@ class PaymentService:
         #   · MATCH + confianza < 90 o cualquier otro status → NEEDS_REVIEW + insertar verdict + NO encolar task
         #   · None                     → PENDIENTE_AI + encolar task (comportamiento original)
         _should_enqueue_ai = True
+        # Sprint 2026-05-26 (CEO) - si alguna aplicacion es FACTURA, el
+        # pago NO se puede auto-confirmar por IA: siempre queda como
+        # borrador (NEEDS_REVIEW si vino pre_verdict, PENDIENTE_AI si no)
+        # para que el CEO presione "Liberar credito" manualmente desde
+        # el drawer. Mismo principio que el sprint anterior para COSTO/
+        # PRODUCTO: la liberacion de credito requiere accion humana
+        # explicita, nunca auto-confirmacion por IA.
+        _has_factura = any(
+            (str(a.get("applicable_type") or "")).upper() == "FACTURA"
+            for a in (validated.get("aplicaciones") or [])
+        )
         if pre_verdict and isinstance(pre_verdict, dict):
             _should_enqueue_ai = False
             _pv_status    = (pre_verdict.get("status") or "").strip().upper()
             _pv_confianza = float(pre_verdict.get("confianza") or 0)
-            _pv_auto      = (_pv_status == "MATCH" and _pv_confianza >= 90.0)
+            _pv_auto      = ((_pv_status == "MATCH" and _pv_confianza >= 90.0)
+                             and not _has_factura)
             _new_estado   = (PaymentStatus.CONFIRMADO_AI if _pv_auto
                              else PaymentStatus.NEEDS_REVIEW)
 
