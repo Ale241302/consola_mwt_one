@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import uuid
 
+from django.db import IntegrityError
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
@@ -212,6 +213,23 @@ class PaymentViewSet(viewsets.ViewSet):
                 actor_role  = actor_role,
                 pre_verdict = pre_verdict,
             )
+        except IntegrityError as exc:
+            # Sprint 2026-05-26 (CEO) - el indice payment_uniq_ref_idx
+            # ahora es PARTIAL: solo CONFIRMADO_AI/HUMANO bloquean
+            # duplicados. Si igual choca, devolvemos 409 user-friendly
+            # en vez de 500.
+            log.warning("PaymentService.register IntegrityError: %s", exc)
+            msg = str(exc).lower()
+            if "payment_uniq_ref_idx" in msg or "duplicate key" in msg:
+                return Response({
+                    "detail": (
+                        "Ya existe un pago CONFIRMADO con esta referencia "
+                        "bancaria para este expediente. Si quieres re-registrar, "
+                        "primero recházalo o elimina el anterior desde su drawer."
+                    ),
+                    "code": "DUPLICATE_PAYMENT_REFERENCE",
+                }, status=409)
+            return Response({"detail": f"Error de integridad: {exc}"}, status=409)
         except RuntimeError as exc:
             log.error("PaymentService.register falló: %s", exc)
             return Response({"detail": str(exc)}, status=502)
