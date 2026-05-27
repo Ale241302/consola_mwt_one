@@ -222,7 +222,30 @@ class ExpedienteSerializer(serializers.ModelSerializer):
       el ViewSet inyecta UUID y autogenera codigo (EXP-YYYY-NNNN) si
       no vienen en el payload. Asi el wizard puede hacer un POST minimo
       con solo client_id + estado.
+
+    Sprint 2026-05-26 (CEO):
+      Las columnas total_cost, total_invoiced, total_paid, balance del
+      modelo Expediente nunca se actualizan automaticamente y siempre
+      estan en 0. Esto hace que las cards "Resumen de costos" y
+      "Avance de cobro" muestren $0 incluso cuando el expediente tiene
+      facturas y costos reales registrados via Builder/transferencias.
+
+      Fix: override de los 4 campos con SerializerMethodField que
+      computan en tiempo real:
+        · total_invoiced -> SUM(field-0118) de ART-13 Factura Comercial
+        · total_cost     -> SUM(amount_usd) de transfers.cost_line
+                            cuyo scope incluya este expediente
+        · total_paid     -> SUM(monto_usd) de finance.payment confirmados
+        · balance        -> total_invoiced - total_paid (no menor a 0)
     """
+    # Sprint 2026-05-26 (CEO) - override totales con valores computados.
+    # Declarados antes que `id` para que DRF los reconozca como
+    # SerializerMethodField y no como columnas del modelo.
+    total_invoiced  = serializers.SerializerMethodField()
+    total_cost      = serializers.SerializerMethodField()
+    total_paid      = serializers.SerializerMethodField()
+    balance         = serializers.SerializerMethodField()
+
     # id es PK pero el view lo inyecta vía s.save(id=uuid.uuid4()).
     # Marcarlo read_only impide que DRF lo exija en el body.
     id              = serializers.UUIDField(read_only=True)
@@ -249,6 +272,120 @@ class ExpedienteSerializer(serializers.ModelSerializer):
     # solo aceptamos el campo para que DRF no falle con "extra fields".
     lines           = serializers.ListField(child=serializers.DictField(),
                                             required=False, write_only=True)
+
+    # ── Sprint 2026-05-26 (CEO) · totales computados ──────────
+    def _safe_uuid(self, val):
+        try:
+            import uuid as _u
+            return str(_u.UUID(str(val)))
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+    def get_total_invoiced(self, obj):
+        """SUM(field-0118) de ART-13 Factura Comercial vinculados."""
+        from django.db import connection as _conn
+        eid = self._safe_uuid(getattr(obj, "id", None))
+        if not eid:
+            return 0
+        try:
+            with _conn.cursor() as c:
+                c.execute("""
+                    SELECT COALESCE(SUM(
+                        COALESCE(NULLIF(bai.data->>'field-0118','')::numeric, 0)
+                    ), 0)
+                    FROM nodos.builder_artifact_instance bai
+                    WHERE bai.template_id = 13
+                      AND bai.is_active   = TRUE
+                      AND EXISTS (
+                          SELECT 1
+                          FROM nodos.builder_artifact_line bal
+                          WHERE bal.builder_artifact_instance_id = bai.id
+                            AND bal.expediente_id = %s::uuid
+                            AND bal.is_active = TRUE
+                      )
+                """, [eid])
+                r = c.fetchone()
+                return float(r[0] or 0) if r else 0
+        except Exception:  # noqa: BLE001
+            return float(getattr(obj, "total_invoiced", 0) or 0)
+
+    def get_total_cost(self, obj):
+        """SUM amount_usd de transfers.cost_line en scope de este exp,
+        recalculando FX cuando currency!=USD y fx==1.0."""
+        from django.db import connection as _conn
+        eid = self._safe_uuid(getattr(obj, "id", None))
+        if not eid:
+            return 0
+        try:
+            from apps.core.fx_service import get_fx_to_usd
+        except ImportError:
+            get_fx_to_usd = None
+        try:
+            with _conn.cursor() as c:
+                c.execute("""
+                    SELECT cl.amount, cl.currency, cl.fx_to_usd, cl.amount_usd
+                    FROM transfers.cost_line cl
+                    WHERE cl.is_active = TRUE
+                      AND EXISTS (
+                          SELECT 1
+                          FROM inventario.expediente_nodo_assignment a
+                          WHERE a.transferencia_id = cl.transferencia_id
+                            AND a.expediente_id   = %s::uuid
+                            AND a.is_active = TRUE
+                      )
+                      AND (
+                        cl.scope_json IS NULL
+                        OR (cl.scope_json->>'applies_to_all')::bool = TRUE
+                        OR cl.scope_json->'expediente_ids' ? %s
+                      )
+                """, [eid, eid])
+                rows = c.fetchall()
+            total = 0.0
+            fx_cache = {}
+            for (amount, currency, fx_stored, amount_usd) in rows:
+                ccy = (currency or "USD").upper()
+                amt = float(amount or 0)
+                fx_s = float(fx_stored or 1)
+                aus = float(amount_usd or 0)
+                if ccy != "USD" and abs(fx_s - 1.0) < 1e-9 and amt > 0 and get_fx_to_usd:
+                    if ccy not in fx_cache:
+                        try: fx_cache[ccy] = float(get_fx_to_usd(ccy) or 1)
+                        except Exception: fx_cache[ccy] = 1.0
+                    total += amt * fx_cache[ccy]
+                else:
+                    total += aus
+            return round(total, 2)
+        except Exception:  # noqa: BLE001
+            return float(getattr(obj, "total_cost", 0) or 0)
+
+    def get_total_paid(self, obj):
+        """SUM monto_usd de finance.payment confirmados para este exp."""
+        from django.db import connection as _conn
+        eid = self._safe_uuid(getattr(obj, "id", None))
+        if not eid:
+            return 0
+        try:
+            with _conn.cursor() as c:
+                c.execute("""
+                    SELECT COALESCE(SUM(p.monto_usd), 0)
+                    FROM finance.payment p
+                    WHERE p.expediente_id = %s::uuid
+                      AND p.is_active     = TRUE
+                      AND p.estado IN ('CONFIRMADO_AI', 'CONFIRMADO_HUMANO')
+                """, [eid])
+                r = c.fetchone()
+                return float(r[0] or 0) if r else 0
+        except Exception:  # noqa: BLE001
+            return float(getattr(obj, "total_paid", 0) or 0)
+
+    def get_balance(self, obj):
+        """total_invoiced - total_paid (clamp >= 0)."""
+        try:
+            inv  = float(self.get_total_invoiced(obj) or 0)
+            paid = float(self.get_total_paid(obj) or 0)
+            return round(max(inv - paid, 0), 2)
+        except Exception:  # noqa: BLE001
+            return float(getattr(obj, "balance", 0) or 0)
 
     class Meta:
         model  = Expediente

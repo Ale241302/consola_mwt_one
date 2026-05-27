@@ -415,7 +415,74 @@ class PaymentViewSet(viewsets.ViewSet):
         )
 
         # ── PROFORMA / FACTURA ────────────────────────────────────
-        if kind in ("PROFORMA", "FACTURA"):
+        if kind == "FACTURA":
+            # Sprint 2026-05-26 (CEO) - las Facturas Comerciales se
+            # gestionan via Builder Artifacts (template_id=13). El
+            # JSONB data tiene: field-0113 (codigo), field-0114
+            # (moneda), field-0118 (total). El expediente se vincula
+            # via nodos.builder_artifact_line.expediente_id.
+            try:
+                with connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT
+                            bai.id::text                                    AS id,
+                            COALESCE(bai.data->>'field-0113', '')       AS codigo,
+                            COALESCE(bai.data->>'field-0114', 'USD')    AS moneda,
+                            COALESCE(NULLIF(bai.data->>'field-0118','')::numeric, 0) AS total,
+                            bai.created_at,
+                            bai.created_by_name                             AS author,
+                            COALESCE((
+                                SELECT SUM(pa.monto_aplicado)
+                                FROM finance.payment_application pa
+                                JOIN finance.payment p
+                                  ON p.id = pa.payment_id
+                                 AND p.is_active = TRUE
+                                 AND p.estado IN ('CONFIRMADO_AI', 'CONFIRMADO_HUMANO')
+                                WHERE pa.applicable_type = 'FACTURA'
+                                  AND pa.applicable_id   = bai.id
+                            ), 0) AS paid
+                        FROM nodos.builder_artifact_instance bai
+                        WHERE bai.template_id = 13
+                          AND bai.is_active   = TRUE
+                          AND EXISTS (
+                              SELECT 1
+                              FROM nodos.builder_artifact_line bal
+                              WHERE bal.builder_artifact_instance_id = bai.id
+                                AND bal.expediente_id = %(exp_id)s::uuid
+                                AND bal.is_active = TRUE
+                          )
+                        GROUP BY bai.id, bai.data, bai.created_at, bai.created_by_name
+                        ORDER BY bai.created_at DESC
+                        """,
+                        {"exp_id": exp_id},
+                    )
+                    fact_rows = cur.fetchall()
+                for (fid, fcodigo, fmoneda, ftotal, fcreated, fauthor, fpaid) in fact_rows:
+                    total = float(ftotal or 0)
+                    paid  = float(fpaid or 0)
+                    balance = max(total - paid, 0)
+                    items.append({
+                        "id":      str(fid),
+                        "code":    fcodigo or "(sin codigo)",
+                        "label":   fcodigo or "Factura",
+                        "balance": balance,
+                        "meta": {
+                            "kind":         "FACTURA",
+                            "fecha":        fcreated.isoformat() if fcreated else None,
+                            "moneda":       fmoneda or "USD",
+                            "author":       fauthor,
+                            "cobro_estado": None,
+                            "total":        total,
+                            "paid":         paid,
+                            "source":       "builder_artifact_template_13",
+                        },
+                    })
+            except Exception as e:
+                log.warning("applicables(FACTURA via Builder) fallo: %s", e)
+            rows = []  # ya procesado arriba, no entrar al codigo legacy
+
+        if kind == "PROFORMA":
             try:
                 with connection.cursor() as cur:
                     cur.execute(
