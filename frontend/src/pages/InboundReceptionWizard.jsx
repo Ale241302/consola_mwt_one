@@ -57,7 +57,7 @@ const SOURCE_TYPES = [
                             l_en: "From expediente(s)",         color: "#0E8A6D" },
   { v: "SUPPLIER_PO",   l_es: "Orden de compra a proveedor",
                         l_en: "Supplier PO",                color: "#3083FE" },
-  { v: "TRANSFER_IN",   l_es: "Transferencia entrante",
+  { v: "TRANSFER_IN",   l_es: "Movimiento entrante",
                         l_en: "Inbound transfer",           color: "#481EE3" },
   { v: "BLIND_RECEIPT", l_es: "Ajuste ciego (sin documento)",
                         l_en: "Blind receipt",              color: "#B45309" },
@@ -745,7 +745,7 @@ function Step1Context({
             const t = transfers.find((x) => String(x.id) === e.target.value);
             setReference(t ? { id: t.id, label: t.codigo || t.id } : null);
           }}>
-            <option value="">— {lang === "es" ? "Transferencia en tránsito" : "Transfer in transit"} —</option>
+            <option value="">— {lang === "es" ? "Movimiento en tránsito" : "Transfer in transit"} —</option>
             {transfers.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.codigo} · {t.nodo_origen_label} → {t.nodo_destino_label}

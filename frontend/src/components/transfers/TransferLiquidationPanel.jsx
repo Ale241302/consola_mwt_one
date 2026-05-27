@@ -457,7 +457,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             {lang === "es" ? "LIQUIDACIÓN INTERNA · CEO-ONLY" : "INTERNAL LIQUIDATION · CEO-ONLY"}
           </div>
           <div style={{ fontSize: 17, fontWeight: 700, color: "#fff" }}>
-            {lang === "es" ? "Landed Cost · Factura interna de transferencia" : "Landed Cost · Internal transfer invoice"}
+            {lang === "es" ? "Landed Cost · Factura interna de movimiento" : "Landed Cost · Internal transfer invoice"}
           </div>
         </div>
         {isLiquidated && (
@@ -678,7 +678,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       </div>
 
       {/* ── Sección 1.5 · Artefactos vinculados (Sprint Fase 16) ──
-          Builder artifacts ligados a esta transferencia. Botón
+          Builder artifacts ligados a este movimiento. Botón
           "+ Agregar artefacto" abre el flow scope → picker → fill
           con expedientes/líneas derivados de transfer.lineas (in-memory). */}
       <TransferBuilderArtifactsBlock transfer={transfer} lang={lang}/>
@@ -1213,7 +1213,7 @@ function ScopeChip({ scope, transferItems, disabled, onOpen, lang }) {
             onClick={onOpen}
             disabled={realDisabled}
             title={noItems
-              ? (lang === "es" ? "No hay líneas en la transferencia" : "No transfer lines")
+              ? (lang === "es" ? "No hay líneas en el movimiento" : "No transfer lines")
               : (lang === "es" ? "Configurar alcance del costo" : "Set cost scope")}
             style={{
               padding: "4px 10px", borderRadius: 999,

@@ -341,7 +341,7 @@ export default function CostScopeModal({
             value={mode} onChange={setMode}
             options={[
               { id: "all",
-                title: lang === "es" ? "Aplicar a TODA la transferencia" : "Apply to whole transfer",
+                title: lang === "es" ? "Aplicar a TODA el movimiento" : "Apply to whole transfer",
                 desc:  lang === "es"
                   ? "El costo se prorratea sobre todas las líneas del batch."
                   : "Cost is prorated across all lines in the batch." },
@@ -559,7 +559,7 @@ function LinesBlock({
               {lang === "es" ? "Qty" : "Qty"}
             </th>
             {/* Sprint 2026-05-17 · Columnas de precio editables.
-                Si la transferencia tiene algun expediente operado por
+                Si el movimiento tiene algun expediente operado por
                 MWT → mostramos Precio MWT + Precio Cliente.
                 Si todos los expedientes son operados por el cliente →
                 solo Precio Cliente. */}
@@ -601,7 +601,7 @@ function LinesBlock({
                 </td>
                 <td className="td-num tabular-nums">{it.qty}</td>
                 {/* Sprint 2026-05-17 · celda Precio MWT.
-                    Si la transferencia tiene al menos un MWT-op expediente
+                    Si el movimiento tiene al menos un MWT-op expediente
                     mostramos la columna; pero si ESTA linea pertenece a un
                     expediente operado por cliente, mostramos '—' en gris. */}
                 {isMwtOpAny && (

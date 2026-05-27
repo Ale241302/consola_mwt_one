@@ -717,7 +717,7 @@ function PaymentDrawer({ lang, exp, onClose }) {
             <div>
               <label className="field-label">{tr(lang,'payment_method')}</label>
               <select className="select">
-                <option>{lang==='es'?'Transferencia':'Wire transfer'}</option>
+                <option>{lang==='es'?'Movimiento':'Wire transfer'}</option>
                 <option>{lang==='es'?'Carta de crédito':'Letter of credit'}</option>
                 <option>{lang==='es'?'Cobranza documentaria':'Documentary collection'}</option>
               </select>

@@ -233,7 +233,7 @@ export default function RegisterPaymentWizard({
   // ── Scope badge label ───────────────────────────────────────────
   const scopeTypeLabel = {
     NODO:          lang === "es" ? "Nodo" : "Node",
-    TRANSFERENCIA: lang === "es" ? "Transferencia" : "Transfer",
+    TRANSFERENCIA: lang === "es" ? "Movimiento" : "Transfer",
     OC:            "OC",
     EXPEDIENTE:    lang === "es" ? "Expediente" : "Expediente",
   };

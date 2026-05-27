@@ -136,7 +136,7 @@ export default function AddTransferItemsModal({
             </div>
             <h3 className="heading-md" style={{ marginTop: 2 }}>
               {lang === "es"
-                ? "Más expedientes / productos a esta transferencia"
+                ? "Más expedientes / productos a este movimiento"
                 : "More expedientes / products in this transfer"}
             </h3>
           </div>
@@ -151,7 +151,7 @@ export default function AddTransferItemsModal({
           {(!originNode || !destinationNode) ? (
             <div className="body-sm" style={{ color: "var(--critical)" }}>
               {lang === "es"
-                ? "Falta nodo origen o destino en la transferencia. Refresca y reintenta."
+                ? "Falta nodo origen o destino en el movimiento. Refresca y reintenta."
                 : "Missing origin or destination node on the transfer. Refresh and retry."}
             </div>
           ) : (

@@ -264,7 +264,7 @@ export default function ScreenTransfers() {
           <div className="micro" style={{marginBottom:6}}>
             {lang==='es'?'SUPPLY CHAIN · TRANSFERENCIAS':'SUPPLY CHAIN · TRANSFERS'}
           </div>
-          <h1 className="page-title">{lang==='es'?'Transferencias':'Transfers'}</h1>
+          <h1 className="page-title">{lang==='es'?'Movimientos':'Transfers'}</h1>
           <div className="page-subtitle">
             {lang==='es'
               ? 'Trazabilidad del flujo físico inter-nodos: planificación, aprobación, tránsito y reconciliación.'
@@ -275,7 +275,7 @@ export default function ScreenTransfers() {
           {/* Sprint Transfer Engine v2: el drawer queda en archivo pero ya no
               se usa — el botón navega al wizard full-page /transferencias/nueva. */}
           <button className="btn btn-accent" onClick={() => navigate('/transferencias/nueva')}>
-            <IconSwap size={14}/> {lang==='es'?'Nueva transferencia':'New transfer'}
+            <IconSwap size={14}/> {lang==='es'?'Nuevo movimiento':'New transfer'}
           </button>
         </div>
       </div>
@@ -293,12 +293,12 @@ export default function ScreenTransfers() {
           color="#B45309"
           label={lang==='es'?'Unidades en tránsito':'Units in transit'}
           value={fmtInt(kpis.unitsInTransit)}
-          sub={`${kpis.activeCount} ${lang==='es'?'transferencias activas':'active transfers'}`}
+          sub={`${kpis.activeCount} ${lang==='es'?'movimientos activas':'active transfers'}`}
         />
         <KpiTile
           icon={IconSwap}
           color="#3083FE"
-          label={lang==='es'?'Transferencias activas':'Active transfers'}
+          label={lang==='es'?'Movimientos activas':'Active transfers'}
           value={fmtInt(kpis.activeCount)}
           sub={lang==='es'?'En tránsito ahora':'Currently in transit'}
         />
@@ -697,7 +697,7 @@ export default function ScreenTransfers() {
                               <button
                                 className="btn btn-danger-soft btn-sm"
                                 disabled={transitioning === t._backend_id}
-                                title={lang==='es'?'Cancelar la transferencia (devuelve el inventario al origen)':'Cancel the transfer (returns stock to origin)'}
+                                title={lang==='es'?'Cancelar el movimiento (devuelve el inventario al origen)':'Cancel the transfer (returns stock to origin)'}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   // Sprint 2026-05-14 · Fase 12 — modal en vez de alert.
@@ -749,7 +749,7 @@ export default function ScreenTransfers() {
           <div className="trf-empty">
             <IconClipboard size={20} style={{ opacity:0.35 }}/>
             <div className="heading-sm">
-              {lang==='es'?'Sin transferencias con esos filtros':'No transfers match these filters'}
+              {lang==='es'?'Sin movimientos con esos filtros':'No transfers match these filters'}
             </div>
           </div>
         )}
@@ -782,7 +782,7 @@ export default function ScreenTransfers() {
                   : `Cancel ${confirm.target?.id || ''}?`)
               : confirm.type === 'bulk-delete'
                 ? (lang==='es'
-                    ? `¿Eliminar ${confirm.ids?.length || 0} transferencias?`
+                    ? `¿Eliminar ${confirm.ids?.length || 0} movimientos?`
                     : `Delete ${confirm.ids?.length || 0} transfers?`)
                 : (lang==='es'
                     ? `¿Eliminar ${confirm.target?.id || ''}?`

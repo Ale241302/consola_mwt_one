@@ -224,13 +224,13 @@ export default function TransferBuilderArtifactsBlock({
                     justifyContent: "space-between", marginBottom: 10 }}>
         <div className="caption" style={{ color: "var(--text-secondary)" }}>
           {items.length}{" "}
-          {lang === "es" ? "artefacto(s) vinculados a esta transferencia" : "artifact(s) linked to this transfer"}
+          {lang === "es" ? "artefacto(s) vinculados a este movimiento" : "artifact(s) linked to this transfer"}
         </div>
         {!readOnly && (
           <button type="button" className="btn btn-primary btn-sm"
                   disabled={!trfId || noLines}
                   title={noLines
-                    ? (lang === "es" ? "La transferencia no tiene líneas con expediente" : "Transfer has no lines with expediente")
+                    ? (lang === "es" ? "El movimiento no tiene líneas con expediente" : "Transfer has no lines with expediente")
                     : ""}
                   onClick={() => { setScopePayload(null); setScopeMode("create"); }}>
             <IconPlus size={13}/>

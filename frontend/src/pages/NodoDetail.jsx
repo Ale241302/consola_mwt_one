@@ -164,7 +164,7 @@ function adaptBackendNode(raw) {
 const TABS = [
   { k: 'overview',    l: 'Resumen' },
   { k: 'inventory',   l: 'Inventario' },
-  { k: 'transfers',   l: 'Transferencias' },
+  { k: 'transfers',   l: 'Movimientos' },
   { k: 'automations', l: 'Automatizaciones' },
   { k: 'files',       l: 'Expedientes' },
   // Sprint 2026-05-11 · Fase 2 · tab "Artefactos" — archivos arbitrarios
@@ -444,9 +444,9 @@ export default function ScreenNodoDetail() {
                 Lista, agrega, edita y archiva archivos arbitrarios
                 asociados al nodo. Soporta mismo tipo repetido y estado libre. */}
             {tab === 'artefactos'  && <NodoArtifactsTab nodeId={nodeId} lang={lang}/>}
-            {/* Sprint 2026-05-14 · Fase 13 · Costos de transferencias
+            {/* Sprint 2026-05-14 · Fase 13 · Costos de movimientos
                 que llegaron a este nodo (filtrados por scope_json).
-                Click en transferencia → /transferencias/{id}.
+                Click en movimiento → /transferencias/{id}.
                 Cada cost_line tiene botón "Pagar este costo" (solo !isClient). */}
             {tab === 'costos'      && <NodoCostosTab nodeId={nodeId} lang={lang} navigate={navigate} isClient={isClient} onPayCost={() => openWizard({ type:'NODO', id:nodeId, label:'Nodo' })}/>}
             {/* Sprint Pagos Transfers · tab Pagos del nodo */}
@@ -1042,13 +1042,13 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId,
   );
 }
 
-/* ─────────────── Tab: Transferencias ─────────────── */
+/* ─────────────── Tab: Movimientos ─────────────── */
 function TransfersTab({ transfers, nodeId, lang }) {
   return (
     <div className="card" style={{marginTop: 12}}>
       <div className="card-head">
         <div>
-          <div className="card-title">{lang==='es'?'Historial de transferencias':'Transfers history'}</div>
+          <div className="card-title">{lang==='es'?'Historial de movimientos':'Transfers history'}</div>
           <div className="card-subtitle">{transfers.length} {lang==='es'?'movimientos':'movements'}</div>
         </div>
       </div>
@@ -1109,7 +1109,7 @@ function TransfersTab({ transfers, nodeId, lang }) {
             })}
             {transfers.length === 0 && (
               <tr><td colSpan={8} className="caption" style={{textAlign:'center', padding:'16px 0'}}>
-                {lang==='es'?'Sin transferencias para este nodo':'No transfers for this node'}
+                {lang==='es'?'Sin movimientos para este nodo':'No transfers for this node'}
               </td></tr>
             )}
           </tbody>
@@ -1134,9 +1134,9 @@ function TransferStatus({ status, lang }) {
 
 /* ─────────────────────────────────────────────────────────────
    Sprint 2026-05-14 · Fase 13 · Tab Costos del NodoDetail.
-   Lista los costos de transferencias que llegaron a este nodo
+   Lista los costos de movimientos que llegaron a este nodo
    (como destino), desglosados por expediente · producto · talla.
-   Cada fila es clickable y navega al detalle de la transferencia.
+   Cada fila es clickable y navega al detalle de el movimiento.
    ───────────────────────────────────────────────────────────── */
 function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) {
   const [rows, setRows]       = useState([]);
@@ -1244,11 +1244,11 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
       <div className="flex ai-center jc-between" style={{ marginBottom: 12 }}>
         <div>
           <div className="card-title">
-            {lang === 'es' ? 'Costos de transferencias recibidas' : 'Received transfer costs'}
+            {lang === 'es' ? 'Costos de movimientos recibidas' : 'Received transfer costs'}
           </div>
           <div className="card-subtitle">
             {lang === 'es'
-              ? 'Costos registrados en las transferencias que llegaron a este nodo, desglosados por expediente y producto.'
+              ? 'Costos registrados en los movimientos que llegaron a este nodo, desglosados por expediente y producto.'
               : 'Costs recorded in transfers that arrived at this node, broken down by expediente and product.'}
           </div>
         </div>
@@ -1274,7 +1274,7 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
       ) : grouped.length === 0 ? (
         <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
           {lang === 'es'
-            ? 'Sin costos asociados a transferencias recibidas en este nodo.'
+            ? 'Sin costos asociados a movimientos recibidas en este nodo.'
             : 'No costs linked to transfers received at this node.'}
         </div>
       ) : (
@@ -1285,7 +1285,7 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
                    border: '1px solid var(--border-subtle)',
                    borderRadius: 10, overflow: 'hidden',
                  }}>
-              {/* Header de la transferencia · clickable */}
+              {/* Header de el movimiento · clickable */}
               <button type="button"
                       onClick={() => navigate(`/transferencias/${trf.transferencia_id}`)}
                       style={{
@@ -1314,7 +1314,7 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
                 </span>
               </button>
 
-              {/* Por cada cost-line de la transferencia */}
+              {/* Por cada cost-line de el movimiento */}
               {trf.costs.map((cost) => (
                 <div key={cost.cost_line_id}
                      style={{ borderTop: '1px solid var(--border-subtle)' }}>
@@ -1532,7 +1532,7 @@ function NodoPagosTab({ nodeId, lang, isClient, refreshKey, onOpenWizard }) {
           </div>
           <div className="card-subtitle">
             {lang === 'es'
-              ? 'Pagos registrados contra costos de transferencias en este nodo.'
+              ? 'Pagos registrados contra costos de movimientos en este nodo.'
               : 'Payments registered against transfer costs at this node.'}
           </div>
         </div>

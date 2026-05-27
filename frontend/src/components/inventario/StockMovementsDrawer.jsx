@@ -39,7 +39,7 @@ const GREY    = "#6B7280";
 
 const SOURCE_LABELS = {
   SUPPLIER_PO:   { es: "Orden de compra a proveedor", en: "Supplier PO",   color: BLUE   },
-  TRANSFER_IN:   { es: "Transferencia entrante",      en: "Transfer in",   color: VIOLET },
+  TRANSFER_IN:   { es: "Movimiento entrante",      en: "Transfer in",   color: VIOLET },
   BLIND_RECEIPT: { es: "Ajuste ciego (sin documento)",en: "Blind receipt", color: AMBER  },
   RETURN:        { es: "Devolución / RMA",            en: "Return / RMA",  color: GREY   },
 };
@@ -646,7 +646,7 @@ function EmptyNoRecepcion({ lang, row }) {
         fontSize: 12.5, color: GREY, lineHeight: 1.5, maxWidth: 420, margin: "0 auto",
       }}>
         {lang === "es"
-          ? "Probablemente fue creada por una transferencia interna, un ajuste manual o un import de stock inicial. Cuando registres la entrada con el wizard de recepción, aquí verás el packing list, las líneas, los costos y las excepciones."
+          ? "Probablemente fue creada por un movimiento interna, un ajuste manual o un import de stock inicial. Cuando registres la entrada con el wizard de recepción, aquí verás el packing list, las líneas, los costos y las excepciones."
           : "It was probably created by an internal transfer, a manual adjustment or an initial stock import. When you register inbound through the reception wizard, you'll see the packing list, lines, costs and exceptions here."}
       </div>
       <div style={{

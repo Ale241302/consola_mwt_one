@@ -2271,11 +2271,11 @@ export default function ScreenOCDetail() {
         </div>
       </div>
 
-      {/* Sprint 2026-05-13 · Fase 10 — card "Costos de transferencias".
-          Listado de cost_lines de transferencias que tocaron a cualquier
+      {/* Sprint 2026-05-13 · Fase 10 — card "Costos de movimientos".
+          Listado de cost_lines de movimientos que tocaron a cualquier
           expediente de esta OC. Click en fila → /transferencias/{id}.
           Solo se renderiza para roles internos (CEO/Admin): el cliente
-          B2B no ve el costo interno de las transferencias. */}
+          B2B no ve el costo interno de los movimientos. */}
       {!isClient && (
         <OCTransferCostsCard ocId={ocId} lang={lang} navigate={navigate} />
       )}
@@ -2356,7 +2356,7 @@ function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
           </h3>
           <div className="caption" style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>
             {lang === 'es'
-              ? 'Pagos registrados contra costos de transferencias de esta OC.'
+              ? 'Pagos registrados contra costos de movimientos de esta OC.'
               : 'Payments registered against transfer costs of this OC.'}
           </div>
         </div>
@@ -2507,11 +2507,11 @@ function OCTransferCostsCard({ ocId, lang, navigate }) {
       <div className="flex ai-center jc-between" style={{ marginBottom: 12 }}>
         <div>
           <h3 className="heading-md" style={{ margin: 0 }}>
-            {lang === 'es' ? 'Costos de transferencias' : 'Transfer costs'}
+            {lang === 'es' ? 'Costos de movimientos' : 'Transfer costs'}
           </h3>
           <div className="caption" style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>
             {lang === 'es'
-              ? 'Costos registrados en las transferencias que movieron stock de algún expediente de esta OC.'
+              ? 'Costos registrados en los movimientos que movieron stock de algún expediente de esta OC.'
               : 'Costs recorded in transfers that moved stock from any expediente of this OC.'}
           </div>
         </div>
@@ -2537,14 +2537,14 @@ function OCTransferCostsCard({ ocId, lang, navigate }) {
       ) : rows.length === 0 ? (
         <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
           {lang === 'es'
-            ? 'No hay costos de transferencias asociados a esta OC.'
+            ? 'No hay costos de movimientos asociados a esta OC.'
             : 'No transfer costs linked to this OC yet.'}
         </div>
       ) : (
         <table className="table">
           <thead>
             <tr>
-              <th>{lang === 'es' ? 'Transferencia' : 'Transfer'}</th>
+              <th>{lang === 'es' ? 'Movimiento' : 'Transfer'}</th>
               <th>{lang === 'es' ? 'Expediente' : 'Expediente'}</th>
               <th>{lang === 'es' ? 'Tipo' : 'Kind'}</th>
               <th>{lang === 'es' ? 'Detalle' : 'Label'}</th>
@@ -2559,7 +2559,7 @@ function OCTransferCostsCard({ ocId, lang, navigate }) {
               <tr key={r.cost_line_id}
                   onClick={() => navigate(`/transferencias/${r.transferencia_id}`)}
                   style={{ cursor: 'pointer' }}
-                  title={lang === 'es' ? 'Ver detalle de la transferencia' : 'Open transfer detail'}>
+                  title={lang === 'es' ? 'Ver detalle de el movimiento' : 'Open transfer detail'}>
                 <td className="mono-sm" style={{ color: 'var(--brand-accent, #0E8A6D)', fontWeight: 700 }}>
                   {r.transferencia_codigo || '—'}
                 </td>

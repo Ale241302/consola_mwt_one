@@ -43,14 +43,14 @@ const LEGAL_LABEL = {
 };
 
 export default function TransferInvoicePrintView({ payload, lang = "es", onClose }) {
-  if (!payload || !payload.transferencia) {
+  if (!payload || !payload.movimiento) {
     return (
       <div style={{ padding: 40, textAlign: "center", color: "#64748B" }}>
         {lang === "es" ? "Sin datos para generar el documento." : "No data to render document."}
       </div>
     );
   }
-  const t = payload.transferencia;
+  const t = payload.movimiento;
   const totals = payload.totales || {};
   const tp = payload.transfer_pricing || {};
   const isFactura = payload.kind === "FACTURA_INTERNA";
@@ -289,7 +289,7 @@ export default function TransferInvoicePrintView({ payload, lang = "es", onClose
             </div>
             <p>
               {lang === "es"
-                ? `Esta transferencia presenta ${payload.gap_info.discrepancy_count} líneas con diferencia entre lo despachado y lo recibido.`
+                ? `Este movimiento presenta ${payload.gap_info.discrepancy_count} líneas con diferencia entre lo despachado y lo recibido.`
                 : `This transfer has ${payload.gap_info.discrepancy_count} lines with variance between dispatched and received.`}
             </p>
             {payload.gap_info.gap_justification && (

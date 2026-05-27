@@ -185,7 +185,7 @@ export default function ScreenTransferDetail() {
       const r = await transferenciasApi.get(transferId);
       setBackend(mapApiDetailToTransfer(r));
     } catch (e) {
-      console.error("No se pudo cargar transferencia:", e);
+      console.error("No se pudo cargar movimiento:", e);
       setLoadError(e?.message || String(e));
     } finally {
       setLoadingBe(false);
@@ -282,7 +282,7 @@ export default function ScreenTransferDetail() {
         <div className="card card-pad-lg empty">
           <IconClock size={24} style={{ color:'var(--brand-accent)' }}/>
           <div className="heading-md">
-            {lang==='es'?'Cargando transferencia…':'Loading transfer…'}
+            {lang==='es'?'Cargando movimiento…':'Loading transfer…'}
           </div>
         </div>
       </div>
@@ -294,7 +294,7 @@ export default function ScreenTransferDetail() {
         <div className="card card-pad-lg empty">
           <IconClipboard size={24} style={{ color:'var(--brand-accent)' }}/>
           <div className="heading-md">
-            {lang==='es'?'Transferencia no encontrada':'Transfer not found'}
+            {lang==='es'?'Movimiento no encontrada':'Transfer not found'}
           </div>
           {loadError && (
             <div className="body-sm text-sec">{loadError}</div>
@@ -339,7 +339,7 @@ export default function ScreenTransferDetail() {
       // Notificación MWT inline (no más browser alert).
       setNotice({
         kind: "error",
-        text: `${lang === "es" ? "Error al avanzar transferencia: " : "Transition error: "}${e?.message || e}`,
+        text: `${lang === "es" ? "Error al avanzar movimiento: " : "Transition error: "}${e?.message || e}`,
       });
     } finally {
       setSaving(false);
@@ -390,7 +390,7 @@ export default function ScreenTransferDetail() {
           <span style={{ color: "#0B1E3A", flex: 1 }}>
             {lang === "es" ? (
               <>
-                <strong>Transferencia de demo</strong> — no existe en la base de datos. Las acciones (agregar costo, subir DUA, notas) no se guardarán.
+                <strong>Movimiento de demo</strong> — no existe en la base de datos. Las acciones (agregar costo, subir DUA, notas) no se guardarán.
                 Para crear una real, ve a{" "}
                 <a href="/transferencias/nueva" style={{ color: "#481EE3", fontWeight: 600 }}>
                   /transferencias/nueva
@@ -439,7 +439,7 @@ export default function ScreenTransferDetail() {
       <div className="page-header">
         <div>
           <button className="link-back" onClick={() => navigate('/transferencias')}>
-            <IconChevLeft size={12}/> {lang==='es'?'Volver a Transferencias':'Back to Transfers'}
+            <IconChevLeft size={12}/> {lang==='es'?'Volver a Movimientos':'Back to Transfers'}
           </button>
           <div className="micro" style={{marginTop:8, marginBottom:6}}>
             {lang==='es'?'TRANSFERENCIA INTER-NODOS':'INTER-NODE TRANSFER'}
@@ -485,7 +485,7 @@ export default function ScreenTransferDetail() {
           )}
           {status === 'received' && !willNeedReconcile && confirmed && (
             <button className="btn btn-accent" disabled={saving} onClick={markReconciled}>
-              <IconCheck size={12}/> {lang==='es'?'Cerrar transferencia':'Close transfer'}
+              <IconCheck size={12}/> {lang==='es'?'Cerrar movimiento':'Close transfer'}
             </button>
           )}
         </div>
@@ -737,7 +737,7 @@ export default function ScreenTransferDetail() {
       {/* ── Notes ledger editable (sprint 2026-04-30) ──
           Sin gate isUuid porque el backend acepta codigo (TRF-YYYY-NNNN)
           O UUID en todas las acciones gracias a _resolve_trf().
-          Si la transferencia es mock-only, panel queda en readOnly. */}
+          Si el movimiento es mock-only, panel queda en readOnly. */}
       <TransferNotesPanel
         lang={lang}
         transferId={transferBase._backend_id || transferBase.id}
@@ -748,7 +748,7 @@ export default function ScreenTransferDetail() {
       {/* Quitamos el import directo de TransferCostsPanel — la sección
           de costos vive en TransferLiquidationPanel arriba. */}
 
-      {/* ── Pagos asociados a esta transferencia (Sprint Pagos Transfers) ── */}
+      {/* ── Pagos asociados a este movimiento (Sprint Pagos Transfers) ── */}
       {!isMockOnly && (
         <TransferPagosCard
           transferId={transferBase._backend_id || transferBase.id}
@@ -768,7 +768,7 @@ export default function ScreenTransferDetail() {
         preselectedScope={{
           type:  'TRANSFERENCIA',
           id:    transferBase?._backend_id || transferBase?.id || '',
-          label: transferBase?.codigo || transferBase?.id || 'Transferencia',
+          label: transferBase?.codigo || transferBase?.id || 'Movimiento',
         }}
       />
 
@@ -838,7 +838,7 @@ function TransferPagosCard({ transferId, lang, isClient, refreshKey, onOpenWizar
           </div>
           <div className="caption" style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>
             {lang === 'es'
-              ? 'Pagos registrados contra los costos de esta transferencia.'
+              ? 'Pagos registrados contra los costos de este movimiento.'
               : 'Payments registered against the costs of this transfer.'}
           </div>
         </div>
@@ -859,7 +859,7 @@ function TransferPagosCard({ transferId, lang, isClient, refreshKey, onOpenWizar
       ) : pagos.length === 0 ? (
         <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '12px 0' }}>
           {lang === 'es'
-            ? 'Sin pagos registrados en esta transferencia.'
+            ? 'Sin pagos registrados en este movimiento.'
             : 'No payments registered for this transfer.'}
         </div>
       ) : (

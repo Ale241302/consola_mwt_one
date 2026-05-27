@@ -200,7 +200,7 @@ export default function ScreenInventario() {
         <div className="flex ai-center gap-2">
           {/* Sprint Transfer Engine v2: navega al wizard full-page en vez del drawer viejo. */}
           <button className="btn btn-accent" onClick={()=>navigate('/transferencias/nueva')}>
-            <IconSwap size={14}/> {lang==='es'?'Nueva transferencia':'New transfer'}
+            <IconSwap size={14}/> {lang==='es'?'Nuevo movimiento':'New transfer'}
           </button>
           {/* Sprint Inbound Engine v1 (2026-04-29):
               navega al wizard full-page en /inventario/recepcion
@@ -512,7 +512,7 @@ export default function ScreenInventario() {
         )}
       </div>
 
-      {/* Drawer · Nueva transferencia DEPRECATED — sustituido por el
+      {/* Drawer · Nuevo movimiento DEPRECATED — sustituido por el
           wizard full-page /transferencias/nueva (sprint Transfer Engine v2). */}
 
       {/* Modal · Recibir lote */}

@@ -576,7 +576,7 @@ function PaymentHistoryTable({ lang }) {
                 <td>{e.client}</td>
                 <td><span className="td-ref">{e.ref}</span></td>
                 <td><PaymentStateBadge state={st} lang={lang}/></td>
-                <td>{lang==='es'?'Transferencia':'Wire transfer'}</td>
+                <td>{lang==='es'?'Movimiento':'Wire transfer'}</td>
                 <td><span className="mono-sm" style={{fontWeight:600}}>TRX-{90000 + i*37}</span></td>
                 <td className="td-money" style={{
                   color: st==='RELEASED' ? 'var(--success)'

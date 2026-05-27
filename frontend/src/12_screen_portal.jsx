@@ -365,7 +365,7 @@ function PortalPayments({ lang, ocs }) {
         amount,
         date: d.toISOString().slice(0,10),
         status,
-        method: ['Transferencia','Letra','Cheque'][j % 3]
+        method: ['Movimiento','Letra','Cheque'][j % 3]
       };
     });
   }).sort((a,b) => b.date.localeCompare(a.date));

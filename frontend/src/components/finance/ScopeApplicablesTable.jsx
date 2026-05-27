@@ -308,7 +308,7 @@ export default function ScopeApplicablesTable({
                     <th style={{ fontSize: 11 }}>{lang === "es" ? "Tipo" : "Kind"}</th>
                     <th style={{ fontSize: 11 }}>{lang === "es" ? "Detalle" : "Detail"}</th>
                     <th style={{ fontSize: 11 }}>
-                      {lang === "es" ? "Transferencia" : "Transfer"}
+                      {lang === "es" ? "Movimiento" : "Transfer"}
                     </th>
                     <th style={{ textAlign: "right", fontSize: 11 }}>
                       {lang === "es" ? "Saldo USD" : "Balance USD"}

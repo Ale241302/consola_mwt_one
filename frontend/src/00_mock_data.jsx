@@ -216,8 +216,8 @@ const HERO_COSTS = [
 
 // ── Pagos for the hero expediente ─────
 const HERO_PAGOS = [
-  { id: 'pg1', date: '2026-01-12', amount: 47400, method: 'Transferencia', ref: 'TRX-88412', currency: 'USD', applied_to: 'PF-0942 · 50%',  status: 'APPLIED' },
-  { id: 'pg2', date: '2026-02-04', amount: 47400, method: 'Transferencia', ref: 'TRX-91203', currency: 'USD', applied_to: 'PF-0942 · 50%',  status: 'APPLIED' },
+  { id: 'pg1', date: '2026-01-12', amount: 47400, method: 'Movimiento', ref: 'TRX-88412', currency: 'USD', applied_to: 'PF-0942 · 50%',  status: 'APPLIED' },
+  { id: 'pg2', date: '2026-02-04', amount: 47400, method: 'Movimiento', ref: 'TRX-91203', currency: 'USD', applied_to: 'PF-0942 · 50%',  status: 'APPLIED' },
 ];
 
 // ── Artifacts (documents) ─────
@@ -234,7 +234,7 @@ const HERO_ARTIFACTS = [
 const HERO_ACTIVITY = [
   { id: 'ev1', t: '2026-03-28T10:14:00Z', who: 'A. Mendoza',    what: 'Zarpe confirmado',               detail: 'Nave MSC Leone zarpó de Ningbo. ETA Callao 2026-04-22.' },
   { id: 'ev2', t: '2026-03-26T16:02:00Z', who: 'Sistema',       what: 'Artefacto recibido',             detail: 'Bill of Lading preliminar recibido de MSC.' },
-  { id: 'ev3', t: '2026-03-21T09:41:00Z', who: 'L. Paredes',    what: 'Pago registrado',                detail: 'Transferencia USD 47,400 aplicada a PF-0942 (saldo 50%).' },
+  { id: 'ev3', t: '2026-03-21T09:41:00Z', who: 'L. Paredes',    what: 'Pago registrado',                detail: 'Movimiento USD 47,400 aplicada a PF-0942 (saldo 50%).' },
   { id: 'ev4', t: '2026-03-18T12:30:00Z', who: 'A. Mendoza',    what: 'Cambio de estado',               detail: 'DESPACHO → TRANSITO. Salida de aduana China confirmada.' },
   { id: 'ev5', t: '2026-03-04T08:12:00Z', who: 'Bison CN',      what: 'Producción finalizada',          detail: 'Lote de 1,580 pares liberado para despacho.' },
   { id: 'ev6', t: '2026-02-22T11:45:00Z', who: 'Sistema',       what: 'Cost registrado',                detail: 'Almacenaje USD 1,290 asignado a EXP-1029.' },
@@ -432,7 +432,7 @@ const ARTIFACT_CATALOG = [
   { id: 'AC-02', code: 'ART-02',  name: 'Proforma MWT',                state: 'REGISTRO',   kind: 'doc',
     fields: [ {k:'pf_code', l:'Código PF', type:'text'}, {k:'date', l:'Fecha', type:'date'}, {k:'amount', l:'Monto', type:'money'}, {k:'valid_until', l:'Válida hasta', type:'date'}, {k:'file', l:'Archivo', type:'file'} ] },
   { id: 'AC-03', code: 'ART-03',  name: 'Pago inicial / Anticipo',     state: 'REGISTRO',   kind: 'payment',
-    fields: [ {k:'amount', l:'Monto', type:'money'}, {k:'method', l:'Método', type:'select', opts:['Transferencia','Crédito','Carta de crédito']}, {k:'ref', l:'Referencia', type:'text'}, {k:'date', l:'Fecha', type:'date'} ] },
+    fields: [ {k:'amount', l:'Monto', type:'money'}, {k:'method', l:'Método', type:'select', opts:['Movimiento','Crédito','Carta de crédito']}, {k:'ref', l:'Referencia', type:'text'}, {k:'date', l:'Fecha', type:'date'} ] },
 
   // Producción
   { id: 'AC-04', code: 'ART-04',  name: 'Confirmación SAP Fábrica',    state: 'PRODUCCION', kind: 'doc',
@@ -480,7 +480,7 @@ const ARTIFACT_CATALOG = [
   { id: 'AC-20', code: 'ART-20',  name: 'Factura MWT al Cliente',      state: 'CERRADO',    kind: 'doc',
     fields: [ {k:'invoice_code', l:'Factura', type:'text'}, {k:'date', l:'Fecha', type:'date'}, {k:'amount', l:'Monto', type:'money'}, {k:'file', l:'PDF', type:'file'} ] },
   { id: 'AC-21', code: 'ART-21',  name: 'Pago Final',                  state: 'CERRADO',    kind: 'payment',
-    fields: [ {k:'amount', l:'Monto', type:'money'}, {k:'method', l:'Método', type:'select', opts:['Transferencia','Cheque','Otro']}, {k:'ref', l:'Referencia', type:'text'}, {k:'date', l:'Fecha', type:'date'} ] },
+    fields: [ {k:'amount', l:'Monto', type:'money'}, {k:'method', l:'Método', type:'select', opts:['Movimiento','Cheque','Otro']}, {k:'ref', l:'Referencia', type:'text'}, {k:'date', l:'Fecha', type:'date'} ] },
   { id: 'AC-22', code: 'ART-22',  name: 'Cierre Contable',             state: 'CERRADO',    kind: 'doc',
     fields: [ {k:'date', l:'Fecha de cierre', type:'date'}, {k:'margin_real', l:'Margen real %', type:'number'}, {k:'notes', l:'Notas finales', type:'textarea'} ] },
 ];
@@ -490,7 +490,7 @@ const ARTIFACT_CATALOG = [
 const HERO_ARTIFACT_RECORDS = {
   'AC-01': [{ id:'R-1',  created:'2026-01-09', author:'A. Mendoza', oc_number:'PO-2026-04128', date:'2026-01-08', amount:189600, file:'OC_AndesRetail.pdf' }],
   'AC-02': [{ id:'R-2',  created:'2026-01-10', author:'A. Mendoza', pf_code:'PF-0942',         date:'2026-01-10', amount:189600, valid_until:'2026-01-31', file:'PF-0942.pdf' }],
-  'AC-03': [{ id:'R-3',  created:'2026-01-12', author:'A. Mendoza', amount:47400, method:'Transferencia', ref:'TRX-88412', date:'2026-01-12' }],
+  'AC-03': [{ id:'R-3',  created:'2026-01-12', author:'A. Mendoza', amount:47400, method:'Movimiento', ref:'TRX-88412', date:'2026-01-12' }],
   'AC-04': [{ id:'R-4',  created:'2026-01-15', author:'Bison CN',   sap_number:'SAP-502147',  factory:'Bison CN Ltd.', delivery_est:'2026-03-05', file:'ConfSAP_502147.xlsx' }],
   'AC-05': [{ id:'R-5',  created:'2026-01-18', author:'Bison CN',   po_fab:'OP-BIS-1142',     qty: 1580, start_date:'2026-01-22', end_date:'2026-03-04' }],
   'AC-06': [

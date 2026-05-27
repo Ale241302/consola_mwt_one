@@ -146,7 +146,7 @@ export default function TransferNotesPanel({
             className="input"
             rows={2}
             placeholder={lang === "es"
-              ? "Escribe una nota sobre esta transferencia…"
+              ? "Escribe una nota sobre este movimiento…"
               : "Write a note about this transfer…"}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -272,7 +272,7 @@ export default function TransferNotesPanel({
           body={
             <>
               {lang === "es"
-                ? "La nota se borrará del ledger de la transferencia. Esta acción es permanente."
+                ? "La nota se borrará del ledger de el movimiento. Esta acción es permanente."
                 : "This note will be removed from the transfer's ledger. This action cannot be undone."}
               {pendingDelete.text && (
                 <div style={{

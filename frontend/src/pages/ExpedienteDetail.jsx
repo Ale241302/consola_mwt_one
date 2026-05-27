@@ -172,7 +172,7 @@ export default function ScreenExpedienteDetail() {
       .then((obj) => {
         if (cancel) return;
         if (!obj || typeof obj !== 'object') { setShippingInfo(null); return; }
-        const t = obj.transferencia || null;
+        const t = obj.movimiento || null;
         setShippingInfo({
           doc_type:        obj.doc_type        || null,
           transport_mode:  obj.transport_mode  || null,
@@ -571,7 +571,7 @@ export default function ScreenExpedienteDetail() {
                 {Number(exp.container_count) <= 0 && Number(exp.product_count) > 0 && (
                   <span className="flex ai-center gap-2"><IconPackage size={13}/>{exp.product_count} {lang==='es' ? 'SKUs' : 'SKUs'}</span>
                 )}
-                {/* Sprint 2026-05-26 (CEO) - ETA viene de la transferencia
+                {/* Sprint 2026-05-26 (CEO) - ETA viene de el movimiento
                     asociada al expediente (shippingInfo.eta). Fallback al
                     campo legacy exp.eta. Si ninguno existe, render "ETA —". */}
                 <span className="flex ai-center gap-2"><IconClock size={13}/>ETA {fmtDate(si?.eta || exp.eta, lang)}</span>
@@ -644,7 +644,7 @@ export default function ScreenExpedienteDetail() {
           {/* Tabs. Sprint 2026-05-13 · Fase 10 — se elimina la tab
               'costs' de aquí (detalle del SAP / expediente interno):
               los costos viven a nivel OC (página /expedientes/:ocId),
-              donde una sola tab "Costos" agrega TODAS las transferencias
+              donde una sola tab "Costos" agrega TODAS los movimientos
               que tocaron a cualquier expediente bajo esta OC.
               Para CLIENT B2B escondemos también 'activity'.
               Sprint 2026-05-11 · Se elimina la tab 'artifacts' / Documentos
@@ -815,7 +815,7 @@ function ExpedienteCostosAsignados({ expedienteId, lang, navigate, onPayCost }) 
           </h3>
           <div className="caption" style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>
             {lang === 'es'
-              ? 'Costos de transferencias registrados en las que participó este expediente.'
+              ? 'Costos de movimientos registrados en las que participó este expediente.'
               : 'Transfer costs registered on transfers that involved this expediente.'}
           </div>
         </div>
@@ -831,7 +831,7 @@ function ExpedienteCostosAsignados({ expedienteId, lang, navigate, onPayCost }) 
         <table className="table">
           <thead>
             <tr>
-              <th>{lang === 'es' ? 'Transferencia' : 'Transfer'}</th>
+              <th>{lang === 'es' ? 'Movimiento' : 'Transfer'}</th>
               <th>{lang === 'es' ? 'Tipo' : 'Kind'}</th>
               <th>{lang === 'es' ? 'Detalle' : 'Label'}</th>
               <th style={{ textAlign: 'right' }}>{lang === 'es' ? 'Monto' : 'Amount'}</th>

@@ -3,7 +3,7 @@ const STRINGS = {
   es: {
     // Nav
     dashboard: 'Dashboard', expedientes: 'Expedientes', pipeline: 'Pipeline', portal: 'Portal',
-    financiero: 'Financiero', transfers: 'Transferencias', nodos: 'Nodos', clientes: 'Clientes', finanzas: 'Finanzas',
+    financiero: 'Financiero', transfers: 'Movimientos', nodos: 'Nodos', clientes: 'Clientes', finanzas: 'Finanzas',
     brands: 'Marcas', productos: 'Productos', suppliers: 'Proveedores', inventario: 'Inventario',
     templates: 'Plantillas', history: 'Historial', collections: 'Cobros',
     core: 'Operación', structure: 'Estructura', notifications: 'Notificaciones',

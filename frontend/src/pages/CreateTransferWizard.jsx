@@ -477,7 +477,7 @@ export default function CreateTransferWizard() {
           // puede editar la transferencia o cancelarla.
           setError(
             (lang === "es"
-              ? "Transferencia creada, pero el movimiento de stock falló: "
+              ? "Movimiento creada, pero el movimiento de stock falló: "
               : "Transfer created, but stock move failed: ") +
             (e2?.body?.detail || e2?.message || "error desconocido"),
           );
@@ -488,7 +488,7 @@ export default function CreateTransferWizard() {
 
       navigate(`/transferencias/${created.id}`);
     } catch (e) {
-      setError(e?.message || (lang === "es" ? "Error al crear la transferencia" : "Error creating transfer"));
+      setError(e?.message || (lang === "es" ? "Error al crear el movimiento" : "Error creating transfer"));
     } finally {
       setSaving(false);
     }
@@ -501,13 +501,13 @@ export default function CreateTransferWizard() {
       <div className="page-header" style={{ marginBottom: 18 }}>
         <div>
           <button className="btn btn-ghost btn-sm" onClick={() => navigate("/transferencias")}>
-            <IconChevLeft size={12}/> {lang === "es" ? "Volver a transferencias" : "Back"}
+            <IconChevLeft size={12}/> {lang === "es" ? "Volver a movimientos" : "Back"}
           </button>
           <div className="micro" style={{ marginTop: 8, marginBottom: 4 }}>
             {lang === "es" ? "MOTOR DE TRANSFERENCIAS" : "TRANSFER ENGINE"}
           </div>
           <h1 className="page-title">
-            {lang === "es" ? "Nueva transferencia inter-nodos" : "New inter-node transfer"}
+            {lang === "es" ? "Nuevo movimiento inter-nodos" : "New inter-node transfer"}
           </h1>
         </div>
       </div>
@@ -685,7 +685,7 @@ export default function CreateTransferWizard() {
                     }}>
               {saving
                 ? (lang === "es" ? "Registrando…" : "Saving…")
-                : <>{lang === "es" ? "Registrar transferencia" : "Register transfer"} <IconCheck size={12}/></>
+                : <>{lang === "es" ? "Registrar movimiento" : "Register transfer"} <IconCheck size={12}/></>
               }
             </button>
           )}
@@ -714,7 +714,7 @@ function Step1Context({
   return (
     <div className="card card-pad-lg">
       <h2 className="heading-md" style={{ marginBottom: 14 }}>
-        {lang === "es" ? "Paso 1 · Contexto de la transferencia" : "Step 1 · Transfer context"}
+        {lang === "es" ? "Paso 1 · Contexto de el movimiento" : "Step 1 · Transfer context"}
       </h2>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 18 }}>
@@ -914,7 +914,7 @@ function LegalDocsByMotive({ lang, legalContext, legalDocs, setLegalDoc }) {
       { key: "remission_guide", required: true,
         label_es: "Guía de Remisión / Traslado",
         label_en: "Remission / Transfer Guide",
-        hint_es:  "Documento legal de traslado sin transferencia de propiedad.",
+        hint_es:  "Documento legal de traslado sin movimiento de propiedad.",
         hint_en:  "Legal transfer document without ownership transfer." },
     ],
     INTERNAL: [],
@@ -1278,7 +1278,7 @@ function EditSkillDrawer({ lang, skill, onClose, onSaved }) {
               {lang === "es" ? "Cambios críticos a nivel compañía. " : "Company-wide critical changes. "}
             </strong>
             {lang === "es"
-              ? "Modificar el system prompt o el modelo afecta el cálculo de costos de TODAS las transferencias futuras (DUAs, facturas, landed cost). Procedé con cuidado y notificá al equipo."
+              ? "Modificar el system prompt o el modelo afecta el cálculo de costos de TODAS los movimientos futuras (DUAs, facturas, landed cost). Procedé con cuidado y notificá al equipo."
               : "Editing the system prompt or model affects cost computation across ALL future transfers (DUAs, invoices, landed cost). Proceed carefully and notify the team."}
           </div>
         </div>
@@ -1888,7 +1888,7 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
       </div>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <h3 className="heading-sm">{lang === "es" ? "Líneas de la transferencia" : "Transfer lines"}</h3>
+        <h3 className="heading-sm">{lang === "es" ? "Líneas de el movimiento" : "Transfer lines"}</h3>
         <span className="caption" style={{ color: "var(--text-tertiary)" }}>
           {productLines.length} {productLines.length === 1 ? (lang === "es" ? "línea" : "line") : (lang === "es" ? "líneas" : "lines")}
         </span>
@@ -2410,7 +2410,7 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
         <strong style={{ color: "#00B286" }}>✓ {lang === "es" ? "Resumen ejecutivo:" : "Executive summary:"}</strong>{" "}
         {lang === "es" ? (
           <>
-            Esta transferencia mueve <strong>{totals.totalUnits}</strong> u. de{" "}
+            Este movimiento mueve <strong>{totals.totalUnits}</strong> u. de{" "}
             <strong>{skusUnicos}</strong> producto{skusUnicos !== 1 ? "s" : ""} desde{" "}
             <strong>{origen?.codigo || "—"}</strong> hacia{" "}
             <strong>{destino?.codigo || "—"}</strong> bajo motivo{" "}
@@ -2566,12 +2566,12 @@ function ContextDataSection({ lang, legalContext, contextData, setCtx }) {
         </div>
         <div className="caption" style={{ color: "#0B1E3A", marginBottom: 14, lineHeight: 1.5 }}>
           ⚠ {lbl(
-            "Este movimiento implica cambio de dueño. Requiere precio de transferencia y aprobación CEO/Compliance.",
+            "Este movimiento implica cambio de dueño. Requiere precio de movimiento y aprobación CEO/Compliance.",
             "This movement transfers ownership. Requires transfer pricing and CEO/Compliance approval."
           )}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 14 }}>
-          <Field label={lbl("Precio de transferencia *", "Transfer price *")}>
+          <Field label={lbl("Precio de movimiento *", "Transfer price *")}>
             <input className="input tabular-nums" type="number" step="0.01" min="0"
                    value={cd.transfer_pricing_amount || ""}
                    onChange={(e) => setCtx({ transfer_pricing_amount: e.target.value })}
@@ -2609,7 +2609,7 @@ function ContextDataSection({ lang, legalContext, contextData, setCtx }) {
         {tp > 0 && (
           <div className="caption" style={{ color: "#00B286", fontWeight: 600, marginTop: 10 }}>
             ✓ {lbl(
-              "Transferencia quedará en estado PLANNED hasta aprobación de Transfer Pricing.",
+              "Movimiento quedará en estado PLANNED hasta aprobación de Transfer Pricing.",
               "Transfer will stay in PLANNED until Transfer Pricing is approved."
             )}
           </div>

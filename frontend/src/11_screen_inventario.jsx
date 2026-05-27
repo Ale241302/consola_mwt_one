@@ -27,7 +27,7 @@ function ScreenInventario({ lang }) {
           <div className="page-subtitle">{lang==='es'?'Stock por SKU y por nodo logístico':'Stock by SKU and logistic node'}</div>
         </div>
         <div className="flex gap-2">
-          <button className="btn btn-secondary"><IconSwap size={14}/>{lang==='es'?'Nueva transferencia':'New transfer'}</button>
+          <button className="btn btn-secondary"><IconSwap size={14}/>{lang==='es'?'Nuevo movimiento':'New transfer'}</button>
           <button className="btn btn-primary"><IconPlus size={14}/>{lang==='es'?'Recibir lote':'Receive lot'}</button>
         </div>
       </div>
@@ -49,7 +49,7 @@ function ScreenInventario({ lang }) {
           <div className="stat-sub">{lang==='es'?'comprometido en expedientes':'committed to files'}</div>
         </div>
         <div className="stat">
-          <div className="stat-label">{lang==='es'?'Transferencias en tránsito':'Transfers in transit'}</div>
+          <div className="stat-label">{lang==='es'?'Movimientos en tránsito':'Transfers in transit'}</div>
           <div className="stat-value">3</div>
           <div className="stat-sub">1,420 {lang==='es'?'unidades':'units'}</div>
         </div>

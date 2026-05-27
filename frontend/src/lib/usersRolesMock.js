@@ -30,7 +30,7 @@ export const MODULES_DEMO = [
   { slug: "expedientes",    nombre: "Expedientes",        categoria: "OPERACIONAL",  orden: 20 },
   { slug: "pipeline",       nombre: "Pipeline",           categoria: "OPERACIONAL",  orden: 30 },
   { slug: "inventario",     nombre: "Inventario",         categoria: "OPERACIONAL",  orden: 40 },
-  { slug: "transferencias", nombre: "Transferencias",     categoria: "OPERACIONAL",  orden: 50 },
+  { slug: "transferencias", nombre: "Movimientos",     categoria: "OPERACIONAL",  orden: 50 },
   { slug: "productos",      nombre: "Productos",          categoria: "CATALOGOS",    orden: 60 },
   { slug: "marcas",         nombre: "Marcas",             categoria: "CATALOGOS",    orden: 70 },
   { slug: "clientes",       nombre: "Clientes",           categoria: "COMERCIAL",    orden: 80 },

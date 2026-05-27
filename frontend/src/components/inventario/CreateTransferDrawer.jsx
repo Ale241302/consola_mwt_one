@@ -226,7 +226,7 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
       onSaved?.(created);
       onClose?.();
     } catch (e) {
-      console.error("Error al crear transferencia:", e);
+      console.error("Error al crear movimiento:", e);
       setSaveErr(e?.message || String(e));
     } finally {
       setSaving(false);
@@ -271,7 +271,7 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
               {lang==='es'?'MOTOR DE TRANSFERENCIAS':'TRANSFER ENGINE'}
             </div>
             <div className="heading-md">
-              {lang==='es'?'Nueva transferencia inter-nodos':'New inter-node transfer'}
+              {lang==='es'?'Nuevo movimiento inter-nodos':'New inter-node transfer'}
             </div>
           </div>
           <button className="btn-icon-xs" onClick={onClose} aria-label="Close">
@@ -306,7 +306,7 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
               className="transfer-step-body"
             >
               <div className="transfer-section-title">
-                {lang==='es'?'Paso 1 · Contexto de la transferencia':'Step 1 · Transfer context'}
+                {lang==='es'?'Paso 1 · Contexto de el movimiento':'Step 1 · Transfer context'}
               </div>
 
               <div className="form-grid-2">
@@ -451,7 +451,7 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
               {/* Líneas agregadas */}
               <div className="transfer-lines-wrap" style={{marginTop:12}}>
                 <div className="transfer-section-title-sm">
-                  {lang==='es'?'Líneas de la transferencia':'Transfer lines'}
+                  {lang==='es'?'Líneas de el movimiento':'Transfer lines'}
                   {form.lines.length > 0 && (
                     <span className="caption tabular-nums" style={{marginLeft:8, color:'var(--text-tertiary)'}}>
                       {form.lines.length} {lang==='es'?'líneas':'lines'}
@@ -628,7 +628,7 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
                     </div>
                     <div className="caption">
                       {lang==='es'
-                        ? `Esta transferencia dejaría el origen (${form.nodo_origen}) con stock insuficiente para cubrir los próximos ${STOCK_SEGURIDAD_DIAS} días. Confirma que sea intencional antes de crearla.`
+                        ? `Este movimiento dejaría el origen (${form.nodo_origen}) con stock insuficiente para cubrir los próximos ${STOCK_SEGURIDAD_DIAS} días. Confirma que sea intencional antes de crearla.`
                         : `This transfer would leave origin (${form.nodo_origen}) below the ${STOCK_SEGURIDAD_DIAS}-day safety buffer. Confirm this is intentional before creating.`}
                     </div>
                   </div>
@@ -693,7 +693,7 @@ export default function CreateTransferDrawer({ lang='es', onClose, onSaved }) {
                 <IconTruck size={14}/>
                 {saving
                   ? (lang==='es'?'Creando…':'Creating…')
-                  : (lang==='es'?'Crear transferencia':'Create transfer')}
+                  : (lang==='es'?'Crear movimiento':'Create transfer')}
               </button>
             )}
           </div>
