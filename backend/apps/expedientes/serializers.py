@@ -42,30 +42,32 @@ class OcSerializer(serializers.ModelSerializer):
             from apps.core.scoped_querysets import _is_bypass, _scope_ids
         except ImportError:
             return None
+        # Sprint 2026-05-26 (CEO) - mismo defensive fallback que
+        # ExpedienteSerializer.get_total_invoiced: sin request -> trust.
         request = self.context.get("request") if hasattr(self, "context") else None
         user = getattr(request, "user", None) if request else None
-        if not user:
-            return None
-        allowed = False
-        try:
-            if _is_bypass(user):
-                allowed = True
-            else:
-                scope = _scope_ids(user) or []
-                if scope:
-                    with _conn.cursor() as c:
-                        c.execute("""
-                            SELECT 1
-                            FROM expedientes.expediente e
-                            WHERE e.oc_id = %s::uuid
-                              AND e.is_active = TRUE
-                              AND e.operating_company_id::text = ANY(%s::text[])
-                            LIMIT 1
-                        """, [str(obj.id), [str(s) for s in scope]])
-                        if c.fetchone():
-                            allowed = True
-        except Exception:  # noqa: BLE001
-            return None
+        allowed = True
+        if user is not None:
+            allowed = False
+            try:
+                if _is_bypass(user):
+                    allowed = True
+                else:
+                    scope = _scope_ids(user) or []
+                    if scope:
+                        with _conn.cursor() as c:
+                            c.execute("""
+                                SELECT 1
+                                FROM expedientes.expediente e
+                                WHERE e.oc_id = %s::uuid
+                                  AND e.is_active = TRUE
+                                  AND e.operating_company_id::text = ANY(%s::text[])
+                                LIMIT 1
+                            """, [str(obj.id), [str(s) for s in scope]])
+                            if c.fetchone():
+                                allowed = True
+            except Exception:  # noqa: BLE001
+                return None
         if not allowed:
             return None
         try:
@@ -366,17 +368,24 @@ class ExpedienteSerializer(serializers.ModelSerializer):
             _is_bypass = None
             _scope_ids = None
         # Visibility check
+        # Sprint 2026-05-26 (CEO) - cuando el serializer se invoca sin
+        # context (ej. Serializer(o).data desde un view custom), no hay
+        # request. En ese caso, TRUST y devolver el valor real (la auth
+        # ya se hizo en la capa HTTP). Si hay request, aplicamos la
+        # regla de operating_company.
         request = self.context.get("request") if hasattr(self, "context") else None
         user = getattr(request, "user", None) if request else None
-        allowed = False
-        if user and _is_bypass and _is_bypass(user):
-            allowed = True
-        elif user and _scope_ids:
-            op_id = getattr(obj, "operating_company_id", None)
-            if op_id:
-                scope = _scope_ids(user) or []
-                if str(op_id) in [str(s) for s in scope]:
-                    allowed = True
+        allowed = True
+        if user is not None:
+            allowed = False
+            if _is_bypass and _is_bypass(user):
+                allowed = True
+            elif _scope_ids:
+                op_id = getattr(obj, "operating_company_id", None)
+                if op_id:
+                    scope = _scope_ids(user) or []
+                    if str(op_id) in [str(s) for s in scope]:
+                        allowed = True
         if not allowed:
             return 0
         eid = self._safe_uuid(getattr(obj, "id", None))

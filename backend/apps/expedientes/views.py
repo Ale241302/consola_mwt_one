@@ -197,7 +197,7 @@ class OcViewSet(viewsets.ViewSet):
                 o = Oc.objects.get(codigo=pk, is_active=True)
             except Oc.DoesNotExist:
                 return Response({"detail": "OC no existe"}, status=404)
-        return Response(OcSerializer(o).data)
+        return Response(OcSerializer(o, context={"request": request}).data)
 
     def create(self, request):
         denied = _deny_client_mutation(request, action_label="oc.create")
@@ -335,7 +335,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 e = Expediente.objects.get(codigo=pk, is_active=True)
             except Expediente.DoesNotExist:
                 return Response({"detail": "Expediente no existe"}, status=404)
-        return Response(ExpedienteSerializer(e).data)
+        return Response(ExpedienteSerializer(e, context={"request": request}).data)
 
     def create(self, request):
         # HARD SHIELD: CLIENT B2B NUNCA crea expedientes por este endpoint
