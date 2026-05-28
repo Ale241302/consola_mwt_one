@@ -379,11 +379,25 @@ export default function ScreenExpedienteDetail() {
       .then((rows) => {
         if (cancelled) return;
         const arr = Array.isArray(rows) ? rows : (rows?.results || []);
-        setApiPagos(arr);
+        // Sprint 2026-05-26 (CEO) - filtro Tweaks: cuando el viewer
+        // simula CLIENT_*, ocultar pagos con aplicacion FACTURA. El
+        // backend ya hace el filtro para CLIENT_* reales, pero el
+        // Tweaks usa JWT de admin asi que el backend no filtra. El
+        // frontend re-filtra defensive para que la simulacion sea fiel.
+        const visible = isClient
+          ? arr.filter((p) => {
+              const apps = p?.aplicaciones || [];
+              const hasFactura = apps.some(
+                (a) => String(a?.applicable_type || "").toUpperCase() === "FACTURA"
+              );
+              return !hasFactura;
+            })
+          : arr;
+        setApiPagos(visible);
       })
       .catch(() => { if (!cancelled) setApiPagos([]); });
     return () => { cancelled = true; };
-  }, [isHero, exp?.id, pagosRefreshKey]);
+  }, [isHero, exp?.id, pagosRefreshKey, isClient]);
   const pagos = isHero ? HERO_PAGOS : apiPagos;
   // Sprint 2026-05-11 · `artifacts` ya no se usa en el render (tab
   // "Documentos" desconectada del expediente). El import de HERO_ARTIFACTS
@@ -1516,6 +1530,11 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
 // Fuente: GET /api/inventario/expedientes/{exp_id}/artifacts/
 // =====================================================================
 function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
+  // Sprint 2026-05-26 (CEO) - filtro Tweaks: ocultar Factura Comercial
+  // (template_id=13) cuando el viewer simula cliente. El backend ya filtra
+  // para CLIENT_* reales; el frontend re-filtra defensive para que el
+  // Tweaks sea fiel.
+  const { isClient: _isClientSim } = useRole();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1553,7 +1572,10 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
       .then((data) => {
         if (cancel) return;
         const arr = Array.isArray(data) ? data : (data?.results || []);
-        setItems(arr);
+        const visible = _isClientSim
+          ? arr.filter((a) => Number(a?.template_id) !== 13)
+          : arr;
+        setItems(visible);
       })
       .catch((e) => {
         if (cancel) return;
@@ -1562,7 +1584,7 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
       })
       .finally(() => { if (!cancel) setLoading(false); });
     return () => { cancel = true; };
-  }, [expedienteId, lang]);
+  }, [expedienteId, lang, _isClientSim]);
 
   const fmt = (iso) => {
     if (!iso) return "—";

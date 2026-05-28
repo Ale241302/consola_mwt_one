@@ -73,7 +73,13 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
     nodoBuilderArtifactsApi.list(nodeId)
       .then((data) => {
         const arr = Array.isArray(data) ? data : (data?.results || []);
-        setItems(arr);
+        // Sprint 2026-05-26 (CEO) - filtro Tweaks: ocultar Factura
+        // Comercial (template_id=13) cuando el viewer simula cliente.
+        // El backend ya filtra para CLIENT_* reales.
+        const visible = isClient
+          ? arr.filter((a) => Number(a?.template_id) !== 13)
+          : arr;
+        setItems(visible);
       })
       .catch((e) => setError(e?.body?.detail || e?.message
         || (lang === "es" ? "Error cargando artefactos" : "Error loading artifacts")))
