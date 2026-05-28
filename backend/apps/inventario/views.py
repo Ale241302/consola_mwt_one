@@ -956,6 +956,32 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
         except Exception as exc:
             log.exception("artifacts_por_expediente SQL failed")
             return Response({"detail": f"SQL error: {exc}"}, status=500)
+
+        # Sprint 2026-05-26 (CEO) - filtrar artefactos Factura Comercial
+        # (template_id=13) cuando el viewer no esta autorizado para el
+        # operating_company del expediente. Mismo principio de
+        # visibility POL_R3 que aplicamos en otros campos de factura.
+        try:
+            from apps.core.scoped_querysets import _is_bypass as _isb, _scope_ids as _sids
+            user = request.user
+            if not _isb(user):
+                allowed_factura = False
+                from apps.expedientes.models import Expediente
+                try:
+                    op_id = (Expediente.objects
+                             .filter(id=exp_id)
+                             .values_list("operating_company_id", flat=True).first())
+                except Exception:
+                    op_id = None
+                if op_id:
+                    scope = [str(s) for s in (_sids(user) or [])]
+                    if str(op_id) in scope:
+                        allowed_factura = True
+                if not allowed_factura:
+                    rows = [r for r in rows if int(r.get("template_id") or 0) != 13]
+        except Exception as _vis_exc:  # noqa: BLE001
+            log.warning("artifacts_por_expediente visibility filter failed: %s",
+                        _vis_exc)
         return Response(rows)
 
     # ── 7) Set de expedientes con al menos una línea pendiente ──

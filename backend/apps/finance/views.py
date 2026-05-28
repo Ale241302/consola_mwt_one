@@ -171,7 +171,49 @@ class PaymentViewSet(viewsets.ViewSet):
 
         try:
             qs = qs.order_by("-created_at")[:200]
-            return Response(PaymentDetailSerializer(qs, many=True).data)
+            data = PaymentDetailSerializer(qs, many=True).data
+
+            # Sprint 2026-05-26 (CEO) - visibility de pagos con
+            # aplicacion FACTURA: solo bypass o user en scope del
+            # operating_company del expediente pueden verlos. Los
+            # clientes finales NO ven pagos a sus propias facturas
+            # (es la metrica de cobro interna del operador MWT).
+            try:
+                from apps.core.scoped_querysets import _is_bypass as _isb, _scope_ids as _sids
+                user = request.user
+                if not _isb(user):
+                    scope = [str(s) for s in (_sids(user) or [])]
+                    # Cache de operating_company_id por expediente
+                    from apps.expedientes.models import Expediente
+                    exp_ids = list({d.get("expediente_id") for d in data if d.get("expediente_id")})
+                    op_map = {}
+                    if exp_ids:
+                        op_map = dict(
+                            Expediente.objects.filter(id__in=exp_ids)
+                            .values_list("id", "operating_company_id")
+                        )
+                    filtered = []
+                    for d in data:
+                        apps_list = d.get("aplicaciones") or []
+                        has_factura = any(
+                            str(a.get("applicable_type") or "").upper() == "FACTURA"
+                            for a in apps_list
+                        )
+                        if not has_factura:
+                            filtered.append(d)
+                            continue
+                        # Tiene FACTURA: chequear si user autorizado para
+                        # el operating_company del expediente del pago.
+                        eid_raw = d.get("expediente_id")
+                        op_id = op_map.get(eid_raw) if eid_raw else None
+                        if op_id and str(op_id) in scope:
+                            filtered.append(d)
+                        # else: pago FACTURA oculto a este viewer
+                    data = filtered
+            except Exception as _vis_exc:  # noqa: BLE001
+                log.warning("[PaymentViewSet.list] visibility filter failed: %s", _vis_exc)
+
+            return Response(data)
         except Exception as exc:  # noqa: BLE001
             log.exception("[PaymentViewSet.list] serializer/render failed: %s", exc)
             return Response(

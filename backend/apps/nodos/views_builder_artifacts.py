@@ -62,6 +62,29 @@ class NodoBuilderArtifactsListCreateView(APIView):
             except (TypeError, ValueError):
                 pass
 
+        # Sprint 2026-05-26 (CEO) - filtrar template_id=13 (Factura
+        # Comercial) cuando el viewer no esta autorizado para el
+        # operating_company del nodo. Mismo principio de visibility
+        # POL_R3 que aplicamos en expedientes/pagos de factura.
+        try:
+            from apps.core.scoped_querysets import _is_bypass as _isb, _scope_ids as _sids
+            user = request.user
+            if not _isb(user):
+                allowed_factura = False
+                try:
+                    op_id = (Nodo.objects.filter(id=nodo_id)
+                             .values_list("operating_company_id", flat=True).first())
+                except Exception:
+                    op_id = None
+                if op_id:
+                    scope = [str(s) for s in (_sids(user) or [])]
+                    if str(op_id) in scope:
+                        allowed_factura = True
+                if not allowed_factura:
+                    qs = qs.exclude(template_id=13)
+        except Exception:
+            pass  # defensivo: si falla la visibility, NO bloqueamos la respuesta
+
         # Sprint 2026-05-11 fase 5 · enriquecemos cada item con el
         # conteo de líneas asociadas y el total de unidades, para que
         # el FE muestre el alcance de cada artefacto en su card.

@@ -351,8 +351,34 @@ class ExpedienteSerializer(serializers.ModelSerializer):
             return None
 
     def get_total_invoiced(self, obj):
-        """SUM(field-0118) de ART-13 Factura Comercial vinculados."""
+        """SUM(field-0118) de ART-13 Factura Comercial vinculados.
+
+        Sprint 2026-05-26 (CEO) - visibility POL_R3:
+          · bypass (admin/CEO/staff)          -> ve el valor
+          · user cuyo scope incluye           -> ve el valor (es del operador)
+            obj.operating_company_id
+          · cliente final del expediente      -> recibe 0 (no expone)
+        """
         from django.db import connection as _conn
+        try:
+            from apps.core.scoped_querysets import _is_bypass, _scope_ids
+        except ImportError:
+            _is_bypass = None
+            _scope_ids = None
+        # Visibility check
+        request = self.context.get("request") if hasattr(self, "context") else None
+        user = getattr(request, "user", None) if request else None
+        allowed = False
+        if user and _is_bypass and _is_bypass(user):
+            allowed = True
+        elif user and _scope_ids:
+            op_id = getattr(obj, "operating_company_id", None)
+            if op_id:
+                scope = _scope_ids(user) or []
+                if str(op_id) in [str(s) for s in scope]:
+                    allowed = True
+        if not allowed:
+            return 0
         eid = self._safe_uuid(getattr(obj, "id", None))
         if not eid:
             return 0
