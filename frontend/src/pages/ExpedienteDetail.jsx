@@ -172,7 +172,7 @@ export default function ScreenExpedienteDetail() {
       .then((obj) => {
         if (cancel) return;
         if (!obj || typeof obj !== 'object') { setShippingInfo(null); return; }
-        const t = obj.movimiento || null;
+        const t = obj.transferencia || null;
         setShippingInfo({
           doc_type:        obj.doc_type        || null,
           transport_mode:  obj.transport_mode  || null,

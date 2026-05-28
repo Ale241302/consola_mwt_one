@@ -43,14 +43,14 @@ const LEGAL_LABEL = {
 };
 
 export default function TransferInvoicePrintView({ payload, lang = "es", onClose }) {
-  if (!payload || !payload.movimiento) {
+  if (!payload || !payload.transferencia) {
     return (
       <div style={{ padding: 40, textAlign: "center", color: "#64748B" }}>
         {lang === "es" ? "Sin datos para generar el documento." : "No data to render document."}
       </div>
     );
   }
-  const t = payload.movimiento;
+  const t = payload.transferencia;
   const totals = payload.totales || {};
   const tp = payload.transfer_pricing || {};
   const isFactura = payload.kind === "FACTURA_INTERNA";
