@@ -727,7 +727,7 @@ export default function ScreenExpedienteDetail() {
           />
           {!isClient && <FinancialCard exp={exp} lang={lang}/>}
           {!isClient && <NextActionCard exp={exp} lang={lang} onAdvance={() => setShowAdvance(true)}/>}
-          {isClient && <TrackingSummaryCard exp={exp} lang={lang}/>}
+          {isClient && <TrackingSummaryCard exp={exp} shippingInfo={shippingInfo} lang={lang}/>}
         </div>
       </div>
 
@@ -3086,7 +3086,7 @@ evidencia:    ${submitResult.evidencia?.original_name || evidence?.name || '—'
 // ETA, cobertura de pagos. SIN available_transitions, SIN próximas
 // acciones internas, SIN botón "Avanzar".
 // ════════════════════════════════════════════════════════════════════
-function TrackingSummaryCard({ exp, lang }) {
+function TrackingSummaryCard({ exp, shippingInfo, lang }) {
   // Mapa técnico → público (duplicado mínimo, coherente con backend)
   const STATE_PUBLIC = {
     REGISTRO:    { es: 'Confirmado',     en: 'Confirmed',      step: 0 },
@@ -3140,7 +3140,7 @@ function TrackingSummaryCard({ exp, lang }) {
         <div>
           <div className="micro">ETA</div>
           <div style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-            {exp?.eta ? fmtDate(exp.eta, lang) : '—'}
+            {(shippingInfo?.eta || exp?.eta) ? fmtDate(shippingInfo?.eta || exp.eta, lang) : '—'}
           </div>
         </div>
         <div>
