@@ -53,7 +53,7 @@ const STATUS_OPTIONS = [
 import { tr, fmtMoney } from "../lib/i18n.js";
 import {
   nodosApi, stockApi, transferenciasApi, nodoAssignmentsApi,
-  financePaymentsApi,
+  financePaymentsApi, nodoBuilderArtifactsApi,
   // Sprint 2026-05-11 fase 4 · nodoArtefactosApi (legacy de fase 2)
   // ya no se usa en esta page — el nuevo NodoArtifactsTab consume
   // nodoBuilderArtifactsApi internamente.
@@ -258,6 +258,61 @@ export default function ScreenNodoDetail() {
   // nodos demo que no existen en BD (compatibilidad con onboarding/screenshots).
   const [inventory, setInventory] = useState([]);
   const [transfers, setTransfers] = useState([]);
+  // Sprint 2026-05-26 (CEO) - data para nuevas 4 KpiTiles +
+  // Top tallas en OverviewTab. Reuso de endpoints existentes:
+  //   - inventoryAllocated  -> total unidades + breakdown por (sku, talla)
+  //   - transferenciaCostosPorNodo  -> total USD de costos del nodo
+  //   - financePaymentsApi.list({nodo_id})  -> total USD pagado
+  //   - nodoBuilderArtifactsApi.list  -> count artefactos del nodo
+  const [allocatedInv,     setAllocatedInv]     = useState([]);
+  const [costsTotalUsd,    setCostsTotalUsd]    = useState(0);
+  const [costsRowsCount,   setCostsRowsCount]   = useState(0);
+  const [pagosTotalUsd,    setPagosTotalUsd]    = useState(0);
+  const [pagosCount,       setPagosCount]       = useState(0);
+  const [artefactosCount,  setArtefactosCount]  = useState(0);
+
+  useEffect(() => {
+    if (!nodeId) return;
+    let cancelled = false;
+    Promise.allSettled([
+      nodoAssignmentsApi.inventoryAllocated(nodeId),
+      nodoAssignmentsApi.transferenciaCostosPorNodo(nodeId),
+      financePaymentsApi.list({ nodo_id: nodeId }),
+      nodoBuilderArtifactsApi.list(nodeId),
+    ]).then(([invR, cstR, pagR, artR]) => {
+      if (cancelled) return;
+      // Inventory allocated
+      if (invR.status === 'fulfilled' && Array.isArray(invR.value)) {
+        setAllocatedInv(invR.value);
+      }
+      // Costos: el endpoint devuelve UNA fila por (cost_line x expediente)
+      // - dedup por cost_line_id para no sumar el mismo cost varias veces.
+      if (cstR.status === 'fulfilled' && Array.isArray(cstR.value)) {
+        const seen = new Set();
+        let total = 0;
+        for (const c of cstR.value) {
+          const cid = c.cost_line_id || c.id;
+          if (cid && !seen.has(cid)) {
+            seen.add(cid);
+            total += Number(c.amount_usd || 0);
+          }
+        }
+        setCostsTotalUsd(total);
+        setCostsRowsCount(seen.size);
+      }
+      // Pagos del nodo
+      if (pagR.status === 'fulfilled' && Array.isArray(pagR.value)) {
+        const total = pagR.value.reduce((a, p) => a + Number(p.monto_usd || 0), 0);
+        setPagosTotalUsd(total);
+        setPagosCount(pagR.value.length);
+      }
+      // Artefactos del nodo
+      if (artR.status === 'fulfilled' && Array.isArray(artR.value)) {
+        setArtefactosCount(artR.value.length);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [nodeId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -382,30 +437,42 @@ export default function ScreenNodoDetail() {
         </div>
       </div>
 
-      {/* ── KPIs fila superior ──────────── */}
+      {/* ── KPIs fila superior (rediseno 2026-05-26 CEO) ────────
+          Reemplaza inventario $0/inbound/outbound/capacidad por las
+          4 metricas que el CEO realmente sigue: unidades en piso,
+          costos USD, pagos USD, count de artefactos. */}
       <div className="nodes-kpis" style={{marginTop: 20}}>
+        {(() => {
+          // Total unidades = suma de qty del allocatedInv (inventory-allocated).
+          // SKUs distintos = uniq(sku) en ese mismo array.
+          const totalUnits = allocatedInv.reduce(
+            (a, r) => a + Number(r.qty || 0), 0
+          );
+          const distinctSkus = new Set(
+            allocatedInv.map((r) => r.sku).filter(Boolean)
+          ).size;
+          return (
+            <KpiTile
+              label={lang==='es'?'Inventario':'Inventory'}
+              value={totalUnits.toLocaleString()}
+              sub={`${distinctSkus} ${lang==='es'?'SKUs':'SKUs'} · ${allocatedInv.length} ${lang==='es'?'lineas':'lines'}`}
+            />
+          );
+        })()}
         <KpiTile
-          label={lang==='es'?'Inventario total':'Total inventory'}
-          value={fmtMoney(invValue)}
-          sub={`${inventory.length} SKU`}
+          label={lang==='es'?'Costos':'Costs'}
+          value={fmtMoney(costsTotalUsd)}
+          sub={`${costsRowsCount} ${lang==='es'?'lineas de costo':'cost lines'}`}
         />
         <KpiTile
-          label={lang==='es'?'Inbound en tránsito':'Inbound in transit'}
-          value={inboundTx.filter(t => t.status==='in_transit').reduce((a,t)=>a+t.units, 0).toLocaleString()}
-          sub={`${inboundTx.length} ${lang==='es'?'movimientos':'moves'}`}
-          icon={<IconArrow size={14} style={{color: meta.color, transform: 'rotate(180deg)'}}/>}
+          label={lang==='es'?'Pagos':'Payments'}
+          value={fmtMoney(pagosTotalUsd)}
+          sub={`${pagosCount} ${lang==='es'?'pagos':'payments'}`}
         />
         <KpiTile
-          label={lang==='es'?'Outbound en tránsito':'Outbound in transit'}
-          value={outboundTx.filter(t => t.status==='in_transit').reduce((a,t)=>a+t.units, 0).toLocaleString()}
-          sub={`${outboundTx.length} ${lang==='es'?'movimientos':'moves'}`}
-          icon={<IconArrow size={14} style={{color: meta.color}}/>}
-        />
-        <KpiTile
-          label={lang==='es'?'Capacidad libre':'Free capacity'}
-          value={(node.capacity_units - node.capacity_used).toLocaleString()}
-          sub={`${100 - utilPct}% ${lang==='es'?'disponible':'available'}`}
-          accent={utilBand === 'red'}
+          label={lang==='es'?'Artefactos':'Artifacts'}
+          value={artefactosCount.toLocaleString()}
+          sub={lang==='es'?'registrados':'registered'}
         />
       </div>
 
@@ -426,7 +493,7 @@ export default function ScreenNodoDetail() {
             animate={{ opacity: 1, y: 0, transition: { duration: 0.22, ease: 'easeOut' } }}
             exit   ={{ opacity: 0, y: -4, transition: { duration: 0.12 } }}
           >
-            {tab === 'overview'    && <OverviewTab node={node} inventory={inventory} transfers={transfers} lang={lang}/>}
+            {tab === 'overview'    && <OverviewTab node={node} inventory={inventory} allocatedInv={allocatedInv} transfers={transfers} lang={lang}/>}
             {tab === 'inventory'   && (
               <InventoryTab
                 inventory={inventory}
@@ -505,28 +572,49 @@ function KpiTile({ label, value, sub, icon, accent }) {
 }
 
 /* ─────────────── Tab: Resumen ─────────────── */
-function OverviewTab({ node, inventory, transfers, lang }) {
-  // Top 3 SKUs por valor
-  const topSkus = [...inventory].sort((a,b) => (b.value||0) - (a.value||0)).slice(0, 3);
+function OverviewTab({ node, inventory, allocatedInv = [], transfers, lang }) {
+  // Sprint 2026-05-26 (CEO) - Top tallas con cantidad:
+  // Agrupa allocatedInv por (sku, talla) y muestra qty total ordenado desc.
+  const topTallas = (() => {
+    const map = new Map();
+    for (const r of allocatedInv || []) {
+      const sku = r.sku || '—';
+      const talla = r.talla || '—';
+      const qty = Number(r.qty || 0);
+      const key = `${sku}::${talla}`;
+      const prev = map.get(key);
+      if (prev) {
+        prev.qty += qty;
+      } else {
+        map.set(key, {
+          sku,
+          talla,
+          qty,
+          nombre: r.nombre || '',
+          producto_id: r.producto_id || null,
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a,b) => b.qty - a.qty).slice(0, 8);
+  })();
   const caps    = node.capabilities || {};
   return (
     <div className="grid col-2 gap-3" style={{marginTop: 12}}>
       <div className="card card-pad">
-        <div className="card-title">{lang==='es'?'Top SKUs por valor':'Top SKUs by value'}</div>
-        {topSkus.length === 0
-          ? <div className="caption" style={{marginTop: 8}}>{lang==='es'?'Sin inventario registrado.':'No inventory registered.'}</div>
-          : topSkus.map(r => {
-              const p = PRODUCTS.find(pp => pp.sku === r.sku);
-              return (
-                <div key={r.sku} className="metric-row">
-                  <div>
-                    <div style={{font:'600 12.5px/1.2 var(--font-mono)', color:'var(--text-primary)'}}>{r.sku}</div>
-                    <div className="caption">{p?.name || '—'}</div>
+        <div className="card-title">{lang==='es'?'Top tallas por cantidad':'Top sizes by quantity'}</div>
+        {topTallas.length === 0
+          ? <div className="caption" style={{marginTop: 8}}>{lang==='es'?'Sin inventario asignado.':'No inventory assigned.'}</div>
+          : topTallas.map(r => (
+              <div key={`${r.sku}-${r.talla}`} className="metric-row">
+                <div>
+                  <div style={{font:'600 12.5px/1.2 var(--font-mono)', color:'var(--text-primary)'}}>
+                    {r.sku} · <span style={{color:'var(--brand-primary)'}}>T{r.talla}</span>
                   </div>
-                  <div className="mv">{fmtMoney(r.value)}</div>
+                  <div className="caption">{r.nombre || '—'}</div>
                 </div>
-              );
-            })
+                <div className="mv tabular-nums">{r.qty.toLocaleString()} u</div>
+              </div>
+            ))
         }
       </div>
 
