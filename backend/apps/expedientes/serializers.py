@@ -20,9 +20,78 @@ class OcListSerializer(serializers.ModelSerializer):
 
 
 class OcSerializer(serializers.ModelSerializer):
+    # Sprint 2026-05-26 (CEO) · Total facturado REAL de la OC,
+    # computado desde los artefactos ART-13 (Factura Comercial,
+    # template_id=13) de TODOS los expedientes vinculados a esta OC.
+    # field-0118 del JSONB contiene el monto en USD.
+    #
+    # Visibility (POL_VISIBILIDAD R3):
+    #   · bypass (admin/CEO/staff)              -> ve el valor
+    #   · user cuyos client_ids incluyen el     -> ve el valor (es del operador)
+    #     operating_company_id de algun expediente
+    #   · cliente final del expediente          -> ve null (no expone metricas internas)
+    total_invoiced_real = serializers.SerializerMethodField()
+
     class Meta:
         model  = Oc
         fields = "__all__"
+
+    def get_total_invoiced_real(self, obj):
+        from django.db import connection as _conn
+        try:
+            from apps.core.scoped_querysets import _is_bypass, _scope_ids
+        except ImportError:
+            return None
+        request = self.context.get("request") if hasattr(self, "context") else None
+        user = getattr(request, "user", None) if request else None
+        if not user:
+            return None
+        allowed = False
+        try:
+            if _is_bypass(user):
+                allowed = True
+            else:
+                scope = _scope_ids(user) or []
+                if scope:
+                    with _conn.cursor() as c:
+                        c.execute("""
+                            SELECT 1
+                            FROM expedientes.expediente e
+                            WHERE e.oc_id = %s::uuid
+                              AND e.is_active = TRUE
+                              AND e.operating_company_id::text = ANY(%s::text[])
+                            LIMIT 1
+                        """, [str(obj.id), [str(s) for s in scope]])
+                        if c.fetchone():
+                            allowed = True
+        except Exception:  # noqa: BLE001
+            return None
+        if not allowed:
+            return None
+        try:
+            with _conn.cursor() as c:
+                c.execute("""
+                    SELECT COALESCE(SUM(
+                        COALESCE(NULLIF(bai.data->>'field-0118','')::numeric, 0)
+                    ), 0)
+                    FROM nodos.builder_artifact_instance bai
+                    WHERE bai.template_id = 13
+                      AND bai.is_active   = TRUE
+                      AND EXISTS (
+                          SELECT 1
+                          FROM nodos.builder_artifact_line bal
+                          JOIN expedientes.expediente e
+                            ON e.id = bal.expediente_id
+                          WHERE bal.builder_artifact_instance_id = bai.id
+                            AND bal.is_active = TRUE
+                            AND e.oc_id       = %s::uuid
+                            AND e.is_active   = TRUE
+                      )
+                """, [str(obj.id)])
+                r = c.fetchone()
+                return float(r[0] or 0) if r else 0
+        except Exception:  # noqa: BLE001
+            return None
 
 
 class ExpedienteListSerializer(serializers.ModelSerializer):

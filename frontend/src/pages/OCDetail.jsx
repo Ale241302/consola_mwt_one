@@ -1570,7 +1570,19 @@ export default function ScreenOCDetail() {
                   {fmtMoney(headline)}
                 </div>
                 <div className="k-sub" style={{display:'flex', flexDirection:'column', alignItems:'flex-start', gap:2}}>
-                  <span><span style={{color:'var(--success)'}}>{fmtMoney(paid)}</span> {tr(lang,'paid_lbl').toLowerCase()}</span>
+                  {/* Sprint 2026-05-26 (CEO) - reemplaza 'cobrado' por
+                      'facturado' usando total_invoiced_real (suma de
+                      ART-13 field-0118 de expedientes de la OC). Solo
+                      el backend lo devuelve si el viewer es admin/CEO
+                      o pertenece al operating_company de algun
+                      expediente de la OC. Si viene null (cliente final),
+                      la linea no se renderiza para no exponer interno. */}
+                  {oc.total_invoiced_real != null && (
+                    <span>
+                      <span style={{color:'var(--success)'}}>{fmtMoney(oc.total_invoiced_real)}</span>
+                      {' '}{lang === 'es' ? 'facturado' : 'invoiced'}
+                    </span>
+                  )}
                   <span><span style={{color:'var(--brand-primary)'}}>{fmtMoney(pendiente)}</span> {tr(lang,'pending').toLowerCase()}</span>
                 </div>
               </>
