@@ -167,6 +167,12 @@ def _fetch_expedientes_mwt() -> list[dict]:
                 e.operating_company_id::text                      AS operating_company_id,
                 e.shipment_date                                   AS shipment_date,
                 e.eta                                             AS eta,
+                -- Sprint 2026-05-30 (CEO) - fechas reales del ART-05
+                -- (template_id=9 AWB/BL) mas reciente del expediente.
+                -- field-1780150662711 = Fecha de Despacho.
+                -- field-1780150673285 = Fecha de Arrivo (ETA).
+                a05.shipment_date_artifact                        AS shipment_date_artifact,
+                a05.eta_artifact                                  AS eta_artifact,
                 e.credit_days                                     AS credit_days,
                 e.credit_days_mwt                                 AS credit_days_mwt,
                 e.credit_days_cliente                             AS credit_days_cliente,
@@ -190,9 +196,26 @@ def _fetch_expedientes_mwt() -> list[dict]:
             FROM expedientes.expediente e
             LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
             LEFT JOIN expedientes.linea l ON l.expediente_id = e.id AND l.is_active = TRUE
+            -- Sprint 2026-05-30 (CEO) - LATERAL join para extraer fecha
+            -- de despacho del ART-05 mas reciente vinculado al expediente.
+            LEFT JOIN LATERAL (
+                SELECT
+                    NULLIF(bai.data->>'field-1780150662711', '')::date AS shipment_date_artifact,
+                    NULLIF(bai.data->>'field-1780150673285', '')::date AS eta_artifact
+                FROM nodos.builder_artifact_instance bai
+                JOIN nodos.builder_artifact_line bal
+                  ON bal.builder_artifact_instance_id = bai.id
+                 AND bal.is_active = TRUE
+                WHERE bai.template_id = 9
+                  AND bai.is_active   = TRUE
+                  AND bal.expediente_id = e.id
+                ORDER BY bai.updated_at DESC NULLS LAST, bai.created_at DESC
+                LIMIT 1
+            ) a05 ON TRUE
             WHERE e.is_active = TRUE
               AND e.operating_company_id = %s
-            GROUP BY e.id, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct
+            GROUP BY e.id, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct,
+                     a05.shipment_date_artifact, a05.eta_artifact
             ORDER BY e.created_at DESC
             """,
             [str(MWT_OPERATING_CLIENT_ID)],
@@ -220,9 +243,12 @@ def _build_item(row: dict, today: date) -> dict:
 
     estado, fecha_devengo = _resolve_devengo_estado(
         commission_rate=_dec(commission_rate) if commission_rate is not None else None,
-        shipment_date=row["shipment_date"],
-        eta=row["eta"],
-        credit_days_cliente=row["credit_days_cliente"],
+        # Sprint 2026-05-30 (CEO) - prioridad ART-05 > legacy.
+        shipment_date=(row.get("shipment_date_artifact") or row["shipment_date"]),
+        eta=(row.get("eta_artifact") or row["eta"]),
+        credit_days_cliente=(row["credit_days_cliente"]
+                             if row["credit_days_cliente"]
+                             else row.get("cliente_dias_credito")),
         credit_days_mwt=row["credit_days_mwt"],
         balance=_dec(row["balance"]),
         total_paid=_dec(row["total_paid"]),
@@ -233,10 +259,19 @@ def _build_item(row: dict, today: date) -> dict:
     # Luego mes_pago_aprox = primer dia del mes siguiente + rango primeros
     # 10 dias habiles. Permite agrupar comision en /finanzas/commission-by-month/
     # para grafica BarChart, y mostrar columna "Fecha pago aprox" en la tabla.
+    # Sprint 2026-05-30 (CEO) - prioridad de fuente para 'base' (fecha
+    # despacho): artefacto ART-05 > campo legacy del expediente.
     fecha_facturada = None
-    base = row["shipment_date"] or row["eta"]
+    base = (row.get("shipment_date_artifact")
+            or row["shipment_date"]
+            or row.get("eta_artifact")
+            or row["eta"])
     if base is not None:
+        # credit_days_cliente del expediente, con fallback al
+        # cliente.dias_credito cuando el expediente lo tiene NULL/0.
         cd_cli = int(row["credit_days_cliente"] or 0)
+        if cd_cli <= 0:
+            cd_cli = int(row.get("cliente_dias_credito") or 0)
         fecha_facturada = base + timedelta(days=cd_cli)
     fpa_inicio, fpa_fin, mes_pago_label = _next_month_business_window(
         fecha_facturada, n_days=10
@@ -261,8 +296,12 @@ def _build_item(row: dict, today: date) -> dict:
         "forma_pago":            row["forma_pago"],
         "credit_days_mwt":       row["credit_days_mwt"],
         "credit_days_cliente":   row["credit_days_cliente"],
-        "shipment_date":         row["shipment_date"].isoformat() if row["shipment_date"] else None,
-        "eta":                   row["eta"].isoformat() if row["eta"] else None,
+        "shipment_date":         (row.get("shipment_date_artifact") or row["shipment_date"]).isoformat()
+                                  if (row.get("shipment_date_artifact") or row["shipment_date"]) else None,
+        "eta":                   (row.get("eta_artifact") or row["eta"]).isoformat()
+                                  if (row.get("eta_artifact") or row["eta"]) else None,
+        "shipment_date_source":  ("artifact_ART05" if row.get("shipment_date_artifact")
+                                  else ("expediente" if row["shipment_date"] else None)),
         "fecha_devengo_esperada": fecha_devengo.isoformat() if fecha_devengo else None,
         "devengo_estado":        estado,
         "lines_count":           row["lines_count"],
