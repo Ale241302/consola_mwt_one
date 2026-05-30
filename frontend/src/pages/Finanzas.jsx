@@ -393,20 +393,10 @@ export default function Finanzas({ lang = "es" }) {
         </table>
       </div>
 
-      {/* Footer · deuda diferida */}
-      <div style={{
-        marginTop: 18, padding: "10px 14px", borderRadius: 8,
-        background: "rgba(48, 131, 254, 0.06)",
-        border: "1px solid rgba(48, 131, 254, 0.20)",
-        fontSize: 11, color: "var(--text-secondary, #475569)", lineHeight: 1.5,
-      }}>
-        <strong style={{ color: "var(--brand-primary, #013A57)" }}>
-          {lang === "es" ? "Próximos sprints:" : "Coming sprints:"}
-        </strong>{" "}
-        {lang === "es"
-          ? "gráficos (comisión por mes, top clientes, scatter SKU, heatmap), subpáginas /finanzas/margen y /finanzas/devengo, export CSV/XLSX, vista materializada mv_linea_finanzas con refresh por Celery. Ver docs/finanzas/SPEC_FINANZAS_MODULE_v1.md."
-          : "charts (commission by month, top clients, SKU scatter, heatmap), /finanzas/margen and /finanzas/devengo subpages, CSV/XLSX export, mv_linea_finanzas materialized view with Celery refresh. See docs/finanzas/SPEC_FINANZAS_MODULE_v1.md."}
-      </div>
+      {/* Sprint 2026-05-30 (CEO) - footer 'Proximos sprints' removido
+          tras implementar graficas scatter + bar por mes + columna
+          fecha pago aprox. Si se requiere agregar mas modulos
+          (heatmap, top clientes, export CSV), levantar feature flag. */}
     </div>
   );
 }
