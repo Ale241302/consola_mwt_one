@@ -101,6 +101,43 @@ def _resolve_devengo_estado(
     return ("PROYECTADA", fecha_devengo)
 
 
+def _next_month_business_window(d: date | None, n_days: int = 10) -> tuple[date | None, date | None, str | None]:
+    """Sprint 2026-05-30 (CEO) - dada una fecha base (fecha_facturada),
+    calcula el rango de los primeros N dias habiles del mes SIGUIENTE.
+
+    Args:
+        d:       fecha base (fecha_facturada = shipment_date + credit_days_cli).
+        n_days:  cuantos dias habiles (default 10).
+
+    Returns:
+        (inicio, fin, label_mes):
+          inicio   -> primer dia del mes siguiente (date)
+          fin      -> n-esimo dia habil del mes siguiente (date)
+          label    -> "2026-06" (YYYY-MM del mes siguiente)
+        Si d es None devuelve (None, None, None).
+    """
+    if d is None:
+        return (None, None, None)
+    # Primer dia del mes siguiente
+    if d.month == 12:
+        inicio = date(d.year + 1, 1, 1)
+    else:
+        inicio = date(d.year, d.month + 1, 1)
+    label = inicio.strftime("%Y-%m")
+    # Avanzar n dias habiles (lun=0..vie=4)
+    cur = inicio
+    habiles = 0
+    # Si inicio cae en fin de semana, lo contamos como 0 habiles.
+    # Avanzamos hasta acumular n_days habiles.
+    while habiles < n_days:
+        if cur.weekday() < 5:  # lun-vie
+            habiles += 1
+            if habiles == n_days:
+                break
+        cur = cur + timedelta(days=1)
+    return (inicio, cur, label)
+
+
 def _fetch_expedientes_mwt() -> list[dict]:
     """Lee expedientes operados por MWT con agregados de lineas.
     Una sola query JOIN — evita N+1. Solo lineas activas.
@@ -192,6 +229,19 @@ def _build_item(row: dict, today: date) -> dict:
         today=today,
     )
 
+    # Sprint 2026-05-30 (CEO) - fecha_facturada = base + credit_days_cliente.
+    # Luego mes_pago_aprox = primer dia del mes siguiente + rango primeros
+    # 10 dias habiles. Permite agrupar comision en /finanzas/commission-by-month/
+    # para grafica BarChart, y mostrar columna "Fecha pago aprox" en la tabla.
+    fecha_facturada = None
+    base = row["shipment_date"] or row["eta"]
+    if base is not None:
+        cd_cli = int(row["credit_days_cliente"] or 0)
+        fecha_facturada = base + timedelta(days=cd_cli)
+    fpa_inicio, fpa_fin, mes_pago_label = _next_month_business_window(
+        fecha_facturada, n_days=10
+    )
+
     return {
         "expediente_id":         row["expediente_id"],
         "display_id":            _resolve_display_id(row["codigo"], row["proforma_codigo"]),
@@ -217,6 +267,11 @@ def _build_item(row: dict, today: date) -> dict:
         "devengo_estado":        estado,
         "lines_count":           row["lines_count"],
         "total_qty":             str(_dec(row["total_qty"])),
+        # Sprint 2026-05-30 (CEO) - fecha facturada y ventana de pago.
+        "fecha_facturada":           fecha_facturada.isoformat() if fecha_facturada else None,
+        "mes_pago_aproximado":       mes_pago_label,
+        "fecha_pago_aprox_inicio":   fpa_inicio.isoformat() if fpa_inicio else None,
+        "fecha_pago_aprox_fin":      fpa_fin.isoformat() if fpa_fin else None,
     }
 
 
@@ -318,6 +373,109 @@ def comisiones_list(request):
         "count": len(items),
         "results": items,
     })
+
+
+@api_view(["GET"])
+@permission_classes([IsCeoOrAdmin])
+def commission_by_month(request):
+    """Sprint 2026-05-30 (CEO) - Agrupa comision_amount por
+    mes_pago_aproximado (primer dia mes siguiente a fecha_facturada).
+
+    Response: {
+        "results": [
+            {"month": "2026-06", "month_label": "Jun 2026",
+             "commission_usd": "1234.56", "expedientes_count": 3,
+             "delta_total_usd": "10234.50"},
+            ...
+        ],
+        "today": "2026-05-30"
+    }
+
+    Util para BarChart "Comision esperada por mes" en /finanzas.
+    """
+    today = date.today()
+    rows = _fetch_expedientes_mwt()
+    items = [_build_item(r, today) for r in rows]
+    agg: dict[str, dict] = {}
+    for it in items:
+        m = it.get("mes_pago_aproximado")
+        if not m:
+            continue
+        amt = it.get("commission_amount")
+        if amt is None:
+            continue
+        bucket = agg.setdefault(m, {
+            "month": m,
+            "commission_usd": Decimal("0"),
+            "delta_total_usd": Decimal("0"),
+            "expedientes_count": 0,
+        })
+        bucket["commission_usd"] += _dec(amt)
+        bucket["delta_total_usd"] += _dec(it.get("delta_total"))
+        bucket["expedientes_count"] += 1
+    # Ordenar cronologicamente
+    sorted_months = sorted(agg.keys())
+    # Label legible (Jun 2026)
+    MESES_ES = ["", "Ene","Feb","Mar","Abr","May","Jun",
+                "Jul","Ago","Sep","Oct","Nov","Dic"]
+    results = []
+    for m in sorted_months:
+        bucket = agg[m]
+        try:
+            y, mo = m.split("-")
+            label = f"{MESES_ES[int(mo)]} {y}"
+        except (ValueError, IndexError):
+            label = m
+        results.append({
+            "month":             m,
+            "month_label":       label,
+            "commission_usd":    str(bucket["commission_usd"].quantize(Decimal("0.01"))),
+            "delta_total_usd":   str(bucket["delta_total_usd"].quantize(Decimal("0.01"))),
+            "expedientes_count": bucket["expedientes_count"],
+        })
+    return Response({"results": results, "today": today.isoformat()})
+
+
+@api_view(["GET"])
+@permission_classes([IsCeoOrAdmin])
+def margin_scatter(request):
+    """Sprint 2026-05-30 (CEO) - datos para scatter Margen proyectado vs real.
+
+    Response: {
+        "points": [
+            {"id": "<expediente_id>", "label": "EXP-2026-0001 · Sondel",
+             "projected": 0.21, "real": 0.21, "value": 2591.45},
+            ...
+        ],
+        "today": "2026-05-30"
+    }
+
+    En MVP, margen proyectado = margen real = margen_pct del expediente
+    (las lineas no tienen drift aun). Cuando exista mv_linea_finanzas
+    con costo real vs proyectado por linea, este endpoint se enrique
+    con la diferencia projected vs real.
+    """
+    today = date.today()
+    rows = _fetch_expedientes_mwt()
+    items = [_build_item(r, today) for r in rows]
+    points = []
+    for it in items:
+        mp = it.get("margen_pct")
+        if mp is None:
+            continue
+        m = float(mp)
+        # MVP: projected == real. Cuando haya drift de margen, separar.
+        delta = float(_dec(it.get("delta_total")))
+        cliente = it.get("cliente_razon_social") or "—"
+        display = it.get("display_id") or it.get("codigo") or "—"
+        points.append({
+            "id":        it["expediente_id"],
+            "label":     f"{display} · {cliente}",
+            "projected": m,
+            "real":      m,
+            "value":     delta,
+        })
+    return Response({"points": points, "today": today.isoformat()})
 
 
 @api_view(["GET"])
