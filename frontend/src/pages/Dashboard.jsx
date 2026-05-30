@@ -318,11 +318,15 @@ export default function ScreenDashboard() {
       <div className="page-header">
         <div>
           <div className="micro" style={{ marginBottom: 6 }}>
-            {lang === "en" ? "OVERVIEW" : "VISTA GENERAL"}
+            {isAdmin
+              ? (lang === "en" ? "OVERVIEW" : "VISTA GENERAL")
+              : (lang === "en" ? "MY ORDERS" : "MIS PEDIDOS")}
           </div>
           <h1 className="page-title">{tr(lang, "dashboard")}</h1>
           <div className="page-subtitle">
-            {lang === "en" ? "Operating cockpit · " : "Cockpit operativo · "}
+            {isAdmin
+              ? (lang === "en" ? "Operating cockpit · " : "Cockpit operativo · ")
+              : (lang === "en" ? "Summary · " : "Resumen · ")}
             {new Date().toLocaleDateString(lang === "en" ? "en-US" : "es-PE", {
               weekday: "long", day: "2-digit", month: "long", year: "numeric",
             })}
@@ -365,8 +369,9 @@ export default function ScreenDashboard() {
         </div>
       </div>
 
-      {/* Filtros globales */}
-      <GlobalFilters value={filters} onChange={setFilters} brands={brands} lang={lang} />
+      {/* Filtros globales · CEO-ONLY (marca/mercado/periodo son
+          dimensiones internas que el cliente B2B no necesita) */}
+      {isAdmin && <GlobalFilters value={filters} onChange={setFilters} brands={brands} lang={lang} />}
 
       {/* Banner de error global */}
       {error && !loading && (
@@ -415,6 +420,10 @@ export default function ScreenDashboard() {
               />}
         </SafeWidget>
 
+        {/* KPIs 2–6 son CEO-ONLY (exposicion financiera, margen,
+            reloj credito, TACoS Amazon, % R1+). El cliente B2B solo
+            ve "Expedientes activos" en esta banda. */}
+        {isAdmin && (<>
         {/* 2 · Cash en riesgo */}
         <SafeWidget lang={lang} endpoint="/api/analytics/aging/">
           {loading
@@ -570,6 +579,7 @@ export default function ScreenDashboard() {
                           : "Sin expedientes activos en últimos 90 días."))}
               />}
         </SafeWidget>
+        </>)}
       </div>
 
       {/* ──────────────────────────────────────────────────────────────
@@ -580,6 +590,7 @@ export default function ScreenDashboard() {
           datos reales en cobros.cobro/pago. Heatmap muestra la curva
           agregada de TODOS los mercados (backend: ?market=ALL por default).
           ────────────────────────────────────────────────────────────── */}
+      {isAdmin && (
       <DashboardCard
         title={lang === "en" ? "Size × market heatmap" : "Heatmap tallas × mercado"}
         subtitle={lang === "en"
@@ -596,6 +607,7 @@ export default function ScreenDashboard() {
               />}
         </SafeWidget>
       </DashboardCard>
+      )}
 
       <div style={{ height: 16 }} />
 
@@ -641,7 +653,10 @@ export default function ScreenDashboard() {
           </SafeWidget>
         </DashboardCard>
 
-        {/* 3C · Inventario por nodo · cableado al endpoint nuevo */}
+        {/* 3C · Inventario por nodo · CEO-ONLY (datos operativos
+            de almacen interno; el cliente B2B solo necesita ver el
+            estado de SUS pedidos en "Acciones urgentes") */}
+        {isAdmin && (
         <DashboardCard
           title={lang === "en" ? "Inventory by node" : "Inventario por nodo"}
           subtitle={lang === "en"
@@ -659,11 +674,16 @@ export default function ScreenDashboard() {
                 />}
           </SafeWidget>
         </DashboardCard>
+        )}
       </div>
 
       {/* ──────────────────────────────────────────────────────────────
-          BANDA 4 — Análisis multidimensional
+          BANDA 4 — Análisis multidimensional · CEO-ONLY entera
+          (Top SKUs por margen, Top clientes por exposicion, Scatter
+          margen real vs proyectado: todos son indicadores internos
+          que NO se exponen al cliente B2B)
           ────────────────────────────────────────────────────────────── */}
+      {isAdmin && (
       <div
         className="grid gap-3 mb-6"
         style={{ gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))" }}
@@ -756,6 +776,7 @@ export default function ScreenDashboard() {
           </DashboardCard>
         )}
       </div>
+      )}
 
       {/* Footer informativo */}
       <div
