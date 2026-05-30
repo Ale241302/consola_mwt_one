@@ -577,11 +577,15 @@ export default function ScreenPortal() {
         {/* Sprint 2026-05-20 · Tabs reducidas de 4 a 3 (mandato CEO §4).
             La tab "Documentos" se eliminó del nav raíz — los documentos
             viven dentro del detalle de cada expediente, no como tab
-            global. */}
+            global.
+            Sprint 2026-05-30 (CEO) · "Historial de Pagos" oculta
+            temporalmente — el modulo de cobros B2B todavia no esta
+            curado para mostrarse al cliente. Se mantiene <PortalPayments>
+            importado y el case 'payments' por si vuelve. */}
         <div className="tabs mb-4">
           {[
             { k:'orders',   es:'Mis Órdenes',        en:'My Orders' },
-            { k:'payments', es:'Historial de Pagos', en:'Payment History' },
+            // { k:'payments', es:'Historial de Pagos', en:'Payment History' }, // oculta 2026-05-30
             { k:'products', es:'Productos',          en:'Products' },
           ].map(t => (
             <button key={t.k} className="tab" data-active={tab===t.k} onClick={()=>setTab(t.k)}>
