@@ -366,8 +366,27 @@ export default function ScreenExpedientes() {
         if (!any) return false;
       }
       if (q) {
-        const s = (e.ref+' '+e.oc_client+' '+(e.sap||'')+' '+e.client+' '+e.brand).toLowerCase();
-        if (!s.includes(q.toLowerCase())) return false;
+        // Sprint 2026-05-30 (CEO) - buscar tambien en arrays role-aware
+        // del backend (proforma_codigos, oc_codigos, sap_codigos). Esto
+        // permite encontrar un expediente por su PO/PF/SAP del cliente
+        // (ej. "504802" -> EXP-2026-0001).
+        const pfs  = Array.isArray(e.proforma_codigos) ? e.proforma_codigos.join(' ') : '';
+        const ocs  = Array.isArray(e.oc_codigos)       ? e.oc_codigos.join(' ')       : '';
+        const saps = Array.isArray(e.sap_codigos)      ? e.sap_codigos.join(' ')      : '';
+        const s = (
+          (e.ref || '') + ' ' +
+          (e.codigo || '') + ' ' +
+          (e.oc_client || '') + ' ' +
+          (e.sap || '') + ' ' +
+          (e.proforma || '') + ' ' +
+          (e.client || '') + ' ' +
+          (e.brand || '') + ' ' +
+          pfs + ' ' + ocs + ' ' + saps
+        ).toLowerCase();
+        // Tokens del query separados por espacio: TODOS deben matchear
+        // (busqueda AND). Permite "sondel 2417" para acotar.
+        const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+        if (!tokens.every((t) => s.includes(t))) return false;
       }
       return true;
     });
