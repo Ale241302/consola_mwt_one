@@ -37,16 +37,51 @@ import React from "react";
  * @property {string}                  [lang]        'es' | 'en'
  */
 
+/** Detecta si el `value` ya empieza con el prefijo del `label` —
+ * en cuyo caso renderizar el label seria duplicacion visual.
+ *
+ * Sprint 2026-05-30 (CEO): "OC PO 504802" debe ser solo "PO 504802"
+ * porque el codigo del cliente ya lleva su propio prefijo (PO/POC/PF/SAP).
+ *
+ * Comparamos uppercase, sin espacios. Acepta: "PO 504802", "PO-2026-001",
+ * "POC 504978", "PF 2473", "SAP 263360", "SAP263360".
+ */
+function _labelRedundante(label, value) {
+  if (!label || !value) return false;
+  const v = String(value).trim().toUpperCase();
+  const lbl = String(label).trim().toUpperCase();
+  if (!v || !lbl) return false;
+  // OC: tambien aceptar PO y POC como prefijos validos (PO Number Cliente).
+  if (lbl === "OC" || lbl === "PO") {
+    return v.startsWith("PO ") || v.startsWith("PO-")
+        || v.startsWith("POC ") || v.startsWith("POC-")
+        || v.startsWith("OC ") || v.startsWith("OC-");
+  }
+  // PF: directo.
+  if (lbl === "PF") {
+    return v.startsWith("PF ") || v.startsWith("PF-") || v.startsWith("PF_");
+  }
+  // SAP: directo, con o sin separador.
+  if (lbl === "SAP") {
+    return v.startsWith("SAP ") || v.startsWith("SAP-") || v.startsWith("SAP_") || v.startsWith("SAP");
+  }
+  // Caso generico
+  return v.startsWith(lbl + " ") || v.startsWith(lbl + "-");
+}
+
 /** Chip individual — usa tokens MWT, cero hex literales. */
 function RefChip({ kind, label, value, onClick, title }) {
   const klass = "ref-chip ref-chip--" + kind + (onClick ? " ref-chip--link" : "");
+  // Sprint 2026-05-30 (CEO): si el value ya trae el prefijo del label,
+  // omitir el label para evitar "OC PO 504802" -> mostrar "PO 504802".
+  const showLabel = !_labelRedundante(label, value);
   return (
     <span
       className={klass}
       onClick={onClick ? (ev) => { ev.stopPropagation(); onClick(value); } : undefined}
       title={title || `${label}: ${value}`}
     >
-      <span className="ref-chip__label">{label}</span>
+      {showLabel && <span className="ref-chip__label">{label}</span>}
       <span className="ref-chip__value font-mono tabular-nums">{value}</span>
     </span>
   );
