@@ -702,6 +702,8 @@ export default function ScreenExpedienteDetail() {
           {tab === 'artifacts' && <ArtifactsByExpedienteTab expedienteId={exp.id} lang={lang} navigate={navigate}/>}
           {tab === 'costs'     && !isClient && <CostsTab costs={costs} lang={lang} onAdd={() => setShowCostDrawer(true)}/>}
           {tab === 'payments'  && <PaymentsTab pagos={pagos} lang={lang} exp={exp}
+                                               lines={apiLines}
+                                               isClient={isClient}
                                                onAdd={isClient ? null : () => setShowPaymentDrawer(true)}
                                                readOnly={isClient}
                                                isHero={isHero}
@@ -727,7 +729,7 @@ export default function ScreenExpedienteDetail() {
           />
           {!isClient && <FinancialCard exp={exp} lang={lang}/>}
           {!isClient && <NextActionCard exp={exp} lang={lang} onAdvance={() => setShowAdvance(true)}/>}
-          {isClient && <TrackingSummaryCard exp={exp} shippingInfo={shippingInfo} lang={lang}/>}
+          {isClient && <TrackingSummaryCard exp={exp} shippingInfo={shippingInfo} lines={apiLines} lang={lang}/>}
         </div>
       </div>
 
@@ -1761,6 +1763,8 @@ function CostsTab({ costs, lang, onAdd }) {
 }
 
 function PaymentsTab({
+  lines = [],
+  isClient = false,
   pagos, lang, exp, onAdd, readOnly = false,
   isHero = false, onOpenPayment,
 }) {
@@ -1769,20 +1773,38 @@ function PaymentsTab({
   // metodo, referencia, monto_usd, moneda}. El hero mock conserva
   // {date, method, ref, applied_to, amount, status} para no romper la demo.
   const isReal = !isHero;
+  // Sprint 2026-05-26 (CEO) - vista cliente: el "Total facturado" NO
+  // debe mostrar el valor del ART-13 (factura interna MWT, $10,224).
+  // En cambio, calcular SUM(qty * unit_price_client) de las lineas
+  // ($12,071) que es el monto real que el cliente B2B ve facturado.
+  // Admin sigue viendo el valor del ART-13 (exp.total_invoiced).
+  const clientInvoiced = (Array.isArray(lines) ? lines : []).reduce(
+    (acc, l) => acc + Number(l?.qty || 0) * Number(l?.unit_price_client || 0),
+    0,
+  );
+  const effectiveInvoiced = isClient ? clientInvoiced : Number(exp?.total_invoiced || 0);
+  const effectivePaid     = Number(exp?.total_paid || 0);
+  const effectiveBalance  = isClient
+    ? Math.max(0, clientInvoiced - effectivePaid)
+    : Number(exp?.balance || 0);
+  const effectivePct = effectiveInvoiced > 0
+    ? (effectivePaid / effectiveInvoiced) * 100
+    : 0;
+
   return (
     <div style={{ display:'flex', flexDirection:'column', gap: 14 }}>
       <div className="card card-pad-lg">
         <div className="flex ai-center jc-between mb-3">
           <div className="heading-md">{tr(lang,'payment_progress')}</div>
           <span className="mono tabular tabular-nums" style={{fontSize:13}}>
-            {fmtMoney(exp.total_paid)} / {fmtMoney(exp.total_invoiced)}
+            {fmtMoney(effectivePaid)} / {fmtMoney(effectiveInvoiced)}
           </span>
         </div>
-        <Progress value={exp.total_paid/exp.total_invoiced*100} variant="success"/>
+        <Progress value={effectivePct} variant="success"/>
         <div className="grid col-3 gap-4 mt-6">
-          <KV label={tr(lang,'total_invoiced_lbl')} value={fmtMoney(exp.total_invoiced)}/>
-          <KV label={tr(lang,'paid_lbl')} value={fmtMoney(exp.total_paid)} good/>
-          <KV label={tr(lang,'balance')} value={fmtMoney(exp.balance)} warning/>
+          <KV label={tr(lang,'total_invoiced_lbl')} value={fmtMoney(effectiveInvoiced)}/>
+          <KV label={tr(lang,'paid_lbl')} value={fmtMoney(effectivePaid)} good/>
+          <KV label={tr(lang,'balance')} value={fmtMoney(effectiveBalance)} warning/>
         </div>
       </div>
       <div className="card">
@@ -3086,7 +3108,7 @@ evidencia:    ${submitResult.evidencia?.original_name || evidence?.name || '—'
 // ETA, cobertura de pagos. SIN available_transitions, SIN próximas
 // acciones internas, SIN botón "Avanzar".
 // ════════════════════════════════════════════════════════════════════
-function TrackingSummaryCard({ exp, shippingInfo, lang }) {
+function TrackingSummaryCard({ exp, shippingInfo, lines = [], lang }) {
   // Mapa técnico → público (duplicado mínimo, coherente con backend)
   const STATE_PUBLIC = {
     REGISTRO:    { es: 'Confirmado',     en: 'Confirmed',      step: 0 },
@@ -3099,8 +3121,17 @@ function TrackingSummaryCard({ exp, shippingInfo, lang }) {
   };
   const tech = (exp?.status || exp?.estado || '').toUpperCase();
   const map  = STATE_PUBLIC[tech] || { es: tech || '—', en: tech || '—', step: 0 };
-  const coverage = (exp?.total_invoiced && exp.total_invoiced > 0)
-    ? Math.round((exp.total_paid / exp.total_invoiced) * 100)
+  // Sprint 2026-05-26 (CEO) - vista cliente: usar SUM(qty * unit_price_client)
+  // de las lineas en lugar del exp.total_invoiced (que es la factura interna).
+  const _clientInvoiced = (Array.isArray(lines) ? lines : []).reduce(
+    (acc, l) => acc + Number(l?.qty || 0) * Number(l?.unit_price_client || 0),
+    0,
+  );
+  const _denom = _clientInvoiced > 0
+    ? _clientInvoiced
+    : Number(exp?.total_invoiced || 0);
+  const coverage = _denom > 0
+    ? Math.round((Number(exp?.total_paid || 0) / _denom) * 100)
     : 0;
 
   return (
