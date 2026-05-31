@@ -12,7 +12,7 @@
 //     la UI antes de levantar Django.
 // =====================================================================
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { authApi, ApiError } from "../lib/api.js";
+import { authApi, ApiError, refreshAccessToken } from "../lib/api.js";
 
 const AUTH_KEY = "mwt-auth";
 
@@ -67,6 +67,44 @@ export function AuthProvider({ children }) {
     } catch { /* noop */ }
     setBootstrapped(true);
   }, []);
+
+  // Sprint 2026-05-31 · Sincronización con el auto-refresh de lib/api.js.
+  // Cuando apiFetch refresca el access token (o fuerza logout porque el
+  // refresh expiró), emite eventos en window. Acá mantenemos el state de
+  // React alineado con localStorage para que ninguna vista quede con un
+  // token viejo ni con sesión fantasma.
+  useEffect(() => {
+    const onRefreshed = (e) => {
+      const acc = e?.detail?.access;
+      const ref = e?.detail?.refresh;
+      if (acc) setAccessToken(acc);
+      if (ref) setRefresh(ref);
+    };
+    const onForcedLogout = () => {
+      setUser(null);
+      setAccessToken(null);
+      setRefresh(null);
+      try { localStorage.removeItem(AUTH_KEY); } catch { /* noop */ }
+    };
+    window.addEventListener("mwt-auth-refreshed", onRefreshed);
+    window.addEventListener("mwt-auth-logout", onForcedLogout);
+    return () => {
+      window.removeEventListener("mwt-auth-refreshed", onRefreshed);
+      window.removeEventListener("mwt-auth-logout", onForcedLogout);
+    };
+  }, []);
+
+  // Sprint 2026-05-31 · Refresh PROACTIVO. El access token dura 30 min
+  // (SIMPLE_JWT.ACCESS_TOKEN_LIFETIME). Refrescamos al bootstrap y cada
+  // 25 min para que ninguna vista —ni siquiera las que usan fetch crudo
+  // con getToken()— vea un token expirado. El refresh dura 7 días.
+  useEffect(() => {
+    if (!bootstrapped || !refresh) return;
+    if (String(refresh).startsWith("dev-local")) return; // sesión DEV
+    refreshAccessToken();
+    const id = setInterval(() => { refreshAccessToken(); }, 25 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [bootstrapped, refresh]);
 
   const persist = (payload) => {
     localStorage.setItem(AUTH_KEY, JSON.stringify(payload));

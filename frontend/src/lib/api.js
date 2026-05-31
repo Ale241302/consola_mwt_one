@@ -174,7 +174,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiFetch(path, { method = "GET", body, token, headers = {} } = {}) {
+export async function apiFetch(path, { method = "GET", body, token, headers = {}, _isRetry = false } = {}) {
   // ── Kill-switch: mock mode ──────────────────────────────────────────
   // /auth/* siempre pasa al backend real (login + refresh + me + logout).
   // El resto: GET → [] (o fixtures específicos si hay mock registrado)
@@ -234,6 +234,19 @@ export async function apiFetch(path, { method = "GET", body, token, headers = {}
   }
 
   if (!resp.ok) {
+    // Sprint 2026-05-31 · auto-refresh silencioso del access token.
+    // Si una vista pega a la API con un access expirado (401), intentamos
+    // UN refresh con el refresh token guardado y reintentamos la request
+    // original una sola vez. Así la sesión no se "pierde" al navegar.
+    // Las rutas /auth/* se excluyen para no entrar en bucle.
+    if (resp.status === 401 && !_isRetry && !path.startsWith("/auth/")) {
+      const newAccess = await refreshAccessToken();
+      if (newAccess) {
+        return apiFetch(path, { method, body, token: newAccess, headers, _isRetry: true });
+      }
+      // No se pudo refrescar (refresh expirado/ausente) → logout limpio.
+      emitForcedLogout();
+    }
     const msg = data?.detail || data?.message || data?.error || `HTTP ${resp.status}`;
     throw new ApiError(msg, resp.status, data);
   }
@@ -247,6 +260,66 @@ export const authApi = {
   me:       (token)             => apiFetch("/auth/me/",       { token }),
   logout:   (token, refresh)    => apiFetch("/auth/logout/",   { method: "POST", token, body: { refresh } }),
 };
+
+// =====================================================================
+// Sprint 2026-05-31 · Refresh silencioso del access token.
+// Comparte la key "mwt-auth" con AuthContext { user, access, refresh }.
+// Single-flight: si varias requests caen en 401 a la vez, solo se
+// dispara UN refresh y todas esperan el mismo resultado.
+// =====================================================================
+function _readAuthBundle() {
+  try {
+    const raw = localStorage.getItem("mwt-auth");
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function _writeAccess(newAccess, newRefresh) {
+  try {
+    const b = _readAuthBundle() || {};
+    b.access = newAccess;
+    if (newRefresh) b.refresh = newRefresh;
+    localStorage.setItem("mwt-auth", JSON.stringify(b));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("mwt-auth-refreshed", {
+        detail: { access: newAccess, refresh: b.refresh },
+      }));
+    }
+  } catch { /* noop */ }
+}
+
+export function emitForcedLogout() {
+  try {
+    localStorage.removeItem("mwt-auth");
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("mwt-auth-logout"));
+    }
+  } catch { /* noop */ }
+}
+
+let _refreshPromise = null;
+export function refreshAccessToken() {
+  if (_refreshPromise) return _refreshPromise;
+  const bundle = _readAuthBundle();
+  const r = bundle?.refresh;
+  // Sin refresh real (o sesión DEV-fallback) → no hay nada que refrescar.
+  if (!r || String(r).startsWith("dev-local")) return Promise.resolve(null);
+  _refreshPromise = (async () => {
+    try {
+      const data = await authApi.refresh(r);
+      if (data?.access) {
+        _writeAccess(data.access, data.refresh);
+        return data.access;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      _refreshPromise = null;
+    }
+  })();
+  return _refreshPromise;
+}
 
 // ---------------------------------------------------------------------
 // Token helper: lee el access token guardado por AuthContext.
