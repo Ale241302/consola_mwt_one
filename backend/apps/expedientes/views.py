@@ -2708,6 +2708,595 @@ class ExpedienteViewSet(viewsets.ViewSet):
 
         return added_ids, removed_ids, updated_ids
 
+
+    # ══════════════════════════════════════════════════════════
+    # Sprint 2026-05-31 · EDICIÓN GENERAL del expediente completo.
+    # Paralelo a patch_sap pero SIN filtro por SAP: opera sobre TODAS
+    # las líneas activas del expediente y cascada los metadatos
+    # (operating_company_id, forma_pago, payment_days) al registro del
+    # expediente + todos sus ART-04 activos. NO hace split (eso es un
+    # concepto por-SAP). Reusa el mismo contrato JSON que /sap/{id}/
+    # para que el wizard (?editExpFull=) hidrate y guarde con la misma
+    # lógica de diffs (lines_added / lines_removed / lines_updated).
+    # ══════════════════════════════════════════════════════════
+    @action(
+        detail=True,
+        methods=["get", "patch"],
+        url_path="edit-full",
+    )
+    def edit_full(self, request, pk=None):
+        # GET es read-only (Admin + CLIENT_* con scope). PATCH es CEO-ONLY.
+        if request.method.upper() == "GET":
+            return self._get_full(request, pk=pk)
+
+        denied = _deny_client_mutation(request, action_label="expediente.edit_full")
+        if denied is not None:
+            return denied
+
+        try:
+            exp = Expediente.objects.get(pk=pk, is_active=True)
+        except Expediente.DoesNotExist:
+            return Response({"detail": "Expediente no existe"}, status=404)
+
+        try:
+            payload = {k: request.data.get(k) for k in request.data.keys()}
+        except Exception:
+            payload = dict(request.data) if hasattr(request.data, "items") else {}
+
+        # Normalizar inputs (todos opcionales).
+        new_op = payload.get("operating_company_id")
+        if new_op == "":
+            new_op = None
+        new_fp = (payload.get("forma_pago") or "").strip().upper() or None
+        if new_fp and new_fp not in ("CREDITO", "CONTADO"):
+            return Response({"detail": "forma_pago inválida"}, status=400)
+        new_pd = payload.get("payment_days")
+        if new_pd in ("", None):
+            new_pd_val = None
+        else:
+            try:
+                new_pd_val = int(new_pd)
+            except (TypeError, ValueError):
+                return Response({"detail": "payment_days inválido"}, status=400)
+            if new_pd_val < 0:
+                return Response({"detail": "payment_days no puede ser negativo"}, status=400)
+
+        new_client_id = payload.get("client_id") or None
+
+        lines_added   = payload.get("lines_added")
+        lines_removed = payload.get("lines_removed")
+        lines_updated = payload.get("lines_updated")
+        for _name in ("lines_added", "lines_removed", "lines_updated"):
+            _val = locals()[_name]
+            if isinstance(_val, str):
+                try:
+                    parsed = json.loads(_val) if _val.strip() else None
+                except json.JSONDecodeError:
+                    return Response({"detail": f"{_name} no es JSON válido"}, status=400)
+                if _name == "lines_added":
+                    lines_added = parsed
+                elif _name == "lines_removed":
+                    lines_removed = parsed
+                else:
+                    lines_updated = parsed
+        for _nm, _v in (
+            ("lines_added", lines_added),
+            ("lines_removed", lines_removed),
+            ("lines_updated", lines_updated),
+        ):
+            if _v is not None and not isinstance(_v, list):
+                return Response({"detail": f"{_nm} debe ser array"}, status=400)
+
+        lines_added   = lines_added or []
+        lines_removed = lines_removed or []
+        lines_updated = lines_updated or []
+
+        # operating_company efectivo (para resolver unit_price legacy de adds).
+        eff_op = (
+            str(new_op) if new_op is not None
+            else (str(getattr(exp, "operating_company_id", "") or "") or None)
+        )
+
+        added_ids = removed_ids = updated_ids = None
+        try:
+            with transaction.atomic():
+                with connection.cursor() as c:
+                    # 1) Metadatos a nivel expediente.
+                    sets, args = [], []
+                    if new_op is not None:
+                        sets.append("operating_company_id = %s")
+                        args.append(str(new_op))
+                    if new_fp is not None:
+                        sets.append("forma_pago = %s")
+                        args.append(new_fp)
+                    if new_pd_val is not None:
+                        sets.append("credit_days = %s")
+                        sets.append("credit_days_cliente = %s")
+                        args.append(new_pd_val)
+                        args.append(new_pd_val)
+                    if new_client_id and str(new_client_id) != str(getattr(exp, "client_id", "") or ""):
+                        sets.append("client_id = %s::uuid")
+                        args.append(str(new_client_id))
+                    if sets:
+                        sets.append("updated_at = NOW()")
+                        c.execute(
+                            f"UPDATE expedientes.expediente SET {', '.join(sets)} "
+                            f"WHERE id = %s::uuid",
+                            args + [str(exp.id)],
+                        )
+
+                    # 2) Cascada de metadatos a TODOS los ART-04 activos del
+                    #    expediente (mantiene consistencia con la vista por-SAP).
+                    art_sets, art_args = [], []
+                    if new_op is not None:
+                        art_sets.append("operating_company_id = %s")
+                        art_args.append(str(new_op))
+                    if new_fp is not None:
+                        art_sets.append("forma_pago = %s")
+                        art_args.append(new_fp)
+                    if new_pd_val is not None:
+                        art_sets.append("payment_days = %s")
+                        art_args.append(new_pd_val)
+                    if art_sets:
+                        art_sets.append("updated_at = NOW()")
+                        try:
+                            c.execute(
+                                f"""
+                                UPDATE expedientes.artifact_instances
+                                   SET {', '.join(art_sets)}
+                                 WHERE expediente_id = %s::uuid
+                                   AND artifact_code = 'ART-04'
+                                   AND is_active = TRUE
+                                """,
+                                art_args + [str(exp.id)],
+                            )
+                        except Exception as e:
+                            log.warning("[edit_full] cascade ART-04 falló: %s", e)
+
+                    # 3) Operaciones de líneas sobre TODO el expediente.
+                    added_ids, removed_ids, updated_ids = self._apply_full_line_ops(
+                        cursor=c,
+                        exp=exp,
+                        operating_company_id=eff_op,
+                        target_client_id=(str(new_client_id) if new_client_id else None),
+                        lines_added=lines_added,
+                        lines_removed=lines_removed,
+                        lines_updated=lines_updated,
+                    )
+
+                    # 4) Recalcular total_cost del expediente.
+                    c.execute(
+                        """
+                        UPDATE expedientes.expediente e
+                           SET total_cost = COALESCE((
+                                 SELECT SUM(l.total_price)
+                                   FROM expedientes.linea l
+                                  WHERE l.expediente_id = e.id
+                                    AND l.is_active = TRUE
+                               ), 0),
+                               updated_at = NOW()
+                         WHERE e.id = %s::uuid
+                        """,
+                        [str(exp.id)],
+                    )
+
+                    # 5) Auditoría (schema real de pipeline.event_log).
+                    try:
+                        emitter_id = getattr(request.user, "id", None)
+                        emitter_role = (
+                            getattr(request.user, "role_default", None)
+                            or getattr(request.user, "role", None)
+                            or "unknown"
+                        )
+                        c.execute(
+                            """
+                            INSERT INTO pipeline.event_log
+                              (id, correlation_id,
+                               event_type, aggregate_type, aggregate_id,
+                               payload,
+                               emitted_by_id, emitted_by_role,
+                               is_active, created_at, updated_at)
+                            VALUES
+                              (%s, %s,
+                               'expediente.edit_full', 'expediente', %s::uuid,
+                               %s::jsonb,
+                               %s, %s,
+                               TRUE, NOW(), NOW())
+                            """,
+                            [
+                                str(uuid.uuid4()),
+                                str(uuid.uuid4()),
+                                str(exp.id),
+                                json.dumps({
+                                    "expediente_id": str(exp.id),
+                                    "operating_company_id": eff_op,
+                                    "forma_pago": new_fp,
+                                    "payment_days": new_pd_val,
+                                    "lines_added": added_ids,
+                                    "lines_removed": removed_ids,
+                                    "lines_updated": updated_ids,
+                                }),
+                                str(emitter_id) if emitter_id else None,
+                                emitter_role,
+                            ],
+                        )
+                    except Exception as e:
+                        log.warning("[edit_full] event_log falló (no-fatal): %s", e)
+        except Exception as e:
+            log.exception("[edit_full] patch failed: %s", e)
+            return Response({"detail": "patch_failed", "error": str(e)[:200]}, status=500)
+
+        return Response({
+            "ok": True,
+            "expediente_id": str(exp.id),
+            "operating_company_id": eff_op,
+            "forma_pago": new_fp or getattr(exp, "forma_pago", None),
+            "payment_days": new_pd_val if new_pd_val is not None else getattr(exp, "credit_days", None),
+            "lines_added": added_ids or [],
+            "lines_removed": removed_ids or [],
+            "lines_updated": updated_ids or [],
+            "full": True,
+        }, status=200)
+
+    def _get_full(self, request, pk=None):
+        # Lookup tolerante: pk puede ser UUID o codigo.
+        exp = None
+        try:
+            exp = Expediente.objects.get(pk=pk, is_active=True)
+        except Expediente.DoesNotExist:
+            exp = None
+        except (ValueError, TypeError):
+            exp = None
+        if exp is None:
+            try:
+                exp = Expediente.objects.get(codigo=pk, is_active=True)
+            except Expediente.DoesNotExist:
+                return Response({"detail": "Expediente no existe"}, status=404)
+
+        is_client = _is_client_viewer(request)
+        if is_client:
+            user_companies = list(getattr(request.user, "legal_entity_ids", None) or [])
+            if not user_companies:
+                return Response({"detail": "forbidden"}, status=403)
+            pool = {str(c) for c in user_companies}
+            client_ok = str(getattr(exp, "client_id", "") or "") in pool
+            oc_ok     = str(getattr(exp, "operating_company_id", "") or "") in pool
+            if not (client_ok or oc_ok):
+                return Response({"detail": "forbidden"}, status=403)
+
+        # Líneas activas del expediente (SIN filtro de SAP).
+        lines_out = []
+        sap_value_mwt    = Decimal("0")
+        sap_value_client = Decimal("0")
+        try:
+            with connection.cursor() as c:
+                c.execute("""
+                    SELECT l.id::text,
+                           l.producto_id::text,
+                           l.sku,
+                           l.size,
+                           l.qty,
+                           l.unit_price,
+                           l.unit_price_mwt,
+                           l.unit_price_client,
+                           l.sap
+                      FROM expedientes.linea l
+                     WHERE l.expediente_id = %s::uuid
+                       AND l.is_active = TRUE
+                     ORDER BY l.created_at ASC, l.id ASC
+                """, [str(exp.id)])
+                rows = c.fetchall()
+        except Exception as e:
+            log.exception("[get_full] lineas lookup failed: %s", e)
+            return Response({"detail": "lookup_failed", "error": str(e)[:200]}, status=500)
+
+        # Labels de productos (best-effort).
+        product_labels = {}
+        try:
+            pids = [r[1] for r in rows if r[1]]
+            unique_pids = list({p for p in pids if p})
+            if unique_pids:
+                with connection.cursor() as c:
+                    placeholders = ",".join(["%s::uuid"] * len(unique_pids))
+                    c.execute(
+                        f"SELECT id::text, nombre FROM productos.producto "
+                        f"WHERE id IN ({placeholders})",
+                        unique_pids,
+                    )
+                    for pid, nombre in c.fetchall():
+                        product_labels[pid] = nombre
+        except Exception as e:
+            log.warning("[get_full] product label lookup failed: %s", e)
+
+        # Label de cliente (best-effort).
+        client_label = None
+        client_id_val = getattr(exp, "client_id", None)
+        if client_id_val:
+            try:
+                with connection.cursor() as c:
+                    c.execute(
+                        "SELECT COALESCE(razon_social, nombre) FROM clientes.cliente "
+                        "WHERE id = %s::uuid LIMIT 1",
+                        [str(client_id_val)],
+                    )
+                    cr = c.fetchone()
+                    if cr:
+                        client_label = cr[0]
+            except Exception as e:
+                log.warning("[get_full] client label lookup failed: %s", e)
+
+        for r in rows:
+            (lid, pid, sku, size, qty, up_legacy, up_mwt, up_cli, sapv) = r
+            try:
+                qty_d = Decimal(str(qty or 0))
+                upm_d = Decimal(str(up_mwt or 0))
+                upc_d = Decimal(str(up_cli or 0))
+            except (TypeError, ValueError, ArithmeticError):
+                qty_d, upm_d, upc_d = Decimal("0"), Decimal("0"), Decimal("0")
+            sap_value_mwt    += (qty_d * upm_d)
+            sap_value_client += (qty_d * upc_d)
+            lines_out.append({
+                "id":                str(lid),
+                "producto_id":       str(pid) if pid else None,
+                "sku":               sku,
+                "talla":             size,
+                "qty":               int(qty_d) if qty_d == qty_d.to_integral_value() else float(qty_d),
+                "unit_price_mwt":    None if is_client else float(upm_d),
+                "unit_price_client": float(upc_d),
+                "product_label":     product_labels.get(str(pid)) if pid else None,
+                "sap":               sapv,
+            })
+
+        return Response({
+            "expediente_id":        str(exp.id),
+            "expediente_codigo":    getattr(exp, "codigo", None),
+            "sap_id":               None,
+            "full":                 True,
+            "client_id":            str(client_id_val) if client_id_val else None,
+            "client_label":         client_label,
+            "operating_company_id": str(getattr(exp, "operating_company_id", "") or "") or None,
+            "forma_pago":           getattr(exp, "forma_pago", None),
+            "payment_days":         getattr(exp, "credit_days", None),
+            "sap_value_mwt":        None if is_client else float(sap_value_mwt.quantize(Decimal("0.01"))),
+            "sap_value_client":     float(sap_value_client.quantize(Decimal("0.01"))),
+            "lines":                lines_out,
+        }, status=200)
+
+    # ══════════════════════════════════════════════════════════
+    # Helper · operaciones de líneas sobre TODO el expediente.
+    # Idéntico a _apply_sap_line_ops pero SIN filtro por SAP; las
+    # líneas nuevas nacen con sap = NULL (PENDIENTE_SAP).
+    # Devuelve (added_ids, removed_ids, updated_ids).
+    # ══════════════════════════════════════════════════════════
+    def _apply_full_line_ops(
+        self, *, cursor, exp, operating_company_id,
+        lines_added, lines_removed, lines_updated,
+        target_client_id=None,
+    ):
+        eff_exp_id = str(exp.id)
+        eff_client_id = (
+            target_client_id if target_client_id is not None
+            else getattr(exp, "client_id", None)
+        )
+        added_ids, removed_ids, updated_ids = [], [], []
+
+        # ── lines_removed (soft-delete, sin filtro SAP) ─────────
+        for raw_id in lines_removed:
+            try:
+                lid = str(raw_id).strip()
+            except (TypeError, ValueError):
+                continue
+            if not lid:
+                continue
+            try:
+                cursor.execute(
+                    """
+                    UPDATE expedientes.linea
+                       SET is_active = FALSE,
+                           updated_at = NOW()
+                     WHERE id = %s::uuid
+                       AND expediente_id = %s::uuid
+                       AND is_active = TRUE
+                    """,
+                    [lid, eff_exp_id],
+                )
+                if cursor.rowcount and cursor.rowcount > 0:
+                    removed_ids.append(lid)
+            except Exception as e:
+                log.warning("[edit_full] remove linea %s falló: %s", lid, e)
+
+        # ── lines_updated (qty + recalc total_price) ────────────
+        for ln in lines_updated:
+            if not isinstance(ln, dict):
+                continue
+            lid = (ln.get("id") or "").strip() if isinstance(ln.get("id"), str) else str(ln.get("id") or "")
+            if not lid:
+                continue
+            try:
+                new_qty = int(ln.get("qty"))
+            except (TypeError, ValueError):
+                continue
+            if new_qty <= 0:
+                continue
+            try:
+                cursor.execute(
+                    """
+                    UPDATE expedientes.linea
+                       SET qty = %s,
+                           total_price = ROUND(%s::numeric * unit_price, 2),
+                           updated_at = NOW()
+                     WHERE id = %s::uuid
+                       AND expediente_id = %s::uuid
+                       AND is_active = TRUE
+                    """,
+                    [new_qty, new_qty, lid, eff_exp_id],
+                )
+                if cursor.rowcount and cursor.rowcount > 0:
+                    updated_ids.append({"id": lid, "qty": new_qty})
+            except Exception as e:
+                log.warning("[edit_full] update linea %s falló: %s", lid, e)
+
+        # ── lines_added (insert con snapshot dual de precios, sap NULL) ──
+        if lines_added:
+            from apps.commercial.views import compute_client_price  # noqa: PLC0415
+
+            client_id_val = eff_client_id
+            oc_id_val     = getattr(exp, "oc_id", None)
+
+            unique_pids = []
+            for ln in lines_added:
+                if not isinstance(ln, dict):
+                    continue
+                pid = ln.get("producto_id")
+                if isinstance(pid, str) and len(pid) == 36:
+                    unique_pids.append(pid)
+            unique_pids = list(set(unique_pids))
+
+            price_map_mwt, price_map_client = {}, {}
+            if unique_pids:
+                try:
+                    placeholders = ",".join(["%s::uuid"] * len(unique_pids))
+                    cursor.execute(
+                        f"""
+                        SELECT id::text,
+                               sku,
+                               marca_id::text,
+                               precio_lista,
+                               precio_mwt,
+                               COALESCE(especificaciones->'client_prices', '{{}}'::jsonb) AS client_prices
+                          FROM productos.producto
+                         WHERE id IN ({placeholders})
+                        """,
+                        unique_pids,
+                    )
+
+                    def _to_decimal(v):
+                        try:
+                            d = Decimal(str(v))
+                            return d if d > 0 else None
+                        except (TypeError, ValueError, ArithmeticError):
+                            return None
+
+                    for pid, sku_db, brand_id, pl, p_mwt_override, cp_json in cursor.fetchall():
+                        cp_map = cp_json or {}
+                        if isinstance(cp_map, str):
+                            try:
+                                cp_map = json.loads(cp_map)
+                            except (TypeError, ValueError):
+                                cp_map = {}
+
+                        p_mwt = _to_decimal(
+                            cp_map.get(MWT_OPERATING_CLIENT_ID)
+                            or cp_map.get(str(MWT_OPERATING_CLIENT_ID))
+                        )
+                        if p_mwt is None:
+                            p_mwt = _to_decimal(p_mwt_override)
+                        if p_mwt is None and brand_id and sku_db:
+                            try:
+                                p_mwt = compute_client_price(
+                                    client_id=MWT_OPERATING_CLIENT_ID,
+                                    brand_id=brand_id,
+                                    product_sku=sku_db,
+                                    days_req=0,
+                                )
+                            except (TypeError, ValueError, ArithmeticError) as e:
+                                log.warning("[edit_full] waterfall MWT pid=%s: %s", pid, e)
+                                p_mwt = None
+                        if p_mwt is not None and p_mwt > 0:
+                            price_map_mwt[pid] = p_mwt
+                        else:
+                            try:
+                                price_map_mwt[pid] = Decimal(str(pl or 0))
+                            except (TypeError, ValueError, ArithmeticError):
+                                price_map_mwt[pid] = Decimal("0")
+
+                        p_cli = None
+                        if client_id_val:
+                            p_cli = _to_decimal(
+                                cp_map.get(str(client_id_val))
+                                or cp_map.get(client_id_val)
+                            )
+                        if p_cli is None and client_id_val and brand_id and sku_db:
+                            try:
+                                p_cli = compute_client_price(
+                                    client_id=client_id_val,
+                                    brand_id=brand_id,
+                                    product_sku=sku_db,
+                                    days_req=0,
+                                )
+                            except (TypeError, ValueError, ArithmeticError) as e:
+                                log.warning("[edit_full] waterfall CLIENT pid=%s: %s", pid, e)
+                                p_cli = None
+                        if p_cli is not None and p_cli > 0:
+                            price_map_client[pid] = p_cli
+                        else:
+                            price_map_client[pid] = price_map_mwt[pid]
+                except Exception as e:
+                    log.exception("[edit_full] price_map fetch failed: %s", e)
+                    price_map_mwt, price_map_client = {}, {}
+
+            for ln in lines_added:
+                if not isinstance(ln, dict):
+                    continue
+                sku = (ln.get("sku") or "").strip().upper()[:64]
+                if not sku:
+                    continue
+                talla = (ln.get("talla") or ln.get("size") or "")
+                talla = (str(talla).strip().upper()[:16] or None) if talla else None
+                cantidad = ln.get("cantidad") or ln.get("qty") or 0
+                try:
+                    cantidad = int(cantidad)
+                except (TypeError, ValueError):
+                    cantidad = 0
+                if cantidad <= 0:
+                    continue
+                pid = ln.get("producto_id")
+                pid = str(pid) if pid else None
+                unit_price_mwt    = (price_map_mwt.get(pid, Decimal("0"))
+                                     if pid else Decimal("0"))
+                unit_price_client = (price_map_client.get(pid, Decimal("0"))
+                                     if pid else Decimal("0"))
+                unit_price = (unit_price_mwt
+                              if str(operating_company_id) == MWT_OPERATING_CLIENT_ID
+                              else unit_price_client)
+                total_price = (unit_price * Decimal(cantidad)).quantize(Decimal("0.01"))
+
+                new_line_id = uuid.uuid4()
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO expedientes.linea (
+                            id, oc_id, expediente_id, producto_id,
+                            sku, size, qty,
+                            unit_price, unit_price_mwt, unit_price_client,
+                            total_price,
+                            sap,
+                            estado, is_active, created_at, updated_at
+                        ) VALUES (
+                            %s, %s, %s, %s,
+                            %s, %s, %s,
+                            %s, %s, %s,
+                            %s,
+                            NULL,
+                            'PENDIENTE_SAP', TRUE, NOW(), NOW()
+                        )
+                        """,
+                        [
+                            str(new_line_id),
+                            str(oc_id_val) if oc_id_val else None,
+                            eff_exp_id,
+                            pid,
+                            sku, talla, cantidad,
+                            unit_price, unit_price_mwt, unit_price_client,
+                            total_price,
+                        ],
+                    )
+                    added_ids.append(str(new_line_id))
+                except Exception as e:
+                    log.warning("[edit_full] insert linea sku=%s falló: %s", sku, e)
+
+        return added_ids, removed_ids, updated_ids
+
     @action(
         detail=True,
         methods=["post"],

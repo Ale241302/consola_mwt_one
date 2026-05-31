@@ -95,7 +95,11 @@ export default function CreateExpedienteWizardLite() {
   const [searchParams] = useSearchParams();
   const editExp = isAdmin ? (searchParams.get('editExp') || null) : null;
   const editSap = isAdmin ? (searchParams.get('editSap') || null) : null;
-  const isEditMode = !!(editExp && editSap);
+  // Sprint 2026-05-31 · Modo EDICIÓN GENERAL (?editExpFull=). Edita TODO
+  // el expediente (todas las líneas/SAPs) vía /api/expedientes/{id}/edit-full/.
+  const editExpFull = isAdmin ? (searchParams.get('editExpFull') || null) : null;
+  const isFullEdit = !!editExpFull;
+  const isEditMode = !!((editExp && editSap) || isFullEdit);
   // ── Sprint 2026-05-06 · Step 0 (operador) solo para ADMIN/CEO/staff.
   // Para CLIENT_* arrancamos directo en el Step 1 con el cliente
   // pre-fijado a su empresa primaria (legal_entity_ids[0]).
@@ -423,7 +427,9 @@ export default function CreateExpedienteWizardLite() {
     (async () => {
       try {
         const token = getToken();
-        const url = `/api/expedientes/${encodeURIComponent(editExp)}/sap/${encodeURIComponent(editSap)}/`;
+        const url = isFullEdit
+          ? `/api/expedientes/${encodeURIComponent(editExpFull)}/edit-full/`
+          : `/api/expedientes/${encodeURIComponent(editExp)}/sap/${encodeURIComponent(editSap)}/`;
         const resp = await fetch(url, {
           headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         });
@@ -473,7 +479,7 @@ export default function CreateExpedienteWizardLite() {
     })();
     return () => { cancel = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEditMode, editExp, editSap]);
+  }, [isEditMode, editExp, editSap, editExpFull, isFullEdit]);
 
   // ── Validación de step ──
   const canAdvance = useMemo(() => {
@@ -545,7 +551,12 @@ export default function CreateExpedienteWizardLite() {
           && selClient?.id
           && selClient.id !== initialClientIdRef.current
         );
-        if (clientChanged && !pendingSplitBodyRef.current) {
+        // Sprint 2026-05-31 · en edición GENERAL no hay split por-SAP:
+        // el cambio de cliente se aplica directo al expediente completo.
+        if (isFullEdit && clientChanged) {
+          body.client_id = selClient.id;
+        }
+        if (clientChanged && !isFullEdit && !pendingSplitBodyRef.current) {
           body.client_id = selClient.id;
           // Guardamos el body en el ref + abrimos el modal. El handler
           // de confirmación re-disparará submit() poniendo el ref pre-aprobado.
@@ -562,7 +573,9 @@ export default function CreateExpedienteWizardLite() {
         }
 
         const token = getToken();
-        const url = `/api/expedientes/${encodeURIComponent(editExp)}/sap/${encodeURIComponent(editSap)}/`;
+        const url = isFullEdit
+          ? `/api/expedientes/${encodeURIComponent(editExpFull)}/edit-full/`
+          : `/api/expedientes/${encodeURIComponent(editExp)}/sap/${encodeURIComponent(editSap)}/`;
         const resp = await fetch(url, {
           method: 'PATCH',
           headers: {
@@ -583,7 +596,7 @@ export default function CreateExpedienteWizardLite() {
         // Parse response — puede traer new_expediente_id si hubo split.
         let respData = null;
         try { respData = await resp.json(); } catch { /* fallthrough */ }
-        const targetExpId = respData?.new_expediente_id || editExp;
+        const targetExpId = respData?.new_expediente_id || editExp || editExpFull;
         const didSplit = !!respData?.split;
 
         // OK → resolver oc_id del expediente final (puede ser el nuevo).
@@ -720,7 +733,7 @@ export default function CreateExpedienteWizardLite() {
       setSaving(false);
     }
   }, [saving, orderLines, selClient, operatingCompanyId, paymentDays, paymentMethod, navigate,
-      isEditMode, editExp, editSap, lang]);
+      isEditMode, editExp, editSap, editExpFull, isFullEdit, lang]);
 
   return (
     <div className="page" style={{ paddingBottom: 96 }}>
@@ -735,14 +748,20 @@ export default function CreateExpedienteWizardLite() {
           </div>
           <h1 className="page-title">
             {isEditMode
-              ? (lang === "es" ? `Editar SAP ${editSap}` : `Edit SAP ${editSap}`)
+              ? (isFullEdit
+                  ? (lang === "es" ? "Editar expediente (general)" : "Edit file (general)")
+                  : (lang === "es" ? `Editar SAP ${editSap}` : `Edit SAP ${editSap}`))
               : (lang === "es" ? "Nuevo expediente" : "New file")}
           </h1>
           <div className="page-subtitle">
             {isEditMode
-              ? (lang === "es"
-                  ? "Editás los datos de este SAP. Los cambios afectan solo a este SAP, no al expediente entero."
-                  : "Editing this SAP. Changes affect only this SAP, not the entire file.")
+              ? (isFullEdit
+                  ? (lang === "es"
+                      ? "Editás el expediente completo. Los cambios afectan TODAS las líneas y SAPs."
+                      : "Editing the whole file. Changes affect ALL lines and SAPs.")
+                  : (lang === "es"
+                      ? "Editás los datos de este SAP. Los cambios afectan solo a este SAP, no al expediente entero."
+                      : "Editing this SAP. Changes affect only this SAP, not the entire file."))
               : (lang === "es"
                   ? "Ingreso puro de pedido. Datos comerciales y logísticos se completan después en el detalle."
                   : "Pure order intake. Commercial/logistics data is filled later in the detail view.")}

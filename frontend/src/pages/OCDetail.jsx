@@ -641,6 +641,26 @@ export default function ScreenOCDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_expIdsKey]);
 
+  // Sprint 2026-05-31 · expediente "primario" de la OC para EDICIÓN GENERAL.
+  // Elegimos el expediente con más líneas asociadas (1:1 en el caso común);
+  // fallback al primero. Alimenta el botón "Editar general" del header.
+  const primaryExpId = useMemo(() => {
+    const exps = apiOcExpedientes || [];
+    if (!exps.length) return null;
+    const counts = {};
+    (apiOcLines || []).forEach((l) => {
+      const k = l.exp_id || l.expediente_id;
+      if (k) counts[k] = (counts[k] || 0) + 1;
+    });
+    let best = exps[0]?.id || null;
+    let bestN = -1;
+    exps.forEach((e) => {
+      const n = counts[e.id] || 0;
+      if (n > bestN) { bestN = n; best = e.id; }
+    });
+    return best;
+  }, [apiOcExpedientes, apiOcLines]);
+
   // Sprint 2026-05-01: AddOCProductModal devuelve un array de rows con
   // { sku, talla, cantidad, producto_id, product_label, unit_price } —
   // una row por talla con qty > 0. addProduct las inserta como extraLines.
@@ -1047,6 +1067,21 @@ export default function ScreenOCDetail() {
 
         <div className="flex gap-2">
           <button className="btn btn-secondary"><IconDownload size={14}/>{tr(lang,'export')}</button>
+          {/* Sprint 2026-05-31 · Editar GENERAL (CEO-ONLY): edita el expediente
+              completo (todas las líneas y SAPs) reutilizando el wizard en modo
+              ?editExpFull=. Coexiste con la edición por-SAP del detalle. */}
+          {isAdmin && primaryExpId && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => navigate(`/portal/nueva-oc?editExpFull=${encodeURIComponent(primaryExpId)}`)}
+              title={lang === 'es'
+                ? 'Editar el expediente completo — operador, cliente, productos, términos de pago'
+                : 'Edit the whole file — operator, client, products, payment terms'}
+            >
+              {lang === 'es' ? '✎ Editar general' : '✎ Edit (general)'}
+            </button>
+          )}
           {/* "+ Agregar SAP" → register_sap (CEO-ONLY).
               Cero validaciones de datos comerciales: el botón queda
               habilitado siempre que haya un expediente elegible (en

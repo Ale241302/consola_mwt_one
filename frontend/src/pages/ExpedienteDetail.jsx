@@ -517,6 +517,29 @@ export default function ScreenExpedienteDetail() {
                 {lang === 'es' ? '✎ Editar' : '✎ Edit'}
               </button>
             )}
+            {/* Sprint 2026-05-31 · Editar GENERAL — edita TODO el expediente
+                (todas las líneas y SAPs) vía wizard ?editExpFull=. Solo Admin. */}
+            {!isClient && exp.id && (
+              <button
+                type="button"
+                onClick={() => navigate(`/portal/nueva-oc?editExpFull=${encodeURIComponent(exp.id)}`)}
+                style={{
+                  marginLeft: 8,
+                  padding: '3px 12px',
+                  borderRadius: 999,
+                  background: 'rgba(255,255,255,0.06)',
+                  color: '#fff', fontSize: 11, fontWeight: 700,
+                  letterSpacing: 0.4,
+                  border: '1px solid rgba(255,255,255,0.30)',
+                  cursor: 'pointer',
+                }}
+                title={lang === 'es'
+                  ? 'Editar el expediente completo (todas las líneas y SAPs)'
+                  : 'Edit the whole file (all lines and SAPs)'}
+              >
+                {lang === 'es' ? '✎ Editar general' : '✎ Edit (general)'}
+              </button>
+            )}
             {exp.is_blocked && (
               <span style={{ marginLeft: !isClient ? 8 : 'auto' }}>
                 <Badge kind="critical" dot>{lang==='es' ? 'BLOQUEADO · Crédito' : 'BLOCKED · Credit'}</Badge>
