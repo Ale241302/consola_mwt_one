@@ -35,11 +35,24 @@ export const INVOICE_AUDIENCE = Object.freeze({
   CLIENT: "CLIENT",
 });
 
-// Tasas tributarias de importación (régimen calzado CR) aplicadas sobre el
-// CIF. Única fuente de verdad — ajustar aquí si cambia la política fiscal.
-//   · ARANCEL (DAI) = 14% s/CIF
-//   · VENTA   (IVA) = 12% s/CIF
-export const CR_TAX_RATES = Object.freeze({ ARANCEL: 0.14, VENTA: 0.12 });
+// Tasas tributarias de importación POR NCM (partida arancelaria). Cada
+// producto trae su `ncm` (productos.producto.especificaciones->>'ncm'); el
+// backend lo propaga por línea en invoice_payload. Modelo CR:
+//   · DAI       = % s/CIF
+//   · LEY_6946  = % s/CIF (Seguridad Ciudadana)
+//   · IVA       = % s/(CIF + DAI + LEY_6946)   (acreditable)
+// Única fuente de verdad — agregar/ajustar NCMs aquí. `_default` aplica a
+// cualquier NCM no listado.
+export const NCM_TAX_RATES = Object.freeze({
+  "6403.99.90": { dai: 0.14, ley_6946: 0.01, iva: 0.13 }, // calzado de seguridad
+  _default:     { dai: 0.14, ley_6946: 0.01, iva: 0.13 },
+});
+
+/** Devuelve las tasas para un NCM (normaliza separadores; cae a _default). */
+export function taxRatesForNcm(ncm) {
+  const key = String(ncm || "").trim();
+  return NCM_TAX_RATES[key] || NCM_TAX_RATES._default;
+}
 
 // Clasificación de cost_lines que entran al CIF (flete + seguro).
 const KIND_FREIGHT = new Set(["FLETE", "FREIGHT", "CONSOLIDACION"]);
@@ -184,39 +197,110 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
       </tr>`).join("");
   const costsTotal = costs.reduce((a, c) => a + Number(c.amount_usd || 0), 0);
 
-  // ── CIF dual + impuestos (solo si el expediente es operado por MWT) ──
-  // Dos CIF: el "aprox" sobre costo Muito Work Limitada y el "real" sobre
-  // costo cliente. CIF = (suma por par) + flete + seguro. Impuestos sobre
-  // el CIF: Arancel 14% + Impuesto de venta 12%.
+  // ── Nacionalización · impuestos dinámicos por NCM ──
+  // Flete + seguro se prorratean por valor de mercadería → CIF por línea;
+  // cada línea aplica las tasas de SU NCM (DAI + Ley 6946 sobre CIF, IVA sobre
+  // CIF+DAI+Ley6946). Se computan dos bases:
+  //   · "real"  = precio cliente (valor declarado en aduana)
+  //   · "aprox" = costo Muito Work Limitada (referencia interna, CEO-ONLY)
   const kindUp = (c) => String(c.kind || "").toUpperCase();
   const freight = costs.reduce((a, c) => a + (KIND_FREIGHT.has(kindUp(c)) ? Number(c.amount_usd || 0) : 0), 0);
   const insurance = costs.reduce((a, c) => a + (KIND_INSURANCE.has(kindUp(c)) ? Number(c.amount_usd || 0) : 0), 0);
-  const mwtGoods = lineas.reduce((a, l) => a + lineQty(l) * (l.unit_price_mwt != null ? Number(l.unit_price_mwt) : Number(l.unit_value_usd || 0)), 0);
-  const clientGoods = lineas.reduce((a, l) => a + lineQty(l) * (l.unit_price_client != null ? Number(l.unit_price_client) : Number(l.unit_value_usd || 0)), 0);
-  const cifMwt = mwtGoods + freight + insurance;
-  const cifClient = clientGoods + freight + insurance;
-  const cifCard = (title, sub, goods, cif) => `
+  const extraTotal = freight + insurance;
+  const unitMwt = (l) => Number(l.unit_price_mwt != null ? l.unit_price_mwt : (l.unit_value_usd || 0));
+  const unitClient = (l) => Number(l.unit_price_client != null ? l.unit_price_client : (l.unit_value_usd || 0));
+  const computeNac = (priceFn) => {
+    const goodsTotal = lineas.reduce((a, l) => a + lineQty(l) * priceFn(l), 0) || 0;
+    const rows = lineas.map((l) => {
+      const qty = lineQty(l);
+      const goods = qty * priceFn(l);
+      const extra = goodsTotal > 0 ? extraTotal * (goods / goodsTotal) : 0;
+      const cif = goods + extra;
+      const r = taxRatesForNcm(l.ncm);
+      const dai = cif * r.dai;
+      const ley = cif * r.ley_6946;
+      const iva = (cif + dai + ley) * r.iva;
+      const total = cif + dai + ley + iva;
+      return { l, qty, ncm: l.ncm || "—", goods, extra, cif, dai, ley, iva, total };
+    });
+    const sum = (k) => rows.reduce((a, x) => a + x[k], 0);
+    return { rows, totals: { goods: sum("goods"), extra: sum("extra"), cif: sum("cif"), dai: sum("dai"), ley: sum("ley"), iva: sum("iva"), total: sum("total") } };
+  };
+  const nacReal = computeNac(unitClient);
+  const nacMwt = computeNac(unitMwt);
+  const nacRows = nacReal.rows.map((x, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td class="m">${esc(x.l.sku || "—")}</td>
+        <td class="m">${esc(x.ncm)}</td>
+        <td class="r">${fmtInt(x.qty)}</td>
+        <td class="r">${usd(x.goods)}</td>
+        <td class="r">${usd(x.extra)}</td>
+        <td class="r"><strong>${usd(x.cif)}</strong></td>
+        <td class="r">${usd(x.dai)}</td>
+        <td class="r">${usd(x.ley)}</td>
+        <td class="r">${usd(x.iva)}</td>
+        <td class="r"><strong>${usd(x.total)}</strong></td>
+      </tr>`).join("");
+  const nacCard = (title, sub, n) => `
     <div class="card">
       <div class="card-h"><h3>${esc(title)}</h3></div>
       <div class="card-b">
         <div class="sr"><span class="k">${esc(sub)}</span><span class="v"></span></div>
-        <div class="sr"><span class="k">${lang === "es" ? "Suma por par" : "Sum per pair"}</span><span class="v">${usd(goods)}</span></div>
-        <div class="sr"><span class="k">${lang === "es" ? "Flete" : "Freight"}</span><span class="v">${usd(freight)}</span></div>
-        <div class="sr"><span class="k">${lang === "es" ? "Seguro" : "Insurance"}</span><span class="v">${usd(insurance)}</span></div>
-        <div class="sr" style="border-top:2px solid var(--navy);"><span class="k" style="font-weight:700;">CIF</span><span class="v" style="font-size:14px;">${usd(cif)}</span></div>
-        <div class="sr"><span class="k">${lang === "es" ? "Arancel" : "Duty"} (${(CR_TAX_RATES.ARANCEL * 100).toFixed(0)}%)</span><span class="v">${usd(cif * CR_TAX_RATES.ARANCEL)}</span></div>
-        <div class="sr"><span class="k">${lang === "es" ? "Impuesto venta" : "Sales tax"} (${(CR_TAX_RATES.VENTA * 100).toFixed(0)}%)</span><span class="v">${usd(cif * CR_TAX_RATES.VENTA)}</span></div>
-        <div class="sr"><span class="k" style="font-weight:700;">${lang === "es" ? "Total impuestos" : "Total taxes"}</span><span class="v">${usd(cif * (CR_TAX_RATES.ARANCEL + CR_TAX_RATES.VENTA))}</span></div>
-        <div class="sr" style="border-top:2px solid var(--mint);"><span class="k" style="font-weight:700;">${lang === "es" ? "Total con impuestos" : "Total with taxes"}</span><span class="v" style="color:var(--ok);">${usd(cif * (1 + CR_TAX_RATES.ARANCEL + CR_TAX_RATES.VENTA))}</span></div>
+        <div class="sr"><span class="k">${lang === "es" ? "Suma mercadería" : "Goods total"}</span><span class="v">${usd(n.totals.goods)}</span></div>
+        <div class="sr"><span class="k">${lang === "es" ? "Flete + seguro" : "Freight + insurance"}</span><span class="v">${usd(n.totals.extra)}</span></div>
+        <div class="sr" style="border-top:2px solid var(--navy);"><span class="k" style="font-weight:700;">CIF</span><span class="v" style="font-size:14px;">${usd(n.totals.cif)}</span></div>
+        <div class="sr"><span class="k">DAI</span><span class="v">${usd(n.totals.dai)}</span></div>
+        <div class="sr"><span class="k">Ley 6946</span><span class="v">${usd(n.totals.ley)}</span></div>
+        <div class="sr"><span class="k">IVA</span><span class="v">${usd(n.totals.iva)}</span></div>
+        <div class="sr"><span class="k" style="font-weight:700;">${lang === "es" ? "Total impuestos" : "Total taxes"}</span><span class="v">${usd(n.totals.dai + n.totals.ley + n.totals.iva)}</span></div>
+        <div class="sr" style="border-top:2px solid var(--mint);"><span class="k" style="font-weight:700;">${lang === "es" ? "Total nacionalizado" : "Nationalized total"}</span><span class="v" style="color:var(--ok);">${usd(n.totals.total)}</span></div>
       </div>
     </div>`;
+  // R3 POL_VISIBILIDAD: el CIF/base MWT (costo interno) NO se muestra al cliente.
   const cifSection = oc.operated_by_mwt ? `
   <div class="sect">
-    <div class="sect-h"><h3>${lang === "es" ? "CIF e impuestos · doble base (operado por Muito Work Limitada)" : "CIF & taxes · dual base"}</h3></div>
+    <div class="sect-h"><h3>${lang === "es" ? "Nacionalización · impuestos por NCM" : "Nationalization · taxes by NCM"}</h3></div>
+    <div class="card-b" style="padding:0;">
+      <table class="ct">
+        <thead>
+          <tr>
+            <th>#</th><th>SKU</th><th>NCM</th>
+            <th class="r">${lang === "es" ? "Cant." : "Qty"}</th>
+            <th class="r">${lang === "es" ? "Valor" : "Value"}</th>
+            <th class="r">${lang === "es" ? "Flete+Seg." : "Frt+Ins."}</th>
+            <th class="r">CIF</th>
+            <th class="r">DAI</th>
+            <th class="r">Ley 6946</th>
+            <th class="r">IVA</th>
+            <th class="r">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${nacRows}
+          <tr class="trow">
+            <td colspan="3">${lang === "es" ? "TOTALES (base cliente)" : "TOTALS (client base)"}</td>
+            <td class="r">${fmtInt(unitsTotal)}</td>
+            <td class="r">${usd(nacReal.totals.goods)}</td>
+            <td class="r">${usd(nacReal.totals.extra)}</td>
+            <td class="r">${usd(nacReal.totals.cif)}</td>
+            <td class="r">${usd(nacReal.totals.dai)}</td>
+            <td class="r">${usd(nacReal.totals.ley)}</td>
+            <td class="r">${usd(nacReal.totals.iva)}</td>
+            <td class="r"><strong>${usd(nacReal.totals.total)}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
     <div class="card-b">
       <div class="dual">
-        ${cifCard(lang === "es" ? "CIF Muito Work Limitada (aprox.)" : "CIF MWT (approx.)", lang === "es" ? "Base: costo operador" : "Operator cost basis", mwtGoods, cifMwt)}
-        ${cifCard(lang === "es" ? "CIF Cliente (real)" : "CIF Client (real)", lang === "es" ? "Base: costo cliente" : "Client cost basis", clientGoods, cifClient)}
+        ${nacCard(lang === "es" ? "CIF Cliente (real)" : "CIF Client (real)", lang === "es" ? "Base: valor declarado (precio cliente)" : "Declared value (client price)", nacReal)}
+        ${!isClient ? nacCard(lang === "es" ? "CIF Muito Work Limitada (aprox.)" : "CIF MWT (approx.)", lang === "es" ? "Base: costo operador · CEO-ONLY" : "Operator cost · CEO-ONLY", nacMwt) : ""}
+      </div>
+      <div style="font-size:10px;color:var(--t3);margin-top:8px;line-height:1.6;">
+        ${lang === "es"
+          ? "Impuestos dinámicos por NCM: DAI y Ley 6946 sobre CIF; IVA sobre CIF+DAI+Ley6946. Flete y seguro prorrateados por valor de cada línea. El IVA es crédito fiscal acreditable."
+          : "Dynamic taxes by NCM. VAT is a creditable tax credit."}
       </div>
     </div>
   </div>` : "";

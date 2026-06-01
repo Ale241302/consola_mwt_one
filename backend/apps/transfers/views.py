@@ -1239,6 +1239,23 @@ class TransferenciaViewSet(viewsets.ViewSet):
         operating_company_label = (
             "Muito Work Limitada" if operated_by_mwt else "Cliente final"
         )
+        # NCM por producto (productos.producto.especificaciones->>'ncm') para
+        # impuestos dinámicos de nacionalización en la factura (Sprint 2026-06-01).
+        ncm_map = {}
+        try:
+            prod_ids = list({str(l.producto_id) for l in lineas if l.producto_id})
+            if prod_ids:
+                from django.db import connection as _conn
+                with _conn.cursor() as c:
+                    c.execute(
+                        "SELECT id, especificaciones->>'ncm' "
+                        "FROM productos.producto WHERE id = ANY(%s::uuid[])",
+                        [prod_ids],
+                    )
+                    for r in c.fetchall():
+                        ncm_map[str(r[0])] = r[1]
+        except Exception:
+            log.exception("[invoice_payload] ncm lookup failed trf=%s", t.id)
         cost_lines = list(CostLine.objects.filter(transferencia_id=t.id, is_active=True).order_by("kind"))
         documentos = list(TransferenciaDocumento.objects.filter(transferencia_id=t.id, is_active=True))
         eventos = list(Evento.objects.filter(transferencia_id=t.id).order_by("-created_at")[:30])
@@ -1335,6 +1352,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 "operating_company_id": (line_pricing.get(str(l.id), {}) or {}).get("operating_company_id"),
                 "expediente_codigo": (line_pricing.get(str(l.id), {}) or {}).get("expediente_codigo"),
                 "proforma_codigo":   (line_pricing.get(str(l.id), {}) or {}).get("proforma_codigo"),
+                "ncm":               ncm_map.get(str(l.producto_id)) if l.producto_id else None,
             }) for l in lineas],
             "cost_breakdown": [{
                 "kind":       c.kind,
