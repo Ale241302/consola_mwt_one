@@ -899,6 +899,11 @@ export default function ScreenOCDetail() {
   const userLegalEntityIds = ((authUser && authUser.legal_entity_ids) || [])
     .map((x) => String(x || '').toLowerCase());
   const isOperator = (apiOcExpedientes || []).some((e) => {
+    // Sprint 2026-05-31 · flag autoritativo del backend (legal_entity_ids
+    // fresco server-side). Cubre el caso en que el user fue asignado a la
+    // empresa operadora despues de su login y el localStorage quedo viejo.
+    if (e && e.viewer_is_operator) return true;
+    // Fallback: legal_entity_ids del user cacheado en el frontend.
     const opId = String(e?.operating_company_id || '').toLowerCase();
     return opId && userLegalEntityIds.includes(opId);
   });

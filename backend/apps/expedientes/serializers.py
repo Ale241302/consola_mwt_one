@@ -118,6 +118,8 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
     proforma_codigos = serializers.SerializerMethodField()
     oc_codigos       = serializers.SerializerMethodField()
     sap_codigos      = serializers.SerializerMethodField()
+    # Sprint 2026-05-31 · flag autoritativo de OPERADOR (server-side).
+    viewer_is_operator = serializers.SerializerMethodField()
 
     # ── role helpers ───────────────────────────────────────────
     def _viewer_role(self):
@@ -254,6 +256,35 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
         except Exception:  # noqa: BLE001
             return []
 
+    # ── viewer_is_operator ─────────────────────────────────────
+    def get_viewer_is_operator(self, obj):
+        """True si el viewer puede ver el costo/precio MWT de este expediente.
+
+        Autoritativo (server-side): admin/CEO/superuser, o usuario cuyo
+        `legal_entity_ids` (leido FRESCO de users.mwtuser en cada request
+        por MwtJWTAuthentication) contiene el operating_company_id del
+        expediente — i.e. es el OPERADOR. El frontend usa este flag en
+        lugar del legal_entity_ids cacheado en localStorage, que puede
+        quedar desactualizado si el usuario fue asignado a la empresa
+        operadora DESPUES de su ultimo login.
+        """
+        request = self.context.get("request") if hasattr(self, "context") else None
+        user = getattr(request, "user", None) if request else None
+        if user is None or not getattr(user, "is_authenticated", False):
+            return False
+        if getattr(user, "is_superuser", False):
+            return True
+        if self._viewer_role() in ("ADMIN", "CEO"):
+            return True
+        op = str(getattr(obj, "operating_company_id", "") or "").strip().lower()
+        if not op:
+            return False
+        leis = {
+            str(x).strip().lower()
+            for x in (getattr(user, "legal_entity_ids", None) or [])
+        }
+        return op in leis
+
     class Meta:
         model  = Expediente
         fields = (
@@ -277,6 +308,8 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             "proforma_codigo",
             # Sprint 2026-05-17 · arrays role-aware
             "proforma_codigos", "oc_codigos", "sap_codigos",
+            # Sprint 2026-05-31 · flag de operador (visibilidad de costo MWT)
+            "viewer_is_operator",
         )
 
 

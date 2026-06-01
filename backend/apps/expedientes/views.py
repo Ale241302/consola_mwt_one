@@ -313,7 +313,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
             client_field="client_id",
             extra_fields=("operating_company_id",),
         )
-        return Response(ExpedienteListSerializer(qs, many=True).data)
+        return Response(ExpedienteListSerializer(qs, many=True, context={"request": request}).data)
 
     def retrieve(self, request, pk=None):
         # Lookup tolerante: el `pk` puede venir como UUID (canónico) o
