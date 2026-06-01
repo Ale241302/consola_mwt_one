@@ -179,7 +179,7 @@ export class ApiError extends Error {
 // un deploy (docker compose recrea el contenedor): nginx/Cloudflare devuelven
 // 502/503/504/522/523/524/408 o hay falla de red. Solo reintentamos métodos
 // idempotentes (GET/HEAD) para NO duplicar mutaciones (POST/PATCH/DELETE).
-const _TRANSIENT_STATUS = new Set([408, 502, 503, 504, 522, 523, 524]);
+const _TRANSIENT_STATUS = new Set([408, 502, 503, 504, 520, 521, 522, 523, 524]);
 const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const _isIdempotent = (m) => {
   const u = String(m || "GET").toUpperCase();

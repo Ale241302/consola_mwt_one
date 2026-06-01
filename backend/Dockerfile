@@ -42,4 +42,9 @@ ENTRYPOINT ["docker-entrypoint.sh"]
 # el matchmaker IA con PDFs de 10+ líneas (OpenAI tarda 15-30s, más SDK
 # retries internos). Con timeout=120s damos margen al request más lento
 # del sistema (extract_document → cross_match → persist).
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "120"]
+# Sprint 2026-05-31 · concurrencia gthread. Antes: 3 workers sync → el
+# dashboard dispara ~18 requests en paralelo y endpoints I/O-bound (ej. el
+# FX externo USD/BRL, hasta ~12s en cache fria) saturaban los 3 workers →
+# nginx timeout → Cloudflare 520. Con gthread una request bloqueada en I/O
+# no mata a las demas. 4 workers x 8 threads = 32 slots concurrentes.
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--threads", "8", "--worker-class", "gthread", "--timeout", "120", "--graceful-timeout", "30"]
