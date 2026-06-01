@@ -2344,7 +2344,12 @@ export default function ScreenOCDetail() {
           expediente de esta OC. Click en fila → /transferencias/{id}.
           Solo se renderiza para roles internos (CEO/Admin): el cliente
           B2B no ve el costo interno de los movimientos. */}
-      {!isClient && (
+      {/* Sprint 2026-05-31 · "Costos de movimientos" visible para admin/CEO
+          Y para el OPERADOR de MWT (canSeeMwtPrice = isAdmin || isOperator).
+          El endpoint transferencia-costos no exige required_module, así que
+          el operador (rol CLIENT_*) puede traerlo. Un cliente final puro
+          (no operador) sigue sin verlo. */}
+      {canSeeMwtPrice && (
         <OCTransferCostsCard ocId={ocId} lang={lang} navigate={navigate} />
       )}
 
