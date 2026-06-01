@@ -34,6 +34,54 @@ log = logging.getLogger(__name__)
 # MinIO client (lazy) — se cachea la instancia entre llamadas
 # --------------------------------------------------------------------
 _minio_client = None
+_minio_presign_client = None
+
+
+def _get_minio_presign_client():
+    """Cliente MinIO usado SOLO para firmar URLs presignadas.
+
+    Firma con el endpoint que el cliente final abrirá: MINIO_PUBLIC_ENDPOINT
+    si está configurado, si no MINIO_ENDPOINT. Esto es crítico porque en AWS
+    SigV4 el `Host` forma parte de `SignedHeaders`; firmar con un host
+    (ej. interno `minio:9000`) y luego reescribir el host de la URL a otro
+    (ej. público `187.77.218.102:9000`) invalida la firma → el servidor
+    responde `SignatureDoesNotMatch`. Firmando directamente contra el host
+    público, la firma cuadra sin reescrituras.
+
+    Para operaciones servidor↔servidor (put/delete/bucket) se sigue usando
+    `_get_minio_client()` (endpoint interno).
+    """
+    global _minio_presign_client
+    if _minio_presign_client is not None:
+        return _minio_presign_client
+    try:
+        from minio import Minio  # noqa: PLC0415
+    except Exception as e:
+        log.warning("minio lib no disponible: %s", e)
+        return None
+
+    pub = (getattr(settings, "MINIO_PUBLIC_ENDPOINT", "") or
+           getattr(settings, "MINIO_ENDPOINT", "") or "")
+    access = getattr(settings, "MINIO_ACCESS_KEY", "") or ""
+    secret = getattr(settings, "MINIO_SECRET_KEY", "") or ""
+    if not pub or not access or not secret:
+        return None
+
+    has_scheme = "://" in pub
+    parsed = urlparse(pub if has_scheme else f"http://{pub}")
+    host = parsed.netloc or parsed.path
+    if has_scheme:
+        secure = parsed.scheme == "https"
+    else:
+        secure = bool(getattr(settings, "MINIO_SECURE", False))
+    try:
+        _minio_presign_client = Minio(
+            host, access_key=access, secret_key=secret, secure=secure,
+        )
+        return _minio_presign_client
+    except Exception as e:
+        log.error("Fallo al construir cliente MinIO (presign): %s", e)
+        return None
 
 
 def _get_minio_client():
@@ -133,22 +181,15 @@ def generate_signed_url(
     if method == "PUT":
         ensure_bucket(bucket)
 
+    # Firmar con el endpoint PÚBLICO (no reescribir el host después de firmar:
+    # eso rompía la firma SigV4 → SignatureDoesNotMatch). El cliente de
+    # presign usa MINIO_PUBLIC_ENDPOINT (fallback MINIO_ENDPOINT).
+    signer = _get_minio_presign_client() or client
     try:
         if method == "PUT":
-            url = client.presigned_put_object(bucket, key, expires=_dt.timedelta(seconds=ttl))
+            url = signer.presigned_put_object(bucket, key, expires=_dt.timedelta(seconds=ttl))
         else:
-            url = client.presigned_get_object(bucket, key, expires=_dt.timedelta(seconds=ttl))
-
-        # Si MINIO_PUBLIC_ENDPOINT está configurado, reescribimos el host de la URL firmada
-        pub_endpoint = getattr(settings, "MINIO_PUBLIC_ENDPOINT", "")
-        if pub_endpoint:
-            from urllib.parse import urlparse, urlunparse
-            internal_parsed = urlparse(getattr(settings, "MINIO_ENDPOINT", ""))
-            pub_parsed = urlparse(pub_endpoint)
-            url_parsed = urlparse(url)
-            if url_parsed.netloc == internal_parsed.netloc:
-                url_parsed = url_parsed._replace(scheme=pub_parsed.scheme, netloc=pub_parsed.netloc)
-                url = urlunparse(url_parsed)
+            url = signer.presigned_get_object(bucket, key, expires=_dt.timedelta(seconds=ttl))
     except Exception as e:
         log.error("presigned_%s_object(%s/%s) falló: %s", method.lower(), bucket, key, e)
         return {
