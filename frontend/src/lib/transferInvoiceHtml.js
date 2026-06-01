@@ -12,8 +12,7 @@
 //   2. Detalle de mercadería al precio de la audiencia (MWT vs Cliente).
 //   3. Costos registrados del movimiento (cost_lines reales: descripción
 //        del costo + valor — Flete, Seguro, etc.).
-//   4. Liquidación interna · Landed cost por línea (datos reales).
-//   5. Resumen por talla.
+//   4. Resumen por talla.
 //
 // NOTA: NO se calculan impuestos de nacionalización (DAI/IVA/Ley 6946). El
 // documento refleja únicamente datos reales del movimiento (precios y
@@ -174,28 +173,6 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         <td class="r"><strong>${usd(c.amount_usd)}</strong></td>
       </tr>`).join("");
   const costsTotal = costs.reduce((a, c) => a + Number(c.amount_usd || 0), 0);
-
-  // ── Liquidación interna (landed cost por línea, datos reales) ──
-  const landedRows = lineas.map((l, i) => {
-    const qty = lineQty(l);
-    const fobUnit = Number(l.unit_value_usd || 0);
-    const share = Number(l.cost_share_usd || 0);
-    const landedUnit = l.landed_cost_usd != null
-      ? Number(l.landed_cost_usd)
-      : (qty ? (qty * fobUnit + share) / qty : fobUnit);
-    const landedTot = landedUnit * qty;
-    return `
-      <tr>
-        <td>${i + 1}</td>
-        <td class="m">${esc(l.sku || "—")}</td>
-        <td class="r">${esc(l.size || "—")}</td>
-        <td class="r">${fmtInt(qty)}</td>
-        <td class="r">${usd4(fobUnit)}</td>
-        <td class="r cshare">+${usd(share)}</td>
-        <td class="r landed">${usd4(landedUnit)}</td>
-        <td class="r"><strong>${usd(landedTot)}</strong></td>
-      </tr>`;
-  }).join("");
 
   // ── Resumen por talla ──
   const bySize = {};
@@ -413,36 +390,6 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
         <tbody>
           ${costRows}
           <tr class="trow"><td colspan="5">${lang === "es" ? "Total costos USD" : "Total costs USD"}</td><td class="r"><strong>${usd(costsTotal)}</strong></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>` : ""}
-
-  ${lineas.length > 0 ? `
-  <div class="sect">
-    <div class="sect-h"><h3>${lang === "es" ? "Liquidación interna · Landed cost por línea" : "Internal settlement · Landed cost per line"}</h3></div>
-    <div class="card-b" style="padding:0;">
-      <table class="ct">
-        <thead>
-          <tr>
-            <th>#</th><th>SKU</th><th class="r">${lang === "es" ? "Talla" : "Size"}</th>
-            <th class="r">${lang === "es" ? "Cant." : "Qty"}</th>
-            <th class="r">FOB unit.</th>
-            <th class="r">${lang === "es" ? "Costo asig." : "Cost share"}</th>
-            <th class="r">${lang === "es" ? "Landed unit." : "Landed unit"}</th>
-            <th class="r">${lang === "es" ? "Landed total" : "Landed total"}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${landedRows}
-          <tr class="trow">
-            <td colspan="3">${lang === "es" ? "TOTALES" : "TOTALS"}</td>
-            <td class="r">${fmtInt(totales.units_total != null ? totales.units_total : unitsTotal)}</td>
-            <td></td>
-            <td class="r cshare"><strong>+${usd(totales.extra_costs_total_usd)}</strong></td>
-            <td class="r landed"><strong>${usd4(totales.avg_landed_per_unit_usd)}</strong><div style="font-size:9px;color:var(--t3);font-weight:600;">${lang === "es" ? "promedio/u" : "avg/u"}</div></td>
-            <td class="r"><strong>${usd(totales.landed_total_usd)}</strong></td>
-          </tr>
         </tbody>
       </table>
     </div>
