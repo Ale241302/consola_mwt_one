@@ -389,7 +389,9 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
     <div class="tot-card">
       <div class="tot-row"><span>${lang === "es" ? "Unidades totales" : "Total units"}</span><strong>${fmtInt(unitsTotal)}</strong></div>
       <div class="tot-row"><span>${lang === "es" ? "Líneas" : "Lines"}</span><strong>${fmtInt(lineas.length)}</strong></div>
-      <div class="tot-row tot-final"><span>${lang === "es" ? "TOTAL" : "TOTAL"} USD</span><strong>${usd(grandTotal)}</strong></div>
+      <div class="tot-row"><span>${lang === "es" ? "Subtotal mercadería" : "Merchandise subtotal"}</span><strong>${usd(grandTotal)}</strong></div>
+      ${costs.length > 0 ? `<div class="tot-row"><span>${lang === "es" ? "Total costos registrados" : "Registered costs total"}</span><strong>${usd(costsTotal)}</strong></div>` : ""}
+      <div class="tot-row tot-final"><span>${lang === "es" ? "TOTAL (mercadería + costos)" : "TOTAL (merchandise + costs)"} USD</span><strong>${usd(grandTotal + costsTotal)}</strong></div>
     </div>
   </div>
 
@@ -438,7 +440,7 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
             <td class="r">${fmtInt(totales.units_total != null ? totales.units_total : unitsTotal)}</td>
             <td></td>
             <td class="r cshare"><strong>+${usd(totales.extra_costs_total_usd)}</strong></td>
-            <td class="r landed"><strong>${usd4(totales.avg_landed_per_unit_usd)}</strong></td>
+            <td class="r landed"><strong>${usd4(totales.avg_landed_per_unit_usd)}</strong><div style="font-size:9px;color:var(--t3);font-weight:600;">${lang === "es" ? "promedio/u" : "avg/u"}</div></td>
             <td class="r"><strong>${usd(totales.landed_total_usd)}</strong></td>
           </tr>
         </tbody>
