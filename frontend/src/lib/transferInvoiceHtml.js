@@ -323,9 +323,13 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
     .map((sz) => `<div class="pill"><span class="s">${esc(sz)}</span><span class="q">${fmtInt(bySize[sz])}</span></div>`)
     .join("");
 
-  const docKind = isClient
-    ? (lang === "es" ? "FACTURA" : "INVOICE")
-    : (lang === "es" ? "REMISIÓN INTERNA" : "INTERNAL WAYBILL");
+  // doc_kind_label permite que un caller (ej. factura comercial de expediente)
+  // fuerce el rótulo del documento; si no, se infiere por audiencia.
+  const docKind = (payload && payload.doc_kind_label)
+    ? payload.doc_kind_label
+    : (isClient
+        ? (lang === "es" ? "FACTURA" : "INVOICE")
+        : (lang === "es" ? "REMISIÓN INTERNA" : "INTERNAL WAYBILL"));
   const title = `MWT — ${docKind} ${esc(t.codigo || "")}`;
 
   return `<!DOCTYPE html>

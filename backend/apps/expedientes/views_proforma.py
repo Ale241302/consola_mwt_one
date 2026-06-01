@@ -247,3 +247,130 @@ def proforma_html_dynamic(request, expediente_id):
         )
 
     return HttpResponse(html_str, content_type="text/html; charset=utf-8")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# GET /api/expedientes/{expediente_id}/factura-payload/
+# Sprint 2026-06-01 · Factura comercial del expediente.
+#
+# Devuelve un payload con la MISMA forma que invoice_payload (transfers)
+# para que el frontend genere la "Factura comercial" con el mismo generador
+# que la factura de transferencia (buildTransferInvoiceHtml). Incluye
+# precios MWT/cliente, NCM por línea (productos.especificaciones->>'ncm') y
+# el flag operated_by_mwt. El expediente no tiene flete/seguro, así que
+# CIF = mercadería (extra=0) en la sección de nacionalización.
+# ═════════════════════════════════════════════════════════════════════
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def factura_payload(request, expediente_id):
+    """GET /api/expedientes/{id}/factura-payload/ — datos para la factura."""
+    try:
+        uuid.UUID(str(expediente_id))
+    except (TypeError, ValueError):
+        return Response({"detail": "expediente_id inválido"}, status=400)
+
+    import datetime as _dt
+    from apps.core.constants import MWT_OPERATING_CLIENT_ID
+
+    with connection.cursor() as c:
+        c.execute(
+            """
+            SELECT e.codigo, e.operating_company_id, e.estado,
+                   COALESCE(cl.razon_social, '') AS cliente
+            FROM expedientes.expediente e
+            LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
+            WHERE e.id = %s
+            """,
+            [str(expediente_id)],
+        )
+        row = c.fetchone()
+    if not row:
+        return Response({"detail": "Expediente no encontrado"}, status=404)
+
+    codigo, op_id, estado, cliente = row
+    op_id = str(op_id) if op_id else None
+    operated_by_mwt = bool(op_id) and op_id.lower() == str(MWT_OPERATING_CLIENT_ID).lower()
+
+    with connection.cursor() as c:
+        c.execute(
+            """
+            SELECT l.id, l.sku, COALESCE(l.size, ''), l.qty,
+                   l.unit_price_mwt, l.unit_price_client, l.producto_id,
+                   COALESCE(p.nombre, ''), p.especificaciones->>'ncm'
+            FROM expedientes.linea l
+            LEFT JOIN productos.producto p ON p.id = l.producto_id
+            WHERE l.expediente_id = %s AND l.is_active = TRUE
+            ORDER BY l.sku, l.size
+            """,
+            [str(expediente_id)],
+        )
+        rows = c.fetchall()
+
+    lineas = []
+    units = 0
+    fob = 0.0
+    for r in rows:
+        try:
+            qty = int(float(r[3] or 0))
+        except (TypeError, ValueError):
+            qty = 0
+        mwt = float(r[4]) if r[4] is not None else 0.0
+        client = float(r[5]) if r[5] is not None else 0.0
+        units += qty
+        fob += qty * mwt
+        lineas.append({
+            "sku":               r[1] or "",
+            "product_label":     r[7] or "",
+            "size":              r[2] or "",
+            "producto_id":       str(r[6]) if r[6] else None,
+            "qty_planned":       qty,
+            "qty_dispatched":    None,
+            "qty_received":      None,
+            "unit_value_usd":    mwt,
+            "unit_cost_usd":     mwt,
+            "cost_share_usd":    0.0,
+            "landed_cost_usd":   None,
+            "estado_discrepancia": None,
+            "unit_price_mwt":    mwt,
+            "unit_price_client": client,
+            "operating_company_id": op_id,
+            "expediente_codigo": codigo,
+            "proforma_codigo":   codigo,
+            "ncm":               r[8],
+        })
+
+    return Response({
+        "kind": "FACTURA_COMERCIAL",
+        "doc_kind_label": "FACTURA COMERCIAL",
+        "transferencia": {
+            "id":             str(expediente_id),
+            "codigo":         codigo,
+            "legal_context":  "NATIONALIZATION",
+            "estado":         estado,
+            "ref_tracking":   "",
+            "value_usd":      fob,
+            "total_cost_usd": 0.0,
+            "context_data":   {},
+        },
+        "operating_company": {
+            "operated_by_mwt":         operated_by_mwt,
+            "operating_company_id":    op_id,
+            "operating_company_label": "Muito Work Limitada" if operated_by_mwt else (cliente or "Cliente final"),
+            "mwt_operating_client_id": str(MWT_OPERATING_CLIENT_ID),
+            "mwt_operator_name":       "Muito Work Limitada",
+        },
+        "origen":  {"label": "Muito Work Limitada"},
+        "destino": {"label": cliente or "Cliente"},
+        "fechas":  {"created_at": _dt.date.today().isoformat(), "dispatched_at": None, "received_at": None},
+        "personas": {},
+        "lineas": lineas,
+        "cost_breakdown": [],
+        "totales": {
+            "fob_total_usd":           fob,
+            "extra_costs_total_usd":   0.0,
+            "landed_total_usd":        fob,
+            "avg_landed_per_unit_usd": (fob / units) if units else 0.0,
+            "units_total":             units,
+            "lines_count":             len(lineas),
+        },
+    })

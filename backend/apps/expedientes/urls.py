@@ -18,7 +18,7 @@ from .views_builder_artifacts import (
     BuilderArtifactsListCreateView, BuilderArtifactDetailView,
     builder_templates_list, builder_template_detail,
 )
-from .views_proforma import generate_proforma, proforma_html_dynamic
+from .views_proforma import generate_proforma, proforma_html_dynamic, factura_payload
 from .views_pronto_pago import apply_pronto_pago
 from .views_product_ocs import ProductOcsView
 
@@ -106,6 +106,11 @@ urlpatterns = [
     # con la data fresca del expediente en cada request (sin tocar MinIO).
     path("expedientes/<uuid:expediente_id>/proforma-html/",
          proforma_html_dynamic, name="expedientes-proforma-html-dynamic"),
+
+    # Sprint 2026-06-01 · Payload para generar la Factura comercial del
+    # expediente con el mismo generador que la factura de transferencia.
+    path("expedientes/<uuid:expediente_id>/factura-payload/",
+         factura_payload, name="expedientes-factura-payload"),
 
     # Sprint 2026-05-10 · Aplica tier de pronto pago a unit_price_client
     # de las líneas matched (SKU+talla viene del extractor IA de proforma).

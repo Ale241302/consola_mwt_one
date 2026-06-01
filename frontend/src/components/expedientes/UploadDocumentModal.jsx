@@ -16,6 +16,9 @@ import {
 } from "../../lib/icons.jsx";
 import { documentosApi, expedientesApi, getToken, documentMatchmakerApi } from "../../lib/api.js";
 import { useRole } from "../../context/RoleContext.jsx";
+// Sprint 2026-06-01 · Factura comercial generada (mismo formato que la
+// factura de transferencia) desde el detalle del expediente.
+import { buildExpedienteFacturaFile } from "../../lib/expedienteFactura.js";
 
 // Sprint 2026-05-10 · Tiers de pronto pago (en sync con
 // proforma_renderer.PRONTO_PAGO_TIERS y CreateExpedienteWizardLite).
@@ -137,11 +140,59 @@ export default function UploadDocumentModal({
   const isAutoProforma = (
     kind === "PROFORMA" && !!expedienteId && !viewerIsClient
   );
+  // Sprint 2026-06-01 · Auto-Factura: la Factura comercial se GENERA (no se
+  // sube archivo) con el mismo formato que la factura de transferencia,
+  // ruteada por audiencia (cliente vs MWT/admin).
+  const isAutoFactura = (
+    kind === "FACTURA" && !!expedienteId && !viewerIsClient
+  );
+  const isAutoGen = isAutoProforma || isAutoFactura;
 
   const onSubmit = async () => {
     if (!kind) { setError(lang === "es" ? "Elige el tipo" : "Pick a type"); return; }
-    if (!isAutoProforma && !file) {
+    if (!isAutoGen && !file) {
       setError(lang === "es" ? "Sube un archivo" : "Upload a file"); return;
+    }
+
+    // === RAMA AUTO-FACTURA (genera HTML, no sube archivo) ===
+    if (isAutoFactura) {
+      setUploading(true); setError(null); setAiPhase(null);
+      try {
+        const aud = audienceApplies ? audience : "CLIENT";
+        const facturaFile = await buildExpedienteFacturaFile({
+          expedienteId, audience: aud, lang,
+        });
+        const fd = new FormData();
+        fd.append("kind", "FACTURA");
+        fd.append("codigo", facturaFile.name.replace(/\.html$/i, ""));
+        fd.append("file", facturaFile, facturaFile.name);
+        if (ocId) fd.append("oc_id", ocId);
+        fd.append("expediente_id", expedienteId);
+        fd.append("audience", aud);
+        const token = getToken();
+        const resp = await fetch(`${API_BASE}/documentos/`, {
+          method: "POST",
+          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: fd,
+        });
+        const text = await resp.text();
+        let data = null;
+        if (text) { try { data = JSON.parse(text); } catch { data = { raw: text }; } }
+        if (!resp.ok) {
+          throw new Error(data?.detail || data?.error || `HTTP ${resp.status}`);
+        }
+        if (typeof onUploaded === "function") onUploaded(data);
+        if (typeof onClose === "function") onClose();
+        return;
+      } catch (e) {
+        setError(
+          (lang === "es" ? "No se pudo generar la factura" : "Could not generate invoice") +
+          ": " + (e?.message || String(e))
+        );
+        return;
+      } finally {
+        setUploading(false); setAiPhase(null);
+      }
     }
 
     // === RAMA AUTO-PROFORMA (sin archivo) ===
@@ -376,6 +427,9 @@ export default function UploadDocumentModal({
     // Sprint 2026-05-24 · Auto-Proforma: label distinto cuando no se sube archivo
     if (kind === "PROFORMA" && !!expedienteId && !viewerIsClient) {
       return lang === "es" ? "Generar proforma" : "Generate proforma";
+    }
+    if (kind === "FACTURA" && !!expedienteId && !viewerIsClient) {
+      return lang === "es" ? "Generar factura" : "Generate invoice";
     }
     return lang === "es" ? "Subir documento" : "Upload document";
   })();
@@ -671,7 +725,9 @@ export default function UploadDocumentModal({
             </div>
           )}
 
-          {/* Numero / Codigo del documento */}
+          {/* Numero / Codigo del documento. Oculto para Factura comercial
+              auto-generada: el código sale del expediente. */}
+          {!isAutoFactura && (
           <label style={{ display: "block" }}>
             <div className="micro" style={{
               fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
@@ -698,9 +754,10 @@ export default function UploadDocumentModal({
               }}
             />
           </label>
+          )}
 
-          {/* Drop zone (oculto cuando es Auto-Proforma: el backend genera el HTML) */}
-          {!isAutoProforma && (
+          {/* Drop zone (oculto cuando se auto-genera el HTML: proforma o factura) */}
+          {!isAutoGen && (
           <div>
             <div className="micro" style={{
               fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
@@ -859,7 +916,7 @@ export default function UploadDocumentModal({
           </button>
           <button
             type="button"
-            disabled={uploading || !kind || (!isAutoProforma && !file)}
+            disabled={uploading || !kind || (!isAutoGen && !file)}
             onClick={onSubmit}
             className="btn btn-accent"
             style={{
