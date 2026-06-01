@@ -1293,6 +1293,12 @@ a { color: inherit; text-decoration: none; }
 .edit-input-money > span { color: var(--text-tertiary); font: 11px var(--font-mono); }
 .edit-input-money .edit-input { flex: 1; padding-left: 4px; }
 
+/* Sprint 2026-06-01 · oculta el spinner nativo del type=number para que el
+   valor (p. ej. Cant.) no quede recortado en columnas angostas. */
+.edit-input.no-spin::-webkit-outer-spin-button,
+.edit-input.no-spin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.edit-input.no-spin { -moz-appearance: textfield; appearance: textfield; }
+
 .sap-link-inline {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 3px 7px; border-radius: var(--radius-sm);

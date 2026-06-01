@@ -1951,16 +1951,22 @@ export default function ScreenOCDetail() {
                   <td style={{textAlign:'center'}}>
                     <span className="size-chip">{l.size}</span>
                   </td>
-                  {/* Qty editable → capability edit_oc_line_qty. */}
+                  {/* Qty editable → capability edit_oc_line_qty.
+                      Sprint 2026-06-01 · fix: el input no mostraba el valor en
+                      la columna angosta (relayout 8146b45) — el dígito quedaba
+                      recortado bajo el spinner nativo del type=number. Se le da
+                      ancho explícito como a los inputs de Precio, value seguro
+                      (Number) y se ocultan los spinners para legibilidad. */}
                   {can('edit_oc_line_qty') ? (
                     <td className="td-edit" style={{textAlign:'right'}}>
-                      <input className="edit-input tabular" type="number" min={0}
-                        value={l.qty}
-                        onChange={e=>updateLine(l.id, { qty: +e.target.value })}/>
+                      <input className="edit-input tabular no-spin" type="number" min={0}
+                        value={Number(l.qty ?? 0)}
+                        onChange={e=>updateLine(l.id, { qty: +e.target.value })}
+                        style={{width:'100%', minWidth:56, maxWidth:84, textAlign:'right'}}/>
                     </td>
                   ) : (
                     <td className="td-num" style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>
-                      {l.qty.toLocaleString()}
+                      {Number(l.qty ?? 0).toLocaleString()}
                     </td>
                   )}
                   {/* Sprint 2026-05-17 · Precios duales (MWT + Cliente).
