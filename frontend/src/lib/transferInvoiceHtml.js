@@ -226,9 +226,16 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
     const sum = (k) => rows.reduce((a, x) => a + x[k], 0);
     return { rows, totals: { goods: sum("goods"), extra: sum("extra"), cif: sum("cif"), dai: sum("dai"), ley: sum("ley"), iva: sum("iva"), total: sum("total") } };
   };
-  const nacReal = computeNac(unitClient);
-  const nacMwt = computeNac(unitMwt);
-  const nacRows = nacReal.rows.map((x, i) => `
+  const nacReal = computeNac(unitClient);   // base cliente (valor declarado)
+  const nacMwt = computeNac(unitMwt);       // base costo MWT (interno)
+  // El desglose usa la base de la AUDIENCIA del documento: la factura MWT
+  // muestra valores a precio MWT (consistente con "Precio MWT"); la del
+  // cliente, a precio cliente.
+  const nacAud = isClient ? nacReal : nacMwt;
+  const baseTag = isClient
+    ? (lang === "es" ? "base cliente" : "client base")
+    : (lang === "es" ? "base MWT (aprox.)" : "MWT base (approx.)");
+  const nacRows = nacAud.rows.map((x, i) => `
       <tr>
         <td>${i + 1}</td>
         <td class="m">${esc(x.l.sku || "—")}</td>
@@ -279,23 +286,23 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         <tbody>
           ${nacRows}
           <tr class="trow">
-            <td colspan="3">${lang === "es" ? "TOTALES (base cliente)" : "TOTALS (client base)"}</td>
+            <td colspan="3">${lang === "es" ? "TOTALES" : "TOTALS"} (${baseTag})</td>
             <td class="r">${fmtInt(unitsTotal)}</td>
-            <td class="r">${usd(nacReal.totals.goods)}</td>
-            <td class="r">${usd(nacReal.totals.extra)}</td>
-            <td class="r">${usd(nacReal.totals.cif)}</td>
-            <td class="r">${usd(nacReal.totals.dai)}</td>
-            <td class="r">${usd(nacReal.totals.ley)}</td>
-            <td class="r">${usd(nacReal.totals.iva)}</td>
-            <td class="r"><strong>${usd(nacReal.totals.total)}</strong></td>
+            <td class="r">${usd(nacAud.totals.goods)}</td>
+            <td class="r">${usd(nacAud.totals.extra)}</td>
+            <td class="r">${usd(nacAud.totals.cif)}</td>
+            <td class="r">${usd(nacAud.totals.dai)}</td>
+            <td class="r">${usd(nacAud.totals.ley)}</td>
+            <td class="r">${usd(nacAud.totals.iva)}</td>
+            <td class="r"><strong>${usd(nacAud.totals.total)}</strong></td>
           </tr>
         </tbody>
       </table>
     </div>
     <div class="card-b">
       <div class="dual">
-        ${nacCard(lang === "es" ? "CIF Cliente (real)" : "CIF Client (real)", lang === "es" ? "Base: valor declarado (precio cliente)" : "Declared value (client price)", nacReal)}
         ${!isClient ? nacCard(lang === "es" ? "CIF Muito Work Limitada (aprox.)" : "CIF MWT (approx.)", lang === "es" ? "Base: costo operador · CEO-ONLY" : "Operator cost · CEO-ONLY", nacMwt) : ""}
+        ${nacCard(lang === "es" ? "CIF Cliente (real)" : "CIF Client (real)", lang === "es" ? "Base: valor declarado (precio cliente)" : "Declared value (client price)", nacReal)}
       </div>
       <div style="font-size:10px;color:var(--t3);margin-top:8px;line-height:1.6;">
         ${lang === "es"
