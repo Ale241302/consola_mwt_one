@@ -3,22 +3,23 @@
 // Agente responsable: [AG-03 FRONTEND]
 //
 // Genera el HTML standalone descargable de la "Factura / Remisión" de una
-// transferencia inter-nodos, con el mismo lenguaje visual que la Proforma
-// (tab DDP/SONDEL): navy + mint, Plus Jakarta Sans, JetBrains Mono,
-// tabular-nums y bloque @media print canónico (POL_PRINT).
+// transferencia inter-nodos, con el mismo lenguaje visual que la Proforma:
+// navy + mint, Plus Jakarta Sans, JetBrains Mono, tabular-nums y bloque
+// @media print canónico (POL_PRINT).
 //
 // SECCIONES
 //   1. Cabecera + emisor / facturado-a (según audiencia).
 //   2. Detalle de mercadería al precio de la audiencia (MWT vs Cliente).
-//   3. NACIONALIZACIÓN / DDP — solo legal_context = NATIONALIZATION:
-//        CIF (FOB declarado + flete + seguro), Impuestos CR (DAI 14% /
-//        Ley 6946 1% / IVA 13%), Costos destino, desglose detallado y
-//        total con/sin IVA por par. Si existen líneas fiscales reales
-//        (DAI/IVA/LEY_6946) se usan; si no, se estiman a tasas estándar.
-//   4. Costos registrados del movimiento (cost_lines reales: descripción
-//        del costo + valor).
-//   5. Liquidación interna · Landed cost por línea (datos reales).
-//   6. Resumen por talla.
+//   3. Costos registrados del movimiento (cost_lines reales: descripción
+//        del costo + valor — Flete, Seguro, etc.).
+//   4. Liquidación interna · Landed cost por línea (datos reales).
+//   5. Resumen por talla.
+//
+// NOTA: NO se calculan impuestos de nacionalización (DAI/IVA/Ley 6946). El
+// documento refleja únicamente datos reales del movimiento (precios y
+// cost_lines cargadas). Si en el futuro se requiere un análisis DDP con
+// liquidación tributaria, debe alimentarse de líneas fiscales reales, no
+// de estimaciones.
 //
 // PRECIO POR AUDIENCIA (la regla del CEO):
 //   · audience === 'MWT'    → unit_price_mwt    (precio operador / interno)
@@ -34,20 +35,6 @@ export const INVOICE_AUDIENCE = Object.freeze({
   MWT: "MWT",
   CLIENT: "CLIENT",
 });
-
-// Tasas tributarias de importación Costa Rica (calzado, régimen general).
-// Fuente: misma metodología que la pestaña DDP de la proforma MWT.
-// Ajustar aquí si cambia la política fiscal (única fuente de verdad).
-export const CR_IMPORT_TAXES = Object.freeze({
-  DAI: 0.14,       // Derecho Arancelario a la Importación
-  LEY_6946: 0.01,  // Ley 6946 · Seguridad Ciudadana (1% s/CIF)
-  IVA: 0.13,       // IVA (acreditable como crédito fiscal)
-});
-
-// Clasificación de kinds de cost_line para el armado del CIF/DDP.
-const KIND_FREIGHT = new Set(["FLETE", "FREIGHT", "CONSOLIDACION"]);
-const KIND_INSURANCE = new Set(["SEGURO", "INSURANCE"]);
-const KIND_TAX = new Set(["DAI", "IVA", "LEY_6946", "ARANCEL", "TIMBRE_CONTADORES"]);
 
 /** Escapa texto para insertarlo seguro en HTML. */
 function esc(s) {
@@ -75,10 +62,6 @@ function usd4(n) {
 
 function fmtInt(n) {
   return Number(n || 0).toLocaleString("en-US");
-}
-
-function pct(frac) {
-  return (Number(frac || 0) * 100).toFixed(2) + "%";
 }
 
 function fmtDate(s, lang) {
@@ -115,13 +98,6 @@ export function unitPriceForAudience(l, audience) {
   return Number(mwt != null ? mwt : (snapshot != null ? snapshot : 0));
 }
 
-/** Precio cliente (valor declarado comercial) con fallback al snapshot. */
-function unitClient(l) {
-  if (l.unit_price_client != null) return Number(l.unit_price_client);
-  if (l.unit_value_usd != null) return Number(l.unit_value_usd);
-  return 0;
-}
-
 /** Cantidad efectiva de la línea (recibido > despachado > planificado). */
 function lineQty(l) {
   if (l.qty_received != null) return Number(l.qty_received);
@@ -129,67 +105,8 @@ function lineQty(l) {
   return Number(l.qty_planned || 0);
 }
 
-/** Suma de cost_breakdown por predicado de kind. */
-function sumCosts(costs, pred) {
-  return (costs || []).reduce(
-    (acc, c) => acc + (pred(String(c.kind || "").toUpperCase()) ? Number(c.amount_usd || 0) : 0),
-    0,
-  );
-}
-
 /**
- * Calcula el bloque DDP / Nacionalización (CIF + impuestos CR + destino)
- * a partir del valor declarado (precio cliente) y los cost_lines reales.
- * Si existen líneas fiscales reales (DAI/IVA/LEY_6946) se usan; si no, se
- * estiman a tasas estándar CR.
- */
-function computeDdp(payload) {
-  const lineas = payload.lineas || [];
-  const costs = payload.cost_breakdown || [];
-
-  const units = lineas.reduce((a, l) => a + lineQty(l), 0);
-  const fobDeclared = lineas.reduce((a, l) => a + lineQty(l) * unitClient(l), 0);
-
-  const freight = sumCosts(costs, (k) => KIND_FREIGHT.has(k));
-  const insurance = sumCosts(costs, (k) => KIND_INSURANCE.has(k));
-  const destination = sumCosts(
-    costs,
-    (k) => !KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k) && !KIND_TAX.has(k),
-  );
-
-  const cif = fobDeclared + freight + insurance;
-
-  // Impuestos: reales si vienen en cost_lines, si no estimados.
-  const realDai = sumCosts(costs, (k) => k === "DAI" || k === "ARANCEL");
-  const realLey = sumCosts(costs, (k) => k === "LEY_6946");
-  const realIva = sumCosts(costs, (k) => k === "IVA");
-  const hasRealTaxes = realDai > 0 || realLey > 0 || realIva > 0;
-
-  let dai, ley, iva, estimated;
-  if (hasRealTaxes) {
-    dai = realDai;
-    ley = realLey;
-    iva = realIva;
-    estimated = false;
-  } else {
-    dai = cif * CR_IMPORT_TAXES.DAI;
-    ley = cif * CR_IMPORT_TAXES.LEY_6946;
-    iva = (cif + dai + ley) * CR_IMPORT_TAXES.IVA;
-    estimated = true;
-  }
-  const taxes = dai + ley + iva;
-  const totalConIva = cif + dai + ley + iva + destination;
-  const totalSinIva = cif + dai + ley + destination; // IVA acreditable
-  const perPar = units ? totalSinIva / units : 0;
-
-  return {
-    units, fobDeclared, freight, insurance, destination,
-    cif, dai, ley, iva, taxes, totalConIva, totalSinIva, perPar, estimated,
-  };
-}
-
-/**
- * Construye el HTML completo de la Factura / Remisión + DDP.
+ * Construye el HTML completo de la Factura / Remisión.
  * @param {object} args
  * @param {object} args.payload    respuesta de invoice_payload
  * @param {('MWT'|'CLIENT')} args.audience
@@ -204,9 +121,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   const totales = (payload && payload.totales) || {};
   const fechas = (payload && payload.fechas) || {};
   const personas = (payload && payload.personas) || {};
-  const ctx = (t && t.context_data) || {};
   const isClient = audience === INVOICE_AUDIENCE.CLIENT;
-  const isNational = String(t.legal_context || "").toUpperCase() === "NATIONALIZATION";
 
   const billTo = isClient
     ? {
@@ -293,62 +208,6 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
     .map((sz) => `<div class="pill"><span class="s">${esc(sz)}</span><span class="q">${fmtInt(bySize[sz])}</span></div>`)
     .join("");
 
-  // ── DDP / Nacionalización ──
-  const ddp = isNational ? computeDdp(payload) : null;
-  const awb = ctx.bl_awb_number || ctx.awb_bl_number || t.ref_tracking || "";
-  const dua = ctx.dua_number || "";
-
-  const ddpSection = ddp ? `
-  <div class="sect">
-    <div class="sect-h ddp">
-      <h3>${lang === "es" ? "Nacionalización · DDP" : "Nationalization · DDP"}
-        ${ddp.estimated ? `<span class="est">${lang === "es" ? "impuestos estimados (tasas CR estándar)" : "estimated taxes (std CR rates)"}</span>` : ""}
-      </h3>
-    </div>
-    <div class="card-b">
-      <div class="meta-grid">
-        ${awb ? `<div><span class="k">BL / AWB</span><span class="v m">${esc(awb)}</span></div>` : ""}
-        ${dua ? `<div><span class="k">${lang === "es" ? "Nº DUA" : "DUA #"}</span><span class="v m">${esc(dua)}</span></div>` : ""}
-        <div><span class="k">${lang === "es" ? "Régimen" : "Regime"}</span><span class="v">${esc(LEGAL_LABEL[t.legal_context] || t.legal_context)}</span></div>
-        <div><span class="k">${lang === "es" ? "Ruta" : "Route"}</span><span class="v">${esc((payload.origen && payload.origen.label) || "—")} → ${esc((payload.destino && payload.destino.label) || "—")}</span></div>
-        <div><span class="k">${lang === "es" ? "Unidades" : "Units"}</span><span class="v">${fmtInt(ddp.units)}</span></div>
-        <div><span class="k">${lang === "es" ? "Valor declarado (FOB cliente)" : "Declared value (client FOB)"}</span><span class="v">${usd(ddp.fobDeclared)}</span></div>
-      </div>
-
-      <table class="ct" style="margin-top:14px;">
-        <thead>
-          <tr>
-            <th>#</th><th>${lang === "es" ? "Concepto" : "Concept"}</th>
-            <th class="r">${lang === "es" ? "Base" : "Base"}</th>
-            <th class="r">${lang === "es" ? "Tasa" : "Rate"}</th>
-            <th class="r">${lang === "es" ? "Monto USD" : "Amount USD"}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td>1</td><td>${lang === "es" ? "FOB declarado (precio cliente)" : "Declared FOB (client price)"}</td><td class="r">${fmtInt(ddp.units)} u.</td><td class="r">—</td><td class="r">${usd(ddp.fobDeclared)}</td></tr>
-          <tr><td>2</td><td>${lang === "es" ? "Flete (cost_lines)" : "Freight (cost_lines)"}</td><td class="r">—</td><td class="r">—</td><td class="r">${usd(ddp.freight)}</td></tr>
-          <tr><td>3</td><td>${lang === "es" ? "Seguro (cost_lines)" : "Insurance (cost_lines)"}</td><td class="r">—</td><td class="r">—</td><td class="r">${usd(ddp.insurance)}</td></tr>
-          <tr class="sub"><td colspan="4">${lang === "es" ? "CIF (base imponible aduana)" : "CIF (customs base)"}</td><td class="r"><strong>${usd(ddp.cif)}</strong></td></tr>
-          <tr><td>4</td><td>${lang === "es" ? "DAI · Derecho Arancelario" : "DAI · Import duty"}</td><td class="r">CIF</td><td class="r">${ddp.estimated ? pct(CR_IMPORT_TAXES.DAI) : "—"}</td><td class="r">${usd(ddp.dai)}</td></tr>
-          <tr><td>5</td><td>${lang === "es" ? "Ley 6946 (Seguridad Ciudadana)" : "Law 6946"}</td><td class="r">CIF</td><td class="r">${ddp.estimated ? pct(CR_IMPORT_TAXES.LEY_6946) : "—"}</td><td class="r">${usd(ddp.ley)}</td></tr>
-          <tr><td>6</td><td>${lang === "es" ? "IVA (acreditable)" : "VAT (creditable)"}</td><td class="r">CIF+DAI+L6946</td><td class="r">${ddp.estimated ? pct(CR_IMPORT_TAXES.IVA) : "—"}</td><td class="r">${usd(ddp.iva)}</td></tr>
-          <tr class="sub"><td colspan="4">${lang === "es" ? "Subtotal impuestos" : "Taxes subtotal"}</td><td class="r"><strong>${usd(ddp.taxes)}</strong></td></tr>
-          ${ddp.destination > 0 ? `<tr><td>7</td><td>${lang === "es" ? "Costos destino (agencia, almacenaje, transporte…)" : "Destination costs"}</td><td class="r">—</td><td class="r">—</td><td class="r">${usd(ddp.destination)}</td></tr>` : ""}
-          <tr class="trow"><td colspan="4">${lang === "es" ? "Total CON IVA" : "Total WITH VAT"}</td><td class="r"><strong>${usd(ddp.totalConIva)}</strong></td></tr>
-          <tr class="trow ok"><td colspan="4">${lang === "es" ? "Total SIN IVA (precio negociación)" : "Total WITHOUT VAT"} · ${usd(ddp.perPar)}/u.</td><td class="r"><strong>${usd(ddp.totalSinIva)}</strong></td></tr>
-        </tbody>
-      </table>
-      <div class="note-ddp">
-        ${lang === "es"
-          ? "El IVA es crédito fiscal acreditable (no costo final). El precio relevante para negociación es el TOTAL SIN IVA. Tipo de cambio a ajustar al día de DUA."
-          : "VAT is a creditable tax credit (not a final cost). The relevant negotiation figure is the TOTAL WITHOUT VAT."}
-        ${ddp.estimated ? (lang === "es"
-          ? " Impuestos calculados a tasas estándar CR (DAI 14% · Ley 6946 1% · IVA 13%); sustituir por la liquidación real de la DUA cuando esté disponible."
-          : " Taxes computed at standard CR rates; replace with the real DUA settlement when available.") : ""}
-      </div>
-    </div>
-  </div>` : "";
-
   const docKind = isClient
     ? (lang === "es" ? "FACTURA" : "INVOICE")
     : (lang === "es" ? "REMISIÓN INTERNA" : "INTERNAL WAYBILL");
@@ -366,7 +225,6 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   --navy:#013A57;--mint:#75CBB3;--mint-s:#E8F5F0;--bg:#F8FAFB;--srf:#FFFFFF;
   --raised:#F1F5F9;--brd:#E2E8F0;--brd2:#CBD5E1;--t1:#0F172A;--t2:#475569;
   --t3:#94A3B8;--ok:#0E8A6D;--info:#0369A1;--crit:#DC2626;--warn:#B45309;
-  --purple:#7C3AED;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:var(--bg);color:var(--t1);line-height:1.5;-webkit-font-smoothing:antialiased;padding:24px;}
@@ -396,14 +254,7 @@ body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:var(--bg);c
 .route .arrow{color:var(--mint);font-weight:700;font-size:18px;}
 .sect{background:var(--srf);border:1px solid var(--brd);border-radius:12px;overflow:hidden;margin-bottom:16px;}
 .sect-h{padding:12px 18px;border-bottom:1px solid var(--brd);}
-.sect-h h3{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--navy);display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-.sect-h.ddp h3{color:var(--purple);}
-.sect-h .est{font-size:9.5px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--warn);background:rgba(180,83,9,.1);padding:2px 8px;border-radius:999px;}
-.meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;}
-.meta-grid > div{padding:8px 0;border-bottom:1px dashed var(--raised);display:flex;flex-direction:column;gap:2px;}
-.meta-grid .k{font-size:10px;color:var(--t3);font-weight:600;text-transform:uppercase;letter-spacing:.4px;}
-.meta-grid .v{font-size:13px;font-weight:700;color:var(--t1);font-variant-numeric:tabular-nums;}
-.meta-grid .v.m{font-family:'JetBrains Mono',monospace;font-size:12px;}
+.sect-h h3{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--navy);}
 table.ct{width:100%;border-collapse:collapse;font-size:12px;}
 table.ct thead th{padding:9px 12px;text-align:left;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);background:var(--raised);border-bottom:2px solid var(--brd);}
 table.ct thead th.r{text-align:right;}
@@ -413,12 +264,8 @@ table.ct tbody td.m{font-family:'JetBrains Mono',monospace;font-size:11px;}
 table.ct tbody td.cshare{color:var(--warn);}
 table.ct tbody td.landed{color:var(--ok);font-weight:600;}
 table.ct .kind{display:inline-block;padding:1px 7px;border-radius:4px;background:var(--raised);color:var(--navy);font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;}
-table.ct .sub td{background:rgba(1,58,87,.04);font-weight:700;border-top:1px solid var(--brd2);}
 table.ct .trow{background:var(--raised);font-weight:700;}
 table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-nums;}
-table.ct .trow.ok td{border-top:2px solid var(--ok);}
-table.ct .trow.ok td strong{color:var(--ok);}
-.note-ddp{margin-top:12px;padding:10px 14px;background:var(--mint-s);border-radius:8px;font-size:11px;color:var(--t2);line-height:1.7;}
 .pills{display:flex;flex-wrap:wrap;gap:5px;padding:4px 0;}
 .pill{display:inline-flex;flex-direction:column;align-items:center;padding:5px 9px;border:1px solid var(--brd);border-radius:6px;min-width:48px;background:var(--srf);}
 .pill .s{font-size:9px;color:var(--t3);font-weight:600;}
@@ -448,7 +295,7 @@ table.ct .trow.ok td strong{color:var(--ok);}
   @page{margin:10mm 12mm;size:letter;}
   body{background:#fff!important;padding:0;font-size:10.5px;}
   .actions{display:none!important;}
-  .card,.sect,.head,.notes-card,.tot-card,.note-ddp{break-inside:avoid;page-break-inside:avoid;border:1px solid #ccc!important;}
+  .card,.sect,.head,.notes-card,.tot-card{break-inside:avoid;page-break-inside:avoid;border:1px solid #ccc!important;}
   table.ct thead{display:table-header-group;}
   table.ct tr{break-inside:avoid;page-break-inside:avoid;}
   table.ct thead th{background:#f1f5f9!important;}
@@ -545,8 +392,6 @@ table.ct .trow.ok td strong{color:var(--ok);}
       <div class="tot-row tot-final"><span>${lang === "es" ? "TOTAL" : "TOTAL"} USD</span><strong>${usd(grandTotal)}</strong></div>
     </div>
   </div>
-
-  ${ddpSection}
 
   ${costs.length > 0 ? `
   <div class="sect">
