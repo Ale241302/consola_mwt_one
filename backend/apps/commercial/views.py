@@ -1702,15 +1702,27 @@ class MarluvasExchangeRateView(APIView):
             payload["upstream_errors"] = errors
             return Response(payload, status=200)
 
-        # Sin cache previo: devolver null con detalle de errores.
-        return Response({
-            "rate":             None, "bid": None, "ask": None,
+        # Sin cache previo: usar fallback hardcoded y cachear por 5 minutos
+        # para evitar saturar el servidor con peticiones bloqueantes repetitivas.
+        fallback_rate = 5.10
+        fallback_payload = {
+            "rate":             fallback_rate,
+            "bid":              fallback_rate,
+            "ask":              fallback_rate,
+            "high":             None,
+            "low":              None,
+            "varBid":           None,
             "timestamp":        None,
-            "source":           "none",
+            "source":           "Hardcoded Fallback",
             "cached":           False,
-            "error":            "Todos los upstreams (AwesomeAPI, Frankfurter) sin respuesta.",
+            "error":            "Todos los upstreams (AwesomeAPI, Frankfurter) fallaron. Usando fallback hardcoded.",
             "upstream_errors":  errors,
-        }, status=200)
+        }
+        try:
+            cache.set(self.CACHE_KEY, fallback_payload, timeout=300)
+        except Exception:
+            pass
+        return Response(fallback_payload, status=200)
 
 
 # =====================================================================
