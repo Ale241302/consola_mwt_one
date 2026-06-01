@@ -165,8 +165,18 @@ def get_fx_to_usd(currency) -> float | None:
         fallback = _fallback_rate(ccy)
         if fallback is not None and fallback > 0:
             log.info("[fx_service] usando fallback hardcoded %s->USD=%s", ccy, fallback)
-            # NO cacheamos el fallback hardcoded: queremos que el
-            # proximo request reintente Frankfurter por si ya volvio.
+            # Cacheamos el fallback para evitar hacer requests bloqueantes repetitivos.
+            # Si es 404 (moneda no soportada por Frankfurter), la cacheamos por 24 horas.
+            # Si es otro error (timeout, conexion), la cacheamos por 5 minutos para dar respiro.
+            try:
+                is_404 = False
+                if isinstance(exc, requests.HTTPError) and exc.response is not None:
+                    if exc.response.status_code == 404:
+                        is_404 = True
+                ttl = 86400 if is_404 else 300
+                cache.set(cache_key, fallback, timeout=ttl)
+            except Exception:
+                pass
             return fallback
         log.error(
             "[fx_service] %s sin tasa: Frankfurter fallo y no hay fallback hardcoded",
