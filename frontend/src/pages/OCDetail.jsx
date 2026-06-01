@@ -2339,19 +2339,16 @@ export default function ScreenOCDetail() {
         </div>
       </div>
 
-      {/* Sprint 2026-05-13 · Fase 10 — card "Costos de movimientos".
-          Listado de cost_lines de movimientos que tocaron a cualquier
-          expediente de esta OC. Click en fila → /transferencias/{id}.
-          Solo se renderiza para roles internos (CEO/Admin): el cliente
-          B2B no ve el costo interno de los movimientos. */}
-      {/* Sprint 2026-05-31 · "Costos de movimientos" visible para admin/CEO
-          Y para el OPERADOR de MWT (canSeeMwtPrice = isAdmin || isOperator).
-          El endpoint transferencia-costos no exige required_module, así que
-          el operador (rol CLIENT_*) puede traerlo. Un cliente final puro
-          (no operador) sigue sin verlo. */}
-      {canSeeMwtPrice && (
-        <OCTransferCostsCard ocId={ocId} lang={lang} navigate={navigate} />
-      )}
+      {/* Sprint 2026-06-01 · DECISIÓN CEO (Alejandro): "Costos de movimientos"
+          visible para CUALQUIER usuario autenticado, incluidos CLIENT_* puros.
+          ⚠️ EXCEPCIÓN EXPLÍCITA a R3 / POL_VISIBILIDAD: normalmente el cliente
+          B2B NO ve costo logístico interno (IVA, DAI, PROCOMER, timbres, montos
+          brutos). Override autorizado por el CEO el 2026-06-01.
+          El endpoint transferencia-costos no exige required_module, así que el
+          fetch funciona para todos los roles sin cambios de backend.
+          Historial: solo admin/CEO (Fase 10) → +operador MWT (2026-05-31)
+          → todos los autenticados (2026-06-01). */}
+      <OCTransferCostsCard ocId={ocId} lang={lang} navigate={navigate} />
 
       {/* Sprint Pagos Transfers — card Pagos al pie de OCDetail (solo staff) */}
       {!isClient && (
