@@ -35,6 +35,16 @@ export const INVOICE_AUDIENCE = Object.freeze({
   CLIENT: "CLIENT",
 });
 
+// Tasas tributarias de importación (régimen calzado CR) aplicadas sobre el
+// CIF. Única fuente de verdad — ajustar aquí si cambia la política fiscal.
+//   · ARANCEL (DAI) = 14% s/CIF
+//   · VENTA   (IVA) = 12% s/CIF
+export const CR_TAX_RATES = Object.freeze({ ARANCEL: 0.14, VENTA: 0.12 });
+
+// Clasificación de cost_lines que entran al CIF (flete + seguro).
+const KIND_FREIGHT = new Set(["FLETE", "FREIGHT", "CONSOLIDACION"]);
+const KIND_INSURANCE = new Set(["SEGURO", "INSURANCE"]);
+
 /** Escapa texto para insertarlo seguro en HTML. */
 function esc(s) {
   return String(s == null ? "" : s)
@@ -173,6 +183,43 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         <td class="r"><strong>${usd(c.amount_usd)}</strong></td>
       </tr>`).join("");
   const costsTotal = costs.reduce((a, c) => a + Number(c.amount_usd || 0), 0);
+
+  // ── CIF dual + impuestos (solo si el expediente es operado por MWT) ──
+  // Dos CIF: el "aprox" sobre costo Muito Work Limitada y el "real" sobre
+  // costo cliente. CIF = (suma por par) + flete + seguro. Impuestos sobre
+  // el CIF: Arancel 14% + Impuesto de venta 12%.
+  const kindUp = (c) => String(c.kind || "").toUpperCase();
+  const freight = costs.reduce((a, c) => a + (KIND_FREIGHT.has(kindUp(c)) ? Number(c.amount_usd || 0) : 0), 0);
+  const insurance = costs.reduce((a, c) => a + (KIND_INSURANCE.has(kindUp(c)) ? Number(c.amount_usd || 0) : 0), 0);
+  const mwtGoods = lineas.reduce((a, l) => a + lineQty(l) * (l.unit_price_mwt != null ? Number(l.unit_price_mwt) : Number(l.unit_value_usd || 0)), 0);
+  const clientGoods = lineas.reduce((a, l) => a + lineQty(l) * (l.unit_price_client != null ? Number(l.unit_price_client) : Number(l.unit_value_usd || 0)), 0);
+  const cifMwt = mwtGoods + freight + insurance;
+  const cifClient = clientGoods + freight + insurance;
+  const cifCard = (title, sub, goods, cif) => `
+    <div class="card">
+      <div class="card-h"><h3>${esc(title)}</h3></div>
+      <div class="card-b">
+        <div class="sr"><span class="k">${esc(sub)}</span><span class="v"></span></div>
+        <div class="sr"><span class="k">${lang === "es" ? "Suma por par" : "Sum per pair"}</span><span class="v">${usd(goods)}</span></div>
+        <div class="sr"><span class="k">${lang === "es" ? "Flete" : "Freight"}</span><span class="v">${usd(freight)}</span></div>
+        <div class="sr"><span class="k">${lang === "es" ? "Seguro" : "Insurance"}</span><span class="v">${usd(insurance)}</span></div>
+        <div class="sr" style="border-top:2px solid var(--navy);"><span class="k" style="font-weight:700;">CIF</span><span class="v" style="font-size:14px;">${usd(cif)}</span></div>
+        <div class="sr"><span class="k">${lang === "es" ? "Arancel" : "Duty"} (${(CR_TAX_RATES.ARANCEL * 100).toFixed(0)}%)</span><span class="v">${usd(cif * CR_TAX_RATES.ARANCEL)}</span></div>
+        <div class="sr"><span class="k">${lang === "es" ? "Impuesto venta" : "Sales tax"} (${(CR_TAX_RATES.VENTA * 100).toFixed(0)}%)</span><span class="v">${usd(cif * CR_TAX_RATES.VENTA)}</span></div>
+        <div class="sr"><span class="k" style="font-weight:700;">${lang === "es" ? "Total impuestos" : "Total taxes"}</span><span class="v">${usd(cif * (CR_TAX_RATES.ARANCEL + CR_TAX_RATES.VENTA))}</span></div>
+        <div class="sr" style="border-top:2px solid var(--mint);"><span class="k" style="font-weight:700;">${lang === "es" ? "Total con impuestos" : "Total with taxes"}</span><span class="v" style="color:var(--ok);">${usd(cif * (1 + CR_TAX_RATES.ARANCEL + CR_TAX_RATES.VENTA))}</span></div>
+      </div>
+    </div>`;
+  const cifSection = oc.operated_by_mwt ? `
+  <div class="sect">
+    <div class="sect-h"><h3>${lang === "es" ? "CIF e impuestos · doble base (operado por Muito Work Limitada)" : "CIF & taxes · dual base"}</h3></div>
+    <div class="card-b">
+      <div class="dual">
+        ${cifCard(lang === "es" ? "CIF Muito Work Limitada (aprox.)" : "CIF MWT (approx.)", lang === "es" ? "Base: costo operador" : "Operator cost basis", mwtGoods, cifMwt)}
+        ${cifCard(lang === "es" ? "CIF Cliente (real)" : "CIF Client (real)", lang === "es" ? "Base: costo cliente" : "Client cost basis", clientGoods, cifClient)}
+      </div>
+    </div>
+  </div>` : "";
 
   // ── Resumen por talla ──
   const bySize = {};
@@ -394,6 +441,8 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
       </table>
     </div>
   </div>` : ""}
+
+  ${cifSection}
 
   ${sizePills ? `
   <div class="sect">
