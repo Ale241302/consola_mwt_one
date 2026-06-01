@@ -527,7 +527,10 @@ class AnalyticsViewSet(viewsets.ViewSet):
             SELECT
               e.id,
               e.codigo                                       AS ref,
-              o.codigo                                       AS oc_codigo,
+              -- Sprint 2026-05-31 · consistente con ExpedienteSerializer.get_oc_codigos:
+              -- el PO real es el codigo del documento OC que subio el cliente;
+              -- el codigo auto de commercial.oc ('PO-2026-000NN') es solo fallback.
+              COALESCE(ocdoc.codigo, o.codigo)               AS oc_codigo,
               o.proforma                                     AS proforma,
               e.client_id,
               COALESCE(cli.nombre_comercial, cli.razon_social) AS client_name,
@@ -544,6 +547,17 @@ class AnalyticsViewSet(viewsets.ViewSet):
             LEFT JOIN expedientes.oc       o   ON o.id = e.oc_id
             LEFT JOIN clientes.cliente     cli ON cli.id = e.client_id
             LEFT JOIN brands.marca         m   ON m.id   = e.brand_id
+            LEFT JOIN LATERAL (
+              SELECT d.codigo
+                FROM expedientes.documento d
+               WHERE d.expediente_id = e.id
+                 AND d.is_active = TRUE
+                 AND d.kind ~* '^OC( |_|$)'
+                 AND d.codigo IS NOT NULL
+                 AND d.codigo <> ''
+               ORDER BY d.audience ASC, d.created_at DESC
+               LIMIT 1
+            ) ocdoc ON TRUE
             WHERE e.is_active = TRUE
               AND (e.is_blocked = TRUE OR e.credit_days > 70)
             ORDER BY e.is_blocked DESC, e.credit_days DESC
