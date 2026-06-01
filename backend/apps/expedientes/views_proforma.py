@@ -263,7 +263,13 @@ def proforma_html_dynamic(request, expediente_id):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def factura_payload(request, expediente_id):
-    """GET /api/expedientes/{id}/factura-payload/ — datos para la factura."""
+    """GET /api/expedientes/{id}/factura-payload/ — datos para la factura.
+
+    El `id` puede ser un expediente_id O un oc_id (la página de detalle del
+    expediente es OC-céntrica). Resuelve líneas por cualquiera de los dos e
+    incluye los costos de transferencia (FLETE/SEGURO/…) asociados a esos
+    expedientes para que el CIF de la factura los sume.
+    """
     try:
         uuid.UUID(str(expediente_id))
     except (TypeError, ValueError):
@@ -271,7 +277,29 @@ def factura_payload(request, expediente_id):
 
     import datetime as _dt
     from apps.core.constants import MWT_OPERATING_CLIENT_ID
+    pid = str(expediente_id)
 
+    # 1) Líneas por expediente_id O por oc_id.
+    with connection.cursor() as c:
+        c.execute(
+            """
+            SELECT l.id, l.sku, COALESCE(l.size, ''), l.qty,
+                   l.unit_price_mwt, l.unit_price_client, l.producto_id,
+                   COALESCE(p.nombre, ''), p.especificaciones->>'ncm',
+                   l.expediente_id
+            FROM expedientes.linea l
+            LEFT JOIN productos.producto p ON p.id = l.producto_id
+            WHERE (l.expediente_id = %(id)s::uuid OR l.oc_id = %(id)s::uuid)
+              AND l.is_active = TRUE
+            ORDER BY l.sku, l.size
+            """,
+            {"id": pid},
+        )
+        rows = c.fetchall()
+
+    exp_ids = sorted({str(r[9]) for r in rows if r[9]})
+
+    # 2) Meta del expediente (codigo, operating_company, cliente).
     with connection.cursor() as c:
         c.execute(
             """
@@ -279,33 +307,62 @@ def factura_payload(request, expediente_id):
                    COALESCE(cl.razon_social, '') AS cliente
             FROM expedientes.expediente e
             LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
-            WHERE e.id = %s
+            WHERE e.id = ANY(%(ids)s::uuid[]) OR e.id = %(id)s::uuid OR e.oc_id = %(id)s::uuid
+            ORDER BY e.created_at
+            LIMIT 1
             """,
-            [str(expediente_id)],
+            {"ids": exp_ids or [pid], "id": pid},
         )
-        row = c.fetchone()
-    if not row:
+        meta = c.fetchone()
+    if not meta:
         return Response({"detail": "Expediente no encontrado"}, status=404)
-
-    codigo, op_id, estado, cliente = row
+    codigo, op_id, estado, cliente = meta
     op_id = str(op_id) if op_id else None
     operated_by_mwt = bool(op_id) and op_id.lower() == str(MWT_OPERATING_CLIENT_ID).lower()
 
-    with connection.cursor() as c:
-        c.execute(
-            """
-            SELECT l.id, l.sku, COALESCE(l.size, ''), l.qty,
-                   l.unit_price_mwt, l.unit_price_client, l.producto_id,
-                   COALESCE(p.nombre, ''), p.especificaciones->>'ncm'
-            FROM expedientes.linea l
-            LEFT JOIN productos.producto p ON p.id = l.producto_id
-            WHERE l.expediente_id = %s AND l.is_active = TRUE
-            ORDER BY l.sku, l.size
-            """,
-            [str(expediente_id)],
-        )
-        rows = c.fetchall()
+    # 3) Costos de transferencia asociados (FLETE/SEGURO/…). Dedup por
+    #    cost_line: seleccionamos directo de transfers.cost_line para los
+    #    transferencia_id ligados a estos expedientes vía assignment.
+    cost_breakdown = []
+    extra = 0.0
+    ids_for_costs = exp_ids or [pid]
+    try:
+        with connection.cursor() as c:
+            c.execute(
+                """
+                WITH trf AS (
+                    SELECT DISTINCT transferencia_id
+                    FROM inventario.expediente_nodo_assignment
+                    WHERE expediente_id = ANY(%(ids)s::uuid[])
+                      AND transferencia_id IS NOT NULL
+                      AND is_active = TRUE
+                )
+                SELECT cl.kind, COALESCE(ck.label, cl.kind), cl.label,
+                       cl.amount, cl.currency, cl.fx_to_usd, cl.amount_usd, cl.source
+                FROM transfers.cost_line cl
+                LEFT JOIN transfers.cost_kind_cat ck ON ck.codigo = cl.kind
+                WHERE cl.transferencia_id IN (SELECT transferencia_id FROM trf)
+                  AND cl.is_active = TRUE
+                ORDER BY cl.kind, cl.created_at
+                """,
+                {"ids": ids_for_costs},
+            )
+            for cr in c.fetchall():
+                amt_usd = float(cr[6]) if cr[6] is not None else 0.0
+                extra += amt_usd
+                cost_breakdown.append({
+                    "kind":       cr[0],
+                    "label":      cr[2] or cr[1] or cr[0],
+                    "amount":     float(cr[3]) if cr[3] is not None else 0.0,
+                    "currency":   cr[4] or "USD",
+                    "fx_to_usd":  float(cr[5]) if cr[5] is not None else 1.0,
+                    "amount_usd": amt_usd,
+                    "source":     cr[7] or "MANUAL",
+                })
+    except Exception:
+        log.exception("[factura_payload] transfer costs lookup failed id=%s", pid)
 
+    # 4) Construir líneas + totales.
     lineas = []
     units = 0
     fob = 0.0
@@ -339,17 +396,18 @@ def factura_payload(request, expediente_id):
             "ncm":               r[8],
         })
 
+    landed = fob + extra
     return Response({
         "kind": "FACTURA_COMERCIAL",
         "doc_kind_label": "FACTURA COMERCIAL",
         "transferencia": {
-            "id":             str(expediente_id),
+            "id":             pid,
             "codigo":         codigo,
             "legal_context":  "NATIONALIZATION",
             "estado":         estado,
             "ref_tracking":   "",
             "value_usd":      fob,
-            "total_cost_usd": 0.0,
+            "total_cost_usd": extra,
             "context_data":   {},
         },
         "operating_company": {
@@ -364,12 +422,12 @@ def factura_payload(request, expediente_id):
         "fechas":  {"created_at": _dt.date.today().isoformat(), "dispatched_at": None, "received_at": None},
         "personas": {},
         "lineas": lineas,
-        "cost_breakdown": [],
+        "cost_breakdown": cost_breakdown,
         "totales": {
             "fob_total_usd":           fob,
-            "extra_costs_total_usd":   0.0,
-            "landed_total_usd":        fob,
-            "avg_landed_per_unit_usd": (fob / units) if units else 0.0,
+            "extra_costs_total_usd":   extra,
+            "landed_total_usd":        landed,
+            "avg_landed_per_unit_usd": (landed / units) if units else 0.0,
             "units_total":             units,
             "lines_count":             len(lineas),
         },
