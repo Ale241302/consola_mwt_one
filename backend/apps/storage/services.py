@@ -138,6 +138,17 @@ def generate_signed_url(
             url = client.presigned_put_object(bucket, key, expires=_dt.timedelta(seconds=ttl))
         else:
             url = client.presigned_get_object(bucket, key, expires=_dt.timedelta(seconds=ttl))
+
+        # Si MINIO_PUBLIC_ENDPOINT está configurado, reescribimos el host de la URL firmada
+        pub_endpoint = getattr(settings, "MINIO_PUBLIC_ENDPOINT", "")
+        if pub_endpoint:
+            from urllib.parse import urlparse, urlunparse
+            internal_parsed = urlparse(getattr(settings, "MINIO_ENDPOINT", ""))
+            pub_parsed = urlparse(pub_endpoint)
+            url_parsed = urlparse(url)
+            if url_parsed.netloc == internal_parsed.netloc:
+                url_parsed = url_parsed._replace(scheme=pub_parsed.scheme, netloc=pub_parsed.netloc)
+                url = urlunparse(url_parsed)
     except Exception as e:
         log.error("presigned_%s_object(%s/%s) falló: %s", method.lower(), bucket, key, e)
         return {

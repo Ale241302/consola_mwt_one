@@ -325,6 +325,7 @@ FX_REQUEST_TIMEOUT = int(os.environ.get("FX_REQUEST_TIMEOUT", "8"))
 # para dev local o staging — si las defines, ganan sobre el default.
 # --------------------------------------------------------------------
 MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT",   "http://187.77.218.102:9000")
+MINIO_PUBLIC_ENDPOINT = os.environ.get("MINIO_PUBLIC_ENDPOINT", "")
 MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "admin")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "MuitoWork2026?")
 MINIO_BUCKET     = os.environ.get("MINIO_BUCKET",     "mwt-one")

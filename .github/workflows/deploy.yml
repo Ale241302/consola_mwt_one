@@ -150,6 +150,15 @@ jobs:
             docker compose pull --ignore-pull-failures || true
             docker compose up -d --build --remove-orphans
 
+            echo "==> [5.5/6] Conectando contenedores a la red mwt_default"
+            if docker network inspect mwt_default >/dev/null 2>&1; then
+              docker network connect mwt_default consola-mwt-one-django || true
+              docker network connect mwt_default consola-mwt-one-celery-worker || true
+              echo ">>> Contenedores conectados a la red mwt_default"
+            else
+              echo ">>> Red mwt_default no encontrada, omitiendo."
+            fi
+
             echo "==> [6/6] Estado final"
             docker compose ps
             docker image prune -f >/dev/null
