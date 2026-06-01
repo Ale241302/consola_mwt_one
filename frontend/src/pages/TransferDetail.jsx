@@ -34,6 +34,13 @@ import PaymentDetailDrawer   from "../components/finance/PaymentDetailDrawer.jsx
 import TransferLiquidationPanel from "../components/transfers/TransferLiquidationPanel.jsx";
 import TransferStateStepper from "../components/transfers/TransferStateStepper.jsx";
 import TransferInvoicePrintView from "../components/transfers/TransferInvoicePrintView.jsx";
+// Sprint 2026-06-01 — Factura/Remisión descargable con modal de audiencia
+// (Muito Work Limitada vs Cliente) y precio por destinatario.
+import TransferInvoiceRecipientModal from "../components/transfers/TransferInvoiceRecipientModal.jsx";
+import {
+  buildTransferInvoiceHtml, downloadTransferInvoice, invoiceFilename,
+} from "../lib/transferInvoiceHtml.js";
+import { isMwtOperated, MWT_OPERATOR_NAME } from "../lib/operatingCompany.js";
 // Sprint 2026-05-14 · Fase 15.2 — modal para agregar productos a la
 // transferencia ya creada. Mueve atómicamente stock origen → destino.
 import AddTransferItemsModal from "../components/transfers/AddTransferItemsModal.jsx";
@@ -161,6 +168,10 @@ export default function ScreenTransferDetail() {
   const [advanceErr, setAdvanceErr] = useState(null);
   const [printingPayload, setPrintingPayload] = useState(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
+  // Sprint 2026-06-01 — modal "¿Para quién es la factura?" + generación del
+  // HTML descargable según audiencia (MWT operador vs Cliente final).
+  const [recipientModalOpen, setRecipientModalOpen] = useState(false);
+  const [generatingInvoice, setGeneratingInvoice]   = useState(false);
   // Notificación inline para errores transitorios (reemplaza alert()).
   const [notice, setNotice] = useState(null); // { kind: 'error'|'info', text }
   // Sprint 2026-05-14 · Fase 15.2 — modal "+ Agregar productos".
@@ -224,6 +235,29 @@ export default function ScreenTransferDetail() {
       });
     } finally {
       setLoadingPdf(false);
+    }
+  }, [isUuid, transferId, lang]);
+
+  // Sprint 2026-06-01 — genera y descarga el HTML de la factura/remisión
+  // usando el precio según la audiencia elegida en el modal.
+  const handleGenerateInvoice = useCallback(async (audience) => {
+    if (!isUuid) return;
+    setGeneratingInvoice(true);
+    setNotice(null);
+    try {
+      const payload = await transferenciasApi.action("invoice_payload", transferId);
+      const html = buildTransferInvoiceHtml({ payload, audience, lang });
+      downloadTransferInvoice(html, invoiceFilename(payload, audience));
+      setRecipientModalOpen(false);
+    } catch (e) {
+      setNotice({
+        kind: "error",
+        text: (lang === "es"
+          ? "No se pudo generar el documento: "
+          : "Could not generate document: ") + (e?.message || e),
+      });
+    } finally {
+      setGeneratingInvoice(false);
     }
   }, [isUuid, transferId, lang]);
 
@@ -312,6 +346,16 @@ export default function ScreenTransferDetail() {
   // el usuario sepa que las mutaciones (add cost / OCR / notes) no
   // van a persistir y vea cómo crear una real.
   const isMockOnly = !transferBase._backend_id;
+  // Sprint 2026-06-01 — ¿el expediente está operado por Muito Work Limitada?
+  // Si TODAS las líneas con operating_company resuelto apuntan al operador
+  // MWT, el modal rotula la opción interna como "Muito Work Limitada".
+  const lineOps = (transferBase.lines || [])
+    .map(l => l.operating_company_id)
+    .filter(Boolean);
+  const operatedByMwt = lineOps.length > 0 && lineOps.every(id => isMwtOperated(id));
+  const operatingCompanyLabel = operatedByMwt
+    ? MWT_OPERATOR_NAME
+    : (lang === 'es' ? 'Cliente final' : 'End client');
   const lmeta    = LEGAL_CONTEXT_META[transferBase.legal_context] || { label: transferBase.legal_context, color:'#64748B' };
   const smeta    = TRANSFER_STATUS_META[status] || TRANSFER_STATUS_META.planned;
   const totBase  = getTransferTotals(transferBase);
@@ -546,12 +590,12 @@ export default function ScreenTransferDetail() {
         <button
           type="button"
           className="btn btn-ghost"
-          onClick={handleOpenPrint}
-          disabled={loadingPdf || !isUuid}
+          onClick={() => setRecipientModalOpen(true)}
+          disabled={generatingInvoice || !isUuid}
           style={{ fontWeight: 600 }}>
-          {loadingPdf
+          {generatingInvoice
             ? (lang === 'es' ? 'Generando…' : 'Generating…')
-            : (lang === 'es' ? '📄 Generar Factura / Remisión PDF' : '📄 Generate Invoice / Waybill PDF')}
+            : (lang === 'es' ? '📄 Generar Factura / Remisión' : '📄 Generate Invoice / Waybill')}
         </button>
       </div>
 
@@ -770,6 +814,18 @@ export default function ScreenTransferDetail() {
           id:    transferBase?._backend_id || transferBase?.id || '',
           label: transferBase?.codigo || transferBase?.id || 'Movimiento',
         }}
+      />
+
+      {/* ── Modal "¿Para quién es la factura?" (sprint 2026-06-01) ── */}
+      <TransferInvoiceRecipientModal
+        open={recipientModalOpen}
+        lang={lang}
+        operatedByMwt={operatedByMwt}
+        operatingCompanyLabel={operatingCompanyLabel}
+        mwtOperatorName={MWT_OPERATOR_NAME}
+        loading={generatingInvoice}
+        onConfirm={handleGenerateInvoice}
+        onClose={() => { if (!generatingInvoice) setRecipientModalOpen(false); }}
       />
 
       {/* ── Modal full-screen del Print View (sprint v4) ── */}

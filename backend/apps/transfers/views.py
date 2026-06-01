@@ -114,6 +114,163 @@ def _recompute_line_discrepancy(linea):
 
 
 # ════════════════════════════════════════════════════════════
+# Pricing por línea (precio MWT vs precio Cliente)
+# ════════════════════════════════════════════════════════════
+def _resolve_line_pricing(t, lineas):
+    """Resuelve, por cada Linea de transferencia, el precio congelado en
+    expedientes.linea (unit_price_mwt / unit_price_client) y el
+    operating_company_id del expediente al que pertenece.
+
+    Reutiliza el mismo enriquecimiento en 2 pasos que TransferenciaViewSet
+    .retrieve(): assignment → expediente_id/operating_company_id, y luego
+    query directo a expedientes.linea por (expediente_id, producto_id,
+    size). Devuelve:
+
+        { str(linea.id): {
+            "unit_price_mwt": float|None,
+            "unit_price_client": float|None,
+            "operating_company_id": str|None,
+            "expediente_codigo": str|None,
+            "proforma_codigo": str|None,
+        }, ... }
+
+    Si algo falla, devuelve {} — el caller cae al snapshot unit_value.
+    """
+    out = {}
+    try:
+        from django.db import connection as _conn
+        # Paso 0: mapa producto_id+talla → expediente_id/operating_company.
+        exp_map = {}
+        _PF_JOIN = """
+            LEFT JOIN LATERAL (
+                SELECT d.codigo
+                FROM expedientes.documento d
+                WHERE d.expediente_id = e.id
+                  AND d.kind          = 'PROFORMA'
+                  AND d.is_active     = TRUE
+                  AND d.codigo IS NOT NULL
+                  AND d.codigo <> ''
+                ORDER BY d.created_at DESC
+                LIMIT 1
+            ) pf ON TRUE
+        """
+        with _conn.cursor() as c:
+            c.execute(
+                f"""
+                SELECT a.producto_id,
+                       COALESCE(a.talla,'')      AS talla_norm,
+                       a.expediente_id,
+                       e.codigo                  AS expediente_codigo,
+                       pf.codigo                 AS proforma_codigo,
+                       e.operating_company_id    AS operating_company_id
+                FROM inventario.expediente_nodo_assignment a
+                LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
+                {_PF_JOIN}
+                WHERE a.transferencia_id = %(trf_id)s::uuid
+                  AND a.is_active = TRUE
+                  AND a.nodo_id   = %(dest_id)s::uuid
+                """,
+                {"trf_id": str(t.id), "dest_id": str(t.destino_id)},
+            )
+            rows = c.fetchall()
+            if not rows:
+                # Fallback legacy por notas (transferencia_id NULL).
+                c.execute(
+                    f"""
+                    SELECT a.producto_id,
+                           COALESCE(a.talla,'')      AS talla_norm,
+                           a.expediente_id,
+                           e.codigo                  AS expediente_codigo,
+                           pf.codigo                 AS proforma_codigo,
+                           e.operating_company_id    AS operating_company_id
+                    FROM inventario.expediente_nodo_assignment a
+                    LEFT JOIN expedientes.expediente e ON e.id = a.expediente_id
+                    {_PF_JOIN}
+                    WHERE a.is_active = TRUE
+                      AND a.nodo_id   = %(dest_id)s::uuid
+                      AND a.notas ILIKE %(notas_pat)s
+                    """,
+                    {"dest_id": str(t.destino_id),
+                     "notas_pat": f"%transfer from {t.id}%"},
+                )
+                rows = c.fetchall()
+            for r in rows:
+                key = (str(r[0]), r[1] or "")
+                exp_map.setdefault(key, {
+                    "expediente_id":        str(r[2]) if r[2] else None,
+                    "expediente_codigo":    r[3],
+                    "proforma_codigo":      r[4],
+                    "operating_company_id": str(r[5]) if r[5] else None,
+                })
+
+        # Paso 1: por cada linea, encontrar su expediente via exp_map.
+        per_line_exp = {}  # linea.id → exp_map dict
+        for l in lineas:
+            key = (str(l.producto_id or ""), (l.size or ""))
+            m = exp_map.get(key)
+            if m:
+                per_line_exp[str(l.id)] = m
+
+        # Paso 2: query directo a expedientes.linea por
+        # (expediente_id, producto_id, size).
+        linea_keys = []
+        seen = set()
+        for l in lineas:
+            m = per_line_exp.get(str(l.id))
+            eid = m["expediente_id"] if m else None
+            pid = str(l.producto_id) if l.producto_id else None
+            if not eid or not pid:
+                continue
+            sz = str(l.size or "")
+            lk = (eid, pid, sz)
+            if lk not in seen:
+                seen.add(lk)
+                linea_keys.append(lk)
+
+        price_info = {}  # (eid, pid, size) → dict
+        if linea_keys:
+            placeholders = ",".join(["(%s::uuid, %s::uuid, %s)"] * len(linea_keys))
+            params = [v for lk in linea_keys for v in lk]
+            with _conn.cursor() as c:
+                c.execute(
+                    f"""
+                    SELECT expediente_id, producto_id,
+                           COALESCE(size, '') AS size_norm,
+                           unit_price_mwt, unit_price_client
+                      FROM expedientes.linea
+                     WHERE (expediente_id, producto_id, COALESCE(size,''))
+                        IN ({placeholders})
+                       AND is_active = TRUE
+                    """,
+                    params,
+                )
+                for r in c.fetchall():
+                    k = (str(r[0]), str(r[1]), r[2] or "")
+                    price_info[k] = {
+                        "unit_price_mwt":    float(r[3]) if r[3] is not None else None,
+                        "unit_price_client": float(r[4]) if r[4] is not None else None,
+                    }
+
+        for l in lineas:
+            m = per_line_exp.get(str(l.id))
+            eid = m["expediente_id"] if m else None
+            pid = str(l.producto_id) if l.producto_id else None
+            sz = str(l.size or "")
+            pinfo = price_info.get((eid, pid, sz)) if (eid and pid) else None
+            out[str(l.id)] = {
+                "unit_price_mwt":       pinfo["unit_price_mwt"]    if pinfo else None,
+                "unit_price_client":    pinfo["unit_price_client"] if pinfo else None,
+                "operating_company_id": m["operating_company_id"]  if m else None,
+                "expediente_codigo":    m["expediente_codigo"]     if m else None,
+                "proforma_codigo":      m["proforma_codigo"]       if m else None,
+            }
+    except Exception:
+        log.exception("[_resolve_line_pricing] enrichment failed trf=%s", getattr(t, "id", None))
+        return {}
+    return out
+
+
+# ════════════════════════════════════════════════════════════
 # Transferencia
 # ════════════════════════════════════════════════════════════
 class TransferenciaViewSet(viewsets.ViewSet):
@@ -1062,6 +1219,26 @@ class TransferenciaViewSet(viewsets.ViewSet):
         tp_currency = ctx.get("transfer_pricing_currency") or "USD"
 
         lineas = list(Linea.objects.filter(transferencia_id=t.id, is_active=True).order_by("created_at"))
+        # Sprint 2026-06-01 · Factura/Remisión por audiencia. Resolvemos el
+        # precio congelado por línea (MWT vs Cliente) + operating_company del
+        # expediente, para que el FE pueda emitir el documento al destinatario
+        # correcto con el precio correcto.
+        line_pricing = _resolve_line_pricing(t, lineas)
+        from apps.core.constants import MWT_OPERATING_CLIENT_ID as _MWT_OC_ID
+        _op_ids = {
+            (line_pricing.get(str(l.id), {}) or {}).get("operating_company_id")
+            for l in lineas
+        }
+        _op_ids.discard(None)
+        # operated_by_mwt: TODAS las líneas con operating_company resuelto
+        # pertenecen al operador MWT. Si no se pudo resolver, default False.
+        operated_by_mwt = bool(_op_ids) and all(
+            str(x).lower() == str(_MWT_OC_ID).lower() for x in _op_ids
+        )
+        operating_company_id = next(iter(_op_ids), None) if _op_ids else None
+        operating_company_label = (
+            "Muito Work Limitada" if operated_by_mwt else "Cliente final"
+        )
         cost_lines = list(CostLine.objects.filter(transferencia_id=t.id, is_active=True).order_by("kind"))
         documentos = list(TransferenciaDocumento.objects.filter(transferencia_id=t.id, is_active=True))
         eventos = list(Evento.objects.filter(transferencia_id=t.id).order_by("-created_at")[:30])
@@ -1131,10 +1308,18 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 "basis":    ctx.get("transfer_pricing_basis") or "PER_UNIT",
                 "requires_tp_approval": bool(ctx.get("requires_tp_approval")),
             },
-            "lineas": [{
+            "operating_company": {
+                "operated_by_mwt":         operated_by_mwt,
+                "operating_company_id":    operating_company_id,
+                "operating_company_label": operating_company_label,
+                "mwt_operating_client_id": str(_MWT_OC_ID),
+                "mwt_operator_name":       "Muito Work Limitada",
+            },
+            "lineas": [dict({
                 "sku":              l.sku or "",
                 "product_label":    l.product_label or "",
                 "size":             l.size or "",
+                "producto_id":      str(l.producto_id) if l.producto_id else None,
                 "qty_planned":      int(l.qty_transfer or 0),
                 "qty_dispatched":   int(l.qty_dispatched) if l.qty_dispatched is not None else None,
                 "qty_received":     int(l.qty_received) if l.qty_received is not None else None,
@@ -1144,7 +1329,13 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 "landed_cost_usd":  float(l.landed_cost_usd) if l.landed_cost_usd is not None else None,
                 "estado_discrepancia": l.estado_discrepancia,
                 "tp_unit_amount":   tp_amount if is_dist and (ctx.get("transfer_pricing_basis") == "PER_UNIT") else None,
-            } for l in lineas],
+                # Precios congelados por audiencia (Sprint 2026-06-01).
+                "unit_price_mwt":    (line_pricing.get(str(l.id), {}) or {}).get("unit_price_mwt"),
+                "unit_price_client": (line_pricing.get(str(l.id), {}) or {}).get("unit_price_client"),
+                "operating_company_id": (line_pricing.get(str(l.id), {}) or {}).get("operating_company_id"),
+                "expediente_codigo": (line_pricing.get(str(l.id), {}) or {}).get("expediente_codigo"),
+                "proforma_codigo":   (line_pricing.get(str(l.id), {}) or {}).get("proforma_codigo"),
+            }) for l in lineas],
             "cost_breakdown": [{
                 "kind":       c.kind,
                 "label":      c.label or "",
