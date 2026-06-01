@@ -105,8 +105,17 @@ export function RefCell({ expediente, isAdmin, onClickOc, lang = "es" }) {
     sap: "SAP",
   };
 
-  const hasChips = (isAdmin && proformas.length > 0) ||
-                   ocs.length > 0 ||
+  // Sprint 2026-05-31 (CEO) · el label PRINCIPAL es el PO del cliente
+  // (oc_codigos[0]), no el código interno EXP-. Si la OC no tiene número
+  // de cliente, caemos al EXP- como fallback. El EXP- pasa a ser un chip
+  // secundario para no perder la referencia interna.
+  const primaryOc = ocs.length > 0 ? ocs[0] : null;
+  const restOcs   = primaryOc ? ocs.slice(1) : ocs;
+  const headValue = primaryOc || e.codigo;
+
+  const hasChips = (!!primaryOc) ||
+                   (isAdmin && proformas.length > 0) ||
+                   restOcs.length > 0 ||
                    (isAdmin && saps.length > 0);
 
   return (
@@ -119,18 +128,23 @@ export function RefCell({ expediente, isAdmin, onClickOc, lang = "es" }) {
             aria-label="blocked"
           >🔒</span>
         )}
-        <span className="ref-cell__code font-mono tabular-nums">{e.codigo}</span>
+        <span className="ref-cell__code font-mono tabular-nums">{headValue}</span>
       </div>
 
       {hasChips && (
         <div className="ref-cell__chips">
+          {/* EXP interno — secundario cuando el PO ya ocupa el head. */}
+          {primaryOc && (
+            <RefChip kind="exp" label="EXP" value={e.codigo} />
+          )}
+
           {/* Proformas — CEO-ONLY (R3) */}
           {isAdmin && proformas.map((c) => (
             <RefChip key={`pf-${c}`} kind="proforma" label={labels.pf} value={c} />
           ))}
 
-          {/* OCs — visible a todos los roles */}
-          {ocs.map((c) => (
+          {/* OCs restantes — visible a todos los roles */}
+          {restOcs.map((c) => (
             <RefChip
               key={`oc-${c}`}
               kind="oc"

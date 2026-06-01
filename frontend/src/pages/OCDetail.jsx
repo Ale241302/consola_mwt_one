@@ -1584,6 +1584,21 @@ export default function ScreenOCDetail() {
             calculamos pendiente = orderValue - total_paid. Si ya hay
             facturacion, priorizamos los campos persistidos del backend. */}
         <div className="kpi-tile">
+          {/* Sprint 2026-05-31 · gating de operador: operada por MWT y el
+              viewer NO es admin ni pertenece a MWT → ve el Total de la orden,
+              no el estado financiero (facturado/pendiente) del operador. */}
+          {(isMwtOp && !canSeeMwtPrice) ? (
+            <>
+              <div className="k-label">{lang==='es'?'Total orden':'Order total'}</div>
+              <div className="k-value" style={{fontSize: 24, whiteSpace:'nowrap'}}>
+                {fmtMoney(computedTotal)}
+              </div>
+              <div className="k-sub">
+                <span>{lang==='es'?'Valor total del pedido':'Total order value'}</span>
+              </div>
+            </>
+          ) : (
+            <>
           <div className="k-label">{tr(lang,'financial_status')}</div>
           {(() => {
             const invoiced     = Number(oc.total_invoiced || 0);
@@ -1623,6 +1638,8 @@ export default function ScreenOCDetail() {
               </>
             );
           })()}
+            </>
+          )}
         </div>
 
         {/* Credit clock — métrica interna de cobranza: CEO-ONLY. */}
@@ -1646,6 +1663,9 @@ export default function ScreenOCDetail() {
 
       {/* ── Main content: Lines table + Docs sidebar ───── */}
       <div className="grid gap-3" style={{gridTemplateColumns: '1fr 340px', alignItems:'start'}}>
+        {/* Sprint 2026-05-31 · columna izquierda = Líneas de la OC + Productos OC
+            (Productos sube a la par de Documentos comerciales, sin hueco grande). */}
+        <div style={{display:'flex', flexDirection:'column', gap:12, minWidth:0}}>
         {/* Lines grouped by SAP */}
         <div className="card">
           <div className="card-head" style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
@@ -1858,161 +1878,6 @@ export default function ScreenOCDetail() {
           </div>
         </div>
 
-        {/* Documents hub */}
-        <div className="card">
-          <div className="card-head">
-            <div>
-              <div className="card-title">{tr(lang,'documents_hub')}</div>
-              <div className="card-subtitle">{oc.docs.length} {lang==='es'?'archivos':'files'}</div>
-            </div>
-          </div>
-          <div style={{padding:'8px 0'}}>
-            {docError && (
-              <div style={{
-                margin: '0 22px 10px',
-                padding: '8px 12px',
-                borderRadius: 8,
-                background: 'color-mix(in oklab, var(--danger, #DC2626) 12%, transparent)',
-                color: 'var(--danger, #991B1B)',
-                border: '1px solid color-mix(in oklab, var(--danger, #DC2626) 30%, transparent)',
-                fontSize: 12,
-                display: 'flex', alignItems: 'flex-start', gap: 6,
-              }}>
-                <IconAlert size={11} style={{flexShrink: 0, marginTop: 2}}/>
-                <div style={{flex: 1}}>{docError}</div>
-                <button
-                  type="button"
-                  onClick={() => setDocError(null)}
-                  style={{background:'transparent', border:0, cursor:'pointer', color:'inherit'}}
-                >
-                  <IconX size={10}/>
-                </button>
-              </div>
-            )}
-            {oc.docs.length === 0 && (
-              <div className="caption" style={{
-                padding: '12px 22px',
-                color: 'var(--text-tertiary)',
-                textAlign: 'center',
-              }}>
-                {lang === 'es' ? 'Aún no hay documentos.' : 'No documents yet.'}
-              </div>
-            )}
-            {oc.docs.filter(d => {
-              // Sprint 2026-05-06 · simular vista por rol cuando Admin
-              // togglea Tweaks→Cliente (B2B). El backend ya filtra
-              // ADMIN_ONLY/MWT_INTERNAL para CLIENT_* reales; aquí
-              // replicamos el filtro para la simulación frontend.
-              const aud = String(d.audience || 'CLIENT').toUpperCase();
-              // Sprint 2026-05-08 · ART-04 (Confirmación SAP) SIEMPRE
-              // se oculta del lado cliente, aunque el campo audience
-              // venga mal seteado en docs legacy. Defensa en profundidad.
-              const rawKind = String((d._raw && d._raw.kind) || '').toUpperCase();
-              const isArt04 = rawKind === 'ART-04';
-              if (isClient) {
-                if (isArt04) return false;
-                return aud === 'CLIENT';
-              }
-              return true;
-            }).map(d => {
-              // Defensivo: cualquier campo faltante cae a un valor seguro
-              // para no romper la UI con docs legacy o shape inesperado.
-              const ext = String(d.ext || 'file').toLowerCase();
-              const isViewing = viewingDocId === d.id;
-              const canMutate = !isClient && can('upload_document');
-              return (
-                <div
-                  key={d.id}
-                  className="doc-item"
-                  onClick={() => handleViewDoc(d)}
-                  style={{
-                    cursor: 'pointer',
-                    opacity: isViewing ? 0.7 : 1,
-                    transition: 'opacity 0.15s',
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      handleViewDoc(d);
-                    }
-                  }}
-                  title={lang === 'es' ? 'Click para abrir el documento' : 'Click to open document'}
-                >
-                  <div className={'doc-icon ext-' + ext}>
-                    {ext.toUpperCase()}
-                  </div>
-                  <div style={{flex: 1, minWidth: 0}}>
-                    <div className="body-sm" style={{fontWeight: 500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
-                      {d.kind || '—'}
-                    </div>
-                    <div className="caption" style={{marginTop: 2, fontFamily:'var(--font-mono)'}}>
-                      {d.code || '—'}
-                    </div>
-                    <div className="caption" style={{color:'var(--text-tertiary)', marginTop: 3}}>
-                      {d.date || '—'} · {d.size || '—'} · {d.author || '—'}
-                    </div>
-                  </div>
-                  <div style={{display:'flex', gap: 4, alignItems:'center'}}>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      title={lang === 'es' ? 'Abrir documento' : 'Open document'}
-                      disabled={isViewing}
-                      onClick={(e) => { e.stopPropagation(); handleViewDoc(d); }}
-                    >
-                      <IconEye size={13}/>
-                    </button>
-                    {canMutate && (
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        title={lang === 'es' ? 'Eliminar documento' : 'Delete document'}
-                        onClick={(e) => { e.stopPropagation(); handleDeleteDoc(d); }}
-                        style={{color: 'var(--danger, #DC2626)'}}
-                      >
-                        <IconTrash size={13}/>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Expedientes pill list */}
-          <div style={{borderTop:'1px solid var(--divider)', padding: '16px 22px'}}>
-            <div className="micro" style={{marginBottom: 10}}>{tr(lang,'expedientes_in_oc')}</div>
-            {oc.expedientes.map(eid => {
-              const e = EXPEDIENTES.find(x => x.id === eid);
-              if (!e) return null;
-              return (
-                <div key={eid} className="exp-link-row" onClick={()=>onOpenExpediente(eid)}>
-                  <div style={{flex: 1, minWidth: 0}}>
-                    <div className="flex ai-center gap-2">
-                      <IconFolder size={12} style={{color:'var(--text-tertiary)'}}/>
-                      <span className="body-sm" style={{fontWeight: 600}}>{e.ref}</span>
-                      {e.sap && <span className="caption" style={{fontFamily:'var(--font-mono)'}}>{e.sap}</span>}
-                    </div>
-                    <div className="caption" style={{marginTop: 2}}>
-                      {e.origin} → {e.destination}
-                    </div>
-                  </div>
-                  <StatusBadge status={e.status} lang={lang}/>
-                  <IconChevRight size={13} style={{color:'var(--text-tertiary)'}}/>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* ══════════════════════════════════════════════════════════════════
-          Tabla plana "Productos OC":
-            · ADMIN → tabla completa editable con columnas diferido + eliminar
-            · CLIENT → tabla de solo-lectura, sin diferido, sin eliminar
-          ══════════════════════════════════════════════════════════════════ */}
       <div className="card" style={{marginTop: 14}}>
         <div className="card-head" style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
           <div>
@@ -2037,7 +1902,7 @@ export default function ScreenOCDetail() {
             <thead>
               <tr>
                 <th style={{width:140}}>SKU</th>
-                <th>{lang==='es'?'Nombre':'Name'}</th>
+                <th style={{width:220}}>{lang==='es'?'Nombre':'Name'}</th>
                 <th style={{width:70, textAlign:'center'}}>{lang==='es'?'Talla':'Size'}</th>
                 <th style={{width:80, textAlign:'right'}}>{lang==='es'?'Cant.':'Qty'}</th>
                 {/* Sprint 2026-05-17 · Columnas de precio duales (MWT + Cliente)
@@ -2315,6 +2180,157 @@ export default function ScreenOCDetail() {
               </tr>
             </tfoot>
           </table>
+        </div>
+      </div>
+        </div>{/* /columna izquierda (Líneas + Productos OC) */}
+
+        {/* Documents hub */}
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <div className="card-title">{tr(lang,'documents_hub')}</div>
+              <div className="card-subtitle">{oc.docs.length} {lang==='es'?'archivos':'files'}</div>
+            </div>
+          </div>
+          <div style={{padding:'8px 0'}}>
+            {docError && (
+              <div style={{
+                margin: '0 22px 10px',
+                padding: '8px 12px',
+                borderRadius: 8,
+                background: 'color-mix(in oklab, var(--danger, #DC2626) 12%, transparent)',
+                color: 'var(--danger, #991B1B)',
+                border: '1px solid color-mix(in oklab, var(--danger, #DC2626) 30%, transparent)',
+                fontSize: 12,
+                display: 'flex', alignItems: 'flex-start', gap: 6,
+              }}>
+                <IconAlert size={11} style={{flexShrink: 0, marginTop: 2}}/>
+                <div style={{flex: 1}}>{docError}</div>
+                <button
+                  type="button"
+                  onClick={() => setDocError(null)}
+                  style={{background:'transparent', border:0, cursor:'pointer', color:'inherit'}}
+                >
+                  <IconX size={10}/>
+                </button>
+              </div>
+            )}
+            {oc.docs.length === 0 && (
+              <div className="caption" style={{
+                padding: '12px 22px',
+                color: 'var(--text-tertiary)',
+                textAlign: 'center',
+              }}>
+                {lang === 'es' ? 'Aún no hay documentos.' : 'No documents yet.'}
+              </div>
+            )}
+            {oc.docs.filter(d => {
+              // Sprint 2026-05-06 · simular vista por rol cuando Admin
+              // togglea Tweaks→Cliente (B2B). El backend ya filtra
+              // ADMIN_ONLY/MWT_INTERNAL para CLIENT_* reales; aquí
+              // replicamos el filtro para la simulación frontend.
+              const aud = String(d.audience || 'CLIENT').toUpperCase();
+              // Sprint 2026-05-08 · ART-04 (Confirmación SAP) SIEMPRE
+              // se oculta del lado cliente, aunque el campo audience
+              // venga mal seteado en docs legacy. Defensa en profundidad.
+              const rawKind = String((d._raw && d._raw.kind) || '').toUpperCase();
+              const isArt04 = rawKind === 'ART-04';
+              if (isClient) {
+                if (isArt04) return false;
+                return aud === 'CLIENT';
+              }
+              return true;
+            }).map(d => {
+              // Defensivo: cualquier campo faltante cae a un valor seguro
+              // para no romper la UI con docs legacy o shape inesperado.
+              const ext = String(d.ext || 'file').toLowerCase();
+              const isViewing = viewingDocId === d.id;
+              const canMutate = !isClient && can('upload_document');
+              return (
+                <div
+                  key={d.id}
+                  className="doc-item"
+                  onClick={() => handleViewDoc(d)}
+                  style={{
+                    cursor: 'pointer',
+                    opacity: isViewing ? 0.7 : 1,
+                    transition: 'opacity 0.15s',
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleViewDoc(d);
+                    }
+                  }}
+                  title={lang === 'es' ? 'Click para abrir el documento' : 'Click to open document'}
+                >
+                  <div className={'doc-icon ext-' + ext}>
+                    {ext.toUpperCase()}
+                  </div>
+                  <div style={{flex: 1, minWidth: 0}}>
+                    <div className="body-sm" style={{fontWeight: 500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+                      {d.kind || '—'}
+                    </div>
+                    <div className="caption" style={{marginTop: 2, fontFamily:'var(--font-mono)'}}>
+                      {d.code || '—'}
+                    </div>
+                    <div className="caption" style={{color:'var(--text-tertiary)', marginTop: 3}}>
+                      {d.date || '—'} · {d.size || '—'} · {d.author || '—'}
+                    </div>
+                  </div>
+                  <div style={{display:'flex', gap: 4, alignItems:'center'}}>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      title={lang === 'es' ? 'Abrir documento' : 'Open document'}
+                      disabled={isViewing}
+                      onClick={(e) => { e.stopPropagation(); handleViewDoc(d); }}
+                    >
+                      <IconEye size={13}/>
+                    </button>
+                    {canMutate && (
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title={lang === 'es' ? 'Eliminar documento' : 'Delete document'}
+                        onClick={(e) => { e.stopPropagation(); handleDeleteDoc(d); }}
+                        style={{color: 'var(--danger, #DC2626)'}}
+                      >
+                        <IconTrash size={13}/>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Expedientes pill list */}
+          <div style={{borderTop:'1px solid var(--divider)', padding: '16px 22px'}}>
+            <div className="micro" style={{marginBottom: 10}}>{tr(lang,'expedientes_in_oc')}</div>
+            {oc.expedientes.map(eid => {
+              const e = EXPEDIENTES.find(x => x.id === eid);
+              if (!e) return null;
+              return (
+                <div key={eid} className="exp-link-row" onClick={()=>onOpenExpediente(eid)}>
+                  <div style={{flex: 1, minWidth: 0}}>
+                    <div className="flex ai-center gap-2">
+                      <IconFolder size={12} style={{color:'var(--text-tertiary)'}}/>
+                      <span className="body-sm" style={{fontWeight: 600}}>{e.ref}</span>
+                      {e.sap && <span className="caption" style={{fontFamily:'var(--font-mono)'}}>{e.sap}</span>}
+                    </div>
+                    <div className="caption" style={{marginTop: 2}}>
+                      {e.origin} → {e.destination}
+                    </div>
+                  </div>
+                  <StatusBadge status={e.status} lang={lang}/>
+                  <IconChevRight size={13} style={{color:'var(--text-tertiary)'}}/>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
