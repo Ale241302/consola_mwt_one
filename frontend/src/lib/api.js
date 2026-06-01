@@ -174,7 +174,19 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiFetch(path, { method = "GET", body, token, headers = {}, _isRetry = false } = {}) {
+// Sprint 2026-05-31 · errores transitorios → reintento automático 1x.
+// Cubre la ventana de ~15-30s en que el upstream Django está abajo durante
+// un deploy (docker compose recrea el contenedor): nginx/Cloudflare devuelven
+// 502/503/504/522/523/524/408 o hay falla de red. Solo reintentamos métodos
+// idempotentes (GET/HEAD) para NO duplicar mutaciones (POST/PATCH/DELETE).
+const _TRANSIENT_STATUS = new Set([408, 502, 503, 504, 522, 523, 524]);
+const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const _isIdempotent = (m) => {
+  const u = String(m || "GET").toUpperCase();
+  return u === "GET" || u === "HEAD";
+};
+
+export async function apiFetch(path, { method = "GET", body, token, headers = {}, _isRetry = false, _transientRetried = false } = {}) {
   // ── Kill-switch: mock mode ──────────────────────────────────────────
   // /auth/* siempre pasa al backend real (login + refresh + me + logout).
   // El resto: GET → [] (o fixtures específicos si hay mock registrado)
@@ -224,6 +236,11 @@ export async function apiFetch(path, { method = "GET", body, token, headers = {}
   try {
     resp = await fetch(`${API_BASE}${path}`, opts);
   } catch (e) {
+    // Falla de red (upstream caído durante deploy, DNS, etc.). Reintento 1x.
+    if (!_transientRetried && _isIdempotent(method)) {
+      await _sleep(1000);
+      return apiFetch(path, { method, body, token, headers, _isRetry, _transientRetried: true });
+    }
     throw new ApiError("No se pudo contactar al servidor", 0, null);
   }
 
@@ -246,6 +263,12 @@ export async function apiFetch(path, { method = "GET", body, token, headers = {}
       }
       // No se pudo refrescar (refresh expirado/ausente) → logout limpio.
       emitForcedLogout();
+    }
+    // Sprint 2026-05-31 · reintento ante error transitorio del gateway
+    // (deploy en curso: Django reiniciándose). Solo GET/HEAD, una vez.
+    if (_TRANSIENT_STATUS.has(resp.status) && !_transientRetried && _isIdempotent(method)) {
+      await _sleep(1000);
+      return apiFetch(path, { method, body, token, headers, _isRetry, _transientRetried: true });
     }
     const msg = data?.detail || data?.message || data?.error || `HTTP ${resp.status}`;
     throw new ApiError(msg, resp.status, data);
