@@ -611,12 +611,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
           ? `lo que le costaría a ${esc(clientName)} <strong>nacionalizar por su cuenta</strong> declarando al precio de la orden (SN), por línea. Flete ${usd(freight)}, seguro ${usd(insurance)}, costos de aduana y transporte de ${usd(destTotal)} prorrateados por pares. <strong>IVA 13% se muestra pero no suma</strong> (crédito fiscal acreditable). Comparado contra el precio al que MWT se lo entrega.`
           : `what it would cost ${esc(clientName)} to <strong>nationalize on their own</strong> declaring at order price (SN), line by line. Freight ${usd(freight)}, insurance ${usd(insurance)}, customs and transport costs of ${usd(destTotal)} prorrated by pairs. <strong>13% VAT is shown but not added</strong> (creditable tax credit).`}
       </div>`
-    : `<div style="padding:10px 14px;background:var(--raised);border-radius:8px;font-size:11px;color:var(--t2);line-height:1.7;margin-bottom:16px;">
-        <strong style="color:var(--navy);">${lang === "es" ? "Qué muestra:" : "What this shows:"}</strong> 
-        ${lang === "es"
-          ? `el costo real de MWT al nacionalizar al <strong>precio Marluvas (UF)</strong>. Mismo prorrateo que la vista ${esc(clientName)} (flete, seguro, aduana y transporte por pares). <strong>IVA 13% sobre CIF</strong>, crédito fiscal — no suma al costo.`
-          : `the actual cost of MWT when nationalizing at <strong>Marluvas price (UF)</strong>. Same prorating as the ${esc(clientName)} view (freight, insurance, customs, and transport by pairs). <strong>13% VAT on CIF</strong>, tax credit — not added to cost.`}
-      </div>`;
+    : ``;
 
   const bottomNote = isClient
     ? `<div style="padding:12px 16px;background:var(--mint-s);border:1px solid var(--mint);border-radius:8px;font-size:11px;color:var(--t1);line-height:1.7;margin-bottom:16px;">
@@ -625,18 +620,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
           ? `nacionalizar por cuenta propia tendría un costo de <strong>${usd(nacReal.totals.total)} sin IVA</strong> (ver costo por par de cada línea arriba) — DAI, Ley 6946, gestión aduanal y transporte incluidos. Comprando a MWT ese proceso y su costo quedan absorbidos. IVA acreditable como crédito fiscal.`
           : `nationalizing on your own would have a cost of <strong>${usd(nacReal.totals.total)} excl. VAT</strong> (see cost per pair for each line above) — DAI, Law 6946, customs management, and transport included. Buying from MWT absorbs this process and its cost. VAT is creditable.`}
       </div>`
-    : `<div style="padding:12px 16px;background:var(--crit-bg);border:1px solid rgba(220,38,38,0.2);border-radius:8px;font-size:11px;color:var(--t1);line-height:1.7;margin-bottom:16px;">
-        <strong style="color:var(--crit);">${lang === "es" ? "⚠️ Margen real (venta SN − costo nacionalizado MWT):" : "⚠️ Real margin (SN sale − MWT nationalized cost):"}</strong> 
-        ${lang === "es"
-          ? `venta a ${esc(clientName)} ${usd(nacReal.totals.goods)} vs costo nacionalizado real ${usd(nacMwt.totals.total)} → <strong style="color:var(--crit);">${usd(nacReal.totals.goods - nacMwt.totals.total)}</strong> si MWT entrega DDP absorbiendo nacionalización.`
-          : `sale to ${esc(clientName)} ${usd(nacReal.totals.goods)} vs real nationalized cost ${usd(nacMwt.totals.total)} → <strong style="color:var(--crit);">${usd(nacReal.totals.goods - nacMwt.totals.total)}</strong> if MWT delivers DDP absorbing nationalization.`}
-      </div>
-      <div style="padding:12px 16px;background:var(--mint-s);border:1px solid var(--mint);border-radius:8px;font-size:11px;color:var(--t1);line-height:1.7;margin-bottom:16px;">
-        <strong style="color:var(--navy);">${lang === "es" ? "Arbitraje del modelo:" : "Model arbitrage:"}</strong> 
-        ${lang === "es"
-          ? `delta de precio + ahorro fiscal por declarar a precio Marluvas = <strong style="color:var(--ok);">${usd(nacReal.totals.total - nacMwt.totals.total)}</strong>. Equivale a DDP SONDEL − DDP MWT. <strong>Valor percibido por el cliente:</strong> vs nacionalizar directo (${usd(nacReal.totals.total)}) ${esc(clientName)} ahorra ${usd(nacReal.totals.total - nacReal.totals.goods)}.`
-          : `price delta + tax savings from declaring at Marluvas price = <strong style="color:var(--ok);">${usd(nacReal.totals.total - nacMwt.totals.total)}</strong>. Equivalent to DDP SONDEL − DDP MWT. <strong>Value perceived by client:</strong> vs direct nationalization (${usd(nacReal.totals.total)}) ${esc(clientName)} saves ${usd(nacReal.totals.total - nacReal.totals.goods)}.`}
-      </div>`;
+    : ``;
 
   // R3 POL_VISIBILIDAD: el CIF/base MWT (costo interno) NO se muestra al cliente.
   const cifSection = oc.operated_by_mwt ? `
@@ -649,7 +633,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         </div>
       </div>
       <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
-        <span class="badge ${badgeClass}">${esc(badgeLabel)}</span>
+        ${isClient ? `<span class="badge ${badgeClass}">${esc(badgeLabel)}</span>` : ""}
       </div>
     </div>
     
@@ -848,80 +832,84 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
 
   ${shippingSection}
 
-  <div class="sect">
-    <div class="sect-h">
-      <h3>${lang === "es" ? "Detalle de mercadería" : "Merchandise detail"} · ${esc(priceColLabel)}</h3>
-    </div>
-    <div class="card-b" style="padding:0;">
-      <div style="padding:10px 18px;font-size:11px;color:var(--t2);">
-        <span class="route">
-          <span class="node">${esc((payload.origen && payload.origen.label) || "—")}</span>
-          <span class="arrow">→</span>
-          <span class="node">${esc((payload.destino && payload.destino.label) || "—")}</span>
-          ${t.ref_tracking ? `<span style="margin-left:auto;font-family:'JetBrains Mono';font-size:10px;color:var(--t3);">Tracking: ${esc(t.ref_tracking)}</span>` : ""}
-        </span>
+  ${isClient ? `
+    <div class="sect">
+      <div class="sect-h">
+        <h3>${lang === "es" ? "Detalle de mercadería" : "Merchandise detail"} · ${esc(priceColLabel)}</h3>
       </div>
-      <table class="ct">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>${lang === "es" ? "Expediente" : "File"}</th>
-            <th>SKU</th>
-            <th>NCM</th>
-            <th>${lang === "es" ? "Producto" : "Product"}</th>
-            <th class="r">${lang === "es" ? "Talla" : "Size"}</th>
-            <th class="r">${lang === "es" ? "Cantidad" : "Qty"}</th>
-            <th class="r">${esc(priceColLabel)}</th>
-            <th class="r">${lang === "es" ? "Subtotal" : "Subtotal"}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows}
-          <tr class="trow">
-            <td colspan="6">${lang === "es" ? "TOTAL" : "TOTAL"}</td>
-            <td class="r">${fmtInt(unitsTotal)}</td>
-            <td></td>
-            <td class="r">${usd(grandTotal)}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="card-b" style="padding:0;">
+        <div style="padding:10px 18px;font-size:11px;color:var(--t2);">
+          <span class="route">
+            <span class="node">${esc((payload.origen && payload.origen.label) || "—")}</span>
+            <span class="arrow">→</span>
+            <span class="node">${esc((payload.destino && payload.destino.label) || "—")}</span>
+            ${t.ref_tracking ? `<span style="margin-left:auto;font-family:'JetBrains Mono';font-size:10px;color:var(--t3);">Tracking: ${esc(t.ref_tracking)}</span>` : ""}
+          </span>
+        </div>
+        <table class="ct">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>${lang === "es" ? "Expediente" : "File"}</th>
+              <th>SKU</th>
+              <th>NCM</th>
+              <th>${lang === "es" ? "Producto" : "Product"}</th>
+              <th class="r">${lang === "es" ? "Talla" : "Size"}</th>
+              <th class="r">${lang === "es" ? "Cantidad" : "Qty"}</th>
+              <th class="r">${esc(priceColLabel)}</th>
+              <th class="r">${lang === "es" ? "Subtotal" : "Subtotal"}</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+            <tr class="trow">
+              <td colspan="6">${lang === "es" ? "TOTAL" : "TOTAL"}</td>
+              <td class="r">${fmtInt(unitsTotal)}</td>
+              <td></td>
+              <td class="r">${usd(grandTotal)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
-  </div>
 
-  <div class="tot">
-    <div class="tot-card">
-      <div class="tot-row"><span>${lang === "es" ? "Unidades totales" : "Total units"}</span><strong>${fmtInt(unitsTotal)}</strong></div>
-      <div class="tot-row"><span>${lang === "es" ? "Líneas" : "Lines"}</span><strong>${fmtInt(lineas.length)}</strong></div>
-      <div class="tot-row"><span>${lang === "es" ? "Subtotal mercadería" : "Merchandise subtotal"}</span><strong>${usd(grandTotal)}</strong></div>
-      ${costs.length > 0 ? `<div class="tot-row"><span>${lang === "es" ? "Total costos registrados" : "Registered costs total"}</span><strong>${usd(costsTotal)}</strong></div>` : ""}
-      <div class="tot-row tot-final"><span>${lang === "es" ? "TOTAL (mercadería + costos)" : "TOTAL (merchandise + costs)"} USD</span><strong>${usd(grandTotal + costsTotal)}</strong></div>
+    <div class="tot">
+      <div class="tot-card">
+        <div class="tot-row"><span>${lang === "es" ? "Unidades totales" : "Total units"}</span><strong>${fmtInt(unitsTotal)}</strong></div>
+        <div class="tot-row"><span>${lang === "es" ? "Líneas" : "Lines"}</span><strong>${fmtInt(lineas.length)}</strong></div>
+        <div class="tot-row"><span>${lang === "es" ? "Subtotal mercadería" : "Merchandise subtotal"}</span><strong>${usd(grandTotal)}</strong></div>
+        ${costs.length > 0 ? `<div class="tot-row"><span>${lang === "es" ? "Total costos registrados" : "Registered costs total"}</span><strong>${usd(costsTotal)}</strong></div>` : ""}
+        <div class="tot-row tot-final"><span>${lang === "es" ? "TOTAL (mercadería + costos)" : "TOTAL (merchandise + costs)"} USD</span><strong>${usd(grandTotal + costsTotal)}</strong></div>
+      </div>
     </div>
-  </div>
 
-  ${costs.length > 0 ? `
-  <div class="sect">
-    <div class="sect-h"><h3>${lang === "es" ? "Costos registrados del movimiento" : "Registered transfer costs"}</h3></div>
-    <div class="card-b" style="padding:0;">
-      <table class="ct">
-        <thead>
-          <tr>
-            <th>${lang === "es" ? "Tipo" : "Kind"}</th>
-            <th>${lang === "es" ? "Descripción del costo" : "Cost description"}</th>
-            <th class="r">${lang === "es" ? "Monto" : "Amount"}</th>
-            <th>${lang === "es" ? "Mon." : "Curr."}</th>
-            <th class="r">FX→USD</th>
-            <th class="r">USD</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${costRows}
-          <tr class="trow"><td colspan="5">${lang === "es" ? "Total costos USD" : "Total costs USD"}</td><td class="r"><strong>${usd(costsTotal)}</strong></td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>` : ""}
+    ${costs.length > 0 ? `
+    <div class="sect">
+      <div class="sect-h"><h3>${lang === "es" ? "Costos registrados del movimiento" : "Registered transfer costs"}</h3></div>
+      <div class="card-b" style="padding:0;">
+        <table class="ct">
+          <thead>
+            <tr>
+              <th>${lang === "es" ? "Tipo" : "Kind"}</th>
+              <th>${lang === "es" ? "Descripción del costo" : "Cost description"}</th>
+              <th class="r">${lang === "es" ? "Monto" : "Amount"}</th>
+              <th>${lang === "es" ? "Mon." : "Curr."}</th>
+              <th class="r">FX→USD</th>
+              <th class="r">USD</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${costRows}
+            <tr class="trow"><td colspan="5">${lang === "es" ? "Total costos USD" : "Total costs USD"}</td><td class="r"><strong>${usd(costsTotal)}</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>` : ""}
 
-  ${cifSection}
+    ${cifSection}
+  ` : `
+    ${cifSection}
+  `}
 
   ${sizePills ? `
   <div class="sect">
