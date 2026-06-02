@@ -383,7 +383,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
 
   const billTo = isClient
     ? {
-        name: oc.operating_company_label || "Cliente final",
+        name: oc.client_name || oc.operating_company_label || "Cliente final",
         sub: lang === "es" ? "Precio de venta (cliente)" : "Sale price (client)",
         ruc: "",
       }
@@ -528,7 +528,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   const refPO = payload.oc_codigo || payload.proforma_codigo || t.oc_codigo || "—";
   
   // Destinatario / Cliente final: name of the client assigned to the expediente
-  const clientName = oc.operating_company_label || billTo.name;
+  const clientName = oc.client_name || oc.operating_company_label || billTo.name;
   
   const awbVal = ship.tracking || "—";
   const carrierVal = ship.carrier || "—";
@@ -622,16 +622,8 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
     <div class="head" style="margin-bottom: 12px; border-top: 4px solid ${isClient ? "var(--purple)" : "var(--navy)"};">
       <div>
         <h2 style="font-size: 18px; font-weight: 800; color: var(--navy); letter-spacing: -.4px;">${esc(cifTitle)}</h2>
-        <div class="meta" style="font-size: 12px; color: var(--t2); margin-top: 4px; line-height: 1.8;">
-          ${metaHtml}
-        </div>
-      </div>
-      <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
-        ${isClient ? `<span class="badge ${badgeClass}">${esc(badgeLabel)}</span>` : ""}
       </div>
     </div>
-    
-    ${noteBlock}
     
     <div class="sect">
       <div class="sect-h">
@@ -656,8 +648,6 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         ${buildLandedCostTable(nacAud, isClient, lang)}
       </div>
     </div>
-
-    ${bottomNote}
   </div>` : "";
 
   // ── Resumen por talla ──
@@ -837,84 +827,7 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
 
   ${shippingSection}
 
-  ${isClient ? `
-    <div class="sect">
-      <div class="sect-h">
-        <h3>${lang === "es" ? "Detalle de mercadería" : "Merchandise detail"} · ${esc(priceColLabel)}</h3>
-      </div>
-      <div class="card-b" style="padding:0;">
-        <div style="padding:10px 18px;font-size:11px;color:var(--t2);">
-          <span class="route">
-            <span class="node">${esc((payload.origen && payload.origen.label) || "—")}</span>
-            <span class="arrow">→</span>
-            <span class="node">${esc((payload.destino && payload.destino.label) || "—")}</span>
-            ${t.ref_tracking ? `<span style="margin-left:auto;font-family:'JetBrains Mono';font-size:10px;color:var(--t3);">Tracking: ${esc(t.ref_tracking)}</span>` : ""}
-          </span>
-        </div>
-        <table class="ct">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>${lang === "es" ? "Expediente" : "File"}</th>
-              <th>SKU</th>
-              <th>NCM</th>
-              <th>${lang === "es" ? "Producto" : "Product"}</th>
-              <th class="r">${lang === "es" ? "Talla" : "Size"}</th>
-              <th class="r">${lang === "es" ? "Cantidad" : "Qty"}</th>
-              <th class="r">${esc(priceColLabel)}</th>
-              <th class="r">${lang === "es" ? "Subtotal" : "Subtotal"}</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows}
-            <tr class="trow">
-              <td colspan="6">${lang === "es" ? "TOTAL" : "TOTAL"}</td>
-              <td class="r">${fmtInt(unitsTotal)}</td>
-              <td></td>
-              <td class="r">${usd(grandTotal)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="tot">
-      <div class="tot-card">
-        <div class="tot-row"><span>${lang === "es" ? "Unidades totales" : "Total units"}</span><strong>${fmtInt(unitsTotal)}</strong></div>
-        <div class="tot-row"><span>${lang === "es" ? "Líneas" : "Lines"}</span><strong>${fmtInt(lineas.length)}</strong></div>
-        <div class="tot-row"><span>${lang === "es" ? "Subtotal mercadería" : "Merchandise subtotal"}</span><strong>${usd(grandTotal)}</strong></div>
-        ${costs.length > 0 ? `<div class="tot-row"><span>${lang === "es" ? "Total costos registrados" : "Registered costs total"}</span><strong>${usd(costsTotal)}</strong></div>` : ""}
-        <div class="tot-row tot-final"><span>${lang === "es" ? "TOTAL (mercadería + costos)" : "TOTAL (merchandise + costs)"} USD</span><strong>${usd(grandTotal + costsTotal)}</strong></div>
-      </div>
-    </div>
-
-    ${costs.length > 0 ? `
-    <div class="sect">
-      <div class="sect-h"><h3>${lang === "es" ? "Costos registrados del movimiento" : "Registered transfer costs"}</h3></div>
-      <div class="card-b" style="padding:0;">
-        <table class="ct">
-          <thead>
-            <tr>
-              <th>${lang === "es" ? "Tipo" : "Kind"}</th>
-              <th>${lang === "es" ? "Descripción del costo" : "Cost description"}</th>
-              <th class="r">${lang === "es" ? "Monto" : "Amount"}</th>
-              <th>${lang === "es" ? "Mon." : "Curr."}</th>
-              <th class="r">FX→USD</th>
-              <th class="r">USD</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${costRows}
-            <tr class="trow"><td colspan="5">${lang === "es" ? "Total costos USD" : "Total costs USD"}</td><td class="r"><strong>${usd(costsTotal)}</strong></td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>` : ""}
-
-    ${cifSection}
-  ` : `
-    ${cifSection}
-  `}
+  ${cifSection}
 
   ${sizePills ? `
   <div class="sect">

@@ -1413,6 +1413,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 "operating_company_label": operating_company_label,
                 "mwt_operating_client_id": str(_MWT_OC_ID),
                 "mwt_operator_name":       "Muito Work Limitada",
+                "client_name":             client_name,
             },
             "proforma_codigo": _pf_codigo,
             "oc_codigo":       _oc_codigo or _pf_codigo,
