@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 from django.db import connection
 
+import json
+
 log = logging.getLogger(__name__)
 
 
@@ -24,8 +26,15 @@ def _label_value_map(data, structure):
     """Construye {label_lower: value} desde data + structure_snapshot."""
     out = {}
     try:
+        if isinstance(data, str):
+            data = json.loads(data)
         data = data or {}
-        for sec in (structure or {}).get("sections", []) or []:
+
+        if isinstance(structure, str):
+            structure = json.loads(structure)
+        structure = structure or {}
+
+        for sec in structure.get("sections", []) or []:
             for col in sec.get("columns", []) or []:
                 for f in col.get("fields", []) or []:
                     fid = f.get("id")
@@ -35,6 +44,7 @@ def _label_value_map(data, structure):
     except Exception:  # noqa: BLE001 — defensivo
         log.exception("[shipping_meta] label map failed")
     return out
+
 
 
 def _first_by_label(lvmap, *needles):
