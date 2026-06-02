@@ -232,7 +232,9 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
       const dai = cif * r.dai;
       const ley = cif * r.ley_6946;
       const iva = (cif + dai + ley) * r.iva;
-      const total = cif + dai + ley + iva;
+      // El IVA es crédito fiscal acreditable (se cobra en la factura de venta):
+      // NO suma al costo nacionalizado. El total y el costo/par van SIN IVA.
+      const total = cif + dai + ley;
       const perPar = g.qty > 0 ? total / g.qty : 0;
       return {
         sku: g.sku, ncm: g.ncm, product_label: g.product_label,
@@ -285,9 +287,9 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         <div class="sr" style="border-top:2px solid var(--navy);"><span class="k" style="font-weight:700;">CIF</span><span class="v" style="font-size:14px;">${usd(n.totals.cif)}</span></div>
         <div class="sr"><span class="k">DAI</span><span class="v">${usd(n.totals.dai)}</span></div>
         <div class="sr"><span class="k">Ley 6946</span><span class="v">${usd(n.totals.ley)}</span></div>
-        <div class="sr"><span class="k">IVA</span><span class="v">${usd(n.totals.iva)}</span></div>
-        <div class="sr"><span class="k" style="font-weight:700;">${lang === "es" ? "Total impuestos" : "Total taxes"}</span><span class="v">${usd(n.totals.dai + n.totals.ley + n.totals.iva)}</span></div>
-        <div class="sr" style="border-top:2px solid var(--mint);"><span class="k" style="font-weight:700;">${lang === "es" ? "Total nacionalizado" : "Nationalized total"}</span><span class="v" style="color:var(--ok);">${usd(n.totals.total)}</span></div>
+        <div class="sr"><span class="k" style="color:var(--t3);">${lang === "es" ? "IVA (acreditable · no suma)" : "VAT (creditable · excluded)"}</span><span class="v" style="color:var(--t3);">${usd(n.totals.iva)}</span></div>
+        <div class="sr" style="border-top:2px solid var(--mint);"><span class="k" style="font-weight:700;">${lang === "es" ? "Total nacionalizado (sin IVA)" : "Nationalized total (excl. VAT)"}</span><span class="v" style="color:var(--ok);">${usd(n.totals.total)}</span></div>
+        <div class="sr"><span class="k" style="font-weight:700;">${lang === "es" ? "Costo por par (sin IVA)" : "Cost per pair (excl. VAT)"}</span><span class="v" style="color:var(--ok);font-weight:700;">${usd4(n.totals.perPar)}</span></div>
       </div>
     </div>`;
   // R3 POL_VISIBILIDAD: el CIF/base MWT (costo interno) NO se muestra al cliente.
@@ -305,8 +307,8 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
             <th class="r">CIF</th>
             <th class="r">DAI</th>
             <th class="r">Ley 6946</th>
-            <th class="r">IVA</th>
-            <th class="r">Total</th>
+            <th class="r">${lang === "es" ? "IVA (acred.)" : "VAT (cred.)"}</th>
+            <th class="r">${lang === "es" ? "Total s/IVA" : "Total excl.VAT"}</th>
             <th class="r">${lang === "es" ? "Costo/par" : "Cost/pair"}</th>
           </tr>
         </thead>
@@ -334,8 +336,8 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
       </div>
       <div style="font-size:10px;color:var(--t3);margin-top:8px;line-height:1.6;">
         ${lang === "es"
-          ? "Impuestos dinámicos por NCM: DAI y Ley 6946 sobre CIF; IVA sobre CIF+DAI+Ley6946. Flete y seguro prorrateados por valor de cada línea. El IVA es crédito fiscal acreditable."
-          : "Dynamic taxes by NCM. VAT is a creditable tax credit."}
+          ? "Agrupado por SKU. Impuestos dinámicos por NCM: DAI y Ley 6946 sobre CIF. El IVA (CIF+DAI+Ley6946) es crédito fiscal acreditable — se cobra en la factura de venta, por eso NO suma al costo nacionalizado: el Total y el Costo/par van SIN IVA. Flete y seguro prorrateados por valor."
+          : "Grouped by SKU. Taxes by NCM. VAT is a creditable credit and is excluded from the nationalized cost — totals are shown excl. VAT."}
       </div>
     </div>
   </div>` : "";
