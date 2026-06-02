@@ -412,13 +412,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   if (has(pack.peso_bruto)) shipItems.push([lang === "es" ? "Peso bruto" : "Gross wt", `${pack.peso_bruto} kg`]);
   if (has(pack.peso_neto)) shipItems.push([lang === "es" ? "Peso neto" : "Net wt", `${pack.peso_neto} kg`]);
   if (has(pack.m3)) shipItems.push(["m³", pack.m3]);
-  const shippingSection = shipItems.length ? `
-  <div class="sect">
-    <div class="sect-h"><h3>${lang === "es" ? "Datos de envío y empaque" : "Shipping & packing"}</h3></div>
-    <div class="card-b"><div class="meta-grid">
-      ${shipItems.map(([k, v]) => `<div><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("")}
-    </div></div>
-  </div>` : "";
+  const shippingSection = "";
 
   // ── Líneas de mercadería (precio de la audiencia) ──
   let grandTotal = 0;
@@ -791,6 +785,17 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
     <div class="brand">
       <div class="logo">MW<span>T</span>.ONE</div>
       <div class="sub">Muito Work · Worldwide Trade</div>
+      ${(has(ship.tracking) || has(ship.carrier) || has(pack.cajas)) ? `
+      <div style="margin-top: 14px; font-size: 11px; color: var(--t2); border-top: 1px dashed var(--brd); padding-top: 10px; display: flex; flex-direction: column; gap: 4px; line-height: 1.5; text-align: left;">
+        ${has(ship.tracking) ? `<div><strong>AWB:</strong> <span style="font-family:'JetBrains Mono';font-size:11px;">${esc(ship.tracking)}</span></div>` : ""}
+        ${has(ship.carrier) ? `<div><strong>Carrier:</strong> ${esc(ship.carrier)}</div>` : ""}
+        <div style="display: flex; gap: 10px; margin-top: 2px; font-size: 10px; color: var(--t2);">
+          ${has(pack.cajas) ? `<span><strong>Cajas:</strong> ${esc(pack.cajas)}</span>` : ""}
+          ${has(pack.peso_bruto) ? `<span><strong>P. bruto:</strong> ${esc(pack.peso_bruto)} kg</span>` : ""}
+          ${has(pack.peso_neto) ? `<span><strong>P. neto:</strong> ${esc(pack.peso_neto)} kg</span>` : ""}
+        </div>
+      </div>
+      ` : ""}
     </div>
     <div class="right">
       <div class="kind">${esc(docKind)}</div>
