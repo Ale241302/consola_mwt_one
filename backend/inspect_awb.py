@@ -19,7 +19,8 @@ with connection.cursor() as c:
     if row:
         print("TITLE:", row[0])
         import json
-        data = row[1] or {}
+        data_raw = row[1]
+        data = json.loads(data_raw) if isinstance(data_raw, str) else (data_raw or {})
         struct = json.loads(row[2]) if row[2] else {}
         for sec in struct.get("sections", []) or []:
             for col in sec.get("columns", []) or []:
