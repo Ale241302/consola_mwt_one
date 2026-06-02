@@ -465,7 +465,10 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
       <div class="folio">${esc(t.codigo || "—")}</div>
       <div class="meta">
         ${lang === "es" ? "Emisión" : "Issued"}: <strong>${esc(fmtDate(fechas.dispatched_at || fechas.created_at, lang))}</strong><br>
-        ${lang === "es" ? "Motivo" : "Reason"}: <strong>${esc(LEGAL_LABEL[t.legal_context] || t.legal_context || "—")}</strong>
+        ${lang === "es" ? "Motivo" : "Reason"}: <strong>${esc(LEGAL_LABEL[t.legal_context] || t.legal_context || "—")}</strong>${
+          (isClient ? (payload.oc_codigo || payload.proforma_codigo) : (payload.proforma_codigo || payload.oc_codigo))
+            ? `<br>${isClient ? "OC" : "Proforma"}: <strong>${esc(isClient ? (payload.oc_codigo || payload.proforma_codigo) : (payload.proforma_codigo || payload.oc_codigo))}</strong>`
+            : ""}
       </div>
       <div class="aud-pill ${isClient ? "aud-client" : "aud-mwt"}">
         ${lang === "es" ? "Facturado a" : "Billed to"}: ${esc(billTo.name)}
@@ -637,8 +640,15 @@ export function downloadTransferInvoice(html, filename) {
  * @param {('MWT'|'CLIENT')} audience
  */
 export function invoiceFilename(payload, audience) {
-  const codigo = (payload && payload.transferencia && payload.transferencia.codigo) || "TRF";
-  const tag = audience === INVOICE_AUDIENCE.CLIENT ? "CLIENTE" : "MWT";
-  const safe = String(codigo).replace(/[^A-Za-z0-9_-]+/g, "_");
+  const t = (payload && payload.transferencia) || {};
+  const proforma = (payload && payload.proforma_codigo) || t.proforma_codigo || "";
+  const oc = (payload && payload.oc_codigo) || t.oc_codigo || "";
+  const isClient = audience === INVOICE_AUDIENCE.CLIENT;
+  // MWT → número de proforma; Cliente → número de OC. Con fallbacks.
+  const ref = isClient
+    ? (oc || proforma || t.codigo || "FACTURA")
+    : (proforma || oc || t.codigo || "FACTURA");
+  const tag = isClient ? "CLIENTE" : "MWT";
+  const safe = String(ref).replace(/[^A-Za-z0-9_-]+/g, "_");
   return `Factura_${safe}_${tag}.html`;
 }

@@ -261,6 +261,7 @@ def _resolve_line_pricing(t, lineas):
                 "unit_price_mwt":       pinfo["unit_price_mwt"]    if pinfo else None,
                 "unit_price_client":    pinfo["unit_price_client"] if pinfo else None,
                 "operating_company_id": m["operating_company_id"]  if m else None,
+                "expediente_id":        m["expediente_id"]         if m else None,
                 "expediente_codigo":    m["expediente_codigo"]     if m else None,
                 "proforma_codigo":      m["proforma_codigo"]       if m else None,
             }
@@ -1239,6 +1240,48 @@ class TransferenciaViewSet(viewsets.ViewSet):
         operating_company_label = (
             "Muito Work Limitada" if operated_by_mwt else "Cliente final"
         )
+        # proforma_codigo (MWT) + oc_codigo (cliente) para el nombre del
+        # archivo de la factura generada en el FE.
+        _pf_codigo = next(
+            (v.get("proforma_codigo") for v in line_pricing.values() if v.get("proforma_codigo")),
+            None,
+        )
+        _exp_ids_ref = sorted({
+            v.get("expediente_id") for v in line_pricing.values() if v.get("expediente_id")
+        })
+        _oc_codigo = None
+        if _exp_ids_ref:
+            try:
+                from django.db import connection as _conn_ref
+                with _conn_ref.cursor() as c:
+                    c.execute(
+                        r"""
+                        SELECT codigo FROM expedientes.documento
+                        WHERE expediente_id = ANY(%(ids)s::uuid[])
+                          AND kind ~* '^OC(\s|_|$)'
+                          AND is_active = TRUE AND codigo IS NOT NULL AND codigo <> ''
+                        ORDER BY (audience = 'CLIENT') DESC, created_at DESC LIMIT 1
+                        """,
+                        {"ids": _exp_ids_ref},
+                    )
+                    r = c.fetchone()
+                    if r:
+                        _oc_codigo = r[0]
+                    if not _oc_codigo:
+                        c.execute(
+                            """
+                            SELECT o.codigo FROM expedientes.oc o
+                            JOIN expedientes.expediente e ON e.oc_id = o.id
+                            WHERE e.id = ANY(%(ids)s::uuid[]) AND o.is_active = TRUE
+                              AND o.codigo IS NOT NULL AND o.codigo <> '' LIMIT 1
+                            """,
+                            {"ids": _exp_ids_ref},
+                        )
+                        r = c.fetchone()
+                        if r:
+                            _oc_codigo = r[0]
+            except Exception:
+                log.exception("[invoice_payload] proforma/oc ref lookup failed trf=%s", t.id)
         # NCM por producto (productos.producto.especificaciones->>'ncm') para
         # impuestos dinámicos de nacionalización en la factura (Sprint 2026-06-01).
         ncm_map = {}
@@ -1332,6 +1375,8 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 "mwt_operating_client_id": str(_MWT_OC_ID),
                 "mwt_operator_name":       "Muito Work Limitada",
             },
+            "proforma_codigo": _pf_codigo,
+            "oc_codigo":       _oc_codigo or _pf_codigo,
             "lineas": [dict({
                 "sku":              l.sku or "",
                 "product_label":    l.product_label or "",

@@ -320,6 +320,56 @@ def factura_payload(request, expediente_id):
     op_id = str(op_id) if op_id else None
     operated_by_mwt = bool(op_id) and op_id.lower() == str(MWT_OPERATING_CLIENT_ID).lower()
 
+    # 2b) Número de proforma (MWT) y número de OC (cliente) para el nombre
+    #     del archivo y el encabezado.
+    proforma_codigo = None
+    oc_codigo = None
+    ids_for_ref = exp_ids or [pid]
+    try:
+        with connection.cursor() as c:
+            c.execute(
+                """
+                SELECT codigo FROM expedientes.documento
+                WHERE expediente_id = ANY(%(ids)s::uuid[]) AND kind = 'PROFORMA'
+                  AND is_active = TRUE AND codigo IS NOT NULL AND codigo <> ''
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                {"ids": ids_for_ref},
+            )
+            r = c.fetchone()
+            if r:
+                proforma_codigo = r[0]
+            c.execute(
+                r"""
+                SELECT codigo FROM expedientes.documento
+                WHERE expediente_id = ANY(%(ids)s::uuid[])
+                  AND kind ~* '^OC(\s|_|$)'
+                  AND is_active = TRUE AND codigo IS NOT NULL AND codigo <> ''
+                ORDER BY (audience = 'CLIENT') DESC, created_at DESC LIMIT 1
+                """,
+                {"ids": ids_for_ref},
+            )
+            r = c.fetchone()
+            if r:
+                oc_codigo = r[0]
+            if not oc_codigo:
+                c.execute(
+                    """
+                    SELECT o.codigo
+                    FROM expedientes.oc o
+                    JOIN expedientes.expediente e ON e.oc_id = o.id
+                    WHERE e.id = ANY(%(ids)s::uuid[]) AND o.is_active = TRUE
+                      AND o.codigo IS NOT NULL AND o.codigo <> ''
+                    LIMIT 1
+                    """,
+                    {"ids": ids_for_ref},
+                )
+                r = c.fetchone()
+                if r:
+                    oc_codigo = r[0]
+    except Exception:
+        log.exception("[factura_payload] ref codes lookup failed id=%s", pid)
+
     # 3) Costos de transferencia asociados (FLETE/SEGURO/…). Dedup por
     #    cost_line: seleccionamos directo de transfers.cost_line para los
     #    transferencia_id ligados a estos expedientes vía assignment.
@@ -400,6 +450,8 @@ def factura_payload(request, expediente_id):
     return Response({
         "kind": "FACTURA_COMERCIAL",
         "doc_kind_label": "FACTURA COMERCIAL",
+        "proforma_codigo": proforma_codigo or codigo,
+        "oc_codigo": oc_codigo or proforma_codigo or codigo,
         "transferencia": {
             "id":             pid,
             "codigo":         codigo,
