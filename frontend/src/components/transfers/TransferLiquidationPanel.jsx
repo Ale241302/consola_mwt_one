@@ -361,15 +361,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   };
 
   const persistCost = async (c) => {
-    // El backend no tiene PATCH directo de cost-line — lo hacemos via
-    // delete + create (idempotente para MVP). En siguiente iteración:
-    // PATCH /api/transfer-cost-lines/{id}/ vía CostLineViewSet.
     setSaving(true); setError(null);
     try {
-      await transferenciasApi.action(`cost-lines/${c.id}`, transferId, undefined);
-    } catch {}
-    try {
-      const created = await transferenciasApi.action("cost-lines", transferId, {
+      const updated = await transferDetailApi.updateCost(transferId, c.id, {
         kind:           c.kind,
         label:          c.label || "",
         amount:         Number(c.amount) || 0,
@@ -377,12 +371,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         fx_to_usd:      Number(c.fx_to_usd) || 1,
         source:         c.source || "MANUAL",
         ocr_confidence: c.ocr_confidence ?? null,
-        // Sprint 2026-05-14 · Fase 14 — persistir scope_json en el ciclo
-        // delete-then-create. Si el editor sólo cambió el alcance, se
-        // mantiene tipo/monto/moneda intactos.
         scope_json:     c.scope_json || null,
       });
-      setCostLines((prev) => prev.map((x) => x.id === c.id ? created : x));
+      setCostLines((prev) => prev.map((x) => x.id === c.id ? updated : x));
     } catch (e) { setError(e?.message || "save_failed"); }
     finally { setSaving(false); }
   };

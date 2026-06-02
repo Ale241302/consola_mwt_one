@@ -44,7 +44,8 @@ export const INVOICE_AUDIENCE = Object.freeze({
 // Única fuente de verdad — agregar/ajustar NCMs aquí. `_default` aplica a
 // cualquier NCM no listado.
 export const NCM_TAX_RATES = Object.freeze({
-  "6403.99.90": { dai: 0.14, ley_6946: 0.01, iva: 0.13 }, // calzado de seguridad
+  "6403.99.90": { dai: 0.14, ley_6946: 0.01, iva: 0.13 }, // calzado seguridad
+  "6403.40.00": { dai: 0.14, ley_6946: 0.01, iva: 0.13 }, // calzado puntera metálica
   _default:     { dai: 0.14, ley_6946: 0.01, iva: 0.13 },
 });
 
@@ -162,6 +163,29 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   const priceColLabel = isClient
     ? (lang === "es" ? "Precio cliente" : "Client price")
     : (lang === "es" ? "Precio MWT" : "MWT price");
+
+  // ── Datos de envío (AWB/BL) y empaque (Packing) desde builder-artifacts ──
+  const ship = (payload && payload.shipping) || {};
+  const pack = (payload && payload.packing) || {};
+  const has = (v) => v != null && v !== "" && v !== [];
+  const shipItems = [];
+  if (has(ship.tracking)) shipItems.push([ship.doc_type ? String(ship.doc_type).toUpperCase() : "AWB/BL", ship.tracking]);
+  if (has(ship.carrier)) shipItems.push(["Carrier", ship.carrier]);
+  if (has(ship.transport_mode)) shipItems.push([lang === "es" ? "Transporte" : "Transport", ship.transport_mode]);
+  if (has(ship.dispatch_date)) shipItems.push([lang === "es" ? "Despacho" : "Dispatched", fmtDate(ship.dispatch_date, lang)]);
+  if (has(ship.arrival_date)) shipItems.push([lang === "es" ? "Arribo" : "Arrival", fmtDate(ship.arrival_date, lang)]);
+  if (has(ship.consolidation)) shipItems.push([lang === "es" ? "Consolidación" : "Consolidation", ship.consolidation]);
+  if (has(pack.cajas)) shipItems.push([lang === "es" ? "Cajas" : "Boxes", pack.cajas]);
+  if (has(pack.peso_bruto)) shipItems.push([lang === "es" ? "Peso bruto" : "Gross wt", `${pack.peso_bruto} kg`]);
+  if (has(pack.peso_neto)) shipItems.push([lang === "es" ? "Peso neto" : "Net wt", `${pack.peso_neto} kg`]);
+  if (has(pack.m3)) shipItems.push(["m³", pack.m3]);
+  const shippingSection = shipItems.length ? `
+  <div class="sect">
+    <div class="sect-h"><h3>${lang === "es" ? "Datos de envío y empaque" : "Shipping & packing"}</h3></div>
+    <div class="card-b"><div class="meta-grid">
+      ${shipItems.map(([k, v]) => `<div><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("")}
+    </div></div>
+  </div>` : "";
 
   // ── Líneas de mercadería (precio de la audiencia) ──
   let grandTotal = 0;
@@ -497,6 +521,8 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
       </div>
     </div>
   </div>
+
+  ${shippingSection}
 
   <div class="sect">
     <div class="sect-h">

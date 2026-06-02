@@ -690,18 +690,30 @@ class TransferenciaViewSet(viewsets.ViewSet):
         s.save(id=uuid.uuid4())
         return Response(s.data, status=201)
 
-    @action(detail=True, methods=["delete"], url_path=r"cost-lines/(?P<cost_id>[^/.]+)")
-    def cost_line_delete(self, request, pk=None, cost_id=None):
+    @action(detail=True, methods=["delete", "patch"], url_path=r"cost-lines/(?P<cost_id>[^/.]+)")
+    def cost_line_detail(self, request, pk=None, cost_id=None):
         try:
             t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
-        updated = CostLine.objects.filter(
-            pk=cost_id, transferencia_id=t.id, is_active=True
-        ).update(is_active=False)
-        if not updated:
+        if request.method.upper() == "DELETE":
+            updated = CostLine.objects.filter(
+                pk=cost_id, transferencia_id=t.id, is_active=True
+            ).update(is_active=False)
+            if not updated:
+                return Response({"detail": "Cost line no encontrada"}, status=404)
+            return Response(status=204)
+
+        # PATCH
+        try:
+            instance = CostLine.objects.get(pk=cost_id, transferencia_id=t.id, is_active=True)
+        except CostLine.DoesNotExist:
             return Response({"detail": "Cost line no encontrada"}, status=404)
-        return Response(status=204)
+
+        s = CostLineSerializer(instance, data=request.data, partial=True)
+        s.is_valid(raise_exception=True)
+        s.save()
+        return Response(s.data)
 
     # ── OCR de costos sobre la transferencia ya creada ─────────────
     # POST /api/transferencias/{id}/upload-cost-ocr/
@@ -1282,6 +1294,13 @@ class TransferenciaViewSet(viewsets.ViewSet):
                             _oc_codigo = r[0]
             except Exception:
                 log.exception("[invoice_payload] proforma/oc ref lookup failed trf=%s", t.id)
+        # Metadata de envío (AWB/BL) y empaque (Packing) desde builder-artifacts.
+        try:
+            from apps.expedientes.shipping_meta import resolve_shipping_packing
+            _ship_pack = resolve_shipping_packing(_exp_ids_ref)
+        except Exception:
+            log.exception("[invoice_payload] shipping/packing resolve failed trf=%s", t.id)
+            _ship_pack = {"shipping": {}, "packing": {}}
         # NCM por producto (productos.producto.especificaciones->>'ncm') para
         # impuestos dinámicos de nacionalización en la factura (Sprint 2026-06-01).
         ncm_map = {}
@@ -1377,6 +1396,8 @@ class TransferenciaViewSet(viewsets.ViewSet):
             },
             "proforma_codigo": _pf_codigo,
             "oc_codigo":       _oc_codigo or _pf_codigo,
+            "shipping":        _ship_pack.get("shipping") or {},
+            "packing":         _ship_pack.get("packing") or {},
             "lineas": [dict({
                 "sku":              l.sku or "",
                 "product_label":    l.product_label or "",

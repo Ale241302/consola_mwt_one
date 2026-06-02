@@ -1065,6 +1065,8 @@ export const transferDetailApi = {
                                               { method: "POST", body, token: getToken() }),
   removeCost: (trfId, costId)      => apiFetch(`/transferencias/${trfId}/cost-lines/${costId}/`,
                                               { method: "DELETE", token: getToken() }),
+  updateCost: (trfId, costId, body)  => apiFetch(`/transferencias/${trfId}/cost-lines/${costId}/`,
+                                              { method: "PATCH", body, token: getToken() }),
   uploadCostOcr: async (trfId, file) => {
     const fd = new FormData();
     fd.append("file", file);

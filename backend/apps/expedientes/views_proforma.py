@@ -370,6 +370,14 @@ def factura_payload(request, expediente_id):
     except Exception:
         log.exception("[factura_payload] ref codes lookup failed id=%s", pid)
 
+    # 2c) Metadata de envío (AWB/BL) y empaque (Packing) desde builder-artifacts.
+    try:
+        from .shipping_meta import resolve_shipping_packing
+        _sp = resolve_shipping_packing(ids_for_ref)
+    except Exception:
+        log.exception("[factura_payload] shipping/packing resolve failed id=%s", pid)
+        _sp = {"shipping": {}, "packing": {}}
+
     # 3) Costos de transferencia asociados (FLETE/SEGURO/…). Dedup por
     #    cost_line: seleccionamos directo de transfers.cost_line para los
     #    transferencia_id ligados a estos expedientes vía assignment.
@@ -452,6 +460,8 @@ def factura_payload(request, expediente_id):
         "doc_kind_label": "FACTURA COMERCIAL",
         "proforma_codigo": proforma_codigo or codigo,
         "oc_codigo": oc_codigo or proforma_codigo or codigo,
+        "shipping": _sp.get("shipping") or {},
+        "packing": _sp.get("packing") or {},
         "transferencia": {
             "id":             pid,
             "codigo":         codigo,
