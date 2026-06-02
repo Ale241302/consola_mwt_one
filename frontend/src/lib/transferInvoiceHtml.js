@@ -210,21 +210,46 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   const unitMwt = (l) => Number(l.unit_price_mwt != null ? l.unit_price_mwt : (l.unit_value_usd || 0));
   const unitClient = (l) => Number(l.unit_price_client != null ? l.unit_price_client : (l.unit_value_usd || 0));
   const computeNac = (priceFn) => {
-    const goodsTotal = lineas.reduce((a, l) => a + lineQty(l) * priceFn(l), 0) || 0;
-    const rows = lineas.map((l) => {
-      const qty = lineQty(l);
-      const goods = qty * priceFn(l);
-      const extra = goodsTotal > 0 ? extraTotal * (goods / goodsTotal) : 0;
-      const cif = goods + extra;
-      const r = taxRatesForNcm(l.ncm);
+    // Agrupar por SKU: una fila por SKU (engloba todas sus tallas). El cálculo
+    // se hace por SKU y al final se da el costo nacionalizado por par.
+    const groups = new Map();
+    lineas.forEach((l) => {
+      const sku = l.sku || "—";
+      const g = groups.get(sku) || {
+        sku, ncm: l.ncm || "—", product_label: l.product_label || "", qty: 0, goods: 0,
+      };
+      g.qty += lineQty(l);
+      g.goods += lineQty(l) * priceFn(l);
+      if ((!g.ncm || g.ncm === "—") && l.ncm) g.ncm = l.ncm;
+      groups.set(sku, g);
+    });
+    const grupos = Array.from(groups.values());
+    const goodsTotal = grupos.reduce((a, g) => a + g.goods, 0) || 0;
+    const rows = grupos.map((g) => {
+      const extra = goodsTotal > 0 ? extraTotal * (g.goods / goodsTotal) : 0;
+      const cif = g.goods + extra;
+      const r = taxRatesForNcm(g.ncm);
       const dai = cif * r.dai;
       const ley = cif * r.ley_6946;
       const iva = (cif + dai + ley) * r.iva;
       const total = cif + dai + ley + iva;
-      return { l, qty, ncm: l.ncm || "—", goods, extra, cif, dai, ley, iva, total };
+      const perPar = g.qty > 0 ? total / g.qty : 0;
+      return {
+        sku: g.sku, ncm: g.ncm, product_label: g.product_label,
+        qty: g.qty, goods: g.goods, extra, cif, dai, ley, iva, total, perPar,
+      };
     });
     const sum = (k) => rows.reduce((a, x) => a + x[k], 0);
-    return { rows, totals: { goods: sum("goods"), extra: sum("extra"), cif: sum("cif"), dai: sum("dai"), ley: sum("ley"), iva: sum("iva"), total: sum("total") } };
+    const totalAll = sum("total");
+    const qtyAll = sum("qty");
+    return {
+      rows,
+      totals: {
+        goods: sum("goods"), extra: sum("extra"), cif: sum("cif"),
+        dai: sum("dai"), ley: sum("ley"), iva: sum("iva"),
+        total: totalAll, qty: qtyAll, perPar: qtyAll > 0 ? totalAll / qtyAll : 0,
+      },
+    };
   };
   const nacReal = computeNac(unitClient);   // base cliente (valor declarado)
   const nacMwt = computeNac(unitMwt);       // base costo MWT (interno)
@@ -238,7 +263,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   const nacRows = nacAud.rows.map((x, i) => `
       <tr>
         <td>${i + 1}</td>
-        <td class="m">${esc(x.l.sku || "—")}</td>
+        <td class="m">${esc(x.sku || "—")}</td>
         <td class="m">${esc(x.ncm)}</td>
         <td class="r">${fmtInt(x.qty)}</td>
         <td class="r">${usd(x.goods)}</td>
@@ -248,6 +273,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         <td class="r">${usd(x.ley)}</td>
         <td class="r">${usd(x.iva)}</td>
         <td class="r"><strong>${usd(x.total)}</strong></td>
+        <td class="r landed"><strong>${usd4(x.perPar)}</strong></td>
       </tr>`).join("");
   const nacCard = (title, sub, n) => `
     <div class="card">
@@ -281,6 +307,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
             <th class="r">Ley 6946</th>
             <th class="r">IVA</th>
             <th class="r">Total</th>
+            <th class="r">${lang === "es" ? "Costo/par" : "Cost/pair"}</th>
           </tr>
         </thead>
         <tbody>
@@ -295,6 +322,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
             <td class="r">${usd(nacAud.totals.ley)}</td>
             <td class="r">${usd(nacAud.totals.iva)}</td>
             <td class="r"><strong>${usd(nacAud.totals.total)}</strong></td>
+            <td class="r landed"><strong>${usd4(nacAud.totals.perPar)}</strong></td>
           </tr>
         </tbody>
       </table>
