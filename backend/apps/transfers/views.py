@@ -1249,9 +1249,6 @@ class TransferenciaViewSet(viewsets.ViewSet):
             str(x).lower() == str(_MWT_OC_ID).lower() for x in _op_ids
         )
         operating_company_id = next(iter(_op_ids), None) if _op_ids else None
-        operating_company_label = (
-            "Muito Work Limitada" if operated_by_mwt else "Cliente final"
-        )
         # proforma_codigo (MWT) + oc_codigo (cliente) para el nombre del
         # archivo de la factura generada en el FE.
         _pf_codigo = next(
@@ -1261,6 +1258,29 @@ class TransferenciaViewSet(viewsets.ViewSet):
         _exp_ids_ref = sorted({
             v.get("expediente_id") for v in line_pricing.values() if v.get("expediente_id")
         })
+        client_name = None
+        if _exp_ids_ref:
+            try:
+                from django.db import connection as _conn_ref
+                with _conn_ref.cursor() as c:
+                    c.execute(
+                        """
+                        SELECT cl.razon_social
+                        FROM expedientes.expediente e
+                        LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
+                        WHERE e.id = ANY(%(ids)s::uuid[]) AND cl.razon_social IS NOT NULL AND cl.razon_social <> ''
+                        LIMIT 1
+                        """,
+                        {"ids": _exp_ids_ref},
+                    )
+                    r = c.fetchone()
+                    if r:
+                        client_name = r[0]
+            except Exception:
+                log.exception("[invoice_payload] client name lookup failed trf=%s", t.id)
+        operating_company_label = (
+            "Muito Work Limitada" if operated_by_mwt else (client_name or "Cliente final")
+        )
         _oc_codigo = None
         if _exp_ids_ref:
             try:

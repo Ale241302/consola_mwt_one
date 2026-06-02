@@ -86,6 +86,10 @@ def resolve_shipping_packing(expediente_ids):
 
         # ── AWB/BL (ART-05, template_id=9 o título con 'awb') ──
         if (tid == 9 or "awb" in title_l) and not shipping:
+            itinerary = _first_by_label(lv, "itinerario")
+            due = _first_by_label(lv, "du-e", "due", "declaración única", "declaracion unica", "declaración de exportación", "declaracion de exportacion")
+            if not due and itinerary and ("BR" in str(itinerary) or "-" in str(itinerary)):
+                due = itinerary
             shipping = {
                 "doc_type":       _first_by_label(lv, "tipo de documento"),
                 "transport_mode": _first_by_label(lv, "modo de transporte"),
@@ -96,6 +100,8 @@ def resolve_shipping_packing(expediente_ids):
                 "consolidation":  _first_by_label(lv, "consolidación", "consolidacion"),
                 "dispatch_date":  _first_by_label(lv, "fecha de despacho"),
                 "arrival_date":   _first_by_label(lv, "fecha de arrivo", "fecha de arribo"),
+                "route":          _first_by_label(lv, "origen y destino", "ruta"),
+                "due":            due,
             }
 
         # ── Packing List (título con 'packing') ──

@@ -97,6 +97,241 @@ function fmtDate(s, lang) {
   });
 }
 
+function buildDetailedLiquidationTable(n, costs, isClient, lang) {
+  const freight = costs.reduce((a, c) => a + (KIND_FREIGHT.has(String(c.kind || "").toUpperCase()) ? Number(c.amount_usd || 0) : 0), 0);
+  const insurance = costs.reduce((a, c) => a + (KIND_INSURANCE.has(String(c.kind || "").toUpperCase()) ? Number(c.amount_usd || 0) : 0), 0);
+  const otherCosts = costs.filter(c => {
+    const k = String(c.kind || "").toUpperCase();
+    return !KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k);
+  });
+  
+  const labelFob = isClient
+    ? (lang === "es" ? "FOB declarado (precio orden SN)" : "Declared FOB (SN price)")
+    : (lang === "es" ? "FOB Marluvas (UF v5)" : "Marluvas FOB (UF v5)");
+    
+  const refFob = isClient
+    ? (lang === "es" ? "Precio de la orden (precio cliente)" : "Order price (client price)")
+    : (lang === "es" ? "Factura Marluvas / pedido" : "Marluvas invoice / order");
+
+  let html = `
+    <table class="ct">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>${lang === "es" ? "Concepto" : "Concept"}</th>
+          <th>${lang === "es" ? "Base" : "Basis"}</th>
+          <th class="r">${lang === "es" ? "Tasa" : "Rate"}</th>
+          <th class="r">${lang === "es" ? "Monto USD" : "Amount USD"}</th>
+          <th>${lang === "es" ? "Notas" : "Notes"}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><strong>${esc(labelFob)}</strong></td>
+          <td class="m">${esc(refFob)}</td>
+          <td class="r">&mdash;</td>
+          <td class="r">${usd(n.totals.goods)}</td>
+          <td style="font-size:10px;color:var(--t2);">${n.totals.qty} pares</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>${lang === "es" ? "Flete aéreo internacional" : "International air freight"}</td>
+          <td class="m">AWB / BL</td>
+          <td class="r">&mdash;</td>
+          <td class="r">${usd(freight)}</td>
+          <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>${lang === "es" ? "Seguro internacional" : "International insurance"}</td>
+          <td class="m">Factura</td>
+          <td class="r">&mdash;</td>
+          <td class="r">${usd(insurance)}</td>
+          <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
+        </tr>
+        <tr class="trow">
+          <td colspan="4"><strong>CIF (base imponible aduana)</strong></td>
+          <td class="r"><strong>${usd(n.totals.cif)}</strong></td>
+          <td></td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>DAI &mdash; Derecho Arancelario</td>
+          <td class="m">CIF</td>
+          <td class="r">14.00%</td>
+          <td class="r">${usd(n.totals.dai)}</td>
+          <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Régimen general calzado" : "General tariff rate"}</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td>Ley 6946</td>
+          <td class="m">CIF</td>
+          <td class="r">1.00%</td>
+          <td class="r">${usd(n.totals.ley)}</td>
+          <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Tributo fijo" : "Fixed tax"}</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td>IVA</td>
+          <td class="m">CIF</td>
+          <td class="r">13.00%</td>
+          <td class="r">${usd(n.totals.iva)}</td>
+          <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Acreditable — crédito fiscal" : "Creditable — tax credit"}</td>
+        </tr>
+        <tr class="trow">
+          <td colspan="4"><strong>${lang === "es" ? "Subtotal impuestos (con IVA)" : "Subtotal taxes (incl. VAT)"}</strong></td>
+          <td class="r"><strong>${usd(n.totals.dai + n.totals.ley + n.totals.iva)}</strong></td>
+          <td></td>
+        </tr>`;
+
+  let idx = 7;
+  otherCosts.forEach((c) => {
+    html += `
+      <tr>
+        <td>${idx++}</td>
+        <td>${esc(c.label || (lang === "es" ? "Otros costos" : "Other costs"))}</td>
+        <td class="m">${esc(c.kind || "—")}</td>
+        <td class="r">&mdash;</td>
+        <td class="r">${usd(c.amount_usd)}</td>
+        <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Costo en destino" : "Destination cost"}</td>
+      </tr>`;
+  });
+
+  html += `
+        <tr class="trow">
+          <td colspan="4"><strong>${lang === "es" ? "Subtotal costos destino" : "Subtotal destination costs"}</strong></td>
+          <td class="r"><strong>${usd(n.totals.dest)}</strong></td>
+          <td></td>
+        </tr>
+        <tr style="background:var(--t2);color:white;">
+          <td colspan="4" style="padding:10px 12px;"><strong style="color:white;font-size:12px;">${lang === "es" ? "Total con IVA (incluye crédito fiscal)" : "Total incl. VAT (includes tax credit)"}</strong></td>
+          <td class="r" style="padding:10px 12px;"><strong style="color:white;font-size:13px;">${usd(n.totals.cif + n.totals.dai + n.totals.ley + n.totals.iva + n.totals.dest)}</strong></td>
+          <td style="padding:10px 12px;color:rgba(255,255,255,.7);font-size:10px;">${lang === "es" ? "embarque completo" : "complete shipment"}</td>
+        </tr>
+        <tr style="background:var(--navy);color:white;">
+          <td colspan="4" style="padding:12px;border-top:2px solid var(--navy);"><strong style="color:white;font-size:13px;">${
+            isClient
+              ? (lang === "es" ? "TOTAL SIN IVA — costo real de nacionalizar" : "TOTAL EXCL. VAT — real nationalization cost")
+              : (lang === "es" ? "TOTAL SIN IVA — costo real de MWT" : "TOTAL EXCL. VAT — real MWT cost")
+          }</strong></td>
+          <td class="r" style="padding:12px;border-top:2px solid var(--navy);"><strong style="color:white;font-size:15px;">${usd(n.totals.total)}</strong></td>
+          <td style="padding:12px;border-top:2px solid var(--navy);color:var(--ice);font-size:10px;">${lang === "es" ? "ver $/par por línea" : "see $/pair by line"}</td>
+        </tr>
+      </tbody>
+    </table>`;
+
+  return html;
+}
+
+function buildLandedCostTable(n, isClient, lang) {
+  const labelFob = isClient
+    ? (lang === "es" ? "FOB SN" : "FOB SN")
+    : (lang === "es" ? "FOB UF" : "FOB UF");
+    
+  const labelPerPar = isClient
+    ? (lang === "es" ? "Nac/par" : "Nac/pair")
+    : (lang === "es" ? "$/par" : "$/pair");
+
+  const showFobParAndCifPar = isClient; // Only show FOB/par and CIF/par for client to match proforma exactly
+
+  const thead = showFobParAndCifPar
+    ? `<thead>
+        <tr>
+          <th>${lang === "es" ? "Modelo" : "Model"}</th>
+          <th class="r">${lang === "es" ? "Pares" : "Pairs"}</th>
+          <th class="r">${esc(labelFob)}</th>
+          <th class="r cb">${lang === "es" ? "FOB/par" : "FOB/pair"}</th>
+          <th class="r">CIF</th>
+          <th class="r cb">${lang === "es" ? "CIF/par" : "CIF/pair"}</th>
+          <th class="r">DAI</th>
+          <th class="r">L6946</th>
+          <th class="r">${lang === "es" ? "Aduana+Transp" : "Customs+Transp"}</th>
+          <th class="r">${lang === "es" ? "Nac. s/IVA" : "Nac. excl.VAT"}</th>
+          <th class="r cb">${esc(labelPerPar)}</th>
+        </tr>
+      </thead>`
+    : `<thead>
+        <tr>
+          <th>${lang === "es" ? "Modelo" : "Model"}</th>
+          <th class="r">${lang === "es" ? "Pares" : "Pairs"}</th>
+          <th class="r">${esc(labelFob)}</th>
+          <th class="r">CIF</th>
+          <th class="r">DAI</th>
+          <th class="r">L6946</th>
+          <th class="r">${lang === "es" ? "Aduana+Transp" : "Customs+Transp"}</th>
+          <th class="r">${lang === "es" ? "Nac. s/IVA" : "Nac. excl.VAT"}</th>
+          <th class="r cb">${esc(labelPerPar)}</th>
+        </tr>
+      </thead>`;
+
+  const rowsHtml = n.rows.map((row) => {
+    const fobPar = row.qty > 0 ? row.goods / row.qty : 0;
+    const cifPar = row.qty > 0 ? row.cif / row.qty : 0;
+    
+    return showFobParAndCifPar
+      ? `<tr>
+          <td class="m">${esc(row.product_label || "—")}</td>
+          <td class="r">${fmtInt(row.qty)}</td>
+          <td class="r">${usd(row.goods)}</td>
+          <td class="r cb">${usd(fobPar)}</td>
+          <td class="r">${usd(row.cif)}</td>
+          <td class="r cb">${usd(cifPar)}</td>
+          <td class="r">${usd(row.dai)}</td>
+          <td class="r">${usd(row.ley)}</td>
+          <td class="r">${usd(row.dest)}</td>
+          <td class="r">${usd(row.total)}</td>
+          <td class="r cb landed"><strong>${usd(row.perPar)}</strong></td>
+        </tr>`
+      : `<tr>
+          <td class="m">${esc(row.product_label || "—")}</td>
+          <td class="r">${fmtInt(row.qty)}</td>
+          <td class="r">${usd(row.goods)}</td>
+          <td class="r">${usd(row.cif)}</td>
+          <td class="r">${usd(row.dai)}</td>
+          <td class="r">${usd(row.ley)}</td>
+          <td class="r">${usd(row.dest)}</td>
+          <td class="r">${usd(row.total)}</td>
+          <td class="r cb landed"><strong>${usd(row.perPar)}</strong></td>
+        </tr>`;
+  }).join("");
+
+  const footerHtml = showFobParAndCifPar
+    ? `<tr class="trow">
+        <td><strong>TOTAL</strong></td>
+        <td class="r"><strong>${fmtInt(n.totals.qty)}</strong></td>
+        <td class="r"><strong>${usd(n.totals.goods)}</strong></td>
+        <td class="r cb"><strong>&mdash;</strong></td>
+        <td class="r"><strong>${usd(n.totals.cif)}</strong></td>
+        <td class="r cb"><strong>&mdash;</strong></td>
+        <td class="r"><strong>${usd(n.totals.dai)}</strong></td>
+        <td class="r"><strong>${usd(n.totals.ley)}</strong></td>
+        <td class="r"><strong>${usd(n.totals.dest)}</strong></td>
+        <td class="r"><strong>${usd(n.totals.total)}</strong></td>
+        <td class="r cb"><strong>&mdash;</strong></td>
+      </tr>`
+    : `<tr class="trow">
+        <td><strong>TOTAL</strong></td>
+        <td class="r"><strong>${fmtInt(n.totals.qty)}</strong></td>
+        <td class="r"><strong>${usd(n.totals.goods)}</strong></td>
+        <td class="r"><strong>${usd(n.totals.cif)}</strong></td>
+        <td class="r"><strong>${usd(n.totals.dai)}</strong></td>
+        <td class="r"><strong>${usd(n.totals.ley)}</strong></td>
+        <td class="r"><strong>${usd(n.totals.dest)}</strong></td>
+        <td class="r"><strong>${usd(n.totals.total)}</strong></td>
+        <td class="r cb"><strong>&mdash;</strong></td>
+      </tr>`;
+
+  return `
+    <table class="ct">
+      ${thead}
+      <tbody>
+        ${rowsHtml}
+        ${footerHtml}
+      </tbody>
+    </table>`;
+}
+
 const LEGAL_LABEL = {
   INTERNAL: "Interno / Redistribución",
   NATIONALIZATION: "Nacionalización",
@@ -148,9 +383,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
 
   const billTo = isClient
     ? {
-        name: oc.operating_company_label && !oc.operated_by_mwt
-          ? oc.operating_company_label
-          : "Cliente final",
+        name: oc.operating_company_label || "Cliente final",
         sub: lang === "es" ? "Precio de venta (cliente)" : "Sale price (client)",
         ruc: "",
       }
@@ -201,6 +434,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         <td>${i + 1}</td>
         <td class="m">${esc(l.proforma_codigo || l.expediente_codigo || "—")}</td>
         <td class="m">${esc(l.sku || "—")}</td>
+        <td class="m">${esc(l.ncm || "—")}</td>
         <td>${esc(l.product_label || "—")}</td>
         <td class="r">${esc(l.size || "—")}</td>
         <td class="r">${fmtInt(qty)}</td>
@@ -295,6 +529,31 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   const baseTag = isClient
     ? (lang === "es" ? "base cliente" : "client base")
     : (lang === "es" ? "base MWT (aprox.)" : "MWT base (approx.)");
+
+  // Resolve dynamic metadata from resolved shipping/packing
+  const refPO = payload.oc_codigo || payload.proforma_codigo || t.oc_codigo || "—";
+  
+  // Destinatario / Cliente final: name of the client assigned to the expediente
+  const clientName = oc.operating_company_label || billTo.name;
+  
+  const awbVal = ship.tracking || "—";
+  const carrierVal = ship.carrier || "—";
+  const routeVal = ship.route || ship.origin_destination || (ship.origin_country && ship.destination_country ? `${ship.origin_country}→${ship.destination_country}` : "—");
+  
+  // First line NCM or fallback
+  const firstNcm = lineas.length > 0 ? (lineas[0].ncm || "6403.99.90") : "6403.99.90";
+  const cajasVal = pack.cajas || "—";
+  const pesoBrutoVal = pack.peso_bruto || "—";
+  const pesoNetoVal = pack.peso_neto || "—";
+  
+  let m3Val = pack.m3;
+  if (!m3Val && unitsTotal > 0) {
+    m3Val = (unitsTotal * 0.007238).toFixed(3);
+  }
+  const m3Str = m3Val ? `${m3Val} m³` : "—";
+  
+  const dueVal = ship.due || "—";
+
   const nacRows = nacAud.rows.map((x, i) => `
       <tr>
         <td>${i + 1}</td>
@@ -327,56 +586,100 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         <div class="sr"><span class="k" style="font-weight:700;">${lang === "es" ? "Costo por par (sin IVA)" : "Cost per pair (excl. VAT)"}</span><span class="v" style="color:var(--ok);font-weight:700;">${usd4(n.totals.perPar)}</span></div>
       </div>
     </div>`;
+
+  const cifTitle = isClient
+    ? (lang === "es" ? "SONDEL · Nacionalización DDP (referencia)" : "SONDEL · DDP Nationalization (reference)")
+    : (lang === "es" ? "MWT · DDP camino real (contable)" : "MWT · DDP contable (real)");
+  const badgeClass = isClient ? "bg-sondel" : "bg-ceo";
+  const badgeLabel = isClient
+    ? (lang === "es" ? "REPORTE CLIENTE" : "CLIENT REPORT")
+    : (lang === "es" ? "CEO-ONLY · INTERNAL" : "CEO-ONLY · INTERNAL");
+    
+  const metaHtml = `
+    <strong>${lang === "es" ? "Ref. PO" : "Ref. PO"}:</strong> ${esc(refPO)} &middot; 
+    <strong>${lang === "es" ? "Cliente" : "Client"}:</strong> ${esc(clientName)} &middot; 
+    <strong>AWB:</strong> ${esc(awbVal)} &middot; ${esc(carrierVal)} &middot; ${esc(routeVal)}<br>
+    <strong>NCM:</strong> ${esc(firstNcm)} &middot; ${cajasVal} ${lang === "es" ? "cajas" : "boxes"} &middot; 
+    ${pesoBrutoVal} kg ${lang === "es" ? "bruto" : "gross"} / ${pesoNetoVal} ${lang === "es" ? "neto" : "net"} &middot; 
+    ${m3Str} &middot; DU-E ${esc(dueVal)}
+  `;
+
+  const noteBlock = isClient
+    ? `<div style="padding:10px 14px;background:var(--raised);border-radius:8px;font-size:11px;color:var(--t2);line-height:1.7;margin-bottom:16px;">
+        <strong style="color:var(--navy);">${lang === "es" ? "Qué muestra:" : "What this shows:"}</strong> 
+        ${lang === "es"
+          ? `lo que le costaría a ${esc(clientName)} <strong>nacionalizar por su cuenta</strong> declarando al precio de la orden (SN), por línea. Flete ${usd(freight)}, seguro ${usd(insurance)}, costos de aduana y transporte de ${usd(destTotal)} prorrateados por pares. <strong>IVA 13% se muestra pero no suma</strong> (crédito fiscal acreditable). Comparado contra el precio al que MWT se lo entrega.`
+          : `what it would cost ${esc(clientName)} to <strong>nationalize on their own</strong> declaring at order price (SN), line by line. Freight ${usd(freight)}, insurance ${usd(insurance)}, customs and transport costs of ${usd(destTotal)} prorrated by pairs. <strong>13% VAT is shown but not added</strong> (creditable tax credit).`}
+      </div>`
+    : `<div style="padding:10px 14px;background:var(--raised);border-radius:8px;font-size:11px;color:var(--t2);line-height:1.7;margin-bottom:16px;">
+        <strong style="color:var(--navy);">${lang === "es" ? "Qué muestra:" : "What this shows:"}</strong> 
+        ${lang === "es"
+          ? `el costo real de MWT al nacionalizar al <strong>precio Marluvas (UF)</strong>. Mismo prorrateo que la vista ${esc(clientName)} (flete, seguro, aduana y transporte por pares). <strong>IVA 13% sobre CIF</strong>, crédito fiscal — no suma al costo.`
+          : `the actual cost of MWT when nationalizing at <strong>Marluvas price (UF)</strong>. Same prorating as the ${esc(clientName)} view (freight, insurance, customs, and transport by pairs). <strong>13% VAT on CIF</strong>, tax credit — not added to cost.`}
+      </div>`;
+
+  const bottomNote = isClient
+    ? `<div style="padding:12px 16px;background:var(--mint-s);border:1px solid var(--mint);border-radius:8px;font-size:11px;color:var(--t1);line-height:1.7;margin-bottom:16px;">
+        <strong style="color:var(--navy);">${lang === "es" ? "MWT entrega DDP en bodega:" : "MWT delivers DDP to warehouse:"}</strong> 
+        ${lang === "es"
+          ? `nacionalizar por cuenta propia tendría un costo de <strong>${usd(nacReal.totals.total)} sin IVA</strong> (ver costo por par de cada línea arriba) — DAI, Ley 6946, gestión aduanal y transporte incluidos. Comprando a MWT ese proceso y su costo quedan absorbidos. IVA acreditable como crédito fiscal.`
+          : `nationalizing on your own would have a cost of <strong>${usd(nacReal.totals.total)} excl. VAT</strong> (see cost per pair for each line above) — DAI, Law 6946, customs management, and transport included. Buying from MWT absorbs this process and its cost. VAT is creditable.`}
+      </div>`
+    : `<div style="padding:12px 16px;background:var(--crit-bg);border:1px solid rgba(220,38,38,0.2);border-radius:8px;font-size:11px;color:var(--t1);line-height:1.7;margin-bottom:16px;">
+        <strong style="color:var(--crit);">${lang === "es" ? "⚠️ Margen real (venta SN − costo nacionalizado MWT):" : "⚠️ Real margin (SN sale − MWT nationalized cost):"}</strong> 
+        ${lang === "es"
+          ? `venta a ${esc(clientName)} ${usd(nacReal.totals.goods)} vs costo nacionalizado real ${usd(nacMwt.totals.total)} → <strong style="color:var(--crit);">${usd(nacReal.totals.goods - nacMwt.totals.total)}</strong> si MWT entrega DDP absorbiendo nacionalización.`
+          : `sale to ${esc(clientName)} ${usd(nacReal.totals.goods)} vs real nationalized cost ${usd(nacMwt.totals.total)} → <strong style="color:var(--crit);">${usd(nacReal.totals.goods - nacMwt.totals.total)}</strong> if MWT delivers DDP absorbing nationalization.`}
+      </div>
+      <div style="padding:12px 16px;background:var(--mint-s);border:1px solid var(--mint);border-radius:8px;font-size:11px;color:var(--t1);line-height:1.7;margin-bottom:16px;">
+        <strong style="color:var(--navy);">${lang === "es" ? "Arbitraje del modelo:" : "Model arbitrage:"}</strong> 
+        ${lang === "es"
+          ? `delta de precio + ahorro fiscal por declarar a precio Marluvas = <strong style="color:var(--ok);">${usd(nacReal.totals.total - nacMwt.totals.total)}</strong>. Equivale a DDP SONDEL − DDP MWT. <strong>Valor percibido por el cliente:</strong> vs nacionalizar directo (${usd(nacReal.totals.total)}) ${esc(clientName)} ahorra ${usd(nacReal.totals.total - nacReal.totals.goods)}.`
+          : `price delta + tax savings from declaring at Marluvas price = <strong style="color:var(--ok);">${usd(nacReal.totals.total - nacMwt.totals.total)}</strong>. Equivalent to DDP SONDEL − DDP MWT. <strong>Value perceived by client:</strong> vs direct nationalization (${usd(nacReal.totals.total)}) ${esc(clientName)} saves ${usd(nacReal.totals.total - nacReal.totals.goods)}.`}
+      </div>`;
+
   // R3 POL_VISIBILIDAD: el CIF/base MWT (costo interno) NO se muestra al cliente.
   const cifSection = oc.operated_by_mwt ? `
-  <div class="sect">
-    <div class="sect-h"><h3>${lang === "es" ? "Nacionalización · impuestos por NCM" : "Nationalization · taxes by NCM"}</h3></div>
-    <div class="card-b" style="padding:0;">
-      <table class="ct">
-        <thead>
-          <tr>
-            <th>#</th><th>SKU</th><th>NCM</th>
-            <th class="r">${lang === "es" ? "Cant." : "Qty"}</th>
-            <th class="r">${lang === "es" ? "Valor" : "Value"}</th>
-            <th class="r">${lang === "es" ? "Flete+Seg." : "Frt+Ins."}</th>
-            <th class="r">CIF</th>
-            <th class="r">DAI</th>
-            <th class="r">Ley 6946</th>
-            <th class="r">${lang === "es" ? "Aduana+Transp" : "Customs+Transp"}</th>
-            <th class="r">${lang === "es" ? "IVA (acred.)" : "VAT (cred.)"}</th>
-            <th class="r">${lang === "es" ? "Total s/IVA" : "Total excl.VAT"}</th>
-            <th class="r">${lang === "es" ? "Costo/par" : "Cost/pair"}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${nacRows}
-          <tr class="trow">
-            <td colspan="3">${lang === "es" ? "TOTALES" : "TOTALS"} (${baseTag})</td>
-            <td class="r">${fmtInt(unitsTotal)}</td>
-            <td class="r">${usd(nacAud.totals.goods)}</td>
-            <td class="r">${usd(nacAud.totals.extra)}</td>
-            <td class="r">${usd(nacAud.totals.cif)}</td>
-            <td class="r">${usd(nacAud.totals.dai)}</td>
-            <td class="r">${usd(nacAud.totals.ley)}</td>
-            <td class="r">${usd(nacAud.totals.dest)}</td>
-            <td class="r">${usd(nacAud.totals.iva)}</td>
-            <td class="r"><strong>${usd(nacAud.totals.total)}</strong></td>
-            <td class="r landed"><strong>${usd4(nacAud.totals.perPar)}</strong></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="card-b">
-      <div class="dual">
-        ${!isClient ? nacCard(lang === "es" ? "CIF Muito Work Limitada (aprox.)" : "CIF MWT (approx.)", lang === "es" ? "Base: costo operador · CEO-ONLY" : "Operator cost · CEO-ONLY", nacMwt) : ""}
-        ${nacCard(lang === "es" ? "CIF Cliente (real)" : "CIF Client (real)", lang === "es" ? "Base: valor declarado (precio cliente)" : "Declared value (client price)", nacReal)}
+  <div style="margin-top: 24px; break-inside: avoid; page-break-inside: avoid;">
+    <div class="head" style="margin-bottom: 12px; border-top: 4px solid ${isClient ? "var(--purple)" : "var(--navy)"};">
+      <div>
+        <h2 style="font-size: 18px; font-weight: 800; color: var(--navy); letter-spacing: -.4px;">${esc(cifTitle)}</h2>
+        <div class="meta" style="font-size: 12px; color: var(--t2); margin-top: 4px; line-height: 1.8;">
+          ${metaHtml}
+        </div>
       </div>
-      <div style="font-size:10px;color:var(--t3);margin-top:8px;line-height:1.6;">
-        ${lang === "es"
-          ? "Agrupado por SKU. Impuestos dinámicos por NCM: DAI y Ley 6946 sobre CIF. El IVA (CIF+DAI+Ley6946) es crédito fiscal acreditable — se cobra en la factura de venta, por eso NO suma al costo nacionalizado: el Total y el Costo/par van SIN IVA. Flete y seguro prorrateados por valor."
-          : "Grouped by SKU. Taxes by NCM. VAT is a creditable credit and is excluded from the nationalized cost — totals are shown excl. VAT."}
+      <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
+        <span class="badge ${badgeClass}">${esc(badgeLabel)}</span>
       </div>
     </div>
+    
+    ${noteBlock}
+    
+    <div class="sect">
+      <div class="sect-h">
+        <h3>${isClient 
+          ? (lang === "es" ? `Liquidación detallada — ${esc(clientName)} nacionaliza al precio de la orden (DUA referencial)` : `Detailed liquidation — ${esc(clientName)} nationalizes at order price (referential DUA)`)
+          : (lang === "es" ? "Liquidación detallada — MWT nacionaliza al precio Marluvas (UF)" : "Detailed liquidation — MWT nationalizes at Marluvas price (UF)")
+        }</h3>
+      </div>
+      <div class="card-b" style="padding:0; overflow-x: auto;">
+        ${buildDetailedLiquidationTable(nacAud, costs, isClient, lang)}
+      </div>
+    </div>
+
+    <div class="sect">
+      <div class="sect-h">
+        <h3>${isClient 
+          ? (lang === "es" ? `Costo nacionalizado por línea (base precio orden SN, sin IVA)` : `Nationalized cost by line (SN base, excl. VAT)`)
+          : (lang === "es" ? "Costo nacionalizado por línea (base UF, sin IVA)" : "Nationalized cost by line (UF base, excl. VAT)")
+        }</h3>
+      </div>
+      <div class="card-b" style="padding:0; overflow-x: auto;">
+        ${buildLandedCostTable(nacAud, isClient, lang)}
+      </div>
+    </div>
+
+    ${bottomNote}
   </div>` : "";
 
   // ── Resumen por talla ──
@@ -411,6 +714,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   --navy:#013A57;--mint:#75CBB3;--mint-s:#E8F5F0;--bg:#F8FAFB;--srf:#FFFFFF;
   --raised:#F1F5F9;--brd:#E2E8F0;--brd2:#CBD5E1;--t1:#0F172A;--t2:#475569;
   --t3:#94A3B8;--ok:#0E8A6D;--info:#0369A1;--crit:#DC2626;--warn:#B45309;
+  --purple:#7C3AED;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:var(--bg);color:var(--t1);line-height:1.5;-webkit-font-smoothing:antialiased;padding:24px;}
@@ -426,6 +730,11 @@ body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:var(--bg);c
 .aud-pill{display:inline-block;margin-top:6px;padding:4px 10px;border-radius:6px;font-size:10px;font-weight:700;letter-spacing:.4px;}
 .aud-mwt{background:rgba(1,58,87,.08);color:var(--navy);}
 .aud-client{background:rgba(3,105,161,.1);color:var(--info);}
+.badge{display:inline-flex;padding:4px 10px;border-radius:6px;font-size:10px;font-weight:700;}
+.bg-ceo{background:rgba(220,38,38,0.08);color:var(--crit);}
+.bg-sondel{background:rgba(124,58,237,0.08);color:var(--purple);}
+table.ct.dense{font-size:11px;}
+table.ct.dense thead th, table.ct.dense tbody td{padding:6px 6px;}
 .dual{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
 .card{background:var(--srf);border:1px solid var(--brd);border-radius:12px;overflow:hidden;}
 .card-h{padding:11px 18px;border-bottom:1px solid var(--brd);}
@@ -448,7 +757,9 @@ table.ct tbody td{padding:8px 12px;border-bottom:1px solid #f1f5f9;}
 table.ct tbody td.r{text-align:right;font-variant-numeric:tabular-nums;}
 table.ct tbody td.m{font-family:'JetBrains Mono',monospace;font-size:11px;}
 table.ct tbody td.cshare{color:var(--warn);}
-table.ct tbody td.landed{color:var(--ok);font-weight:600;}
+table.ct tbody td.landed{color:var(--ok)!important;font-weight:700;}
+table.ct .cb{background:rgba(1,58,87,.02);}
+table.ct .rb{background:rgba(14,138,109,.03);}
 table.ct .kind{display:inline-block;padding:1px 7px;border-radius:4px;background:var(--raised);color:var(--navy);font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;}
 table.ct .trow{background:var(--raised);font-weight:700;}
 table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-nums;}
@@ -556,6 +867,7 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
             <th>#</th>
             <th>${lang === "es" ? "Expediente" : "File"}</th>
             <th>SKU</th>
+            <th>NCM</th>
             <th>${lang === "es" ? "Producto" : "Product"}</th>
             <th class="r">${lang === "es" ? "Talla" : "Size"}</th>
             <th class="r">${lang === "es" ? "Cantidad" : "Qty"}</th>
@@ -566,7 +878,7 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
         <tbody>
           ${rows}
           <tr class="trow">
-            <td colspan="5">${lang === "es" ? "TOTAL" : "TOTAL"}</td>
+            <td colspan="6">${lang === "es" ? "TOTAL" : "TOTAL"}</td>
             <td class="r">${fmtInt(unitsTotal)}</td>
             <td></td>
             <td class="r">${usd(grandTotal)}</td>
