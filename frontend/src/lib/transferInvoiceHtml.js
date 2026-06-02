@@ -222,7 +222,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   const costsTotal = costs.reduce((a, c) => a + Number(c.amount_usd || 0), 0);
 
   // ── Nacionalización · impuestos dinámicos por NCM ──
-  // Flete + seguro se prorratean por valor de mercadería → CIF por línea;
+  // Flete + seguro y Aduana + transporte se prorratean por cantidad (pares) → CIF y Costos locales por línea;
   // cada línea aplica las tasas de SU NCM (DAI + Ley 6946 sobre CIF, IVA sobre
   // CIF+DAI+Ley6946). Se computan dos bases:
   //   · "real"  = precio cliente (valor declarado en aduana)
@@ -231,6 +231,13 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   const freight = costs.reduce((a, c) => a + (KIND_FREIGHT.has(kindUp(c)) ? Number(c.amount_usd || 0) : 0), 0);
   const insurance = costs.reduce((a, c) => a + (KIND_INSURANCE.has(kindUp(c)) ? Number(c.amount_usd || 0) : 0), 0);
   const extraTotal = freight + insurance;
+  const destTotal = costs.reduce((a, c) => {
+    const k = kindUp(c);
+    if (!KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k)) {
+      return a + Number(c.amount_usd || 0);
+    }
+    return a;
+  }, 0);
   const unitMwt = (l) => Number(l.unit_price_mwt != null ? l.unit_price_mwt : (l.unit_value_usd || 0));
   const unitClient = (l) => Number(l.unit_price_client != null ? l.unit_price_client : (l.unit_value_usd || 0));
   const computeNac = (priceFn) => {
@@ -248,9 +255,10 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
       groups.set(sku, g);
     });
     const grupos = Array.from(groups.values());
-    const goodsTotal = grupos.reduce((a, g) => a + g.goods, 0) || 0;
+    const qtyTotalAll = grupos.reduce((a, g) => a + g.qty, 0) || 0;
     const rows = grupos.map((g) => {
-      const extra = goodsTotal > 0 ? extraTotal * (g.goods / goodsTotal) : 0;
+      const extra = qtyTotalAll > 0 ? extraTotal * (g.qty / qtyTotalAll) : 0;
+      const dest = qtyTotalAll > 0 ? destTotal * (g.qty / qtyTotalAll) : 0;
       const cif = g.goods + extra;
       const r = taxRatesForNcm(g.ncm);
       const dai = cif * r.dai;
@@ -258,11 +266,12 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
       const iva = (cif + dai + ley) * r.iva;
       // El IVA es crédito fiscal acreditable (se cobra en la factura de venta):
       // NO suma al costo nacionalizado. El total y el costo/par van SIN IVA.
-      const total = cif + dai + ley;
+      // Total sin IVA = CIF + DAI + Ley 6946 + Aduana + transporte
+      const total = cif + dai + ley + dest;
       const perPar = g.qty > 0 ? total / g.qty : 0;
       return {
         sku: g.sku, ncm: g.ncm, product_label: g.product_label,
-        qty: g.qty, goods: g.goods, extra, cif, dai, ley, iva, total, perPar,
+        qty: g.qty, goods: g.goods, extra, cif, dai, ley, dest, iva, total, perPar,
       };
     });
     const sum = (k) => rows.reduce((a, x) => a + x[k], 0);
@@ -272,7 +281,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
       rows,
       totals: {
         goods: sum("goods"), extra: sum("extra"), cif: sum("cif"),
-        dai: sum("dai"), ley: sum("ley"), iva: sum("iva"),
+        dai: sum("dai"), ley: sum("ley"), dest: sum("dest"), iva: sum("iva"),
         total: totalAll, qty: qtyAll, perPar: qtyAll > 0 ? totalAll / qtyAll : 0,
       },
     };
@@ -297,6 +306,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         <td class="r"><strong>${usd(x.cif)}</strong></td>
         <td class="r">${usd(x.dai)}</td>
         <td class="r">${usd(x.ley)}</td>
+        <td class="r">${usd(x.dest)}</td>
         <td class="r">${usd(x.iva)}</td>
         <td class="r"><strong>${usd(x.total)}</strong></td>
         <td class="r landed"><strong>${usd4(x.perPar)}</strong></td>
@@ -311,6 +321,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         <div class="sr" style="border-top:2px solid var(--navy);"><span class="k" style="font-weight:700;">CIF</span><span class="v" style="font-size:14px;">${usd(n.totals.cif)}</span></div>
         <div class="sr"><span class="k">DAI</span><span class="v">${usd(n.totals.dai)}</span></div>
         <div class="sr"><span class="k">Ley 6946</span><span class="v">${usd(n.totals.ley)}</span></div>
+        <div class="sr"><span class="k">${lang === "es" ? "Aduana + transporte" : "Customs + transport"}</span><span class="v">${usd(n.totals.dest)}</span></div>
         <div class="sr"><span class="k" style="color:var(--t3);">${lang === "es" ? "IVA (acreditable · no suma)" : "VAT (creditable · excluded)"}</span><span class="v" style="color:var(--t3);">${usd(n.totals.iva)}</span></div>
         <div class="sr" style="border-top:2px solid var(--mint);"><span class="k" style="font-weight:700;">${lang === "es" ? "Total nacionalizado (sin IVA)" : "Nationalized total (excl. VAT)"}</span><span class="v" style="color:var(--ok);">${usd(n.totals.total)}</span></div>
         <div class="sr"><span class="k" style="font-weight:700;">${lang === "es" ? "Costo por par (sin IVA)" : "Cost per pair (excl. VAT)"}</span><span class="v" style="color:var(--ok);font-weight:700;">${usd4(n.totals.perPar)}</span></div>
@@ -331,6 +342,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
             <th class="r">CIF</th>
             <th class="r">DAI</th>
             <th class="r">Ley 6946</th>
+            <th class="r">${lang === "es" ? "Aduana+Transp" : "Customs+Transp"}</th>
             <th class="r">${lang === "es" ? "IVA (acred.)" : "VAT (cred.)"}</th>
             <th class="r">${lang === "es" ? "Total s/IVA" : "Total excl.VAT"}</th>
             <th class="r">${lang === "es" ? "Costo/par" : "Cost/pair"}</th>
@@ -346,6 +358,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
             <td class="r">${usd(nacAud.totals.cif)}</td>
             <td class="r">${usd(nacAud.totals.dai)}</td>
             <td class="r">${usd(nacAud.totals.ley)}</td>
+            <td class="r">${usd(nacAud.totals.dest)}</td>
             <td class="r">${usd(nacAud.totals.iva)}</td>
             <td class="r"><strong>${usd(nacAud.totals.total)}</strong></td>
             <td class="r landed"><strong>${usd4(nacAud.totals.perPar)}</strong></td>
