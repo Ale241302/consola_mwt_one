@@ -80,6 +80,9 @@ const fmt = (n) => Number(n || 0).toLocaleString("en-US", {
 const fmt4 = (n) => Number(n || 0).toLocaleString("en-US", {
   minimumFractionDigits: 4, maximumFractionDigits: 4,
 });
+const fmtInt = (n) => Number(n || 0).toLocaleString("en-US", {
+  maximumFractionDigits: 0,
+});
 
 export default function TransferLiquidationPanel({ transfer, lang = "es", onLiquidated }) {
   const transferId = transfer?._backend_id || transfer?.id;
