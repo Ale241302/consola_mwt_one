@@ -65,11 +65,29 @@ const SOURCE_TYPES = [
                         l_en: "Return / RMA",               color: "#10B981" },
 ];
 
+// ─── Catálogo de tipos de costo operativo (paso 3) ─────────────────
+// Sprint 2026-06-02 · Mismo set que /transferencias/nueva. Los costos
+// se prorratean por unidad y viajan con la asignación al transferir.
+const COST_KINDS = [
+  { codigo: "FLETE",         label_es: "Flete",                label_en: "Freight" },
+  { codigo: "SEGURO",        label_es: "Seguro",               label_en: "Insurance" },
+  { codigo: "ALMACENAJE",    label_es: "Almacenaje",           label_en: "Storage" },
+  { codigo: "AGENCIAMIENTO", label_es: "Agenciamiento",        label_en: "Customs agency" },
+  { codigo: "MANIPULEO",     label_es: "Manipuleo / handling", label_en: "Handling" },
+  { codigo: "DAI",           label_es: "Aranceles (DAI)",      label_en: "Duties (DAI)" },
+  { codigo: "IVA",           label_es: "Impuestos (IVA)",      label_en: "Taxes (VAT)" },
+  { codigo: "OTRO",          label_es: "Otro",                 label_en: "Other" },
+];
+const costKindLabel = (codigo, lang) => {
+  const k = COST_KINDS.find((x) => x.codigo === codigo);
+  return k ? (lang === "es" ? k.label_es : k.label_en) : codigo;
+};
+
 // ─── Stepper visual reutilizable ───────────────────────────────────
 function Stepper({ step, lang }) {
   const items = lang === "es"
-    ? ["Contexto", "Reconciliación", "Confirmar"]
-    : ["Context",  "Reconcile",      "Confirm"];
+    ? ["Contexto", "Reconciliación", "Costos", "Confirmar"]
+    : ["Context",  "Reconcile",      "Costs",  "Confirm"];
   return (
     <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "24px 0 18px" }}>
       {items.map((label, i) => {
@@ -144,6 +162,29 @@ export default function InboundReceptionWizard() {
   // Al confirmar, primero hacemos bulk-create de allocations y luego
   // POST de cada artefacto.
   const [pendingArtifacts, setPendingArtifacts] = useState([]);
+
+  // ── Estado paso 3: costos operativos ──────────────────────────
+  // Sprint 2026-06-02 · Costos manuales (tipo, monto, moneda, fx→usd)
+  // igual que /transferencias/nueva. Se mandan en el submit y el
+  // backend los prorratea por unidad sobre el lote recibido.
+  const [costLines, setCostLines] = useState([]);
+  const addCostLine = () => setCostLines((prev) => [...prev, {
+    tmpId:    `c-${Date.now()}-${Math.random().toString(36).slice(2,5)}`,
+    kind:     "OTRO",
+    label:    "",
+    amount:   0,
+    currency: "USD",
+    fx_to_usd: 1,
+    source:   "MANUAL",
+  }]);
+  const updateCostLine = (tmpId, patch) =>
+    setCostLines((prev) => prev.map((c) => c.tmpId === tmpId ? { ...c, ...patch } : c));
+  const removeCostLine = (tmpId) =>
+    setCostLines((prev) => prev.filter((c) => c.tmpId !== tmpId));
+  const totalCostUsd = useMemo(
+    () => costLines.reduce((a, c) => a + Number(c.amount || 0) * Number(c.fx_to_usd || 1), 0),
+    [costLines],
+  );
 
   // Sprint 2026-05-11 (iteración fix) · Las allocations del paso 2
   // todavía no están en BD cuando el modal de alcance se abre desde
@@ -428,6 +469,16 @@ export default function InboundReceptionWizard() {
           // inventario.recepcion (no hay líneas físicas, sólo asignaciones).
           recepcion_id: null,
           items: cleanItems,
+          // Sprint 2026-06-02 · costos operativos del paso 3. El backend
+          // los prorratea por unidad y los estampa en cada asignación.
+          cost_lines: costLines.map((c) => ({
+            kind:      c.kind,
+            label:     c.label || costKindLabel(c.kind, lang),
+            amount:    Number(c.amount) || 0,
+            currency:  c.currency || "USD",
+            fx_to_usd: Number(c.fx_to_usd) || 1,
+            source:    c.source || "MANUAL",
+          })),
         });
 
         // Sprint 2026-05-11 (iteración) · Crear los artefactos pendientes
@@ -476,6 +527,16 @@ export default function InboundReceptionWizard() {
           gap_justification: l.gap_justification || null,
           source:            l.source,
           ocr_confidence:    l.ocr_confidence,
+        })),
+        // Sprint 2026-06-02 · costos operativos del paso 3. El backend
+        // los prorratea por unidad y los suma al landed cost del stock.
+        cost_lines: costLines.map((c) => ({
+          kind:      c.kind,
+          label:     c.label || costKindLabel(c.kind, lang),
+          amount:    Number(c.amount) || 0,
+          currency:  c.currency || "USD",
+          fx_to_usd: Number(c.fx_to_usd) || 1,
+          source:    c.source || "MANUAL",
         })),
       };
       const r = await inboundApi.receive(payload);
@@ -577,7 +638,22 @@ export default function InboundReceptionWizard() {
         )}
 
         {step === 3 && (
-          <motion.div key="step3" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+          <motion.div key="step3costs" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.22 }}>
+            <Step3Costs
+              lang={lang}
+              costLines={costLines}
+              totalCostUsd={totalCostUsd}
+              currencies={currencies}
+              onAdd={addCostLine}
+              onUpdate={updateCostLine}
+              onRemove={removeCostLine}
+            />
+          </motion.div>
+        )}
+
+        {step === 4 && (
+          <motion.div key="step4" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.22 }}>
             <Step3Confirm
               lang={lang}
@@ -586,6 +662,9 @@ export default function InboundReceptionWizard() {
               reference={reference}
               lines={lines}
               totals={totals}
+              /* Sprint 2026-06-02 · costos operativos del paso 3 */
+              costLines={costLines}
+              totalCostUsd={totalCostUsd}
               submitting={submitting}
               submitError={submitError}
               onConfirm={submit}
@@ -619,23 +698,26 @@ export default function InboundReceptionWizard() {
         <button className="btn" disabled={step === 1} onClick={() => setStep((s) => Math.max(1, s - 1))}>
           ← {lang === "es" ? "Atrás" : "Back"}
         </button>
-        {step < 3 ? (
+        {step < 4 ? (
           <button
             className="btn btn-accent"
             disabled={
               (step === 1 && !step1Valid) ||
               (step === 2 && !(isExpedienteAssign ? assignValid : step2Valid))
+              // step === 3 (Costos) es opcional → nunca bloquea.
             }
             onClick={() => setStep((s) => s + 1)}
             style={{
               minWidth: 200, fontWeight: 700,
               background:
                 ((step === 1 && step1Valid) ||
-                 (step === 2 && (isExpedienteAssign ? assignValid : step2Valid)))
+                 (step === 2 && (isExpedienteAssign ? assignValid : step2Valid)) ||
+                 step === 3)
                   ? "#00B286" : "#94A3B8",
               borderColor:
                 ((step === 1 && step1Valid) ||
-                 (step === 2 && (isExpedienteAssign ? assignValid : step2Valid)))
+                 (step === 2 && (isExpedienteAssign ? assignValid : step2Valid)) ||
+                 step === 3)
                   ? "#00B286" : "#94A3B8",
             }}
           >
@@ -1072,6 +1154,8 @@ function ProductAutocomplete({ lang, value, label, productos, onPick }) {
 // =====================================================================
 function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
                        totals, submitting, submitError, onConfirm,
+                       // Sprint 2026-06-02 · costos operativos del paso 3
+                       costLines = [], totalCostUsd = 0,
                        isExpedienteAssign = false, assignItems = [],
                        // Sprint 2026-05-11 (iteración) · artefactos pendientes
                        pendingArtifacts = [], setPendingArtifacts = () => {},
@@ -1374,6 +1458,47 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
       </Card>
       )}
 
+      {/* Sprint 2026-06-02 · Resumen de costos operativos capturados en
+          el paso 3. Se prorratean por unidad sobre el lote y viajan con
+          el inventario del nodo. */}
+      {costLines.length > 0 && (
+        <Card title={lang === "es" ? "Costos operativos" : "Operating costs"}
+              subtitle={lang === "es"
+                ? "Se prorratean por unidad y quedan asociados al inventario del nodo."
+                : "Prorated per unit and attached to the node inventory."}>
+          <div style={{ border: "1px solid var(--border-subtle)", borderRadius: 10, overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "rgba(11,30,58,0.04)" }}>
+                  <th style={{ ...th, textAlign: "left" }}>{lang === "es" ? "Tipo" : "Kind"}</th>
+                  <th style={{ ...th, textAlign: "left" }}>{lang === "es" ? "Detalle" : "Label"}</th>
+                  <th style={{ ...th, textAlign: "right" }}>USD</th>
+                </tr>
+              </thead>
+              <tbody>
+                {costLines.map((c) => (
+                  <tr key={c.tmpId} style={{ borderTop: "1px solid var(--border-subtle)" }}>
+                    <td style={td}>{costKindLabel(c.kind, lang)}</td>
+                    <td style={td}>{c.label || "—"}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 700 }} className="tabular-nums">
+                      ${(Number(c.amount || 0) * Number(c.fx_to_usd || 1)).toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
+                  <td colSpan={2} style={{ ...td, textAlign: "right", color: "#0B1E3A" }}>
+                    {lang === "es" ? "Total costos USD" : "Total costs USD"}
+                  </td>
+                  <td className="tabular-nums" style={{ ...td, textAlign: "right", color: "#00B286", fontSize: 15 }}>
+                    ${Number(totalCostUsd || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
       {/* submitError vive fuera de la Card "Valorización por moneda" para
           que también sea visible cuando el flow EXPEDIENTE_ASSIGN oculta
           esa Card. */}
@@ -1408,6 +1533,157 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
         )}
       </button>
     </div>
+  );
+}
+
+// =====================================================================
+// PASO 3 — Costos operativos
+// Sprint 2026-06-02 · Réplica del paso de costos de /transferencias/nueva.
+// Captura costos manuales (tipo, detalle, monto, moneda, FX→USD). El
+// total USD se prorratea por unidad en el backend y viaja con la
+// asignación / stock del nodo. Opcional: puede confirmarse sin costos.
+// =====================================================================
+function Step3Costs({
+  lang, costLines, totalCostUsd,
+  currencies = [{ codigo: "USD", nombre: "US Dollar", symbol: "$" }],
+  onAdd, onUpdate, onRemove,
+}) {
+  return (
+    <Card
+      title={lang === "es" ? "Costos operativos" : "Operating costs"}
+      subtitle={lang === "es"
+        ? "Agrega flete, seguro, aranceles u otros costos. Se prorratean por unidad y quedan asociados al inventario del nodo (viajan con él al transferir). Opcional."
+        : "Add freight, insurance, duties or other costs. They are prorated per unit and stay attached to the node inventory (they travel on transfer). Optional."}
+    >
+      <div style={{
+        display: "flex", justifyContent: "flex-end", marginBottom: 12,
+      }}>
+        <button className="btn" onClick={onAdd}>
+          <IconPlus size={11}/> {lang === "es" ? "Agregar costo" : "Add cost"}
+        </button>
+      </div>
+
+      {costLines.length === 0 ? (
+        <div style={{
+          padding: "30px 18px", textAlign: "center",
+          border: "1px dashed var(--border-subtle)", borderRadius: 10,
+          color: "var(--text-tertiary)", fontSize: 13,
+        }}>
+          {lang === "es"
+            ? "Sin costos asociados. Puedes confirmar la recepción sin costos, o agregar flete / seguro / aranceles con el botón de arriba."
+            : "No costs yet. You can confirm the reception without costs, or add freight / insurance / duties with the button above."}
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto", border: "1px solid var(--border-subtle)", borderRadius: 12 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed" }}>
+            <colgroup>
+              <col style={{ width: 170 }}/>{/* Tipo */}
+              <col/>{/* Detalle */}
+              <col style={{ width: 110 }}/>{/* Monto */}
+              <col style={{ width: 90 }}/>{/* Moneda */}
+              <col style={{ width: 100 }}/>{/* FX→USD */}
+              <col style={{ width: 110 }}/>{/* USD */}
+              <col style={{ width: 90 }}/>{/* Origen */}
+              <col style={{ width: 80 }}/>{/* Aplicar a */}
+              <col style={{ width: 48 }}/>{/* Trash */}
+            </colgroup>
+            <thead>
+              <tr style={{ background: "rgba(11,30,58,0.04)" }}>
+                <th style={th}>{lang === "es" ? "Tipo" : "Kind"}</th>
+                <th style={th}>{lang === "es" ? "Detalle" : "Label"}</th>
+                <th style={{ ...th, textAlign: "right" }}>{lang === "es" ? "Monto" : "Amount"}</th>
+                <th style={{ ...th, textAlign: "center" }}>{lang === "es" ? "Moneda" : "Curr."}</th>
+                <th style={{ ...th, textAlign: "right" }}>FX→USD</th>
+                <th style={{ ...th, textAlign: "right" }}>USD</th>
+                <th style={{ ...th, textAlign: "center" }}>{lang === "es" ? "Origen" : "Source"}</th>
+                <th style={{ ...th, textAlign: "center" }}>{lang === "es" ? "Aplicar a" : "Apply to"}</th>
+                <th style={th}/>
+              </tr>
+            </thead>
+            <tbody>
+              {costLines.map((c) => {
+                const usd = Number(c.amount || 0) * Number(c.fx_to_usd || 1);
+                return (
+                  <tr key={c.tmpId} style={{ borderTop: "1px solid var(--border-subtle)", background: "white" }}>
+                    <td style={td}>
+                      <select className="input mono-sm" style={{ width: "100%" }}
+                              value={c.kind}
+                              onChange={(e) => onUpdate(c.tmpId, { kind: e.target.value })}>
+                        {COST_KINDS.map((k) => (
+                          <option key={k.codigo} value={k.codigo}>
+                            {lang === "es" ? k.label_es : k.label_en}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td style={td}>
+                      <input className="input mono-sm" style={{ width: "100%" }}
+                             value={c.label || ""}
+                             placeholder={costKindLabel(c.kind, lang)}
+                             onChange={(e) => onUpdate(c.tmpId, { label: e.target.value })}/>
+                    </td>
+                    <td style={{ ...td, textAlign: "right" }} className="tabular-nums">
+                      <input className="input mono-sm" type="number" step="0.01" min="0"
+                             style={{ width: "100%", textAlign: "right" }}
+                             value={c.amount}
+                             onChange={(e) => onUpdate(c.tmpId, { amount: e.target.value })}/>
+                    </td>
+                    <td style={{ ...td, textAlign: "center" }}>
+                      <select className="input mono-sm"
+                              style={{ width: "100%", textAlign: "center", padding: "6px 4px" }}
+                              value={c.currency || "USD"}
+                              onChange={(e) => onUpdate(c.tmpId, { currency: e.target.value })}>
+                        {currencies.map((cur) => (
+                          <option key={cur.codigo} value={cur.codigo}>{cur.codigo}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td style={{ ...td, textAlign: "right" }} className="tabular-nums">
+                      <input className="input mono-sm" type="number" step="0.0001" min="0"
+                             style={{ width: "100%", textAlign: "right" }}
+                             value={c.fx_to_usd}
+                             onChange={(e) => onUpdate(c.tmpId, { fx_to_usd: e.target.value })}/>
+                    </td>
+                    <td className="tabular-nums" style={{ ...td, textAlign: "right", fontWeight: 700, color: "#0B1E3A" }}>
+                      ${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ ...td, textAlign: "center" }}>
+                      <span style={{
+                        padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600,
+                        background: "#F3F5F8", color: "#64748B",
+                      }}>MANUAL</span>
+                    </td>
+                    <td style={{ ...td, textAlign: "center" }}>
+                      <span style={{
+                        padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700,
+                        background: "rgba(0,178,134,0.10)", color: "#0E8A6D",
+                      }}>{lang === "es" ? "Todo" : "All"}</span>
+                    </td>
+                    <td style={td}>
+                      <button className="btn btn-ghost btn-sm"
+                              onClick={() => onRemove(c.tmpId)}
+                              title={lang === "es" ? "Quitar costo" : "Remove cost"}
+                              style={{ color: "#D64545", padding: "6px 8px" }}>
+                        <IconTrash size={13}/>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
+                <td colSpan={5} style={{ ...td, textAlign: "right", color: "#0B1E3A" }}>
+                  {lang === "es" ? "Total costos USD" : "Total costs USD"}
+                </td>
+                <td className="tabular-nums" style={{ ...td, textAlign: "right", color: "#00B286", fontSize: 15 }}>
+                  ${Number(totalCostUsd || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                </td>
+                <td colSpan={3}/>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 

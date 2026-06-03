@@ -232,6 +232,13 @@ class ExpedienteNodoAssignment(models.Model):
     # Sprint 2026-05-13 · Fase 10 — trazabilidad transferencia→assignment.
     # Persistido por SQL 65c_assignment_transferencia_id.sql.
     transferencia_id = models.UUIDField(null=True, blank=True)          # ⛔ sin FK
+    # Sprint 2026-06-02 · Costos operativos de recepción prorrateados
+    # POR UNIDAD (USD). Persistido por SQL E0_recepcion_costos.sql.
+    # Invariante al split → se copia tal cual al mover la asignación en
+    # una transferencia (el costo viaja con el inventario).
+    costo_operativo_unitario_usd = models.DecimalField(
+        max_digits=14, decimal_places=4, default=0)
+    costo_batch_id = models.UUIDField(null=True, blank=True)            # ⛔ sin FK
     notas          = models.TextField(null=True, blank=True)
     created_by_id  = models.UUIDField(null=True, blank=True)            # ⛔ sin FK
     is_active      = models.BooleanField(default=True)
@@ -241,4 +248,38 @@ class ExpedienteNodoAssignment(models.Model):
     class Meta:
         managed  = False
         db_table = 'inventario"."expediente_nodo_assignment'
+        ordering = ("-created_at",)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Sprint 2026-06-02 · Costos operativos de la recepción de inventario.
+# Tabla `inventario.recepcion_costo` creada por SQL E0_recepcion_costos.sql.
+#
+# Audit de las líneas de costo capturadas en el paso 3 del wizard de
+# recepción. Una de las dos referencias está presente:
+#   · recepcion_id → flow legacy de líneas físicas (/inventory/receive/)
+#   · batch_id     → flow EXPEDIENTE_ASSIGN (no genera fila en recepcion)
+# ─────────────────────────────────────────────────────────────────
+class RecepcionCosto(models.Model):
+    id             = models.UUIDField(primary_key=True)
+    recepcion_id   = models.UUIDField(null=True, blank=True)            # ⛔ sin FK
+    batch_id       = models.UUIDField(null=True, blank=True)            # ⛔ sin FK
+    nodo_id        = models.UUIDField(null=True, blank=True)            # ⛔ sin FK
+    kind           = models.CharField(max_length=32, default="OTRO")
+    label          = models.CharField(max_length=160, null=True, blank=True)
+    amount         = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    currency       = models.CharField(max_length=3, default="USD")
+    fx_to_usd      = models.DecimalField(max_digits=14, decimal_places=6, default=1)
+    # amount_usd es columna GENERATED ALWAYS en SQL — NO se declara aquí
+    # para que el ORM no la incluya en el INSERT (Postgres la calcula).
+    source         = models.CharField(max_length=16, default="MANUAL")
+    scope_json     = models.JSONField(null=True, blank=True)
+    is_active      = models.BooleanField(default=True)
+    created_by_id  = models.UUIDField(null=True, blank=True)            # ⛔ sin FK
+    created_at     = models.DateTimeField(auto_now_add=True)
+    updated_at     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'inventario"."recepcion_costo'
         ordering = ("-created_at",)

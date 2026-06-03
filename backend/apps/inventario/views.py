@@ -13,7 +13,7 @@ from .models import (
     Stock, Movimiento, TipoMovimientoCat, MotivoCat,
     ContextoMovimientoCat,
     StockSnapshot, StockUbicacion, InventoryImportLog,
-    ExpedienteNodoAssignment,
+    ExpedienteNodoAssignment, RecepcionCosto,
 )
 from .serializers import (
     StockSerializer, StockListSerializer, MovimientoSerializer,
@@ -716,6 +716,23 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
         if not isinstance(uploader, uuid.UUID):
             uploader = None
 
+        # ── Sprint 2026-06-02 · Costos operativos del paso 3 ──
+        # cost_lines: [{kind, label, amount, currency, fx_to_usd, source}]
+        # Se prorratean por unidad sobre TODO el batch y el costo por
+        # unidad se estampa en cada asignación (costo_operativo_unitario_usd),
+        # de modo que viaje con la asignación cuando se transfiera.
+        cost_lines = request.data.get("cost_lines") or []
+        total_cost_usd = 0.0
+        for cl in cost_lines:
+            try:
+                total_cost_usd += float(cl.get("amount") or 0) * float(cl.get("fx_to_usd") or 1)
+            except (TypeError, ValueError):
+                return Response({"detail": "cost_line inválida (amount/fx_to_usd)"}, status=400)
+        total_units = sum(int(it["qty_asignada"]) for it in items)
+        per_unit_cost = round(total_cost_usd / total_units, 4) if (total_cost_usd and total_units) else 0
+        batch_id = uuid.uuid4() if cost_lines else None
+        nodo_destino = items[0].get("nodo_id") if items else None
+
         created = []
         with transaction.atomic():
             for it in items:
@@ -727,11 +744,31 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                     nodo_id=it["nodo_id"],
                     qty_asignada=int(it["qty_asignada"]),
                     recepcion_id=recepcion_id or None,
+                    costo_operativo_unitario_usd=per_unit_cost,
+                    costo_batch_id=batch_id,
                     notas=it.get("notas") or None,
                     created_by_id=uploader,
                     is_active=True,
                 )
                 created.append(row)
+
+            # Audit de las líneas de costo (no bloquea la asignación).
+            for cl in cost_lines:
+                RecepcionCosto.objects.create(
+                    id=uuid.uuid4(),
+                    recepcion_id=recepcion_id or None,
+                    batch_id=batch_id,
+                    nodo_id=nodo_destino,
+                    kind=(cl.get("kind") or "OTRO")[:32],
+                    label=(cl.get("label") or None),
+                    amount=float(cl.get("amount") or 0),
+                    currency=(cl.get("currency") or "USD")[:3],
+                    fx_to_usd=float(cl.get("fx_to_usd") or 1),
+                    source=(cl.get("source") or "MANUAL")[:16],
+                    scope_json=cl.get("scope") or cl.get("scope_json") or None,
+                    created_by_id=uploader,
+                    is_active=True,
+                )
 
         return Response(
             ExpedienteNodoAssignmentSerializer(created, many=True).data,
@@ -1661,7 +1698,7 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"],
             url_path="nodo-assignments/transfer")
     def transfer(self, request):
-        from django.db.models import Q, Sum
+        from django.db.models import Q, Sum, F
         try:
             origin_id = request.data["origin_nodo_id"]
             dest_id   = request.data["destination_nodo_id"]
@@ -1707,8 +1744,19 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                         )
                     else:
                         qs_origin = qs_origin.filter(talla=talla)
-                    qty_origin = int(qs_origin.aggregate(
-                        s=Sum("qty_asignada"))["s"] or 0)
+                    # Sprint 2026-06-02 · Costo operativo: lo leemos del
+                    # origen ANTES del soft-delete. Promedio ponderado por
+                    # qty (por si hay varios batches en origen). El costo
+                    # por-unidad es invariante al split → se copia a destino
+                    # y residual, y así viaja con la asignación.
+                    agg = qs_origin.aggregate(
+                        s=Sum("qty_asignada"),
+                        c=Sum(F("qty_asignada") * F("costo_operativo_unitario_usd")),
+                    )
+                    qty_origin = int(agg["s"] or 0)
+                    total_cost_origin = float(agg["c"] or 0)
+                    per_unit_cost = round(total_cost_origin / qty_origin, 4) if qty_origin else 0
+                    origin_batch_id = qs_origin.values_list("costo_batch_id", flat=True).first()
                     if qty > qty_origin:
                         return Response({
                             "detail": "Over-transfer: qty > disponible en origen",
@@ -1729,6 +1777,9 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                         recepcion_id=None,
                         # Sprint 2026-05-13 · Fase 10 — trazabilidad.
                         transferencia_id=transferencia_id or None,
+                        # Sprint 2026-06-02 · el costo viaja con la asignación.
+                        costo_operativo_unitario_usd=per_unit_cost,
+                        costo_batch_id=origin_batch_id,
                         notas=(
                             f"transfer from {transferencia_id}"
                             if transferencia_id else "transfer"
@@ -1747,6 +1798,9 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                             recepcion_id=None,
                             # Sprint 2026-05-13 · Fase 10 — trazabilidad.
                             transferencia_id=transferencia_id or None,
+                            # Sprint 2026-06-02 · residual conserva su costo.
+                            costo_operativo_unitario_usd=per_unit_cost,
+                            costo_batch_id=origin_batch_id,
                             notas="transfer-residual",
                             created_by_id=uploader, is_active=True,
                         )
