@@ -283,14 +283,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     }
   }, [transferId, transfer, effectiveView, customDaiRate, customLeyRate, customIvaRate, lang, onLiquidated]);
 
-  // Sprint 2026-06-03 — costos visibles según la vista activa. Cada
-  // CostLine pertenece a una vista (price_view). Las filas legacy sin
-  // price_view se tratan como 'MWT'. El CRUD opera sobre `costLines`
-  // (lista cruda); el cálculo y el render usan `viewCostLines`.
-  const viewCostLines = useMemo(
-    () => costLines.filter((c) => String(c.price_view || "MWT") === effectiveView),
-    [costLines, effectiveView]
-  );
+  // Sprint 2026-06-03 (rev) — los costos incrementales (flete, seguro,
+  // aduana) son COMPARTIDOS entre Vista MWT y Vista Cliente: el costo real
+  // incurrido es el mismo, sólo cambian el FOB base y el tratamiento fiscal
+  // por vista. Por eso NO se filtran por price_view; editar un costo en una
+  // vista se refleja en la otra. (Lo que sí es per-vista: tasas DAI/Ley/IVA,
+  // overrides de línea e impuestos custom — viven en context_data.views.)
+  const viewCostLines = costLines;
 
   // ── Cálculo en vivo del preview (sin pegarle al backend cada keystroke) ──
   const livePreview = useMemo(() => {
@@ -719,7 +718,6 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         kind: "OTRO", label: "", amount: 0, currency: "USD",
         fx_to_usd: 1, source: "MANUAL",
         scope_json: extra.scope || null,
-        price_view: effectiveView,   // el costo nace en la vista activa
       });
       setCostLines((prev) => [...prev, created]);
     } catch (e) { setError(e?.message || "create_failed"); }
@@ -742,7 +740,6 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
           fx_to_usd:      Number(c.fx_to_usd) || 1,
           source:         c.source || "MANUAL",
           scope_json:     c.scope_json || null,
-          price_view:     c.price_view || effectiveView,
         });
         setCostLines((prev) => prev.map((x) => x.id === c.id ? created : x));
       } else {
