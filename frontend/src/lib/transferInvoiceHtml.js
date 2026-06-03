@@ -59,6 +59,20 @@ export function taxRatesForNcm(ncm) {
 const KIND_FREIGHT = new Set(["FLETE", "FREIGHT", "CONSOLIDACION"]);
 const KIND_INSURANCE = new Set(["SEGURO", "INSURANCE"]);
 
+// Sprint 2026-06-03 — bucket de overrides por vista (MWT|CLIENT). El panel
+// guarda tasas/overrides/impuestos custom en context_data.views[view]; la
+// factura debe leer los de su audiencia. Fallback a las claves legacy de
+// nivel superior para transferencias previas a la vista dual.
+function viewBucket(ctx, audience) {
+  const b = ctx?.views?.[audience];
+  if (b && typeof b === "object") return b;
+  return {
+    line_overrides: ctx?.line_overrides,
+    custom_taxes:   ctx?.custom_taxes,
+    custom_rates:   ctx?.custom_rates,
+  };
+}
+
 /** Escapa texto para insertarlo seguro en HTML. */
 function esc(s) {
   return String(s == null ? "" : s)
@@ -97,7 +111,12 @@ function fmtDate(s, lang) {
   });
 }
 
-function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}) {
+function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket = {}) {
+  // Tasas mostradas según la vista (custom_rates) con fallback a NCM.
+  const cr = bucket.custom_rates || {};
+  const daiPct = ((cr.dai != null ? Number(cr.dai) : 0.14) * 100).toFixed(2);
+  const leyPct = ((cr.ley != null ? Number(cr.ley) : 0.01) * 100).toFixed(2);
+  const ivaPct = ((cr.iva != null ? Number(cr.iva) : 0.13) * 100).toFixed(2);
   const freight = costs.reduce((a, c) => a + (KIND_FREIGHT.has(String(c.kind || "").toUpperCase()) ? Number(c.amount_usd || 0) : 0), 0);
   const insurance = costs.reduce((a, c) => a + (KIND_INSURANCE.has(String(c.kind || "").toUpperCase()) ? Number(c.amount_usd || 0) : 0), 0);
   const otherCosts = costs.filter(c => {
@@ -159,7 +178,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}) {
           <td>4</td>
           <td>DAI &mdash; Derecho Arancelario</td>
           <td class="m">CIF</td>
-          <td class="r">14.00%</td>
+          <td class="r">${daiPct}%</td>
           <td class="r">${usd(n.totals.dai)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Régimen general calzado" : "General tariff rate"}</td>
         </tr>
@@ -167,7 +186,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}) {
           <td>5</td>
           <td>Ley 6946</td>
           <td class="m">CIF</td>
-          <td class="r">1.00%</td>
+          <td class="r">${leyPct}%</td>
           <td class="r">${usd(n.totals.ley)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Tributo fijo" : "Fixed tax"}</td>
         </tr>
@@ -175,12 +194,12 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}) {
           <td>6</td>
           <td>IVA</td>
           <td class="m">CIF</td>
-          <td class="r">13.00%</td>
+          <td class="r">${ivaPct}%</td>
           <td class="r">${usd(n.totals.iva)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Acreditable — crédito fiscal" : "Creditable — tax credit"}</td>
         </tr>`;
 
-  const customTaxes = t.context_data?.custom_taxes || [];
+  const customTaxes = bucket.custom_taxes || t.context_data?.custom_taxes || [];
   let customTaxesSum = 0;
   let customTaxIdx = 0;
   customTaxes.filter(x => x.type === "TAX").forEach((x) => {
@@ -367,11 +386,12 @@ function buildLandedCostTable(n, isClient, lang) {
     </table>`;
 }
 
-function buildFacturarTable(n, skuGroups, lang) {
+function buildFacturarTable(n, skuGroups, lang, bucket = {}) {
+  const crIva = bucket.custom_rates?.iva;
+  const ivaRateFor = (ncm) => (crIva != null ? Number(crIva) : taxRatesForNcm(ncm).iva);
   const rowsHtml = n.rows.map((row, idx) => {
     const subtotal = row.qty * row.perPar;
-    const r = taxRatesForNcm(row.ncm);
-    const iva = subtotal * r.iva;
+    const iva = subtotal * ivaRateFor(row.ncm);
     const totalConIva = subtotal + iva;
     
     const sortedSizes = Object.keys(skuGroups[row.sku]?.sizes || {}).sort((a, b) => Number(a) - Number(b));
@@ -394,8 +414,7 @@ function buildFacturarTable(n, skuGroups, lang) {
 
   const totalIva = n.rows.reduce((a, row) => {
     const subtotal = row.qty * row.perPar;
-    const r = taxRatesForNcm(row.ncm);
-    return a + (subtotal * r.iva);
+    return a + (subtotal * ivaRateFor(row.ncm));
   }, 0);
   const totalConIvaAll = n.totals.total + totalIva;
 
@@ -583,8 +602,9 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   }, 0);
   const unitMwt = (l) => Number(l.unit_price_mwt != null ? l.unit_price_mwt : (l.unit_value_usd || 0));
   const unitClient = (l) => Number(l.unit_price_client != null ? l.unit_price_client : (l.unit_value_usd || 0));
-  const computeNac = (priceFn) => {
-    const lineOverrides = t.context_data?.line_overrides || {};
+  const computeNac = (priceFn, bucket = {}) => {
+    const lineOverrides = bucket.line_overrides || {};
+    const cr = bucket.custom_rates || {};
     const groups = new Map();
     
     // Calculate total quantity across all lines first to do proration
@@ -603,14 +623,18 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
       const dest = qtyTotalAll > 0 ? destTotal * (qty / qtyTotalAll) : 0;
 
       const r = taxRatesForNcm(l.ncm);
-      
+      // Tasas por vista: custom_rates manda sobre el default NCM.
+      const daiRate = cr.dai != null ? Number(cr.dai) : r.dai;
+      const leyRate = cr.ley != null ? Number(cr.ley) : r.ley_6946;
+      const ivaRate = cr.iva != null ? Number(cr.iva) : r.iva;
+
       const override = lineOverrides[l.id] || {};
 
       const cif = override.cif !== undefined ? Number(override.cif) : (lt + extra);
-      const dai = override.dai !== undefined ? Number(override.dai) : (cif * r.dai);
-      const ley = override.ley !== undefined ? Number(override.ley) : (cif * r.ley_6946);
+      const dai = override.dai !== undefined ? Number(override.dai) : (cif * daiRate);
+      const ley = override.ley !== undefined ? Number(override.ley) : (cif * leyRate);
       const itemDest = override.dest !== undefined ? Number(override.dest) : dest;
-      const iva = cif * r.iva;
+      const iva = cif * ivaRate;
 
       let itemTotal = cif + dai + ley + itemDest;
       if (override.landed_total_usd !== undefined) {
@@ -654,8 +678,11 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
       },
     };
   };
-  const nacReal = computeNac(unitClient);   // base cliente (valor declarado)
-  const nacMwt = computeNac(unitMwt);       // base costo MWT (interno)
+  // Cada base usa los overrides/tasas guardados en SU vista:
+  //   · cliente (precio declarado)  → context_data.views.CLIENT
+  //   · MWT (costo interno)         → context_data.views.MWT
+  const nacReal = computeNac(unitClient, viewBucket(t.context_data, INVOICE_AUDIENCE.CLIENT));
+  const nacMwt = computeNac(unitMwt, viewBucket(t.context_data, INVOICE_AUDIENCE.MWT));
   // El desglose usa la base de la AUDIENCIA del documento: la factura MWT
   // muestra valores a precio MWT (consistente con "Precio MWT"); la del
   // cliente, a precio cliente.
@@ -773,7 +800,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         }</h3>
       </div>
       <div class="card-b" style="padding:0; overflow-x: auto;">
-        ${buildDetailedLiquidationTable(nacAud, costs, isClient, lang, t)}
+        ${buildDetailedLiquidationTable(nacAud, costs, isClient, lang, t, viewBucket(t.context_data, audience))}
       </div>
     </div>
 
@@ -794,7 +821,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         <h3>${lang === "es" ? "Líneas a facturar — precio nacionalizado + IVA (tallas entregadas)" : "Lines to invoice — landed cost + VAT (delivered sizes)"}</h3>
       </div>
       <div class="card-b" style="padding:0; overflow-x: auto;">
-        ${buildFacturarTable(nacAud, skuGroups, lang)}
+        ${buildFacturarTable(nacAud, skuGroups, lang, viewBucket(t.context_data, audience))}
       </div>
     </div>
   </div>` : "";
