@@ -350,7 +350,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
 
       const dai = cif * daiRate;
       const ley = cif * leyRate;
-      const iva = (cif + dai + ley) * ivaRate;
+      const iva = cif * ivaRate;
 
       daiTotal += dai;
       leyTotal += ley;
@@ -1250,9 +1250,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                  value={livePreview.ivaTotal.toFixed(2)}
                                  onChange={(e) => {
                                    const val = e.target.value;
-                                   const ivaBase = (livePreview.fobTotal + livePreview.extraTotal) + livePreview.daiTotal + livePreview.leyTotal;
-                                   if (ivaBase > 0) {
-                                     setCustomIvaRate(val === "" ? null : Number(val) / ivaBase);
+                                   const cifBase = livePreview.fobTotal + livePreview.extraTotal;
+                                   if (cifBase > 0) {
+                                     setCustomIvaRate(val === "" ? null : Number(val) / cifBase);
                                    }
                                  }}/>
                         </span>

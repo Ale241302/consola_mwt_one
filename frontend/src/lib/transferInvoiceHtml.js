@@ -332,6 +332,66 @@ function buildLandedCostTable(n, isClient, lang) {
     </table>`;
 }
 
+function buildFacturarTable(n, skuGroups, lang) {
+  const rowsHtml = n.rows.map((row, idx) => {
+    const subtotal = row.qty * row.perPar;
+    const r = taxRatesForNcm(row.ncm);
+    const iva = subtotal * r.iva;
+    const totalConIva = subtotal + iva;
+    
+    const sortedSizes = Object.keys(skuGroups[row.sku]?.sizes || {}).sort((a, b) => Number(a) - Number(b));
+    const sizesHtml = sortedSizes.map((sz) => `${sz}:${skuGroups[row.sku].sizes[sz]}`).join(" &middot; ");
+
+    return `
+      <tr>
+        <td>${idx + 1}</td>
+        <td>
+          <strong>${esc(row.sku)} &middot; ${esc(row.product_label || "—")}</strong>
+          <div style="font-size:10px;color:var(--t2);margin-top:2px;">${sizesHtml}</div>
+        </td>
+        <td class="r">${fmtInt(row.qty)}</td>
+        <td class="r landed"><strong>${usd4(row.perPar)}</strong></td>
+        <td class="r">${usd(subtotal)}</td>
+        <td class="r">${usd(iva)}</td>
+        <td class="r" style="color:var(--purple);font-weight:700;">${usd(totalConIva)}</td>
+      </tr>`;
+  }).join("");
+
+  const totalIva = n.rows.reduce((a, row) => {
+    const subtotal = row.qty * row.perPar;
+    const r = taxRatesForNcm(row.ncm);
+    return a + (subtotal * r.iva);
+  }, 0);
+  const totalConIvaAll = n.totals.total + totalIva;
+
+  return `
+    <table class="ct">
+      <thead>
+        <tr>
+          <th style="width: 40px;">#</th>
+          <th>${lang === "es" ? "Referencia / Tallas Entregadas" : "Reference / Delivered Sizes"}</th>
+          <th class="r" style="width: 80px;">${lang === "es" ? "Cant." : "Qty."}</th>
+          <th class="r" style="width: 110px;">${lang === "es" ? "Costo/par nac." : "Landed unit price"}</th>
+          <th class="r" style="width: 110px;">Subtotal</th>
+          <th class="r" style="width: 110px;">IVA</th>
+          <th class="r" style="width: 120px; color: var(--purple);">${lang === "es" ? "Total c/IVA" : "Total incl. VAT"}</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+        <tr class="trow" style="background:rgba(124,58,237,0.06);">
+          <td><strong>TOTAL A FACTURAR</strong></td>
+          <td></td>
+          <td class="r"><strong>${fmtInt(n.totals.qty)}</strong></td>
+          <td class="r"><strong>&mdash;</strong></td>
+          <td class="r"><strong>${usd(n.totals.total)}</strong></td>
+          <td class="r"><strong>${usd(totalIva)}</strong></td>
+          <td class="r" style="color:var(--purple);font-size:14px;"><strong>${usd(totalConIvaAll)}</strong></td>
+        </tr>
+      </tbody>
+    </table>`;
+}
+
 const LEGAL_LABEL = {
   INTERNAL: "Interno / Redistribución",
   NATIONALIZATION: "Nacionalización",
@@ -414,6 +474,26 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   if (has(pack.m3)) shipItems.push(["m³", pack.m3]);
   const shippingSection = "";
 
+  // ── Desglose por talla por SKU ──
+  const skuOrderedList = [];
+  const skuGroups = {};
+  lineas.forEach((l) => {
+    const sku = l.sku || "—";
+    if (!skuGroups[sku]) {
+      skuGroups[sku] = {
+        sku: sku,
+        product_label: l.product_label || "—",
+        sizes: {},
+        totalQty: 0
+      };
+      skuOrderedList.push(sku);
+    }
+    const size = l.size || "—";
+    const qty = lineQty(l);
+    skuGroups[sku].sizes[size] = (skuGroups[sku].sizes[size] || 0) + qty;
+    skuGroups[sku].totalQty += qty;
+  });
+
   // ── Líneas de mercadería (precio de la audiencia) ──
   let grandTotal = 0;
   let unitsTotal = 0;
@@ -491,7 +571,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
       const r = taxRatesForNcm(g.ncm);
       const dai = cif * r.dai;
       const ley = cif * r.ley_6946;
-      const iva = (cif + dai + ley) * r.iva;
+      const iva = cif * r.iva;
       // El IVA es crédito fiscal acreditable (se cobra en la factura de venta):
       // NO suma al costo nacionalizado. El total y el costo/par van SIN IVA.
       // Total sin IVA = CIF + DAI + Ley 6946 + Aduana + transporte
@@ -648,27 +728,16 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         ${buildLandedCostTable(nacAud, isClient, lang)}
       </div>
     </div>
-  </div>` : "";
 
-  // ── Desglose por talla por SKU ──
-  const skuOrderedList = [];
-  const skuGroups = {};
-  lineas.forEach((l) => {
-    const sku = l.sku || "—";
-    if (!skuGroups[sku]) {
-      skuGroups[sku] = {
-        sku: sku,
-        product_label: l.product_label || "—",
-        sizes: {},
-        totalQty: 0
-      };
-      skuOrderedList.push(sku);
-    }
-    const size = l.size || "—";
-    const qty = lineQty(l);
-    skuGroups[sku].sizes[size] = (skuGroups[sku].sizes[size] || 0) + qty;
-    skuGroups[sku].totalQty += qty;
-  });
+    <div class="sect">
+      <div class="sect-h">
+        <h3>${lang === "es" ? "Líneas a facturar — precio nacionalizado + IVA (tallas entregadas)" : "Lines to invoice — landed cost + VAT (delivered sizes)"}</h3>
+      </div>
+      <div class="card-b" style="padding:0; overflow-x: auto;">
+        ${buildFacturarTable(nacAud, skuGroups, lang)}
+      </div>
+    </div>
+  </div>` : "";
 
   const breakdownTitle = lang === "es" ? "Desglose por talla" : "Size breakdown";
 
