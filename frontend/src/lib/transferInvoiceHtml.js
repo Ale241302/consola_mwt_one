@@ -650,16 +650,46 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
     </div>
   </div>` : "";
 
-  // ── Resumen por talla ──
-  const bySize = {};
+  // ── Desglose por talla por SKU ──
+  const skuOrderedList = [];
+  const skuGroups = {};
   lineas.forEach((l) => {
-    const k = l.size || "—";
-    bySize[k] = (bySize[k] || 0) + lineQty(l);
+    const sku = l.sku || "—";
+    if (!skuGroups[sku]) {
+      skuGroups[sku] = {
+        sku: sku,
+        product_label: l.product_label || "—",
+        sizes: {},
+        totalQty: 0
+      };
+      skuOrderedList.push(sku);
+    }
+    const size = l.size || "—";
+    const qty = lineQty(l);
+    skuGroups[sku].sizes[size] = (skuGroups[sku].sizes[size] || 0) + qty;
+    skuGroups[sku].totalQty += qty;
   });
-  const sizePills = Object.keys(bySize)
-    .sort((a, b) => Number(a) - Number(b))
-    .map((sz) => `<div class="pill"><span class="s">${esc(sz)}</span><span class="q">${fmtInt(bySize[sz])}</span></div>`)
-    .join("");
+
+  const breakdownTitle = lang === "es" ? "Desglose por talla" : "Size breakdown";
+
+  const breakdownGroupsHtml = skuOrderedList.map((sku) => {
+    const group = skuGroups[sku];
+    const sortedSizes = Object.keys(group.sizes).sort((a, b) => Number(a) - Number(b));
+    const pillsHtml = sortedSizes.map((sz) => {
+      const qty = group.sizes[sz];
+      return `<div class="pill"><span class="s">${esc(sz)}</span><span class="q">${fmtInt(qty)}</span></div>`;
+    }).join("");
+
+    return `
+      <div class="sku-size-group" style="margin-bottom: 16px; break-inside: avoid; page-break-inside: avoid;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--t2); text-transform: uppercase; margin-bottom: 8px; letter-spacing: .5px;">
+          ${esc(group.sku)} &middot; ${esc(group.product_label)} &middot; ${fmtInt(group.totalQty)} ${lang === "es" ? "PARES" : "PAIRS"}
+        </div>
+        <div class="pills">
+          ${pillsHtml}
+        </div>
+      </div>`;
+  }).join("");
 
   // doc_kind_label permite que un caller (ej. factura comercial de expediente)
   // fuerce el rótulo del documento; si no, se infiere por audiencia.
@@ -829,10 +859,10 @@ table.ct .trow td{border-top:2px solid var(--navy);font-variant-numeric:tabular-
 
   ${cifSection}
 
-  ${sizePills ? `
-  <div class="sect">
-    <div class="sect-h"><h3>${lang === "es" ? "Resumen por talla" : "Size summary"}</h3></div>
-    <div class="card-b"><div class="pills">${sizePills}</div></div>
+  ${breakdownGroupsHtml ? `
+  <div class="sect" style="break-inside: avoid; page-break-inside: avoid;">
+    <div class="sect-h"><h3>${esc(breakdownTitle)}</h3></div>
+    <div class="card-b" style="padding: 16px 18px 4px 18px;">${breakdownGroupsHtml}</div>
   </div>` : ""}
 
   <div class="notes-card">
