@@ -35,6 +35,20 @@ import { useRole } from "../../context/RoleContext.jsx";
 import { isMwtOperated, MWT_OPERATING_CLIENT_ID } from "../../lib/operatingCompany.js";
 import { useTransferPriceMode } from "../../hooks/useTransferPriceMode.js";
 
+const NCM_TAX_RATES = {
+  "6403.99.90": { dai: 0.14, ley_6946: 0.01, iva: 0.13 }, // calzado seguridad
+  "6403.40.00": { dai: 0.14, ley_6946: 0.01, iva: 0.13 }, // calzado puntera metálica
+  _default:     { dai: 0.14, ley_6946: 0.01, iva: 0.13 },
+};
+
+function taxRatesForNcm(ncm) {
+  const key = String(ncm || "").trim();
+  return NCM_TAX_RATES[key] || NCM_TAX_RATES._default;
+}
+
+const KIND_FREIGHT = new Set(["FLETE", "FREIGHT", "CONSOLIDACION"]);
+const KIND_INSURANCE = new Set(["SEGURO", "INSURANCE"]);
+
 // ── Catálogo fallback de tipos de costo (espejo del backend) ──
 const COST_KINDS_FALLBACK = [
   { codigo:"DAI",           label:"Aranceles (DAI)",     is_fiscal:true,  color:"#481EE3" },
@@ -272,13 +286,25 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // ── Cálculo en vivo del preview (sin pegarle al backend cada keystroke) ──
   const livePreview = useMemo(() => {
     const lineas = transfer?.lines || transfer?.lineas || [];
+
+    // 1. Identificar costos de flete, seguro y otros costos de costLines
+    const freight = costLines.reduce((a, c) => a + (KIND_FREIGHT.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
+    const insurance = costLines.reduce((a, c) => a + (KIND_INSURANCE.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
+    const extraTotal = freight + insurance;
+    const destTotal = costLines.reduce((a, c) => {
+      const k = String(c.kind || "").toUpperCase();
+      if (!KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k)) {
+        return a + Number(c.amount || 0) * Number(c.fx_to_usd || 1);
+      }
+      return a;
+    }, 0);
+    const otherCostsTotal = destTotal;
+
+    // 2. Computar FOB unitario y total por línea (con la cantidad entregada/recibida > despachada > planeada)
     let fobTotal = 0;
     const lineValues = lineas.map((l) => {
-      const qty = Number(l.qty_transfer || 0);
-      // Sprint 2026-05-22 · viewer-aware unit_value.
-      // Si el expediente fue operado por MWT y el viewer es interno,
-      // usar unit_price_mwt. Sino, unit_price_client. Si ninguno está
-      // disponible (línea sin snapshot dual), caer al legacy unit_value.
+      const qty = l.qty_received != null ? Number(l.qty_received) : (l.qty_dispatched != null ? Number(l.qty_dispatched) : Number(l.qty_transfer || 0));
+      
       const opIsMwt  = isMwtOperated(l.operating_company_id || l._operating_company_id);
       const priceMwt = Number(l.unit_price_mwt    || 0);
       const priceCli = Number(l.unit_price_client || 0);
@@ -296,47 +322,71 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       fobTotal += lt;
       return { l, qty, uv, lt };
     });
-    let extraUsd = 0;
-    for (const c of costLines) {
-      extraUsd += Number(c.amount || 0) * Number(c.fx_to_usd || 1);
-    }
+
+    const qtyTotalAll = lineValues.reduce((a, x) => a + x.qty, 0);
+
+    // 3. Desglosar por talla y calcular impuestos (prorrateo por cantidad)
+    let daiTotal = 0;
+    let leyTotal = 0;
+    let ivaTotal = 0;
+
     const lines = lineValues.map(({ l, qty, uv, lt }) => {
-      const weight     = fobTotal > 0 ? lt / fobTotal : 0;
-      const costShare  = extraUsd * weight;
-      const landedUnit = qty > 0 ? uv + (costShare / qty) : uv;
+      const extra = qtyTotalAll > 0 ? extraTotal * (qty / qtyTotalAll) : 0;
+      const dest = qtyTotalAll > 0 ? destTotal * (qty / qtyTotalAll) : 0;
+      const cif = lt + extra;
+
+      const r = taxRatesForNcm(l.ncm || l._raw?.ncm);
+      const dai = cif * r.dai;
+      const ley = cif * r.ley_6946;
+      const iva = (cif + dai + ley) * r.iva;
+
+      daiTotal += dai;
+      leyTotal += ley;
+      ivaTotal += iva;
+
+      const total = cif + dai + ley + dest;
+      const landedUnit = qty > 0 ? total / qty : 0;
+
       return {
         line_id:          l._line_id || l.id,
         sku:              l.sku || "",
         product_label:    l.product_label || l.product || "",
         size:             l.size || "",
         lote:             l.lote || l.lot || "",
-        // Sprint 2026-05-14 · Fase 11.2 — propagar expediente_codigo
-        // para mostrar la columna Expediente en la tabla del Landed Cost.
         expediente_codigo: l.expediente_codigo || "",
-        // Sprint 2026-05-17 · proforma_codigo para que la celda EXPEDIENTE
-        // muestre la proforma (con fallback a EXP code). Sin esto, el panel
-        // dejaba caer el campo y la tabla mostraba EXP-YYYY-NNNN.
         proforma_codigo:   l.proforma_codigo || "",
         qty,
         unit_fob_usd:     uv,
         fob_total_usd:    lt,
-        weight_pct:       weight * 100,
-        cost_share_usd:   costShare,
+        extra,
+        cif,
+        dai,
+        ley,
+        dest,
+        iva,
         landed_unit_usd:  landedUnit,
-        landed_total_usd: landedUnit * qty,
+        landed_total_usd: total,
       };
     });
-    const unitsTotal = lineValues.reduce((a, x) => a + x.qty, 0);
+
     const landedTotal = lines.reduce((a, x) => a + x.landed_total_usd, 0);
+
     return {
-      fobTotal, extraUsd, unitsTotal, landedTotal,
-      avgLanded: unitsTotal > 0 ? landedTotal / unitsTotal : 0,
+      fobTotal,
+      freight,
+      insurance,
+      extraTotal,
+      extraUsd: extraTotal,
+      destTotal,
+      otherCostsTotal,
+      unitsTotal: qtyTotalAll,
+      landedTotal,
+      daiTotal,
+      leyTotal,
+      ivaTotal,
+      avgLanded: qtyTotalAll > 0 ? landedTotal / qtyTotalAll : 0,
       lines,
     };
-    // Sprint 2026-05-22 · viewerIsMwt en deps. Sin esta dependencia el
-    // useMemo NO recalcula cuando el admin toggle a "Cliente B2B" en el
-    // panel Tweaks - la tabla mostraba el precio MWT cacheado aunque la
-    // logica del if/else if mas arriba ya era correcta.
   }, [transfer, costLines, viewerIsMwt]);
 
   // ── Cost line CRUD (server-side persiste; trigger SQL actualiza total_cost_usd) ──
@@ -930,118 +980,288 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             {lang === "es" ? "Sin líneas de mercadería para calcular." : "No lines to compute."}
           </div>
         ) : (
-          <div className="card card-pad-0">
-            <table className="table">
-              <thead>
-                <tr>
-                  {/* Sprint 2026-05-14 · Fase 11.2 — Expediente antes de SKU/Lote. */}
-                  <th>{lang === "es" ? "Expediente" : "Expediente"}</th>
-                  <th>SKU / {lang === "es" ? "Lote" : "Lot"}</th>
-                  <th>{lang === "es" ? "Producto" : "Product"}</th>
-                  <th>{lang === "es" ? "Talla" : "Size"}</th>
-                  <th style={{ textAlign: "right" }}>{lang === "es" ? "Cant." : "Qty"}</th>
-                  <th style={{ textAlign: "right" }}>{lang === "es" ? "FOB unit." : "Unit FOB"}</th>
-                  <th style={{ textAlign: "right" }}>FOB total</th>
-                  <th style={{ textAlign: "right" }}>%</th>
-                  <th style={{ textAlign: "right" }}>{lang === "es" ? "Costo asignado" : "Cost share"}</th>
-                  <th style={{ textAlign: "right" }}>
-                    <strong style={{ color: "#00B286" }}>
-                      {lang === "es" ? "Landed unit." : "Landed unit"}
-                    </strong>
-                  </th>
-                  <th style={{ textAlign: "right" }}>{lang === "es" ? "Landed total" : "Landed total"}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {livePreview.lines.map((l) => {
-                  // FOB UNIT editable — sprint 2026-04-30. El operador puede
-                  // corregir el valor declarado para que el motor de Landed
-                  // Cost prorratee bien (BY_VALUE). PATCH al perder foco.
-                  const editingVal = editingUnitValue[l.line_id];
-                  const displayVal = editingVal !== undefined
-                    ? editingVal
-                    : Number(l.unit_fob_usd || 0).toFixed(4);
-                  return (
-                  <tr key={l.line_id}>
-                    {/* Sprint 2026-05-17 · muestra proforma_codigo con
-                        fallback al EXP code. Header de columna mantiene
-                        "Expediente" — el valor es la proforma cuando existe. */}
-                    <td className="mono-sm" style={{ color: "var(--brand-primary)", fontWeight: 700 }}>
-                      {l.proforma_codigo || l.expediente_codigo || "—"}
-                    </td>
-                    <td className="mono-sm">
-                      <div>{l.sku}</div>
-                      {l.lote && <div className="caption">L: {l.lote}</div>}
-                    </td>
-                    <td>{l.product_label}</td>
-                    <td>{l.size || "—"}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>{l.qty}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>
-                      {isLiquidated ? (
-                        <span>${fmt4(l.unit_fob_usd)}</span>
-                      ) : (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
-                          <input className="input tabular-nums"
-                                 type="number" step="0.0001" min="0"
-                                 style={{
-                                   width: 88, textAlign: "right",
-                                   padding: "4px 6px", fontSize: 12.5,
-                                 }}
-                                 value={displayVal}
-                                 onChange={(e) => setEditingUnitValue((m) => ({
-                                   ...m, [l.line_id]: e.target.value,
-                                 }))}
-                                 onBlur={(e) => {
-                                   const v = Number(e.target.value);
-                                   if (Number.isFinite(v) && v !== Number(l.unit_fob_usd || 0)) {
-                                     persistLineUnitValue(l.line_id, v);
-                                   }
-                                   setEditingUnitValue((m) => {
-                                     const { [l.line_id]: _, ...rest } = m;
-                                     return rest;
-                                   });
-                                 }}
-                                 title={lang === "es"
-                                   ? "Valor unitario USD declarado · base FOB"
-                                   : "Declared unit value USD · FOB base"}/>
-                        </span>
-                      )}
-                    </td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(l.fob_total_usd)}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>
-                      {l.weight_pct.toFixed(1)}%
-                    </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "#F59E0B" }}>
-                      +${fmt(l.cost_share_usd)}
-                    </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#00B286" }}>
-                      ${fmt4(l.landed_unit_usd)}
-                    </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>
-                      ${fmt(l.landed_total_usd)}
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Tabla 1: Liquidación detallada */}
+            <div className="card card-pad-0" style={{ overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)" }}>
+                <h4 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
+                  {viewerIsMwt
+                    ? (lang === "es" ? "LIQUIDACIÓN DETALLADA — MWT NACIONALIZA AL PRECIO MARLUVAS (UF)" : "DETAILED LIQUIDATION — MWT AT MARLUVAS (UF)")
+                    : (lang === "es" ? `LIQUIDACIÓN DETALLADA — ${transfer?._raw?.operating_company_label || "SONDEL"} NACIONALIZA AL PRECIO DE LA ORDEN (DUA REFERENCIAL)` : `DETAILED LIQUIDATION — ${transfer?._raw?.operating_company_label || "SONDEL"} AT ORDER PRICE`)}
+                </h4>
+              </div>
+              <table className="table" style={{ fontSize: 12.5 }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: 40 }}>#</th>
+                    <th>{lang === "es" ? "Concepto" : "Concept"}</th>
+                    <th>{lang === "es" ? "Base" : "Basis"}</th>
+                    <th style={{ textAlign: "right" }}>{lang === "es" ? "Tasa" : "Rate"}</th>
+                    <th style={{ textAlign: "right" }}>{lang === "es" ? "Monto USD" : "Amount USD"}</th>
+                    <th>{lang === "es" ? "Notas" : "Notes"}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>1</td>
+                    <td><strong>{viewerIsMwt ? (lang === "es" ? "FOB Marluvas (UF v5)" : "Marluvas FOB (UF v5)") : (lang === "es" ? "FOB declarado (precio orden SN)" : "Declared FOB (SN order price)")}</strong></td>
+                    <td>{viewerIsMwt ? (lang === "es" ? "Factura Marluvas / pedido" : "Marluvas invoice / order") : (lang === "es" ? "Precio de la orden (precio cliente)" : "Order price (client price)")}</td>
+                    <td style={{ textAlign: "right" }}>—</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal)}</td>
+                    <td style={{ color: "#64748B", fontSize: 11 }}>{livePreview.unitsTotal} {lang === "es" ? "pares" : "pairs"}</td>
+                  </tr>
+                  <tr>
+                    <td>2</td>
+                    <td>{lang === "es" ? "Flete aéreo internacional" : "International air freight"}</td>
+                    <td>AWB / BL</td>
+                    <td style={{ textAlign: "right" }}>—</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.freight)}</td>
+                    <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
+                  </tr>
+                  <tr>
+                    <td>3</td>
+                    <td>{lang === "es" ? "Seguro internacional" : "International insurance"}</td>
+                    <td>Factura</td>
+                    <td style={{ textAlign: "right" }}>—</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.insurance)}</td>
+                    <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
+                  </tr>
+                  <tr style={{ background: "rgba(11,30,58,0.02)", fontWeight: 700 }}>
+                    <td colSpan={4}>CIF (base imponible aduana)</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal + livePreview.extraTotal)}</td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td>4</td>
+                    <td>DAI — Derecho Arancelario</td>
+                    <td>CIF</td>
+                    <td style={{ textAlign: "right" }}>14.00%</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.daiTotal)}</td>
+                    <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Régimen general calzado" : "General footwear regime"}</td>
+                  </tr>
+                  <tr>
+                    <td>5</td>
+                    <td>Ley 6946</td>
+                    <td>CIF</td>
+                    <td style={{ textAlign: "right" }}>1.00%</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.leyTotal)}</td>
+                    <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Tributo fijo" : "Fixed tax"}</td>
+                  </tr>
+                  <tr>
+                    <td>6</td>
+                    <td>IVA</td>
+                    <td>CIF</td>
+                    <td style={{ textAlign: "right" }}>13.00%</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.ivaTotal)}</td>
+                    <td style={{ color: "#64748B", fontSize: 11, fontStyle: "italic" }}>
+                      {lang === "es" ? "Acreditable — crédito fiscal (no suma)" : "Creditable — VAT credit (excluded)"}
                     </td>
                   </tr>
-                  );
-                })}
-                <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
-                  {/* +1 columna Expediente (Sprint Fase 11.2). */}
-                  <td colSpan={4} style={{ color: "#0B1E3A" }}>
-                    {lang === "es" ? "TOTALES" : "TOTALS"}
-                  </td>
-                  <td className="tabular-nums" style={{ textAlign: "right" }}>{livePreview.unitsTotal}</td>
-                  <td colSpan={2} className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal)}</td>
-                  <td></td>
-                  <td className="tabular-nums" style={{ textAlign: "right", color: "#F59E0B" }}>
-                    +${fmt(livePreview.extraUsd)}
-                  </td>
-                  <td></td>
-                  <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 15 }}>
-                    ${fmt(livePreview.landedTotal)}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                  <tr style={{ background: "rgba(11,30,58,0.02)", fontWeight: 700 }}>
+                    <td colSpan={4}>{lang === "es" ? "Subtotal impuestos (con IVA)" : "Subtotal taxes (incl. VAT)"}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.daiTotal + livePreview.leyTotal + livePreview.ivaTotal)}</td>
+                    <td></td>
+                  </tr>
+                  {costLines.filter(c => {
+                    const k = String(c.kind || "").toUpperCase();
+                    return !KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k);
+                  }).map((c, idx) => (
+                    <tr key={c.id}>
+                      <td>{7 + idx}</td>
+                      <td>{c.label || c.kind}</td>
+                      <td>{c.kind}</td>
+                      <td style={{ textAlign: "right" }}>—</td>
+                      <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(Number(c.amount) * Number(c.fx_to_usd || 1))}</td>
+                      <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo en destino" : "Destination cost"}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: "rgba(11,30,58,0.02)", fontWeight: 700 }}>
+                    <td colSpan={4}>{lang === "es" ? "Subtotal costos destino" : "Subtotal destination costs"}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.destTotal)}</td>
+                    <td></td>
+                  </tr>
+                  <tr style={{ background: "var(--text-secondary, #475569)", color: "white", fontWeight: 700 }}>
+                    <td colSpan={4} style={{ color: "white" }}>{lang === "es" ? "Total con IVA (incluye crédito fiscal)" : "Total incl. VAT (includes credit)"}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>
+                      ${fmt(livePreview.fobTotal + livePreview.extraTotal + livePreview.daiTotal + livePreview.leyTotal + livePreview.ivaTotal + livePreview.destTotal)}
+                    </td>
+                    <td style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>{lang === "es" ? "embarque completo" : "complete shipment"}</td>
+                  </tr>
+                  <tr style={{ background: "#0B1E3A", color: "white", fontWeight: 700 }}>
+                    <td colSpan={4} style={{ color: "white" }}>
+                      {viewerIsMwt
+                        ? (lang === "es" ? "TOTAL SIN IVA — costo real de MWT" : "TOTAL EXCL. VAT — real MWT cost")
+                        : (lang === "es" ? "TOTAL SIN IVA — costo real de nacionalizar" : "TOTAL EXCL. VAT — real nationalization cost")}
+                    </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#1DE394", fontSize: 14 }}>
+                      ${fmt(livePreview.landedTotal)}
+                    </td>
+                    <td style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>{lang === "es" ? "ver $/par por línea abajo" : "see $/pair by line below"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Tabla 2: Costo nacionalizado por línea */}
+            <div className="card card-pad-0" style={{ overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)" }}>
+                <h4 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
+                  {viewerIsMwt
+                    ? (lang === "es" ? "COSTO NACIONALIZADO POR LÍNEA (BASE UF, SIN IVA)" : "NATIONALIZED COST BY LINE (UF BASE, EXCL. VAT)")
+                    : (lang === "es" ? "COSTO NACIONALIZADO POR LÍNEA (BASE PRECIO ORDEN SN, SIN IVA)" : "NATIONALIZED COST BY LINE (SN BASE, EXCL. VAT)")}
+                </h4>
+              </div>
+              <table className="table" style={{ fontSize: 12.5 }}>
+                <thead>
+                  <tr>
+                    <th>{lang === "es" ? "Expediente" : "Expediente"}</th>
+                    <th>SKU / {lang === "es" ? "Lote" : "Lot"}</th>
+                    <th>{lang === "es" ? "Producto" : "Product"}</th>
+                    <th>{lang === "es" ? "Talla" : "Size"}</th>
+                    <th style={{ textAlign: "right" }}>{lang === "es" ? "Pares" : "Pairs"}</th>
+                    <th style={{ textAlign: "right" }}>{viewerIsMwt ? "FOB UF" : "FOB SN"}</th>
+                    <th style={{ textAlign: "right" }}>CIF</th>
+                    <th style={{ textAlign: "right" }}>DAI</th>
+                    <th style={{ textAlign: "right" }}>L6946</th>
+                    <th style={{ textAlign: "right" }}>{lang === "es" ? "Aduana+Transp" : "Customs+Transp"}</th>
+                    <th style={{ textAlign: "right", color: "#00B286" }}>{lang === "es" ? "Landed Unit" : "Landed Unit"}</th>
+                    <th style={{ textAlign: "right" }}>Landed Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {livePreview.lines.map((l) => {
+                    const editingVal = editingUnitValue[l.line_id];
+                    const displayVal = editingVal !== undefined
+                      ? editingVal
+                      : Number(l.unit_fob_usd || 0).toFixed(4);
+                    return (
+                      <tr key={l.line_id}>
+                        <td className="mono-sm" style={{ color: "var(--brand-primary)", fontWeight: 700 }}>
+                          {l.proforma_codigo || l.expediente_codigo || "—"}
+                        </td>
+                        <td className="mono-sm">
+                          <div>{l.sku}</div>
+                          {l.lote && <div className="caption">L: {l.lote}</div>}
+                        </td>
+                        <td>{l.product_label}</td>
+                        <td>{l.size || "—"}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>{l.qty}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>
+                          {isLiquidated ? (
+                            <span>${fmt4(l.unit_fob_usd)}</span>
+                          ) : (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                              <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                              <input className="input tabular-nums"
+                                     type="number" step="0.0001" min="0"
+                                     style={{
+                                       width: 88, textAlign: "right",
+                                       padding: "4px 6px", fontSize: 12,
+                                     }}
+                                     value={displayVal}
+                                     onChange={(e) => setEditingUnitValue((m) => ({
+                                       ...m, [l.line_id]: e.target.value,
+                                     }))}
+                                     onBlur={(e) => {
+                                       const v = Number(e.target.value);
+                                       if (Number.isFinite(v) && v !== Number(l.unit_fob_usd || 0)) {
+                                         persistLineUnitValue(l.line_id, v);
+                                       }
+                                       setEditingUnitValue((m) => {
+                                         const { [l.line_id]: _, ...rest } = m;
+                                         return rest;
+                                       });
+                                     }}
+                                     title="Editar FOB unitario"/>
+                            </span>
+                          )}
+                        </td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(l.cif)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(l.dai)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(l.ley)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(l.dest)}</td>
+                        <td className="tabular-nums landed" style={{ textAlign: "right", fontWeight: 700, color: "#00B286" }}>
+                          ${fmt4(l.landed_unit_usd)}
+                        </td>
+                        <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>
+                          ${fmt(l.landed_total_usd)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
+                    <td colSpan={4}>{lang === "es" ? "TOTALES" : "TOTALS"}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>{livePreview.unitsTotal}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal + livePreview.extraTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.daiTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.leyTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.destTotal)}</td>
+                    <td></td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 14 }}>
+                      ${fmt(livePreview.landedTotal)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Tabla 3: Líneas a facturar */}
+            <div className="card card-pad-0" style={{ overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)" }}>
+                <h4 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
+                  {lang === "es" ? "LÍNEAS A FACTURAR — PRECIO NACIONALIZADO + IVA 13% (TALLAS ENTREGADAS)" : "LINES TO INVOICE — LANDED COST + 13% VAT (DELIVERED SIZES)"}
+                </h4>
+              </div>
+              <table className="table" style={{ fontSize: 12.5 }}>
+                <thead>
+                  <tr>
+                    <th>SKU / {lang === "es" ? "Lote" : "Lot"}</th>
+                    <th>{lang === "es" ? "Producto" : "Product"}</th>
+                    <th>{lang === "es" ? "Talla" : "Size"}</th>
+                    <th style={{ textAlign: "right" }}>{lang === "es" ? "Pares entregados" : "Delivered pairs"}</th>
+                    <th style={{ textAlign: "right" }}>{lang === "es" ? "Precio nacionalizado" : "Landed unit price"}</th>
+                    <th style={{ textAlign: "right" }}>Subtotal</th>
+                    <th style={{ textAlign: "right" }}>IVA 13%</th>
+                    <th style={{ textAlign: "right", color: "#7C3AED" }}>Total con IVA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {livePreview.lines.map((l) => {
+                    const subtotal = l.qty * l.landed_unit_usd;
+                    const iva = subtotal * 0.13;
+                    const totalConIva = subtotal + iva;
+                    return (
+                      <tr key={l.line_id}>
+                        <td className="mono-sm">
+                          <div>{l.sku}</div>
+                          {l.lote && <div className="caption">L: {l.lote}</div>}
+                        </td>
+                        <td>{l.product_label}</td>
+                        <td>{l.size || "—"}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>{l.qty}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt4(l.landed_unit_usd)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(subtotal)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(iva)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#7C3AED" }}>
+                          ${fmt(totalConIva)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <tr style={{ background: "rgba(124,58,237,0.06)", fontWeight: 700 }}>
+                    <td colSpan={3}>{lang === "es" ? "TOTALES" : "TOTALS"}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>{livePreview.unitsTotal}</td>
+                    <td></td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.landedTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.ivaTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#7C3AED", fontSize: 14 }}>
+                      ${fmt(livePreview.landedTotal + livePreview.ivaTotal)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -1077,6 +1297,100 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             <strong>{new Date(report.liquidated_at).toLocaleString()}</strong>
             {report.liquidated_by_name && <> {lang === "es" ? "por" : "by"} <strong>{report.liquidated_by_name}</strong></>}
             {" · "} {lang === "es" ? "Método" : "Method"}: <code className="mono-sm">{report.method}</code>
+          </div>
+        )}
+
+        {/* Costo nacionalizado por línea (base UF, sin IVA) - SKU grouped card */}
+        {livePreview.lines.length > 0 && (
+          <div className="card card-pad-0" style={{ marginTop: 24, overflow: "hidden", borderTop: "4px solid #00B286" }}>
+            <div style={{ padding: "14px 18px", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                {viewerIsMwt
+                  ? (lang === "es" ? "Costo nacionalizado por línea (base UF, sin IVA)" : "Nationalized cost by line (UF base, excl. VAT)")
+                  : (lang === "es" ? "Costo nacionalizado por línea (base precio orden SN, sin IVA)" : "Nationalized cost by line (SN base, excl. VAT)")}
+              </h3>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600 }}>
+                {viewerIsMwt ? (lang === "es" ? "MWT · DDP contable (real)" : "MWT · DDP real (contable)") : (lang === "es" ? "SONDEL · Nacionalización DDP (referencia)" : "SONDEL · DDP Nationalization (reference)")}
+              </span>
+            </div>
+            <div className="card-b" style={{ padding: 0 }}>
+              <table className="table" style={{ fontSize: 12.5 }}>
+                <thead>
+                  <tr>
+                    <th>{lang === "es" ? "Modelo" : "Model"}</th>
+                    <th style={{ textAlign: "right" }}>{lang === "es" ? "Pares" : "Pairs"}</th>
+                    <th style={{ textAlign: "right" }}>{viewerIsMwt ? "FOB UF" : "FOB SN"}</th>
+                    <th style={{ textAlign: "right" }}>CIF</th>
+                    <th style={{ textAlign: "right" }}>DAI</th>
+                    <th style={{ textAlign: "right" }}>L6946</th>
+                    <th style={{ textAlign: "right" }}>{lang === "es" ? "Aduana+Transp" : "Customs+Transp"}</th>
+                    <th style={{ textAlign: "right" }}>{lang === "es" ? "Nac. s/IVA" : "Nac. excl. VAT"}</th>
+                    <th style={{ textAlign: "right", color: "#00B286" }}>{viewerIsMwt ? "$/par" : "Nac/par"}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const groupsMap = new Map();
+                    livePreview.lines.forEach((item) => {
+                      const sku = item.sku || "—";
+                      const g = groupsMap.get(sku) || {
+                        sku,
+                        product_label: item.product_label,
+                        qty: 0,
+                        goods: 0,
+                        cif: 0,
+                        dai: 0,
+                        ley: 0,
+                        dest: 0,
+                        iva: 0,
+                        total: 0,
+                      };
+                      g.qty += item.qty;
+                      g.goods += item.fob_total_usd;
+                      g.cif += item.cif;
+                      g.dai += item.dai;
+                      g.ley += item.ley;
+                      g.dest += item.dest;
+                      g.iva += item.iva;
+                      g.total += item.landed_total_usd;
+                      groupsMap.set(sku, g);
+                    });
+                    
+                    return Array.from(groupsMap.values()).map((g) => {
+                      const perPar = g.qty > 0 ? g.total / g.qty : 0;
+                      return (
+                        <tr key={g.sku}>
+                          <td className="mono-sm" style={{ fontWeight: 600 }}>{g.sku} &middot; {g.product_label}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>{fmtInt(g.qty)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.goods)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.cif)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.dai)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.ley)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.dest)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.total)}</td>
+                          <td className="tabular-nums landed" style={{ textAlign: "right", fontWeight: 700, color: "#00B286" }}>
+                            ${fmt(perPar)}
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
+                  <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
+                    <td>{lang === "es" ? "TOTAL" : "TOTAL"}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>{fmtInt(livePreview.unitsTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal + livePreview.extraTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.daiTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.leyTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.destTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.landedTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 13 }}>
+                      ${fmt(livePreview.unitsTotal > 0 ? livePreview.landedTotal / livePreview.unitsTotal : 0)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
