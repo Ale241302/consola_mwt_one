@@ -171,10 +171,17 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // Mapa { line_id → valor temporal mientras el operador escribe }.
   const [editingUnitValue, setEditingUnitValue] = useState({});
 
-  // Custom rates in state (initially null, which falls back to NCM default rates)
-  const [customDaiRate, setCustomDaiRate] = useState(null);
-  const [customLeyRate, setCustomLeyRate] = useState(null);
-  const [customIvaRate, setCustomIvaRate] = useState(null);
+  // Custom rates in state. Se inicializan desde context_data.custom_rates si
+  // el operador ya editó las tasas; si no, quedan en null → fallback a NCM.
+  // (Antes eran siempre null y no se persistían: editar IVA/DAI/Ley no se
+  //  guardaba y al recargar volvía al default NCM. Fix sprint 2026-06-03.)
+  const _initRate = (k) => {
+    const v = transfer?.context_data?.custom_rates?.[k];
+    return v !== undefined && v !== null ? Number(v) : null;
+  };
+  const [customDaiRate, setCustomDaiRate] = useState(() => _initRate("dai"));
+  const [customLeyRate, setCustomLeyRate] = useState(() => _initRate("ley"));
+  const [customIvaRate, setCustomIvaRate] = useState(() => _initRate("iva"));
 
   // Line overrides states
   const [lineOverrides, setLineOverrides] = useState(() => transfer?.context_data?.line_overrides || {});
@@ -193,6 +200,11 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     } else {
       setCustomTaxes([]);
     }
+    // Re-hidratar tasas custom tras un re-fetch del padre.
+    const cr = transfer?.context_data?.custom_rates;
+    setCustomDaiRate(cr?.dai !== undefined && cr?.dai !== null ? Number(cr.dai) : null);
+    setCustomLeyRate(cr?.ley !== undefined && cr?.ley !== null ? Number(cr.ley) : null);
+    setCustomIvaRate(cr?.iva !== undefined && cr?.iva !== null ? Number(cr.iva) : null);
   }, [transfer]);
 
   // Persistir overrides in context_data via PATCH
@@ -232,6 +244,30 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       );
     }
   }, [transferId, transfer, lang, onLiquidated]);
+
+  // Persistir tasas custom (DAI / Ley 6946 / IVA) en context_data.custom_rates.
+  // null = "usar default NCM". Se llama en onBlur de cada input de tasa/monto.
+  const persistCustomRates = useCallback(async (next = {}) => {
+    if (!transferId) return;
+    try {
+      const currentCtx = transfer?.context_data || {};
+      const nextCtx = {
+        ...currentCtx,
+        custom_rates: {
+          dai: next.dai !== undefined ? next.dai : customDaiRate,
+          ley: next.ley !== undefined ? next.ley : customLeyRate,
+          iva: next.iva !== undefined ? next.iva : customIvaRate,
+        },
+      };
+      await transferenciasApi.update(transferId, { context_data: nextCtx });
+      onLiquidated?.();
+    } catch (e) {
+      setError(
+        (lang === "es" ? "No se pudo actualizar las tasas: " : "Could not update rates: ")
+        + (e?.body?.detail || e?.message || "error")
+      );
+    }
+  }, [transferId, transfer, customDaiRate, customLeyRate, customIvaRate, lang, onLiquidated]);
 
   // ── Cálculo en vivo del preview (sin pegarle al backend cada keystroke) ──
   const livePreview = useMemo(() => {
@@ -1415,6 +1451,10 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                  onChange={(e) => {
                                    const val = e.target.value;
                                    setCustomDaiRate(val === "" ? null : Number(val) / 100);
+                                 }}
+                                 onBlur={(e) => {
+                                   const val = e.target.value;
+                                   persistCustomRates({ dai: val === "" ? null : Number(val) / 100 });
                                  }}/>
                           <span>%</span>
                         </span>
@@ -1434,6 +1474,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                    const cifBase = livePreview.cifTotal;
                                    if (cifBase > 0) {
                                      setCustomDaiRate(val === "" ? null : Number(val) / cifBase);
+                                   }
+                                 }}
+                                 onBlur={(e) => {
+                                   const val = e.target.value;
+                                   const cifBase = livePreview.cifTotal;
+                                   if (cifBase > 0) {
+                                     persistCustomRates({ dai: val === "" ? null : Number(val) / cifBase });
                                    }
                                  }}/>
                         </span>
@@ -1456,6 +1503,10 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                  onChange={(e) => {
                                    const val = e.target.value;
                                    setCustomLeyRate(val === "" ? null : Number(val) / 100);
+                                 }}
+                                 onBlur={(e) => {
+                                   const val = e.target.value;
+                                   persistCustomRates({ ley: val === "" ? null : Number(val) / 100 });
                                  }}/>
                           <span>%</span>
                         </span>
@@ -1475,6 +1526,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                    const cifBase = livePreview.cifTotal;
                                    if (cifBase > 0) {
                                      setCustomLeyRate(val === "" ? null : Number(val) / cifBase);
+                                   }
+                                 }}
+                                 onBlur={(e) => {
+                                   const val = e.target.value;
+                                   const cifBase = livePreview.cifTotal;
+                                   if (cifBase > 0) {
+                                     persistCustomRates({ ley: val === "" ? null : Number(val) / cifBase });
                                    }
                                  }}/>
                         </span>
@@ -1497,6 +1555,10 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                  onChange={(e) => {
                                    const val = e.target.value;
                                    setCustomIvaRate(val === "" ? null : Number(val) / 100);
+                                 }}
+                                 onBlur={(e) => {
+                                   const val = e.target.value;
+                                   persistCustomRates({ iva: val === "" ? null : Number(val) / 100 });
                                  }}/>
                           <span>%</span>
                         </span>
@@ -1516,6 +1578,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                    const cifBase = livePreview.cifTotal;
                                    if (cifBase > 0) {
                                      setCustomIvaRate(val === "" ? null : Number(val) / cifBase);
+                                   }
+                                 }}
+                                 onBlur={(e) => {
+                                   const val = e.target.value;
+                                   const cifBase = livePreview.cifTotal;
+                                   if (cifBase > 0) {
+                                     persistCustomRates({ iva: val === "" ? null : Number(val) / cifBase });
                                    }
                                  }}/>
                         </span>
