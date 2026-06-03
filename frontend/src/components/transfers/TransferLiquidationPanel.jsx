@@ -170,6 +170,11 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // Sprint 2026-04-30 — FOB UNIT editable inline en la sección 3.
   // Mapa { line_id → valor temporal mientras el operador escribe }.
   const [editingUnitValue, setEditingUnitValue] = useState({});
+
+  // Custom rates in state (initially null, which falls back to NCM default rates)
+  const [customDaiRate, setCustomDaiRate] = useState(null);
+  const [customLeyRate, setCustomLeyRate] = useState(null);
+  const [customIvaRate, setCustomIvaRate] = useState(null);
   // Persistir el unit_value de una línea via PATCH a /api/transfer-lineas/{id}/.
   const persistLineUnitValue = useCallback(async (lineId, val) => {
     if (!lineId) return;
@@ -339,9 +344,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       const cif = lt + extra;
 
       const r = taxRatesForNcm(l.ncm || l._raw?.ncm);
-      const dai = cif * r.dai;
-      const ley = cif * r.ley_6946;
-      const iva = (cif + dai + ley) * r.iva;
+      const daiRate = customDaiRate !== null ? customDaiRate : r.dai;
+      const leyRate = customLeyRate !== null ? customLeyRate : r.ley_6946;
+      const ivaRate = customIvaRate !== null ? customIvaRate : r.iva;
+
+      const dai = cif * daiRate;
+      const ley = cif * leyRate;
+      const iva = (cif + dai + ley) * ivaRate;
 
       daiTotal += dai;
       leyTotal += ley;
@@ -389,8 +398,11 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       ivaTotal,
       avgLanded: qtyTotalAll > 0 ? landedTotal / qtyTotalAll : 0,
       lines,
+      daiRate: customDaiRate !== null ? customDaiRate : 0.14,
+      leyRate: customLeyRate !== null ? customLeyRate : 0.01,
+      ivaRate: customIvaRate !== null ? customIvaRate : 0.13,
     };
-  }, [transfer, costLines, viewerIsMwt]);
+  }, [transfer, costLines, viewerIsMwt, customDaiRate, customLeyRate, customIvaRate]);
 
   // ── Cost line CRUD (server-side persiste; trigger SQL actualiza total_cost_usd) ──
   // Sprint 2026-05-14 · Fase 14 — addCost acepta { scope } para que el
@@ -416,17 +428,30 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   const persistCost = async (c) => {
     setSaving(true); setError(null);
     try {
-      const updated = await transferDetailApi.updateCost(transferId, c.id, {
-        kind:           c.kind,
-        label:          c.label || "",
-        amount:         Number(c.amount) || 0,
-        currency:       c.currency || "USD",
-        fx_to_usd:      Number(c.fx_to_usd) || 1,
-        source:         c.source || "MANUAL",
-        ocr_confidence: c.ocr_confidence ?? null,
-        scope_json:     c.scope_json || null,
-      });
-      setCostLines((prev) => prev.map((x) => x.id === c.id ? updated : x));
+      if (String(c.id).startsWith("temp-")) {
+        const created = await transferenciasApi.action("cost-lines", transferId, {
+          kind:           c.kind,
+          label:          c.label || "",
+          amount:         Number(c.amount) || 0,
+          currency:       c.currency || "USD",
+          fx_to_usd:      Number(c.fx_to_usd) || 1,
+          source:         c.source || "MANUAL",
+          scope_json:     c.scope_json || null,
+        });
+        setCostLines((prev) => prev.map((x) => x.id === c.id ? created : x));
+      } else {
+        const updated = await transferDetailApi.updateCost(transferId, c.id, {
+          kind:           c.kind,
+          label:          c.label || "",
+          amount:         Number(c.amount) || 0,
+          currency:       c.currency || "USD",
+          fx_to_usd:      Number(c.fx_to_usd) || 1,
+          source:         c.source || "MANUAL",
+          ocr_confidence: c.ocr_confidence ?? null,
+          scope_json:     c.scope_json || null,
+        });
+        setCostLines((prev) => prev.map((x) => x.id === c.id ? updated : x));
+      }
     } catch (e) { setError(e?.message || "save_failed"); }
     finally { setSaving(false); }
   };
@@ -1018,7 +1043,46 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td>{lang === "es" ? "Flete aéreo internacional" : "International air freight"}</td>
                     <td>AWB / BL</td>
                     <td style={{ textAlign: "right" }}>—</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.freight)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>
+                      {isLiquidated ? (
+                        <span>${fmt(livePreview.freight)}</span>
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                          <input className="input tabular-nums" type="number" step="0.01" min="0"
+                                 style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                                 value={(() => {
+                                   const c = costLines.find(x => KIND_FREIGHT.has(String(x.kind || "").toUpperCase()));
+                                   return c ? c.amount : "";
+                                 })()}
+                                 placeholder="0.00"
+                                 onChange={(e) => {
+                                   const val = e.target.value;
+                                   const c = costLines.find(x => KIND_FREIGHT.has(String(x.kind || "").toUpperCase()));
+                                   if (c) {
+                                     updateCost(c.id, { amount: val });
+                                   } else {
+                                     const tempCost = {
+                                       id: "temp-flete",
+                                       kind: "FLETE",
+                                       label: lang === "es" ? "Flete" : "Freight",
+                                       amount: val,
+                                       currency: "USD",
+                                       fx_to_usd: 1,
+                                       source: "MANUAL"
+                                     };
+                                     setCostLines((prev) => [...prev, tempCost]);
+                                   }
+                                 }}
+                                 onBlur={() => {
+                                   const target = costLines.find(x => KIND_FREIGHT.has(String(x.kind || "").toUpperCase()));
+                                   if (target) {
+                                     persistCost(target);
+                                   }
+                                 }}/>
+                        </span>
+                      )}
+                    </td>
                     <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
                   </tr>
                   <tr>
@@ -1026,7 +1090,46 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td>{lang === "es" ? "Seguro internacional" : "International insurance"}</td>
                     <td>Factura</td>
                     <td style={{ textAlign: "right" }}>—</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.insurance)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>
+                      {isLiquidated ? (
+                        <span>${fmt(livePreview.insurance)}</span>
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                          <input className="input tabular-nums" type="number" step="0.01" min="0"
+                                 style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                                 value={(() => {
+                                   const c = costLines.find(x => KIND_INSURANCE.has(String(x.kind || "").toUpperCase()));
+                                   return c ? c.amount : "";
+                                 })()}
+                                 placeholder="0.00"
+                                 onChange={(e) => {
+                                   const val = e.target.value;
+                                   const c = costLines.find(x => KIND_INSURANCE.has(String(x.kind || "").toUpperCase()));
+                                   if (c) {
+                                     updateCost(c.id, { amount: val });
+                                   } else {
+                                     const tempCost = {
+                                       id: "temp-seguro",
+                                       kind: "SEGURO",
+                                       label: lang === "es" ? "Seguro" : "Insurance",
+                                       amount: val,
+                                       currency: "USD",
+                                       fx_to_usd: 1,
+                                       source: "MANUAL"
+                                     };
+                                     setCostLines((prev) => [...prev, tempCost]);
+                                   }
+                                 }}
+                                 onBlur={() => {
+                                   const target = costLines.find(x => KIND_INSURANCE.has(String(x.kind || "").toUpperCase()));
+                                   if (target) {
+                                     persistCost(target);
+                                   }
+                                 }}/>
+                        </span>
+                      )}
+                    </td>
                     <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
                   </tr>
                   <tr style={{ background: "rgba(11,30,58,0.02)", fontWeight: 700 }}>
@@ -1038,24 +1141,123 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td>4</td>
                     <td>DAI — Derecho Arancelario</td>
                     <td>CIF</td>
-                    <td style={{ textAlign: "right" }}>14.00%</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.daiTotal)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      {isLiquidated ? (
+                        <span>{Number(livePreview.daiRate * 100).toFixed(2)}%</span>
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                          <input className="input tabular-nums" type="number" step="0.01" min="0" max="100"
+                                 style={{ width: 70, textAlign: "right", padding: "2px 4px", fontSize: 12 }}
+                                 value={(livePreview.daiRate * 100).toFixed(2)}
+                                 onChange={(e) => {
+                                   const val = e.target.value;
+                                   setCustomDaiRate(val === "" ? null : Number(val) / 100);
+                                 }}/>
+                          <span>%</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>
+                      {isLiquidated ? (
+                        <span>${fmt(livePreview.daiTotal)}</span>
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                          <input className="input tabular-nums" type="number" step="0.01" min="0"
+                                 style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                                 value={livePreview.daiTotal.toFixed(2)}
+                                 onChange={(e) => {
+                                   const val = e.target.value;
+                                   const cifBase = livePreview.fobTotal + livePreview.extraTotal;
+                                   if (cifBase > 0) {
+                                     setCustomDaiRate(val === "" ? null : Number(val) / cifBase);
+                                   }
+                                 }}/>
+                        </span>
+                      )}
+                    </td>
                     <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Régimen general calzado" : "General footwear regime"}</td>
                   </tr>
                   <tr>
                     <td>5</td>
                     <td>Ley 6946</td>
                     <td>CIF</td>
-                    <td style={{ textAlign: "right" }}>1.00%</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.leyTotal)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      {isLiquidated ? (
+                        <span>{Number(livePreview.leyRate * 100).toFixed(2)}%</span>
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                          <input className="input tabular-nums" type="number" step="0.01" min="0" max="100"
+                                 style={{ width: 70, textAlign: "right", padding: "2px 4px", fontSize: 12 }}
+                                 value={(livePreview.leyRate * 100).toFixed(2)}
+                                 onChange={(e) => {
+                                   const val = e.target.value;
+                                   setCustomLeyRate(val === "" ? null : Number(val) / 100);
+                                 }}/>
+                          <span>%</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>
+                      {isLiquidated ? (
+                        <span>${fmt(livePreview.leyTotal)}</span>
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                          <input className="input tabular-nums" type="number" step="0.01" min="0"
+                                 style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                                 value={livePreview.leyTotal.toFixed(2)}
+                                 onChange={(e) => {
+                                   const val = e.target.value;
+                                   const cifBase = livePreview.fobTotal + livePreview.extraTotal;
+                                   if (cifBase > 0) {
+                                     setCustomLeyRate(val === "" ? null : Number(val) / cifBase);
+                                   }
+                                 }}/>
+                        </span>
+                      )}
+                    </td>
                     <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Tributo fijo" : "Fixed tax"}</td>
                   </tr>
                   <tr>
                     <td>6</td>
                     <td>IVA</td>
                     <td>CIF</td>
-                    <td style={{ textAlign: "right" }}>13.00%</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.ivaTotal)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      {isLiquidated ? (
+                        <span>{Number(livePreview.ivaRate * 100).toFixed(2)}%</span>
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                          <input className="input tabular-nums" type="number" step="0.01" min="0" max="100"
+                                 style={{ width: 70, textAlign: "right", padding: "2px 4px", fontSize: 12 }}
+                                 value={(livePreview.ivaRate * 100).toFixed(2)}
+                                 onChange={(e) => {
+                                   const val = e.target.value;
+                                   setCustomIvaRate(val === "" ? null : Number(val) / 100);
+                                 }}/>
+                          <span>%</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>
+                      {isLiquidated ? (
+                        <span>${fmt(livePreview.ivaTotal)}</span>
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                          <input className="input tabular-nums" type="number" step="0.01" min="0"
+                                 style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                                 value={livePreview.ivaTotal.toFixed(2)}
+                                 onChange={(e) => {
+                                   const val = e.target.value;
+                                   const ivaBase = (livePreview.fobTotal + livePreview.extraTotal) + livePreview.daiTotal + livePreview.leyTotal;
+                                   if (ivaBase > 0) {
+                                     setCustomIvaRate(val === "" ? null : Number(val) / ivaBase);
+                                   }
+                                 }}/>
+                        </span>
+                      )}
+                    </td>
                     <td style={{ color: "#64748B", fontSize: 11, fontStyle: "italic" }}>
                       {lang === "es" ? "Acreditable — crédito fiscal (no suma)" : "Creditable — VAT credit (excluded)"}
                     </td>
@@ -1074,7 +1276,22 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       <td>{c.label || c.kind}</td>
                       <td>{c.kind}</td>
                       <td style={{ textAlign: "right" }}>—</td>
-                      <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(Number(c.amount) * Number(c.fx_to_usd || 1))}</td>
+                      <td className="tabular-nums" style={{ textAlign: "right" }}>
+                        {isLiquidated ? (
+                          <span>${fmt(Number(c.amount) * Number(c.fx_to_usd || 1))}</span>
+                        ) : (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                            <span style={{ color: "#64748B", fontSize: 11 }}>
+                              {c.currency === "USD" ? "$" : `${c.currency} `}
+                            </span>
+                            <input className="input tabular-nums" type="number" step="0.01" min="0"
+                                   style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                                   value={c.amount}
+                                   onChange={(e) => updateCost(c.id, { amount: e.target.value })}
+                                   onBlur={() => persistCost(c)}/>
+                          </span>
+                        )}
+                      </td>
                       <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo en destino" : "Destination cost"}</td>
                     </tr>
                   ))}
@@ -1225,14 +1442,14 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <th style={{ textAlign: "right" }}>{lang === "es" ? "Pares entregados" : "Delivered pairs"}</th>
                     <th style={{ textAlign: "right" }}>{lang === "es" ? "Precio nacionalizado" : "Landed unit price"}</th>
                     <th style={{ textAlign: "right" }}>Subtotal</th>
-                    <th style={{ textAlign: "right" }}>IVA 13%</th>
+                    <th style={{ textAlign: "right" }}>IVA {Number(livePreview.ivaRate * 100).toFixed(0)}%</th>
                     <th style={{ textAlign: "right", color: "#7C3AED" }}>Total con IVA</th>
                   </tr>
                 </thead>
                 <tbody>
                   {livePreview.lines.map((l) => {
                     const subtotal = l.qty * l.landed_unit_usd;
-                    const iva = subtotal * 0.13;
+                    const iva = subtotal * livePreview.ivaRate;
                     const totalConIva = subtotal + iva;
                     return (
                       <tr key={l.line_id}>

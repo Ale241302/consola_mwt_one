@@ -66,3 +66,6 @@ coverage/
 
 # Archivos temporales generados por scripts/python en el mount Windows
 *.tmp
+graphify-out/
+.agents/
+.obsidian/
