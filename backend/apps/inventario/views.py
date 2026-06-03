@@ -20,6 +20,7 @@ from .serializers import (
     StockSnapshotSerializer, StockUbicacionSerializer, InventoryImportLogSerializer,
     ExpedienteNodoAssignmentSerializer,
 )
+from .cost_proration import operative_per_unit_map
 
 
 # ============================================================
@@ -722,20 +723,22 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
         # unidad se estampa en cada asignación (costo_operativo_unitario_usd),
         # de modo que viaje con la asignación cuando se transfiera.
         cost_lines = request.data.get("cost_lines") or []
-        total_cost_usd = 0.0
-        for cl in cost_lines:
-            try:
-                total_cost_usd += float(cl.get("amount") or 0) * float(cl.get("fx_to_usd") or 1)
-            except (TypeError, ValueError):
-                return Response({"detail": "cost_line inválida (amount/fx_to_usd)"}, status=400)
-        total_units = sum(int(it["qty_asignada"]) for it in items)
-        per_unit_cost = round(total_cost_usd / total_units, 4) if (total_cost_usd and total_units) else 0
+        # Prorrateo honrando el `scope` de cada costo (todo · expedientes ·
+        # líneas). Cada item recibe su propio costo operativo por unidad.
+        units = [{
+            "idx":           i,
+            "qty":           int(it["qty_asignada"]),
+            "expediente_id": it.get("expediente_id"),
+            "producto_id":   it.get("producto_id"),
+            "talla":         it.get("talla") or "",
+        } for i, it in enumerate(items)]
+        per_unit_by_idx = operative_per_unit_map(cost_lines, units)
         batch_id = uuid.uuid4() if cost_lines else None
         nodo_destino = items[0].get("nodo_id") if items else None
 
         created = []
         with transaction.atomic():
-            for it in items:
+            for i, it in enumerate(items):
                 row = ExpedienteNodoAssignment.objects.create(
                     id=uuid.uuid4(),
                     expediente_id=it["expediente_id"],
@@ -744,7 +747,7 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                     nodo_id=it["nodo_id"],
                     qty_asignada=int(it["qty_asignada"]),
                     recepcion_id=recepcion_id or None,
-                    costo_operativo_unitario_usd=per_unit_cost,
+                    costo_operativo_unitario_usd=per_unit_by_idx.get(i, 0),
                     costo_batch_id=batch_id,
                     notas=it.get("notas") or None,
                     created_by_id=uploader,

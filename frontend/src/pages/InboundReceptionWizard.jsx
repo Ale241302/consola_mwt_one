@@ -47,6 +47,9 @@ import ArtifactFillModal   from "../components/expedientes/builderArtifacts/Arti
 // Sprint 2026-05-11 (iteración) · modal de alcance — paso 3 del wizard
 // filtra los expedientes a los del paso 2.
 import ArtifactScopeModal  from "../components/nodos/ArtifactScopeModal.jsx";
+// Sprint 2026-06-02 · modal de alcance del costo (paso 3) — réplica del
+// de /transferencias/nueva, adaptado a las líneas de la recepción.
+import RecepcionCostScopeModal from "../components/inventario/RecepcionCostScopeModal.jsx";
 
 // ─── Tipos de origen del inbound (alineado con SQL source_type_cat) ─
 // Sprint 2026-05-11 · Fase 3 · Se agrega EXPEDIENTE_ASSIGN: el operador
@@ -168,7 +171,9 @@ export default function InboundReceptionWizard() {
   // igual que /transferencias/nueva. Se mandan en el submit y el
   // backend los prorratea por unidad sobre el lote recibido.
   const [costLines, setCostLines] = useState([]);
-  const addCostLine = () => setCostLines((prev) => [...prev, {
+  // addCostLine acepta un patch opcional (típicamente {scope}) cuando la
+  // fila se crea desde el flow "+ Agregar costo → modal de alcance → guardar".
+  const addCostLine = (patch = {}) => setCostLines((prev) => [...prev, {
     tmpId:    `c-${Date.now()}-${Math.random().toString(36).slice(2,5)}`,
     kind:     "OTRO",
     label:    "",
@@ -176,6 +181,8 @@ export default function InboundReceptionWizard() {
     currency: "USD",
     fx_to_usd: 1,
     source:   "MANUAL",
+    scope:    null,   // null = aplica a TODO el lote
+    ...patch,
   }]);
   const updateCostLine = (tmpId, patch) =>
     setCostLines((prev) => prev.map((c) => c.tmpId === tmpId ? { ...c, ...patch } : c));
@@ -404,6 +411,30 @@ export default function InboundReceptionWizard() {
   // Para el nuevo flow EXPEDIENTE_ASSIGN la validez del paso 2 viene del
   // sub-componente (basta con que haya >=1 item con qty>0).
   const isExpedienteAssign = sourceType === "EXPEDIENTE_ASSIGN";
+  // Líneas normalizadas para el modal de alcance del costo (paso 3).
+  // Flow assign → desde assignItems (con expediente); flow legacy →
+  // desde las líneas físicas (sin expediente, scope por producto/talla).
+  const costScopeItems = useMemo(() => {
+    if (isExpedienteAssign) {
+      return (assignItems || []).map((it) => ({
+        expediente_id:     it.expediente_id,
+        expediente_codigo: it._expediente_codigo || "—",
+        producto_id:       it.producto_id,
+        sku:               it._sku || "",
+        nombre:            it._nombre || "",
+        talla:             it.talla || "",
+        qty:               Number(it.qty_asignada || 0),
+      }));
+    }
+    return (lines || []).map((l) => ({
+      expediente_id: "",
+      producto_id:   l.producto_id,
+      sku:           l.product_sku || "",
+      nombre:        l.product_label || "",
+      talla:         l.talla || "",
+      qty:           Number(l.qty || l.received_qty || 0),
+    }));
+  }, [isExpedienteAssign, assignItems, lines]);
   const linesWithGap = lines.filter((l) =>
     Number(l.received_qty || 0) < Number(l.expected_qty || 0)
   );
@@ -478,6 +509,7 @@ export default function InboundReceptionWizard() {
             currency:  c.currency || "USD",
             fx_to_usd: Number(c.fx_to_usd) || 1,
             source:    c.source || "MANUAL",
+            scope:     c.scope || null,
           })),
         });
 
@@ -537,6 +569,7 @@ export default function InboundReceptionWizard() {
           currency:  c.currency || "USD",
           fx_to_usd: Number(c.fx_to_usd) || 1,
           source:    c.source || "MANUAL",
+          scope:     c.scope || null,
         })),
       };
       const r = await inboundApi.receive(payload);
@@ -645,6 +678,8 @@ export default function InboundReceptionWizard() {
               costLines={costLines}
               totalCostUsd={totalCostUsd}
               currencies={currencies}
+              items={costScopeItems}
+              groupByExpediente={isExpedienteAssign}
               onAdd={addCostLine}
               onUpdate={updateCostLine}
               onRemove={removeCostLine}
@@ -1546,8 +1581,24 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
 function Step3Costs({
   lang, costLines, totalCostUsd,
   currencies = [{ codigo: "USD", nombre: "US Dollar", symbol: "$" }],
+  items = [], groupByExpediente = false,
   onAdd, onUpdate, onRemove,
 }) {
+  // Flow scope (igual a transferencias): "+ Agregar costo" abre el modal
+  // de alcance (creatingNewScope); al guardar crea la fila con su scope.
+  // Click en el chip "Aplicar a" reabre el modal para esa fila.
+  const [creatingNewScope, setCreatingNewScope] = useState(false);
+  const [scopeOpenFor, setScopeOpenFor] = useState(null);
+  const openScope = costLines.find((c) => c.tmpId === scopeOpenFor) || null;
+  const modalOpen = creatingNewScope || !!openScope;
+  const modalInitial = creatingNewScope ? null : (openScope?.scope || null);
+  const modalLabel = creatingNewScope
+    ? (lang === "es" ? "Nuevo costo" : "New cost")
+    : (openScope?.label || (openScope ? costKindLabel(openScope.kind, lang) : ""));
+  const handleScopeSave = (scope) => {
+    if (creatingNewScope) onAdd({ scope });
+    else if (openScope) onUpdate(openScope.tmpId, { scope });
+  };
   return (
     <Card
       title={lang === "es" ? "Costos operativos" : "Operating costs"}
@@ -1558,7 +1609,7 @@ function Step3Costs({
       <div style={{
         display: "flex", justifyContent: "flex-end", marginBottom: 12,
       }}>
-        <button className="btn" onClick={onAdd}>
+        <button className="btn" onClick={() => setCreatingNewScope(true)}>
           <IconPlus size={11}/> {lang === "es" ? "Agregar costo" : "Add cost"}
         </button>
       </div>
@@ -1654,10 +1705,8 @@ function Step3Costs({
                       }}>MANUAL</span>
                     </td>
                     <td style={{ ...td, textAlign: "center" }}>
-                      <span style={{
-                        padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700,
-                        background: "rgba(0,178,134,0.10)", color: "#0E8A6D",
-                      }}>{lang === "es" ? "Todo" : "All"}</span>
+                      <ScopeCell scope={c.scope} lang={lang}
+                                 onOpen={() => setScopeOpenFor(c.tmpId)}/>
                     </td>
                     <td style={td}>
                       <button className="btn btn-ghost btn-sm"
@@ -1683,7 +1732,52 @@ function Step3Costs({
           </table>
         </div>
       )}
+
+      <RecepcionCostScopeModal
+        open={modalOpen}
+        lang={lang}
+        costLabel={modalLabel}
+        items={items}
+        groupByExpediente={groupByExpediente}
+        initialScope={modalInitial}
+        onClose={() => { setCreatingNewScope(false); setScopeOpenFor(null); }}
+        onSave={handleScopeSave}
+      />
     </Card>
+  );
+}
+
+// ── Chip "Aplicar a" del paso de costos ────────────────────────────
+// Resume el scope: null → "Todo"; con lines → "N líneas". Click → modal.
+function ScopeCell({ scope, lang, onOpen }) {
+  let label = lang === "es" ? "Todo" : "All";
+  let restricted = false;
+  if (scope && scope.applies_to_all === false) {
+    restricted = true;
+    const nLines = Array.isArray(scope.lines) ? scope.lines.length : 0;
+    const nExp = Array.isArray(scope.expediente_ids) ? scope.expediente_ids.length : 0;
+    if (nLines > 0) {
+      label = lang === "es" ? `${nLines} líneas` : `${nLines} lines`;
+    } else if (nExp > 0) {
+      label = lang === "es" ? `${nExp} exp.` : `${nExp} exp.`;
+    } else {
+      label = lang === "es" ? "Restringido" : "Restricted";
+    }
+  }
+  return (
+    <button type="button" onClick={onOpen}
+            title={lang === "es" ? "Configurar alcance del costo" : "Set cost scope"}
+            style={{
+              padding: "4px 10px", borderRadius: 999,
+              border: restricted
+                ? "1.5px solid var(--brand-accent, #0E8A6D)"
+                : "1px solid var(--border-subtle)",
+              background: restricted ? "rgba(14,138,109,0.10)" : "var(--surface, white)",
+              color: restricted ? "var(--brand-accent, #0E8A6D)" : "var(--text-secondary)",
+              fontSize: 11, fontWeight: 700, cursor: "pointer",
+            }}>
+      {label}
+    </button>
   );
 }
 

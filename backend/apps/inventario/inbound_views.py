@@ -35,6 +35,7 @@ from .inbound_models import (
     SourceTypeCat, RecepcionEstadoCat,
 )
 from .inbound_ocr import extract_packing_list
+from .cost_proration import operative_per_unit_map
 
 log = logging.getLogger(__name__)
 CEO_ROLES = {"admin", "superadmin", "ceo"}
@@ -340,28 +341,32 @@ class InboundReceiveView(APIView):
                 #    stock (landed cost). Además se persiste el detalle en
                 #    inventario.recepcion_costo para auditoría.
                 cost_lines = data.get("cost_lines") or []
-                total_cost_usd = 0.0
-                for cl in cost_lines:
-                    try:
-                        total_cost_usd += float(cl.get("amount") or 0) * float(cl.get("fx_to_usd") or 1)
-                    except (TypeError, ValueError):
-                        pass
-                total_recv_units = 0
-                for ln in lines:
+                # Prorrateo POR LÍNEA honrando el `scope` de cada costo.
+                # En el flow legacy no hay expedientes → el scope se limita a
+                # (producto, talla) de las líneas físicas recibidas.
+                units = []
+                for i, ln in enumerate(lines):
                     exp = int(ln.get("expected_qty") or 0)
                     rr = ln.get("received_qty")
-                    total_recv_units += int(rr) if rr not in (None, "") else exp
-                operative_per_unit = round(total_cost_usd / total_recv_units, 4) \
-                    if (total_cost_usd and total_recv_units) else 0
+                    qty = int(rr) if rr not in (None, "") else exp
+                    units.append({
+                        "idx": i, "qty": qty, "expediente_id": "",
+                        "producto_id": ln.get("producto_id"),
+                        "talla": (ln.get("talla") or ""),
+                    })
+                per_unit_by_idx = operative_per_unit_map(cost_lines, units)
+                for i, ln in enumerate(lines):
+                    ln["_operative_per_unit"] = per_unit_by_idx.get(i, 0)
                 for cl in cost_lines:
                     try:
+                        scope = cl.get("scope") or cl.get("scope_json")
                         with connection.cursor() as c:
                             c.execute("""
                                 INSERT INTO inventario.recepcion_costo
                                     (id, recepcion_id, nodo_id, kind, label,
-                                     amount, currency, fx_to_usd, source, created_by_id)
+                                     amount, currency, fx_to_usd, source, scope_json, created_by_id)
                                 VALUES (gen_random_uuid(), %s::uuid, %s::uuid, %s, %s,
-                                        %s, %s, %s, %s, %s)
+                                        %s, %s, %s, %s, %s::jsonb, %s)
                             """, [
                                 str(recepcion_id), str(dest_id),
                                 (cl.get("kind") or "OTRO")[:32],
@@ -370,6 +375,7 @@ class InboundReceiveView(APIView):
                                 (cl.get("currency") or "USD")[:3],
                                 float(cl.get("fx_to_usd") or 1),
                                 (cl.get("source") or "MANUAL")[:16],
+                                (None if scope is None else __import__("json").dumps(scope)),
                                 str(actor_id) if actor_id else None,
                             ])
                     except Exception as ce:  # noqa: BLE001 — audit best-effort
@@ -378,8 +384,9 @@ class InboundReceiveView(APIView):
                 # 5. Sumar stock al nodo destino (si la tabla inventario.stock
                 #    existe y aceptamos que producto_id puede ser null para
                 #    blind receipts — en ese caso saltamos esta fila).
-                _apply_to_stock(dest_id, lines, actor_id=actor_id, actor_name=actor_name,
-                                operative_per_unit=operative_per_unit)
+                #    Cada línea ya trae su costo operativo por unidad en
+                #    `_operative_per_unit` (prorrateado por scope).
+                _apply_to_stock(dest_id, lines, actor_id=actor_id, actor_name=actor_name)
 
         except Exception as e:
             log.exception("[receive] error rec=%s", recepcion_id)
@@ -390,16 +397,15 @@ class InboundReceiveView(APIView):
                         status=201)
 
 
-def _apply_to_stock(node_id, lines, *, actor_id=None, actor_name=None,
-                    operative_per_unit=0):
+def _apply_to_stock(node_id, lines, *, actor_id=None, actor_name=None):
     """Suma cada línea al stock del nodo destino, **por talla**.
     Granularidad: (nodo, producto, lote, talla). Si una fila existe con
     la misma combinación, sumamos la cantidad recibida. Si no, insert
     nuevo. Si producto_id es null (blind receipt) → omitimos la fila.
 
-    Sprint 2026-06-02 · `operative_per_unit` es el costo operativo
-    prorrateado por unidad (USD); se suma al costo unitario de la línea
-    para obtener el landed cost que se guarda en el stock del nodo.
+    Sprint 2026-06-02 · cada línea puede traer `_operative_per_unit`
+    (costo operativo prorrateado por unidad, USD); se suma al costo
+    unitario de la línea para obtener el landed cost del stock.
     """
     with connection.cursor() as c:
         for ln in lines:
@@ -415,8 +421,9 @@ def _apply_to_stock(node_id, lines, *, actor_id=None, actor_name=None,
             # Landed cost = costo de la línea + costo operativo por unidad.
             # Si no hay ninguno de los dos, mantenemos None (COALESCE
             # preserva el costo existente del stock).
-            if operative_per_unit:
-                landed_cost = round(float(unit_cost or 0) + float(operative_per_unit), 4)
+            op = float(ln.get("_operative_per_unit") or 0)
+            if op:
+                landed_cost = round(float(unit_cost or 0) + op, 4)
             else:
                 landed_cost = unit_cost
             try:
