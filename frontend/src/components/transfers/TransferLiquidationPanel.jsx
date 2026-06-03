@@ -175,6 +175,196 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   const [customDaiRate, setCustomDaiRate] = useState(null);
   const [customLeyRate, setCustomLeyRate] = useState(null);
   const [customIvaRate, setCustomIvaRate] = useState(null);
+
+  // Line overrides states
+  const [lineOverrides, setLineOverrides] = useState(() => transfer?.context_data?.line_overrides || {});
+  const [editingOverrides, setEditingOverrides] = useState({});
+
+  // Sync state with transfer prop updates
+  useEffect(() => {
+    if (transfer?.context_data?.line_overrides) {
+      setLineOverrides(transfer.context_data.line_overrides);
+    } else {
+      setLineOverrides({});
+    }
+  }, [transfer]);
+
+  // Persistir overrides in context_data via PATCH
+  const persistLineOverrides = useCallback(async (newOverrides) => {
+    if (!transferId) return;
+    try {
+      const currentCtx = transfer?.context_data || {};
+      const nextCtx = {
+        ...currentCtx,
+        line_overrides: newOverrides,
+      };
+      await transferenciasApi.update(transferId, { context_data: nextCtx });
+      onLiquidated?.();
+    } catch (e) {
+      setError(
+        (lang === "es" ? "No se pudo actualizar los costos: " : "Could not update costs: ")
+        + (e?.body?.detail || e?.message || "error")
+      );
+    }
+  }, [transferId, transfer, lang, onLiquidated]);
+
+  // Sku distribution helpers
+  const distributeSkuOverride = useCallback((sku, field, totalValue) => {
+    const skuLines = livePreview.lines.filter(l => (l.sku || "—") === sku);
+    const totalQty = skuLines.reduce((sum, l) => sum + l.qty, 0);
+    if (totalQty === 0) return;
+
+    let nextOverrides = { ...lineOverrides };
+    skuLines.forEach((l) => {
+      if (!nextOverrides[l.line_id]) {
+        nextOverrides[l.line_id] = {};
+      }
+      const share = (l.qty / totalQty) * totalValue;
+      nextOverrides[l.line_id][field] = share;
+    });
+
+    setLineOverrides(nextOverrides);
+    persistLineOverrides(nextOverrides);
+  }, [livePreview, lineOverrides, persistLineOverrides]);
+
+  const distributeSkuUnitOverride = useCallback((sku, unitValue) => {
+    const skuLines = livePreview.lines.filter(l => (l.sku || "—") === sku);
+    let nextOverrides = { ...lineOverrides };
+    skuLines.forEach((l) => {
+      if (!nextOverrides[l.line_id]) {
+        nextOverrides[l.line_id] = {};
+      }
+      nextOverrides[l.line_id]["landed_unit_usd"] = unitValue;
+    });
+    setLineOverrides(nextOverrides);
+    persistLineOverrides(nextOverrides);
+  }, [livePreview, lineOverrides, persistLineOverrides]);
+
+  // Cell rendering helpers
+  const renderEditableCell = (lineId, field, currentValue, step = "0.01", decimals = 2) => {
+    const fieldKey = `${lineId}_${field}`;
+    const editingVal = editingOverrides[fieldKey];
+    const displayVal = editingVal !== undefined
+      ? editingVal
+      : (currentValue !== undefined && currentValue !== null ? Number(currentValue).toFixed(decimals) : "");
+
+    if (isLiquidated) {
+      return <span>${decimals === 4 ? fmt4(currentValue) : fmt(currentValue)}</span>;
+    }
+
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+        <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+        <input className="input tabular-nums"
+               type="number" step={step} min="0"
+               style={{
+                 width: decimals === 4 ? 88 : 80, textAlign: "right",
+                 padding: "4px 6px", fontSize: 12,
+               }}
+               value={displayVal}
+               onChange={(e) => setEditingOverrides((m) => ({
+                 ...m, [fieldKey]: e.target.value,
+               }))}
+               onKeyDown={(e) => {
+                 if (e.key === "Enter") {
+                   e.target.blur();
+                 }
+               }}
+               onBlur={(e) => {
+                 const raw = e.target.value;
+                 let nextOverrides = { ...lineOverrides };
+                 if (raw === "") {
+                   if (nextOverrides[lineId]) {
+                     delete nextOverrides[lineId][field];
+                     if (Object.keys(nextOverrides[lineId]).length === 0) {
+                       delete nextOverrides[lineId];
+                     }
+                   }
+                 } else {
+                   const v = Number(raw);
+                   if (Number.isFinite(v) && v >= 0) {
+                     if (!nextOverrides[lineId]) {
+                       nextOverrides[lineId] = {};
+                     }
+                     nextOverrides[lineId][field] = v;
+                   }
+                 }
+                 setLineOverrides(nextOverrides);
+                 persistLineOverrides(nextOverrides);
+                 setEditingOverrides((m) => {
+                   const { [fieldKey]: _, ...rest } = m;
+                   return rest;
+                 });
+               }}
+        />
+      </span>
+    );
+  };
+
+  const renderSkuEditableCell = (sku, field, currentValue, step = "0.01", decimals = 2) => {
+    const fieldKey = `${sku}_${field}`;
+    const editingVal = editingOverrides[fieldKey];
+    const displayVal = editingVal !== undefined
+      ? editingVal
+      : (currentValue !== undefined && currentValue !== null ? Number(currentValue).toFixed(decimals) : "");
+
+    if (isLiquidated) {
+      return <span>${decimals === 4 ? fmt4(currentValue) : fmt(currentValue)}</span>;
+    }
+
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+        <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+        <input className="input tabular-nums"
+               type="number" step={step} min="0"
+               style={{
+                 width: decimals === 4 ? 88 : 80, textAlign: "right",
+                 padding: "4px 6px", fontSize: 12,
+               }}
+               value={displayVal}
+               onChange={(e) => setEditingOverrides((m) => ({
+                 ...m, [fieldKey]: e.target.value,
+               }))}
+               onKeyDown={(e) => {
+                 if (e.key === "Enter") {
+                   e.target.blur();
+                 }
+               }}
+               onBlur={(e) => {
+                 const raw = e.target.value;
+                 if (raw === "") {
+                   const skuLines = livePreview.lines.filter(l => (l.sku || "—") === sku);
+                   let nextOverrides = { ...lineOverrides };
+                   skuLines.forEach((l) => {
+                     if (nextOverrides[l.line_id]) {
+                       delete nextOverrides[l.line_id][field];
+                       if (Object.keys(nextOverrides[l.line_id]).length === 0) {
+                         delete nextOverrides[l.line_id];
+                       }
+                     }
+                   });
+                   setLineOverrides(nextOverrides);
+                   persistLineOverrides(nextOverrides);
+                 } else {
+                   const v = Number(raw);
+                   if (Number.isFinite(v) && v >= 0) {
+                     if (field === "landed_unit_usd") {
+                       distributeSkuUnitOverride(sku, v);
+                     } else {
+                       distributeSkuOverride(sku, field, v);
+                     }
+                   }
+                 }
+                 setEditingOverrides((m) => {
+                   const { [fieldKey]: _, ...rest } = m;
+                   return rest;
+                 });
+               }}
+        />
+      </span>
+    );
+  };
+
   // Persistir el unit_value de una línea via PATCH a /api/transfer-lineas/{id}/.
   const persistLineUnitValue = useCallback(async (lineId, val) => {
     if (!lineId) return;
@@ -339,28 +529,43 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     let ivaTotal = 0;
 
     const lines = lineValues.map(({ l, qty, uv, lt }) => {
+      const lineId = l._line_id || l.id;
+      const override = lineOverrides[lineId] || {};
+
       const extra = qtyTotalAll > 0 ? extraTotal * (qty / qtyTotalAll) : 0;
       const dest = qtyTotalAll > 0 ? destTotal * (qty / qtyTotalAll) : 0;
-      const cif = lt + extra;
+      
+      const calculatedCif = lt + extra;
+      const cif = override.cif !== undefined ? Number(override.cif) : calculatedCif;
 
       const r = taxRatesForNcm(l.ncm || l._raw?.ncm);
       const daiRate = customDaiRate !== null ? customDaiRate : r.dai;
       const leyRate = customLeyRate !== null ? customLeyRate : r.ley_6946;
       const ivaRate = customIvaRate !== null ? customIvaRate : r.iva;
 
-      const dai = cif * daiRate;
-      const ley = cif * leyRate;
+      const dai = override.dai !== undefined ? Number(override.dai) : (cif * daiRate);
+      const ley = override.ley !== undefined ? Number(override.ley) : (cif * leyRate);
       const iva = cif * ivaRate;
+
+      const itemDest = override.dest !== undefined ? Number(override.dest) : dest;
 
       daiTotal += dai;
       leyTotal += ley;
       ivaTotal += iva;
 
-      const total = cif + dai + ley + dest;
-      const landedUnit = qty > 0 ? total / qty : 0;
+      let total = cif + dai + ley + itemDest;
+      let landedUnit = qty > 0 ? total / qty : 0;
+
+      if (override.landed_total_usd !== undefined) {
+        total = Number(override.landed_total_usd);
+        landedUnit = qty > 0 ? total / qty : 0;
+      } else if (override.landed_unit_usd !== undefined) {
+        landedUnit = Number(override.landed_unit_usd);
+        total = landedUnit * qty;
+      }
 
       return {
-        line_id:          l._line_id || l.id,
+        line_id:          lineId,
         sku:              l.sku || "",
         product_label:    l.product_label || l.product || "",
         size:             l.size || "",
@@ -374,7 +579,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         cif,
         dai,
         ley,
-        dest,
+        dest:             itemDest,
         iva,
         landed_unit_usd:  landedUnit,
         landed_total_usd: total,
@@ -382,6 +587,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     });
 
     const landedTotal = lines.reduce((a, x) => a + x.landed_total_usd, 0);
+    const cifTotal = lines.reduce((a, x) => a + x.cif, 0);
+    const destTotalSum = lines.reduce((a, x) => a + x.dest, 0);
 
     return {
       fobTotal,
@@ -389,7 +596,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       insurance,
       extraTotal,
       extraUsd: extraTotal,
-      destTotal,
+      destTotal: destTotalSum,
+      cifTotal,
       otherCostsTotal,
       unitsTotal: qtyTotalAll,
       landedTotal,
@@ -402,7 +610,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       leyRate: customLeyRate !== null ? customLeyRate : 0.01,
       ivaRate: customIvaRate !== null ? customIvaRate : 0.13,
     };
-  }, [transfer, costLines, viewerIsMwt, customDaiRate, customLeyRate, customIvaRate]);
+  }, [transfer, costLines, viewerIsMwt, customDaiRate, customLeyRate, customIvaRate, lineOverrides]);
 
   // ── Cost line CRUD (server-side persiste; trigger SQL actualiza total_cost_usd) ──
   // Sprint 2026-05-14 · Fase 14 — addCost acepta { scope } para que el
@@ -1134,7 +1342,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   </tr>
                   <tr style={{ background: "rgba(11,30,58,0.02)", fontWeight: 700 }}>
                     <td colSpan={4}>CIF (base imponible aduana)</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal + livePreview.extraTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.cifTotal)}</td>
                     <td></td>
                   </tr>
                   <tr>
@@ -1168,7 +1376,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                  value={livePreview.daiTotal.toFixed(2)}
                                  onChange={(e) => {
                                    const val = e.target.value;
-                                   const cifBase = livePreview.fobTotal + livePreview.extraTotal;
+                                   const cifBase = livePreview.cifTotal;
                                    if (cifBase > 0) {
                                      setCustomDaiRate(val === "" ? null : Number(val) / cifBase);
                                    }
@@ -1209,7 +1417,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                  value={livePreview.leyTotal.toFixed(2)}
                                  onChange={(e) => {
                                    const val = e.target.value;
-                                   const cifBase = livePreview.fobTotal + livePreview.extraTotal;
+                                   const cifBase = livePreview.cifTotal;
                                    if (cifBase > 0) {
                                      setCustomLeyRate(val === "" ? null : Number(val) / cifBase);
                                    }
@@ -1250,7 +1458,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                  value={livePreview.ivaTotal.toFixed(2)}
                                  onChange={(e) => {
                                    const val = e.target.value;
-                                   const cifBase = livePreview.fobTotal + livePreview.extraTotal;
+                                   const cifBase = livePreview.cifTotal;
                                    if (cifBase > 0) {
                                      setCustomIvaRate(val === "" ? null : Number(val) / cifBase);
                                    }
@@ -1303,7 +1511,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   <tr style={{ background: "var(--text-secondary, #475569)", color: "white", fontWeight: 700 }}>
                     <td colSpan={4} style={{ color: "white" }}>{lang === "es" ? "Total con IVA (incluye crédito fiscal)" : "Total incl. VAT (includes credit)"}</td>
                     <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>
-                      ${fmt(livePreview.fobTotal + livePreview.extraTotal + livePreview.daiTotal + livePreview.leyTotal + livePreview.ivaTotal + livePreview.destTotal)}
+                      ${fmt(livePreview.cifTotal + livePreview.daiTotal + livePreview.leyTotal + livePreview.ivaTotal + livePreview.destTotal)}
                     </td>
                     <td style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>{lang === "es" ? "embarque completo" : "complete shipment"}</td>
                   </tr>
@@ -1396,15 +1604,23 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             </span>
                           )}
                         </td>
-                        <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(l.cif)}</td>
-                        <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(l.dai)}</td>
-                        <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(l.ley)}</td>
-                        <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(l.dest)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>
+                          {renderEditableCell(l.line_id, "cif", l.cif, "0.01", 2)}
+                        </td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>
+                          {renderEditableCell(l.line_id, "dai", l.dai, "0.01", 2)}
+                        </td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>
+                          {renderEditableCell(l.line_id, "ley", l.ley, "0.01", 2)}
+                        </td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>
+                          {renderEditableCell(l.line_id, "dest", l.dest, "0.01", 2)}
+                        </td>
                         <td className="tabular-nums landed" style={{ textAlign: "right", fontWeight: 700, color: "#00B286" }}>
-                          ${fmt4(l.landed_unit_usd)}
+                          {renderEditableCell(l.line_id, "landed_unit_usd", l.landed_unit_usd, "0.0001", 4)}
                         </td>
                         <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>
-                          ${fmt(l.landed_total_usd)}
+                          {renderEditableCell(l.line_id, "landed_total_usd", l.landed_total_usd, "0.01", 2)}
                         </td>
                       </tr>
                     );
@@ -1413,7 +1629,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td colSpan={4}>{lang === "es" ? "TOTALES" : "TOTALS"}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>{livePreview.unitsTotal}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal)}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal + livePreview.extraTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.cifTotal)}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.daiTotal)}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.leyTotal)}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.destTotal)}</td>
@@ -1584,13 +1800,23 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           <td className="mono-sm" style={{ fontWeight: 600 }}>{g.sku} &middot; {g.product_label}</td>
                           <td className="tabular-nums" style={{ textAlign: "right" }}>{fmtInt(g.qty)}</td>
                           <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.goods)}</td>
-                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.cif)}</td>
-                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.dai)}</td>
-                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.ley)}</td>
-                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.dest)}</td>
-                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.total)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>
+                            {renderSkuEditableCell(g.sku, "cif", g.cif, "0.01", 2)}
+                          </td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>
+                            {renderSkuEditableCell(g.sku, "dai", g.dai, "0.01", 2)}
+                          </td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>
+                            {renderSkuEditableCell(g.sku, "ley", g.ley, "0.01", 2)}
+                          </td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>
+                            {renderSkuEditableCell(g.sku, "dest", g.dest, "0.01", 2)}
+                          </td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>
+                            {renderSkuEditableCell(g.sku, "landed_total_usd", g.total, "0.01", 2)}
+                          </td>
                           <td className="tabular-nums landed" style={{ textAlign: "right", fontWeight: 700, color: "#00B286" }}>
-                            ${fmt(perPar)}
+                            {renderSkuEditableCell(g.sku, "landed_unit_usd", perPar, "0.0001", 4)}
                           </td>
                         </tr>
                       );
@@ -1600,7 +1826,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td>{lang === "es" ? "TOTAL" : "TOTAL"}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>{fmtInt(livePreview.unitsTotal)}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal)}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal + livePreview.extraTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.cifTotal)}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.daiTotal)}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.leyTotal)}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.destTotal)}</td>

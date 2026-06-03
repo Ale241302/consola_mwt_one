@@ -549,39 +549,64 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
   const unitMwt = (l) => Number(l.unit_price_mwt != null ? l.unit_price_mwt : (l.unit_value_usd || 0));
   const unitClient = (l) => Number(l.unit_price_client != null ? l.unit_price_client : (l.unit_value_usd || 0));
   const computeNac = (priceFn) => {
-    // Agrupar por SKU: una fila por SKU (engloba todas sus tallas). El cálculo
-    // se hace por SKU y al final se da el costo nacionalizado por par.
+    const lineOverrides = t.context_data?.line_overrides || {};
     const groups = new Map();
+    
+    // Calculate total quantity across all lines first to do proration
+    const qtyTotalAll = lineas.reduce((a, l) => a + lineQty(l), 0) || 0;
+
     lineas.forEach((l) => {
       const sku = l.sku || "—";
       const g = groups.get(sku) || {
         sku, ncm: l.ncm || "—", product_label: l.product_label || "", qty: 0, goods: 0,
+        extra: 0, cif: 0, dai: 0, ley: 0, dest: 0, iva: 0, total: 0,
       };
-      g.qty += lineQty(l);
-      g.goods += lineQty(l) * priceFn(l);
+
+      const qty = lineQty(l);
+      const lt = qty * priceFn(l);
+      const extra = qtyTotalAll > 0 ? extraTotal * (qty / qtyTotalAll) : 0;
+      const dest = qtyTotalAll > 0 ? destTotal * (qty / qtyTotalAll) : 0;
+
+      const r = taxRatesForNcm(l.ncm);
+      
+      const override = lineOverrides[l.id] || {};
+
+      const cif = override.cif !== undefined ? Number(override.cif) : (lt + extra);
+      const dai = override.dai !== undefined ? Number(override.dai) : (cif * r.dai);
+      const ley = override.ley !== undefined ? Number(override.ley) : (cif * r.ley_6946);
+      const itemDest = override.dest !== undefined ? Number(override.dest) : dest;
+      const iva = cif * r.iva;
+
+      let itemTotal = cif + dai + ley + itemDest;
+      if (override.landed_total_usd !== undefined) {
+        itemTotal = Number(override.landed_total_usd);
+      } else if (override.landed_unit_usd !== undefined) {
+        itemTotal = Number(override.landed_unit_usd) * qty;
+      }
+
+      g.qty += qty;
+      g.goods += lt;
+      g.extra += extra;
+      g.cif += cif;
+      g.dai += dai;
+      g.ley += ley;
+      g.dest += itemDest;
+      g.iva += iva;
+      g.total += itemTotal;
+
       if ((!g.ncm || g.ncm === "—") && l.ncm) g.ncm = l.ncm;
       groups.set(sku, g);
     });
-    const grupos = Array.from(groups.values());
-    const qtyTotalAll = grupos.reduce((a, g) => a + g.qty, 0) || 0;
-    const rows = grupos.map((g) => {
-      const extra = qtyTotalAll > 0 ? extraTotal * (g.qty / qtyTotalAll) : 0;
-      const dest = qtyTotalAll > 0 ? destTotal * (g.qty / qtyTotalAll) : 0;
-      const cif = g.goods + extra;
-      const r = taxRatesForNcm(g.ncm);
-      const dai = cif * r.dai;
-      const ley = cif * r.ley_6946;
-      const iva = cif * r.iva;
-      // El IVA es crédito fiscal acreditable (se cobra en la factura de venta):
-      // NO suma al costo nacionalizado. El total y el costo/par van SIN IVA.
-      // Total sin IVA = CIF + DAI + Ley 6946 + Aduana + transporte
-      const total = cif + dai + ley + dest;
-      const perPar = g.qty > 0 ? total / g.qty : 0;
+
+    const rows = Array.from(groups.values()).map((g) => {
+      const perPar = g.qty > 0 ? g.total / g.qty : 0;
       return {
         sku: g.sku, ncm: g.ncm, product_label: g.product_label,
-        qty: g.qty, goods: g.goods, extra, cif, dai, ley, dest, iva, total, perPar,
+        qty: g.qty, goods: g.goods, extra: g.extra, cif: g.cif,
+        dai: g.dai, ley: g.ley, dest: g.dest, iva: g.iva, total: g.total, perPar,
       };
     });
+
     const sum = (k) => rows.reduce((a, x) => a + x[k], 0);
     const totalAll = sum("total");
     const qtyAll = sum("qty");
