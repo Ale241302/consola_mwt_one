@@ -1485,7 +1485,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
           </div>
         )}
 
-        {/* ── Botón Liquidar ─────────────────── */}
+        {/* ── Botón Liquidar (Ocultado por requerimiento de usuario) ──
         {!isLiquidated && livePreview.lines.length > 0 && (
           <div style={{ marginTop: 18, display: "flex", justifyContent: "flex-end", gap: 10 }}>
             <button className="btn btn-ghost" onClick={load} disabled={loading || liquidating}>
@@ -1507,6 +1507,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             </button>
           </div>
         )}
+        ── */}
 
         {isLiquidated && report?.liquidated_at && (
           <div className="caption" style={{
