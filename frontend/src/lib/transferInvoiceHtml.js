@@ -97,7 +97,7 @@ function fmtDate(s, lang) {
   });
 }
 
-function buildDetailedLiquidationTable(n, costs, isClient, lang) {
+function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}) {
   const freight = costs.reduce((a, c) => a + (KIND_FREIGHT.has(String(c.kind || "").toUpperCase()) ? Number(c.amount_usd || 0) : 0), 0);
   const insurance = costs.reduce((a, c) => a + (KIND_INSURANCE.has(String(c.kind || "").toUpperCase()) ? Number(c.amount_usd || 0) : 0), 0);
   const otherCosts = costs.filter(c => {
@@ -178,10 +178,33 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang) {
           <td class="r">13.00%</td>
           <td class="r">${usd(n.totals.iva)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Acreditable — crédito fiscal" : "Creditable — tax credit"}</td>
-        </tr>
+        </tr>`;
+
+  const customTaxes = t.context_data?.custom_taxes || [];
+  let customTaxesSum = 0;
+  let customTaxIdx = 0;
+  customTaxes.filter(x => x.type === "TAX").forEach((x) => {
+    const rate = Number(x.rate || 0);
+    const amount = n.totals.cif * (rate / 100);
+    customTaxesSum += amount;
+    const rowNum = `6${String.fromCharCode(97 + customTaxIdx++)}`;
+    html += `
+      <tr>
+        <td>${rowNum}</td>
+        <td>${esc(x.concept || (lang === "es" ? "Impuesto adicional" : "Additional tax"))}</td>
+        <td class="m">CIF</td>
+        <td class="r">${rate.toFixed(2)}%</td>
+        <td class="r">${usd(amount)}</td>
+        <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Impuesto específico" : "Specific tax"}</td>
+      </tr>`;
+  });
+
+  const subtotalTaxes = n.totals.dai + n.totals.ley + n.totals.iva + customTaxesSum;
+
+  html += `
         <tr class="trow">
           <td colspan="4"><strong>${lang === "es" ? "Subtotal impuestos (con IVA)" : "Subtotal taxes (incl. VAT)"}</strong></td>
-          <td class="r"><strong>${usd(n.totals.dai + n.totals.ley + n.totals.iva)}</strong></td>
+          <td class="r"><strong>${usd(subtotalTaxes)}</strong></td>
           <td></td>
         </tr>`;
 
@@ -198,6 +221,18 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang) {
       </tr>`;
   });
 
+  customTaxes.filter(x => x.type === "COST").forEach((x) => {
+    html += `
+      <tr>
+        <td>${idx++}</td>
+        <td>${esc(x.concept || (lang === "es" ? "Gasto adicional" : "Additional charge"))}</td>
+        <td class="m">OTRO</td>
+        <td class="r">&mdash;</td>
+        <td class="r">${usd(x.amount)}</td>
+        <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Costo en destino" : "Destination cost"}</td>
+      </tr>`;
+  });
+
   html += `
         <tr class="trow">
           <td colspan="4"><strong>${lang === "es" ? "Subtotal costos destino" : "Subtotal destination costs"}</strong></td>
@@ -206,7 +241,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang) {
         </tr>
         <tr style="background:var(--t2);color:white;">
           <td colspan="4" style="padding:10px 12px;"><strong style="color:white;font-size:12px;">${lang === "es" ? "Total con IVA (incluye crédito fiscal)" : "Total incl. VAT (includes tax credit)"}</strong></td>
-          <td class="r" style="padding:10px 12px;"><strong style="color:white;font-size:13px;">${usd(n.totals.cif + n.totals.dai + n.totals.ley + n.totals.iva + n.totals.dest)}</strong></td>
+          <td class="r" style="padding:10px 12px;"><strong style="color:white;font-size:13px;">${usd(n.totals.total + n.totals.iva)}</strong></td>
           <td style="padding:10px 12px;color:rgba(255,255,255,.7);font-size:10px;">${lang === "es" ? "embarque completo" : "complete shipment"}</td>
         </tr>
         <tr style="background:var(--navy);color:white;">
@@ -738,7 +773,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         }</h3>
       </div>
       <div class="card-b" style="padding:0; overflow-x: auto;">
-        ${buildDetailedLiquidationTable(nacAud, costs, isClient, lang)}
+        ${buildDetailedLiquidationTable(nacAud, costs, isClient, lang, t)}
       </div>
     </div>
 

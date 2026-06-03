@@ -179,6 +179,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // Line overrides states
   const [lineOverrides, setLineOverrides] = useState(() => transfer?.context_data?.line_overrides || {});
   const [editingOverrides, setEditingOverrides] = useState({});
+  const [customTaxes, setCustomTaxes] = useState(() => transfer?.context_data?.custom_taxes || []);
 
   // Sync state with transfer prop updates
   useEffect(() => {
@@ -186,6 +187,11 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       setLineOverrides(transfer.context_data.line_overrides);
     } else {
       setLineOverrides({});
+    }
+    if (transfer?.context_data?.custom_taxes) {
+      setCustomTaxes(transfer.context_data.custom_taxes);
+    } else {
+      setCustomTaxes([]);
     }
   }, [transfer]);
 
@@ -207,6 +213,166 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       );
     }
   }, [transferId, transfer, lang, onLiquidated]);
+
+  // Persistir custom taxes/costs via PATCH
+  const persistCustomTaxes = useCallback(async (nextTaxes) => {
+    if (!transferId) return;
+    try {
+      const currentCtx = transfer?.context_data || {};
+      const nextCtx = {
+        ...currentCtx,
+        custom_taxes: nextTaxes,
+      };
+      await transferenciasApi.update(transferId, { context_data: nextCtx });
+      onLiquidated?.();
+    } catch (e) {
+      setError(
+        (lang === "es" ? "No se pudo actualizar los impuestos: " : "Could not update taxes: ")
+        + (e?.body?.detail || e?.message || "error")
+      );
+    }
+  }, [transferId, transfer, lang, onLiquidated]);
+
+  // ── Cálculo en vivo del preview (sin pegarle al backend cada keystroke) ──
+  const livePreview = useMemo(() => {
+    const lineas = transfer?.lines || transfer?.lineas || [];
+
+    // 1. Identificar costos de flete, seguro y otros costos de costLines
+    const freight = costLines.reduce((a, c) => a + (KIND_FREIGHT.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
+    const insurance = costLines.reduce((a, c) => a + (KIND_INSURANCE.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
+    const extraTotal = freight + insurance;
+    const destTotal = costLines.reduce((a, c) => {
+      const k = String(c.kind || "").toUpperCase();
+      if (!KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k)) {
+        return a + Number(c.amount || 0) * Number(c.fx_to_usd || 1);
+      }
+      return a;
+    }, 0);
+    const otherCostsTotal = destTotal;
+
+    // 2. Computar FOB unitario y total por línea (con la cantidad entregada/recibida > despachada > planeada)
+    let fobTotal = 0;
+    const lineValues = lineas.map((l) => {
+      const qty = l.qty_received != null ? Number(l.qty_received) : (l.qty_dispatched != null ? Number(l.qty_dispatched) : Number(l.qty_transfer || 0));
+      
+      const opIsMwt  = isMwtOperated(l.operating_company_id || l._operating_company_id);
+      const priceMwt = Number(l.unit_price_mwt    || 0);
+      const priceCli = Number(l.unit_price_client || 0);
+      let uv;
+      if (opIsMwt && viewerIsMwt) {
+        uv = priceMwt > 0 ? priceMwt : priceCli;
+      } else if (priceCli > 0) {
+        uv = priceCli;
+      } else if (priceMwt > 0) {
+        uv = priceMwt;
+      } else {
+        uv = Number(l._raw?.unit_value || l.unit_value || l.unit_cost || 0);
+      }
+      const lt  = qty * uv;
+      fobTotal += lt;
+      return { l, qty, uv, lt };
+    });
+
+    const qtyTotalAll = lineValues.reduce((a, x) => a + x.qty, 0);
+
+    // 3. Desglosar por talla y calcular impuestos (prorrateo por cantidad)
+    let daiTotal = 0;
+    let leyTotal = 0;
+    let ivaTotal = 0;
+    let customTaxesSum = 0;
+    let customCostsSum = 0;
+
+    const lines = lineValues.map(({ l, qty, uv, lt }) => {
+      const lineId = l._line_id || l.id;
+      const override = lineOverrides[lineId] || {};
+
+      const extra = qtyTotalAll > 0 ? extraTotal * (qty / qtyTotalAll) : 0;
+      const dest = qtyTotalAll > 0 ? destTotal * (qty / qtyTotalAll) : 0;
+      
+      const calculatedCif = lt + extra;
+      const cif = override.cif !== undefined ? Number(override.cif) : calculatedCif;
+
+      const r = taxRatesForNcm(l.ncm || l._raw?.ncm);
+      const daiRate = customDaiRate !== null ? customDaiRate : r.dai;
+      const leyRate = customLeyRate !== null ? customLeyRate : r.ley_6946;
+      const ivaRate = customIvaRate !== null ? customIvaRate : r.iva;
+
+      const dai = override.dai !== undefined ? Number(override.dai) : (cif * daiRate);
+      const ley = override.ley !== undefined ? Number(override.ley) : (cif * leyRate);
+      const iva = cif * ivaRate;
+
+      // Custom taxes on CIF and custom costs prorated by pairs qty
+      const lineCustomTaxesAmount = customTaxes.filter(x => x.type === "TAX").reduce((sum, tax) => sum + (cif * ((tax.rate || 0) / 100)), 0);
+      const lineCustomCostsAmount = customTaxes.filter(x => x.type === "COST").reduce((sum, cost) => sum + (qtyTotalAll > 0 ? (Number(cost.amount || 0) * (qty / qtyTotalAll)) : 0), 0);
+
+      const itemDest = override.dest !== undefined ? Number(override.dest) : dest;
+
+      daiTotal += dai;
+      leyTotal += ley;
+      ivaTotal += iva;
+      customTaxesSum += lineCustomTaxesAmount;
+      customCostsSum += lineCustomCostsAmount;
+
+      let total = cif + dai + ley + itemDest + lineCustomTaxesAmount + lineCustomCostsAmount;
+      let landedUnit = qty > 0 ? total / qty : 0;
+
+      if (override.landed_total_usd !== undefined) {
+        total = Number(override.landed_total_usd);
+        landedUnit = qty > 0 ? total / qty : 0;
+      } else if (override.landed_unit_usd !== undefined) {
+        landedUnit = Number(override.landed_unit_usd);
+        total = landedUnit * qty;
+      }
+
+      return {
+        line_id:          lineId,
+        sku:              l.sku || "",
+        product_label:    l.product_label || l.product || "",
+        size:             l.size || "",
+        lote:             l.lote || l.lot || "",
+        expediente_codigo: l.expediente_codigo || "",
+        proforma_codigo:   l.proforma_codigo || "",
+        qty,
+        unit_fob_usd:     uv,
+        fob_total_usd:    lt,
+        extra,
+        cif,
+        dai,
+        ley,
+        dest:             itemDest,
+        iva,
+        landed_unit_usd:  landedUnit,
+        landed_total_usd: total,
+      };
+    });
+
+    const landedTotal = lines.reduce((a, x) => a + x.landed_total_usd, 0);
+    const cifTotal = lines.reduce((a, x) => a + x.cif, 0);
+    const destTotalSum = lines.reduce((a, x) => a + x.dest, 0);
+
+    return {
+      fobTotal,
+      freight,
+      insurance,
+      extraTotal,
+      extraUsd: extraTotal,
+      destTotal: destTotalSum,
+      cifTotal,
+      otherCostsTotal,
+      unitsTotal: qtyTotalAll,
+      landedTotal,
+      daiTotal,
+      leyTotal,
+      ivaTotal,
+      customTaxesSum,
+      customCostsSum,
+      avgLanded: qtyTotalAll > 0 ? landedTotal / qtyTotalAll : 0,
+      lines,
+      daiRate: customDaiRate !== null ? customDaiRate : 0.14,
+      leyRate: customLeyRate !== null ? customLeyRate : 0.01,
+      ivaRate: customIvaRate !== null ? customIvaRate : 0.13,
+    };
+  }, [transfer, costLines, viewerIsMwt, customDaiRate, customLeyRate, customIvaRate, lineOverrides, customTaxes]);
 
   // Sku distribution helpers
   const distributeSkuOverride = useCallback((sku, field, totalValue) => {
@@ -481,136 +647,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       }));
   }, [transfer]);
 
-  // ── Cálculo en vivo del preview (sin pegarle al backend cada keystroke) ──
-  const livePreview = useMemo(() => {
-    const lineas = transfer?.lines || transfer?.lineas || [];
-
-    // 1. Identificar costos de flete, seguro y otros costos de costLines
-    const freight = costLines.reduce((a, c) => a + (KIND_FREIGHT.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
-    const insurance = costLines.reduce((a, c) => a + (KIND_INSURANCE.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
-    const extraTotal = freight + insurance;
-    const destTotal = costLines.reduce((a, c) => {
-      const k = String(c.kind || "").toUpperCase();
-      if (!KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k)) {
-        return a + Number(c.amount || 0) * Number(c.fx_to_usd || 1);
-      }
-      return a;
-    }, 0);
-    const otherCostsTotal = destTotal;
-
-    // 2. Computar FOB unitario y total por línea (con la cantidad entregada/recibida > despachada > planeada)
-    let fobTotal = 0;
-    const lineValues = lineas.map((l) => {
-      const qty = l.qty_received != null ? Number(l.qty_received) : (l.qty_dispatched != null ? Number(l.qty_dispatched) : Number(l.qty_transfer || 0));
-      
-      const opIsMwt  = isMwtOperated(l.operating_company_id || l._operating_company_id);
-      const priceMwt = Number(l.unit_price_mwt    || 0);
-      const priceCli = Number(l.unit_price_client || 0);
-      let uv;
-      if (opIsMwt && viewerIsMwt) {
-        uv = priceMwt > 0 ? priceMwt : priceCli;
-      } else if (priceCli > 0) {
-        uv = priceCli;
-      } else if (priceMwt > 0) {
-        uv = priceMwt;
-      } else {
-        uv = Number(l._raw?.unit_value || l.unit_value || l.unit_cost || 0);
-      }
-      const lt  = qty * uv;
-      fobTotal += lt;
-      return { l, qty, uv, lt };
-    });
-
-    const qtyTotalAll = lineValues.reduce((a, x) => a + x.qty, 0);
-
-    // 3. Desglosar por talla y calcular impuestos (prorrateo por cantidad)
-    let daiTotal = 0;
-    let leyTotal = 0;
-    let ivaTotal = 0;
-
-    const lines = lineValues.map(({ l, qty, uv, lt }) => {
-      const lineId = l._line_id || l.id;
-      const override = lineOverrides[lineId] || {};
-
-      const extra = qtyTotalAll > 0 ? extraTotal * (qty / qtyTotalAll) : 0;
-      const dest = qtyTotalAll > 0 ? destTotal * (qty / qtyTotalAll) : 0;
-      
-      const calculatedCif = lt + extra;
-      const cif = override.cif !== undefined ? Number(override.cif) : calculatedCif;
-
-      const r = taxRatesForNcm(l.ncm || l._raw?.ncm);
-      const daiRate = customDaiRate !== null ? customDaiRate : r.dai;
-      const leyRate = customLeyRate !== null ? customLeyRate : r.ley_6946;
-      const ivaRate = customIvaRate !== null ? customIvaRate : r.iva;
-
-      const dai = override.dai !== undefined ? Number(override.dai) : (cif * daiRate);
-      const ley = override.ley !== undefined ? Number(override.ley) : (cif * leyRate);
-      const iva = cif * ivaRate;
-
-      const itemDest = override.dest !== undefined ? Number(override.dest) : dest;
-
-      daiTotal += dai;
-      leyTotal += ley;
-      ivaTotal += iva;
-
-      let total = cif + dai + ley + itemDest;
-      let landedUnit = qty > 0 ? total / qty : 0;
-
-      if (override.landed_total_usd !== undefined) {
-        total = Number(override.landed_total_usd);
-        landedUnit = qty > 0 ? total / qty : 0;
-      } else if (override.landed_unit_usd !== undefined) {
-        landedUnit = Number(override.landed_unit_usd);
-        total = landedUnit * qty;
-      }
-
-      return {
-        line_id:          lineId,
-        sku:              l.sku || "",
-        product_label:    l.product_label || l.product || "",
-        size:             l.size || "",
-        lote:             l.lote || l.lot || "",
-        expediente_codigo: l.expediente_codigo || "",
-        proforma_codigo:   l.proforma_codigo || "",
-        qty,
-        unit_fob_usd:     uv,
-        fob_total_usd:    lt,
-        extra,
-        cif,
-        dai,
-        ley,
-        dest:             itemDest,
-        iva,
-        landed_unit_usd:  landedUnit,
-        landed_total_usd: total,
-      };
-    });
-
-    const landedTotal = lines.reduce((a, x) => a + x.landed_total_usd, 0);
-    const cifTotal = lines.reduce((a, x) => a + x.cif, 0);
-    const destTotalSum = lines.reduce((a, x) => a + x.dest, 0);
-
-    return {
-      fobTotal,
-      freight,
-      insurance,
-      extraTotal,
-      extraUsd: extraTotal,
-      destTotal: destTotalSum,
-      cifTotal,
-      otherCostsTotal,
-      unitsTotal: qtyTotalAll,
-      landedTotal,
-      daiTotal,
-      leyTotal,
-      ivaTotal,
-      avgLanded: qtyTotalAll > 0 ? landedTotal / qtyTotalAll : 0,
-      lines,
-      daiRate: customDaiRate !== null ? customDaiRate : 0.14,
-      leyRate: customLeyRate !== null ? customLeyRate : 0.01,
-      ivaRate: customIvaRate !== null ? customIvaRate : 0.13,
-    };
-  }, [transfer, costLines, viewerIsMwt, customDaiRate, customLeyRate, customIvaRate, lineOverrides]);
+  // (livePreview moved above helper callbacks to prevent Temporal Dead Zone error)
 
   // ── Cost line CRUD (server-side persiste; trigger SQL actualiza total_cost_usd) ──
   // Sprint 2026-05-14 · Fase 14 — addCost acepta { scope } para que el
@@ -1219,12 +1256,30 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
             {/* Tabla 1: Liquidación detallada */}
             <div className="card card-pad-0" style={{ overflow: "hidden" }}>
-              <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)" }}>
+              <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h4 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
                   {viewerIsMwt
                     ? (lang === "es" ? "LIQUIDACIÓN DETALLADA — MWT NACIONALIZA AL PRECIO MARLUVAS (UF)" : "DETAILED LIQUIDATION — MWT AT MARLUVAS (UF)")
                     : (lang === "es" ? `LIQUIDACIÓN DETALLADA — ${transfer?._raw?.operating_company_label || "SONDEL"} NACIONALIZA AL PRECIO DE LA ORDEN (DUA REFERENCIAL)` : `DETAILED LIQUIDATION — ${transfer?._raw?.operating_company_label || "SONDEL"} AT ORDER PRICE`)}
                 </h4>
+                {!isLiquidated && (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="btn btn-ghost btn-xs" onClick={() => {
+                      const next = [...customTaxes, { id: "tax-" + Date.now(), type: "TAX", concept: lang === "es" ? "Impuesto adicional" : "Additional tax", rate: 0 }];
+                      setCustomTaxes(next);
+                      persistCustomTaxes(next);
+                    }} style={{ padding: "2px 6px", fontSize: 11 }}>
+                      <IconPlus size={10} style={{ marginRight: 2 }}/> {lang === "es" ? "Agregar impuesto (%)" : "Agregar impuesto (%)"}
+                    </button>
+                    <button className="btn btn-ghost btn-xs" onClick={() => {
+                      const next = [...customTaxes, { id: "cost-" + Date.now(), type: "COST", concept: lang === "es" ? "Gasto adicional" : "Additional charge", amount: 0 }];
+                      setCustomTaxes(next);
+                      persistCustomTaxes(next);
+                    }} style={{ padding: "2px 6px", fontSize: 11 }}>
+                      <IconPlus size={10} style={{ marginRight: 2 }}/> {lang === "es" ? "Agregar gasto (USD)" : "Agregar gasto (USD)"}
+                    </button>
+                  </div>
+                )}
               </div>
               <table className="table" style={{ fontSize: 12.5 }}>
                 <thead>
@@ -1470,9 +1525,64 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       {lang === "es" ? "Acreditable — crédito fiscal (no suma)" : "Creditable — VAT credit (excluded)"}
                     </td>
                   </tr>
+                  {customTaxes.filter(x => x.type === "TAX").map((x, idx) => {
+                    const rowNum = `6${String.fromCharCode(97 + idx)}`;
+                    const amount = livePreview.cifTotal * ((x.rate || 0) / 100);
+                    return (
+                      <tr key={x.id}>
+                        <td>{rowNum}</td>
+                        <td>
+                          {isLiquidated ? (
+                            <strong>{x.concept}</strong>
+                          ) : (
+                            <input className="input" style={{ width: 180, padding: "2px 6px", fontSize: 12 }}
+                                   value={x.concept}
+                                   onChange={(e) => {
+                                     const next = customTaxes.map(item => item.id === x.id ? { ...item, concept: e.target.value } : item);
+                                     setCustomTaxes(next);
+                                   }}
+                                   onBlur={() => persistCustomTaxes(customTaxes)}/>
+                          )}
+                        </td>
+                        <td>CIF</td>
+                        <td style={{ textAlign: "right" }}>
+                          {isLiquidated ? (
+                            <span>{Number(x.rate || 0).toFixed(2)}%</span>
+                          ) : (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                              <input className="input tabular-nums" type="number" step="0.01" min="0" max="100"
+                                     style={{ width: 70, textAlign: "right", padding: "2px 4px", fontSize: 12 }}
+                                     value={x.rate}
+                                     onChange={(e) => {
+                                       const next = customTaxes.map(item => item.id === x.id ? { ...item, rate: Number(e.target.value) } : item);
+                                       setCustomTaxes(next);
+                                     }}
+                                     onBlur={() => persistCustomTaxes(customTaxes)}/>
+                              <span>%</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>
+                          ${fmt(amount)}
+                        </td>
+                        <td>
+                          {!isLiquidated && (
+                            <button className="btn btn-ghost btn-xs" style={{ color: "#D64545", padding: "2px" }}
+                                    onClick={() => {
+                                      const next = customTaxes.filter(item => item.id !== x.id);
+                                      setCustomTaxes(next);
+                                      persistCustomTaxes(next);
+                                    }}>
+                              <IconTrash size={10}/>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                   <tr style={{ background: "rgba(11,30,58,0.02)", fontWeight: 700 }}>
                     <td colSpan={4}>{lang === "es" ? "Subtotal impuestos (con IVA)" : "Subtotal taxes (incl. VAT)"}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.daiTotal + livePreview.leyTotal + livePreview.ivaTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.daiTotal + livePreview.leyTotal + livePreview.ivaTotal + livePreview.customTaxesSum)}</td>
                     <td></td>
                   </tr>
                   {costLines.filter(c => {
@@ -1503,15 +1613,71 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo en destino" : "Destination cost"}</td>
                     </tr>
                   ))}
+                  {customTaxes.filter(x => x.type === "COST").map((x, idx) => {
+                    const rowNum = 7 + costLines.filter(c => {
+                      const k = String(c.kind || "").toUpperCase();
+                      return !KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k);
+                    }).length + idx;
+                    return (
+                      <tr key={x.id}>
+                        <td>{rowNum}</td>
+                        <td>
+                          {isLiquidated ? (
+                            <strong>{x.concept}</strong>
+                          ) : (
+                            <input className="input" style={{ width: 180, padding: "2px 6px", fontSize: 12 }}
+                                   value={x.concept}
+                                   onChange={(e) => {
+                                     const next = customTaxes.map(item => item.id === x.id ? { ...item, concept: e.target.value } : item);
+                                     setCustomTaxes(next);
+                                   }}
+                                   onBlur={() => persistCustomTaxes(customTaxes)}/>
+                          )}
+                        </td>
+                        <td>OTRO</td>
+                        <td style={{ textAlign: "right" }}>—</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>
+                          {isLiquidated ? (
+                            <span>${fmt(x.amount)}</span>
+                          ) : (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                              <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                              <input className="input tabular-nums" type="number" step="0.01" min="0"
+                                     style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                                     value={x.amount}
+                                     onChange={(e) => {
+                                       const next = customTaxes.map(item => item.id === x.id ? { ...item, amount: Number(e.target.value) } : item);
+                                       setCustomTaxes(next);
+                                     }}
+                                     onBlur={() => persistCustomTaxes(customTaxes)}/>
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          <span style={{ color: "#64748B", fontSize: 11, marginRight: 8 }}>{lang === "es" ? "Costo en destino" : "Destination cost"}</span>
+                          {!isLiquidated && (
+                            <button className="btn btn-ghost btn-xs" style={{ color: "#D64545", padding: "2px", display: "inline-flex", verticalAlign: "middle" }}
+                                    onClick={() => {
+                                      const next = customTaxes.filter(item => item.id !== x.id);
+                                      setCustomTaxes(next);
+                                      persistCustomTaxes(next);
+                                    }}>
+                              <IconTrash size={10}/>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                   <tr style={{ background: "rgba(11,30,58,0.02)", fontWeight: 700 }}>
                     <td colSpan={4}>{lang === "es" ? "Subtotal costos destino" : "Subtotal destination costs"}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.destTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.destTotal + livePreview.customCostsSum)}</td>
                     <td></td>
                   </tr>
                   <tr style={{ background: "var(--text-secondary, #475569)", color: "white", fontWeight: 700 }}>
                     <td colSpan={4} style={{ color: "white" }}>{lang === "es" ? "Total con IVA (incluye crédito fiscal)" : "Total incl. VAT (includes credit)"}</td>
                     <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>
-                      ${fmt(livePreview.cifTotal + livePreview.daiTotal + livePreview.leyTotal + livePreview.ivaTotal + livePreview.destTotal)}
+                      ${fmt(livePreview.landedTotal + livePreview.ivaTotal)}
                     </td>
                     <td style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>{lang === "es" ? "embarque completo" : "complete shipment"}</td>
                   </tr>
