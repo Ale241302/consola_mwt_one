@@ -50,6 +50,9 @@ import ArtifactScopeModal  from "../components/nodos/ArtifactScopeModal.jsx";
 // Sprint 2026-06-02 · modal de alcance del costo (paso 3) — réplica del
 // de /transferencias/nueva, adaptado a las líneas de la recepción.
 import RecepcionCostScopeModal from "../components/inventario/RecepcionCostScopeModal.jsx";
+// Flow EXPEDIENTE_ASSIGN reusa el MISMO modal de alcance de transferencias
+// (expedientes → productos), para paridad total con /transferencias/nueva.
+import CostScopeModal from "../components/transfers/CostScopeModal.jsx";
 
 // ─── Tipos de origen del inbound (alineado con SQL source_type_cat) ─
 // Sprint 2026-05-11 · Fase 3 · Se agrega EXPEDIENTE_ASSIGN: el operador
@@ -71,19 +74,23 @@ const SOURCE_TYPES = [
 // ─── Catálogo de tipos de costo operativo (paso 3) ─────────────────
 // Sprint 2026-06-02 · Mismo set que /transferencias/nueva. Los costos
 // se prorratean por unidad y viajan con la asignación al transferir.
-const COST_KINDS = [
-  { codigo: "FLETE",         label_es: "Flete",                label_en: "Freight" },
-  { codigo: "SEGURO",        label_es: "Seguro",               label_en: "Insurance" },
-  { codigo: "ALMACENAJE",    label_es: "Almacenaje",           label_en: "Storage" },
-  { codigo: "AGENCIAMIENTO", label_es: "Agenciamiento",        label_en: "Customs agency" },
-  { codigo: "MANIPULEO",     label_es: "Manipuleo / handling", label_en: "Handling" },
-  { codigo: "DAI",           label_es: "Aranceles (DAI)",      label_en: "Duties (DAI)" },
-  { codigo: "IVA",           label_es: "Impuestos (IVA)",      label_en: "Taxes (VAT)" },
-  { codigo: "OTRO",          label_es: "Otro",                 label_en: "Other" },
+// Fallback si /transferencias/select_cost_kinds/ falla. El set completo
+// (PROCOMER, Ley 6946, timbres, etc.) lo provee el backend — el mismo
+// catálogo que usa /transferencias/nueva.
+const COST_KINDS_FALLBACK = [
+  { codigo: "DAI",           label: "Aranceles (DAI)" },
+  { codigo: "IVA",           label: "Impuestos (IVA)" },
+  { codigo: "ALMACENAJE",    label: "Almacenaje aduanal" },
+  { codigo: "AGENCIAMIENTO", label: "Agenciamiento" },
+  { codigo: "MANIPULEO",     label: "Manipuleo / handling" },
+  { codigo: "FLETE",         label: "Flete" },
+  { codigo: "SEGURO",        label: "Seguro" },
+  { codigo: "CONSOLIDACION", label: "Consolidación" },
+  { codigo: "OTRO",          label: "Otro" },
 ];
-const costKindLabel = (codigo, lang) => {
-  const k = COST_KINDS.find((x) => x.codigo === codigo);
-  return k ? (lang === "es" ? k.label_es : k.label_en) : codigo;
+const labelForKind = (catalog, codigo) => {
+  const k = (catalog || []).find((x) => x.codigo === codigo);
+  return k ? k.label : codigo;
 };
 
 // ─── Stepper visual reutilizable ───────────────────────────────────
@@ -170,6 +177,15 @@ export default function InboundReceptionWizard() {
   // Sprint 2026-06-02 · Costos manuales (tipo, monto, moneda, fx→usd)
   // igual que /transferencias/nueva. Se mandan en el submit y el
   // backend los prorratea por unidad sobre el lote recibido.
+  // Catálogo de tipos de costo — el MISMO de /transferencias/nueva
+  // (backend /transferencias/select_cost_kinds/). Fallback local si falla.
+  const [costKinds, setCostKinds] = useState(COST_KINDS_FALLBACK);
+  useEffect(() => {
+    transferenciasApi.action("select_cost_kinds")
+      .then((d) => { if (Array.isArray(d) && d.length) setCostKinds(d); })
+      .catch(() => { /* mantén el fallback */ });
+  }, []);
+
   const [costLines, setCostLines] = useState([]);
   // addCostLine acepta un patch opcional (típicamente {scope}) cuando la
   // fila se crea desde el flow "+ Agregar costo → modal de alcance → guardar".
@@ -504,7 +520,7 @@ export default function InboundReceptionWizard() {
           // los prorratea por unidad y los estampa en cada asignación.
           cost_lines: costLines.map((c) => ({
             kind:      c.kind,
-            label:     c.label || costKindLabel(c.kind, lang),
+            label:     c.label || labelForKind(costKinds, c.kind),
             amount:    Number(c.amount) || 0,
             currency:  c.currency || "USD",
             fx_to_usd: Number(c.fx_to_usd) || 1,
@@ -564,7 +580,7 @@ export default function InboundReceptionWizard() {
         // los prorratea por unidad y los suma al landed cost del stock.
         cost_lines: costLines.map((c) => ({
           kind:      c.kind,
-          label:     c.label || costKindLabel(c.kind, lang),
+          label:     c.label || labelForKind(costKinds, c.kind),
           amount:    Number(c.amount) || 0,
           currency:  c.currency || "USD",
           fx_to_usd: Number(c.fx_to_usd) || 1,
@@ -678,6 +694,7 @@ export default function InboundReceptionWizard() {
               costLines={costLines}
               totalCostUsd={totalCostUsd}
               currencies={currencies}
+              costKinds={costKinds}
               items={costScopeItems}
               groupByExpediente={isExpedienteAssign}
               onAdd={addCostLine}
@@ -700,6 +717,7 @@ export default function InboundReceptionWizard() {
               /* Sprint 2026-06-02 · costos operativos del paso 3 */
               costLines={costLines}
               totalCostUsd={totalCostUsd}
+              costKinds={costKinds}
               submitting={submitting}
               submitError={submitError}
               onConfirm={submit}
@@ -1190,7 +1208,7 @@ function ProductAutocomplete({ lang, value, label, productos, onPick }) {
 function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
                        totals, submitting, submitError, onConfirm,
                        // Sprint 2026-06-02 · costos operativos del paso 3
-                       costLines = [], totalCostUsd = 0,
+                       costLines = [], totalCostUsd = 0, costKinds = [],
                        isExpedienteAssign = false, assignItems = [],
                        // Sprint 2026-05-11 (iteración) · artefactos pendientes
                        pendingArtifacts = [], setPendingArtifacts = () => {},
@@ -1513,7 +1531,7 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
               <tbody>
                 {costLines.map((c) => (
                   <tr key={c.tmpId} style={{ borderTop: "1px solid var(--border-subtle)" }}>
-                    <td style={td}>{costKindLabel(c.kind, lang)}</td>
+                    <td style={td}>{labelForKind(costKinds, c.kind)}</td>
                     <td style={td}>{c.label || "—"}</td>
                     <td style={{ ...td, textAlign: "right", fontWeight: 700 }} className="tabular-nums">
                       ${(Number(c.amount || 0) * Number(c.fx_to_usd || 1)).toLocaleString("en-US", { maximumFractionDigits: 2 })}
@@ -1581,7 +1599,7 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
 function Step3Costs({
   lang, costLines, totalCostUsd,
   currencies = [{ codigo: "USD", nombre: "US Dollar", symbol: "$" }],
-  items = [], groupByExpediente = false,
+  costKinds = [], items = [], groupByExpediente = false,
   onAdd, onUpdate, onRemove,
 }) {
   // Flow scope (igual a transferencias): "+ Agregar costo" abre el modal
@@ -1594,11 +1612,28 @@ function Step3Costs({
   const modalInitial = creatingNewScope ? null : (openScope?.scope || null);
   const modalLabel = creatingNewScope
     ? (lang === "es" ? "Nuevo costo" : "New cost")
-    : (openScope?.label || (openScope ? costKindLabel(openScope.kind, lang) : ""));
+    : (openScope?.label || (openScope ? labelForKind(costKinds, openScope.kind) : ""));
   const handleScopeSave = (scope) => {
     if (creatingNewScope) onAdd({ scope });
     else if (openScope) onUpdate(openScope.tmpId, { scope });
   };
+  // Mapa de las líneas del lote al shape que espera el CostScopeModal de
+  // transferencias (flow EXPEDIENTE_ASSIGN). La recepción no captura
+  // precios por línea → las columnas de precio se muestran como "—".
+  const transferItems = items.map((it) => ({
+    expediente_id:         it.expediente_id,
+    _expediente_codigo:    it.expediente_codigo,
+    _proforma_codigo:      null,
+    producto_id:           it.producto_id,
+    _sku:                  it.sku,
+    _nombre:               it.nombre,
+    talla:                 it.talla || null,
+    qty:                   it.qty,
+    _operating_company_id: null,
+    _linea_id_expediente:  null,
+    _unit_price_mwt:       null,
+    _unit_price_client:    null,
+  }));
   return (
     <Card
       title={lang === "es" ? "Costos operativos" : "Operating costs"}
@@ -1660,17 +1695,15 @@ function Step3Costs({
                       <select className="input mono-sm" style={{ width: "100%" }}
                               value={c.kind}
                               onChange={(e) => onUpdate(c.tmpId, { kind: e.target.value })}>
-                        {COST_KINDS.map((k) => (
-                          <option key={k.codigo} value={k.codigo}>
-                            {lang === "es" ? k.label_es : k.label_en}
-                          </option>
+                        {costKinds.map((k) => (
+                          <option key={k.codigo} value={k.codigo}>{k.label}</option>
                         ))}
                       </select>
                     </td>
                     <td style={td}>
                       <input className="input mono-sm" style={{ width: "100%" }}
                              value={c.label || ""}
-                             placeholder={costKindLabel(c.kind, lang)}
+                             placeholder={labelForKind(costKinds, c.kind)}
                              onChange={(e) => onUpdate(c.tmpId, { label: e.target.value })}/>
                     </td>
                     <td style={{ ...td, textAlign: "right" }} className="tabular-nums">
@@ -1733,16 +1766,28 @@ function Step3Costs({
         </div>
       )}
 
-      <RecepcionCostScopeModal
-        open={modalOpen}
-        lang={lang}
-        costLabel={modalLabel}
-        items={items}
-        groupByExpediente={groupByExpediente}
-        initialScope={modalInitial}
-        onClose={() => { setCreatingNewScope(false); setScopeOpenFor(null); }}
-        onSave={handleScopeSave}
-      />
+      {groupByExpediente ? (
+        <CostScopeModal
+          open={modalOpen}
+          lang={lang}
+          costLabel={modalLabel}
+          transferItems={transferItems}
+          initialScope={modalInitial}
+          onClose={() => { setCreatingNewScope(false); setScopeOpenFor(null); }}
+          onSave={handleScopeSave}
+        />
+      ) : (
+        <RecepcionCostScopeModal
+          open={modalOpen}
+          lang={lang}
+          costLabel={modalLabel}
+          items={items}
+          groupByExpediente={false}
+          initialScope={modalInitial}
+          onClose={() => { setCreatingNewScope(false); setScopeOpenFor(null); }}
+          onSave={handleScopeSave}
+        />
+      )}
     </Card>
   );
 }
