@@ -1501,11 +1501,14 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"],
             url_path=r"nodos/(?P<nodo_id>[^/.]+)/transferencia-costos")
     def transferencia_costos_por_nodo(self, request, nodo_id=None):
+        # Sprint 2026-06-02 · El tab Costos del nodo ahora UNE:
+        #   (1) costos de transferencias (transfers.cost_line) — via assignments
+        #       con transferencia_id, y
+        #   (2) costos de RECEPCIÓN (inventario.recepcion_costo) — via assignments
+        #       con costo_batch_id. El costo de recepción viaja con la asignación,
+        #       así que aparece en el nodo donde esté actualmente.
         sql = """
             WITH asignaciones_del_nodo AS (
-                -- Todas las (expediente, producto, talla) asignadas a
-                -- este nodo via transferencia (no recepción inicial),
-                -- agregadas por (trf, exp, prod, talla).
                 SELECT
                     a.transferencia_id,
                     a.expediente_id,
@@ -1518,6 +1521,21 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                   AND a.transferencia_id IS NOT NULL
                   AND a.is_active = TRUE
                 GROUP BY a.transferencia_id, a.expediente_id, a.producto_id, a.talla
+                HAVING SUM(a.qty_asignada) > 0
+            ),
+            recepcion_asignaciones_del_nodo AS (
+                SELECT
+                    a.costo_batch_id,
+                    a.expediente_id,
+                    a.producto_id,
+                    COALESCE(a.talla, '')         AS talla_norm,
+                    a.talla,
+                    SUM(a.qty_asignada)::int      AS qty_asignada
+                FROM inventario.expediente_nodo_assignment a
+                WHERE a.nodo_id = %(nodo_id)s::uuid
+                  AND a.costo_batch_id IS NOT NULL
+                  AND a.is_active = TRUE
+                GROUP BY a.costo_batch_id, a.expediente_id, a.producto_id, a.talla
                 HAVING SUM(a.qty_asignada) > 0
             )
             SELECT
@@ -1543,7 +1561,8 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                 cl.amount_usd,
                 cl.source,
                 cl.scope_json,
-                cl.created_at                                      AS cost_created_at
+                cl.created_at                                      AS cost_created_at,
+                FALSE                                              AS is_reception
             FROM asignaciones_del_nodo a
             JOIN transfers.cost_line cl
               ON cl.transferencia_id = a.transferencia_id
@@ -1556,9 +1575,6 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             LEFT JOIN expedientes.expediente e    ON e.id = a.expediente_id
             LEFT JOIN productos.producto p        ON p.id = a.producto_id
             LEFT JOIN transfers.cost_kind_cat ck  ON ck.codigo = cl.kind
-            -- Sprint 2026-05-17 · proforma mas reciente del expediente.
-            -- El FE muestra proforma_codigo con fallback a expediente_codigo
-            -- en la tab Costos del NodoDetail (CEO request).
             LEFT JOIN LATERAL (
                 SELECT d.codigo
                 FROM expedientes.documento d
@@ -1571,18 +1587,14 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                 LIMIT 1
             ) pf ON TRUE
             WHERE (
-                -- scope null o applies_to_all → cost aplica a todo
                 cl.scope_json IS NULL
                 OR (cl.scope_json->>'applies_to_all')::bool = TRUE
                 OR (
-                    -- expediente_ids contiene este expediente
                     cl.scope_json->'expediente_ids' ? a.expediente_id::text
                     AND (
-                        -- y lines está vacío/ausente → todas las líneas
                         cl.scope_json->'lines' IS NULL
                         OR jsonb_typeof(cl.scope_json->'lines') <> 'array'
                         OR jsonb_array_length(cl.scope_json->'lines') = 0
-                        -- o lines contiene esta (producto, talla)
                         OR EXISTS (
                             SELECT 1 FROM jsonb_array_elements(cl.scope_json->'lines') AS ln
                             WHERE ln->>'expediente_id' = a.expediente_id::text
@@ -1592,7 +1604,75 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                     )
                 )
             )
-            ORDER BY t.created_at DESC, e.codigo, l.sku, a.talla
+
+            UNION ALL
+
+            SELECT
+                rc.id                                              AS cost_line_id,
+                ra.costo_batch_id                                  AS transferencia_id,
+                'Recepción'                                        AS transferencia_codigo,
+                NULL                                               AS legal_context,
+                rc.created_at                                      AS transferencia_fecha,
+                ra.expediente_id,
+                e.codigo                                           AS expediente_codigo,
+                pf.codigo                                          AS proforma_codigo,
+                ra.producto_id,
+                l.sku,
+                COALESCE(p.nombre, p.descripcion, l.sku, '—')      AS nombre,
+                ra.talla,
+                ra.qty_asignada                                    AS qty,
+                rc.kind,
+                COALESCE(ck.label, rc.kind)                        AS kind_label,
+                rc.label,
+                rc.amount,
+                rc.currency,
+                rc.fx_to_usd,
+                rc.amount_usd,
+                rc.source,
+                rc.scope_json,
+                rc.created_at                                      AS cost_created_at,
+                TRUE                                               AS is_reception
+            FROM recepcion_asignaciones_del_nodo ra
+            JOIN inventario.recepcion_costo rc
+              ON rc.batch_id = ra.costo_batch_id
+             AND rc.is_active = TRUE
+            LEFT JOIN expedientes.linea l
+              ON l.expediente_id = ra.expediente_id
+             AND l.producto_id   = ra.producto_id
+             AND COALESCE(l.size,'') = ra.talla_norm
+            LEFT JOIN expedientes.expediente e    ON e.id = ra.expediente_id
+            LEFT JOIN productos.producto p        ON p.id = ra.producto_id
+            LEFT JOIN transfers.cost_kind_cat ck  ON ck.codigo = rc.kind
+            LEFT JOIN LATERAL (
+                SELECT d.codigo
+                FROM expedientes.documento d
+                WHERE d.expediente_id = e.id
+                  AND d.kind          = 'PROFORMA'
+                  AND d.is_active     = TRUE
+                  AND d.codigo IS NOT NULL
+                  AND d.codigo <> ''
+                ORDER BY d.created_at DESC
+                LIMIT 1
+            ) pf ON TRUE
+            WHERE (
+                rc.scope_json IS NULL
+                OR (rc.scope_json->>'applies_to_all')::bool = TRUE
+                OR (
+                    rc.scope_json->'expediente_ids' ? ra.expediente_id::text
+                    AND (
+                        rc.scope_json->'lines' IS NULL
+                        OR jsonb_typeof(rc.scope_json->'lines') <> 'array'
+                        OR jsonb_array_length(rc.scope_json->'lines') = 0
+                        OR EXISTS (
+                            SELECT 1 FROM jsonb_array_elements(rc.scope_json->'lines') AS ln
+                            WHERE ln->>'expediente_id' = ra.expediente_id::text
+                              AND ln->>'producto_id'   = ra.producto_id::text
+                              AND COALESCE(ln->>'talla','') = ra.talla_norm
+                        )
+                    )
+                )
+            )
+            ORDER BY transferencia_fecha DESC, expediente_codigo, sku, talla
         """
         try:
             with connection.cursor() as c:

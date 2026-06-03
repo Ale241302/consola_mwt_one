@@ -1261,6 +1261,9 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
           transferencia_id:      r.transferencia_id,
           transferencia_codigo:  r.transferencia_codigo,
           transferencia_fecha:   r.transferencia_fecha,
+          // Sprint 2026-06-02 · costos de recepción (no transferencia) →
+          // no enlazan a un detalle de transferencia.
+          is_reception:          !!r.is_reception,
           costs:                 new Map(),     // cost_line_id → { meta, byExp:Map }
         });
       }
@@ -1373,22 +1376,32 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
                    border: '1px solid var(--border-subtle)',
                    borderRadius: 10, overflow: 'hidden',
                  }}>
-              {/* Header de el movimiento · clickable */}
+              {/* Header del grupo · clickable solo si es transferencia */}
               <button type="button"
-                      onClick={() => navigate(`/transferencias/${trf.transferencia_id}`)}
+                      onClick={() => { if (!trf.is_reception) navigate(`/transferencias/${trf.transferencia_id}`); }}
                       style={{
                         width: '100%', textAlign: 'left',
                         padding: '10px 14px',
                         background: 'var(--surface-alt, rgba(0,0,0,0.02))',
-                        border: 'none', cursor: 'pointer',
+                        border: 'none', cursor: trf.is_reception ? 'default' : 'pointer',
                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span className="mono-sm" style={{
                     fontWeight: 700, color: 'var(--brand-accent, #0E8A6D)',
                   }}>
-                    {trf.transferencia_codigo || '—'}
+                    {trf.is_reception
+                      ? (lang === 'es' ? 'Recepción' : 'Reception')
+                      : (trf.transferencia_codigo || '—')}
                   </span>
+                  {trf.is_reception && (
+                    <span style={{
+                      padding: '1px 7px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+                      background: 'rgba(48,131,254,0.12)', color: '#3083FE',
+                    }}>
+                      {lang === 'es' ? 'INGRESO' : 'INBOUND'}
+                    </span>
+                  )}
                   {trf.transferencia_fecha && (
                     <span className="caption" style={{ color: 'var(--text-tertiary)' }}>
                       · {new Date(trf.transferencia_fecha).toLocaleDateString(
@@ -1397,9 +1410,11 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
                     </span>
                   )}
                 </div>
-                <span className="caption" style={{ color: 'var(--brand-accent, #0E8A6D)', fontWeight: 600 }}>
-                  {lang === 'es' ? 'Ver detalle →' : 'View detail →'}
-                </span>
+                {!trf.is_reception && (
+                  <span className="caption" style={{ color: 'var(--brand-accent, #0E8A6D)', fontWeight: 600 }}>
+                    {lang === 'es' ? 'Ver detalle →' : 'View detail →'}
+                  </span>
+                )}
               </button>
 
               {/* Por cada cost-line de el movimiento */}
