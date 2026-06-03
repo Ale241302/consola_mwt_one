@@ -306,6 +306,12 @@ class CostLine(models.Model):
     document_id        = models.UUIDField(null=True, blank=True)        # ⛔ sin FK
     ocr_confidence     = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
 
+    # Sprint 2026-06-03 — vista dual MWT / Cliente. Cada costo pertenece a
+    # una vista de la liquidación (91m_cost_line_price_view.sql). El panel
+    # filtra por price_view según la vista activa; las filas legacy quedan
+    # en 'MWT' (la liquidación histórica siempre fue la interna).
+    price_view         = models.CharField(max_length=8, default="MWT")  # MWT | CLIENT
+
     notes              = models.TextField(null=True, blank=True)
 
     # Sprint 2026-05-13 · Fase 9 — scope del costo. JSON con shape:

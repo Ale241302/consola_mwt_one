@@ -172,6 +172,11 @@ export default function ScreenTransferDetail() {
   // HTML descargable según audiencia (MWT operador vs Cliente final).
   const [recipientModalOpen, setRecipientModalOpen] = useState(false);
   const [generatingInvoice, setGeneratingInvoice]   = useState(false);
+  // Sprint 2026-06-03 — Vista dual MWT / Cliente. Solo aplica cuando el
+  // expediente es Operado por Muito Work Limitada (operatedByMwt). Se
+  // persiste como predeterminada en context_data.active_view.
+  const [activeView, setActiveView] = useState("MWT");  // 'MWT' | 'CLIENT'
+  const [savingView, setSavingView] = useState(false);
   // Notificación inline para errores transitorios (reemplaza alert()).
   const [notice, setNotice] = useState(null); // { kind: 'error'|'info', text }
   // Sprint 2026-05-14 · Fase 15.2 — modal "+ Agregar productos".
@@ -204,6 +209,35 @@ export default function ScreenTransferDetail() {
   }, [isUuid, transferId]);
 
   useEffect(() => { loadBackend(); }, [loadBackend]);
+
+  // Sync de la vista activa desde context_data (predeterminada persistida).
+  useEffect(() => {
+    const v = backend?.context_data?.active_view;
+    if (v === "MWT" || v === "CLIENT") setActiveView(v);
+  }, [backend]);
+
+  // Persistir la vista elegida como predeterminada del movimiento.
+  const handleSwitchView = useCallback(async (view) => {
+    if (view !== "MWT" && view !== "CLIENT") return;
+    setActiveView(view);  // optimista
+    if (!isUuid) return;
+    setSavingView(true);
+    try {
+      const currentCtx = backend?.context_data || {};
+      await transferenciasApi.update(transferId, {
+        context_data: { ...currentCtx, active_view: view },
+      });
+      await loadBackend();
+    } catch (e) {
+      setNotice({
+        kind: "error",
+        text: (lang === "es" ? "No se pudo guardar la vista: " : "Could not save view: ")
+          + (e?.body?.detail || e?.message || e),
+      });
+    } finally {
+      setSavingView(false);
+    }
+  }, [isUuid, transferId, backend, loadBackend, lang]);
 
   // Sprint v4 — avanzar estado y abrir PDF
   const handleAdvance = useCallback(async () => {
@@ -585,8 +619,44 @@ export default function ScreenTransferDetail() {
         blockReason={advanceErr}
       />
 
-      {/* ── Botón generar PDF / Imprimir ── */}
-      <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'flex-end' }}>
+      {/* ── Toggle de vista (solo si Operado por MWT) + generar PDF ── */}
+      <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12 }}>
+        {/* Vista MWT / Vista Cliente — R3: solo cuando el expediente es
+            Operado por Muito Work Limitada. Si lo opera el cliente, hay
+            una sola liquidación y no se muestra el switch. */}
+        {operatedByMwt && (
+          <div role="group" aria-label={lang === 'es' ? 'Vista de liquidación' : 'Liquidation view'}
+               style={{
+                 display: 'inline-flex', borderRadius: 999, padding: 3,
+                 background: 'var(--surface-alt, #F1F5F9)',
+                 border: '1px solid var(--border-subtle, #E2E8F0)',
+               }}>
+            {[
+              { key: 'MWT',    label: lang === 'es' ? 'Vista MWT' : 'MWT view' },
+              { key: 'CLIENT', label: lang === 'es' ? 'Vista Cliente' : 'Client view' },
+            ].map((v) => {
+              const active = activeView === v.key;
+              return (
+                <button
+                  key={v.key}
+                  type="button"
+                  onClick={() => handleSwitchView(v.key)}
+                  disabled={savingView || active}
+                  aria-pressed={active}
+                  className="tabular-nums"
+                  style={{
+                    padding: '6px 14px', borderRadius: 999, border: 'none',
+                    fontSize: 12, fontWeight: 700, cursor: active ? 'default' : 'pointer',
+                    background: active ? 'var(--brand-primary, #013A57)' : 'transparent',
+                    color: active ? '#FFFFFF' : 'var(--text-secondary, #475569)',
+                    transition: 'background .15s, color .15s',
+                  }}>
+                  {v.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <button
           type="button"
           className="btn btn-ghost"
@@ -611,7 +681,8 @@ export default function ScreenTransferDetail() {
       {/* ── Liquidación / Landed Cost (sprint Transfer Engine v3) ──
           Incluye costos editables (CRUD) + dropzone OCR auto-merge
           (sprint 2026-04-30). */}
-      <TransferLiquidationPanel transfer={transferBase} lang={lang} onLiquidated={loadBackend}/>
+      <TransferLiquidationPanel transfer={transferBase} lang={lang} onLiquidated={loadBackend}
+                                viewMode={operatedByMwt ? activeView : undefined}/>
 
       {/* ── Reconciliación banner ── */}
       {status === 'received' && willNeedReconcile && (

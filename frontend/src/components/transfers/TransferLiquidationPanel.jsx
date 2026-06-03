@@ -84,7 +84,7 @@ const fmtInt = (n) => Number(n || 0).toLocaleString("en-US", {
   maximumFractionDigits: 0,
 });
 
-export default function TransferLiquidationPanel({ transfer, lang = "es", onLiquidated }) {
+export default function TransferLiquidationPanel({ transfer, lang = "es", onLiquidated, viewMode }) {
   const transferId = transfer?._backend_id || transfer?.id;
 
   // Estado local de cost lines editables (espejo del backend)
@@ -115,7 +115,37 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // El override del Tweaks SIEMPRE tiene prioridad: previsualizar como
   // Cliente B2B debe mostrar precio cliente aunque el usuario real tenga
   // legal_entity asignada.
-  const { viewerIsMwt } = useTransferPriceMode();
+  const { viewerIsMwt: viewerIsMwtAuto } = useTransferPriceMode();
+  // Sprint 2026-06-03 — Vista dual explícita. Si el padre pasa `viewMode`
+  // (expediente Operado por MWT), manda sobre el viewport automático del
+  // hook. Si no, se respeta la regla por rol/Tweaks de useTransferPriceMode.
+  const effectiveView = (viewMode === "MWT" || viewMode === "CLIENT")
+    ? viewMode
+    : (viewerIsMwtAuto ? "MWT" : "CLIENT");
+  const viewerIsMwt = effectiveView === "MWT";
+
+  // Overrides namespaced por vista en context_data.views.{MWT|CLIENT}.
+  // Fallback a las claves legacy de nivel superior (transferencias previas
+  // a la vista dual): así no se pierden los overrides ya guardados.
+  const readViewCtx = (ctx) => {
+    const bucket = ctx?.views?.[effectiveView];
+    if (bucket && typeof bucket === "object") return bucket;
+    return {
+      line_overrides: ctx?.line_overrides,
+      custom_taxes:   ctx?.custom_taxes,
+      custom_rates:   ctx?.custom_rates,
+    };
+  };
+  const writeViewCtx = (ctx, patch) => {
+    const base = ctx || {};
+    const views = { ...(base.views || {}) };
+    const cur = (views[effectiveView] && typeof views[effectiveView] === "object")
+      ? views[effectiveView]
+      : readViewCtx(base);  // semilla desde legacy en la primera escritura
+    views[effectiveView] = { ...cur, ...patch };
+    return { ...base, views };
+  };
+
   const [headerEdit, setHeaderEdit] = useState({});  // patch pendiente
   const [headerSaving, setHeaderSaving] = useState(false);
   const [headerError, setHeaderError] = useState(null);
@@ -176,7 +206,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // (Antes eran siempre null y no se persistían: editar IVA/DAI/Ley no se
   //  guardaba y al recargar volvía al default NCM. Fix sprint 2026-06-03.)
   const _initRate = (k) => {
-    const v = transfer?.context_data?.custom_rates?.[k];
+    const v = readViewCtx(transfer?.context_data)?.custom_rates?.[k];
     return v !== undefined && v !== null ? Number(v) : null;
   };
   const [customDaiRate, setCustomDaiRate] = useState(() => _initRate("dai"));
@@ -184,38 +214,28 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   const [customIvaRate, setCustomIvaRate] = useState(() => _initRate("iva"));
 
   // Line overrides states
-  const [lineOverrides, setLineOverrides] = useState(() => transfer?.context_data?.line_overrides || {});
+  const [lineOverrides, setLineOverrides] = useState(() => readViewCtx(transfer?.context_data)?.line_overrides || {});
   const [editingOverrides, setEditingOverrides] = useState({});
-  const [customTaxes, setCustomTaxes] = useState(() => transfer?.context_data?.custom_taxes || []);
+  const [customTaxes, setCustomTaxes] = useState(() => readViewCtx(transfer?.context_data)?.custom_taxes || []);
 
-  // Sync state with transfer prop updates
+  // Sync state with transfer prop updates Y con el cambio de vista activa.
+  // Al togglear MWT↔Cliente re-hidratamos overrides/tasas del bucket de
+  // esa vista (cada vista guarda sus propios valores).
   useEffect(() => {
-    if (transfer?.context_data?.line_overrides) {
-      setLineOverrides(transfer.context_data.line_overrides);
-    } else {
-      setLineOverrides({});
-    }
-    if (transfer?.context_data?.custom_taxes) {
-      setCustomTaxes(transfer.context_data.custom_taxes);
-    } else {
-      setCustomTaxes([]);
-    }
-    // Re-hidratar tasas custom tras un re-fetch del padre.
-    const cr = transfer?.context_data?.custom_rates;
+    const b = readViewCtx(transfer?.context_data);
+    setLineOverrides(b?.line_overrides || {});
+    setCustomTaxes(b?.custom_taxes || []);
+    const cr = b?.custom_rates;
     setCustomDaiRate(cr?.dai !== undefined && cr?.dai !== null ? Number(cr.dai) : null);
     setCustomLeyRate(cr?.ley !== undefined && cr?.ley !== null ? Number(cr.ley) : null);
     setCustomIvaRate(cr?.iva !== undefined && cr?.iva !== null ? Number(cr.iva) : null);
-  }, [transfer]);
+  }, [transfer, effectiveView]);
 
   // Persistir overrides in context_data via PATCH
   const persistLineOverrides = useCallback(async (newOverrides) => {
     if (!transferId) return;
     try {
-      const currentCtx = transfer?.context_data || {};
-      const nextCtx = {
-        ...currentCtx,
-        line_overrides: newOverrides,
-      };
+      const nextCtx = writeViewCtx(transfer?.context_data, { line_overrides: newOverrides });
       await transferenciasApi.update(transferId, { context_data: nextCtx });
       onLiquidated?.();
     } catch (e) {
@@ -224,17 +244,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         + (e?.body?.detail || e?.message || "error")
       );
     }
-  }, [transferId, transfer, lang, onLiquidated]);
+  }, [transferId, transfer, effectiveView, lang, onLiquidated]);
 
   // Persistir custom taxes/costs via PATCH
   const persistCustomTaxes = useCallback(async (nextTaxes) => {
     if (!transferId) return;
     try {
-      const currentCtx = transfer?.context_data || {};
-      const nextCtx = {
-        ...currentCtx,
-        custom_taxes: nextTaxes,
-      };
+      const nextCtx = writeViewCtx(transfer?.context_data, { custom_taxes: nextTaxes });
       await transferenciasApi.update(transferId, { context_data: nextCtx });
       onLiquidated?.();
     } catch (e) {
@@ -243,22 +259,20 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         + (e?.body?.detail || e?.message || "error")
       );
     }
-  }, [transferId, transfer, lang, onLiquidated]);
+  }, [transferId, transfer, effectiveView, lang, onLiquidated]);
 
   // Persistir tasas custom (DAI / Ley 6946 / IVA) en context_data.custom_rates.
   // null = "usar default NCM". Se llama en onBlur de cada input de tasa/monto.
   const persistCustomRates = useCallback(async (next = {}) => {
     if (!transferId) return;
     try {
-      const currentCtx = transfer?.context_data || {};
-      const nextCtx = {
-        ...currentCtx,
+      const nextCtx = writeViewCtx(transfer?.context_data, {
         custom_rates: {
           dai: next.dai !== undefined ? next.dai : customDaiRate,
           ley: next.ley !== undefined ? next.ley : customLeyRate,
           iva: next.iva !== undefined ? next.iva : customIvaRate,
         },
-      };
+      });
       await transferenciasApi.update(transferId, { context_data: nextCtx });
       onLiquidated?.();
     } catch (e) {
@@ -267,17 +281,26 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         + (e?.body?.detail || e?.message || "error")
       );
     }
-  }, [transferId, transfer, customDaiRate, customLeyRate, customIvaRate, lang, onLiquidated]);
+  }, [transferId, transfer, effectiveView, customDaiRate, customLeyRate, customIvaRate, lang, onLiquidated]);
+
+  // Sprint 2026-06-03 — costos visibles según la vista activa. Cada
+  // CostLine pertenece a una vista (price_view). Las filas legacy sin
+  // price_view se tratan como 'MWT'. El CRUD opera sobre `costLines`
+  // (lista cruda); el cálculo y el render usan `viewCostLines`.
+  const viewCostLines = useMemo(
+    () => costLines.filter((c) => String(c.price_view || "MWT") === effectiveView),
+    [costLines, effectiveView]
+  );
 
   // ── Cálculo en vivo del preview (sin pegarle al backend cada keystroke) ──
   const livePreview = useMemo(() => {
     const lineas = transfer?.lines || transfer?.lineas || [];
 
-    // 1. Identificar costos de flete, seguro y otros costos de costLines
-    const freight = costLines.reduce((a, c) => a + (KIND_FREIGHT.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
-    const insurance = costLines.reduce((a, c) => a + (KIND_INSURANCE.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
+    // 1. Identificar costos de flete, seguro y otros costos de viewCostLines
+    const freight = viewCostLines.reduce((a, c) => a + (KIND_FREIGHT.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
+    const insurance = viewCostLines.reduce((a, c) => a + (KIND_INSURANCE.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
     const extraTotal = freight + insurance;
-    const destTotal = costLines.reduce((a, c) => {
+    const destTotal = viewCostLines.reduce((a, c) => {
       const k = String(c.kind || "").toUpperCase();
       if (!KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k)) {
         return a + Number(c.amount || 0) * Number(c.fx_to_usd || 1);
@@ -408,7 +431,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       leyRate: customLeyRate !== null ? customLeyRate : 0.01,
       ivaRate: customIvaRate !== null ? customIvaRate : 0.13,
     };
-  }, [transfer, costLines, viewerIsMwt, customDaiRate, customLeyRate, customIvaRate, lineOverrides, customTaxes]);
+  }, [transfer, viewCostLines, effectiveView, viewerIsMwt, customDaiRate, customLeyRate, customIvaRate, lineOverrides, customTaxes]);
 
   // Sku distribution helpers
   const distributeSkuOverride = useCallback((sku, field, totalValue) => {
@@ -696,6 +719,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         kind: "OTRO", label: "", amount: 0, currency: "USD",
         fx_to_usd: 1, source: "MANUAL",
         scope_json: extra.scope || null,
+        price_view: effectiveView,   // el costo nace en la vista activa
       });
       setCostLines((prev) => [...prev, created]);
     } catch (e) { setError(e?.message || "create_failed"); }
@@ -718,6 +742,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
           fx_to_usd:      Number(c.fx_to_usd) || 1,
           source:         c.source || "MANUAL",
           scope_json:     c.scope_json || null,
+          price_view:     c.price_view || effectiveView,
         });
         setCostLines((prev) => prev.map((x) => x.id === c.id ? created : x));
       } else {
@@ -1131,7 +1156,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
           </motion.div>
         )}
 
-        {costLines.length === 0 ? (
+        {viewCostLines.length === 0 ? (
           <div className="caption" style={{ color: "var(--text-tertiary)", padding: 18, textAlign: "center" }}>
             {lang === "es"
               ? "Sin costos registrados. Agregá flete, aranceles o seguros para que el motor calcule el landed cost."
@@ -1157,7 +1182,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                 </tr>
               </thead>
               <tbody>
-                {costLines.map((c) => {
+                {viewCostLines.map((c) => {
                   const usd = Number(c.amount || 0) * Number(c.fx_to_usd || 1);
                   const isOcr = c.source === "OCR_DUA";
                   return (
@@ -1351,13 +1376,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           <input className="input tabular-nums" type="number" step="0.01" min="0"
                                  style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
                                  value={(() => {
-                                   const c = costLines.find(x => KIND_FREIGHT.has(String(x.kind || "").toUpperCase()));
+                                   const c = viewCostLines.find(x => KIND_FREIGHT.has(String(x.kind || "").toUpperCase()));
                                    return c ? c.amount : "";
                                  })()}
                                  placeholder="0.00"
                                  onChange={(e) => {
                                    const val = e.target.value;
-                                   const c = costLines.find(x => KIND_FREIGHT.has(String(x.kind || "").toUpperCase()));
+                                   const c = viewCostLines.find(x => KIND_FREIGHT.has(String(x.kind || "").toUpperCase()));
                                    if (c) {
                                      updateCost(c.id, { amount: val });
                                    } else {
@@ -1374,7 +1399,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                    }
                                  }}
                                  onBlur={() => {
-                                   const target = costLines.find(x => KIND_FREIGHT.has(String(x.kind || "").toUpperCase()));
+                                   const target = viewCostLines.find(x => KIND_FREIGHT.has(String(x.kind || "").toUpperCase()));
                                    if (target) {
                                      persistCost(target);
                                    }
@@ -1398,13 +1423,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           <input className="input tabular-nums" type="number" step="0.01" min="0"
                                  style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
                                  value={(() => {
-                                   const c = costLines.find(x => KIND_INSURANCE.has(String(x.kind || "").toUpperCase()));
+                                   const c = viewCostLines.find(x => KIND_INSURANCE.has(String(x.kind || "").toUpperCase()));
                                    return c ? c.amount : "";
                                  })()}
                                  placeholder="0.00"
                                  onChange={(e) => {
                                    const val = e.target.value;
-                                   const c = costLines.find(x => KIND_INSURANCE.has(String(x.kind || "").toUpperCase()));
+                                   const c = viewCostLines.find(x => KIND_INSURANCE.has(String(x.kind || "").toUpperCase()));
                                    if (c) {
                                      updateCost(c.id, { amount: val });
                                    } else {
@@ -1421,7 +1446,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                    }
                                  }}
                                  onBlur={() => {
-                                   const target = costLines.find(x => KIND_INSURANCE.has(String(x.kind || "").toUpperCase()));
+                                   const target = viewCostLines.find(x => KIND_INSURANCE.has(String(x.kind || "").toUpperCase()));
                                    if (target) {
                                      persistCost(target);
                                    }
@@ -1654,7 +1679,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.daiTotal + livePreview.leyTotal + livePreview.ivaTotal + livePreview.customTaxesSum)}</td>
                     <td></td>
                   </tr>
-                  {costLines.filter(c => {
+                  {viewCostLines.filter(c => {
                     const k = String(c.kind || "").toUpperCase();
                     return !KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k);
                   }).map((c, idx) => (
@@ -1683,7 +1708,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     </tr>
                   ))}
                   {customTaxes.filter(x => x.type === "COST").map((x, idx) => {
-                    const rowNum = 7 + costLines.filter(c => {
+                    const rowNum = 7 + viewCostLines.filter(c => {
                       const k = String(c.kind || "").toUpperCase();
                       return !KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k);
                     }).length + idx;
