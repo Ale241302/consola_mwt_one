@@ -755,37 +755,42 @@ export default function AddSAPConfirmationDrawer({
                 </div>
               </div>
 
-              {/* Sprint 2026-05-06 · sap_id y fecha_fabricacion se extraen
-                  del Excel en /analyze-sap-confirmation/. Los chips read-only
-                  SOLO se muestran cuando el analysis ya devolvió valores
-                  reales — antes muestra solo el dropzone para evitar
-                  confundir al usuario con el todayISO() default. */}
-              {!isEditMode && analysis && (analysis.sap_id || analysis.fecha_fabricacion) && (
-                <div className="sap-form-grid" style={{ marginBottom: 8 }}>
-                  {analysis.sap_id && (
-                    <div className="sap-field">
-                      <span className="sap-label">
-                        {lang === "es" ? "Número SAP detectado" : "Detected SAP number"}
-                      </span>
-                      <div className="input mono" style={{
-                        background: 'var(--surface-alt, #F1F4F8)',
-                        color: 'var(--text-primary)',
-                        cursor: 'default',
-                      }} title={lang === 'es' ? 'Leído del Excel (col Documento de vendas)' : 'Read from Excel (Sales document column)'}>
-                        {String(analysis.sap_id)}
-                      </div>
+              <div className="sap-form-grid" style={{ marginBottom: 8 }}>
+                <div className="sap-field">
+                  <span className="sap-label">
+                    {lang === "es" ? "Número SAP (Marluvas)" : "SAP Number (Marluvas)"}
+                    <span className="sap-req">*</span>
+                  </span>
+                  {!isEditMode && analysis?.sap_id ? (
+                    <div className="input mono" style={{
+                      background: 'var(--surface-alt, #F1F4F8)',
+                      color: 'var(--text-primary)',
+                      cursor: 'default',
+                    }} title={lang === 'es' ? 'Leído del Excel' : 'Read from Excel'}>
+                      {String(analysis.sap_id)}
                     </div>
+                  ) : (
+                    <input
+                      className="input mono"
+                      placeholder="SAP-202600123"
+                      value={sapId}
+                      onChange={(e) => setSapId(e.target.value)}
+                    />
                   )}
-                  {analysis.fecha_fabricacion && (
-                    <div className="sap-field">
-                      <span className="sap-label">
-                        {lang === "es" ? "Fecha de Registro detectada" : "Detected registration date"}
-                      </span>
+                </div>
+
+                <div className="sap-field">
+                  <span className="sap-label">
+                    {lang === "es" ? "Fecha de Registro" : "Registration Date"}
+                    <span className="sap-req">*</span>
+                  </span>
+                  {!isEditMode && analysis?.fecha_fabricacion ? (
+                    <>
                       <div className="input tabular-nums" style={{
                         background: 'var(--surface-alt, #F1F4F8)',
                         color: 'var(--text-primary)',
                         cursor: 'default',
-                      }} title={lang === 'es' ? 'Leído del Excel (col Data do documento)' : 'Read from Excel (Document date column)'}>
+                      }} title={lang === 'es' ? 'Leído del Excel' : 'Read from Excel'}>
                         {String(analysis.fecha_fabricacion).slice(0, 10)}
                       </div>
                       <span className="micro text-sec" style={{ marginTop: 4 }}>
@@ -793,59 +798,26 @@ export default function AddSAPConfirmationDrawer({
                           ? "Punto de partida del ETA proyectado."
                           : "Starting point of the projected ETA."}
                       </span>
-                    </div>
-                  )}
-                  {!analysis.fecha_fabricacion && (
-                    <div className="sap-field">
-                      <span className="sap-label" style={{ color: 'var(--warning, #B45309)' }}>
-                        {lang === "es" ? "Fecha de Registro (manual)" : "Registration Date (manual)"}
-                        <span className="sap-req">*</span>
-                      </span>
+                    </>
+                  ) : (
+                    <>
                       <input
                         type="date"
                         className="input tabular-nums"
                         value={fechaFab}
                         onChange={(e) => setFechaFab(e.target.value)}
                       />
-                      <span className="micro text-sec" style={{ marginTop: 4, color: 'var(--warning, #B45309)' }}>
-                        {lang === "es"
-                          ? "El Excel no incluyó columna 'Data do documento' — completala manualmente."
-                          : "The Excel did not include 'Data do documento' — fill manually."}
-                      </span>
-                    </div>
+                      {!isEditMode && analysis && !analysis.fecha_fabricacion && (
+                        <span className="micro text-sec" style={{ marginTop: 4, color: 'var(--warning, #B45309)' }}>
+                          {lang === "es"
+                            ? "El Excel no incluyó columna 'Data do documento' — completala manualmente."
+                            : "The Excel did not include 'Data do documento' — fill manually."}
+                        </span>
+                      )}
+                    </>
                   )}
                 </div>
-              )}
-
-              {/* En edit mode (upsert) sí permitimos override manual. */}
-              {isEditMode && (
-                <div className="sap-form-grid">
-                  <label className="sap-field">
-                    <span className="sap-label">
-                      {lang === "es" ? "Número SAP (Marluvas)" : "SAP Number (Marluvas)"}
-                      <span className="sap-req">*</span>
-                    </span>
-                    <input
-                      className="input mono"
-                      placeholder="SAP-202600123"
-                      value={sapId}
-                      onChange={(e) => setSapId(e.target.value)}
-                    />
-                  </label>
-                  <label className="sap-field">
-                    <span className="sap-label">
-                      {lang === "es" ? "Fecha de Registro" : "Registration Date"}
-                      <span className="sap-req">*</span>
-                    </span>
-                    <input
-                      type="date"
-                      className="input tabular-nums"
-                      value={fechaFab}
-                      onChange={(e) => setFechaFab(e.target.value)}
-                    />
-                  </label>
-                </div>
-              )}
+              </div>
 
               {/* Dropzone */}
               <div
@@ -876,8 +848,8 @@ export default function AddSAPConfirmationDrawer({
                     </div>
                     <div className="caption">
                       {lang === "es"
-                        ? "PDF · XLSX · XLS · CSV · máx. 10MB · arrastrá o hacé click"
-                        : "PDF · XLSX · XLS · CSV · max 10MB · drag or click"}
+                        ? "(Opcional) PDF · XLSX · XLS · CSV · máx. 10MB · arrastrá o hacé click"
+                        : "(Optional) PDF · XLSX · XLS · CSV · max 10MB · drag or click"}
                     </div>
                   </>
                 ) : (
