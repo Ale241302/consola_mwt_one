@@ -206,7 +206,7 @@ export default function AddSAPConfirmationDrawer({
   const isEditMode = !!existingSap;
   // ───── state ─────
   const [sapId, setSapId]                 = useState("");
-  const [fechaFab, setFechaFab]           = useState(todayISO());
+  const [fechaFab, setFechaFab]           = useState("");
   const [file, setFile]                   = useState(null);
   const [fileError, setFileError]         = useState(null);
   const [confirmedQtys, setConfirmedQtys] = useState({});
@@ -262,7 +262,7 @@ export default function AddSAPConfirmationDrawer({
 
     if (isEditMode && existingSap) {
       setSapId(existingSap.sap_id || "");
-      setFechaFab(existingSap.fecha_fabricacion || todayISO());
+      setFechaFab(existingSap.fecha_fabricacion || "");
       const ids = new Set(existingSap.line_ids || []);
       setAddedLineIds(ids);
       const qtys = {};
@@ -272,7 +272,7 @@ export default function AddSAPConfirmationDrawer({
       setConfirmedQtys(qtys);
     } else {
       setSapId("");
-      setFechaFab(todayISO());
+      setFechaFab("");
       setAddedLineIds(new Set());
       setConfirmedQtys({});
     }
@@ -338,7 +338,6 @@ export default function AddSAPConfirmationDrawer({
 
   const formValid = useMemo(() => {
     if (!sapId.trim()) return false;
-    if (!fechaFab) return false;
     if (!expediente?.id) return false;
     // al menos una línea agregada con qty confirmada > 0
     if (addedLines.length === 0) return false;
@@ -782,7 +781,6 @@ export default function AddSAPConfirmationDrawer({
                 <div className="sap-field">
                   <span className="sap-label">
                     {lang === "es" ? "Fecha de Registro" : "Registration Date"}
-                    <span className="sap-req">*</span>
                   </span>
                   {!isEditMode && analysis?.fecha_fabricacion ? (
                     <>

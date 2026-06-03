@@ -1200,13 +1200,13 @@ class ExpedienteViewSet(viewsets.ViewSet):
 
         if not sap_id:
             return Response({"detail": "sap_id requerido"}, status=400)
-        if not fecha_fabricacion:
-            return Response({"detail": "fecha_fabricacion requerida"}, status=400)
 
-        try:
-            fabricacion_dt = datetime.fromisoformat(fecha_fabricacion).date()
-        except ValueError:
-            return Response({"detail": "fecha_fabricacion debe ser YYYY-MM-DD"}, status=400)
+        fabricacion_dt = None
+        if fecha_fabricacion:
+            try:
+                fabricacion_dt = datetime.fromisoformat(fecha_fabricacion).date()
+            except ValueError:
+                return Response({"detail": "fecha_fabricacion debe ser YYYY-MM-DD"}, status=400)
 
         # ── Validaciones de negocio ─────────────────────
         try:
