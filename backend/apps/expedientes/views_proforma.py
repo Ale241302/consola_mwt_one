@@ -18,6 +18,7 @@ Reglas:
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 
@@ -420,6 +421,51 @@ def factura_payload(request, expediente_id):
     except Exception:
         log.exception("[factura_payload] transfer costs lookup failed id=%s", pid)
 
+    # 3b) context_data de la transferencia ligada (vista dual MWT/Cliente).
+    #     buildTransferInvoiceHtml lee context_data.views[audience] para
+    #     aplicar tasas (DAI/Ley/IVA), overrides de línea e impuestos custom
+    #     guardados por vista. Sin esto la factura del expediente ignoraría
+    #     las modificaciones hechas en el detalle de la transferencia.
+    trf_id = None
+    trf_codigo = None
+    trf_legal = None
+    trf_tracking = ""
+    trf_context_data = {}
+    try:
+        with connection.cursor() as c:
+            c.execute(
+                """
+                SELECT t.id, t.codigo, t.legal_context,
+                       COALESCE(t.ref_tracking, ''), t.context_data
+                FROM transfers.transferencia t
+                WHERE t.id IN (
+                    SELECT DISTINCT transferencia_id
+                    FROM inventario.expediente_nodo_assignment
+                    WHERE expediente_id = ANY(%(ids)s::uuid[])
+                      AND transferencia_id IS NOT NULL
+                      AND is_active = TRUE
+                )
+                ORDER BY t.created_at DESC
+                LIMIT 1
+                """,
+                {"ids": ids_for_costs},
+            )
+            tr = c.fetchone()
+        if tr:
+            trf_id = str(tr[0]) if tr[0] else None
+            trf_codigo = tr[1]
+            trf_legal = tr[2]
+            trf_tracking = tr[3] or ""
+            cd = tr[4]
+            if isinstance(cd, str):
+                try:
+                    cd = json.loads(cd)
+                except (ValueError, TypeError):
+                    cd = {}
+            trf_context_data = cd if isinstance(cd, dict) else {}
+    except Exception:
+        log.exception("[factura_payload] transfer context_data lookup failed id=%s", pid)
+
     # 4) Construir líneas + totales.
     lineas = []
     units = 0
@@ -463,14 +509,15 @@ def factura_payload(request, expediente_id):
         "shipping": _sp.get("shipping") or {},
         "packing": _sp.get("packing") or {},
         "transferencia": {
-            "id":             pid,
-            "codigo":         codigo,
-            "legal_context":  "NATIONALIZATION",
+            "id":             trf_id or pid,
+            "codigo":         trf_codigo or codigo,
+            "legal_context":  trf_legal or "NATIONALIZATION",
             "estado":         estado,
-            "ref_tracking":   "",
+            "ref_tracking":   trf_tracking,
             "value_usd":      fob,
             "total_cost_usd": extra,
-            "context_data":   {},
+            # context_data real de la transferencia → vista dual MWT/Cliente.
+            "context_data":   trf_context_data,
         },
         "operating_company": {
             "operated_by_mwt":         operated_by_mwt,
