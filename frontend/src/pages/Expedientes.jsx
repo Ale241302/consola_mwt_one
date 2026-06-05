@@ -45,6 +45,9 @@ import ScreenPipeline from "./Pipeline.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 // Sprint 2026-05-17 · Celda REF con chips role-aware (proforma / OC / SAP).
 import RefCell from "../components/expedientes/RefCell.jsx";
+// Sprint 2026-06-04 · Export de expedientes (modal + .html resumen SKU/talla/qty).
+import ExportExpedientesModal from "../components/expedientes/ExportExpedientesModal.jsx";
+import { runExpedienteExport } from "../lib/expedienteExport.js";
 
 // ── Mapeo backend → UI ──────── (Sprint 2026-05-03 v4)
 function mapExpedienteFromApi(r) {
@@ -308,6 +311,48 @@ export default function ScreenExpedientes() {
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleteErr, setDeleteErr] = useState(null);
 
+  // ── Export (sprint 2026-06-04) ─────────────────────────────
+  // Modal con filtros NO obligatorios (cliente / estado / expediente) +
+  // audiencia (cliente vs admin) → genera un .html resumen SKU/talla/qty.
+  const [exportOpen, setExportOpen]   = useState(false);
+  const [exporting, setExporting]     = useState(false);
+  const [exportErr, setExportErr]     = useState(null);
+  const [clientOpts, setClientOpts]   = useState([]); // [{id, name}]
+
+  // Catálogo de clientes para el selector del modal (nombre legible).
+  useEffect(() => {
+    let alive = true;
+    clientesApi.list()
+      .then((rows) => {
+        if (!alive) return;
+        const arr = Array.isArray(rows) ? rows : (rows?.results || []);
+        setClientOpts(arr.map((c) => ({
+          id: c.id,
+          name: c.razon_social || c.nombre_comercial || c.name || c.nombre || c.id,
+        })));
+      })
+      .catch(() => { /* degradación: selector cliente queda en "Todos" */ });
+    return () => { alive = false; };
+  }, []);
+
+  const handleExportConfirm = useCallback(async (opts) => {
+    setExporting(true);
+    setExportErr(null);
+    try {
+      await runExpedienteExport({
+        expedientes: apiExpedientes,
+        audience: opts.audience,
+        lang,
+        filters: opts,
+      });
+      setExportOpen(false);
+    } catch (e) {
+      setExportErr(e?.message || String(e));
+    } finally {
+      setExporting(false);
+    }
+  }, [apiExpedientes, lang]);
+
   const toggleOne = (uuid) => {
     setSelected(prev => {
       const next = new Set(prev);
@@ -488,7 +533,7 @@ export default function ScreenExpedientes() {
           <div className="page-subtitle">{pageSubtitle}</div>
         </div>
         <div className="flex gap-2">
-          <button className="btn btn-secondary"><IconDownload size={14}/>{tr(lang,'export')}</button>
+          <button className="btn btn-secondary" onClick={() => { setExportErr(null); setExportOpen(true); }}><IconDownload size={14}/>{tr(lang,'export')}</button>
           {/* "+ Crear Expediente" → capability create_expediente (CEO-ONLY).
               ART-01 se origina siempre desde MWT-Factory, nunca desde Portal B2B. */}
           {can('create_expediente') && (
@@ -1117,6 +1162,20 @@ export default function ScreenExpedientes() {
         </div>
       )}
       </>)}{/* fin del bloque viewMode === 'table' */}
+
+      {/* Sprint 2026-06-04 · Modal de exportación de expedientes (.html). */}
+      <ExportExpedientesModal
+        open={exportOpen}
+        lang={lang}
+        isAdmin={isAdmin}
+        clients={clientOpts.filter((c) => apiExpedientes.some((e) => e.client_id === c.id))}
+        estados={STATES.map((s) => ({ code: s, label: tr(lang, s) }))}
+        expedientes={apiExpedientes}
+        loading={exporting}
+        error={exportErr || ""}
+        onConfirm={handleExportConfirm}
+        onClose={() => { if (!exporting) { setExportOpen(false); setExportErr(null); } }}
+      />
 
       {/* Sprint 2026-05-03 v4 · Modal de confirmación de bulk delete.
           Replica el patrón exacto de Productos.jsx:
