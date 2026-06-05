@@ -27,7 +27,7 @@ import {
 import {
   TRANSFERS, TRANSFER_STATUS_META, LEGAL_CONTEXT_META, getTransferTotals,
 } from "../data/mockData.js";
-import { transferenciasApi, transferLineasApi, financePaymentsApi } from "../lib/api.js";
+import { transferenciasApi, transferLineasApi, financePaymentsApi, fxApi } from "../lib/api.js";
 // Sprint Pagos Transfers — wizard de registro de pago.
 import RegisterPaymentWizard from "../components/finance/RegisterPaymentWizard.jsx";
 import PaymentDetailDrawer   from "../components/finance/PaymentDetailDrawer.jsx";
@@ -280,7 +280,10 @@ export default function ScreenTransferDetail() {
     setNotice(null);
     try {
       const payload = await transferenciasApi.action("invoice_payload", transferId);
-      const html = buildTransferInvoiceHtml({ payload, audience, lang });
+      // TC USD→CRC en vivo para la columna Monto ₡ (si falla, factura sólo USD).
+      let crcRate = 0;
+      try { const fx = await fxApi.usdCrc(); if (fx && fx.rate) crcRate = Number(fx.rate); } catch (e) { /* sin TC */ }
+      const html = buildTransferInvoiceHtml({ payload, audience, lang, crcRate });
       downloadTransferInvoice(html, invoiceFilename(payload, audience));
       setRecipientModalOpen(false);
     } catch (e) {

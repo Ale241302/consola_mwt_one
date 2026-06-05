@@ -135,7 +135,9 @@ function fmtDate(s, lang) {
   });
 }
 
-function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket = {}) {
+function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket = {}, crcRate = 0) {
+  // Conversión a colones (CRC) en vivo. Si no hay tasa, columna muestra "—".
+  const crc = (v) => (crcRate > 0 ? "₡" + Math.round(Number(v || 0) * crcRate).toLocaleString("es-CR") : "&mdash;");
   // Tasas mostradas según la vista (custom_rates) con fallback a NCM.
   const cr = bucket.custom_rates || {};
   const daiPct = ((cr.dai != null ? Number(cr.dai) : 0.14) * 100).toFixed(2);
@@ -165,6 +167,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
           <th>${lang === "es" ? "Base" : "Basis"}</th>
           <th class="r">${lang === "es" ? "Tasa" : "Rate"}</th>
           <th class="r">${lang === "es" ? "Monto USD" : "Amount USD"}</th>
+          <th class="r">${lang === "es" ? "Monto ₡" : "Amount ₡"}</th>
           <th>${lang === "es" ? "Notas" : "Notes"}</th>
         </tr>
       </thead>
@@ -175,6 +178,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
           <td class="m">${esc(refFob)}</td>
           <td class="r">&mdash;</td>
           <td class="r">${usd(n.totals.goods)}</td>
+          <td class="r" style="color:var(--t2);">${crc(n.totals.goods)}</td>
           <td style="font-size:10px;color:var(--t2);">${n.totals.qty} pares</td>
         </tr>
         <tr>
@@ -183,6 +187,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
           <td class="m">AWB / BL</td>
           <td class="r">&mdash;</td>
           <td class="r">${usd(freight)}</td>
+          <td class="r" style="color:var(--t2);">${crc(freight)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
         </tr>
         <tr>
@@ -191,11 +196,13 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
           <td class="m">Factura</td>
           <td class="r">&mdash;</td>
           <td class="r">${usd(insurance)}</td>
+          <td class="r" style="color:var(--t2);">${crc(insurance)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
         </tr>
         <tr class="trow">
           <td colspan="4"><strong>CIF (base imponible aduana)</strong></td>
           <td class="r"><strong>${usd(n.totals.cif)}</strong></td>
+          <td class="r"><strong>${crc(n.totals.cif)}</strong></td>
           <td></td>
         </tr>`;
 
@@ -213,6 +220,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
           <td class="m">CIF</td>
           <td class="r">${daiPct}%</td>
           <td class="r">${usd(daiT)}</td>
+          <td class="r" style="color:var(--t2);">${crc(daiT)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Régimen general calzado" : "General tariff rate"}</td>
         </tr>`;
   if (!excluded.ley) html += `
@@ -222,6 +230,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
           <td class="m">CIF</td>
           <td class="r">${leyPct}%</td>
           <td class="r">${usd(leyT)}</td>
+          <td class="r" style="color:var(--t2);">${crc(leyT)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Tributo fijo" : "Fixed tax"}</td>
         </tr>`;
   if (!excluded.iva) html += `
@@ -231,6 +240,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
           <td class="m">CIF</td>
           <td class="r">${ivaPct}%</td>
           <td class="r">${usd(ivaT)}</td>
+          <td class="r" style="color:var(--t2);">${crc(ivaT)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Acreditable — crédito fiscal" : "Creditable — tax credit"}</td>
         </tr>`;
 
@@ -256,6 +266,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
         <td class="m">CIF</td>
         <td class="r">${rateCell}</td>
         <td class="r">${usd(amount)}</td>
+        <td class="r" style="color:var(--t2);">${crc(amount)}</td>
         <td style="font-size:10px;color:var(--t2);">${esc(notes)}</td>
       </tr>`;
   });
@@ -266,6 +277,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
         <tr class="trow">
           <td colspan="4"><strong>${lang === "es" ? "Subtotal tributos+timbres (con IVA)" : "Subtotal taxes+stamps (incl. VAT)"}</strong></td>
           <td class="r"><strong>${usd(subtotalTaxes)}</strong></td>
+          <td class="r"><strong>${crc(subtotalTaxes)}</strong></td>
           <td></td>
         </tr>`;
 
@@ -278,6 +290,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
         <td class="m">${esc(c.kind || "—")}</td>
         <td class="r">&mdash;</td>
         <td class="r">${usd(c.amount_usd)}</td>
+        <td class="r" style="color:var(--t2);">${crc(c.amount_usd)}</td>
         <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Costo en destino" : "Destination cost"}</td>
       </tr>`;
   });
@@ -293,6 +306,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
         <td class="m">OTRO</td>
         <td class="r">&mdash;</td>
         <td class="r">${usd(amt)}</td>
+        <td class="r" style="color:var(--t2);">${crc(amt)}</td>
         <td style="font-size:10px;color:var(--t2);">${esc(x.notes || (lang === "es" ? "Costo en destino" : "Destination cost"))}</td>
       </tr>`;
   });
@@ -305,11 +319,13 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
         <tr class="trow">
           <td colspan="4"><strong>${lang === "es" ? "Subtotal costos destino" : "Subtotal destination costs"}</strong></td>
           <td class="r"><strong>${usd(destTot)}</strong></td>
+          <td class="r"><strong>${crc(destTot)}</strong></td>
           <td></td>
         </tr>
         <tr style="background:var(--t2);color:white;">
           <td colspan="4" style="padding:10px 12px;"><strong style="color:white;font-size:12px;">${lang === "es" ? "Total con IVA (incluye crédito fiscal)" : "Total incl. VAT (includes tax credit)"}</strong></td>
           <td class="r" style="padding:10px 12px;"><strong style="color:white;font-size:13px;">${usd(totalConIva)}</strong></td>
+          <td class="r" style="padding:10px 12px;"><strong style="color:white;font-size:13px;">${crc(totalConIva)}</strong></td>
           <td style="padding:10px 12px;color:rgba(255,255,255,.7);font-size:10px;">${lang === "es" ? "embarque completo" : "complete shipment"}</td>
         </tr>
         <tr style="background:var(--navy);color:white;">
@@ -319,6 +335,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
               : (lang === "es" ? "TOTAL SIN IVA — costo real de MWT" : "TOTAL EXCL. VAT — real MWT cost")
           }</strong></td>
           <td class="r" style="padding:12px;border-top:2px solid var(--navy);"><strong style="color:white;font-size:15px;">${usd(totalSinIva)}</strong></td>
+          <td class="r" style="padding:12px;border-top:2px solid var(--navy);"><strong style="color:var(--ice);font-size:14px;">${crc(totalSinIva)}</strong></td>
           <td style="padding:12px;border-top:2px solid var(--navy);color:var(--ice);font-size:10px;">${lang === "es" ? "ver $/par por línea" : "see $/pair by line"}</td>
         </tr>
       </tbody>
@@ -534,7 +551,7 @@ function lineQty(l) {
  * @param {('es'|'en')} [args.lang='es']
  * @returns {string} HTML autónomo
  */
-export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
+export function buildTransferInvoiceHtml({ payload, audience, lang = "es", crcRate = 0 }) {
   const t = (payload && payload.transferencia) || {};
   const oc = (payload && payload.operating_company) || {};
   const lineas = (payload && payload.lineas) || [];
@@ -849,7 +866,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es" }) {
         }</h3>
       </div>
       <div class="card-b" style="padding:0; overflow-x: auto;">
-        ${buildDetailedLiquidationTable(nacAud, costs, isClient, lang, t, viewBucket(t.context_data, audience))}
+        ${buildDetailedLiquidationTable(nacAud, costs, isClient, lang, t, viewBucket(t.context_data, audience), crcRate)}
       </div>
     </div>
 
