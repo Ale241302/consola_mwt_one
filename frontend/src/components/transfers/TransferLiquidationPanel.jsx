@@ -1509,6 +1509,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <th>{lang === "es" ? "Base" : "Basis"}</th>
                     <th style={{ textAlign: "right" }}>{lang === "es" ? "Tasa" : "Rate"}</th>
                     <th style={{ textAlign: "right" }}>{lang === "es" ? "Monto USD" : "Amount USD"}</th>
+                    <th style={{ textAlign: "right" }}>{lang === "es" ? "Monto ₡" : "Amount ₡"}</th>
                     <th>{lang === "es" ? "Notas" : "Notes"}</th>
                   </tr>
                 </thead>
@@ -1519,6 +1520,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td>{viewerIsMwt ? (lang === "es" ? "Factura Marluvas / pedido" : "Marluvas invoice / order") : (lang === "es" ? "Precio de la orden (precio cliente)" : "Order price (client price)")}</td>
                     <td style={{ textAlign: "right" }}>—</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.fobTotal) : "—"}</td>
                     <td style={{ color: "#64748B", fontSize: 11 }}>{livePreview.unitsTotal} {lang === "es" ? "pares" : "pairs"}</td>
                   </tr>
                   <tr>
@@ -1579,6 +1581,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         </span>
                       )}
                     </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.freight) : "—"}</td>
                     <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
                   </tr>
                   <tr>
@@ -1639,11 +1642,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         </span>
                       )}
                     </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.insurance) : "—"}</td>
                     <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
                   </tr>
                   <tr style={{ background: "rgba(11,30,58,0.02)", fontWeight: 700 }}>
                     <td colSpan={4}>CIF (base imponible aduana)</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.cifTotal)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>{crcRate > 0 ? fmtCrc(livePreview.cifTotal) : "—"}</td>
                     <td></td>
                   </tr>
                   {!excludedTaxes.dai && (
@@ -1707,6 +1712,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         </span>
                       )}
                     </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.daiTotal) : "—"}</td>
                     <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Régimen general calzado" : "General footwear regime"}</td>
                   </tr>
                   )}
@@ -1771,6 +1777,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         </span>
                       )}
                     </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.leyTotal) : "—"}</td>
                     <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Tributo fijo" : "Fixed tax"}</td>
                   </tr>
                   )}
@@ -1835,6 +1842,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         </span>
                       )}
                     </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.ivaTotal) : "—"}</td>
                     <td style={{ color: "#64748B", fontSize: 11, fontStyle: "italic" }}>
                       {lang === "es" ? "Acreditable — crédito fiscal (no suma)" : "Creditable — VAT credit (excluded)"}
                     </td>
@@ -1843,7 +1851,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   {(excludedTaxes.dai || excludedTaxes.ley || excludedTaxes.iva) && !isLiquidated && (
                     <tr>
                       <td></td>
-                      <td colSpan={5} style={{ fontSize: 11, color: "#64748B" }}>
+                      <td colSpan={6} style={{ fontSize: 11, color: "#64748B" }}>
                         {lang === "es" ? "Impuestos excluidos:" : "Excluded taxes:"}{" "}
                         {["dai", "ley", "iva"].filter(k => excludedTaxes[k]).map(k => k.toUpperCase()).join(", ")}
                         {" · "}
@@ -1925,6 +1933,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             </span>
                           )}
                         </td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(hasAmt ? Number(x.amount) : computed) : "—"}</td>
                         <td>
                           {isLiquidated ? (
                             <span style={{ color: "#64748B", fontSize: 11 }}>{x.notes || ""}</span>
@@ -1944,6 +1953,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   <tr style={{ background: "rgba(11,30,58,0.02)", fontWeight: 700 }}>
                     <td colSpan={4}>{lang === "es" ? "Subtotal impuestos (con IVA)" : "Subtotal taxes (incl. VAT)"}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.daiTotal + livePreview.leyTotal + livePreview.ivaTotal + livePreview.customTaxesSum)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>{crcRate > 0 ? fmtCrc(livePreview.daiTotal + livePreview.leyTotal + livePreview.ivaTotal + livePreview.customTaxesSum) : "—"}</td>
                     <td></td>
                   </tr>
                   {viewCostLines.filter(c => {
@@ -1981,6 +1991,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           </span>
                         )}
                       </td>
+                      <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(Number(c.amount || 0) * Number(c.fx_to_usd || 1)) : "—"}</td>
                       <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo en destino" : "Destination cost"}</td>
                     </tr>
                   ))}
@@ -2038,6 +2049,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             </span>
                           )}
                         </td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(Number(x.amount || 0)) : "—"}</td>
                         <td>
                           {isLiquidated ? (
                             <span style={{ color: "#64748B", fontSize: 11 }}>{x.notes || (lang === "es" ? "Costo en destino" : "Destination cost")}</span>
@@ -2057,6 +2069,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   <tr style={{ background: "rgba(11,30,58,0.02)", fontWeight: 700 }}>
                     <td colSpan={4}>{lang === "es" ? "Subtotal costos destino" : "Subtotal destination costs"}</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.destTotal + livePreview.customCostsSum)}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right" }}>{crcRate > 0 ? fmtCrc(livePreview.destTotal + livePreview.customCostsSum) : "—"}</td>
                     <td></td>
                   </tr>
                   <tr style={{ background: "var(--text-secondary, #475569)", color: "white", fontWeight: 700 }}>
@@ -2064,6 +2077,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>
                       ${fmt(livePreview.landedTotal + livePreview.ivaTotal)}
                     </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>{crcRate > 0 ? fmtCrc(livePreview.landedTotal + livePreview.ivaTotal) : "—"}</td>
                     <td style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>{lang === "es" ? "embarque completo" : "complete shipment"}</td>
                   </tr>
                   <tr style={{ background: "#0B1E3A", color: "white", fontWeight: 700 }}>
@@ -2075,6 +2089,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td className="tabular-nums" style={{ textAlign: "right", color: "#1DE394", fontSize: 14 }}>
                       ${fmt(livePreview.landedTotal)}
                     </td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "#1DE394", fontSize: 14 }}>{crcRate > 0 ? fmtCrc(livePreview.landedTotal) : "—"}</td>
                     <td style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>{lang === "es" ? "ver $/par por línea abajo" : "see $/pair by line below"}</td>
                   </tr>
                 </tbody>
