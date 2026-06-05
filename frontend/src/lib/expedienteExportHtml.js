@@ -255,6 +255,7 @@ function clientRuntime() {
   function fmt(d) { return d ? d.toISOString().slice(0, 10) : ""; }
   function addDays(d, n) { var x = new Date(d); x.setDate(x.getDate() + n); return x; }
   function shortD(d) { return d ? d.getDate() + " " + MES[d.getMonth()] : ""; }
+  function glab(x, txt) { return '<div class="glab' + (x > 80 ? " left" : "") + '" style="left:' + x + '%">' + esc(txt) + "</div>"; }
   function delivered(e) { return e.estado === "EN_DESTINO" || e.estado === "CERRADO"; }
 
   function etaOf(e) {
@@ -364,12 +365,13 @@ function clientRuntime() {
       dated.forEach(function (r) {
         var e = r.e, p = r.p, s = r.s, bar = "";
         if (s && p.date) {
-          var l = pct(s), w = Math.max(2, pct(p.date) - l);
+          var l = pct(s), end = pct(p.date), w = Math.max(2, end - l);
           var cls = p.done ? "done" : (p.est ? "est" : (e.modo === "Aereo" ? "aereo" : (e.modo === "Maritimo" ? "maritimo" : "est")));
-          bar += '<div class="gbar ' + cls + '" style="left:' + l + "%;width:" + w + '%">' + shortD(p.date) + (p.est ? " ~" : "") + "</div>";
+          bar += '<div class="gbar ' + cls + '" style="left:' + l + "%;width:" + w + '%"></div>';
+          bar += glab(end, shortD(p.date) + (p.est ? " ~" : ""));
         } else if (p.date) {
           var x = pct(p.date);
-          bar += '<div class="gdot" style="left:' + x + '%"></div><div class="gdotlab" style="left:' + x + '%">' + shortD(p.date) + "</div>";
+          bar += '<div class="gdot" style="left:' + x + '%"></div>' + glab(x, shortD(p.date));
         }
         html += '<div class="grow"><div class="glabel">Exp ' + esc(e.expediente) + " · " + fInt(e.volumen) + " prs · " + esc(e.operador) + '</div><div class="gtrack">' + bar + "</div></div>";
       });
@@ -557,7 +559,8 @@ select { font:inherit; border:1px solid #d2d8e0; border-radius:7px; padding:7px 
 .gbar.aereo { background:#1a7f48; } .gbar.maritimo { background:#1a6a8f; } .gbar.done { background:#2da44e; }
 .gbar.est { background:repeating-linear-gradient(45deg,#9aa3b0,#9aa3b0 5px,#b3bac4 5px,#b3bac4 10px); }
 .gdot { position:absolute; top:9px; width:12px; height:12px; border-radius:50%; background:#2da44e; border:2px solid #fff; box-shadow:0 0 0 1px #2da44e; }
-.gdotlab { position:absolute; top:6px; font-size:10px; font-weight:700; color:#2da44e; white-space:nowrap; transform:translateX(12px); }
+.glab { position:absolute; top:7px; font-size:10px; font-weight:700; color:#1c2430; white-space:nowrap; transform:translateX(9px); }
+.glab.left { transform:translateX(calc(-100% - 9px)); }
 .goverlay { position:absolute; left:200px; right:0; top:0; bottom:22px; pointer-events:none; }
 .gaxis { position:relative; height:18px; margin-left:200px; border-top:1px solid #e6e9ee; margin-top:4px; }
 .gtick { position:absolute; top:2px; font-size:9.5px; color:#8a93a0; transform:translateX(-50%); }
