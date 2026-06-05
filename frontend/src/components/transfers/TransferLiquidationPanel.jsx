@@ -227,6 +227,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   const [lineOverrides, setLineOverrides] = useState(() => readViewCtx(transfer?.context_data)?.line_overrides || {});
   const [editingOverrides, setEditingOverrides] = useState({});
   const [customTaxes, setCustomTaxes] = useState(() => readViewCtx(transfer?.context_data)?.custom_taxes || []);
+  // Impuestos núcleo excluidos (DAI/Ley/IVA) — por vista. Trash en el panel.
+  const [excludedTaxes, setExcludedTaxes] = useState(() => readViewCtx(transfer?.context_data)?.excluded || {});
 
   // Sync state with transfer prop updates Y con el cambio de vista activa.
   // Al togglear MWT↔Cliente re-hidratamos overrides/tasas del bucket de
@@ -235,6 +237,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     const b = readViewCtx(transfer?.context_data);
     setLineOverrides(b?.line_overrides || {});
     setCustomTaxes(b?.custom_taxes || []);
+    setExcludedTaxes(b?.excluded || {});
     const cr = b?.custom_rates;
     setCustomDaiRate(cr?.dai !== undefined && cr?.dai !== null ? Number(cr.dai) : null);
     setCustomLeyRate(cr?.ley !== undefined && cr?.ley !== null ? Number(cr.ley) : null);
@@ -245,6 +248,14 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // Contadores) por vista, sólo en NATIONALIZATION y una sola vez. Quedan como
   // filas TAX de monto fijo editables/eliminables; se reflejan en la factura.
   const seededRef = useRef({});
+  // País del nodo destino: los impuestos/timbres por defecto (DAI, Ley 6946,
+  // IVA, PROCOMER, tasas) son de Costa Rica. Para otros países los tributos
+  // son distintos → NO se siembran impuestos por defecto.
+  const destPais = String(
+    transfer?.destino_pais_iso2
+      || (String(transfer?.destino_label || "").toUpperCase().startsWith("CR") ? "CR" : "")
+  ).toUpperCase();
+  const isCR = destPais === "CR";
   useEffect(() => {
     if (!transferId) return;
     if (transfer?.liquidated_at) return;
@@ -254,19 +265,33 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     if ((b.custom_taxes || []).length) return;
     if (seededRef.current[effectiveView]) return;
     seededRef.current[effectiveView] = true;
-    const seeded = DEFAULT_TIMBRES.map((tb, i) => ({
-      id: "timbre-" + effectiveView + "-" + i,
-      type: "TAX", concept: tb.concept, amount: tb.amount, notes: "Timbre / tasa",
-    }));
-    setCustomTaxes(seeded);
-    (async () => {
-      try {
-        const nextCtx = writeViewCtx(transfer?.context_data, { custom_taxes: seeded, timbres_seeded: true });
-        await transferenciasApi.update(transferId, { context_data: nextCtx });
-        onLiquidated?.();
-      } catch (e) { /* siembra best-effort */ }
-    })();
-  }, [transfer, effectiveView, transferId]);
+    if (isCR) {
+      // Costa Rica → sembrar timbres/tasas estándar.
+      const seeded = DEFAULT_TIMBRES.map((tb, i) => ({
+        id: "timbre-" + effectiveView + "-" + i,
+        type: "TAX", concept: tb.concept, amount: tb.amount, notes: "Timbre / tasa",
+      }));
+      setCustomTaxes(seeded);
+      (async () => {
+        try {
+          const nextCtx = writeViewCtx(transfer?.context_data, { custom_taxes: seeded, timbres_seeded: true });
+          await transferenciasApi.update(transferId, { context_data: nextCtx });
+          onLiquidated?.();
+        } catch (e) { /* siembra best-effort */ }
+      })();
+    } else {
+      // Fuera de CR → sin impuestos por defecto (DAI/Ley/IVA excluidos).
+      const exc = { dai: true, ley: true, iva: true };
+      setExcludedTaxes(exc);
+      (async () => {
+        try {
+          const nextCtx = writeViewCtx(transfer?.context_data, { excluded: exc, timbres_seeded: true });
+          await transferenciasApi.update(transferId, { context_data: nextCtx });
+          onLiquidated?.();
+        } catch (e) { /* siembra best-effort */ }
+      })();
+    }
+  }, [transfer, effectiveView, transferId, isCR]);
 
   // Persistir overrides in context_data via PATCH
   const persistLineOverrides = useCallback(async (newOverrides) => {
@@ -293,6 +318,21 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     } catch (e) {
       setError(
         (lang === "es" ? "No se pudo actualizar los impuestos: " : "Could not update taxes: ")
+        + (e?.body?.detail || e?.message || "error")
+      );
+    }
+  }, [transferId, transfer, effectiveView, lang, onLiquidated]);
+
+  // Persistir exclusiones de impuestos núcleo (DAI/Ley/IVA) por vista.
+  const persistExcluded = useCallback(async (nextExcluded) => {
+    if (!transferId) return;
+    try {
+      const nextCtx = writeViewCtx(transfer?.context_data, { excluded: nextExcluded });
+      await transferenciasApi.update(transferId, { context_data: nextCtx });
+      onLiquidated?.();
+    } catch (e) {
+      setError(
+        (lang === "es" ? "No se pudo actualizar: " : "Could not update: ")
         + (e?.body?.detail || e?.message || "error")
       );
     }
@@ -392,9 +432,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       const leyRate = customLeyRate !== null ? customLeyRate : r.ley_6946;
       const ivaRate = customIvaRate !== null ? customIvaRate : r.iva;
 
-      const dai = override.dai !== undefined ? Number(override.dai) : (cif * daiRate);
-      const ley = override.ley !== undefined ? Number(override.ley) : (cif * leyRate);
-      const iva = cif * ivaRate;
+      const dai = excludedTaxes.dai ? 0 : (override.dai !== undefined ? Number(override.dai) : (cif * daiRate));
+      const ley = excludedTaxes.ley ? 0 : (override.ley !== undefined ? Number(override.ley) : (cif * leyRate));
+      const iva = excludedTaxes.iva ? 0 : (cif * ivaRate);
 
       // Custom taxes on CIF and custom costs prorated by pairs qty
       const lineCustomTaxesAmount = customTaxes.filter(x => x.type === "TAX").reduce((sum, tax) => {
@@ -473,7 +513,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       leyRate: customLeyRate !== null ? customLeyRate : 0.01,
       ivaRate: customIvaRate !== null ? customIvaRate : 0.13,
     };
-  }, [transfer, viewCostLines, effectiveView, viewerIsMwt, customDaiRate, customLeyRate, customIvaRate, lineOverrides, customTaxes]);
+  }, [transfer, viewCostLines, effectiveView, viewerIsMwt, customDaiRate, customLeyRate, customIvaRate, lineOverrides, customTaxes, excludedTaxes]);
 
   // Sku distribution helpers
   const distributeSkuOverride = useCallback((sku, field, totalValue) => {
@@ -1403,7 +1443,20 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td style={{ color: "#64748B", fontSize: 11 }}>{livePreview.unitsTotal} {lang === "es" ? "pares" : "pairs"}</td>
                   </tr>
                   <tr>
-                    <td>2</td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>2</span>
+                        {!isLiquidated && (() => {
+                          const c = viewCostLines.find(x => KIND_FREIGHT.has(String(x.kind || "").toUpperCase()));
+                          return c ? (
+                            <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar costo (sincroniza con sección 2)" : "Remove cost"} style={{ color: "#D64545", padding: "2px" }}
+                                    onClick={() => askRemoveCost(c)}>
+                              <IconTrash size={10}/>
+                            </button>
+                          ) : null;
+                        })()}
+                      </div>
+                    </td>
                     <td>{lang === "es" ? "Flete aéreo internacional" : "International air freight"}</td>
                     <td>AWB / BL</td>
                     <td style={{ textAlign: "right" }}>—</td>
@@ -1450,7 +1503,20 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
                   </tr>
                   <tr>
-                    <td>3</td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>3</span>
+                        {!isLiquidated && (() => {
+                          const c = viewCostLines.find(x => KIND_INSURANCE.has(String(x.kind || "").toUpperCase()));
+                          return c ? (
+                            <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar costo (sincroniza con sección 2)" : "Remove cost"} style={{ color: "#D64545", padding: "2px" }}
+                                    onClick={() => askRemoveCost(c)}>
+                              <IconTrash size={10}/>
+                            </button>
+                          ) : null;
+                        })()}
+                      </div>
+                    </td>
                     <td>{lang === "es" ? "Seguro internacional" : "International insurance"}</td>
                     <td>Factura</td>
                     <td style={{ textAlign: "right" }}>—</td>
@@ -1501,8 +1567,19 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.cifTotal)}</td>
                     <td></td>
                   </tr>
+                  {!excludedTaxes.dai && (
                   <tr>
-                    <td>4</td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>4</span>
+                        {!isLiquidated && (
+                          <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
+                                  onClick={() => { const nx = { ...excludedTaxes, dai: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
+                            <IconTrash size={10}/>
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td>DAI — Derecho Arancelario</td>
                     <td>CIF</td>
                     <td style={{ textAlign: "right" }}>
@@ -1553,8 +1630,20 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     </td>
                     <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Régimen general calzado" : "General footwear regime"}</td>
                   </tr>
+                  )}
+                  {!excludedTaxes.ley && (
                   <tr>
-                    <td>5</td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>5</span>
+                        {!isLiquidated && (
+                          <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
+                                  onClick={() => { const nx = { ...excludedTaxes, ley: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
+                            <IconTrash size={10}/>
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td>Ley 6946</td>
                     <td>CIF</td>
                     <td style={{ textAlign: "right" }}>
@@ -1605,8 +1694,20 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     </td>
                     <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Tributo fijo" : "Fixed tax"}</td>
                   </tr>
+                  )}
+                  {!excludedTaxes.iva && (
                   <tr>
-                    <td>6</td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span>6</span>
+                        {!isLiquidated && (
+                          <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
+                                  onClick={() => { const nx = { ...excludedTaxes, iva: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
+                            <IconTrash size={10}/>
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td>IVA</td>
                     <td>CIF</td>
                     <td style={{ textAlign: "right" }}>
@@ -1659,6 +1760,21 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       {lang === "es" ? "Acreditable — crédito fiscal (no suma)" : "Creditable — VAT credit (excluded)"}
                     </td>
                   </tr>
+                  )}
+                  {(excludedTaxes.dai || excludedTaxes.ley || excludedTaxes.iva) && !isLiquidated && (
+                    <tr>
+                      <td></td>
+                      <td colSpan={5} style={{ fontSize: 11, color: "#64748B" }}>
+                        {lang === "es" ? "Impuestos excluidos:" : "Excluded taxes:"}{" "}
+                        {["dai", "ley", "iva"].filter(k => excludedTaxes[k]).map(k => k.toUpperCase()).join(", ")}
+                        {" · "}
+                        <button className="btn btn-ghost btn-xs" style={{ color: "#1f6feb", padding: "2px 6px" }}
+                                onClick={() => { setExcludedTaxes({}); persistExcluded({}); }}>
+                          {lang === "es" ? "Restaurar" : "Restore"}
+                        </button>
+                      </td>
+                    </tr>
+                  )}
                   {customTaxes.filter(x => x.type === "TAX").map((x, idx) => {
                     const rowNum = `6${String.fromCharCode(97 + idx)}`;
                     const hasAmt = x.amount != null && x.amount !== "";

@@ -45,6 +45,19 @@ class TransferenciaListSerializer(serializers.ModelSerializer):
 
 
 class TransferenciaSerializer(serializers.ModelSerializer):
+    # País ISO2 del nodo destino (p.ej. "CR"). El frontend lo usa para
+    # decidir si siembra los impuestos/timbres de nacionalización por
+    # defecto (sólo Costa Rica); otros países tienen tributos distintos.
+    destino_pais_iso2 = serializers.SerializerMethodField()
+
+    def get_destino_pais_iso2(self, obj):
+        try:
+            from apps.nodos.models import Nodo
+            n = Nodo.objects.filter(id=obj.destino_id).only("pais_iso2").first()
+            return (n.pais_iso2 or "").upper() if n else ""
+        except Exception:
+            return ""
+
     class Meta:
         model  = Transferencia
         fields = "__all__"

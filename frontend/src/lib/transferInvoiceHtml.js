@@ -66,14 +66,11 @@ export const DEFAULT_TIMBRES = Object.freeze([
   { concept: "T. Contadores",                     amount: 0.00, fixed: true },
 ]);
 
-/** Lista de impuestos TAX de un bucket, con timbres por defecto si no fueron
- *  sembrados todavía (movimientos no abiertos en el panel). */
+/** Lista de impuestos TAX de un bucket. Los timbres por defecto los siembra
+ *  el panel (gateado por país destino = CR); aquí sólo se renderiza lo que
+ *  quedó guardado en el bucket de la vista. */
 function resolveTaxRows(bucket) {
-  const taxes = (bucket.custom_taxes || []).filter((x) => x && x.type === "TAX");
-  if (taxes.length || bucket.timbres_seeded) return taxes;
-  return DEFAULT_TIMBRES.map((tb, i) => ({
-    id: "timbre-" + i, type: "TAX", concept: tb.concept, amount: tb.amount, fixed: true,
-  }));
+  return (bucket.custom_taxes || []).filter((x) => x && x.type === "TAX");
 }
 
 /** Monto efectivo de una fila de impuesto TAX: fijo si trae amount, si no CIF×tasa. */
