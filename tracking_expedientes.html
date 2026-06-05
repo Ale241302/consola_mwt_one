@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MWT - Tracking de Expedientes</title>
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin:0; background:#f6f7f9; color:#1c2430; font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+.wrap { max-width:1180px; margin:0 auto; padding:18px 20px 60px; }
+h1 { font-size:19px; margin:0 0 2px; }
+.sub { color:#6b7785; font-size:12.5px; margin-bottom:16px; }
+.bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:14px; }
+.bar .spacer { flex:1; }
+label.lbl { font-size:12px; color:#6b7785; margin-right:4px; }
+select, input, button { font:inherit; border:1px solid #d2d8e0; border-radius:7px; padding:7px 9px; background:#fff; color:#1c2430; }
+button { cursor:pointer; }
+button.primary { background:#1f6feb; border-color:#1f6feb; color:#fff; font-weight:600; }
+button.ghost { background:#fff; }
+button.danger { color:#c2362f; border-color:#e3b6b3; background:#fff; }
+.kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:16px; }
+.kpi { background:#fff; border:1px solid #e6e9ee; border-radius:10px; padding:11px 13px; }
+.kpi .n { font-size:19px; font-weight:700; }
+.kpi .l { font-size:11px; color:#6b7785; text-transform:uppercase; letter-spacing:.03em; }
+.tabs { display:flex; gap:4px; border-bottom:2px solid #e6e9ee; margin-bottom:16px; flex-wrap:wrap; }
+.tab { border:none; background:none; padding:9px 15px; font-size:13.5px; font-weight:600; color:#6b7785; border-bottom:2px solid transparent; margin-bottom:-2px; border-radius:0; }
+.tab.on { color:#1f6feb; border-bottom-color:#1f6feb; }
+.panel.hide { display:none; }
+.hide { display:none; }
+.sec-h { font-size:13px; font-weight:700; margin:4px 0 10px; color:#1c2430; }
+.proj { background:#fff; border:1px solid #e6e9ee; border-radius:10px; padding:14px 16px 18px; margin-bottom:20px; position:relative; }
+.gantt { position:relative; }
+.grow { display:grid; grid-template-columns:170px 1fr; align-items:center; height:30px; }
+.glabel { font-size:11.5px; font-weight:600; color:#43505f; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:8px; }
+.gtrack { position:relative; height:30px; }
+.gbar { position:absolute; top:7px; height:16px; border-radius:8px; font-size:10px; color:#fff; font-weight:700; line-height:16px; padding:0 6px; white-space:nowrap; }
+.gbar.aereo { background:#1a7f48; }
+.gbar.maritimo { background:#1a6a8f; }
+.gbar.est { background:repeating-linear-gradient(45deg,#9aa3b0,#9aa3b0 5px,#b3bac4 5px,#b3bac4 10px); }
+.gdot { position:absolute; top:9px; width:12px; height:12px; border-radius:50%; background:#2da44e; border:2px solid #fff; box-shadow:0 0 0 1px #2da44e; }
+.gdead { position:absolute; top:4px; font-size:13px; color:#cf222e; transform:translateX(-50%); }
+.goverlay { position:absolute; left:170px; right:0; top:0; bottom:22px; pointer-events:none; }
+.gaxis { position:relative; height:18px; margin-left:170px; border-top:1px solid #e6e9ee; margin-top:4px; }
+.gtick { position:absolute; top:2px; font-size:9.5px; color:#8a93a0; transform:translateX(-50%); }
+.gtline { position:absolute; top:0; bottom:0; width:1px; background:#eef1f5; }
+.gtoday { position:absolute; top:0; bottom:0; width:2px; background:#cf222e; opacity:.55; }
+.gtoday .lab { position:absolute; top:-2px; left:3px; font-size:9px; color:#cf222e; font-weight:700; }
+.nodate { color:#b3804b; font-size:11px; font-style:italic; }
+.upnext { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-bottom:20px; }
+.up { border:1px solid #e6e9ee; border-radius:9px; padding:10px 12px; background:#fff; }
+.up .d1 { font-size:13px; font-weight:700; }
+.up .d2 { font-size:11.5px; color:#6b7785; margin-top:2px; }
+.up .d3 { font-size:11.5px; margin-top:5px; font-weight:600; }
+.glegend { font-size:10.5px; color:#8a93a0; margin-top:8px; }
+.glegend span { margin-right:12px; }
+.dotL { display:inline-block; width:9px; height:9px; border-radius:3px; vertical-align:middle; margin-right:3px; }
+.pipeline { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; }
+.col { background:#fff; border:1px solid #e6e9ee; border-radius:10px; padding:8px; min-height:70px; }
+.col h3 { font-size:11.5px; margin:2px 4px 8px; color:#43505f; text-transform:uppercase; letter-spacing:.03em; display:flex; justify-content:space-between; }
+.col h3 .c { background:#eef1f5; border-radius:10px; padding:0 7px; font-weight:700; color:#43505f; }
+.card { border-radius:8px; padding:8px 9px; margin-bottom:7px; border:1px solid #e6e9ee; cursor:pointer; background:#fbfcfe; }
+.card:hover { border-color:#1f6feb; }
+.card .exp { font-weight:700; font-size:13.5px; }
+.card .meta { font-size:11.5px; color:#6b7785; margin-top:2px; }
+.card .tags { margin-top:5px; display:flex; gap:4px; flex-wrap:wrap; }
+.tag { font-size:10.5px; padding:1px 6px; border-radius:10px; font-weight:600; }
+.tag.mwt { background:#e3f0ff; color:#1a5fb4; }
+.tag.sondel { background:#efe6ff; color:#6b3fb0; }
+.tag.aereo { background:#e6f7ee; color:#1a7f48; }
+.tag.maritimo { background:#e6f1f7; color:#1a6a8f; }
+.tag.pend { background:#f3f4f6; color:#8a93a0; }
+.eta { font-size:11.5px; margin-top:4px; font-weight:600; }
+.sem { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+.sem.ok { background:#2da44e; } .sem.warn { background:#d4a72c; } .sem.late { background:#cf222e; } .sem.none { background:#c8ced6; }
+table { width:100%; border-collapse:collapse; background:#fff; border:1px solid #e6e9ee; border-radius:10px; overflow:hidden; }
+th, td { text-align:left; padding:8px 10px; border-bottom:1px solid #eef1f5; font-size:12.5px; }
+th { background:#f0f3f7; font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:#5a6675; cursor:pointer; }
+tr:last-child td { border-bottom:none; }
+.grp td { background:#eef3fb; font-weight:700; color:#1a5fb4; font-size:12px; }
+.muted { color:#9aa3b0; font-style:italic; }
+.exprow:hover td { background:#fafcff; }
+.ebtn { border:1px solid #d2d8e0; border-radius:6px; padding:2px 8px; font-size:11px; background:#fff; }
+.detrow td { background:#f7f9fc; padding:12px 14px; }
+.det { border:1px solid #e1e6ee; border-radius:8px; background:#fff; }
+.det th, .det td { font-size:11.5px; padding:6px 9px; }
+.det th { background:#eef2f7; text-transform:none; letter-spacing:0; }
+.tch { display:inline-block; background:#eef3fb; border-radius:6px; padding:1px 7px; margin:2px 3px 0 0; font-size:11px; }
+.tch b { color:#1a5fb4; }
+.entbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:14px; }
+.arrcard { background:#fff; border:1px solid #e6e9ee; border-radius:11px; padding:14px 16px; margin-bottom:14px; }
+.arrcard.done { opacity:.62; }
+.arrh { font-size:14.5px; display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; }
+.arrh .when { margin-left:auto; font-size:13px; font-weight:700; padding:2px 10px; border-radius:7px; background:#eef3fb; color:#1a5fb4; }
+.arrh .when.done { background:#e6f7ee; color:#1a7f48; }
+.arrh .when.soon { background:#fff4e5; color:#b45309; }
+.arrsub { font-size:11.5px; color:#6b7785; margin:3px 0 12px; }
+.mtx { font-size:11.5px; }
+.mtx th, .mtx td { padding:5px 8px; text-align:center; border-bottom:1px solid #eef1f5; }
+.mtx th:first-child, .mtx td:first-child { text-align:left; font-weight:600; white-space:nowrap; }
+.mtx thead th { background:#f0f3f7; cursor:default; }
+.mtx td.z { color:#cfd6df; }
+.mtx tr.mtot td { background:#f7f9fc; font-weight:700; border-top:2px solid #d6dde6; }
+.mtx td.tot, .mtx th.tot { background:#eef3fb; font-weight:700; }
+.foot { font-size:11.5px; color:#8a93a0; margin-top:18px; line-height:1.5; }
+.ov { position:fixed; inset:0; background:rgba(20,26,34,.45); display:none; align-items:center; justify-content:center; padding:20px; z-index:50; }
+.ov.on { display:flex; }
+.modal { background:#fff; border-radius:12px; padding:18px 20px; width:480px; max-width:100%; max-height:90vh; overflow:auto; }
+.modal h2 { font-size:16px; margin:0 0 12px; }
+.fg { margin-bottom:10px; }
+.fg label { display:block; font-size:11.5px; color:#6b7785; margin-bottom:3px; }
+.fg input, .fg select { width:100%; }
+.row2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.modal .actions { display:flex; gap:8px; margin-top:14px; }
+.modal .actions .spacer { flex:1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MWT - Tracking de Expedientes</h1>
+  <div class="sub">Marluvas hacia SONDEL. Tiempos, movimientos y cantidades por modelo y talla.</div>
+
+  <div class="bar">
+    <label class="lbl">Operador</label>
+    <select id="fOp"><option value="">Todos</option><option>MWT</option><option>SONDEL</option></select>
+    <label class="lbl">Modo</label>
+    <select id="fModo"><option value="">Todos</option><option>Aereo</option><option>Maritimo</option></select>
+    <div class="spacer"></div>
+    <button class="primary" id="addBtn">+ Expediente</button>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="tabs">
+    <button class="tab on" data-tab="crono">Cronograma</button>
+    <button class="tab" data-tab="tabla">Entrada de pares</button>
+    <button class="tab" data-tab="matriz">Hoja de recepcion</button>
+    <button class="tab" data-tab="exped">Expedientes</button>
+  </div>
+
+  <!-- TAB: CRONOGRAMA -->
+  <div class="panel" id="p-crono">
+    <div class="sec-h">Proyeccion de atencion de entregas</div>
+    <div class="proj"><div class="gantt" id="gantt"></div>
+      <div class="glegend">
+        <span><i class="dotL" style="background:#1a7f48"></i>Aereo (~10d)</span>
+        <span><i class="dotL" style="background:#1a6a8f"></i>Maritimo (~5 sem)</span>
+        <span><i class="dotL" style="background:#9aa3b0"></i>Estimado</span>
+        <span style="color:#2da44e">entregado</span>
+        <span style="color:#cf222e">deadline</span>
+      </div>
+    </div>
+    <div class="sec-h">Proximas entregas</div>
+    <div class="upnext" id="upnext"></div>
+    <div class="sec-h" style="margin-top:8px">Pipeline por estado</div>
+    <div class="pipeline" id="pipeline"></div>
+  </div>
+
+  <!-- TAB: ENTRADA DE PARES (tabla por modelo y talla) -->
+  <div class="panel hide" id="p-tabla">
+    <div class="entbar">
+      <label class="lbl">Modelo</label><select id="ft_model"><option value="">Todos</option></select>
+      <label class="lbl">Ordenar</label><select id="ft_sort"><option value="modelo">Modelo / talla</option><option value="fecha">Fecha de llegada</option></select>
+      <div class="spacer"></div>
+      <button class="ghost" id="ft_csv">Descargar CSV</button>
+    </div>
+    <table id="fa_tbl"><thead><tr>
+      <th>Modelo</th><th>Talla</th><th>Pares</th><th>Llega</th><th>Estado</th><th>Exped (PO)</th>
+    </tr></thead><tbody id="fa_body"></tbody></table>
+  </div>
+
+  <!-- TAB: HOJA DE RECEPCION (matriz modelo x talla por llegada) -->
+  <div class="panel hide" id="p-matriz">
+    <div class="entbar">
+      <label class="lbl">Mostrar</label>
+      <select id="hr_show"><option value="pend">Por llegar</option><option value="all">Todos</option><option value="done">Entregados</option></select>
+      <label class="lbl">Modelo</label><select id="hr_model"><option value="">Todos</option></select>
+      <div class="spacer"></div>
+      <button class="ghost" id="hr_csv">Descargar CSV</button>
+    </div>
+    <div id="recep"></div>
+  </div>
+
+  <!-- TAB: EXPEDIENTES -->
+  <div class="panel hide" id="p-exped">
+    <div class="bar">
+      <label class="lbl">Agrupar por</label>
+      <select id="groupBy"><option value="none">Sin agrupar</option><option value="oc">OC</option><option value="operador">Operador</option><option value="estado">Estado</option></select>
+      <div class="spacer"></div>
+      <button class="ghost" id="exp_csv">Descargar CSV</button>
+    </div>
+    <table id="tbl">
+      <thead><tr>
+        <th data-k="expediente">Exped.</th><th data-k="oc">OC</th><th data-k="cliente">Cliente</th>
+        <th data-k="operador">Operador</th><th data-k="marca">Marca</th><th data-k="modo">Modo</th>
+        <th data-k="volumen">Pares</th><th data-k="estado">Estado</th><th data-k="embarque">Embarque</th>
+        <th data-k="eta">Entrega / ETA</th><th data-k="finalizacion">Fin</th><th></th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<div class="ov" id="ov">
+  <div class="modal">
+    <h2 id="mTitle">Expediente</h2>
+    <div class="fg"><label>N Expediente *</label><input id="m_expediente" placeholder="2452"></div>
+    <div class="row2">
+      <div class="fg"><label>OC del cliente</label><input id="m_oc" placeholder="504978"></div>
+      <div class="fg"><label>Cliente</label><input id="m_cliente" placeholder="SONDEL S.A."></div>
+    </div>
+    <div class="row2">
+      <div class="fg"><label>Operador</label><select id="m_operador"><option value="">-</option><option>MWT</option><option>SONDEL</option></select></div>
+      <div class="fg"><label>Marca</label><select id="m_marca"><option value="">-</option><option>Marluvas</option><option>Tecmater</option><option>Rana Walk</option></select></div>
+    </div>
+    <div class="row2">
+      <div class="fg"><label>Modo de transporte</label><select id="m_modo"><option value="">-</option><option>Aereo</option><option>Maritimo</option></select></div>
+      <div class="fg"><label>Pares / unidades</label><input id="m_volumen" placeholder="1565"></div>
+    </div>
+    <div class="fg"><label>Estado</label><select id="m_estado">
+      <option>Produccion</option><option>Listo / Esperando embarque</option><option>En transito</option><option>En aduana</option><option>Entregado</option>
+    </select></div>
+    <div class="row2">
+      <div class="fg"><label>Fecha de embarque</label><input id="m_embarque" type="date"></div>
+      <div class="fg"><label>Fecha de entrega (real/confirmada)</label><input id="m_entrega" type="date"></div>
+    </div>
+    <div class="fg"><label>Fecha de finalizacion (deadline)</label><input id="m_finalizacion" type="date"></div>
+    <div class="fg muted" id="m_etaHint"></div>
+    <div class="actions">
+      <button class="danger" id="m_del">Eliminar</button>
+      <div class="spacer"></div>
+      <button class="ghost" id="m_cancel">Cancelar</button>
+      <button class="primary" id="m_save">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const KEY = "mwt_expedientes_v1";
+const TRANSIT = { "Aereo":10, "Maritimo":35 };
+const ADUANA_DAYS = 4;
+const STAGES = ["Produccion","Listo / Esperando embarque","En transito","En aduana","Entregado"];
+const STAGE_SHORT = {"Produccion":"Produccion","Listo / Esperando embarque":"Listo","En transito":"Transito","En aduana":"Aduana","Entregado":"Entregado"};
+
+function id(){ return Math.random().toString(36).slice(2,9); }
+const MASTER = [
+  { expediente:"2452", oc:"504978", cliente:"SONDEL S.A.", operador:"MWT", marca:"Marluvas", modo:"Maritimo", volumen:"1565", estado:"Listo / Esperando embarque", embarque:"2026-06-06", entrega:"", finalizacion:"",
+    lineas:[ {cod:"701266", modelo:"60B22V-CPAP-CNFL", color:"Cafe", total:1565, tallas:"37:15 38:40 39:225 40:300 41:350 42:350 43:175 44:60 45:50"} ] },
+  { expediente:"2453", oc:"504990", cliente:"SONDEL S.A.", operador:"MWT", marca:"Marluvas", modo:"Aereo", volumen:"500", estado:"Entregado", embarque:"2026-06-01", entrega:"", finalizacion:"",
+    lineas:[ {cod:"701809", modelo:"50B22-V-E-CPAP-CP", color:"Negro", total:280, tallas:"37:40 38:50 39:80 40:110"},
+             {cod:"700728", modelo:"75BPR29-MSMC-CPAP-ST", color:"Cafe", total:210, tallas:"38:50 39:60 40:60 43:40"},
+             {cod:"700282", modelo:"70C32-PET-E-CPAP-PAD", color:"Marron", total:10, tallas:"39:5 44:5"} ] },
+  { expediente:"2454", oc:"504983", cliente:"SONDEL S.A.", operador:"MWT", marca:"Marluvas", modo:"Aereo", volumen:"425", estado:"En aduana", embarque:"2026-06-04", entrega:"2026-06-08", finalizacion:"",
+    lineas:[ {cod:"700406", modelo:"70B22-E-CPAP-PAD", color:"Negro", total:250, tallas:"35:20 36:30 37:50 38:110 45:40"},
+             {cod:"700282", modelo:"70C32-PET-E-CPAP-PAD", color:"Marron", total:75, tallas:"39:5 40:15 41:20 42:20 44:5 45:5 46:5"},
+             {cod:"700294", modelo:"70B19-E-C-PAD", color:"Blanco", total:20, tallas:"36:20"},
+             {cod:"801048", modelo:"PALMILHA SOFTBED", color:"-", total:80, tallas:"36:20 42:60"} ] },
+  { expediente:"2455", oc:"504983", cliente:"SONDEL S.A.", operador:"MWT", marca:"Marluvas", modo:"Maritimo", volumen:"890", estado:"Produccion", embarque:"2026-06-20", entrega:"", finalizacion:"",
+    lineas:[ {cod:"700728", modelo:"75BPR29-MSMC-CPAP-ST", color:"Cafe", total:890, tallas:"38:80 39:160 40:210 41:320 43:90 45:30"} ] },
+  { expediente:"2473", oc:"505107", cliente:"SONDEL S.A.", operador:"MWT", marca:"Marluvas", modo:"Maritimo", volumen:"690", estado:"Produccion", embarque:"2026-08-10", entrega:"", finalizacion:"",
+    lineas:[ {cod:"700406", modelo:"70B22-E-CPAP-PAD", color:"Negro", total:690, tallas:"38:80 39:210 40:170 42:150 44:70 46:10"} ] },
+  { expediente:"2475", oc:"", cliente:"SONDEL S.A.", operador:"MWT", marca:"Marluvas", modo:"Maritimo", volumen:"385", estado:"Produccion", embarque:"2026-08-10", entrega:"", finalizacion:"",
+    lineas:[ {cod:"701809", modelo:"50B22-V-E-CPAP-CP", color:"Negro", total:300, tallas:"41:300"},
+             {cod:"75BPR29-CLIMM-CPAP", modelo:"75BPR29-CLIMM-CPAP", color:"Cafe", total:20, tallas:"35:20"},
+             {cod:"70B22-CPAP", modelo:"70B22-CPAP", color:"Negro", total:60, tallas:"45:60"},
+             {cod:"70C32-PET-CPAP-PAD", modelo:"70C32-PET-CPAP-PAD", color:"Marron", total:5, tallas:"41:5"} ] },
+  { expediente:"2456", oc:"504983", cliente:"SONDEL S.A.", operador:"SONDEL", marca:"Marluvas", modo:"Maritimo", volumen:"1500", estado:"Produccion", embarque:"2026-06-20", entrega:"", finalizacion:"",
+    lineas:[ {cod:"701809", modelo:"50B22-V-E-CPAP-CP", color:"Negro", total:1500, tallas:"37:20 38:110 39:260 40:380 41:650 44:50 45:30"} ] },
+  { expediente:"2468", oc:"504960", cliente:"SONDEL S.A.", operador:"SONDEL", marca:"Marluvas", modo:"", volumen:"320", estado:"Produccion", embarque:"", entrega:"", finalizacion:"",
+    lineas:[ {cod:"700844", modelo:"50B22M-CPAP-PAD", color:"-", total:300, tallas:"40:300"},
+             {cod:"701340", modelo:"75BPR29-CLI-MM-CPAP-EXP", color:"-", total:20, tallas:"34:20"} ] },
+  { expediente:"2472", oc:"505107", cliente:"SONDEL S.A.", operador:"SONDEL", marca:"Marluvas", modo:"Maritimo", volumen:"3410", estado:"Produccion", embarque:"2026-08-10", entrega:"", finalizacion:"",
+    lineas:[ {cod:"700844", modelo:"50B22M-CPAP-PAD", color:"Negro", total:2570, tallas:"36:60 37:100 38:200 39:400 40:530 41:600 42:440 43:240"},
+             {cod:"700728", modelo:"75BPR29-MSMC-CPAP-ST", color:"Cafe", total:680, tallas:"37:100 40:210 42:200 43:110 44:50 45:10"},
+             {cod:"700282", modelo:"70C32-PET-E-CPAP-PAD", color:"-", total:110, tallas:"38:20 39:20 41:30 42:30 43:10"},
+             {cod:"701340", modelo:"75BPR29-CLI-MM-CPAP-EXP", color:"-", total:30, tallas:"34:10 35:10 36:10"},
+             {cod:"700294", modelo:"70B19-E-C-PAD", color:"Blanco", total:20, tallas:"36:20"} ] },
+];
+function seed(){ return MASTER.map(m=>Object.assign({id:id()}, JSON.parse(JSON.stringify(m)))); }
+function load(){ try { const r = JSON.parse(localStorage.getItem(KEY)); if (Array.isArray(r) && r.length) return r; } catch(e){} const s = seed(); save(s); return s; }
+function save(d){ localStorage.setItem(KEY, JSON.stringify(d)); }
+const MIG = "mwt_exp_mig_v10";
+function migrate(d){
+  d.forEach(e=>{ if(e.entrega==null)e.entrega=""; });
+  if (localStorage.getItem(MIG)) return d;
+  const AUTH = ["oc","cliente","operador","marca","volumen","lineas"];
+  const FILL = ["modo","estado","embarque","entrega","finalizacion"];
+  MASTER.forEach(m=>{
+    let e = d.find(x=>x.expediente===m.expediente);
+    if (!e){ e = { id:id(), expediente:m.expediente }; d.push(e); }
+    AUTH.forEach(f=> e[f]=JSON.parse(JSON.stringify(m[f])));
+    FILL.forEach(f=>{ if(!e[f]) e[f]=m[f]; });
+    if (e.valor!=null) delete e.valor;
+  });
+  localStorage.setItem(MIG,"1"); save(d); return d;
+}
+let data = migrate(load());
+const expanded = new Set();
+
+function today(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
+function parseD(s){ if(!s) return null; const d=new Date(s+"T00:00:00"); return isNaN(d)?null:d; }
+function fmt(d){ return d ? d.toISOString().slice(0,10) : ""; }
+function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
+
+function etaOf(e){
+  if (e.entrega){ const d=parseD(e.entrega); if(d) return d; }
+  if (e.estado === "Entregado") return null;
+  if (!e.embarque || !e.modo || !(e.modo in TRANSIT)) return null;
+  const emb = parseD(e.embarque); if(!emb) return null;
+  return addDays(emb, TRANSIT[e.modo]);
+}
+function semaforo(e){
+  const fin = parseD(e.finalizacion);
+  const eta = etaOf(e);
+  if (e.estado === "Entregado") return {cls:"ok", txt:"Entregado"};
+  if (!fin) return {cls:"none", txt:"sin deadline"};
+  if (!eta) return {cls:"none", txt:"sin ETA"};
+  const diff = Math.round((fin - eta)/86400000);
+  if (diff < 0) return {cls:"late", txt:diff+"d (tarde)"};
+  if (diff <= 5) return {cls:"warn", txt:"+"+diff+"d (justo)"};
+  return {cls:"ok", txt:"+"+diff+"d holgura"};
+}
+function filtered(){
+  const op = document.getElementById("fOp").value;
+  const mo = document.getElementById("fModo").value;
+  return data.filter(e => (!op || e.operador===op) && (!mo || e.modo===mo));
+}
+let sortK = "expediente", sortDir = 1;
+
+const MES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+function shortD(d){ return d ? d.getDate()+" "+MES[d.getMonth()] : ""; }
+function projectedDelivery(e){
+  const done = e.estado === "Entregado";
+  if (e.entrega){ const d=parseD(e.entrega); if(d) return { date:d, done, est:false, manual:true }; }
+  if (done){
+    const emb = parseD(e.embarque);
+    return { date: (emb && TRANSIT[e.modo]!=null) ? addDays(emb, TRANSIT[e.modo]) : null, done:true, est:false };
+  }
+  const eta = etaOf(e);
+  if (eta) return { date: eta, done:false, est:false };
+  if (e.estado === "En aduana") return { date: addDays(today(), ADUANA_DAYS), done:false, est:true };
+  return { date: null, done:false, est:true };
+}
+function startOf(e){
+  const emb = parseD(e.embarque);
+  if (emb) return emb;
+  if (e.estado === "En aduana") return today();
+  return null;
+}
+function arrivalRows(list){
+  const out=[];
+  list.forEach(e=>{ const p=projectedDelivery(e);
+    (e.lineas||[]).forEach(l=>{ (l.tallas||"").split(" ").filter(Boolean).forEach(t=>{ const a=t.split(":");
+      out.push({ modelo:l.modelo, talla:a[0], qty:+a[1]||0, date:p.date, est:p.est, done:p.done, estado:e.estado, exp:e.expediente, oc:e.oc, operador:e.operador, embarque:e.embarque });
+    });});
+  });
+  return out;
+}
+function llegaTxt(r){ return r.done?"entregado":(r.date?fmt(r.date):""); }
+
+function render(){
+  const list = filtered();
+  renderKpis(list); renderFlat(list); renderRecep(list); renderProjection(list); renderUpnext(list); renderPipeline(list); renderTable(list); renderFoot();
+}
+function fillModelSelect(selId, list){
+  const sel=document.getElementById(selId);
+  const models=[...new Set(list.flatMap(e=>(e.lineas||[]).map(l=>l.modelo)))].sort();
+  const cur=sel.value;
+  sel.innerHTML='<option value="">Todos</option>'+models.map(m=>`<option${m===cur?" selected":""}>${m}</option>`).join("");
+  return sel.value;
+}
+function renderKpis(list){
+  const total = list.length;
+  const entreg = list.filter(e=>e.estado==="Entregado").length;
+  const transito = list.filter(e=>e.estado==="En transito"||e.estado==="En aduana").length;
+  const esperando = list.filter(e=>e.estado==="Listo / Esperando embarque"||e.estado==="Produccion").length;
+  const vol = list.reduce((a,e)=>a+(parseFloat(String(e.volumen).replace(/[^\d.]/g,""))||0),0);
+  const modelos = new Set(); list.forEach(e=>(e.lineas||[]).forEach(l=>modelos.add(l.modelo)));
+  const cards = [
+    ["Expedientes", total], ["Entregados", entreg], ["En transito/aduana", transito],
+    ["Por salir", esperando], ["Pares totales", vol?vol.toLocaleString("es-CR"):"-"], ["Modelos distintos", modelos.size]
+  ];
+  document.getElementById("kpis").innerHTML = cards.map(c=>`<div class="kpi"><div class="n">${c[1]}</div><div class="l">${c[0]}</div></div>`).join("");
+}
+
+// ---- ENTRADA DE PARES (tabla por modelo y talla) ----
+function renderFlat(list){
+  const fm = fillModelSelect("ft_model", list);
+  let rows = arrivalRows(list);
+  if(fm) rows = rows.filter(r=>r.modelo===fm);
+  const sort=document.getElementById("ft_sort").value;
+  rows.sort((a,b)=> sort==="fecha"
+    ? ((a.date?a.date.getTime():Infinity)-(b.date?b.date.getTime():Infinity)) || a.modelo.localeCompare(b.modelo) || (+a.talla-+b.talla)
+    : a.modelo.localeCompare(b.modelo) || (+a.talla-+b.talla) || ((a.date?a.date.getTime():Infinity)-(b.date?b.date.getTime():Infinity)));
+  document.getElementById("fa_body").innerHTML = rows.map(r=>{
+    const fecha = r.done?'<span style="color:#2da44e;font-weight:600">entregado</span>':(r.date?(shortD(r.date)+(r.est?" (est)":"")):'<span class="muted">sin fecha</span>');
+    return `<tr><td>${r.modelo}</td><td><b>${r.talla}</b></td><td>${r.qty}</td><td>${fecha}</td><td>${r.estado}</td><td>${r.exp}${r.oc?(" / "+r.oc):""}</td></tr>`;
+  }).join("") || '<tr><td colspan="6" class="muted" style="text-align:center;padding:14px">Sin datos.</td></tr>';
+}
+function sizeMatrix(lineas){
+  if(!lineas.length) return '<div class="muted">Sin desglose.</div>';
+  const sizes=[...new Set(lineas.flatMap(l=>(l.tallas||"").split(" ").filter(Boolean).map(p=>+p.split(":")[0])))].sort((a,b)=>a-b);
+  const colTot={}; sizes.forEach(s=>colTot[s]=0); let grand=0;
+  let th='<th>Modelo</th>'+sizes.map(s=>`<th>${s}</th>`).join('')+'<th class="tot">Total</th>';
+  let body=lineas.map(l=>{
+    const map={}; (l.tallas||"").split(" ").filter(Boolean).forEach(p=>{const a=p.split(":");map[+a[0]]=+a[1];});
+    let rt=0;
+    const cells=sizes.map(s=>{const q=map[s]||0; if(q){colTot[s]+=q; rt+=q;} return q?`<td>${q}</td>`:'<td class="z">.</td>';}).join('');
+    grand+=rt;
+    return `<tr><td>${l.modelo}${l.color&&l.color!=="-"?(' <span class="muted">'+l.color+'</span>'):''}</td>${cells}<td class="tot">${rt}</td></tr>`;
+  }).join('');
+  let footrow=`<tr class="mtot"><td>Total</td>${sizes.map(s=>`<td>${colTot[s]||''}</td>`).join('')}<td class="tot">${grand}</td></tr>`;
+  return `<div style="overflow-x:auto"><table class="mtx"><thead><tr>${th}</tr></thead><tbody>${body}${footrow}</tbody></table></div>`;
+}
+function renderRecep(list){
+  const fm = fillModelSelect("hr_model", list);
+  const show=document.getElementById("hr_show").value;
+  let items=list.map(e=>({e,p:projectedDelivery(e)}));
+  if(show==="pend") items=items.filter(x=>!x.p.done);
+  else if(show==="done") items=items.filter(x=>x.p.done);
+  items.sort((a,b)=>{ const ad=a.p.date?a.p.date.getTime():(a.p.done?-1:Infinity); const bd=b.p.date?b.p.date.getTime():(b.p.done?-1:Infinity); return ad-bd; });
+  const host=document.getElementById("recep");
+  host.innerHTML = items.map(({e,p})=>{
+    let lineas = e.lineas||[];
+    if(fm) lineas = lineas.filter(l=>l.modelo===fm);
+    if(fm && !lineas.length) return "";
+    const dias = p.date ? Math.round((p.date - today())/86400000) : null;
+    let whenCls="", whenTxt;
+    if(p.done){ whenCls="done"; whenTxt="Entregado"; }
+    else if(p.date){ whenTxt = "Llega "+shortD(p.date)+(p.est?" (est)":"")+(dias!=null?(dias<=0?" - hoy/vencida":" - en "+dias+"d"):""); if(dias!=null&&dias<=7) whenCls="soon"; }
+    else whenTxt="Sin fecha";
+    const totVis = lineas.reduce((a,l)=>a+(+l.total||0),0);
+    return `<div class="arrcard${p.done?' done':''}">
+      <div class="arrh"><b>Exp ${e.expediente}</b> <span class="muted" style="font-weight:400">${e.oc?("PO "+e.oc):"PO pendiente"}</span> - ${totVis.toLocaleString("es-CR")} prs
+        <span class="when ${whenCls}">${whenTxt}</span></div>
+      <div class="arrsub">${e.operador||"?"} - ${e.modo||"modo?"} - ${e.estado}${e.embarque?(" - sale "+e.embarque):""}${fm?(" - filtrado: "+fm):""}</div>
+      ${sizeMatrix(lineas)}
+    </div>`;
+  }).join("") || '<div class="nodate">Sin llegadas con este filtro.</div>';
+}
+
+function renderProjection(list){
+  const rows = list.map(e=>({ e, p:projectedDelivery(e), s:startOf(e) }));
+  const dated = rows.filter(r=>r.p.date || r.s);
+  const undated = rows.filter(r=>!r.p.date && !r.s);
+  const g = document.getElementById("gantt");
+  if (!dated.length){ g.innerHTML = '<div class="nodate">Sin fechas suficientes para proyectar.</div>'; }
+  else {
+    const ds = [today()];
+    dated.forEach(r=>{ if(r.p.date) ds.push(r.p.date); if(r.s) ds.push(r.s); const f=parseD(r.e.finalizacion); if(f) ds.push(f); });
+    let min = addDays(new Date(Math.min(...ds.map(d=>d.getTime()))), -3);
+    let max = addDays(new Date(Math.max(...ds.map(d=>d.getTime()))), 5);
+    const span = Math.max(1,(max-min)/86400000);
+    const pct = d => ((d-min)/86400000)/span*100;
+    dated.sort((a,b)=> (a.p.date?a.p.date.getTime():Infinity) - (b.p.date?b.p.date.getTime():Infinity));
+    let grid = "", axis = "";
+    let t = new Date(min); t.setDate(t.getDate() + ((1 - t.getDay() + 7) % 7));
+    for (; t <= max; t = addDays(t,7)){
+      const x = pct(t);
+      grid += `<div class="gtline" style="left:${x}%"></div>`;
+      axis += `<div class="gtick" style="left:${x}%">${shortD(t)}</div>`;
+    }
+    grid += `<div class="gtoday" style="left:${pct(today())}%"><span class="lab">hoy</span></div>`;
+    let html = `<div class="goverlay">${grid}</div>`;
+    dated.forEach(r=>{
+      const {e,p,s} = r;
+      let bar = "";
+      if (s && p.date){
+        const l = pct(s), w = Math.max(2, pct(p.date)-l);
+        const cls = p.est ? "est" : (e.modo==="Aereo"?"aereo":(e.modo==="Maritimo"?"maritimo":"est"));
+        bar += `<div class="gbar ${cls}" style="left:${l}%;width:${w}%">${shortD(p.date)}${p.est?" ~":""}</div>`;
+      } else if (p.date){
+        bar += `<div class="gdot" style="left:${pct(p.date)}%"></div><div class="gbar" style="left:${pct(p.date)}%;background:none;color:#2da44e;top:6px">${shortD(p.date)}</div>`;
+      }
+      const f = parseD(e.finalizacion);
+      if (f) bar += `<div class="gdead" style="left:${pct(f)}%">&#9670;</div>`;
+      html += `<div class="grow"><div class="glabel">Exp ${e.expediente} - ${e.volumen} prs - ${e.operador||"?"}</div><div class="gtrack">${bar}</div></div>`;
+    });
+    html += `<div class="gaxis">${axis}</div>`;
+    g.innerHTML = html;
+  }
+  if (undated.length){
+    g.innerHTML += `<div class="nodate" style="margin-top:8px">Sin fecha de salida: ${undated.map(r=>"Exp "+r.e.expediente).join(", ")}</div>`;
+  }
+}
+function renderUpnext(list){
+  const rows = list.map(e=>({e,p:projectedDelivery(e)})).filter(r=>!r.p.done && r.p.date).sort((a,b)=>a.p.date-b.p.date);
+  const box = document.getElementById("upnext");
+  if (!rows.length){ box.innerHTML = '<div class="nodate">Nada proyectable.</div>'; return; }
+  box.innerHTML = rows.map(({e,p})=>{
+    const dias = Math.round((p.date - today())/86400000);
+    const sem = semaforo(e);
+    return `<div class="up">
+      <div class="d1">Exp ${e.expediente} - ${shortD(p.date)}${p.est?" (est.)":""}</div>
+      <div class="d2">${e.volumen} prs - ${e.modo||"modo?"} - ${e.operador||""}${e.oc?(" - PO "+e.oc):""}</div>
+      <div class="d3"><span class="sem ${sem.cls}"></span>${dias<=0?"entrega hoy/vencida":("en "+dias+" dias")}</div>
+    </div>`;
+  }).join("");
+}
+function renderPipeline(list){
+  const byStage = {}; STAGES.forEach(s=>byStage[s]=[]);
+  list.forEach(e=> (byStage[e.estado]||(byStage[e.estado]=[])).push(e));
+  document.getElementById("pipeline").innerHTML = STAGES.map(s=>{
+    const items = byStage[s]||[];
+    return `<div class="col"><h3>${STAGE_SHORT[s]}<span class="c">${items.length}</span></h3>${items.map(cardHtml).join("")}</div>`;
+  }).join("");
+  document.querySelectorAll(".card").forEach(c=>c.onclick=()=>openModal(c.dataset.id));
+}
+function cardHtml(e){
+  const eta = etaOf(e); const sem = semaforo(e);
+  const opTag = e.operador ? `<span class="tag ${e.operador==='MWT'?'mwt':'sondel'}">${e.operador}</span>` : `<span class="tag pend">operador?</span>`;
+  const moTag = e.modo ? `<span class="tag ${e.modo==='Aereo'?'aereo':'maritimo'}">${e.modo}</span>` : "";
+  return `<div class="card" data-id="${e.id}">
+    <div class="exp">Exp. ${e.expediente||"-"} <span style="font-weight:400;color:#6b7785">${e.volumen} prs</span></div>
+    <div class="meta">${e.oc?("PO "+e.oc):'<span class="muted">PO pendiente</span>'}</div>
+    <div class="tags">${opTag}${moTag}</div>
+    ${eta?`<div class="eta"><span class="sem ${sem.cls}"></span>${e.entrega?"Entrega ":"ETA "}${fmt(eta)}</div>`:(e.estado!=="Entregado"?`<div class="eta"><span class="sem ${sem.cls}"></span>${sem.txt}</div>`:"")}
+  </div>`;
+}
+function lineasHtml(e){
+  if(!e.lineas||!e.lineas.length) return '<div class="muted">Sin desglose.</div>';
+  let t='<table class="det"><thead><tr><th>Codigo</th><th>Modelo</th><th>Color</th><th>Pares</th><th>Tallas</th></tr></thead><tbody>';
+  e.lineas.forEach(l=>{
+    const chips=(l.tallas||"").split(" ").filter(Boolean).map(p=>{const a=p.split(":");return `<span class="tch"><b>${a[0]}</b> ${a[1]}</span>`;}).join("");
+    t+=`<tr><td>${l.cod||"-"}</td><td>${l.modelo||"-"}</td><td>${l.color||"-"}</td><td><b>${l.total||"-"}</b></td><td>${chips||'-'}</td></tr>`;
+  });
+  return t+'</tbody></table>';
+}
+function renderTable(list){
+  const grp = document.getElementById("groupBy").value;
+  const rows = [...list].sort((a,b)=>{ const va=(a[sortK]||"").toString(), vb=(b[sortK]||"").toString(); return va.localeCompare(vb,'es',{numeric:true})*sortDir; });
+  const tb = document.getElementById("tbody");
+  const cell = v => v ? v : '<span class="muted">-</span>';
+  const rowHtml = e=>{
+    const eta = etaOf(e); const sem = semaforo(e); const op = expanded.has(e.id);
+    let h = `<tr class="exprow" data-id="${e.id}" style="cursor:pointer">
+      <td><b>${op?"&#9662; ":"&#9656; "}${cell(e.expediente)}</b></td>
+      <td>${cell(e.oc)}</td><td>${cell(e.cliente)}</td>
+      <td>${e.operador?`<span class="tag ${e.operador==='MWT'?'mwt':'sondel'}">${e.operador}</span>`:'<span class="muted">-</span>'}</td>
+      <td>${cell(e.marca)}</td>
+      <td>${e.modo?`<span class="tag ${e.modo==='Aereo'?'aereo':'maritimo'}">${e.modo}</span>`:'<span class="muted">-</span>'}</td>
+      <td><b>${cell(e.volumen)}</b></td>
+      <td>${cell(e.estado)}</td><td>${cell(e.embarque)}</td>
+      <td>${eta?(fmt(eta)+(e.entrega?' <span style="color:#2da44e">OK</span>':'')):'<span class="muted">-</span>'}</td>
+      <td><span class="sem ${sem.cls}"></span>${cell(e.finalizacion)}</td>
+      <td><button class="ebtn" data-edit="${e.id}">editar</button></td></tr>`;
+    if (op) h += `<tr class="detrow"><td colspan="12">${lineasHtml(e)}</td></tr>`;
+    return h;
+  };
+  let html = "";
+  if (grp === "none") html = rows.map(rowHtml).join("");
+  else {
+    const groups = {};
+    rows.forEach(e=>{ const k = (e[grp]||"(sin asignar)"); (groups[k]||(groups[k]=[])).push(e); });
+    Object.keys(groups).sort((a,b)=>a.localeCompare(b,'es',{numeric:true})).forEach(k=>{
+      const gp = groups[k].reduce((a,e)=>a+(parseFloat(String(e.volumen).replace(/[^\d.]/g,""))||0),0);
+      html += `<tr class="grp"><td colspan="12">${grp.toUpperCase()}: ${k} &nbsp;-&nbsp; ${groups[k].length} exped. &nbsp;-&nbsp; ${gp.toLocaleString("es-CR")} pares</td></tr>`;
+      html += groups[k].map(rowHtml).join("");
+    });
+  }
+  tb.innerHTML = html || `<tr><td colspan="12" class="muted" style="padding:18px;text-align:center">Sin expedientes.</td></tr>`;
+  tb.querySelectorAll("tr.exprow").forEach(r=>r.onclick=()=>{ const i=r.dataset.id; if(expanded.has(i))expanded.delete(i); else expanded.add(i); render(); });
+  tb.querySelectorAll("button[data-edit]").forEach(b=>b.onclick=(ev)=>{ ev.stopPropagation(); openModal(b.dataset.edit); });
+}
+function renderFoot(){
+  document.getElementById("foot").innerHTML =
+    "Cronograma: cuando llega cada expediente. Entregas de pares: que llega por modelo y talla (tabla o matriz de recepcion). "+
+    "Transito: Aereo ~10 dias, Maritimo ~5 semanas. La entrega real manda sobre el ETA. Datos editables; persisten solo en este equipo.";
+}
+
+function downloadCsv(rowsAoA, fname){
+  const csv=rowsAoA.map(r=>r.map(v=>{const s=(v==null?"":v).toString().replace(/"/g,'""');return /[",\n]/.test(s)?`"${s}"`:s;}).join(",")).join("\n");
+  const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"})); a.download=fname; a.click();
+}
+
+let editing = null;
+const FIELDS = ["expediente","oc","cliente","operador","marca","modo","volumen","estado","embarque","entrega","finalizacion"];
+function openModal(eid){
+  editing = eid ? data.find(e=>e.id===eid) : { id:id(), expediente:"", oc:"", cliente:"", operador:"", marca:"", modo:"", volumen:"", estado:"Produccion", embarque:"", entrega:"", finalizacion:"", lineas:[] };
+  document.getElementById("mTitle").textContent = eid ? ("Editar expediente "+(editing.expediente||"")) : "Nuevo expediente";
+  for (const f of FIELDS) document.getElementById("m_"+f).value = editing[f]||"";
+  document.getElementById("m_del").style.display = eid ? "" : "none";
+  updateEtaHint();
+  document.getElementById("ov").classList.add("on");
+}
+function updateEtaHint(){
+  const modo = document.getElementById("m_modo").value;
+  const emb = document.getElementById("m_embarque").value;
+  const ent = document.getElementById("m_entrega").value;
+  const h = document.getElementById("m_etaHint");
+  if (ent) { h.textContent = "Entrega confirmada "+ent+" - manda sobre el ETA."; return; }
+  if (modo && emb && modo in TRANSIT) { const eta = addDays(parseD(emb), TRANSIT[modo]); h.textContent = "ETA estimado: "+fmt(eta)+" ("+modo+", +"+TRANSIT[modo]+" dias)."; }
+  else h.textContent = "Asigna modo + embarque para calcular ETA, o carga la entrega real.";
+}
+document.getElementById("m_modo").onchange = updateEtaHint;
+document.getElementById("m_embarque").onchange = updateEtaHint;
+document.getElementById("m_entrega").onchange = updateEtaHint;
+document.getElementById("m_save").onclick = ()=>{
+  for (const f of FIELDS) editing[f] = document.getElementById("m_"+f).value.trim();
+  if (!editing.expediente){ alert("El N de expediente es obligatorio."); return; }
+  if (!data.find(e=>e.id===editing.id)) data.push(editing);
+  save(data); closeModal(); render();
+};
+document.getElementById("m_del").onclick = ()=>{ if(confirm("Eliminar este expediente?")){ data = data.filter(e=>e.id!==editing.id); save(data); closeModal(); render(); } };
+function closeModal(){ document.getElementById("ov").classList.remove("on"); editing=null; }
+document.getElementById("m_cancel").onclick = closeModal;
+document.getElementById("ov").onclick = e=>{ if(e.target.id==="ov") closeModal(); };
+
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
+  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));
+  t.classList.add("on");
+  document.querySelectorAll(".panel").forEach(p=>p.classList.add("hide"));
+  document.getElementById("p-"+t.dataset.tab).classList.remove("hide");
+});
+
+document.getElementById("addBtn").onclick = ()=>openModal(null);
+["fOp","fModo","groupBy","ft_model","ft_sort","hr_show","hr_model"].forEach(idn=>document.getElementById(idn).onchange = render);
+document.querySelectorAll("#tbl thead th[data-k]").forEach(th=>th.onclick=()=>{ const k = th.dataset.k; if(sortK===k) sortDir*=-1; else { sortK=k; sortDir=1; } render(); });
+function tallaCsv(fm, fname){
+  let rows=arrivalRows(filtered()); if(fm) rows=rows.filter(r=>r.modelo===fm);
+  rows.sort((a,b)=>a.modelo.localeCompare(b.modelo)||(+a.talla-+b.talla)||((a.date?a.date.getTime():Infinity)-(b.date?b.date.getTime():Infinity)));
+  let out=[["expediente","oc","operador","estado","embarque","llega","modelo","talla","cantidad"]];
+  rows.forEach(r=>out.push([r.exp,r.oc,r.operador,r.estado,r.embarque,llegaTxt(r),r.modelo,r.talla,r.qty]));
+  downloadCsv(out, fname);
+}
+document.getElementById("ft_csv").onclick = ()=> tallaCsv(document.getElementById("ft_model").value, "entrada_pares_por_talla.csv");
+document.getElementById("hr_csv").onclick = ()=> tallaCsv(document.getElementById("hr_model").value, "hoja_recepcion_por_talla.csv");
+document.getElementById("exp_csv").onclick = ()=>{
+  let out=[["expediente","oc","cliente","operador","marca","modo","pares","estado","embarque","eta","finalizacion"]];
+  filtered().forEach(e=>{ const eta=etaOf(e); out.push([e.expediente,e.oc,e.cliente,e.operador,e.marca,e.modo,e.volumen,e.estado,e.embarque,eta?fmt(eta):"",e.finalizacion]); });
+  downloadCsv(out, "expedientes.csv");
+};
+
+render();
+</script>
+</body>
+</html>
