@@ -21,20 +21,55 @@ import {
 const API_BASE =
   (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || "/api";
 
-/** Pide el factura-payload de un expediente (autenticado). */
-async function fetchPayload(expedienteId) {
+/** GET autenticado → JSON. */
+async function fetchJson(path) {
   const token = getToken();
-  const resp = await fetch(
-    `${API_BASE}/expedientes/${encodeURIComponent(expedienteId)}/factura-payload/`,
-    { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
-  );
+  const resp = await fetch(`${API_BASE}${path}`, {
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
   if (!resp.ok) {
     const txt = await resp.text().catch(() => "");
-    throw new Error(
-      `HTTP ${resp.status} (${expedienteId})${txt ? ": " + txt.slice(0, 120) : ""}`,
-    );
+    throw new Error(`HTTP ${resp.status} ${path}${txt ? ": " + txt.slice(0, 120) : ""}`);
   }
   return resp.json();
+}
+
+/** Pide el factura-payload de un expediente (autenticado). */
+async function fetchPayload(expedienteId) {
+  return fetchJson(
+    `/expedientes/${encodeURIComponent(expedienteId)}/factura-payload/`,
+  );
+}
+
+/**
+ * Trae los artefactos del Builder del expediente (Packing List, AWB/BL, …).
+ * Lista: /inventario/expedientes/{id}/artifacts/
+ * Detalle: /nodos/{nodo_id}/builder-artifacts/{artifact_id}/ (trae data +
+ * structure_snapshot con labels y archivos). Tolerante a fallos.
+ * @returns {Promise<Array>} detalles de artefacto
+ */
+async function fetchArtifacts(expedienteId) {
+  let list;
+  try {
+    list = await fetchJson(
+      `/inventario/expedientes/${encodeURIComponent(expedienteId)}/artifacts/`,
+    );
+  } catch {
+    return [];
+  }
+  const arr = Array.isArray(list) ? list : (list?.results || []);
+  const details = await Promise.allSettled(
+    arr
+      .filter((a) => a && a.nodo_id && a.id)
+      .map((a) =>
+        fetchJson(
+          `/nodos/${encodeURIComponent(a.nodo_id)}/builder-artifacts/${encodeURIComponent(a.id)}/`,
+        ),
+      ),
+  );
+  return details
+    .filter((d) => d.status === "fulfilled")
+    .map((d) => d.value);
 }
 
 /**
@@ -93,6 +128,8 @@ export async function runExpedienteExport({
     if (res.status === "fulfilled") {
       items.push({
         payload: res.value,
+        expedienteId: r.uuid || r.id,
+        artifacts: [],
         codigo: r.ref || (res.value && res.value.proforma_codigo) || "",
         estado: r.status || "",
         sap: r.sap || (Array.isArray(r.sap_codigos) ? r.sap_codigos[0] : "") || "",
@@ -113,10 +150,25 @@ export async function runExpedienteExport({
     );
   }
 
+  // Artefactos del Builder (Packing List, AWB/BL, …) por expediente.
+  const includeArtifacts = filters.includeArtifacts !== false;
+  if (includeArtifacts) {
+    const artRes = await Promise.allSettled(
+      items.map((it) => fetchArtifacts(it.expedienteId)),
+    );
+    artRes.forEach((r, i) => {
+      items[i].artifacts = r.status === "fulfilled" ? r.value : [];
+    });
+  }
+
+  const fileBase =
+    typeof window !== "undefined" && window.location ? window.location.origin : "";
+
   const html = buildExpedientesExportHtml({
     items,
     audience,
     lang,
+    fileBase,
     filters: {
       clienteLabel: filters.clienteLabel || "",
       estadoLabel: filters.estadoLabel || "",

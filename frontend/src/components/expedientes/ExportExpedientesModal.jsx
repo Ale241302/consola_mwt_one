@@ -55,6 +55,7 @@ export default function ExportExpedientesModal({
   const [clienteId, setClienteId] = useState("ALL");
   const [estado, setEstado] = useState("ALL");
   const [expedienteUuid, setExpedienteUuid] = useState("");
+  const [includeArtifacts, setIncludeArtifacts] = useState(true);
 
   // Reset al abrir.
   useEffect(() => {
@@ -63,6 +64,7 @@ export default function ExportExpedientesModal({
       setClienteId("ALL");
       setEstado("ALL");
       setExpedienteUuid("");
+      setIncludeArtifacts(true);
     }
   }, [open, isAdmin]);
 
@@ -104,6 +106,7 @@ export default function ExportExpedientesModal({
       clienteId: specific ? undefined : clienteId,
       estado: specific ? undefined : estado,
       expedienteUuid: specific ? expedienteUuid : undefined,
+      includeArtifacts,
       clienteLabel,
       estadoLabel,
       expedienteLabel,
@@ -269,6 +272,23 @@ export default function ExportExpedientesModal({
                   ))}
                 </select>
               </div>
+
+              {/* Incluir artefactos */}
+              <label style={{ display: "flex", alignItems: "center", gap: 9, cursor: loading ? "default" : "pointer", fontSize: 13, color: "var(--text-primary, #0F172A)" }}>
+                <input
+                  type="checkbox"
+                  checked={includeArtifacts}
+                  disabled={loading}
+                  onChange={(e) => setIncludeArtifacts(e.target.checked)}
+                  style={{ width: 16, height: 16, accentColor: "var(--brand-primary, #013A57)" }}
+                />
+                <span>
+                  {L(lang, "Incluir artefactos", "Include artifacts")}
+                  <span style={{ color: "var(--text-tertiary, #94A3B8)", marginLeft: 6, fontSize: 11 }}>
+                    {L(lang, "(Packing List, AWB/BL…)", "(Packing List, AWB/BL…)")}
+                  </span>
+                </span>
+              </label>
 
               {/* Contador */}
               <div style={{

@@ -85,8 +85,69 @@ export function effectiveAudienceFor(recipient, payload) {
   return INVOICE_AUDIENCE.CLIENT;
 }
 
+// ── artefactos del Builder (Packing List, AWB/BL, …) ─────────────────
+function fieldVisibleTo(field, recipient) {
+  if (recipient !== INVOICE_AUDIENCE.CLIENT) return true;
+  const v = String((field && field.permissions && field.permissions.view) || "").toLowerCase();
+  return v === "" || v === "todos" || v === "all";
+}
+
+function renderArtifactValue(field, value, fileBase, lang) {
+  if (value == null || value === "") return "";
+  if (field.type === "file" && typeof value === "object" && value.url) {
+    const href = (fileBase || "") + value.url;
+    const name = value.name || (lang === "es" ? "Archivo" : "File");
+    return `<a class="afile" href="${esc(href)}" target="_blank" rel="noopener">📎 ${esc(name)}</a>`;
+  }
+  if (typeof value === "object") {
+    return value.name ? esc(value.name) : "";
+  }
+  return esc(value);
+}
+
+function renderArtifacts(artifacts, recipient, lang, fileBase) {
+  const list = Array.isArray(artifacts) ? artifacts : [];
+  if (!list.length) return "";
+  const cards = list
+    .map((a) => {
+      const data = a.data || {};
+      const sections = ((a.structure_snapshot || {}).sections) || [];
+      const rows = [];
+      sections.forEach((sec) => {
+        (sec.columns || []).forEach((col) => {
+          (col.fields || []).forEach((f) => {
+            if (!f || f.type === "code") return;
+            if (!fieldVisibleTo(f, recipient)) return;
+            const html = renderArtifactValue(f, data[f.id], fileBase, lang);
+            if (html === "") return;
+            rows.push(
+              `<tr><td class="al">${esc(f.label || f.id)}</td><td class="av">${html}</td></tr>`,
+            );
+          });
+        });
+      });
+      if (!rows.length) return "";
+      return `
+      <div class="art">
+        <div class="art-head">
+          <span class="art-title">${esc(a.template_title || (lang === "es" ? "Artefacto" : "Artifact"))}</span>
+          ${a.nodo_codigo ? `<span class="art-nodo mono">${esc(a.nodo_codigo)}</span>` : ""}
+        </div>
+        <table class="at"><tbody>${rows.join("")}</tbody></table>
+      </div>`;
+    })
+    .filter(Boolean)
+    .join("");
+  if (!cards) return "";
+  return `
+    <div class="arts">
+      <div class="arts-title">${lang === "es" ? "ARTEFACTOS" : "ARTIFACTS"}</div>
+      ${cards}
+    </div>`;
+}
+
 // ── render de un expediente ──────────────────────────────────────────
-function renderExpediente(item, recipient, lang) {
+function renderExpediente(item, recipient, lang, fileBase) {
   const payload = item.payload || {};
   const t = payload.transferencia || {};
   const oc = payload.operating_company || {};
@@ -248,6 +309,7 @@ function renderExpediente(item, recipient, lang) {
     </div>
     ${groupsHtml || `<div class="empty">${lang === "es" ? "Sin líneas." : "No lines."}</div>`}
     ${costsHtml}
+    ${renderArtifacts(item.artifacts, recipient, lang, fileBase)}
     <div class="exp-tot">
       <div><span>${lang === "es" ? "Unidades" : "Units"}</span><b class="num">${fmtInt(unitsTotal)}</b></div>
       <div><span>${lang === "es" ? "Valor mercadería" : "Goods value"}</span><b class="num">$${fmtMoney(goodsTotal)}</b></div>
@@ -272,6 +334,7 @@ export function buildExpedientesExportHtml({
   audience = INVOICE_AUDIENCE.MWT,
   lang = "es",
   filters = {},
+  fileBase = "",
   generatedBy = "",
 }) {
   const now = new Date();
@@ -314,7 +377,7 @@ export function buildExpedientesExportHtml({
     .map((c) => `<span class="chip">${c}</span>`)
     .join("");
 
-  const body = items.map((it) => renderExpediente(it, audience, lang)).join("");
+  const body = items.map((it) => renderExpediente(it, audience, lang, fileBase)).join("");
 
   const title = lang === "es" ? "Resumen de Exportación" : "Export Summary";
 
@@ -368,6 +431,17 @@ export function buildExpedientesExportHtml({
   table.lt tfoot td{font-weight:700;background:var(--mint-s);color:var(--navy);border-top:2px solid var(--mint);}
   .costs{margin-top:12px;}
   .costs-title{font-size:10px;font-weight:700;color:var(--purple);letter-spacing:.6px;margin-bottom:6px;}
+  .arts{margin-top:14px;}
+  .arts-title{font-size:10px;font-weight:700;color:var(--info);letter-spacing:.6px;margin-bottom:8px;}
+  .art{border:1px solid var(--brd);border-radius:10px;padding:10px 12px;margin-bottom:10px;background:var(--bg);break-inside:avoid;}
+  .art-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px;}
+  .art-title{font-weight:700;font-size:12px;color:var(--navy);}
+  .art-nodo{font-size:10px;color:var(--t2);background:var(--raised);padding:2px 7px;border-radius:999px;}
+  table.at{width:100%;border-collapse:collapse;font-size:11px;}
+  table.at td{padding:4px 8px;border-bottom:1px solid var(--brd);vertical-align:top;}
+  table.at td.al{color:var(--t2);width:40%;font-weight:600;}
+  table.at td.av{color:var(--t1);word-break:break-word;}
+  .afile{color:var(--info);text-decoration:none;font-weight:600;}
   .exp-tot{display:flex;gap:24px;flex-wrap:wrap;justify-content:flex-end;margin-top:14px;padding-top:12px;border-top:1px dashed var(--brd2);}
   .exp-tot > div{text-align:right;}
   .exp-tot span{display:block;font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;}
