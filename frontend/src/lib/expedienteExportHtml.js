@@ -105,11 +105,25 @@ function renderArtifactValue(field, value, fileBase, lang) {
   return esc(value);
 }
 
-function renderArtifacts(artifacts, recipient, lang, fileBase) {
+/** ¿Es el artefacto "Factura Comercial"? (por título o template_id 13). */
+function isFacturaComercial(a) {
+  return (
+    /factura\s*comercial/i.test(String((a && a.template_title) || "")) ||
+    Number(a && a.template_id) === 13
+  );
+}
+
+function renderArtifacts(artifacts, recipient, lang, fileBase, operated) {
   const list = Array.isArray(artifacts) ? artifacts : [];
   if (!list.length) return "";
   const cards = list
     .map((a) => {
+      // Regla de visibilidad: en el reporte del CLIENTE, la Factura Comercial
+      // sólo se muestra si el expediente es operado POR EL CLIENTE. Si lo opera
+      // Muito Work Limitada, NO se filtra al cliente (MWT factura por su cuenta).
+      if (recipient === INVOICE_AUDIENCE.CLIENT && operated && isFacturaComercial(a)) {
+        return "";
+      }
       const data = a.data || {};
       const sections = ((a.structure_snapshot || {}).sections) || [];
       const rows = [];
@@ -309,7 +323,7 @@ function renderExpediente(item, recipient, lang, fileBase) {
     </div>
     ${groupsHtml || `<div class="empty">${lang === "es" ? "Sin líneas." : "No lines."}</div>`}
     ${costsHtml}
-    ${renderArtifacts(item.artifacts, recipient, lang, fileBase)}
+    ${renderArtifacts(item.artifacts, recipient, lang, fileBase, operatedByMwt(payload))}
     <div class="exp-tot">
       <div><span>${lang === "es" ? "Unidades" : "Units"}</span><b class="num">${fmtInt(unitsTotal)}</b></div>
       <div><span>${lang === "es" ? "Valor mercadería" : "Goods value"}</span><b class="num">$${fmtMoney(goodsTotal)}</b></div>
