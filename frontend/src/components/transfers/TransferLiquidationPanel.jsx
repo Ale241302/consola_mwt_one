@@ -49,6 +49,16 @@ function taxRatesForNcm(ncm) {
 const KIND_FREIGHT = new Set(["FLETE", "FREIGHT", "CONSOLIDACION"]);
 const KIND_INSURANCE = new Set(["SEGURO", "INSURANCE"]);
 
+// Timbres/tasas fijas de nacionalización CR (montos USD fijos). Se siembran
+// por defecto en cada movimiento (vista MWT y Cliente) y se muestran en la
+// liquidación + factura. Mantener en sync con lib/transferInvoiceHtml.js.
+const DEFAULT_TIMBRES = [
+  { concept: "PROCOMER",                          amount: 3.00 },
+  { concept: "T. Asociación Agentes (Ley 7017)",  amount: 0.11 },
+  { concept: "T. Archivo Nacional",               amount: 0.04 },
+  { concept: "T. Contadores",                     amount: 0.00 },
+];
+
 // ── Catálogo fallback de tipos de costo (espejo del backend) ──
 const COST_KINDS_FALLBACK = [
   { codigo:"DAI",           label:"Aranceles (DAI)",     is_fiscal:true,  color:"#481EE3" },
@@ -231,6 +241,33 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     setCustomIvaRate(cr?.iva !== undefined && cr?.iva !== null ? Number(cr.iva) : null);
   }, [transfer, effectiveView]);
 
+  // Siembra de timbres por defecto (PROCOMER, T. Asociación, T. Archivo, T.
+  // Contadores) por vista, sólo en NATIONALIZATION y una sola vez. Quedan como
+  // filas TAX de monto fijo editables/eliminables; se reflejan en la factura.
+  const seededRef = useRef({});
+  useEffect(() => {
+    if (!transferId) return;
+    if (transfer?.liquidated_at) return;
+    if (transfer?.legal_context !== "NATIONALIZATION") return;
+    const b = readViewCtx(transfer?.context_data) || {};
+    if (b.timbres_seeded) return;
+    if ((b.custom_taxes || []).length) return;
+    if (seededRef.current[effectiveView]) return;
+    seededRef.current[effectiveView] = true;
+    const seeded = DEFAULT_TIMBRES.map((tb, i) => ({
+      id: "timbre-" + effectiveView + "-" + i,
+      type: "TAX", concept: tb.concept, amount: tb.amount, notes: "Timbre / tasa",
+    }));
+    setCustomTaxes(seeded);
+    (async () => {
+      try {
+        const nextCtx = writeViewCtx(transfer?.context_data, { custom_taxes: seeded, timbres_seeded: true });
+        await transferenciasApi.update(transferId, { context_data: nextCtx });
+        onLiquidated?.();
+      } catch (e) { /* siembra best-effort */ }
+    })();
+  }, [transfer, effectiveView, transferId]);
+
   // Persistir overrides in context_data via PATCH
   const persistLineOverrides = useCallback(async (newOverrides) => {
     if (!transferId) return;
@@ -360,7 +397,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       const iva = cif * ivaRate;
 
       // Custom taxes on CIF and custom costs prorated by pairs qty
-      const lineCustomTaxesAmount = customTaxes.filter(x => x.type === "TAX").reduce((sum, tax) => sum + (cif * ((tax.rate || 0) / 100)), 0);
+      const lineCustomTaxesAmount = customTaxes.filter(x => x.type === "TAX").reduce((sum, tax) => {
+        const hasAmt = tax.amount != null && tax.amount !== "";
+        // Timbre (monto fijo) → prorratea por cantidad; impuesto % → CIF×tasa.
+        return sum + (hasAmt
+          ? (qtyTotalAll > 0 ? (Number(tax.amount) * (qty / qtyTotalAll)) : 0)
+          : (cif * ((tax.rate || 0) / 100)));
+      }, 0);
       const lineCustomCostsAmount = customTaxes.filter(x => x.type === "COST").reduce((sum, cost) => sum + (qtyTotalAll > 0 ? (Number(cost.amount || 0) * (qty / qtyTotalAll)) : 0), 0);
 
       const itemDest = override.dest !== undefined ? Number(override.dest) : dest;
@@ -1618,10 +1661,25 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   </tr>
                   {customTaxes.filter(x => x.type === "TAX").map((x, idx) => {
                     const rowNum = `6${String.fromCharCode(97 + idx)}`;
-                    const amount = livePreview.cifTotal * ((x.rate || 0) / 100);
+                    const hasAmt = x.amount != null && x.amount !== "";
+                    const computed = livePreview.cifTotal * ((x.rate || 0) / 100);
                     return (
                       <tr key={x.id}>
-                        <td>{rowNum}</td>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <span>{rowNum}</span>
+                            {!isLiquidated && (
+                              <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar fila" : "Remove row"} style={{ color: "#D64545", padding: "2px" }}
+                                      onClick={() => {
+                                        const next = customTaxes.filter(item => item.id !== x.id);
+                                        setCustomTaxes(next);
+                                        persistCustomTaxes(next);
+                                      }}>
+                                <IconTrash size={10}/>
+                              </button>
+                            )}
+                          </div>
+                        </td>
                         <td>
                           {isLiquidated ? (
                             <strong>{x.concept}</strong>
@@ -1638,14 +1696,15 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         <td>CIF</td>
                         <td style={{ textAlign: "right" }}>
                           {isLiquidated ? (
-                            <span>{Number(x.rate || 0).toFixed(2)}%</span>
+                            <span>{hasAmt ? "—" : Number(x.rate || 0).toFixed(2) + "%"}</span>
                           ) : (
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
                               <input className="input tabular-nums" type="number" step="0.01" min="0" max="100"
-                                     style={{ width: 70, textAlign: "right", padding: "2px 4px", fontSize: 12 }}
-                                     value={x.rate}
+                                     style={{ width: 60, textAlign: "right", padding: "2px 4px", fontSize: 12 }}
+                                     value={x.rate != null ? x.rate : ""} placeholder="—"
                                      onChange={(e) => {
-                                       const next = customTaxes.map(item => item.id === x.id ? { ...item, rate: Number(e.target.value) } : item);
+                                       const v = e.target.value;
+                                       const next = customTaxes.map(item => item.id === x.id ? { ...item, rate: v === "" ? null : Number(v) } : item);
                                        setCustomTaxes(next);
                                      }}
                                      onBlur={() => persistCustomTaxes(customTaxes)}/>
@@ -1654,18 +1713,34 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           )}
                         </td>
                         <td className="tabular-nums" style={{ textAlign: "right" }}>
-                          ${fmt(amount)}
+                          {isLiquidated ? (
+                            <span>${fmt(hasAmt ? Number(x.amount) : computed)}</span>
+                          ) : (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                              <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                              <input className="input tabular-nums" type="number" step="0.01" min="0"
+                                     style={{ width: 100, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                                     value={hasAmt ? x.amount : ""} placeholder={fmt(computed)}
+                                     onChange={(e) => {
+                                       const v = e.target.value;
+                                       const next = customTaxes.map(item => item.id === x.id ? { ...item, amount: v === "" ? null : Number(v) } : item);
+                                       setCustomTaxes(next);
+                                     }}
+                                     onBlur={() => persistCustomTaxes(customTaxes)}/>
+                            </span>
+                          )}
                         </td>
                         <td>
-                          {!isLiquidated && (
-                            <button className="btn btn-ghost btn-xs" style={{ color: "#D64545", padding: "2px" }}
-                                    onClick={() => {
-                                      const next = customTaxes.filter(item => item.id !== x.id);
-                                      setCustomTaxes(next);
-                                      persistCustomTaxes(next);
-                                    }}>
-                              <IconTrash size={10}/>
-                            </button>
+                          {isLiquidated ? (
+                            <span style={{ color: "#64748B", fontSize: 11 }}>{x.notes || ""}</span>
+                          ) : (
+                            <input className="input" style={{ width: 150, padding: "2px 6px", fontSize: 12 }}
+                                   value={x.notes || ""} placeholder={lang === "es" ? "Notas" : "Notes"}
+                                   onChange={(e) => {
+                                     const next = customTaxes.map(item => item.id === x.id ? { ...item, notes: e.target.value } : item);
+                                     setCustomTaxes(next);
+                                   }}
+                                   onBlur={() => persistCustomTaxes(customTaxes)}/>
                           )}
                         </td>
                       </tr>
@@ -1681,7 +1756,17 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     return !KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k);
                   }).map((c, idx) => (
                     <tr key={c.id}>
-                      <td>{7 + idx}</td>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span>{7 + idx}</span>
+                          {!isLiquidated && (
+                            <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar costo (sincroniza con sección 2)" : "Remove cost"} style={{ color: "#D64545", padding: "2px" }}
+                                    onClick={() => askRemoveCost(c)}>
+                              <IconTrash size={10}/>
+                            </button>
+                          )}
+                        </div>
+                      </td>
                       <td>{c.label || c.kind}</td>
                       <td>{c.kind}</td>
                       <td style={{ textAlign: "right" }}>—</td>
@@ -1711,7 +1796,21 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     }).length + idx;
                     return (
                       <tr key={x.id}>
-                        <td>{rowNum}</td>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <span>{rowNum}</span>
+                            {!isLiquidated && (
+                              <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar fila" : "Remove row"} style={{ color: "#D64545", padding: "2px" }}
+                                      onClick={() => {
+                                        const next = customTaxes.filter(item => item.id !== x.id);
+                                        setCustomTaxes(next);
+                                        persistCustomTaxes(next);
+                                      }}>
+                                <IconTrash size={10}/>
+                              </button>
+                            )}
+                          </div>
+                        </td>
                         <td>
                           {isLiquidated ? (
                             <strong>{x.concept}</strong>
@@ -1734,7 +1833,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
                               <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
                               <input className="input tabular-nums" type="number" step="0.01" min="0"
-                                     style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                                     style={{ width: 100, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
                                      value={x.amount}
                                      onChange={(e) => {
                                        const next = customTaxes.map(item => item.id === x.id ? { ...item, amount: Number(e.target.value) } : item);
@@ -1745,16 +1844,16 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           )}
                         </td>
                         <td>
-                          <span style={{ color: "#64748B", fontSize: 11, marginRight: 8 }}>{lang === "es" ? "Costo en destino" : "Destination cost"}</span>
-                          {!isLiquidated && (
-                            <button className="btn btn-ghost btn-xs" style={{ color: "#D64545", padding: "2px", display: "inline-flex", verticalAlign: "middle" }}
-                                    onClick={() => {
-                                      const next = customTaxes.filter(item => item.id !== x.id);
-                                      setCustomTaxes(next);
-                                      persistCustomTaxes(next);
-                                    }}>
-                              <IconTrash size={10}/>
-                            </button>
+                          {isLiquidated ? (
+                            <span style={{ color: "#64748B", fontSize: 11 }}>{x.notes || (lang === "es" ? "Costo en destino" : "Destination cost")}</span>
+                          ) : (
+                            <input className="input" style={{ width: 150, padding: "2px 6px", fontSize: 12 }}
+                                   value={x.notes || ""} placeholder={lang === "es" ? "Costo en destino" : "Destination cost"}
+                                   onChange={(e) => {
+                                     const next = customTaxes.map(item => item.id === x.id ? { ...item, notes: e.target.value } : item);
+                                     setCustomTaxes(next);
+                                   }}
+                                   onBlur={() => persistCustomTaxes(customTaxes)}/>
                           )}
                         </td>
                       </tr>

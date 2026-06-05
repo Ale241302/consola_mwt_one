@@ -55,6 +55,33 @@ export function taxRatesForNcm(ncm) {
   return NCM_TAX_RATES[key] || NCM_TAX_RATES._default;
 }
 
+// Timbres/tasas fijas estándar de nacionalización CR (montos USD fijos).
+// Se siembran por defecto en cada movimiento (vista MWT y Cliente) y se
+// muestran en la liquidación de la factura. Editables/eliminables por el CEO.
+// Mantener en sync con el panel (TransferLiquidationPanel.jsx).
+export const DEFAULT_TIMBRES = Object.freeze([
+  { concept: "PROCOMER",                          amount: 3.00, fixed: true },
+  { concept: "T. Asociación Agentes (Ley 7017)",  amount: 0.11, fixed: true },
+  { concept: "T. Archivo Nacional",               amount: 0.04, fixed: true },
+  { concept: "T. Contadores",                     amount: 0.00, fixed: true },
+]);
+
+/** Lista de impuestos TAX de un bucket, con timbres por defecto si no fueron
+ *  sembrados todavía (movimientos no abiertos en el panel). */
+function resolveTaxRows(bucket) {
+  const taxes = (bucket.custom_taxes || []).filter((x) => x && x.type === "TAX");
+  if (taxes.length || bucket.timbres_seeded) return taxes;
+  return DEFAULT_TIMBRES.map((tb, i) => ({
+    id: "timbre-" + i, type: "TAX", concept: tb.concept, amount: tb.amount, fixed: true,
+  }));
+}
+
+/** Monto efectivo de una fila de impuesto TAX: fijo si trae amount, si no CIF×tasa. */
+function taxRowAmount(x, cif) {
+  if (x.amount != null && x.amount !== "") return Number(x.amount) || 0;
+  return Number(cif) * (Number(x.rate || 0) / 100);
+}
+
 // Clasificación de cost_lines que entran al CIF (flete + seguro).
 const KIND_FREIGHT = new Set(["FLETE", "FREIGHT", "CONSOLIDACION"]);
 const KIND_INSURANCE = new Set(["SEGURO", "INSURANCE"]);
@@ -173,56 +200,74 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
           <td colspan="4"><strong>CIF (base imponible aduana)</strong></td>
           <td class="r"><strong>${usd(n.totals.cif)}</strong></td>
           <td></td>
-        </tr>
+        </tr>`;
+
+  // Exclusiones de impuestos núcleo (trash en el panel) y montos por vista.
+  const excluded = bucket.excluded || {};
+  const cifTot = Number(n.totals.cif);
+  const daiT = excluded.dai ? 0 : Number(n.totals.dai);
+  const leyT = excluded.ley ? 0 : Number(n.totals.ley);
+  const ivaT = excluded.iva ? 0 : Number(n.totals.iva);
+
+  if (!excluded.dai) html += `
         <tr>
           <td>4</td>
           <td>DAI &mdash; Derecho Arancelario</td>
           <td class="m">CIF</td>
           <td class="r">${daiPct}%</td>
-          <td class="r">${usd(n.totals.dai)}</td>
+          <td class="r">${usd(daiT)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Régimen general calzado" : "General tariff rate"}</td>
-        </tr>
+        </tr>`;
+  if (!excluded.ley) html += `
         <tr>
           <td>5</td>
           <td>Ley 6946</td>
           <td class="m">CIF</td>
           <td class="r">${leyPct}%</td>
-          <td class="r">${usd(n.totals.ley)}</td>
+          <td class="r">${usd(leyT)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Tributo fijo" : "Fixed tax"}</td>
-        </tr>
+        </tr>`;
+  if (!excluded.iva) html += `
         <tr>
           <td>6</td>
-          <td>IVA</td>
+          <td>IVA (Ley 9635)</td>
           <td class="m">CIF</td>
           <td class="r">${ivaPct}%</td>
-          <td class="r">${usd(n.totals.iva)}</td>
+          <td class="r">${usd(ivaT)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Acreditable — crédito fiscal" : "Creditable — tax credit"}</td>
         </tr>`;
 
-  const customTaxes = bucket.custom_taxes || t.context_data?.custom_taxes || [];
+  // Timbres + impuestos custom (monto fijo, o % sobre CIF). Timbres por
+  // defecto si el movimiento aún no fue sembrado en el panel.
+  const taxRows = resolveTaxRows(bucket);
   let customTaxesSum = 0;
   let customTaxIdx = 0;
-  customTaxes.filter(x => x.type === "TAX").forEach((x) => {
-    const rate = Number(x.rate || 0);
-    const amount = n.totals.cif * (rate / 100);
+  taxRows.forEach((x) => {
+    const amount = taxRowAmount(x, cifTot);
     customTaxesSum += amount;
     const rowNum = `6${String.fromCharCode(97 + customTaxIdx++)}`;
+    const hasAmount = x.amount != null && x.amount !== "";
+    const rateNum = Number(x.rate || 0);
+    const rateCell = (hasAmount && !rateNum) ? "&mdash;" : rateNum.toFixed(2) + "%";
+    const notes = x.notes || ((hasAmount && !rateNum)
+      ? (lang === "es" ? "Timbre / tasa" : "Stamp / fee")
+      : (lang === "es" ? "Impuesto específico" : "Specific tax"));
     html += `
       <tr>
         <td>${rowNum}</td>
         <td>${esc(x.concept || (lang === "es" ? "Impuesto adicional" : "Additional tax"))}</td>
         <td class="m">CIF</td>
-        <td class="r">${rate.toFixed(2)}%</td>
+        <td class="r">${rateCell}</td>
         <td class="r">${usd(amount)}</td>
-        <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Impuesto específico" : "Specific tax"}</td>
+        <td style="font-size:10px;color:var(--t2);">${esc(notes)}</td>
       </tr>`;
   });
 
-  const subtotalTaxes = n.totals.dai + n.totals.ley + n.totals.iva + customTaxesSum;
+  const subtotalTaxes = daiT + leyT + ivaT + customTaxesSum;
 
   html += `
         <tr class="trow">
-          <td colspan="4"><strong>${lang === "es" ? "Subtotal impuestos (con IVA)" : "Subtotal taxes (incl. VAT)"}</strong></td>
+          <td colspan="4"><strong>${lang === "es" ? "Subtotal tributos+timbres (con IVA)" : "Subtotal taxes+stamps (incl. VAT)"}</strong></td>
           <td class="r"><strong>${usd(subtotalTaxes)}</strong></td>
           <td></td>
         </tr>`;
@@ -240,27 +285,34 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
       </tr>`;
   });
 
-  customTaxes.filter(x => x.type === "COST").forEach((x) => {
+  let customCostsSum = 0;
+  (bucket.custom_taxes || []).filter((x) => x.type === "COST").forEach((x) => {
+    const amt = Number(x.amount || 0);
+    customCostsSum += amt;
     html += `
       <tr>
         <td>${idx++}</td>
         <td>${esc(x.concept || (lang === "es" ? "Gasto adicional" : "Additional charge"))}</td>
         <td class="m">OTRO</td>
         <td class="r">&mdash;</td>
-        <td class="r">${usd(x.amount)}</td>
-        <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Costo en destino" : "Destination cost"}</td>
+        <td class="r">${usd(amt)}</td>
+        <td style="font-size:10px;color:var(--t2);">${esc(x.notes || (lang === "es" ? "Costo en destino" : "Destination cost"))}</td>
       </tr>`;
   });
+
+  const destTot = Number(n.totals.dest) + customCostsSum;
+  const totalSinIva = cifTot + daiT + leyT + customTaxesSum + destTot;
+  const totalConIva = totalSinIva + ivaT;
 
   html += `
         <tr class="trow">
           <td colspan="4"><strong>${lang === "es" ? "Subtotal costos destino" : "Subtotal destination costs"}</strong></td>
-          <td class="r"><strong>${usd(n.totals.dest)}</strong></td>
+          <td class="r"><strong>${usd(destTot)}</strong></td>
           <td></td>
         </tr>
         <tr style="background:var(--t2);color:white;">
           <td colspan="4" style="padding:10px 12px;"><strong style="color:white;font-size:12px;">${lang === "es" ? "Total con IVA (incluye crédito fiscal)" : "Total incl. VAT (includes tax credit)"}</strong></td>
-          <td class="r" style="padding:10px 12px;"><strong style="color:white;font-size:13px;">${usd(n.totals.total + n.totals.iva)}</strong></td>
+          <td class="r" style="padding:10px 12px;"><strong style="color:white;font-size:13px;">${usd(totalConIva)}</strong></td>
           <td style="padding:10px 12px;color:rgba(255,255,255,.7);font-size:10px;">${lang === "es" ? "embarque completo" : "complete shipment"}</td>
         </tr>
         <tr style="background:var(--navy);color:white;">
@@ -269,7 +321,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
               ? (lang === "es" ? "TOTAL SIN IVA — costo real de nacionalizar" : "TOTAL EXCL. VAT — real nationalization cost")
               : (lang === "es" ? "TOTAL SIN IVA — costo real de MWT" : "TOTAL EXCL. VAT — real MWT cost")
           }</strong></td>
-          <td class="r" style="padding:12px;border-top:2px solid var(--navy);"><strong style="color:white;font-size:15px;">${usd(n.totals.total)}</strong></td>
+          <td class="r" style="padding:12px;border-top:2px solid var(--navy);"><strong style="color:white;font-size:15px;">${usd(totalSinIva)}</strong></td>
           <td style="padding:12px;border-top:2px solid var(--navy);color:var(--ice);font-size:10px;">${lang === "es" ? "ver $/par por línea" : "see $/pair by line"}</td>
         </tr>
       </tbody>
