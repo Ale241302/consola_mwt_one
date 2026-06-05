@@ -73,6 +73,22 @@ async function fetchArtifacts(expedienteId) {
 }
 
 /**
+ * Costos del MOVIMIENTO puntual del expediente (no el fan-out histórico).
+ * `trfId` = payload.transferencia.id (transfer más reciente ligado). Si no
+ * hay transfer real (cae al expediente_id), no consulta. Devuelve las
+ * cost_line con su `price_view` para que el front filtre MWT/Cliente.
+ */
+async function fetchCostLines(trfId, expedienteId) {
+  if (!trfId || trfId === expedienteId) return [];
+  try {
+    const r = await fetchJson(`/transferencias/${encodeURIComponent(trfId)}/cost-lines/`);
+    return Array.isArray(r) ? r : (r?.results || []);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Resuelve el conjunto de expedientes objetivo según los filtros.
  * @param {Array} expedientes  filas cargadas en la pantalla (mapExpedienteFromApi)
  * @param {Object} f  { expedienteUuid, clienteId, estado }
@@ -130,6 +146,7 @@ export async function runExpedienteExport({
         payload: res.value,
         expedienteId: r.uuid || r.id,
         artifacts: [],
+        costLines: [],
         codigo: r.ref || (res.value && res.value.proforma_codigo) || "",
         estado: r.status || "",
         sap: r.sap || (Array.isArray(r.sap_codigos) ? r.sap_codigos[0] : "") || "",
@@ -158,6 +175,21 @@ export async function runExpedienteExport({
     );
     artRes.forEach((r, i) => {
       items[i].artifacts = r.status === "fulfilled" ? r.value : [];
+    });
+  }
+
+  // Costos del movimiento (sólo audiencia interna/MWT) divididos por price_view.
+  if (audience === INVOICE_AUDIENCE.MWT) {
+    const clRes = await Promise.allSettled(
+      items.map((it) =>
+        fetchCostLines(
+          it.payload && it.payload.transferencia && it.payload.transferencia.id,
+          it.expedienteId,
+        ),
+      ),
+    );
+    clRes.forEach((r, i) => {
+      items[i].costLines = r.status === "fulfilled" ? r.value : [];
     });
   }
 

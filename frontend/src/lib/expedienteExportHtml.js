@@ -149,7 +149,7 @@ function buildNormalized(item, recipient, lang, fileBase) {
   const payload = item.payload || {};
   const oc = payload.operating_company || {};
   const lineasRaw = Array.isArray(payload.lineas) ? payload.lineas : [];
-  const costsRaw = Array.isArray(payload.cost_breakdown) ? payload.cost_breakdown : [];
+  const costLinesRaw = Array.isArray(item.costLines) ? item.costLines : [];
   const opByMwt = operatedByMwt(payload);
   const eff = effectiveAudienceFor(recipient, payload);
   const showCosts = recipient === INVOICE_AUDIENCE.MWT;
@@ -197,12 +197,18 @@ function buildNormalized(item, recipient, lang, fileBase) {
     return { cod: g.cod, modelo: g.modelo, total: g.total, unit: g.unit, amount: g.amount, tallas };
   });
 
+  // Costos del MOVIMIENTO divididos por price_view (MWT/CLIENT). Sólo se
+  // exponen a la audiencia interna (showCosts). El cliente nunca los ve (R3).
+  const wantView = recipient === INVOICE_AUDIENCE.MWT ? "MWT" : "CLIENT";
   const costs = showCosts
-    ? costsRaw.map((c) => ({ label: c.label || c.kind || "Costo", usd: Number(c.amount_usd) || 0 }))
+    ? costLinesRaw
+        .filter((c) => String(c.price_view || "MWT").toUpperCase() === wantView)
+        .map((c) => ({ label: c.label || c.kind || "Costo", usd: Number(c.amount_usd) || 0 }))
     : [];
   const costsTotal = costs.reduce((a, c) => a + c.usd, 0);
 
   const estado = item.estado || (payload.transferencia || {}).estado || "—";
+  const trfId = (payload.transferencia || {}).id || "";
 
   return {
     expediente: item.codigo || payload.proforma_codigo || "—",
@@ -214,6 +220,7 @@ function buildNormalized(item, recipient, lang, fileBase) {
     carrier: log.carrier || "",
     estado,
     estadoLabel: ESTADO_LABEL[estado] || estado,
+    trfId,
     embarque: log.embarque || "",
     entrega: log.entrega || "",
     volumen,
@@ -327,7 +334,11 @@ function clientRuntime() {
       ["Expedientes", total], ["Entregados", entreg], ["En tránsito", transito],
       ["Por salir", porsalir], ["Pares totales", fInt(vol)], ["Valor mercadería", fUsd(goods)],
     ];
-    if (showCosts) cards.push(["Costos movimiento", fUsd(list.reduce(function (a, e) { return a + (e.costsTotal || 0); }, 0))]);
+    if (showCosts) {
+      var seen = {}, costSum = 0;
+      list.forEach(function (e) { var k = e.trfId || e.expediente; if (!seen[k]) { seen[k] = 1; costSum += (e.costsTotal || 0); } });
+      cards.push(["Costos movimiento", fUsd(costSum)]);
+    }
     document.getElementById("kpis").innerHTML = cards.map(function (c) { return '<div class="kpi"><div class="n">' + c[1] + '</div><div class="l">' + c[0] + "</div></div>"; }).join("");
   }
 
@@ -354,10 +365,11 @@ function clientRuntime() {
         var e = r.e, p = r.p, s = r.s, bar = "";
         if (s && p.date) {
           var l = pct(s), w = Math.max(2, pct(p.date) - l);
-          var cls = p.est ? "est" : (e.modo === "Aereo" ? "aereo" : (e.modo === "Maritimo" ? "maritimo" : "est"));
+          var cls = p.done ? "done" : (p.est ? "est" : (e.modo === "Aereo" ? "aereo" : (e.modo === "Maritimo" ? "maritimo" : "est")));
           bar += '<div class="gbar ' + cls + '" style="left:' + l + "%;width:" + w + '%">' + shortD(p.date) + (p.est ? " ~" : "") + "</div>";
         } else if (p.date) {
-          bar += '<div class="gdot" style="left:' + pct(p.date) + '%"></div><div class="gbar" style="left:' + pct(p.date) + '%;background:none;color:#2da44e;top:6px">' + shortD(p.date) + "</div>";
+          var x = pct(p.date);
+          bar += '<div class="gdot" style="left:' + x + '%"></div><div class="gdotlab" style="left:' + x + '%">' + shortD(p.date) + "</div>";
         }
         html += '<div class="grow"><div class="glabel">Exp ' + esc(e.expediente) + " · " + fInt(e.volumen) + " prs · " + esc(e.operador) + '</div><div class="gtrack">' + bar + "</div></div>";
       });
@@ -367,12 +379,19 @@ function clientRuntime() {
     if (undated.length) g.innerHTML += '<div class="nodate" style="margin-top:8px">Sin fecha: ' + undated.map(function (r) { return "Exp " + esc(r.e.expediente); }).join(", ") + "</div>";
   }
   function renderUpnext(list) {
-    var rows = list.map(function (e) { return { e: e, p: projectedDelivery(e) }; }).filter(function (r) { return !r.p.done && r.p.date; }).sort(function (a, b) { return a.p.date - b.p.date; });
+    var rows = list.map(function (e) { return { e: e, p: projectedDelivery(e) }; }).filter(function (r) { return r.p.date; });
+    rows.sort(function (a, b) {
+      if (a.p.done !== b.p.done) return a.p.done ? 1 : -1; // pendientes primero
+      return a.p.done ? (b.p.date - a.p.date) : (a.p.date - b.p.date);
+    });
     var box = document.getElementById("upnext");
-    if (!rows.length) { box.innerHTML = '<div class="nodate">Nada proyectable.</div>'; return; }
+    if (!rows.length) { box.innerHTML = '<div class="nodate">Sin fechas de entrega.</div>'; return; }
     box.innerHTML = rows.map(function (r) {
       var e = r.e, p = r.p, dias = Math.round((p.date - today()) / 86400000);
-      return '<div class="up"><div class="d1">Exp ' + esc(e.expediente) + " · " + shortD(p.date) + (p.est ? " (est.)" : "") + '</div><div class="d2">' + fInt(e.volumen) + " prs · " + esc(e.modo || "modo?") + " · " + esc(e.operador) + (e.oc ? " · OC " + esc(e.oc) : "") + '</div><div class="d3"><span class="sem ' + sem(e) + '"></span>' + (dias <= 0 ? "entrega hoy/vencida" : "en " + dias + " días") + "</div></div>";
+      var d3 = p.done
+        ? '<span class="sem ok"></span>Entregado'
+        : '<span class="sem ' + sem(e) + '"></span>' + (dias <= 0 ? "entrega hoy/vencida" : "en " + dias + " días");
+      return '<div class="up"><div class="d1">Exp ' + esc(e.expediente) + " · " + shortD(p.date) + (p.est ? " (est.)" : "") + '</div><div class="d2">' + fInt(e.volumen) + " prs · " + esc(e.modo || "modo?") + " · " + esc(e.operador) + (e.oc ? " · OC " + esc(e.oc) : "") + '</div><div class="d3">' + d3 + "</div></div>";
     }).join("");
   }
   function renderPipeline(list) {
@@ -535,9 +554,10 @@ select { font:inherit; border:1px solid #d2d8e0; border-radius:7px; padding:7px 
 .glabel { font-size:11.5px; font-weight:600; color:#43505f; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:8px; }
 .gtrack { position:relative; height:30px; }
 .gbar { position:absolute; top:7px; height:16px; border-radius:8px; font-size:10px; color:#fff; font-weight:700; line-height:16px; padding:0 6px; white-space:nowrap; }
-.gbar.aereo { background:#1a7f48; } .gbar.maritimo { background:#1a6a8f; }
+.gbar.aereo { background:#1a7f48; } .gbar.maritimo { background:#1a6a8f; } .gbar.done { background:#2da44e; }
 .gbar.est { background:repeating-linear-gradient(45deg,#9aa3b0,#9aa3b0 5px,#b3bac4 5px,#b3bac4 10px); }
 .gdot { position:absolute; top:9px; width:12px; height:12px; border-radius:50%; background:#2da44e; border:2px solid #fff; box-shadow:0 0 0 1px #2da44e; }
+.gdotlab { position:absolute; top:6px; font-size:10px; font-weight:700; color:#2da44e; white-space:nowrap; transform:translateX(12px); }
 .goverlay { position:absolute; left:200px; right:0; top:0; bottom:22px; pointer-events:none; }
 .gaxis { position:relative; height:18px; margin-left:200px; border-top:1px solid #e6e9ee; margin-top:4px; }
 .gtick { position:absolute; top:2px; font-size:9.5px; color:#8a93a0; transform:translateX(-50%); }
@@ -684,7 +704,7 @@ export function buildExpedientesExportHtml({
   <div class="panel hide" id="p-matriz">
     <div class="entbar">
       <label class="lbl">Mostrar</label>
-      <select id="hr_show"><option value="pend">Por llegar</option><option value="all">Todos</option><option value="done">Entregados</option></select>
+      <select id="hr_show"><option value="all">Todos</option><option value="pend">Por llegar</option><option value="done">Entregados</option></select>
       <label class="lbl">Modelo</label><select id="hr_model"><option value="">Todos</option></select>
     </div>
     <div id="recep"></div>
