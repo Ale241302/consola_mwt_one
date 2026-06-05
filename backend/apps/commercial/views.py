@@ -1726,6 +1726,94 @@ class MarluvasExchangeRateView(APIView):
 
 
 # =====================================================================
+# UsdCrcExchangeRateView · cotización USD/CRC (colón costarricense) en vivo
+# ---------------------------------------------------------------------
+# Mismo patrón que MarluvasExchangeRateView (proxy + cache 60min + cadena
+# de fallback). La liquidación de movimientos / factura lo consume para
+# mostrar montos en colones. Frankfurter (ECB) NO tiene CRC → la cadena es
+# AwesomeAPI → open.er-api.com → cache stale → fallback.
+# GET /api/commercial/exchange-rate/usd-crc/  → { rate, source, cached, ... }
+# =====================================================================
+class UsdCrcExchangeRateView(APIView):
+    """Proxy + cache + fallback chain para USD/CRC."""
+    permission_classes = [IsAuthenticated]
+
+    CACHE_KEY = "commercial:fx:usd-crc"
+    CACHE_TTL = 60 * 60
+    UPSTREAM_TIMEOUT = 6
+
+    URL_AWESOME = "https://economia.awesomeapi.com.br/last/USD-CRC"
+    URL_ERAPI   = "https://open.er-api.com/v6/latest/USD"
+
+    @classmethod
+    def _fetch_awesomeapi(cls):
+        resp = requests.get(cls.URL_AWESOME, timeout=cls.UPSTREAM_TIMEOUT)
+        resp.raise_for_status()
+        raw = resp.json()
+        if isinstance(raw, dict) and raw.get("code") and not raw.get("USDCRC"):
+            raise RuntimeError(f"AwesomeAPI body error: {raw.get('code')}")
+        data = raw.get("USDCRC") or {}
+        bid = data.get("bid")
+        if bid in (None, ""):
+            raise RuntimeError("AwesomeAPI: bid vacío")
+        b = float(bid)
+        return {
+            "rate": b, "bid": b,
+            "ask":  float(data["ask"])    if data.get("ask")    not in (None, "") else None,
+            "high": float(data["high"])   if data.get("high")   not in (None, "") else None,
+            "low":  float(data["low"])    if data.get("low")    not in (None, "") else None,
+            "varBid": float(data["varBid"]) if data.get("varBid") not in (None, "") else None,
+            "timestamp": data.get("create_date"), "source": "AwesomeAPI", "cached": False,
+        }
+
+    @classmethod
+    def _fetch_erapi(cls):
+        resp = requests.get(cls.URL_ERAPI, timeout=cls.UPSTREAM_TIMEOUT)
+        resp.raise_for_status()
+        raw = resp.json()
+        rate = (raw.get("rates") or {}).get("CRC")
+        if rate in (None, ""):
+            raise RuntimeError("open.er-api: rate CRC vacío")
+        r = float(rate)
+        return {
+            "rate": r, "bid": r, "ask": r, "high": None, "low": None, "varBid": None,
+            "timestamp": raw.get("time_last_update_utc"), "source": "open.er-api.com", "cached": False,
+        }
+
+    def get(self, request):
+        force = str(request.query_params.get("refresh", "")).lower() in ("1", "true", "yes")
+        if not force:
+            cached = cache.get(self.CACHE_KEY)
+            if cached:
+                payload = dict(cached); payload["cached"] = True
+                return Response(payload, status=200)
+        errors = []
+        for name, fetcher in [("awesomeapi", self._fetch_awesomeapi), ("er-api", self._fetch_erapi)]:
+            try:
+                payload = fetcher()
+                cache.set(self.CACHE_KEY, payload, timeout=self.CACHE_TTL)
+                return Response(payload, status=200)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{name}: {exc}")
+                log.warning("UsdCrcExchangeRateView upstream %s failed: %s", name, exc)
+        stale = cache.get(self.CACHE_KEY)
+        if stale:
+            payload = dict(stale); payload["cached"] = True
+            payload["upstream_errors"] = errors
+            return Response(payload, status=200)
+        fallback = {
+            "rate": 505.0, "bid": 505.0, "ask": 505.0, "high": None, "low": None, "varBid": None,
+            "timestamp": None, "source": "Hardcoded Fallback", "cached": False,
+            "error": "Upstreams USD/CRC fallaron; usando fallback.", "upstream_errors": errors,
+        }
+        try:
+            cache.set(self.CACHE_KEY, fallback, timeout=300)
+        except Exception:
+            pass
+        return Response(fallback, status=200)
+
+
+# =====================================================================
 # MarluvasClientEnabledSkusView · SKUs habilitados por cliente
 # ---------------------------------------------------------------------
 # Source of truth: `productos.producto.especificaciones->'visibility'`.

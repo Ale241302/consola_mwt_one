@@ -1185,6 +1185,9 @@ export const fxApi = {
   usdBrl:        (refresh = false) =>
     apiFetch(`/commercial/exchange-rate/usd-brl/${refresh ? "?refresh=1" : ""}`,
              { token: getToken() }),
+  usdCrc:        (refresh = false) =>
+    apiFetch(`/commercial/exchange-rate/usd-crc/${refresh ? "?refresh=1" : ""}`,
+             { token: getToken() }),
 };
 
 // ---------------------------------------------------------------------

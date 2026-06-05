@@ -29,7 +29,7 @@ import {
 } from "../../lib/icons.jsx";
 import {
   transferenciasApi, transferDetailApi, currencyCatApi, transferLineasApi,
-  nodosApi,
+  nodosApi, fxApi,
 } from "../../lib/api.js";
 import { useRole } from "../../context/RoleContext.jsx";
 import { isMwtOperated, MWT_OPERATING_CLIENT_ID } from "../../lib/operatingCompany.js";
@@ -229,6 +229,18 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   const [customTaxes, setCustomTaxes] = useState(() => readViewCtx(transfer?.context_data)?.custom_taxes || []);
   // Impuestos núcleo excluidos (DAI/Ley/IVA) — por vista. Trash en el panel.
   const [excludedTaxes, setExcludedTaxes] = useState(() => readViewCtx(transfer?.context_data)?.excluded || {});
+  // Cotización USD→CRC (colón) en vivo, desde /commercial/exchange-rate/usd-crc/.
+  const [crcFx, setCrcFx] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    fxApi.usdCrc()
+      .then((r) => { if (alive && r && r.rate) setCrcFx({ rate: Number(r.rate), source: r.source, cached: r.cached }); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const crcRate = crcFx?.rate || 0;
+  const toCrc = (usd) => (crcRate > 0 ? Math.round(Number(usd || 0) * crcRate) : null);
+  const fmtCrc = (usd) => { const v = toCrc(usd); return v == null ? "" : "₡" + v.toLocaleString("es-CR"); };
 
   // Sync state with transfer prop updates Y con el cambio de vista activa.
   // Al togglear MWT↔Cliente re-hidratamos overrides/tasas del bucket de
@@ -260,32 +272,44 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     if (!transferId) return;
     if (transfer?.liquidated_at) return;
     if (transfer?.legal_context !== "NATIONALIZATION") return;
-    const b = readViewCtx(transfer?.context_data) || {};
-    if (b.timbres_seeded) return;
-    if ((b.custom_taxes || []).length) return;
-    if (seededRef.current[effectiveView]) return;
-    seededRef.current[effectiveView] = true;
+    const base = transfer?.context_data || {};
+    const mwtB = base.views?.MWT || {};
+    const cliB = base.views?.CLIENT || {};
+    if (mwtB.timbres_seeded && cliB.timbres_seeded) return;
+    if (seededRef.current.done) return;
+    seededRef.current.done = true;
     if (isCR) {
-      // Costa Rica → sembrar timbres/tasas estándar.
-      const seeded = DEFAULT_TIMBRES.map((tb, i) => ({
-        id: "timbre-" + effectiveView + "-" + i,
+      // Costa Rica → sembrar timbres/tasas estándar en AMBAS vistas.
+      // Mismo id en ambas vistas → el borrado cross-view empareja la línea.
+      const mk = () => DEFAULT_TIMBRES.map((tb, i) => ({
+        id: "timbre-" + i,
         type: "TAX", concept: tb.concept, amount: tb.amount, notes: "Timbre / tasa",
       }));
-      setCustomTaxes(seeded);
+      const mwtSeed = (mwtB.custom_taxes && mwtB.custom_taxes.length) ? mwtB.custom_taxes : mk("MWT");
+      const cliSeed = (cliB.custom_taxes && cliB.custom_taxes.length) ? cliB.custom_taxes : mk("CLIENT");
+      setCustomTaxes(effectiveView === "CLIENT" ? cliSeed : mwtSeed);
       (async () => {
         try {
-          const nextCtx = writeViewCtx(transfer?.context_data, { custom_taxes: seeded, timbres_seeded: true });
+          const nextCtx = writeBothViewsCtx(
+            base,
+            { custom_taxes: mwtSeed, timbres_seeded: true },
+            { custom_taxes: cliSeed, timbres_seeded: true },
+          );
           await transferenciasApi.update(transferId, { context_data: nextCtx });
           onLiquidated?.();
         } catch (e) { /* siembra best-effort */ }
       })();
     } else {
-      // Fuera de CR → sin impuestos por defecto (DAI/Ley/IVA excluidos).
+      // Fuera de CR → sin impuestos por defecto (DAI/Ley/IVA excluidos), ambas vistas.
       const exc = { dai: true, ley: true, iva: true };
       setExcludedTaxes(exc);
       (async () => {
         try {
-          const nextCtx = writeViewCtx(transfer?.context_data, { excluded: exc, timbres_seeded: true });
+          const nextCtx = writeBothViewsCtx(
+            base,
+            { excluded: exc, timbres_seeded: true },
+            { excluded: exc, timbres_seeded: true },
+          );
           await transferenciasApi.update(transferId, { context_data: nextCtx });
           onLiquidated?.();
         } catch (e) { /* siembra best-effort */ }
@@ -335,6 +359,57 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         (lang === "es" ? "No se pudo actualizar: " : "Could not update: ")
         + (e?.body?.detail || e?.message || "error")
       );
+    }
+  }, [transferId, transfer, effectiveView, lang, onLiquidated]);
+
+  // Escribe un patch en AMBAS vistas (MWT y CLIENT) del context_data.
+  const writeBothViewsCtx = (ctx, patchMwt, patchClient) => {
+    const base = ctx || {};
+    const views = { ...(base.views || {}) };
+    const cur = (v) => (views[v] && typeof views[v] === "object")
+      ? views[v]
+      : { line_overrides: base.line_overrides, custom_taxes: base.custom_taxes, custom_rates: base.custom_rates };
+    views.MWT = { ...cur("MWT"), ...patchMwt };
+    views.CLIENT = { ...cur("CLIENT"), ...patchClient };
+    return { ...base, views };
+  };
+
+  // Agregar impuesto/gasto: la LÍNEA se crea en AMBAS vistas (mismo id), pero
+  // el valor (tasa/monto) es independiente por vista. Así "se ve en cliente"
+  // aunque el monto pueda diferir.
+  const addCustomTaxBoth = useCallback(async (item) => {
+    if (!transferId) return;
+    const base = transfer?.context_data || {};
+    const mwtCur = (base.views?.MWT?.custom_taxes) || (effectiveView === "MWT" ? customTaxes : []);
+    const cliCur = (base.views?.CLIENT?.custom_taxes) || (effectiveView === "CLIENT" ? customTaxes : []);
+    const mwtNext = [...mwtCur, { ...item }];
+    const cliNext = [...cliCur, { ...item }];
+    setCustomTaxes(effectiveView === "MWT" ? mwtNext : cliNext);
+    try {
+      const nextCtx = writeBothViewsCtx(transfer?.context_data, { custom_taxes: mwtNext }, { custom_taxes: cliNext });
+      await transferenciasApi.update(transferId, { context_data: nextCtx });
+      onLiquidated?.();
+    } catch (e) {
+      setError((lang === "es" ? "No se pudo agregar: " : "Could not add: ") + (e?.body?.detail || e?.message || "error"));
+    }
+  }, [transferId, transfer, effectiveView, customTaxes, lang, onLiquidated]);
+
+  // Eliminar impuesto/gasto: se borra de AMBAS vistas (por id, o por concepto+tipo).
+  const persistCustomTaxesBoth = useCallback(async (nextCurrent, removed) => {
+    if (!transferId) { setCustomTaxes(nextCurrent); return; }
+    setCustomTaxes(nextCurrent);
+    const base = transfer?.context_data || {};
+    const rm = (arr) => (arr || []).filter((it) =>
+      removed && removed.id ? it.id !== removed.id
+        : !(it.type === removed?.type && it.concept === removed?.concept));
+    const mwtNext = rm(base.views?.MWT?.custom_taxes);
+    const cliNext = rm(base.views?.CLIENT?.custom_taxes);
+    try {
+      const nextCtx = writeBothViewsCtx(transfer?.context_data, { custom_taxes: mwtNext }, { custom_taxes: cliNext });
+      await transferenciasApi.update(transferId, { context_data: nextCtx });
+      onLiquidated?.();
+    } catch (e) {
+      setError((lang === "es" ? "No se pudo eliminar: " : "Could not remove: ") + (e?.body?.detail || e?.message || "error"));
     }
   }, [transferId, transfer, effectiveView, lang, onLiquidated]);
 
@@ -1403,19 +1478,23 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     ? (lang === "es" ? "LIQUIDACIÓN DETALLADA — MWT NACIONALIZA AL PRECIO MARLUVAS (UF)" : "DETAILED LIQUIDATION — MWT AT MARLUVAS (UF)")
                     : (lang === "es" ? `LIQUIDACIÓN DETALLADA — ${transfer?._raw?.operating_company_label || "SONDEL"} NACIONALIZA AL PRECIO DE LA ORDEN (DUA REFERENCIAL)` : `DETAILED LIQUIDATION — ${transfer?._raw?.operating_company_label || "SONDEL"} AT ORDER PRICE`)}
                 </h4>
+                {crcRate > 0 && (
+                  <span className="tabular-nums" style={{ fontSize: 11, color: "#475569", fontWeight: 600 }}>
+                    TC ₡{crcRate.toLocaleString("es-CR", { maximumFractionDigits: 2 })}/USD
+                    {" · "}CIF {fmtCrc(livePreview.cifTotal)}
+                    {" · "}Landed {fmtCrc(livePreview.landedTotal)}
+                    <span style={{ color: "#94A3B8", marginLeft: 6, fontWeight: 400 }}>{crcFx?.source || ""}{crcFx?.cached ? " · cache" : ""}</span>
+                  </span>
+                )}
                 {!isLiquidated && (
                   <div style={{ display: "flex", gap: 8 }}>
                     <button className="btn btn-ghost btn-xs" onClick={() => {
-                      const next = [...customTaxes, { id: "tax-" + Date.now(), type: "TAX", concept: lang === "es" ? "Impuesto adicional" : "Additional tax", rate: 0 }];
-                      setCustomTaxes(next);
-                      persistCustomTaxes(next);
+                      addCustomTaxBoth({ id: "tax-" + Date.now(), type: "TAX", concept: lang === "es" ? "Impuesto adicional" : "Additional tax", rate: 0, amount: null, notes: "" });
                     }} style={{ padding: "2px 6px", fontSize: 11 }}>
                       <IconPlus size={10} style={{ marginRight: 2 }}/> {lang === "es" ? "Agregar impuesto (%)" : "Agregar impuesto (%)"}
                     </button>
                     <button className="btn btn-ghost btn-xs" onClick={() => {
-                      const next = [...customTaxes, { id: "cost-" + Date.now(), type: "COST", concept: lang === "es" ? "Gasto adicional" : "Additional charge", amount: 0 }];
-                      setCustomTaxes(next);
-                      persistCustomTaxes(next);
+                      addCustomTaxBoth({ id: "cost-" + Date.now(), type: "COST", concept: lang === "es" ? "Gasto adicional" : "Additional charge", amount: 0, notes: "" });
                     }} style={{ padding: "2px 6px", fontSize: 11 }}>
                       <IconPlus size={10} style={{ marginRight: 2 }}/> {lang === "es" ? "Agregar gasto (USD)" : "Agregar gasto (USD)"}
                     </button>
@@ -1787,9 +1866,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             {!isLiquidated && (
                               <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar fila" : "Remove row"} style={{ color: "#D64545", padding: "2px" }}
                                       onClick={() => {
-                                        const next = customTaxes.filter(item => item.id !== x.id);
+                                        const next = customTaxes.filter(item => item !== x);
                                         setCustomTaxes(next);
-                                        persistCustomTaxes(next);
+                                        persistCustomTaxesBoth(next, x);
                                       }}>
                                 <IconTrash size={10}/>
                               </button>
@@ -1918,9 +1997,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             {!isLiquidated && (
                               <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar fila" : "Remove row"} style={{ color: "#D64545", padding: "2px" }}
                                       onClick={() => {
-                                        const next = customTaxes.filter(item => item.id !== x.id);
+                                        const next = customTaxes.filter(item => item !== x);
                                         setCustomTaxes(next);
-                                        persistCustomTaxes(next);
+                                        persistCustomTaxesBoth(next, x);
                                       }}>
                                 <IconTrash size={10}/>
                               </button>

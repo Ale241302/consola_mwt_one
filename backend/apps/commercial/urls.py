@@ -39,6 +39,8 @@ from .views import (
     ResolvedPricesByAssignmentView, ProductClientsPricingView,
     # Simulador Marluvas v7 · cotización USD/BRL en vivo
     MarluvasExchangeRateView,
+    # Liquidación movimientos · cotización USD/CRC (colón) en vivo
+    UsdCrcExchangeRateView,
     # Simulador Marluvas v7 · SKUs habilitados por cliente
     MarluvasClientEnabledSkusView,
     # Simulador Marluvas v7 · persistencia de simulaciones (snapshot por reemplazo)
@@ -107,6 +109,10 @@ urlpatterns = [
     path("commercial/exchange-rate/usd-brl/",
          MarluvasExchangeRateView.as_view(),
          name="commercial-fx-usd-brl"),
+    # Liquidación movimientos · proxy USD/CRC (AwesomeAPI + open.er-api + cache)
+    path("commercial/exchange-rate/usd-crc/",
+         UsdCrcExchangeRateView.as_view(),
+         name="commercial-fx-usd-crc"),
     # Simulador Marluvas v7 · SKUs habilitados por cliente (parseo de BCPA.notas)
     path("commercial/clients/<uuid:cliente_id>/enabled-skus/",
          MarluvasClientEnabledSkusView.as_view(),
