@@ -1889,7 +1889,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     </tr>
                   )}
                   {customTaxes.filter(x => x.type === "TAX").map((x, idx) => {
-                    const rowNum = `6${String.fromCharCode(97 + idx)}`;
+                    const rowNum = 4 + (excludedTaxes.dai ? 0 : 1) + (excludedTaxes.ley ? 0 : 1) + (excludedTaxes.iva ? 0 : 1) + idx;
                     const hasAmt = x.amount != null && x.amount !== "";
                     const computed = livePreview.cifTotal * ((x.rate || 0) / 100);
                     return (
@@ -1989,7 +1989,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <tr key={c.id}>
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <span>{7 + idx}</span>
+                          <span>{4 + (excludedTaxes.dai ? 0 : 1) + (excludedTaxes.ley ? 0 : 1) + (excludedTaxes.iva ? 0 : 1) + customTaxes.filter(t => t.type === "TAX").length + idx}</span>
                           {!isLiquidated && (
                             <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar costo (sincroniza con sección 2)" : "Remove cost"} style={{ color: "#D64545", padding: "2px" }}
                                     onClick={() => askRemoveCost(c)}>
@@ -2022,10 +2022,12 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     </tr>
                   ))}
                   {customTaxes.filter(x => x.type === "COST").map((x, idx) => {
-                    const rowNum = 7 + viewCostLines.filter(c => {
-                      const k = String(c.kind || "").toUpperCase();
-                      return !KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k);
-                    }).length + idx;
+                    const rowNum = 4 + (excludedTaxes.dai ? 0 : 1) + (excludedTaxes.ley ? 0 : 1) + (excludedTaxes.iva ? 0 : 1)
+                      + customTaxes.filter(t => t.type === "TAX").length
+                      + viewCostLines.filter(c => {
+                          const k = String(c.kind || "").toUpperCase();
+                          return !KIND_FREIGHT.has(k) && !KIND_INSURANCE.has(k);
+                        }).length + idx;
                     return (
                       <tr key={x.id}>
                         <td>

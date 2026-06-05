@@ -248,11 +248,12 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
   // defecto si el movimiento aún no fue sembrado en el panel.
   const taxRows = resolveTaxRows(bucket);
   let customTaxesSum = 0;
-  let customTaxIdx = 0;
+  // Numeración continua: FOB/Flete/Seguro (3) + impuestos núcleo presentes.
+  let rowN = 3 + (excluded.dai ? 0 : 1) + (excluded.ley ? 0 : 1) + (excluded.iva ? 0 : 1);
   taxRows.forEach((x) => {
     const amount = taxRowAmount(x, cifTot);
     customTaxesSum += amount;
-    const rowNum = `6${String.fromCharCode(97 + customTaxIdx++)}`;
+    const rowNum = `${++rowN}`;
     const hasAmount = x.amount != null && x.amount !== "";
     const rateNum = Number(x.rate || 0);
     const rateCell = (hasAmount && !rateNum) ? "&mdash;" : rateNum.toFixed(2) + "%";
@@ -281,11 +282,10 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
           <td></td>
         </tr>`;
 
-  let idx = 7;
   otherCosts.forEach((c) => {
     html += `
       <tr>
-        <td>${idx++}</td>
+        <td>${++rowN}</td>
         <td>${esc(c.label || (lang === "es" ? "Otros costos" : "Other costs"))}</td>
         <td class="m">${esc(c.kind || "—")}</td>
         <td class="r">&mdash;</td>
@@ -301,7 +301,7 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
     customCostsSum += amt;
     html += `
       <tr>
-        <td>${idx++}</td>
+        <td>${++rowN}</td>
         <td>${esc(x.concept || (lang === "es" ? "Gasto adicional" : "Additional charge"))}</td>
         <td class="m">OTRO</td>
         <td class="r">&mdash;</td>
