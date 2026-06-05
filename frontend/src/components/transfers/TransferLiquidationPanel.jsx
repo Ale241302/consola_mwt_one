@@ -413,6 +413,32 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     }
   }, [transferId, transfer, effectiveView, lang, onLiquidated]);
 
+  // Persiste editando: la vista actual guarda todo (incl. tasa/monto); la OTRA
+  // vista sólo sincroniza concepto y notas (por id), conservando su tasa/monto.
+  const persistCustomTaxesMeta = useCallback(async (currentTaxes, id) => {
+    if (!transferId) { setCustomTaxes(currentTaxes); return; }
+    setCustomTaxes(currentTaxes);
+    const base = transfer?.context_data || {};
+    const edited = currentTaxes.find((it) => it.id === id) || {};
+    const otherView = effectiveView === "CLIENT" ? "MWT" : "CLIENT";
+    const otherArr = (base.views?.[otherView]?.custom_taxes) || [];
+    const otherNext = otherArr.map((it) =>
+      it.id === id ? { ...it, concept: edited.concept, notes: edited.notes } : it);
+    const patchCur = { custom_taxes: currentTaxes };
+    const patchOther = { custom_taxes: otherNext };
+    try {
+      const nextCtx = writeBothViewsCtx(
+        transfer?.context_data,
+        effectiveView === "MWT" ? patchCur : patchOther,
+        effectiveView === "MWT" ? patchOther : patchCur,
+      );
+      await transferenciasApi.update(transferId, { context_data: nextCtx });
+      onLiquidated?.();
+    } catch (e) {
+      setError((lang === "es" ? "No se pudo actualizar: " : "Could not update: ") + (e?.body?.detail || e?.message || "error"));
+    }
+  }, [transferId, transfer, effectiveView, lang, onLiquidated]);
+
   // Persistir tasas custom (DAI / Ley 6946 / IVA) en context_data.custom_rates.
   // null = "usar default NCM". Se llama en onBlur de cada input de tasa/monto.
   const persistCustomRates = useCallback(async (next = {}) => {
@@ -1893,7 +1919,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                      const next = customTaxes.map(item => item.id === x.id ? { ...item, concept: e.target.value } : item);
                                      setCustomTaxes(next);
                                    }}
-                                   onBlur={() => persistCustomTaxes(customTaxes)}/>
+                                   onBlur={() => persistCustomTaxesMeta(customTaxes, x.id)}/>
                           )}
                         </td>
                         <td>CIF</td>
@@ -1944,7 +1970,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                      const next = customTaxes.map(item => item.id === x.id ? { ...item, notes: e.target.value } : item);
                                      setCustomTaxes(next);
                                    }}
-                                   onBlur={() => persistCustomTaxes(customTaxes)}/>
+                                   onBlur={() => persistCustomTaxesMeta(customTaxes, x.id)}/>
                           )}
                         </td>
                       </tr>
@@ -2027,7 +2053,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                      const next = customTaxes.map(item => item.id === x.id ? { ...item, concept: e.target.value } : item);
                                      setCustomTaxes(next);
                                    }}
-                                   onBlur={() => persistCustomTaxes(customTaxes)}/>
+                                   onBlur={() => persistCustomTaxesMeta(customTaxes, x.id)}/>
                           )}
                         </td>
                         <td>OTRO</td>
@@ -2060,7 +2086,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                      const next = customTaxes.map(item => item.id === x.id ? { ...item, notes: e.target.value } : item);
                                      setCustomTaxes(next);
                                    }}
-                                   onBlur={() => persistCustomTaxes(customTaxes)}/>
+                                   onBlur={() => persistCustomTaxesMeta(customTaxes, x.id)}/>
                           )}
                         </td>
                       </tr>
