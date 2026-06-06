@@ -178,20 +178,19 @@ export async function runExpedienteExport({
     });
   }
 
-  // Costos del movimiento (sólo audiencia interna/MWT) divididos por price_view.
-  if (audience === INVOICE_AUDIENCE.MWT) {
-    const clRes = await Promise.allSettled(
-      items.map((it) =>
-        fetchCostLines(
-          it.payload && it.payload.transferencia && it.payload.transferencia.id,
-          it.expedienteId,
-        ),
+  // Costos del movimiento para AMBAS audiencias: la liquidación landed se
+  // calcula por vista (MWT y Cliente cada una con sus tasas/valores).
+  const clRes = await Promise.allSettled(
+    items.map((it) =>
+      fetchCostLines(
+        it.payload && it.payload.transferencia && it.payload.transferencia.id,
+        it.expedienteId,
       ),
-    );
-    clRes.forEach((r, i) => {
-      items[i].costLines = r.status === "fulfilled" ? r.value : [];
-    });
-  }
+    ),
+  );
+  clRes.forEach((r, i) => {
+    items[i].costLines = r.status === "fulfilled" ? r.value : [];
+  });
 
   const fileBase =
     typeof window !== "undefined" && window.location ? window.location.origin : "";

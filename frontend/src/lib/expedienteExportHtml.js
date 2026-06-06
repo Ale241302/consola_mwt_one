@@ -152,7 +152,9 @@ function buildNormalized(item, recipient, lang, fileBase) {
   const costLinesRaw = Array.isArray(item.costLines) ? item.costLines : [];
   const opByMwt = operatedByMwt(payload);
   const eff = effectiveAudienceFor(recipient, payload);
-  const showCosts = recipient === INVOICE_AUDIENCE.MWT;
+  // Ambas vistas muestran su propio landed cost (cada una con sus tasas/valores
+  // de context_data.views[vista]); la del cliente trae sus propios montos.
+  const showCosts = true;
 
   // Artefactos (regla Factura Comercial + visibilidad de campos).
   const artifacts = (item.artifacts || [])
@@ -437,7 +439,7 @@ function clientRuntime() {
       var d3 = p.done
         ? '<span class="sem ok"></span>Entregado'
         : '<span class="sem ' + sem(e) + '"></span>' + (dias <= 0 ? "entrega hoy/vencida" : "en " + dias + " días");
-      return '<div class="up"><div class="d1">' + esc(e.expediente) + " · " + shortD(p.date) + (p.est ? " (est.)" : "") + '</div><div class="d2">' + fInt(e.volumen) + " prs · " + esc(e.modo || "modo?") + " · " + esc(e.operador) + (e.oc ? " · OC " + esc(e.oc) : "") + '</div><div class="d3">' + d3 + "</div></div>";
+      return '<div class="up"><div class="d1">' + esc(e.expediente) + " · " + shortD(p.date) + (p.est ? " (est.)" : "") + '</div><div class="d2">' + fInt(e.volumen) + " prs · " + esc(e.modo || "modo?") + " · " + esc(e.operador) + (e.oc && e.oc !== e.expediente ? " · OC " + esc(e.oc) : "") + '</div><div class="d3">' + d3 + "</div></div>";
     }).join("");
   }
   function renderPipeline(list) {
@@ -488,7 +490,7 @@ function clientRuntime() {
       else if (p.date) { whenTxt = "Llega " + shortD(p.date) + (p.est ? " (est)" : "") + (dias != null ? (dias <= 0 ? " · hoy/vencida" : " · en " + dias + "d") : ""); if (dias != null && dias <= 7) whenCls = "soon"; }
       else whenTxt = "Sin fecha";
       var totVis = lineas.reduce(function (a, l) { return a + (+l.total || 0); }, 0);
-      return '<div class="arrcard' + (p.done ? " done" : "") + '"><div class="arrh"><b>Exp ' + esc(e.expediente) + '</b> <span class="muted" style="font-weight:400">' + (e.oc ? "OC " + esc(e.oc) : "OC pendiente") + "</span> · " + fInt(totVis) + ' prs<span class="when ' + whenCls + '">' + whenTxt + '</span></div><div class="arrsub">' + esc(e.operador) + " · " + esc(e.modo || "modo?") + " · " + esc(e.estadoLabel) + (e.embarque ? " · sale " + esc(e.embarque) : "") + "</div>" + sizeMatrix(lineas) + "</div>";
+      return '<div class="arrcard' + (p.done ? " done" : "") + '"><div class="arrh"><b>' + esc(e.expediente) + '</b> <span class="muted" style="font-weight:400">' + (e.oc && e.oc !== e.expediente ? "OC " + esc(e.oc) : "") + "</span> · " + fInt(totVis) + ' prs<span class="when ' + whenCls + '">' + whenTxt + '</span></div><div class="arrsub">' + esc(e.operador) + " · " + esc(e.modo || "modo?") + " · " + esc(e.estadoLabel) + (e.embarque ? " · sale " + esc(e.embarque) : "") + "</div>" + sizeMatrix(lineas) + "</div>";
     }).join("") || '<div class="nodate">Sin llegadas con este filtro.</div>';
   }
 
