@@ -197,21 +197,65 @@ function buildNormalized(item, recipient, lang, fileBase) {
     return { cod: g.cod, modelo: g.modelo, total: g.total, unit: g.unit, amount: g.amount, tallas };
   });
 
-  // Costos del MOVIMIENTO divididos por price_view (MWT/CLIENT). Sólo se
-  // exponen a la audiencia interna (showCosts). El cliente nunca los ve (R3).
-  const wantView = recipient === INVOICE_AUDIENCE.MWT ? "MWT" : "CLIENT";
-  const costs = showCosts
-    ? costLinesRaw
-        .filter((c) => String(c.price_view || "MWT").toUpperCase() === wantView)
-        .map((c) => ({ label: c.label || c.kind || "Costo", usd: Number(c.amount_usd) || 0 }))
-    : [];
-  const costsTotal = costs.reduce((a, c) => a + c.usd, 0);
+  // Liquidación landed = MISMA fórmula que la sección 3 (TransferLiquidationPanel):
+  // CIF (FOB+flete+seguro) + DAI + Ley 6946 + costos destino + timbres/impuestos
+  // custom, con tasas/exclusiones de context_data por vista. IVA es acreditable
+  // (no suma). Sólo se expone a la audiencia interna (showCosts · R3).
+  const ctxAll = (payload.transferencia || {}).context_data || {};
+  const bucket = (ctxAll.views && ctxAll.views[recipient]) || ctxAll || {};
+  const crr = bucket.custom_rates || {};
+  const exc = bucket.excluded || {};
+  const FREIGHTK = { FLETE: 1, FREIGHT: 1, CONSOLIDACION: 1 };
+  const INSK = { SEGURO: 1, INSURANCE: 1 };
+  let freight = 0, insurance = 0;
+  const destLines = [];
+  costLinesRaw.forEach((c) => {
+    const k = String(c.kind || "").toUpperCase();
+    const amt = Number(c.amount_usd != null ? c.amount_usd : (Number(c.amount || 0) * Number(c.fx_to_usd || 1))) || 0;
+    if (FREIGHTK[k]) freight += amt;
+    else if (INSK[k]) insurance += amt;
+    else destLines.push({ label: c.label || c.kind || "Otro", usd: amt });
+  });
+  const destCosts = destLines.reduce((a, c) => a + c.usd, 0);
+  const cif = goods + freight + insurance;
+  const daiRate = crr.dai != null ? Number(crr.dai) : 0.14;
+  const leyRate = crr.ley != null ? Number(crr.ley) : 0.01;
+  const ivaRate = crr.iva != null ? Number(crr.iva) : 0.13;
+  const dai = exc.dai ? 0 : cif * daiRate;
+  const ley = exc.ley ? 0 : cif * leyRate;
+  const iva = exc.iva ? 0 : cif * ivaRate;
+  let timbresSum = 0;
+  const timbres = (bucket.custom_taxes || []).filter((x) => x && x.type === "TAX").map((x) => {
+    const has = x.amount != null && x.amount !== "";
+    const amt = has ? (Number(x.amount) || 0) : cif * (Number(x.rate || 0) / 100);
+    timbresSum += amt;
+    return { label: x.concept || (lang === "es" ? "Timbre" : "Stamp"), usd: amt };
+  });
+  let customCostsSum = 0;
+  const customCostRows = (bucket.custom_taxes || []).filter((x) => x && x.type === "COST").map((x) => {
+    const amt = Number(x.amount || 0); customCostsSum += amt;
+    return { label: x.concept || (lang === "es" ? "Gasto" : "Charge"), usd: amt };
+  });
+  const landed = cif + dai + ley + destCosts + timbresSum + customCostsSum; // sin IVA
+  const costsTotal = landed - goods; // costos extra (flete+seguro+impuestos+destino+timbres)
+  const costs = showCosts ? [
+    { label: lang === "es" ? "Flete" : "Freight", usd: freight },
+    { label: lang === "es" ? "Seguro" : "Insurance", usd: insurance },
+    { label: "CIF", usd: cif, bold: true },
+    { label: "DAI " + (daiRate * 100).toFixed(2) + "%", usd: dai },
+    { label: "Ley 6946 " + (leyRate * 100).toFixed(2) + "%", usd: ley },
+    { label: "IVA " + (ivaRate * 100).toFixed(2) + "%" + (lang === "es" ? " (acreditable, no suma)" : " (creditable)"), usd: iva, info: true },
+  ].concat(timbres, destLines, customCostRows).filter((r) => r.bold || r.info || Math.abs(r.usd) > 0.0001) : [];
 
   const estado = item.estado || (payload.transferencia || {}).estado || "—";
   const trfId = (payload.transferencia || {}).id || "";
 
+  // Etiqueta del expediente: MWT → número de proforma; Cliente → número de OC.
+  const codeMwt = payload.proforma_codigo || item.codigo || "—";
+  const codeClient = item.oc_codigo || payload.oc_codigo || item.codigo || "—";
+
   return {
-    expediente: item.codigo || payload.proforma_codigo || "—",
+    expediente: recipient === INVOICE_AUDIENCE.MWT ? codeMwt : codeClient,
     oc: item.oc_codigo || payload.oc_codigo || "",
     cliente: oc.operating_company_label || (payload.destino || {}).label || "—",
     operador: opByMwt ? "MWT" : "Cliente",
@@ -229,7 +273,7 @@ function buildNormalized(item, recipient, lang, fileBase) {
     showCosts,
     costs,
     costsTotal,
-    landed: goods + costsTotal,
+    landed,
     lineas,
     artifacts,
   };
@@ -363,7 +407,7 @@ function clientRuntime() {
       var html = '<div class="goverlay">' + grid + "</div>";
       dated.forEach(function (r) {
         var e = r.e, p = r.p, s = r.s, bar = "";
-        if (s && p.date) {
+        if (s && p.date && pct(p.date) > pct(s)) {
           var l = pct(s), end = pct(p.date), w = Math.max(2, end - l);
           var cls = p.done ? "done" : (p.est ? "est" : (e.modo === "Aereo" ? "aereo" : (e.modo === "Maritimo" ? "maritimo" : "est")));
           var tip = shortD(p.date) + (p.est ? " (est.)" : "") + (p.done ? " · entregado" : "");
@@ -373,12 +417,12 @@ function clientRuntime() {
           var tip2 = shortD(p.date) + (p.done ? " · entregado" : (p.est ? " (est.)" : ""));
           bar += '<div class="gdot" data-tip="' + esc(tip2) + '" style="left:' + x + '%"></div>';
         }
-        html += '<div class="grow"><div class="glabel">Exp ' + esc(e.expediente) + " · " + fInt(e.volumen) + " prs · " + esc(e.operador) + '</div><div class="gtrack">' + bar + "</div></div>";
+        html += '<div class="grow"><div class="glabel">' + esc(e.expediente) + " · " + fInt(e.volumen) + " prs · " + esc(e.operador) + '</div><div class="gtrack">' + bar + "</div></div>";
       });
       html += '<div class="gaxis">' + axis + "</div>";
       g.innerHTML = html;
     }
-    if (undated.length) g.innerHTML += '<div class="nodate" style="margin-top:8px">Sin fecha: ' + undated.map(function (r) { return "Exp " + esc(r.e.expediente); }).join(", ") + "</div>";
+    if (undated.length) g.innerHTML += '<div class="nodate" style="margin-top:8px">Sin fecha: ' + undated.map(function (r) { return esc(r.e.expediente); }).join(", ") + "</div>";
   }
   function renderUpnext(list) {
     var rows = list.map(function (e) { return { e: e, p: projectedDelivery(e) }; }).filter(function (r) { return r.p.date; });
@@ -393,7 +437,7 @@ function clientRuntime() {
       var d3 = p.done
         ? '<span class="sem ok"></span>Entregado'
         : '<span class="sem ' + sem(e) + '"></span>' + (dias <= 0 ? "entrega hoy/vencida" : "en " + dias + " días");
-      return '<div class="up"><div class="d1">Exp ' + esc(e.expediente) + " · " + shortD(p.date) + (p.est ? " (est.)" : "") + '</div><div class="d2">' + fInt(e.volumen) + " prs · " + esc(e.modo || "modo?") + " · " + esc(e.operador) + (e.oc ? " · OC " + esc(e.oc) : "") + '</div><div class="d3">' + d3 + "</div></div>";
+      return '<div class="up"><div class="d1">' + esc(e.expediente) + " · " + shortD(p.date) + (p.est ? " (est.)" : "") + '</div><div class="d2">' + fInt(e.volumen) + " prs · " + esc(e.modo || "modo?") + " · " + esc(e.operador) + (e.oc ? " · OC " + esc(e.oc) : "") + '</div><div class="d3">' + d3 + "</div></div>";
     }).join("");
   }
   function renderPipeline(list) {
@@ -409,7 +453,7 @@ function clientRuntime() {
     var opTag = '<span class="tag ' + (e.operador === "MWT" ? "mwt" : "sondel") + '">' + esc(e.operador) + "</span>";
     var moTag = e.modo ? '<span class="tag ' + (e.modo === "Aereo" ? "aereo" : "maritimo") + '">' + esc(e.modo) + "</span>" : "";
     var eta = etaOf(e);
-    return '<div class="card" data-exp="' + esc(e.expediente) + '"><div class="exp">Exp ' + esc(e.expediente) + ' <span style="font-weight:400;color:#6b7785">' + fInt(e.volumen) + ' prs</span></div><div class="meta">' + (e.oc ? "OC " + esc(e.oc) : '<span class="muted">OC pendiente</span>') + '</div><div class="tags">' + opTag + moTag + "</div>" + (eta ? '<div class="eta"><span class="sem ' + sem(e) + '"></span>' + (e.entrega ? "Entrega " : "ETA ") + fmt(eta) + "</div>" : "") + "</div>";
+    return '<div class="card" data-exp="' + esc(e.expediente) + '"><div class="exp">' + esc(e.expediente) + ' <span style="font-weight:400;color:#6b7785">' + fInt(e.volumen) + ' prs</span></div><div class="meta">' + (e.oc ? "OC " + esc(e.oc) : '<span class="muted">OC pendiente</span>') + '</div><div class="tags">' + opTag + moTag + "</div>" + (eta ? '<div class="eta"><span class="sem ' + sem(e) + '"></span>' + (e.entrega ? "Entrega " : "ETA ") + fmt(eta) + "</div>" : "") + "</div>";
   }
 
   function renderFlat(list) {
