@@ -30,6 +30,7 @@ import {
   unitPriceForAudience,
   downloadTransferInvoice,
 } from "./transferInvoiceHtml.js";
+import { MWT_LOGO_DATA_URI, MWT_FAVICON_DATA_URI } from "./mwtBrandAssets.js";
 
 export { INVOICE_AUDIENCE, downloadTransferInvoice };
 
@@ -593,8 +594,8 @@ const DASHBOARD_CSS = `
   --text-title: #0f172a;
   --text-body: #334155;
   --text-muted: #64748b;
-  --primary-indigo: #4f46e5;
-  --primary-blue: #2563eb;
+  --primary-indigo: #013A57;
+  --primary-blue: #13B98A;
   --success: #10b981;
   --success-bg: #d1fae5;
   --success-text: #065f46;
@@ -630,9 +631,9 @@ body {
   padding: 32px 24px 80px;
 }
 .header-container {
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  border-radius: 16px;
-  padding: 28px 32px;
+  background: linear-gradient(135deg, #013A57 0%, #06283A 100%);
+  border-radius: 20px;
+  padding: 26px 32px 28px;
   color: #ffffff;
   margin-bottom: 28px;
   box-shadow: var(--shadow-lg);
@@ -642,13 +643,26 @@ body {
 .header-container::after {
   content: "";
   position: absolute;
-  top: -50%;
-  right: -20%;
-  width: 300px;
-  height: 300px;
-  background: radial-gradient(circle, rgba(79,70,229,0.15) 0%, rgba(0,0,0,0) 70%);
+  top: -55%;
+  right: -15%;
+  width: 340px;
+  height: 340px;
+  background: radial-gradient(circle, rgba(19,185,138,0.22) 0%, rgba(0,0,0,0) 70%);
   border-radius: 50%;
   pointer-events: none;
+}
+.header-container .hc-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.header-container .logo-img {
+  height: 30px;
+  width: auto;
+  display: block;
+  filter: brightness(0) invert(1);
 }
 .header-container h1 {
   font-size: 24px;
@@ -659,15 +673,17 @@ body {
   align-items: center;
   gap: 10px;
 }
-.header-container h1 .brand-badge {
-  background: linear-gradient(90deg, #4f46e5, #3b82f6);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 6px;
+.header-container h1 .brand-badge,
+.header-container .hc-top .brand-badge {
+  background: linear-gradient(90deg, #13B98A, #75CBB3);
+  color: #012b41;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 4px 10px;
+  border-radius: 999px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  box-shadow: 0 2px 4px rgba(79,70,229,0.3);
+  letter-spacing: 0.08em;
+  box-shadow: 0 2px 8px rgba(19,185,138,0.35);
 }
 .header-container .sub {
   color: #94a3b8;
@@ -896,7 +912,7 @@ select:focus {
   transition: opacity 0.2s;
 }
 .gbar.aereo {
-  background: linear-gradient(90deg, #3b82f6, #4f46e5);
+  background: linear-gradient(90deg, #3b82f6, #2563eb);
 }
 .gbar.maritimo {
   background: linear-gradient(90deg, #0ea5e9, #0284c7);
@@ -1454,6 +1470,7 @@ export function buildExpedientesExportHtml({
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Resumen de Exportación · MWT.ONE</title>
+<link rel="icon" type="image/png" href="${MWT_FAVICON_DATA_URI}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
@@ -1462,7 +1479,11 @@ export function buildExpedientesExportHtml({
 <body>
 <div class="wrap">
   <div class="header-container">
-    <h1>MWT.ONE · Resumen de Exportación <span class="brand-badge">Control Center</span></h1>
+    <div class="hc-top">
+      <img class="logo-img" src="${MWT_LOGO_DATA_URI}" alt="MWT ONE" />
+      <span class="brand-badge">Control Center</span>
+    </div>
+    <h1>Resumen de Exportación</h1>
     <div class="sub">${esc(fecha)}${generatedBy ? " · " + esc(generatedBy) : ""} &nbsp; <span class="recip">${esc(recipientLabel)}</span></div>
     ${chipsHtml ? `<div class="chips">${chipsHtml}</div>` : ""}
   </div>
