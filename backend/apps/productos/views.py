@@ -15,10 +15,11 @@ from apps.storage.services import delete_object as _storage_delete
 
 from .models import (
     Producto, CategoriaCat, SubcategoriaCat, UnidadCat, EstadoCat,
-    ProductClientAlias,
+    ProductClientAlias, NcmCode,
 )
 from .serializers import (
     ProductoSerializer, ProductoListSerializer, ProductClientAliasSerializer,
+    NcmCodeSerializer,
 )
 
 log = logging.getLogger(__name__)
@@ -692,3 +693,18 @@ class ProductoViewSet(viewsets.ViewSet):
             "skipped": skipped,
             "errors":  errors,
         })
+
+
+class NcmCodeViewSet(viewsets.ModelViewSet):
+    queryset = NcmCode.objects.filter(is_active=True).order_by("code")
+    serializer_class = NcmCodeSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(id=uuid.uuid4())
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.is_active = False
+        instance.save()
+        return Response(status=204)
+

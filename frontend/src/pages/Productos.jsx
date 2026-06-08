@@ -333,6 +333,9 @@ export default function ScreenProductos() {
           <button className="btn" onClick={()=>navigate('/tallas')}>
             <IconSliders size={14}/> {lang==='es'?'Motor de Tallas':'Sizing Engine'}
           </button>
+          <button className="btn" onClick={()=>navigate('/ncm')}>
+            <IconSliders size={14}/> {lang==='es'?'Motor de NCM':'NCM Engine'}
+          </button>
           <button className="btn" onClick={onExport} disabled={rows.length === 0}>
             <IconDownload size={14}/> {lang==='es'?'Exportar':'Export'}
             {selected.size > 0 && <span className="badge-count">{selected.size}</span>}

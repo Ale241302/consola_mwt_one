@@ -131,3 +131,19 @@ class ProductClientAlias(models.Model):
         managed = False
         db_table = 'productos"."product_client_alias'
         ordering = ("alias",)
+
+
+class NcmCode(models.Model):
+    id          = models.UUIDField(primary_key=True)
+    code        = models.CharField(max_length=16, unique=True)
+    descripcion = models.TextField(null=True, blank=True)
+    tarifas     = models.JSONField(default=list, blank=True)
+    is_active   = models.BooleanField(default=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'productos"."ncm_code'
+        ordering = ("code",)
+

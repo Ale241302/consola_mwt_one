@@ -38,7 +38,7 @@ import ProductExpedientesTab from "../components/productos/ProductExpedientesTab
 import { useRole } from "../context/RoleContext.jsx";
 import {
   productosApi, marcasApi, tallasApi, nodosApi, clientesApi,
-  productoAliasesApi,
+  productoAliasesApi, ncmApi,
   apiFetch, getToken,
 } from "../lib/api.js";
 
@@ -720,11 +720,13 @@ export default function ScreenProductFormView() {
   const [realBrands, setRealBrands] = useState([]);
   const [realSizes,  setRealSizes]  = useState([]);
   const [realNodes,  setRealNodes]  = useState([]);
+  const [realNcms,   setRealNcms]   = useState([]);
   useEffect(() => {
     const norm = (r) => Array.isArray(r) ? r : (r?.results || []);
     marcasApi.list().then(r => setRealBrands(norm(r))).catch(() => setRealBrands([]));
     tallasApi.list().then(r => setRealSizes(norm(r))).catch(() => setRealSizes([]));
     nodosApi.list().then(r => setRealNodes(norm(r))).catch(() => setRealNodes([]));
+    ncmApi.list().then(r => setRealNcms(norm(r))).catch(() => setRealNcms([]));
   }, []);
 
   // En modo CREATE, si no hay brandId seleccionado y ya cargaron las
@@ -877,6 +879,7 @@ export default function ScreenProductFormView() {
       // Archivos REALES subidos a MinIO (vía FileUploader → signed PUT).
       imagen_url:        galleryKeys[0] || null,
       ficha_url:         fichaKeys[0] || null,
+      hs_code:           attrs.ncm || null,
     };
 
     try {
@@ -1058,8 +1061,18 @@ export default function ScreenProductFormView() {
                     value={attrs.plantilla_interna} onChange={v=>setAttrs({...attrs, plantilla_interna: v})}/>
         <label className="form-field">
           <span>NCM</span>
-          <input className="input mono-sm" value={attrs.ncm} onChange={e=>setAttrs({...attrs, ncm: e.target.value})}
-                 placeholder="6403.40.00"/>
+          <select
+            className="input select mono-sm"
+            value={attrs.ncm || ""}
+            onChange={e => setAttrs({ ...attrs, ncm: e.target.value })}
+          >
+            <option value="">{lang === 'es' ? '(Sin NCM)' : '(No NCM)'}</option>
+            {realNcms.map(n => (
+              <option key={n.id} value={n.code}>
+                {n.code}{n.descripcion ? ` - ${n.descripcion}` : ''}
+              </option>
+            ))}
+          </select>
         </label>
       </div>
 

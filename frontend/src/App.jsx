@@ -34,6 +34,7 @@ import ScreenBrandClientPricingForm from "./pages/BrandClientPricingForm.jsx";
 import ScreenProductos from "./pages/Productos.jsx";
 import ScreenProductFormView from "./pages/ProductFormView.jsx";
 import ScreenSizingEngine from "./pages/SizingEngine.jsx";
+import ScreenNcmEngine from "./pages/NcmEngine.jsx";
 import ScreenProveedores from "./pages/Proveedores.jsx";
 import ScreenSupplierFormView from "./pages/SupplierFormView.jsx";
 import ScreenSupplierDetail from "./pages/SupplierDetail.jsx";
@@ -123,6 +124,7 @@ export default function App() {
             CLIENT y aplica el strip-down (fieldset disabled + tabs filtradas). */}
         <Route path="/portal/productos/:productId" element={<ScreenProductFormView />} />
         <Route path="/tallas" element={<ScreenSizingEngine />} />
+        <Route path="/ncm" element={<ScreenNcmEngine />} />
         <Route path="/proveedores" element={<ScreenProveedores />} />
         <Route path="/proveedores/nuevo" element={<ScreenSupplierFormView />} />
         <Route path="/proveedores/:supplierId/editar" element={<ScreenSupplierFormView />} />

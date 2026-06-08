@@ -423,6 +423,7 @@ marcasApi.expedientes = (marcaId) =>
            { token: getToken() });
 export const clientesApi       = resource("clientes");
 export const productosApi      = resource("productos");
+export const ncmApi            = resource("ncm");
 
 // Aliases comerciales por cliente (CEO/ADMIN-only, R3 · POL_VISIBILIDAD).
 //   GET    /api/productos/<productoId>/aliases/

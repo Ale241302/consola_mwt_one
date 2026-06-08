@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Producto, ProductClientAlias
+from .models import Producto, ProductClientAlias, NcmCode
 
 
 # ── Cache simple en memoria para evitar N+1 al resolver marca_id → nombre.
@@ -86,4 +86,23 @@ class ProductClientAliasSerializer(serializers.ModelSerializer):
         if not v:
             raise serializers.ValidationError("El alias no puede estar vacio.")
         return v
+
+
+class NcmCodeSerializer(serializers.ModelSerializer):
+    productos_asociados = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = NcmCode
+        fields = "__all__"
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def get_productos_asociados(self, obj):
+        from apps.productos.models import Producto
+        from django.db.models import Q
+        qs = Producto.objects.filter(
+            Q(hs_code=obj.code) | Q(especificaciones__ncm=obj.code),
+            is_active=True
+        ).only("sku", "nombre").order_by("sku")
+        return [{"sku": p.sku, "nombre": p.nombre} for p in qs]
+
 
