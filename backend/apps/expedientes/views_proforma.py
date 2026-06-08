@@ -431,12 +431,15 @@ def factura_payload(request, expediente_id):
     trf_legal = None
     trf_tracking = ""
     trf_context_data = {}
+    trf_origen_id = None
+    trf_destino_id = None
     try:
         with connection.cursor() as c:
             c.execute(
                 """
                 SELECT t.id, t.codigo, t.legal_context,
-                       COALESCE(t.ref_tracking, ''), t.context_data
+                       COALESCE(t.ref_tracking, ''), t.context_data,
+                       t.origen_id, t.destino_id
                 FROM transfers.transferencia t
                 WHERE t.id IN (
                     SELECT DISTINCT transferencia_id
@@ -463,8 +466,53 @@ def factura_payload(request, expediente_id):
                 except (ValueError, TypeError):
                     cd = {}
             trf_context_data = cd if isinstance(cd, dict) else {}
+            trf_origen_id = str(tr[5]) if tr[5] else None
+            trf_destino_id = str(tr[6]) if tr[6] else None
     except Exception:
         log.exception("[factura_payload] transfer context_data lookup failed id=%s", pid)
+
+    # 3c) DAI vivo por NCM (productos.ncm_code.tarifas) según origen→destino de
+    #     la transferencia ligada. Igual que invoice_payload (transfers): la
+    #     factura del expediente debe traer el arancel real, no un hardcode 0.14.
+    ncm_dai_map = {}
+    try:
+        origen_iso = ""
+        destino_iso = ""
+        _node_ids = [x for x in (trf_origen_id, trf_destino_id) if x]
+        if _node_ids:
+            with connection.cursor() as c:
+                c.execute(
+                    "SELECT id, UPPER(COALESCE(pais_iso2, '')) "
+                    "FROM nodos.nodo WHERE id = ANY(%(ids)s::uuid[])",
+                    {"ids": _node_ids},
+                )
+                _paises = {str(rr[0]): rr[1] for rr in c.fetchall()}
+            origen_iso = _paises.get(trf_origen_id or "", "")
+            destino_iso = _paises.get(trf_destino_id or "", "")
+        _codes = sorted({r[8] for r in rows if r[8]})
+        if _codes and destino_iso:
+            with connection.cursor() as c:
+                c.execute(
+                    "SELECT code, tarifas FROM productos.ncm_code "
+                    "WHERE code = ANY(%(codes)s) AND is_active = TRUE",
+                    {"codes": _codes},
+                )
+                for code, tarifas in c.fetchall():
+                    if isinstance(tarifas, str):
+                        try:
+                            tarifas = json.loads(tarifas)
+                        except (ValueError, TypeError):
+                            tarifas = []
+                    rate = None
+                    for tf in (tarifas or []):
+                        if (str(tf.get("origin_iso2", "")).upper() == origen_iso
+                                and str(tf.get("destination_iso2", "")).upper() == destino_iso):
+                            rate = tf.get("rate_pct")
+                            break
+                    if rate is not None:
+                        ncm_dai_map[code] = float(rate) / 100.0
+    except Exception:
+        log.exception("[factura_payload] ncm dai rate lookup failed id=%s", pid)
 
     # 4) Construir líneas + totales.
     lineas = []
@@ -498,6 +546,7 @@ def factura_payload(request, expediente_id):
             "expediente_codigo": codigo,
             "proforma_codigo":   codigo,
             "ncm":               r[8],
+            "dai_rate":          ncm_dai_map.get(r[8]),
         })
 
     landed = fob + extra
