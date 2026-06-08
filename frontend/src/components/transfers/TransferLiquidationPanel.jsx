@@ -238,7 +238,12 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       .catch(() => {});
     return () => { alive = false; };
   }, []);
-  const crcRate = crcFx?.rate || 0;
+
+  const [customCrcRate, setCustomCrcRate] = useState(() => {
+    const v = readViewCtx(transfer?.context_data)?.custom_exchange_rate;
+    return v !== undefined && v !== null ? Number(v) : null;
+  });
+  const crcRate = customCrcRate !== null ? customCrcRate : (crcFx?.rate || 0);
   const toCrc = (usd) => (crcRate > 0 ? Math.round(Number(usd || 0) * crcRate) : null);
   const fmtCrc = (usd) => { const v = toCrc(usd); return v == null ? "" : "₡" + v.toLocaleString("es-CR"); };
 
@@ -261,6 +266,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     setCustomDaiRate(cr?.dai !== undefined && cr?.dai !== null ? Number(cr.dai) : null);
     setCustomLeyRate(cr?.ley !== undefined && cr?.ley !== null ? Number(cr.ley) : null);
     setCustomIvaRate(cr?.iva !== undefined && cr?.iva !== null ? Number(cr.iva) : null);
+
+    const cer = b?.custom_exchange_rate;
+    setCustomCrcRate(cer !== undefined && cer !== null ? Number(cer) : null);
   }, [transfer, effectiveView]);
 
   // Siembra de timbres por defecto (PROCOMER, T. Asociación, T. Archivo, T.
@@ -467,6 +475,22 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       );
     }
   }, [transferId, transfer, effectiveView, customDaiRate, customLeyRate, customIvaRate, lang, onLiquidated]);
+
+  const persistCustomCrcRate = useCallback(async (val) => {
+    if (!transferId) return;
+    try {
+      const nextCtx = writeViewCtx(transfer?.context_data, {
+        custom_exchange_rate: val,
+      });
+      await transferenciasApi.update(transferId, { context_data: nextCtx });
+      onLiquidated?.();
+    } catch (e) {
+      setError(
+        (lang === "es" ? "No se pudo actualizar la tasa de cambio: " : "Could not update exchange rate: ")
+        + (e?.body?.detail || e?.message || "error")
+      );
+    }
+  }, [transferId, transfer, effectiveView, lang, onLiquidated]);
 
   // Sprint 2026-06-03 (rev) — los costos incrementales (flete, seguro,
   // aduana) son COMPARTIDOS entre Vista MWT y Vista Cliente: el costo real
@@ -1580,11 +1604,35 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     : (lang === "es" ? `LIQUIDACIÓN DETALLADA — ${transfer?._raw?.operating_company_label || "SONDEL"} NACIONALIZA AL PRECIO DE LA ORDEN (DUA REFERENCIAL)` : `DETAILED LIQUIDATION — ${transfer?._raw?.operating_company_label || "SONDEL"} AT ORDER PRICE`)}
                 </h4>
                 {crcRate > 0 && (
-                  <span className="tabular-nums" style={{ fontSize: 11, color: "#475569", fontWeight: 600 }}>
-                    TC ₡{crcRate.toLocaleString("es-CR", { maximumFractionDigits: 2 })}/USD
+                  <span className="tabular-nums" style={{ fontSize: 11, color: "#475569", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <span>TC ₡</span>
+                    {isLiquidated ? (
+                      <span>{crcRate.toLocaleString("es-CR", { maximumFractionDigits: 2 })}</span>
+                    ) : (
+                      <input className="input tabular-nums" type="number" step="0.01" min="0"
+                             style={{
+                               width: 65, padding: "2px 4px", fontSize: 11, textAlign: "right",
+                               height: "auto", border: "1px solid #CBD5E1", borderRadius: 4,
+                               background: "#fff", display: "inline-block"
+                             }}
+                             value={customCrcRate !== null ? customCrcRate : crcRate.toFixed(2)}
+                             onChange={(e) => {
+                               const val = e.target.value;
+                               setCustomCrcRate(val === "" ? null : Number(val));
+                             }}
+                             onBlur={(e) => {
+                               const val = e.target.value;
+                               persistCustomCrcRate(val === "" ? null : Number(val));
+                             }}/>
+                    )}
+                    <span>/USD</span>
                     {" · "}CIF {fmtCrc(livePreview.cifTotal)}
                     {" · "}Landed {fmtCrc(livePreview.landedTotal)}
-                    <span style={{ color: "#94A3B8", marginLeft: 6, fontWeight: 400 }}>{crcFx?.source || ""}{crcFx?.cached ? " · cache" : ""}</span>
+                    <span style={{ color: "#94A3B8", marginLeft: 6, fontWeight: 400 }}>
+                      {customCrcRate !== null
+                        ? (lang === "es" ? "manual" : "manual")
+                        : `${crcFx?.source || ""}${crcFx?.cached ? " · cache" : ""}`}
+                    </span>
                   </span>
                 )}
                 {!isLiquidated && (
