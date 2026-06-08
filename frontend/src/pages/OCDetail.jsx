@@ -1907,7 +1907,7 @@ export default function ScreenOCDetail() {
             <thead>
               <tr>
                 <th style={{width:140}}>SKU</th>
-                <th style={{width:220}}>{lang==='es'?'Nombre':'Name'}</th>
+                <th style={{whiteSpace:'nowrap'}}>{lang==='es'?'Nombre':'Name'}</th>
                 <th style={{width:70, textAlign:'center'}}>{lang==='es'?'Talla':'Size'}</th>
                 <th style={{width:80, textAlign:'right'}}>{lang==='es'?'Cant.':'Qty'}</th>
                 {/* Sprint 2026-05-17 · Columnas de precio duales (MWT + Cliente)
@@ -1947,7 +1947,7 @@ export default function ScreenOCDetail() {
               {allLines.map(l => (
                 <tr key={l.id} data-orphan={!l.sap}>
                   <td className="mono" style={{fontSize:11.5}}>{l.sku}</td>
-                  <td>{l.product}</td>
+                  <td style={{whiteSpace:'nowrap'}}>{l.product}</td>
                   <td style={{textAlign:'center'}}>
                     <span className="size-chip">{l.size}</span>
                   </td>
