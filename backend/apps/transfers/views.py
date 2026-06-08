@@ -1338,6 +1338,35 @@ class TransferenciaViewSet(viewsets.ViewSet):
                         ncm_map[str(r[0])] = r[1]
         except Exception:
             log.exception("[invoice_payload] ncm lookup failed trf=%s", t.id)
+        # DAI por NCM en VIVO (productos.ncm_code.tarifas) según origen→destino
+        # del movimiento. El frontend usa esta tasa para el "Derecho Arancelario"
+        # de la factura en lugar de una tabla hardcodeada que quedaba stale.
+        # Fix 2026-06-08: la factura mostraba 14% aunque el NCM fuera 10%.
+        ncm_dai_map = {}
+        try:
+            from apps.nodos.models import Nodo as _Nodo
+            from apps.productos.models import NcmCode as _NcmCode
+            _origen_iso = ""
+            _destino_iso = ""
+            if t.origen_id:
+                _no = _Nodo.objects.filter(id=t.origen_id).only("pais_iso2").first()
+                _origen_iso = (_no.pais_iso2 or "").upper() if _no else ""
+            if t.destino_id:
+                _nd = _Nodo.objects.filter(id=t.destino_id).only("pais_iso2").first()
+                _destino_iso = (_nd.pais_iso2 or "").upper() if _nd else ""
+            _codes = sorted({v for v in ncm_map.values() if v})
+            if _codes and _destino_iso:
+                for _nc in _NcmCode.objects.filter(code__in=_codes, is_active=True):
+                    _rate = None
+                    for _tf in (_nc.tarifas or []):
+                        if (str(_tf.get("origin_iso2", "")).upper() == _origen_iso
+                                and str(_tf.get("destination_iso2", "")).upper() == _destino_iso):
+                            _rate = _tf.get("rate_pct")
+                            break
+                    if _rate is not None:
+                        ncm_dai_map[_nc.code] = float(_rate) / 100.0
+        except Exception:
+            log.exception("[invoice_payload] ncm dai rate lookup failed trf=%s", t.id)
         cost_lines = list(CostLine.objects.filter(transferencia_id=t.id, is_active=True).order_by("kind"))
         documentos = list(TransferenciaDocumento.objects.filter(transferencia_id=t.id, is_active=True))
         eventos = list(Evento.objects.filter(transferencia_id=t.id).order_by("-created_at")[:30])
@@ -1440,6 +1469,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 "expediente_codigo": (line_pricing.get(str(l.id), {}) or {}).get("expediente_codigo"),
                 "proforma_codigo":   (line_pricing.get(str(l.id), {}) or {}).get("proforma_codigo"),
                 "ncm":               ncm_map.get(str(l.producto_id)) if l.producto_id else None,
+                "dai_rate":          ncm_dai_map.get(ncm_map.get(str(l.producto_id))) if l.producto_id else None,
             }) for l in lineas],
             "cost_breakdown": [{
                 "kind":       c.kind,

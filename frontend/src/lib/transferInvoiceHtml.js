@@ -213,19 +213,59 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
   const leyT = excluded.ley ? 0 : Number(n.totals.ley);
   const ivaT = excluded.iva ? 0 : Number(n.totals.iva);
 
-  if (!excluded.dai) html += `
+  // DAI: agrupado por NCM con su tasa VIVA (igual que el panel). Si el operador
+  // hizo un override EXPLÍCITO (dai_overridden), se muestra una sola fila a esa
+  // tasa; si no, una fila por NCM con tasa = dai/cif del grupo.
+  const daiOverridden = cr.dai_overridden === true;
+  let daiRows = [];
+  if (!excluded.dai) {
+    if (daiOverridden) {
+      daiRows = [{
+        label: "DAI &mdash; Derecho Arancelario",
+        basis: "CIF",
+        ratePct: daiPct,
+        amount: daiT,
+        note: lang === "es" ? "Override manual" : "Manual override",
+      }];
+    } else {
+      const byNcm = new Map();
+      (n.rows || []).forEach((row) => {
+        const code = (row.ncm && row.ncm !== "—") ? row.ncm : "—";
+        const g = byNcm.get(code) || { code, cif: 0, dai: 0 };
+        g.cif += Number(row.cif || 0);
+        g.dai += Number(row.dai || 0);
+        byNcm.set(code, g);
+      });
+      daiRows = Array.from(byNcm.values()).map((g) => ({
+        label: `DAI &mdash; Derecho Arancelario${g.code !== "—" ? ` (${esc(g.code)})` : ""}`,
+        basis: g.code !== "—" ? `CIF (${esc(g.code)})` : "CIF",
+        ratePct: (g.cif > 0 ? (g.dai / g.cif * 100) : 0).toFixed(2),
+        amount: g.dai,
+        note: g.code !== "—" ? esc(g.code) : (lang === "es" ? "Régimen general" : "General tariff"),
+      }));
+    }
+  }
+
+  // Numeración continua de filas núcleo (FOB/Flete/Seguro = 1-3).
+  let coreIdx = 3;
+  daiRows.forEach((dr) => {
+    coreIdx++;
+    html += `
         <tr>
-          <td>4</td>
-          <td>DAI &mdash; Derecho Arancelario</td>
-          <td class="m">CIF</td>
-          <td class="r">${daiPct}%</td>
-          <td class="r">${usd(daiT)}</td>
-          <td class="r" style="color:var(--t2);">${crc(daiT)}</td>
-          <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Régimen general calzado" : "General tariff rate"}</td>
+          <td>${coreIdx}</td>
+          <td>${dr.label}</td>
+          <td class="m">${dr.basis}</td>
+          <td class="r">${dr.ratePct}%</td>
+          <td class="r">${usd(dr.amount)}</td>
+          <td class="r" style="color:var(--t2);">${crc(dr.amount)}</td>
+          <td style="font-size:10px;color:var(--t2);">${dr.note}</td>
         </tr>`;
-  if (!excluded.ley) html += `
+  });
+  if (!excluded.ley) {
+    coreIdx++;
+    html += `
         <tr>
-          <td>5</td>
+          <td>${coreIdx}</td>
           <td>Ley 6946</td>
           <td class="m">CIF</td>
           <td class="r">${leyPct}%</td>
@@ -233,23 +273,28 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
           <td class="r" style="color:var(--t2);">${crc(leyT)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Tributo fijo" : "Fixed tax"}</td>
         </tr>`;
-  if (!excluded.iva) html += `
+  }
+  if (!excluded.iva) {
+    coreIdx++;
+    html += `
         <tr>
-          <td>6</td>
+          <td>${coreIdx}</td>
           <td>IVA (Ley 9635)</td>
-          <td class="m">CIF</td>
+          <td class="m">CIF + DAI + Ley</td>
           <td class="r">${ivaPct}%</td>
           <td class="r">${usd(ivaT)}</td>
           <td class="r" style="color:var(--t2);">${crc(ivaT)}</td>
           <td style="font-size:10px;color:var(--t2);">${lang === "es" ? "Acreditable — crédito fiscal" : "Creditable — tax credit"}</td>
         </tr>`;
+  }
 
   // Timbres + impuestos custom (monto fijo, o % sobre CIF). Timbres por
   // defecto si el movimiento aún no fue sembrado en el panel.
   const taxRows = resolveTaxRows(bucket);
   let customTaxesSum = 0;
-  // Numeración continua: FOB/Flete/Seguro (3) + impuestos núcleo presentes.
-  let rowN = 3 + (excluded.dai ? 0 : 1) + (excluded.ley ? 0 : 1) + (excluded.iva ? 0 : 1);
+  // Numeración continua desde la última fila núcleo (coreIdx ya contó DAI por
+  // grupo + Ley + IVA presentes).
+  let rowN = coreIdx;
   taxRows.forEach((x) => {
     const amount = taxRowAmount(x, cifTot);
     customTaxesSum += amount;
@@ -689,8 +734,11 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es", crcRa
       const dest = qtyTotalAll > 0 ? destTotal * (qty / qtyTotalAll) : 0;
 
       const r = taxRatesForNcm(l.ncm);
-      // Tasas por vista: custom_rates manda sobre el default NCM.
-      const daiRate = cr.dai != null ? Number(cr.dai) : r.dai;
+      // DAI: tasa VIVA del NCM (l.dai_rate, resuelta en backend por origen→
+      // destino). Sólo un override EXPLÍCITO del operador (dai_overridden) la
+      // reemplaza. Antes usaba cr.dai stale o el hardcode 0.14 → mostraba 14%.
+      const _liveDai = (l.dai_rate != null) ? Number(l.dai_rate) : r.dai;
+      const daiRate = (cr.dai_overridden === true && cr.dai != null) ? Number(cr.dai) : _liveDai;
       const leyRate = cr.ley != null ? Number(cr.ley) : r.ley_6946;
       const ivaRate = cr.iva != null ? Number(cr.iva) : r.iva;
 
@@ -700,7 +748,8 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es", crcRa
       const dai = override.dai !== undefined ? Number(override.dai) : (cif * daiRate);
       const ley = override.ley !== undefined ? Number(override.ley) : (cif * leyRate);
       const itemDest = override.dest !== undefined ? Number(override.dest) : dest;
-      const iva = cif * ivaRate;
+      // IVA acreditable: base CIF + DAI + Ley 6946 (igual que el panel).
+      const iva = (cif + dai + ley) * ivaRate;
 
       let itemTotal = cif + dai + ley + itemDest;
       if (override.landed_total_usd !== undefined) {
