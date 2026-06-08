@@ -1,0 +1,1219 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Resumen de Exportación · MWT.ONE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-main: #f8fafc;
+  --surface-card: #ffffff;
+  --text-title: #0f172a;
+  --text-body: #334155;
+  --text-muted: #64748b;
+  --primary-indigo: #4f46e5;
+  --primary-blue: #2563eb;
+  --success: #10b981;
+  --success-bg: #d1fae5;
+  --success-text: #065f46;
+  --warning: #f59e0b;
+  --warning-bg: #fef3c7;
+  --warning-text: #92400e;
+  --danger: #ef4444;
+  --danger-bg: #fee2e2;
+  --danger-text: #991b1b;
+  --info-aereo: #3b82f6;
+  --info-aereo-bg: #dbeafe;
+  --info-aereo-text: #1e40af;
+  --info-maritimo: #0284c7;
+  --info-maritimo-bg: #e0f2fe;
+  --info-maritimo-text: #0369a1;
+  --border-color: #e2e8f0;
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.04), 0 4px 6px -4px rgb(0 0 0 / 0.04);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg-main);
+  color: var(--text-body);
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+}
+.header-container {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  border-radius: 16px;
+  padding: 28px 32px;
+  color: #ffffff;
+  margin-bottom: 28px;
+  box-shadow: var(--shadow-lg);
+  position: relative;
+  overflow: hidden;
+}
+.header-container::after {
+  content: "";
+  position: absolute;
+  top: -50%;
+  right: -20%;
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(79,70,229,0.15) 0%, rgba(0,0,0,0) 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.header-container h1 {
+  font-size: 24px;
+  font-weight: 800;
+  margin: 0 0 8px;
+  letter-spacing: -0.025em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.header-container h1 .brand-badge {
+  background: linear-gradient(90deg, #4f46e5, #3b82f6);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  box-shadow: 0 2px 4px rgba(79,70,229,0.3);
+}
+.header-container .sub {
+  color: #94a3b8;
+  font-size: 13px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.header-container .recip {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 3px 12px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  backdrop-filter: blur(4px);
+}
+.chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.chip {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 99px;
+  padding: 4px 12px;
+  font-size: 11.5px;
+  color: #cbd5e1;
+  font-weight: 500;
+}
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  background: #ffffff;
+  padding: 16px 20px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-sm);
+}
+label.lbl {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+select {
+  font-family: inherit;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #ffffff;
+  color: var(--text-title);
+  outline: none;
+  min-width: 140px;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+select:focus {
+  border-color: var(--primary-indigo);
+  box-shadow: 0 0 0 3px rgba(79,70,229,0.15);
+}
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.kpi {
+  background: var(--surface-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 16px 20px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.kpi:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+.kpi-icon-wrapper {
+  background: #f1f5f9;
+  color: var(--text-muted);
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.kpi:hover .kpi-icon-wrapper {
+  background: var(--primary-indigo);
+  color: #ffffff;
+}
+.kpi-icon {
+  width: 20px;
+  height: 20px;
+}
+.kpi-content {
+  display: flex;
+  flex-direction: column;
+}
+.kpi .n {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-title);
+  line-height: 1.2;
+}
+.kpi .l {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
+}
+.tabs-container {
+  background: #e2e8f0;
+  border-radius: 10px;
+  padding: 4px;
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 28px;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);
+}
+.tab {
+  border: none;
+  background: none;
+  padding: 8px 18px;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-body);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.tab:hover {
+  color: var(--text-title);
+}
+.tab.on {
+  background: var(--surface-card);
+  color: var(--primary-indigo);
+  box-shadow: var(--shadow-sm);
+}
+.panel.hide { display: none; }
+.sec-h {
+  font-size: 15px;
+  font-weight: 800;
+  margin: 24px 0 12px;
+  color: var(--text-title);
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sec-h::before {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  background: var(--primary-indigo);
+  border-radius: 2px;
+}
+.proj {
+  background: var(--surface-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-sm);
+  overflow-x: auto;
+}
+.gantt {
+  position: relative;
+  min-width: 600px;
+}
+.grow {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  align-items: center;
+  height: 36px;
+  border-bottom: 1px dashed #f1f5f9;
+}
+.grow:hover {
+  background: #f8fafc;
+}
+.glabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 12px;
+}
+.gtrack {
+  position: relative;
+  height: 36px;
+}
+.gbar {
+  position: absolute;
+  top: 9px;
+  height: 18px;
+  border-radius: 9px;
+  font-size: 10px;
+  color: #ffffff;
+  font-weight: 700;
+  line-height: 18px;
+  padding: 0 8px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+  transition: opacity 0.2s;
+}
+.gbar.aereo {
+  background: linear-gradient(90deg, #3b82f6, #4f46e5);
+}
+.gbar.maritimo {
+  background: linear-gradient(90deg, #0ea5e9, #0284c7);
+}
+.gbar.done {
+  background: linear-gradient(90deg, #10b981, #059669);
+}
+.gbar.est {
+  background: repeating-linear-gradient(45deg, #cbd5e1, #cbd5e1 5px, #94a3b8 5px, #94a3b8 10px);
+}
+.gdot {
+  position: absolute;
+  top: 9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #10b981;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 2px #10b981;
+  transition: transform 0.2s;
+}
+.gdot:hover {
+  transform: scale(1.2);
+}
+.gbar, .gdot { cursor: help; }
+.gbar[data-tip]:hover::after, .gdot[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: 150%;
+  transform: translateX(-50%);
+  background: #0f172a;
+  color: #ffffff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  z-index: 50;
+  pointer-events: none;
+  box-shadow: var(--shadow-lg);
+  opacity: 0.95;
+}
+.goverlay {
+  position: absolute;
+  left: 180px;
+  right: 0;
+  top: 0;
+  bottom: 24px;
+  pointer-events: none;
+}
+.gaxis {
+  position: relative;
+  height: 20px;
+  margin-left: 180px;
+  border-top: 1px solid var(--border-color);
+  margin-top: 6px;
+}
+.gtick {
+  position: absolute;
+  top: 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  transform: translateX(-50%);
+}
+.gtline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #e2e8f0;
+}
+.gtoday {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--danger);
+  box-shadow: 0 0 4px rgba(220,38,38,0.4);
+}
+.gtoday .lab {
+  position: absolute;
+  top: -3px;
+  left: 5px;
+  font-size: 9px;
+  color: var(--danger);
+  font-weight: 800;
+  text-transform: uppercase;
+  background: var(--bg-main);
+  padding: 1px 3px;
+  border-radius: 3px;
+  border: 1px solid rgba(220,38,38,0.2);
+}
+.nodate {
+  color: var(--warning-text);
+  background: var(--warning-bg);
+  border: 1px solid rgba(217,119,6,0.15);
+  font-size: 11.5px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 500;
+  display: inline-block;
+}
+.upnext {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.up {
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.up:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+.up .d1 {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-title);
+}
+.up .d2 {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.up .d3 {
+  font-size: 12px;
+  margin-top: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.glegend {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-top: 14px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.glegend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dotL {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.pipeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+}
+.col {
+  background: #f1f5f9;
+  border-radius: 12px;
+  padding: 12px;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.col h3 {
+  font-size: 11.5px;
+  font-weight: 800;
+  margin: 0 0 4px;
+  color: var(--text-title);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.col h3 .c {
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 2px 8px;
+  font-weight: 700;
+  font-size: 10.5px;
+  color: var(--text-title);
+  box-shadow: var(--shadow-sm);
+}
+.card {
+  border-radius: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.card:hover {
+  border-color: var(--primary-indigo);
+  box-shadow: var(--shadow-md);
+}
+.card .exp {
+  font-weight: 800;
+  font-size: 13.5px;
+  color: var(--text-title);
+}
+.card .meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.card .tags {
+  margin-top: 8px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.tag.mwt {
+  background: var(--info-aereo-bg);
+  color: var(--info-aereo-text);
+}
+.tag.sondel {
+  background: #efe6ff;
+  color: #6b3fb0;
+}
+.tag.aereo {
+  background: var(--info-aereo-bg);
+  color: var(--info-aereo-text);
+}
+.tag.maritimo {
+  background: var(--info-maritimo-bg);
+  color: var(--info-maritimo-text);
+}
+.eta {
+  font-size: 11px;
+  margin-top: 8px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.sem {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  position: relative;
+}
+.sem::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  opacity: 0;
+  animation: pulse-ring 1.5s infinite;
+}
+.sem.ok {
+  background: var(--success);
+  color: var(--success);
+}
+.sem.warn {
+  background: var(--warning);
+  color: var(--warning);
+}
+.sem.warn::after { opacity: 1; }
+.sem.late {
+  background: var(--danger);
+  color: var(--danger);
+}
+.sem.late::after { opacity: 1; }
+.sem.none {
+  background: var(--text-muted);
+  color: var(--text-muted);
+}
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--surface-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+th, td {
+  text-align: left;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+}
+th {
+  background: #f8fafc;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  user-select: none;
+}
+tr:last-child td {
+  border-bottom: none;
+}
+tbody tr:hover td {
+  background: #f8fafc;
+}
+.grp td {
+  background: #f1f5f9;
+  font-weight: 800;
+  color: var(--text-title);
+  font-size: 12px;
+  border-top: 1px solid var(--border-color);
+}
+.muted {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.detrow td {
+  background: #f8fafc;
+  padding: 20px;
+  border-top: inset 1px var(--border-color);
+}
+.det {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--surface-card);
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-sm);
+}
+.det th, .det td {
+  font-size: 12px;
+  padding: 10px 14px;
+}
+.det th {
+  background: #f1f5f9;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.det tr.mtot td {
+  background: #f8fafc;
+  font-weight: 800;
+  border-top: 2px solid var(--border-color);
+}
+.blk-h {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--primary-indigo);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 18px 0 8px;
+}
+.artbox {
+  margin-bottom: 12px;
+}
+.art-h {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-title);
+  margin-bottom: 6px;
+}
+.afile {
+  color: var(--primary-indigo);
+  text-decoration: none;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.afile:hover {
+  text-decoration: underline;
+}
+.tch {
+  display: inline-block;
+  background: #f1f5f9;
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin: 2px 4px 2px 0;
+  font-size: 11.5px;
+  color: var(--text-body);
+}
+.tch b {
+  color: var(--primary-indigo);
+}
+.entbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  background: #ffffff;
+  padding: 16px 20px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
+}
+.arrcard {
+  background: var(--surface-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-sm);
+}
+.arrcard.done {
+  opacity: 0.7;
+}
+.arrh {
+  font-size: 15px;
+  font-weight: 800;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-title);
+}
+.arrh .when {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: var(--text-body);
+}
+.arrh .when.done {
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+.arrh .when.soon {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+.arrsub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0 16px;
+}
+.mtx {
+  font-size: 12px;
+}
+.mtx th, .mtx td {
+  padding: 8px 10px;
+  text-align: center;
+  border-bottom: 1px solid var(--border-color);
+}
+.mtx th:first-child, .mtx td:first-child {
+  text-align: left;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mtx thead th {
+  background: #f8fafc;
+}
+.mtx td.z {
+  color: var(--border-color);
+}
+.mtx tr.mtot td {
+  background: #f8fafc;
+  font-weight: 800;
+  border-top: 2px solid var(--border-color);
+}
+.mtx td.tot, .mtx th.tot {
+  background: #f1f5f9;
+  font-weight: 800;
+}
+.foot {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 32px;
+  line-height: 1.6;
+  text-align: center;
+  border-top: 1px solid var(--border-color);
+  padding-top: 20px;
+}
+@media print {
+  .tabs-container, .filter-bar, .entbar { display: none !important; }
+  .panel.hide { display: block !important; }
+  body { background: #ffffff; }
+  .wrap { padding: 0; }
+  .header-container {
+    background: #ffffff;
+    color: var(--text-title);
+    border: 1px solid var(--border-color);
+    box-shadow: none;
+    padding: 20px;
+  }
+  .header-container .sub, .header-container .recip {
+    color: var(--text-body);
+  }
+  .header-container .recip {
+    border-color: var(--border-color);
+  }
+  .chip {
+    border-color: var(--border-color);
+    color: var(--text-body);
+  }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header-container">
+    <h1>MWT.ONE · Resumen de Exportación <span class="brand-badge">Control Center</span></h1>
+    <div class="sub">08/06/2026, 09:03 a. m. &nbsp; <span class="recip">Admin / Interno (MWT)</span></div>
+    <div class="chips"><span class="chip">Cliente: Sondel S.A.</span><span class="chip">Estado: En destino</span></div>
+  </div>
+
+  <div class="filter-bar">
+    <label class="lbl">Operador</label>
+    <select id="fOp"><option value="">Todos</option><option>MWT</option><option>Cliente</option></select>
+    <label class="lbl" style="margin-left: 10px;">Modo</label>
+    <select id="fModo"><option value="">Todos</option><option>Aereo</option><option>Maritimo</option></select>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="tabs-container">
+    <button class="tab on" data-tab="crono">Cronograma</button>
+    <button class="tab" data-tab="tabla">Entrada de pares</button>
+    <button class="tab" data-tab="matriz">Hoja de recepción</button>
+    <button class="tab" data-tab="exped">Expedientes</button>
+  </div>
+
+  <div class="panel" id="p-crono">
+    <div class="sec-h">Proyección de atención de entregas</div>
+    <div class="proj"><div class="gantt" id="gantt"></div>
+      <div class="glegend">
+        <span><i class="dotL" style="background:#3b82f6"></i>Aéreo (~10d)</span>
+        <span><i class="dotL" style="background:#0ea5e9"></i>Marítimo (~5 sem)</span>
+        <span><i class="dotL" style="background:#cbd5e1"></i>Estimado</span>
+        <span style="color:#10b981">entregado</span>
+      </div>
+    </div>
+    <div class="sec-h">Próximas entregas</div>
+    <div class="upnext" id="upnext"></div>
+    <div class="sec-h" style="margin-top:8px">Pipeline por estado</div>
+    <div class="pipeline" id="pipeline"></div>
+  </div>
+
+  <div class="panel hide" id="p-tabla">
+    <div class="entbar">
+      <label class="lbl">Modelo</label><select id="ft_model"><option value="">Todos</option></select>
+      <label class="lbl" style="margin-left: 10px;">Ordenar</label><select id="ft_sort"><option value="modelo">Modelo / talla</option><option value="fecha">Fecha de llegada</option></select>
+    </div>
+    <table id="fa_tbl"><thead><tr>
+      <th>Modelo</th><th>Talla</th><th>Pares</th><th>Llega</th><th>Estado</th><th>Exped (OC)</th>
+    </tr></thead><tbody id="fa_body"></tbody></table>
+  </div>
+
+  <div class="panel hide" id="p-matriz">
+    <div class="entbar">
+      <label class="lbl">Mostrar</label>
+      <select id="hr_show"><option value="all">Todos</option><option value="pend">Por llegar</option><option value="done">Entregados</option></select>
+      <label class="lbl" style="margin-left: 10px;">Modelo</label><select id="hr_model"><option value="">Todos</option></select>
+    </div>
+    <div id="recep"></div>
+  </div>
+
+  <div class="panel hide" id="p-exped">
+    <div class="filter-bar" style="margin-bottom: 16px;">
+      <label class="lbl">Agrupar por</label>
+      <select id="groupBy"><option value="none">Sin agrupar</option><option value="oc">OC</option><option value="operador">Operador</option><option value="estadoLabel">Estado</option></select>
+    </div>
+    <table id="tbl">
+      <thead><tr>
+        <th>Exped.</th><th>OC</th><th>Cliente</th><th>Operador</th><th>Modo</th>
+        <th>Pares</th><th>Estado</th><th>Embarque</th><th>Entrega / ETA</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="foot">Cronograma: cuándo llega cada expediente. Tránsito: Aéreo ~10 días, Marítimo ~5 semanas. La entrega real manda sobre el ETA. Documento generado por MWT.ONE.</div>
+</div>
+<script>window.__EXP=[{"expediente":"2454-2026","oc":"PO 504983","cliente":"Muito Work Limitada","operador":"MWT","modo":"Aereo","tracking":"230-6683-2102","carrier":"COPA AIRLINES","estado":"EN_DESTINO","estadoLabel":"En destino","trfId":"eef4c154-3a07-49af-bcd9-5ccd9fb68a6b","embarque":"2026-06-01","entrega":"2026-06-01","volumen":425,"priceTag":"Precio MWT (interno)","goods":4719.15,"showCosts":true,"costs":[{"label":"Flete","usd":962.92},{"label":"Seguro","usd":18.75},{"label":"CIF","usd":5700.82,"bold":true},{"label":"DAI 14.00%","usd":798.1148000000001},{"label":"Ley 6946 1.00%","usd":57.008199999999995},{"label":"IVA 13.00% (acreditable, no suma)","usd":741.1066,"info":true},{"label":"CIF","usd":5700.82},{"label":"DAI 14.00%","usd":798.1148000000001},{"label":"Ley 6946 1.00%","usd":57.008199999999995},{"label":"IVA 13.00% (acreditable, no suma)","usd":741.1066},{"label":"CIF","usd":5700.82},{"label":"DAI 13.86%","usd":790.1886139035895},{"label":"Ley 6946 1.00%","usd":57.00999999999999},{"label":"IVA 14.93% (acreditable, no suma)","usd":851.2399999999999},{"label":"PROCOMER","usd":3},{"label":"T. Asociacion Agentes (Ley 7017)","usd":0.11},{"label":"T. Archivo Nacional","usd":0.04},{"label":"Servicios aduanales (agente Barquero Fonseca)","usd":300},{"label":"Transporte terrestre","usd":119.57},{"label":"PROCOMER","usd":3},{"label":"T. Asociacion Agentes (Ley 7017)","usd":0.11},{"label":"T. Archivo Nacional","usd":0.04},{"label":"Servicios aduanales (agente Barquero Fonseca)","usd":300},{"label":"Transporte terrestre","usd":119.57},{"label":"PROCOMER","usd":3},{"label":"T. Asociacion Agentes (Ley 7017)","usd":0.11},{"label":"T. Archivo Nacional","usd":0.04},{"label":"Servicios aduanales (agente Barquero Fonseca)","usd":300},{"label":"Transporte terrestre","usd":119.57},{"label":"PROCOMER","usd":3},{"label":"T. Asociacion Agentes (Ley 7017)","usd":0.11},{"label":"T. Archivo Nacional","usd":0.04},{"label":"Servicios aduanales (agente Barquero Fonseca)","usd":300},{"label":"Transporte terrestre","usd":119.57}],"costsTotal":18223.981213903593,"landed":22943.13121390359,"lineas":[{"cod":"700282","modelo":"70C32-PET-E-CPAP-PAD","total":75,"unit":15.43,"amount":1157.2500000000002,"tallas":"39:5 40:15 41:20 42:20 44:5 45:5 46:5"},{"cod":"700294","modelo":"70B19-E-C-PAD","total":20,"unit":11.16,"amount":223.2,"tallas":"36:20"},{"cod":"700406","modelo":"70B22-E-CPAP-PAD","total":250,"unit":12.83,"amount":3207.5,"tallas":"35:20 36:30 37:50 38:110 45:40"},{"cod":"801048","modelo":"PALMILHA MARLUVAS SOFTBED","total":80,"unit":1.64,"amount":131.2,"tallas":"36:20 42:60"}],"artifacts":[{"title":"Packing List Dellado","nodo":"","rows":[{"label":"Packing List","file":{"name":"43 Volumes PF 2454-2026 Pedido 269317 Muito Work.pdf","href":"/api/storage/download/?key=artifact-field%2Ffield-1779742541599%2F3707f1e3-43-volumes-pf-2454-2026-pedido-269317-muito-work.pdf"}},{"label":"# Cajas","value":"43"},{"label":"Peso Neto","value":"395"},{"label":"Peso bruto","value":"438"}]},{"title":"Factura Comercial","nodo":"","rows":[{"label":"ID de Factura","value":"2454-2026"},{"label":"Moneda (Currency)","value":"USD"},{"label":"Total Vista Cliente (total_client_view)","value":"5700"},{"label":"Factura","file":{"name":"Invoice 2454-2026 (1).pdf","href":"/api/storage/download/?key=artifact-field%2Ffield-1779822627353%2F1d388299-invoice-2454-2026-1-.pdf"}}]},{"title":"ART-05: AWB/BL (Documento de Envío)","nodo":"","rows":[{"label":"Tipo de Documento","value":"awb"},{"label":"Modo de Transporte (transport_mode)","value":"aéreo"},{"label":"Modo de Flete (freight_mode)","value":"prepaid"},{"label":"Fecha de Despacho","value":"2026-06-01"},{"label":"Gestión de Despacho (dispatch_mode)","value":"client"},{"label":"Fecha de Arrivo","value":"2026-06-01"},{"label":"CARRIER","value":"COPA AIRLINES"},{"label":"AWB/BL","file":{"name":"EA-2600028-MTN AWB 2454-2026.pdf","href":"/api/storage/download/?key=artifact-field%2Ffield-1778637230655%2Fba4442ba-ea-2600028-mtn-awb-2454-2026.pdf"}},{"label":"Tracking","value":"230-6683-2102"},{"label":"Consolidación","value":"sí"}]}]},{"expediente":"2453-2026","oc":"PO 504990","cliente":"Muito Work Limitada","operador":"MWT","modo":"Aereo","tracking":"230-6683-2091","carrier":"COPA AIRLNES","estado":"EN_DESTINO","estadoLabel":"En destino","trfId":"f70a65ff-a1cb-4e95-9235-3df1b6fcfb1d","embarque":"2026-05-29","entrega":"2026-05-05","volumen":500,"priceTag":"Precio MWT (interno)","goods":10370.1,"showCosts":true,"costs":[{"label":"Flete","usd":1070.74},{"label":"Seguro","usd":132.14},{"label":"CIF","usd":11572.98,"bold":true},{"label":"DAI 14.00%","usd":1620.2172},{"label":"Ley 6946 1.00%","usd":115.7298},{"label":"IVA 13.00% (acreditable, no suma)","usd":1504.4874,"info":true},{"label":"CIF","usd":11572.98},{"label":"DAI 14.00%","usd":1620.2172},{"label":"Ley 6946 1.00%","usd":115.7298},{"label":"IVA 13.00% (acreditable, no suma)","usd":1504.4874},{"label":"CIF","usd":11572.98},{"label":"DAI 14.00%","usd":1620.2199999999998},{"label":"Ley 6946 1.00%","usd":115.72999999999998},{"label":"IVA 14.95% (acreditable, no suma)","usd":1730.1599999999999},{"label":"PROCOMER","usd":3},{"label":"T. Asociacion Agentes (Ley 7017)","usd":0.11},{"label":"T. Archivo Nacional","usd":0.04},{"label":"Servicios aduanales","usd":300},{"label":"Transporte terrestre","usd":119.57},{"label":"PROCOMER","usd":3},{"label":"T. Asociacion Agentes (Ley 7017)","usd":0.11},{"label":"T. Archivo Nacional","usd":0.04},{"label":"Servicios aduanales","usd":300},{"label":"Transporte terrestre","usd":119.57},{"label":"PROCOMER","usd":3},{"label":"T. Asociacion Agentes (Ley 7017)","usd":0.11},{"label":"T. Archivo Nacional","usd":0.04},{"label":"Servicios aduanales","usd":300},{"label":"Transporte terrestre","usd":119.57},{"label":"PROCOMER","usd":3},{"label":"T. Asociacion Agentes (Ley 7017)","usd":0.11},{"label":"T. Archivo Nacional","usd":0.04},{"label":"Servicios aduanales","usd":300},{"label":"Transporte terrestre","usd":119.57}],"costsTotal":34482.2114,"landed":44852.3114,"lineas":[{"cod":"700282","modelo":"70C32-PET-E-CPAP-PAD","total":10,"unit":15.43,"amount":154.3,"tallas":"39:5 44:5"},{"cod":"700728","modelo":"75BPR29-MSMC-CPAP-ST","total":210,"unit":28.3,"amount":5943,"tallas":"38:50 39:60 40:60 43:40"},{"cod":"701809","modelo":"50B22-V-E-CPAP-CP","total":280,"unit":15.26,"amount":4272.799999999999,"tallas":"37:40 38:50 39:80 40:110"}],"artifacts":[{"title":"Packing List Dellado","nodo":"","rows":[{"label":"Packing List","file":{"name":"51 Volumes PF 2453-2026 Pedido 269474 Muito Work.pdf","href":"/api/storage/download/?key=artifact-field%2Ffield-1779742541599%2Ff255efaa-51-volumes-pf-2453-2026-pedido-269474-muito-work.pdf"}},{"label":"# Cajas","value":"51"},{"label":"Peso Neto","value":"563"},{"label":"Peso bruto","value":"614"}]},{"title":"Factura Comercial","nodo":"","rows":[{"label":"ID de Factura","value":"2453-2026"},{"label":"Moneda (Currency)","value":"USD"},{"label":"Total Vista Cliente (total_client_view)","value":"11403"},{"label":"Factura","file":{"name":"Invoice 2453-2026.pdf","href":"/api/storage/download/?key=artifact-field%2Ffield-1779822627353%2F5f9abe8b-invoice-2453-2026.pdf"}}]},{"title":"ART-05: AWB/BL (Documento de Envío)","nodo":"","rows":[{"label":"Tipo de Documento","value":"awb"},{"label":"Modo de Transporte (transport_mode)","value":"aéreo"},{"label":"Modo de Flete (freight_mode)","value":"prepaid"},{"label":"Fecha de Despacho","value":"2026-05-29"},{"label":"Gestión de Despacho (dispatch_mode)","value":"client"},{"label":"Fecha de Arrivo","value":"2026-05-05"},{"label":"CARRIER","value":"COPA AIRLNES"},{"label":"AWB/BL","file":{"name":"EA-2600027-MTN AWB final 2453-2026.pdf","href":"/api/storage/download/?key=artifact-field%2Ffield-1778637230655%2Fed62cf9f-ea-2600027-mtn-awb-final-2453-2026.pdf"}},{"label":"Tracking","value":"230-6683-2091"},{"label":"Consolidación","value":"sí"}]},{"title":"Packing List Dellado","nodo":"","rows":[{"label":"Packing List","file":{"name":"Packing List 2453-2026 (1).pdf","href":"/api/storage/download/?key=artifact-field%2Ffield-1779742541599%2Ffe1b5613-packing-list-2453-2026-1-.pdf"}}]}]},{"expediente":"2417-2026","oc":"PO 504802","cliente":"Muito Work Limitada","operador":"MWT","modo":"Aereo","tracking":"230-6683-2076","carrier":"COPA AIRLINES","estado":"EN_DESTINO","estadoLabel":"En destino","trfId":"2ea71aac-b225-45ec-9f82-dff4852db7b2","embarque":"2026-04-30","entrega":"2026-05-05","volumen":260,"priceTag":"Precio MWT (interno)","goods":9479.6,"showCosts":true,"costs":[{"label":"CIF","usd":9479.6,"bold":true},{"label":"DAI 14.00%","usd":1327.1440000000002},{"label":"Ley 6946 1.00%","usd":94.796},{"label":"IVA 13.00% (acreditable, no suma)","usd":1232.3480000000002,"info":true},{"label":"CIF","usd":9479.6},{"label":"DAI 14.00%","usd":1327.1440000000002},{"label":"Ley 6946 1.00%","usd":94.796},{"label":"IVA 13.00% (acreditable, no suma)","usd":1232.3480000000002},{"label":"CIF","usd":9479.6},{"label":"DAI 14.00%","usd":1327.1440000000002},{"label":"Ley 6946 1.00%","usd":94.796},{"label":"IVA 13.00% (acreditable, no suma)","usd":1232.3480000000002},{"label":"Derechos arancelarios a la importación","usd":664447.67},{"label":"Impuesto sobre el valor agregado","usd":709535.19},{"label":"PROCOMER","usd":1373.55},{"label":"Timbre archivo nacional","usd":20},{"label":"Timbre asociación agentes de aduana ley 7017","usd":50},{"label":"Timbre contadores privados de Costa Rica","usd":2},{"label":"Ley 6946","usd":47460.55},{"label":"Derechos arancelarios a la importación","usd":664447.67},{"label":"Impuesto sobre el valor agregado","usd":709535.19},{"label":"PROCOMER","usd":1373.55},{"label":"Timbre archivo nacional","usd":20},{"label":"Timbre asociación agentes de aduana ley 7017","usd":50},{"label":"Timbre contadores privados de Costa Rica","usd":2},{"label":"Derechos arancelarios a la importación","usd":664447.67},{"label":"Impuesto sobre el valor agregado","usd":709535.19},{"label":"PROCOMER","usd":1373.55},{"label":"Timbre archivo nacional","usd":20},{"label":"Timbre asociación agentes de aduana ley 7017","usd":50},{"label":"Timbre contadores privados de Costa Rica","usd":2},{"label":"Derechos arancelarios a la importación","usd":664447.67},{"label":"Impuesto sobre el valor agregado","usd":709535.19},{"label":"PROCOMER","usd":1373.55},{"label":"Timbre archivo nacional","usd":20},{"label":"Timbre asociación agentes de aduana ley 7017","usd":50},{"label":"Timbre contadores privados de Costa Rica","usd":2}],"costsTotal":5574863.9059999995,"landed":5584343.505999999,"lineas":[{"cod":"701340","modelo":"75BPR29-CLI-MM-E-CPAP","total":260,"unit":36.46,"amount":9479.6,"tallas":"37:10 38:10 39:20 40:20 41:90 42:40 43:30 44:20 45:10 46:10"}],"artifacts":[{"title":"Packing List Dellado","nodo":"","rows":[{"label":"Packing List","file":{"name":"26 Volumes PF 2417-2025 Pedido 263360 Muito Work.pdf","href":"/api/storage/download/?key=artifact-field%2Ffield-1779742541599%2F39f6b1ca-26-volumes-pf-2417-2025-pedido-263360-muito-work.pdf"}},{"label":"# Cajas","value":"26"},{"label":"Peso Neto","value":"262"},{"label":"Peso bruto","value":"288"}]},{"title":"ART-05: AWB/BL (Documento de Envío)","nodo":"","rows":[{"label":"Tipo de Documento","value":"awb"},{"label":"Modo de Transporte (transport_mode)","value":"aéreo"},{"label":"Modo de Flete (freight_mode)","value":"prepaid"},{"label":"Fecha de Despacho","value":"2026-04-30"},{"label":"Gestión de Despacho (dispatch_mode)","value":"client"},{"label":"Fecha de Arrivo","value":"2026-05-05"},{"label":"CARRIER","value":"COPA AIRLINES"},{"label":"AWB/BL","file":{"name":"00020-0426AEA AWB.pdf","href":"/api/storage/download/?key=artifact-field%2Ffield-1778637230655%2F4fa29cc7-00020-0426aea-awb.pdf"}},{"label":"Tracking","value":"230-6683-2076"},{"label":"Consolidación","value":"sí"}]},{"title":"Factura Comercial","nodo":"","rows":[{"label":"ID de Factura","value":"2517-2026"},{"label":"Moneda (Currency)","value":"USD"},{"label":"Total Vista Cliente (total_client_view)","value":"10224"},{"label":"Factura","file":{"name":"Invoice 2417-2026.pdf","href":"/api/storage/download/?key=artifact-field%2Ffield-1779822627353%2Fbd7fb1f2-invoice-2417-2026.pdf"}}]}]}];window.__AUD="MWT";window.__META={"recipient":"Admin / Interno (MWT)"};</script>
+<script>(function clientRuntime() {
+  var DATA = window.__EXP || [];
+  var AUD = window.__AUD || "MWT";
+  var META = window.__META || {};
+  var STAGES = ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO", "TRANSITO", "EN_DESTINO", "CERRADO"];
+  var SLAB = { REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION: "Preparación", DESPACHO: "Despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino", CERRADO: "Cerrado" };
+  var TRANSIT = { Aereo: 10, Maritimo: 35 };
+  var MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+  var showCosts = AUD === "MWT";
+
+  function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function fInt(n) { return (Number(n) || 0).toLocaleString("es-CR"); }
+  function fUsd(n) { return "$" + (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function today() { var d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+  function parseD(s) { if (!s) return null; var d = new Date(s + "T00:00:00"); return isNaN(d) ? null : d; }
+  function fmt(d) { return d ? d.toISOString().slice(0, 10) : ""; }
+  function addDays(d, n) { var x = new Date(d); x.setDate(x.getDate() + n); return x; }
+  function shortD(d) { return d ? d.getDate() + " " + MES[d.getMonth()] : ""; }
+  function delivered(e) { return e.estado === "EN_DESTINO" || e.estado === "CERRADO"; }
+
+  function etaOf(e) {
+    if (e.entrega) { var d = parseD(e.entrega); if (d) return d; }
+    if (delivered(e)) return null;
+    if (!e.embarque || !(e.modo in TRANSIT)) return null;
+    var emb = parseD(e.embarque); if (!emb) return null;
+    return addDays(emb, TRANSIT[e.modo]);
+  }
+  function projectedDelivery(e) {
+    if (e.entrega) { var d = parseD(e.entrega); if (d) return { date: d, done: delivered(e), est: false }; }
+    var eta = etaOf(e);
+    if (eta) return { date: eta, done: delivered(e), est: false };
+    return { date: null, done: delivered(e), est: true };
+  }
+  function startOf(e) { var emb = parseD(e.embarque); return emb || null; }
+  function sem(e) {
+    if (delivered(e)) return "ok";
+    var eta = etaOf(e); if (!eta) return "none";
+    var dias = Math.round((eta - today()) / 86400000);
+    if (dias < 0) return "late"; if (dias <= 7) return "warn"; return "ok";
+  }
+
+  function filtered() {
+    var op = document.getElementById("fOp").value;
+    var mo = document.getElementById("fModo").value;
+    return DATA.filter(function (e) { return (!op || e.operador === op) && (!mo || e.modo === mo); });
+  }
+  function fillModel(selId, list) {
+    var sel = document.getElementById(selId);
+    var models = []; list.forEach(function (e) { (e.lineas || []).forEach(function (l) { if (models.indexOf(l.modelo) < 0) models.push(l.modelo); }); });
+    models.sort();
+    var cur = sel.value;
+    sel.innerHTML = '<option value="">Todos</option>' + models.map(function (m) { return '<option' + (m === cur ? " selected" : "") + ">" + esc(m) + "</option>"; }).join("");
+    return sel.value;
+  }
+
+  function arrivalRows(list) {
+    var out = [];
+    list.forEach(function (e) {
+      var p = projectedDelivery(e);
+      (e.lineas || []).forEach(function (l) {
+        (l.tallas || "").split(" ").filter(Boolean).forEach(function (t) {
+          var a = t.split(":");
+          out.push({ modelo: l.modelo, talla: a[0], qty: +a[1] || 0, date: p.date, est: p.est, done: p.done, estado: e.estadoLabel, exp: e.expediente, oc: e.oc });
+        });
+      });
+    });
+    return out;
+  }
+  function sizeMatrix(lineas) {
+    if (!lineas.length) return '<div class="muted">Sin desglose.</div>';
+    var sizes = [];
+    lineas.forEach(function (l) { (l.tallas || "").split(" ").filter(Boolean).forEach(function (p) { var s = +p.split(":")[0]; if (sizes.indexOf(s) < 0) sizes.push(s); }); });
+    sizes.sort(function (a, b) { return a - b; });
+    var colTot = {}; sizes.forEach(function (s) { colTot[s] = 0; }); var grand = 0;
+    var th = "<th>Modelo</th>" + sizes.map(function (s) { return "<th>" + s + "</th>"; }).join("") + '<th class="tot">Total</th>';
+    var body = lineas.map(function (l) {
+      var map = {}; (l.tallas || "").split(" ").filter(Boolean).forEach(function (p) { var a = p.split(":"); map[+a[0]] = +a[1]; });
+      var rt = 0;
+      var cells = sizes.map(function (s) { var q = map[s] || 0; if (q) { colTot[s] += q; rt += q; } return q ? "<td>" + q + "</td>" : '<td class="z">.</td>'; }).join("");
+      grand += rt;
+      return "<tr><td>" + esc(l.modelo) + "</td>" + cells + '<td class="tot">' + rt + "</td></tr>";
+    }).join("");
+    var foot = '<tr class="mtot"><td>Total</td>' + sizes.map(function (s) { return "<td>" + (colTot[s] || "") + "</td>"; }).join("") + '<td class="tot">' + grand + "</td></tr>";
+    return '<div style="overflow-x:auto"><table class="mtx"><thead><tr>' + th + "</tr></thead><tbody>" + body + foot + "</tbody></table></div>";
+  }
+
+  function renderKpis(list) {
+    var total = list.length;
+    var entreg = list.filter(delivered).length;
+    var transito = list.filter(function (e) { return e.estado === "TRANSITO"; }).length;
+    var porsalir = list.filter(function (e) { return ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO"].indexOf(e.estado) >= 0; }).length;
+    var vol = list.reduce(function (a, e) { return a + (e.volumen || 0); }, 0);
+    var goods = list.reduce(function (a, e) { return a + (e.goods || 0); }, 0);
+    var cards = [
+      ["Expedientes", total], ["Entregados", entreg], ["En tránsito", transito],
+      ["Por salir", porsalir], ["Pares totales", fInt(vol)], ["Valor mercadería", fUsd(goods)],
+    ];
+    if (showCosts) {
+      var seen = {}, costSum = 0;
+      list.forEach(function (e) { var k = e.trfId || e.expediente; if (!seen[k]) { seen[k] = 1; costSum += (e.costsTotal || 0); } });
+      cards.push(["Costos movimiento", fUsd(costSum)]);
+    }
+    var icons = {
+      "Expedientes": '<svg class="kpi-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>',
+      "Entregados": '<svg class="kpi-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>',
+      "En tránsito": '<svg class="kpi-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0zM13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 011-1v-4a1 1 0 01.816-.983L18 8.5V13a1 1 0 001 1h2a1 1 0 001-1v-4a1 1 0 00-.316-.725l-4-3.858A1 1 0 0013.92 3H12" /></svg>',
+      "Por salir": '<svg class="kpi-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>',
+      "Pares totales": '<svg class="kpi-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>',
+      "Valor mercadería": '<svg class="kpi-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>',
+      "Costos movimiento": '<svg class="kpi-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z" /></svg>'
+    };
+    document.getElementById("kpis").innerHTML = cards.map(function (c) {
+      var icon = icons[c[0]] || "";
+      return '<div class="kpi"><div class="kpi-icon-wrapper">' + icon + '</div><div class="kpi-content"><div class="n">' + c[1] + '</div><div class="l">' + c[0] + '</div></div></div>';
+    }).join("");
+  }
+
+  function renderProjection(list) {
+    var rows = list.map(function (e) { return { e: e, p: projectedDelivery(e), s: startOf(e) }; });
+    var dated = rows.filter(function (r) { return r.p.date || r.s; });
+    var undated = rows.filter(function (r) { return !r.p.date && !r.s; });
+    var g = document.getElementById("gantt");
+    if (!dated.length) { g.innerHTML = '<div class="nodate">Sin fechas suficientes para proyectar.</div>'; }
+    else {
+      var ds = [today()];
+      dated.forEach(function (r) { if (r.p.date) ds.push(r.p.date); if (r.s) ds.push(r.s); });
+      var min = addDays(new Date(Math.min.apply(null, ds.map(function (d) { return d.getTime(); }))), -3);
+      var max = addDays(new Date(Math.max.apply(null, ds.map(function (d) { return d.getTime(); }))), 5);
+      var span = Math.max(1, (max - min) / 86400000);
+      var pct = function (d) { return ((d - min) / 86400000) / span * 100; };
+      dated.sort(function (a, b) { return (a.p.date ? a.p.date.getTime() : Infinity) - (b.p.date ? b.p.date.getTime() : Infinity); });
+      var grid = "", axis = "";
+      var t = new Date(min); t.setDate(t.getDate() + ((1 - t.getDay() + 7) % 7));
+      for (; t <= max; t = addDays(t, 7)) { var x = pct(t); grid += '<div class="gtline" style="left:' + x + '%"></div>'; axis += '<div class="gtick" style="left:' + x + '%">' + shortD(t) + "</div>"; }
+      grid += '<div class="gtoday" style="left:' + pct(today()) + '%"><span class="lab">hoy</span></div>';
+      var html = '<div class="goverlay">' + grid + "</div>";
+      dated.forEach(function (r) {
+        var e = r.e, p = r.p, s = r.s, bar = "";
+        if (s && p.date && pct(p.date) > pct(s)) {
+          var l = pct(s), end = pct(p.date), w = Math.max(2, end - l);
+          var cls = p.done ? "done" : (p.est ? "est" : (e.modo === "Aereo" ? "aereo" : (e.modo === "Maritimo" ? "maritimo" : "est")));
+          var tip = shortD(p.date) + (p.est ? " (est.)" : "") + (p.done ? " · entregado" : "");
+          bar += '<div class="gbar ' + cls + '" data-tip="' + esc(tip) + '" style="left:' + l + "%;width:" + w + '%"></div>';
+        } else if (p.date) {
+          var x = pct(p.date);
+          var tip2 = shortD(p.date) + (p.done ? " · entregado" : (p.est ? " (est.)" : ""));
+          bar += '<div class="gdot" data-tip="' + esc(tip2) + '" style="left:' + x + '%"></div>';
+        }
+        html += '<div class="grow"><div class="glabel">' + esc(e.expediente) + " · " + fInt(e.volumen) + " prs · " + esc(e.operador) + '</div><div class="gtrack">' + bar + "</div></div>";
+      });
+      html += '<div class="gaxis">' + axis + "</div>";
+      g.innerHTML = html;
+    }
+    if (undated.length) g.innerHTML += '<div class="nodate" style="margin-top:8px">Sin fecha: ' + undated.map(function (r) { return esc(r.e.expediente); }).join(", ") + "</div>";
+  }
+  function renderUpnext(list) {
+    var rows = list.map(function (e) { return { e: e, p: projectedDelivery(e) }; }).filter(function (r) { return r.p.date; });
+    rows.sort(function (a, b) {
+      if (a.p.done !== b.p.done) return a.p.done ? 1 : -1; // pendientes primero
+      return a.p.done ? (b.p.date - a.p.date) : (a.p.date - b.p.date);
+    });
+    var box = document.getElementById("upnext");
+    if (!rows.length) { box.innerHTML = '<div class="nodate">Sin fechas de entrega.</div>'; return; }
+    box.innerHTML = rows.map(function (r) {
+      var e = r.e, p = r.p, dias = Math.round((p.date - today()) / 86400000);
+      var pulseClass = p.done ? 'ok' : sem(e);
+      var d3 = p.done
+        ? '<span class="sem ok"></span>Entregado'
+        : '<span class="sem ' + pulseClass + '"></span>' + (dias <= 0 ? "entrega hoy/vencida" : "en " + dias + " días");
+      return '<div class="up"><div class="d1">' + esc(e.expediente) + " · " + shortD(p.date) + (p.est ? " (est.)" : "") + '</div><div class="d2">' + fInt(e.volumen) + " prs · " + esc(e.modo || "modo?") + " · " + esc(e.operador) + (e.oc && e.oc !== e.expediente ? " · OC " + esc(e.oc) : "") + '</div><div class="d3">' + d3 + "</div></div>";
+    }).join("");
+  }
+  function renderPipeline(list) {
+    var by = {}; STAGES.forEach(function (s) { by[s] = []; });
+    list.forEach(function (e) { (by[e.estado] || (by[e.estado] = [])).push(e); });
+    document.getElementById("pipeline").innerHTML = STAGES.map(function (s) {
+      var items = by[s] || [];
+      return '<div class="col"><h3>' + (SLAB[s] || s) + '<span class="c">' + items.length + "</span></h3>" + items.map(cardHtml).join("") + "</div>";
+    }).join("");
+    Array.prototype.forEach.call(document.querySelectorAll(".card"), function (c) { c.onclick = function () { gotoExp(c.getAttribute("data-exp")); }; });
+  }
+  function cardHtml(e) {
+    var opTag = '<span class="tag ' + (e.operador === "MWT" ? "mwt" : "sondel") + '">' + esc(e.operador) + "</span>";
+    var moTag = e.modo ? '<span class="tag ' + (e.modo === "Aereo" ? "aereo" : "maritimo") + '">' + esc(e.modo) + "</span>" : "";
+    var eta = etaOf(e);
+    return '<div class="card" data-exp="' + esc(e.expediente) + '"><div class="exp">' + esc(e.expediente) + ' <span style="font-weight:400;color:#6b7785">' + fInt(e.volumen) + ' prs</span></div><div class="meta">' + (e.oc ? "OC " + esc(e.oc) : '<span class="muted">OC pendiente</span>') + '</div><div class="tags">' + opTag + moTag + "</div>" + (eta ? '<div class="eta"><span class="sem ' + sem(e) + '"></span>' + (e.entrega ? "Entrega " : "ETA ") + fmt(eta) + "</div>" : "") + "</div>";
+  }
+
+  function renderFlat(list) {
+    var fm = fillModel("ft_model", list);
+    var rows = arrivalRows(list);
+    if (fm) rows = rows.filter(function (r) { return r.modelo === fm; });
+    var sort = document.getElementById("ft_sort").value;
+    rows.sort(function (a, b) {
+      return sort === "fecha"
+        ? ((a.date ? a.date.getTime() : Infinity) - (b.date ? b.date.getTime() : Infinity)) || a.modelo.localeCompare(b.modelo) || (+a.talla - +b.talla)
+        : a.modelo.localeCompare(b.modelo) || (+a.talla - +b.talla);
+    });
+    document.getElementById("fa_body").innerHTML = rows.map(function (r) {
+      var fecha = r.done ? '<span style="color:#2da44e;font-weight:600">entregado</span>' : (r.date ? (shortD(r.date) + (r.est ? " (est)" : "")) : '<span class="muted">sin fecha</span>');
+      return "<tr><td>" + esc(r.modelo) + "</td><td><b>" + esc(r.talla) + "</b></td><td>" + r.qty + "</td><td>" + fecha + "</td><td>" + esc(r.estado) + "</td><td>" + esc(r.exp) + (r.oc ? " / " + esc(r.oc) : "") + "</td></tr>";
+    }).join("") || '<tr><td colspan="6" class="muted" style="text-align:center;padding:14px">Sin datos.</td></tr>';
+  }
+  function renderRecep(list) {
+    var fm = fillModel("hr_model", list);
+    var show = document.getElementById("hr_show").value;
+    var items = list.map(function (e) { return { e: e, p: projectedDelivery(e) }; });
+    if (show === "pend") items = items.filter(function (x) { return !x.p.done; });
+    else if (show === "done") items = items.filter(function (x) { return x.p.done; });
+    items.sort(function (a, b) { var ad = a.p.date ? a.p.date.getTime() : (a.p.done ? -1 : Infinity); var bd = b.p.date ? b.p.date.getTime() : (b.p.done ? -1 : Infinity); return ad - bd; });
+    document.getElementById("recep").innerHTML = items.map(function (x) {
+      var e = x.e, p = x.p, lineas = e.lineas || [];
+      if (fm) lineas = lineas.filter(function (l) { return l.modelo === fm; });
+      if (fm && !lineas.length) return "";
+      var dias = p.date ? Math.round((p.date - today()) / 86400000) : null;
+      var whenCls = "", whenTxt;
+      if (p.done) { whenCls = "done"; whenTxt = "Entregado"; }
+      else if (p.date) { whenTxt = "Llega " + shortD(p.date) + (p.est ? " (est)" : "") + (dias != null ? (dias <= 0 ? " · hoy/vencida" : " · en " + dias + "d") : ""); if (dias != null && dias <= 7) whenCls = "soon"; }
+      else whenTxt = "Sin fecha";
+      var totVis = lineas.reduce(function (a, l) { return a + (+l.total || 0); }, 0);
+      return '<div class="arrcard' + (p.done ? " done" : "") + '"><div class="arrh"><b>' + esc(e.expediente) + '</b> <span class="muted" style="font-weight:400">' + (e.oc && e.oc !== e.expediente ? "OC " + esc(e.oc) : "") + "</span> · " + fInt(totVis) + ' prs<span class="when ' + whenCls + '">' + whenTxt + '</span></div><div class="arrsub">' + esc(e.operador) + " · " + esc(e.modo || "modo?") + " · " + esc(e.estadoLabel) + (e.embarque ? " · sale " + esc(e.embarque) : "") + "</div>" + sizeMatrix(lineas) + "</div>";
+    }).join("") || '<div class="nodate">Sin llegadas con este filtro.</div>';
+  }
+
+  var expanded = {};
+  function detailHtml(e) {
+    var t = '<table class="det"><thead><tr><th>Código</th><th>Modelo</th><th>Pares</th><th>Precio U.</th><th>Total</th><th>Tallas</th></tr></thead><tbody>';
+    (e.lineas || []).forEach(function (l) {
+      var chips = (l.tallas || "").split(" ").filter(Boolean).map(function (p) { var a = p.split(":"); return '<span class="tch"><b>' + a[0] + "</b> " + a[1] + "</span>"; }).join("");
+      t += "<tr><td>" + esc(l.cod) + "</td><td>" + esc(l.modelo) + "</td><td><b>" + fInt(l.total) + "</b></td><td>" + fUsd(l.unit) + "</td><td>" + fUsd(l.amount) + "</td><td>" + (chips || "-") + "</td></tr>";
+    });
+    t += '<tr class="mtot"><td colspan="2">Total</td><td><b>' + fInt(e.volumen) + "</b></td><td></td><td><b>" + fUsd(e.goods) + "</b></td><td></td></tr>";
+    t += "</tbody></table>";
+    if (e.showCosts && e.costs && e.costs.length) {
+      t += '<div class="blk-h">Costos del movimiento</div><table class="det"><tbody>';
+      e.costs.forEach(function (c) { t += "<tr><td>" + esc(c.label) + '</td><td style="text-align:right">' + fUsd(c.usd) + "</td></tr>"; });
+      t += '<tr class="mtot"><td>Landed total</td><td style="text-align:right"><b>' + fUsd(e.landed) + "</b></td></tr></tbody></table>";
+    }
+    if (e.artifacts && e.artifacts.length) {
+      t += '<div class="blk-h">Artefactos</div>';
+      e.artifacts.forEach(function (a) {
+        t += '<div class="artbox"><div class="art-h">' + esc(a.title) + (a.nodo ? ' <span class="muted">' + esc(a.nodo) + "</span>" : "") + "</div><table class=\"det\"><tbody>";
+        a.rows.forEach(function (r) {
+          var val = r.file ? '<a class="afile" href="' + esc(r.file.href) + '" target="_blank" rel="noopener">📎 ' + esc(r.file.name) + "</a>" : esc(r.value);
+          t += "<tr><td>" + esc(r.label) + '</td><td style="text-align:right">' + val + "</td></tr>";
+        });
+        t += "</tbody></table></div>";
+      });
+    }
+    return t;
+  }
+  function renderTable(list) {
+    var grp = document.getElementById("groupBy").value;
+    var tb = document.getElementById("tbody");
+    var cell = function (v) { return v ? esc(v) : '<span class="muted">-</span>'; };
+    function rowHtml(e) {
+      var eta = etaOf(e), op = !!expanded[e.expediente];
+      var h = '<tr class="exprow" data-exp="' + esc(e.expediente) + '" style="cursor:pointer"><td><b>' + (op ? "▾ " : "▸ ") + cell(e.expediente) + "</b></td><td>" + cell(e.oc) + "</td><td>" + cell(e.cliente) + '</td><td><span class="tag ' + (e.operador === "MWT" ? "mwt" : "sondel") + '">' + esc(e.operador) + "</span></td><td>" + (e.modo ? '<span class="tag ' + (e.modo === "Aereo" ? "aereo" : "maritimo") + '">' + esc(e.modo) + "</span>" : '<span class="muted">-</span>') + "</td><td><b>" + fInt(e.volumen) + "</b></td><td>" + esc(e.estadoLabel) + "</td><td>" + cell(e.embarque) + "</td><td>" + (eta ? fmt(eta) + (e.entrega ? ' <span style="color:#2da44e">OK</span>' : "") : '<span class="muted">-</span>') + "</td></tr>";
+      if (op) h += '<tr class="detrow"><td colspan="9">' + detailHtml(e) + "</td></tr>";
+      return h;
+    }
+    var html = "";
+    if (grp === "none") html = list.map(rowHtml).join("");
+    else {
+      var groups = {};
+      list.forEach(function (e) { var k = e[grp] || "(sin asignar)"; (groups[k] || (groups[k] = [])).push(e); });
+      Object.keys(groups).sort().forEach(function (k) {
+        var gp = groups[k].reduce(function (a, e) { return a + (e.volumen || 0); }, 0);
+        html += '<tr class="grp"><td colspan="9">' + esc(String(grp).toUpperCase()) + ": " + esc(k) + " · " + groups[k].length + " exped. · " + fInt(gp) + " pares</td></tr>";
+        html += groups[k].map(rowHtml).join("");
+      });
+    }
+    tb.innerHTML = html || '<tr><td colspan="9" class="muted" style="padding:18px;text-align:center">Sin expedientes.</td></tr>';
+    Array.prototype.forEach.call(tb.querySelectorAll("tr.exprow"), function (r) {
+      r.onclick = function () { var i = r.getAttribute("data-exp"); expanded[i] = !expanded[i]; render(); };
+    });
+  }
+
+  function gotoExp(code) {
+    Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (x) { x.classList.remove("on"); });
+    document.querySelector('.tab[data-tab="exped"]').classList.add("on");
+    Array.prototype.forEach.call(document.querySelectorAll(".panel"), function (p) { p.classList.add("hide"); });
+    document.getElementById("p-exped").classList.remove("hide");
+    expanded[code] = true; render();
+  }
+
+  function render() {
+    var list = filtered();
+    renderKpis(list); renderProjection(list); renderUpnext(list); renderPipeline(list); renderFlat(list); renderRecep(list); renderTable(list);
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (tb) {
+    tb.onclick = function () {
+      Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (x) { x.classList.remove("on"); });
+      tb.classList.add("on");
+      Array.prototype.forEach.call(document.querySelectorAll(".panel"), function (p) { p.classList.add("hide"); });
+      document.getElementById("p-" + tb.getAttribute("data-tab")).classList.remove("hide");
+    };
+  });
+  ["fOp", "fModo", "groupBy", "ft_model", "ft_sort", "hr_show", "hr_model"].forEach(function (idn) { var el = document.getElementById(idn); if (el) el.onchange = render; });
+  render();
+})();</script>
+</body>
+</html>
