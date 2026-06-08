@@ -43,14 +43,6 @@ const MUTED = "#64748B";
 const SOFT  = "#F8FAFC";
 
 // ─── Catálogos ──────────────────────────────────────────────
-const COUNTRIES = [
-  { k: "MX", l: "México 🇲🇽" },   { k: "PE", l: "Perú 🇵🇪" },
-  { k: "CO", l: "Colombia 🇨🇴" }, { k: "CL", l: "Chile 🇨🇱" },
-  { k: "PA", l: "Panamá 🇵🇦" },   { k: "BR", l: "Brasil 🇧🇷" },
-  { k: "CR", l: "Costa Rica 🇨🇷" }, { k: "US", l: "USA 🇺🇸" },
-  { k: "EC", l: "Ecuador 🇪🇨" }, { k: "AR", l: "Argentina 🇦🇷" },
-  { k: "DO", l: "R. Dominicana 🇩🇴" },
-];
 
 const INCOTERMS = [
   { k: "EXW", l: "EXW · Ex Works" },
@@ -119,6 +111,11 @@ export default function ScreenClienteFormView() {
   const { isAdmin } = useRole();
 
   const isEdit  = !!clienteId && clienteId !== "nuevo";
+
+  const [paises, setPaises] = useState([]);
+  useEffect(() => {
+    clientesApi.select("paises").then(setPaises).catch(()=>{});
+  }, []);
 
   // Initial — fetch real al backend cuando es modo edit; cae a mock si el
   // ID solo existe en mockData (compat con onboarding/screenshots viejos).
@@ -424,7 +421,7 @@ export default function ScreenClienteFormView() {
             <Field label={lang === "es" ? "País" : "Country"}>
               <Select value={form.pais_iso2 || "MX"}
                       onChange={v => update("pais_iso2", v)}
-                      options={COUNTRIES}/>
+                      options={paises.map(c => ({ k: c.codigo, l: `${c.label} (${c.codigo})` }))}/>
             </Field>
             <Field label={lang === "es" ? "Ciudad" : "City"}>
               <Input value={form.ciudad || ""}

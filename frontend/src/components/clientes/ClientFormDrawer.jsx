@@ -33,6 +33,7 @@ import {
   IconCreditCard, IconShield, IconGlobe, IconLock, IconAlert,
   IconDollar, IconPercent,
 } from "../../lib/icons.jsx";
+import { clientesApi } from "../../lib/api.js";
 
 // IconInfo no existe en el set del proyecto — usamos una letra "i"
 // estilizada dentro de un círculo con SVG inline (misma API que los otros iconos).
@@ -57,14 +58,6 @@ const MUTED = "#64748B";
 const SOFT  = "#F8FAFC";
 
 // ─── Catálogos (deberían venir del backend en prod) ──────────
-const COUNTRIES = [
-  { k: "MX", l: "México 🇲🇽" },   { k: "PE", l: "Perú 🇵🇪" },
-  { k: "CO", l: "Colombia 🇨🇴" }, { k: "CL", l: "Chile 🇨🇱" },
-  { k: "PA", l: "Panamá 🇵🇦" },   { k: "BR", l: "Brasil 🇧🇷" },
-  { k: "CR", l: "Costa Rica 🇨🇷" }, { k: "US", l: "USA 🇺🇸" },
-  { k: "EC", l: "Ecuador 🇪🇨" }, { k: "AR", l: "Argentina 🇦🇷" },
-  { k: "DO", l: "R. Dominicana 🇩🇴" },
-];
 
 const INCOTERMS = [
   { k: "EXW", l: "EXW · Ex Works" },
@@ -118,6 +111,11 @@ const CODIGO_MARLUVAS_RX = /^\d{10}$/;
 export default function ClientFormDrawer({ lang = "es", initial = null, onClose, onCreated }) {
   const { isAdmin } = useRole();
   const isEdit = !!initial;
+
+  const [paises, setPaises] = useState([]);
+  useEffect(() => {
+    clientesApi.select("paises").then(setPaises).catch(()=>{});
+  }, []);
 
   // El initial viene de un listado donde los campos pueden tener
   // distintos nombres (mock vs API). Normalizamos en el defaults.
@@ -340,7 +338,7 @@ export default function ClientFormDrawer({ lang = "es", initial = null, onClose,
               <Field label={lang === "es" ? "País" : "Country"}>
                 <Select value={form.pais_iso2 || "MX"}
                         onChange={v => update("pais_iso2", v)}
-                        options={COUNTRIES.map(c => ({ k: c.k, l: c.l }))}/>
+                        options={paises.map(c => ({ k: c.codigo, l: `${c.label} (${c.codigo})` }))}/>
               </Field>
               <Field label={lang === "es" ? "Ciudad" : "City"}>
                 <Input value={form.ciudad || ""}

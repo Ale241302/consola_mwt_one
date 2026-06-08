@@ -6,13 +6,14 @@
 //   node_id, name, type, legal_entity_id, operator_id,
 //   country, status, capabilities{...}
 // ─────────────────────────────────────────────────────────────
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   IconX, IconCheck, IconPackage, IconBoxes, IconTruck,
   IconDollar, IconTrend, IconMapPin,
 } from "../../lib/icons.jsx";
 import { LEGAL_ENTITIES, OPERATORS } from "../../data/mockData.js";
+import { nodosApi } from "../../lib/api.js";
 
 const TYPES = [
   { k:'marketplace', l:'Marketplace', hint:'Inventario consignado en Amazon, Mercado Libre, etc.' },
@@ -20,15 +21,6 @@ const TYPES = [
   { k:'warehouse',   l:'Warehouse',   hint:'Centro de distribución propio u operado' },
   { k:'distributor', l:'Distributor', hint:'Hub de un distribuidor regional' },
   { k:'factory',     l:'Factory',     hint:'Planta productiva / origen de mercancía' },
-];
-
-const COUNTRIES = [
-  { k:'MX', l:'México 🇲🇽' }, { k:'PE', l:'Perú 🇵🇪' },
-  { k:'CO', l:'Colombia 🇨🇴' }, { k:'CL', l:'Chile 🇨🇱' },
-  { k:'PA', l:'Panamá 🇵🇦' }, { k:'BR', l:'Brasil 🇧🇷' },
-  { k:'CR', l:'Costa Rica 🇨🇷' }, { k:'US', l:'USA 🇺🇸' },
-  { k:'CN', l:'China 🇨🇳' }, { k:'EC', l:'Ecuador 🇪🇨' },
-  { k:'AR', l:'Argentina 🇦🇷' },
 ];
 
 const CAPS = [
@@ -41,6 +33,11 @@ const CAPS = [
 ];
 
 export default function CreateNodeModal({ lang='es', onClose, onCreated }) {
+  const [paises, setPaises] = useState([]);
+  useEffect(() => {
+    nodosApi.select('paises').then(setPaises).catch(()=>{});
+  }, []);
+
   const [form, setForm] = useState({
     node_id: '',
     name: '',
@@ -165,7 +162,9 @@ export default function CreateNodeModal({ lang='es', onClose, onCreated }) {
                   <IconMapPin size={13} style={{color:'var(--text-tertiary)'}}/>
                   <select value={form.country} onChange={e=>update('country', e.target.value)}
                           style={{flex:1, border:0, background:'transparent', outline:'none', font:'inherit'}}>
-                    {COUNTRIES.map(c => <option key={c.k} value={c.k}>{c.l}</option>)}
+                    {paises.map(p => (
+                      <option key={p.codigo} value={p.codigo}>{p.label} ({p.codigo})</option>
+                    ))}
                   </select>
                 </div>
               </div>
