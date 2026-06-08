@@ -219,7 +219,17 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     const v = readViewCtx(transfer?.context_data)?.custom_rates?.[k];
     return v !== undefined && v !== null ? Number(v) : null;
   };
-  const [customDaiRate, setCustomDaiRate] = useState(() => _initRate("dai"));
+  // DAI: la tasa OFICIAL es la del NCM (live, por grupo). Sólo se respeta un
+  // valor guardado si fue un override EXPLÍCITO del operador (flag
+  // dai_overridden). Datos viejos sin flag → null → se re-sincroniza solo con
+  // el NCM. Fix 2026-06-08: el DAI persistido tapaba la tasa viva del NCM
+  // (mostraba 14% guardado aunque el NCM fuera 10%).
+  const _initDaiRate = () => {
+    const cr = readViewCtx(transfer?.context_data)?.custom_rates;
+    if (cr?.dai_overridden && cr?.dai !== undefined && cr?.dai !== null) return Number(cr.dai);
+    return null;
+  };
+  const [customDaiRate, setCustomDaiRate] = useState(_initDaiRate);
   const [customLeyRate, setCustomLeyRate] = useState(() => _initRate("ley"));
   const [customIvaRate, setCustomIvaRate] = useState(() => _initRate("iva"));
 
@@ -263,7 +273,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     setCustomTaxes(b?.custom_taxes || []);
     setExcludedTaxes(b?.excluded || {});
     const cr = b?.custom_rates;
-    setCustomDaiRate(cr?.dai !== undefined && cr?.dai !== null ? Number(cr.dai) : null);
+    setCustomDaiRate(cr?.dai_overridden && cr?.dai !== undefined && cr?.dai !== null ? Number(cr.dai) : null);
     setCustomLeyRate(cr?.ley !== undefined && cr?.ley !== null ? Number(cr.ley) : null);
     setCustomIvaRate(cr?.iva !== undefined && cr?.iva !== null ? Number(cr.iva) : null);
 
@@ -459,9 +469,15 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   const persistCustomRates = useCallback(async (next = {}) => {
     if (!transferId) return;
     try {
+      // dai_overridden: marca de override EXPLÍCITO. Si se setea un número →
+      // true; si se limpia (null, botón "Sincronizar con NCM") → false. Si la
+      // llamada no toca el DAI, se conserva el flag previo.
+      const _prevDaiOverridden = readViewCtx(transfer?.context_data)?.custom_rates?.dai_overridden || false;
+      const _daiOverridden = next.dai !== undefined ? (next.dai !== null) : _prevDaiOverridden;
       const nextCtx = writeViewCtx(transfer?.context_data, {
         custom_rates: {
           dai: next.dai !== undefined ? next.dai : customDaiRate,
+          dai_overridden: _daiOverridden,
           ley: next.ley !== undefined ? next.ley : customLeyRate,
           iva: next.iva !== undefined ? next.iva : customIvaRate,
         },
@@ -1807,14 +1823,28 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                             <span>4</span>
                             {!isLiquidated && (
-                              <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
-                                      onClick={() => { const nx = { ...excludedTaxes, dai: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
-                                <IconTrash size={10}/>
-                              </button>
+                              <>
+                                <button className="btn btn-ghost btn-xs"
+                                        title={lang === "es" ? "Sincronizar con la tasa oficial del NCM" : "Sync with official NCM rate"}
+                                        style={{ color: "#0F8A5F", padding: "2px" }}
+                                        onClick={() => { setCustomDaiRate(null); persistCustomRates({ dai: null }); }}>
+                                  <IconRefresh size={10}/>
+                                </button>
+                                <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
+                                        onClick={() => { const nx = { ...excludedTaxes, dai: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
+                                  <IconTrash size={10}/>
+                                </button>
+                              </>
                             )}
                           </div>
                         </td>
-                        <td>DAI — Derecho Arancelario</td>
+                        <td>
+                          DAI — Derecho Arancelario
+                          {" "}
+                          <span style={{ color: "#D9822B", fontSize: 10, fontWeight: 600 }}>
+                            {lang === "es" ? "· override manual" : "· manual override"}
+                          </span>
+                        </td>
                         <td>CIF</td>
                         <td style={{ textAlign: "right" }}>
                           {isLiquidated ? (

@@ -29,5 +29,7 @@ CREATE INDEX IF NOT EXISTS ix_ncm_code_is_active ON productos.ncm_code(is_active
 -- Seed initial data
 INSERT INTO productos.ncm_code (code, descripcion, tarifas) VALUES
 ('6403.40.00', 'Calzado de seguridad con puntera de metal', '[{"origin_iso2": "BR", "destination_iso2": "CR", "rate_pct": 13.0}, {"origin_iso2": "CN", "destination_iso2": "CR", "rate_pct": 0.0}]'::jsonb),
-('6403.99.90', 'Otros calzados con suela de caucho y parte superior de cuero', '[{"origin_iso2": "BR", "destination_iso2": "CR", "rate_pct": 10.0}]'::jsonb)
+('6403.99.90', 'Otros calzados con suela de caucho y parte superior de cuero', '[{"origin_iso2": "BR", "destination_iso2": "CR", "rate_pct": 10.0}]'::jsonb),
+('6406.90.20', 'Plantillas amovibles (Palmilhas) de seguridad', '[{"origin_iso2": "BR", "destination_iso2": "CR", "rate_pct": 10.0}]'::jsonb)
 ON CONFLICT (code) DO NOTHING;
+
