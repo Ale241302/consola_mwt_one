@@ -1615,9 +1615,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             <div className="card card-pad-0" style={{ overflow: "hidden" }}>
               <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h4 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
-                  {viewerIsMwt
-                    ? (lang === "es" ? "LIQUIDACIÓN DETALLADA — MWT NACIONALIZA AL PRECIO MARLUVAS (UF)" : "DETAILED LIQUIDATION — MWT AT MARLUVAS (UF)")
-                    : (lang === "es" ? `LIQUIDACIÓN DETALLADA — ${transfer?._raw?.operating_company_label || "SONDEL"} NACIONALIZA AL PRECIO DE LA ORDEN (DUA REFERENCIAL)` : `DETAILED LIQUIDATION — ${transfer?._raw?.operating_company_label || "SONDEL"} AT ORDER PRICE`)}
+                  {lang === "es" ? "LIQUIDACIÓN DETALLADA" : "DETAILED LIQUIDATION"}
                 </h4>
                 {crcRate > 0 && (
                   <span className="tabular-nums" style={{ fontSize: 11, color: "#475569", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}>
