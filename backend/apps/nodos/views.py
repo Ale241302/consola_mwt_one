@@ -124,7 +124,9 @@ class NodoViewSet(viewsets.ViewSet):
                 WHERE is_active = TRUE
                 ORDER BY orden, label
             """)
-            return Response([{"codigo": r[0], "label": r[1]} for r in c.fetchall()])
+            response = Response([{"codigo": r[0], "label": r[1]} for r in c.fetchall()])
+            response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            return response
 
     @action(detail=False, methods=["get"])
     def select_responsables(self, request):
