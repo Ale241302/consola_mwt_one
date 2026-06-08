@@ -756,12 +756,14 @@ select:focus {
   box-shadow: 0 0 0 3px rgba(79,70,229,0.15);
 }
 .kpis {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   margin-bottom: 28px;
 }
 .kpi {
+  flex: 1 1 auto;
+  min-width: max-content;
   background: var(--surface-card);
   border: 1px solid var(--border-color);
   border-radius: 12px;
@@ -804,6 +806,7 @@ select:focus {
   font-weight: 800;
   color: var(--text-title);
   line-height: 1.2;
+  white-space: nowrap;
 }
 .kpi .l {
   font-size: 11px;

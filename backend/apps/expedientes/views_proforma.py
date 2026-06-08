@@ -433,13 +433,19 @@ def factura_payload(request, expediente_id):
     trf_context_data = {}
     trf_origen_id = None
     trf_destino_id = None
+    trf_origen_label = None
+    trf_destino_label = None
+    trf_dispatched_at = None
+    trf_received_at = None
     try:
         with connection.cursor() as c:
             c.execute(
                 """
                 SELECT t.id, t.codigo, t.legal_context,
                        COALESCE(t.ref_tracking, ''), t.context_data,
-                       t.origen_id, t.destino_id
+                       t.origen_id, t.destino_id,
+                       t.origen_label, t.destino_label,
+                       t.dispatched_at, t.received_at
                 FROM transfers.transferencia t
                 WHERE t.id IN (
                     SELECT DISTINCT transferencia_id
@@ -468,6 +474,10 @@ def factura_payload(request, expediente_id):
             trf_context_data = cd if isinstance(cd, dict) else {}
             trf_origen_id = str(tr[5]) if tr[5] else None
             trf_destino_id = str(tr[6]) if tr[6] else None
+            trf_origen_label = tr[7] or None
+            trf_destino_label = tr[8] or None
+            trf_dispatched_at = tr[9]
+            trf_received_at = tr[10]
     except Exception:
         log.exception("[factura_payload] transfer context_data lookup failed id=%s", pid)
 
@@ -572,12 +582,17 @@ def factura_payload(request, expediente_id):
             "operated_by_mwt":         operated_by_mwt,
             "operating_company_id":    op_id,
             "operating_company_label": "Muito Work Limitada" if operated_by_mwt else (cliente or "Cliente final"),
+            "client_name":             cliente,
             "mwt_operating_client_id": str(MWT_OPERATING_CLIENT_ID),
             "mwt_operator_name":       "Muito Work Limitada",
         },
-        "origen":  {"label": "Muito Work Limitada"},
-        "destino": {"label": cliente or "Cliente"},
-        "fechas":  {"created_at": _dt.date.today().isoformat(), "dispatched_at": None, "received_at": None},
+        "origen":  {"label": trf_origen_label or "Muito Work Limitada"},
+        "destino": {"label": trf_destino_label or (cliente or "Cliente")},
+        "fechas":  {
+            "created_at":    _dt.date.today().isoformat(),
+            "dispatched_at": trf_dispatched_at.isoformat() if trf_dispatched_at else None,
+            "received_at":   trf_received_at.isoformat() if trf_received_at else None,
+        },
         "personas": {},
         "lineas": lineas,
         "cost_breakdown": cost_breakdown,
