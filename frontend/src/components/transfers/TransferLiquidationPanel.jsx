@@ -29,7 +29,7 @@ import {
 } from "../../lib/icons.jsx";
 import {
   transferenciasApi, transferDetailApi, currencyCatApi, transferLineasApi,
-  nodosApi, fxApi,
+  nodosApi, fxApi, ncmApi,
 } from "../../lib/api.js";
 import { useRole } from "../../context/RoleContext.jsx";
 import { isMwtOperated, MWT_OPERATING_CLIENT_ID } from "../../lib/operatingCompany.js";
@@ -241,6 +241,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   const crcRate = crcFx?.rate || 0;
   const toCrc = (usd) => (crcRate > 0 ? Math.round(Number(usd || 0) * crcRate) : null);
   const fmtCrc = (usd) => { const v = toCrc(usd); return v == null ? "" : "₡" + v.toLocaleString("es-CR"); };
+
+  const [ncms, setNcms] = useState([]);
+  useEffect(() => {
+    ncmApi.list({ limit: 1000 })
+      .then((d) => { setNcms(Array.isArray(d) ? d : (d?.results || [])); })
+      .catch(() => {});
+  }, []);
 
   // Sync state with transfer prop updates Y con el cambio de vista activa.
   // Al togglear MWT↔Cliente re-hidratamos overrides/tasas del bucket de
@@ -473,6 +480,47 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   const livePreview = useMemo(() => {
     const lineas = transfer?.lines || transfer?.lineas || [];
 
+    const originCountry = transfer?.origen_pais_iso2 || report?.origen?.pais_iso2 || "";
+    const destinationCountry = transfer?.destino_pais_iso2 || report?.destino?.pais_iso2 || "";
+
+    const getLineNcmInfo = (line) => {
+      let lineSku = String(line.sku || "").trim();
+      let lineNcmCode = String(line.ncm || line._raw?.ncm || "").trim();
+      
+      let matchedNcm = null;
+      if (lineNcmCode) {
+        matchedNcm = ncms.find(n => String(n.code).trim() === lineNcmCode);
+      }
+      if (!matchedNcm && lineSku) {
+        matchedNcm = ncms.find(n => 
+          (n.productos_asociados || []).some(p => String(p.sku).trim() === lineSku)
+        );
+      }
+      
+      let ncmCode = matchedNcm ? matchedNcm.code : (lineNcmCode || "default");
+      let daiRate = 0.14; // Default fallback
+      let leyRate = 0.01;
+      let ivaRate = 0.13;
+      
+      if (matchedNcm) {
+        const tariff = (matchedNcm.tarifas || []).find(t => 
+          String(t.origin_iso2).toUpperCase() === String(originCountry).toUpperCase() &&
+          String(t.destination_iso2).toUpperCase() === String(destinationCountry).toUpperCase()
+        );
+        if (tariff) {
+          daiRate = Number(tariff.rate_pct) / 100;
+        } else {
+          const staticRates = taxRatesForNcm(ncmCode);
+          daiRate = staticRates.dai;
+        }
+      } else {
+        const staticRates = taxRatesForNcm(ncmCode);
+        daiRate = staticRates.dai;
+      }
+      
+      return { ncmCode, daiRate, leyRate, ivaRate };
+    };
+
     // 1. Identificar costos de flete, seguro y otros costos de viewCostLines
     const freight = viewCostLines.reduce((a, c) => a + (KIND_FREIGHT.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
     const insurance = viewCostLines.reduce((a, c) => a + (KIND_INSURANCE.has(String(c.kind || "").toUpperCase()) ? Number(c.amount || 0) * Number(c.fx_to_usd || 1) : 0), 0);
@@ -528,14 +576,14 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       const calculatedCif = lt + extra;
       const cif = override.cif !== undefined ? Number(override.cif) : calculatedCif;
 
-      const r = taxRatesForNcm(l.ncm || l._raw?.ncm);
-      const daiRate = customDaiRate !== null ? customDaiRate : r.dai;
-      const leyRate = customLeyRate !== null ? customLeyRate : r.ley_6946;
-      const ivaRate = customIvaRate !== null ? customIvaRate : r.iva;
+      const ncmInfo = getLineNcmInfo(l);
+      const daiRate = customDaiRate !== null ? customDaiRate : ncmInfo.daiRate;
+      const leyRate = customLeyRate !== null ? customLeyRate : ncmInfo.leyRate;
+      const ivaRate = customIvaRate !== null ? customIvaRate : ncmInfo.ivaRate;
 
       const dai = excludedTaxes.dai ? 0 : (override.dai !== undefined ? Number(override.dai) : (cif * daiRate));
       const ley = excludedTaxes.ley ? 0 : (override.ley !== undefined ? Number(override.ley) : (cif * leyRate));
-      const iva = excludedTaxes.iva ? 0 : (cif * ivaRate);
+      const iva = excludedTaxes.iva ? 0 : ((cif + dai + ley) * ivaRate);
 
       // Custom taxes on CIF and custom costs prorated by pairs qty
       const lineCustomTaxesAmount = customTaxes.filter(x => x.type === "TAX").reduce((sum, tax) => {
@@ -585,6 +633,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         iva,
         landed_unit_usd:  landedUnit,
         landed_total_usd: total,
+        ncmCode:          ncmInfo.ncmCode,
+        daiRate:          daiRate,
       };
     });
 
@@ -614,7 +664,32 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       leyRate: customLeyRate !== null ? customLeyRate : 0.01,
       ivaRate: customIvaRate !== null ? customIvaRate : 0.13,
     };
-  }, [transfer, viewCostLines, effectiveView, viewerIsMwt, customDaiRate, customLeyRate, customIvaRate, lineOverrides, customTaxes, excludedTaxes]);
+  }, [transfer, viewCostLines, effectiveView, viewerIsMwt, customDaiRate, customLeyRate, customIvaRate, lineOverrides, customTaxes, excludedTaxes, ncms, report]);
+
+  const groupedDai = useMemo(() => {
+    const groups = {};
+    livePreview.lines.forEach((line) => {
+      const code = line.ncmCode || "default";
+      if (!groups[code]) {
+        groups[code] = {
+          code,
+          cif: 0,
+          dai: 0,
+          daiRate: line.daiRate,
+        };
+      }
+      groups[code].cif += line.cif;
+      groups[code].dai += line.dai;
+    });
+    return Object.values(groups);
+  }, [livePreview.lines]);
+
+  const getNcmDesc = useCallback((code) => {
+    const found = ncms.find(n => String(n.code).trim() === String(code).trim());
+    return found ? found.descripcion : "";
+  }, [ncms]);
+
+  const daiRowsCount = excludedTaxes.dai ? 0 : (customDaiRate !== null ? 1 : groupedDai.length);
 
   // Sku distribution helpers
   const distributeSkuOverride = useCallback((sku, field, totalValue) => {
@@ -1678,75 +1753,150 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td></td>
                   </tr>
                   {!excludedTaxes.dai && (
-                  <tr>
-                    <td>
-                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <span>4</span>
-                        {!isLiquidated && (
-                          <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
-                                  onClick={() => { const nx = { ...excludedTaxes, dai: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
-                            <IconTrash size={10}/>
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                    <td>DAI — Derecho Arancelario</td>
-                    <td>CIF</td>
-                    <td style={{ textAlign: "right" }}>
-                      {isLiquidated ? (
-                        <span>{Number(livePreview.daiRate * 100).toFixed(2)}%</span>
-                      ) : (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
-                          <input className="input tabular-nums" type="number" step="0.01" min="0" max="100"
-                                 style={{ width: 70, textAlign: "right", padding: "2px 4px", fontSize: 12 }}
-                                 value={(livePreview.daiRate * 100).toFixed(2)}
-                                 onChange={(e) => {
-                                   const val = e.target.value;
-                                   setCustomDaiRate(val === "" ? null : Number(val) / 100);
-                                 }}
-                                 onBlur={(e) => {
-                                   const val = e.target.value;
-                                   persistCustomRates({ dai: val === "" ? null : Number(val) / 100 });
-                                 }}/>
-                          <span>%</span>
-                        </span>
-                      )}
-                    </td>
-                    <td className="tabular-nums" style={{ textAlign: "right" }}>
-                      {isLiquidated ? (
-                        <span>${fmt(livePreview.daiTotal)}</span>
-                      ) : (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
-                          <input className="input tabular-nums" type="number" step="0.01" min="0"
-                                 style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
-                                 value={livePreview.daiTotal.toFixed(2)}
-                                 onChange={(e) => {
-                                   const val = e.target.value;
-                                   const cifBase = livePreview.cifTotal;
-                                   if (cifBase > 0) {
-                                     setCustomDaiRate(val === "" ? null : Number(val) / cifBase);
-                                   }
-                                 }}
-                                 onBlur={(e) => {
-                                   const val = e.target.value;
-                                   const cifBase = livePreview.cifTotal;
-                                   if (cifBase > 0) {
-                                     persistCustomRates({ dai: val === "" ? null : Number(val) / cifBase });
-                                   }
-                                 }}/>
-                        </span>
-                      )}
-                    </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.daiTotal) : "—"}</td>
-                    <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Régimen general calzado" : "General footwear regime"}</td>
-                  </tr>
+                    customDaiRate !== null ? (
+                      <tr>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <span>4</span>
+                            {!isLiquidated && (
+                              <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
+                                      onClick={() => { const nx = { ...excludedTaxes, dai: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
+                                <IconTrash size={10}/>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td>DAI — Derecho Arancelario</td>
+                        <td>CIF</td>
+                        <td style={{ textAlign: "right" }}>
+                          {isLiquidated ? (
+                            <span>{Number(livePreview.daiRate * 100).toFixed(2)}%</span>
+                          ) : (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                              <input className="input tabular-nums" type="number" step="0.01" min="0" max="100"
+                                     style={{ width: 70, textAlign: "right", padding: "2px 4px", fontSize: 12 }}
+                                     value={(livePreview.daiRate * 100).toFixed(2)}
+                                     onChange={(e) => {
+                                       const val = e.target.value;
+                                       setCustomDaiRate(val === "" ? null : Number(val) / 100);
+                                     }}
+                                     onBlur={(e) => {
+                                       const val = e.target.value;
+                                       persistCustomRates({ dai: val === "" ? null : Number(val) / 100 });
+                                     }}/>
+                              <span>%</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>
+                          {isLiquidated ? (
+                            <span>${fmt(livePreview.daiTotal)}</span>
+                          ) : (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                              <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                              <input className="input tabular-nums" type="number" step="0.01" min="0"
+                                     style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                                     value={livePreview.daiTotal.toFixed(2)}
+                                     onChange={(e) => {
+                                       const val = e.target.value;
+                                       const cifBase = livePreview.cifTotal;
+                                       if (cifBase > 0) {
+                                         setCustomDaiRate(val === "" ? null : Number(val) / cifBase);
+                                       }
+                                     }}
+                                     onBlur={(e) => {
+                                       const val = e.target.value;
+                                       const cifBase = livePreview.cifTotal;
+                                       if (cifBase > 0) {
+                                         persistCustomRates({ dai: val === "" ? null : Number(val) / cifBase });
+                                       }
+                                     }}/>
+                            </span>
+                          )}
+                        </td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.daiTotal) : "—"}</td>
+                        <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Régimen general calzado" : "General footwear regime"}</td>
+                      </tr>
+                    ) : (
+                      groupedDai.map((g, idx) => {
+                        const ncmDesc = getNcmDesc(g.code);
+                        return (
+                          <tr key={"dai-group-" + g.code}>
+                            <td>
+                              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                <span>{idx === 0 ? "4" : `4.${idx + 1}`}</span>
+                                {!isLiquidated && idx === 0 && (
+                                  <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
+                                          onClick={() => { const nx = { ...excludedTaxes, dai: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
+                                    <IconTrash size={10}/>
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              <strong>DAI — Derecho Arancelario ({g.code})</strong>
+                            </td>
+                            <td>CIF ({g.code})</td>
+                            <td style={{ textAlign: "right" }}>
+                              {isLiquidated ? (
+                                <span>{Number(g.daiRate * 100).toFixed(2)}%</span>
+                              ) : (
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                                  <input className="input tabular-nums" type="number" step="0.01" min="0" max="100"
+                                         style={{ width: 70, textAlign: "right", padding: "2px 4px", fontSize: 12 }}
+                                         value={(g.daiRate * 100).toFixed(2)}
+                                         onChange={(e) => {
+                                           const val = e.target.value;
+                                           setCustomDaiRate(val === "" ? null : Number(val) / 100);
+                                         }}
+                                         onBlur={(e) => {
+                                           const val = e.target.value;
+                                           persistCustomRates({ dai: val === "" ? null : Number(val) / 100 });
+                                         }}/>
+                                  <span>%</span>
+                                </span>
+                              )}
+                            </td>
+                            <td className="tabular-nums" style={{ textAlign: "right" }}>
+                              {isLiquidated ? (
+                                <span>${fmt(g.dai)}</span>
+                              ) : (
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                                  <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                                  <input className="input tabular-nums" type="number" step="0.01" min="0"
+                                         style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
+                                         value={g.dai.toFixed(2)}
+                                         onChange={(e) => {
+                                           const val = e.target.value;
+                                           const cifBase = g.cif;
+                                           if (cifBase > 0) {
+                                             setCustomDaiRate(val === "" ? null : Number(val) / cifBase);
+                                           }
+                                         }}
+                                         onBlur={(e) => {
+                                           const val = e.target.value;
+                                           const cifBase = g.cif;
+                                           if (cifBase > 0) {
+                                             persistCustomRates({ dai: val === "" ? null : Number(val) / cifBase });
+                                           }
+                                         }}/>
+                                </span>
+                              )}
+                            </td>
+                            <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(g.dai) : "—"}</td>
+                            <td style={{ color: "#64748B", fontSize: 11 }}>
+                              {ncmDesc || (lang === "es" ? "Régimen general calzado" : "General footwear regime")}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )
                   )}
                   {!excludedTaxes.ley && (
                   <tr>
                     <td>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <span>5</span>
+                        <span>{4 + daiRowsCount}</span>
                         {!isLiquidated && (
                           <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
                                   onClick={() => { const nx = { ...excludedTaxes, ley: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
@@ -1811,7 +1961,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   <tr>
                     <td>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <span>6</span>
+                        <span>{4 + daiRowsCount + (excludedTaxes.ley ? 0 : 1)}</span>
                         {!isLiquidated && (
                           <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
                                   onClick={() => { const nx = { ...excludedTaxes, iva: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
@@ -1821,7 +1971,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       </div>
                     </td>
                     <td>IVA</td>
-                    <td>CIF</td>
+                    <td>CIF + DAI + Ley</td>
                     <td style={{ textAlign: "right" }}>
                       {isLiquidated ? (
                         <span>{Number(livePreview.ivaRate * 100).toFixed(2)}%</span>
@@ -1853,16 +2003,16 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                  value={livePreview.ivaTotal.toFixed(2)}
                                  onChange={(e) => {
                                    const val = e.target.value;
-                                   const cifBase = livePreview.cifTotal;
-                                   if (cifBase > 0) {
-                                     setCustomIvaRate(val === "" ? null : Number(val) / cifBase);
+                                   const ivaBase = livePreview.cifTotal + livePreview.daiTotal + livePreview.leyTotal;
+                                   if (ivaBase > 0) {
+                                     setCustomIvaRate(val === "" ? null : Number(val) / ivaBase);
                                    }
                                  }}
                                  onBlur={(e) => {
                                    const val = e.target.value;
-                                   const cifBase = livePreview.cifTotal;
-                                   if (cifBase > 0) {
-                                     persistCustomRates({ iva: val === "" ? null : Number(val) / cifBase });
+                                   const ivaBase = livePreview.cifTotal + livePreview.daiTotal + livePreview.leyTotal;
+                                   if (ivaBase > 0) {
+                                     persistCustomRates({ iva: val === "" ? null : Number(val) / ivaBase });
                                    }
                                  }}/>
                         </span>
@@ -1889,7 +2039,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     </tr>
                   )}
                   {customTaxes.filter(x => x.type === "TAX").map((x, idx) => {
-                    const rowNum = 4 + (excludedTaxes.dai ? 0 : 1) + (excludedTaxes.ley ? 0 : 1) + (excludedTaxes.iva ? 0 : 1) + idx;
+                    const rowNum = 4 + daiRowsCount + (excludedTaxes.ley ? 0 : 1) + (excludedTaxes.iva ? 0 : 1) + idx;
                     const hasAmt = x.amount != null && x.amount !== "";
                     const computed = livePreview.cifTotal * ((x.rate || 0) / 100);
                     return (
@@ -1989,7 +2139,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <tr key={c.id}>
                       <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <span>{4 + (excludedTaxes.dai ? 0 : 1) + (excludedTaxes.ley ? 0 : 1) + (excludedTaxes.iva ? 0 : 1) + customTaxes.filter(t => t.type === "TAX").length + idx}</span>
+                          <span>{4 + daiRowsCount + (excludedTaxes.ley ? 0 : 1) + (excludedTaxes.iva ? 0 : 1) + customTaxes.filter(t => t.type === "TAX").length + idx}</span>
                           {!isLiquidated && (
                             <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar costo (sincroniza con sección 2)" : "Remove cost"} style={{ color: "#D64545", padding: "2px" }}
                                     onClick={() => askRemoveCost(c)}>
@@ -2022,7 +2172,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     </tr>
                   ))}
                   {customTaxes.filter(x => x.type === "COST").map((x, idx) => {
-                    const rowNum = 4 + (excludedTaxes.dai ? 0 : 1) + (excludedTaxes.ley ? 0 : 1) + (excludedTaxes.iva ? 0 : 1)
+                    const rowNum = 4 + daiRowsCount + (excludedTaxes.ley ? 0 : 1) + (excludedTaxes.iva ? 0 : 1)
                       + customTaxes.filter(t => t.type === "TAX").length
                       + viewCostLines.filter(c => {
                           const k = String(c.kind || "").toUpperCase();

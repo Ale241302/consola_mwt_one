@@ -118,6 +118,20 @@ def calcular_liquidacion(transferencia, *, persist=False, actor_id=None, actor_n
             "landed_total_usd": float(line_landed_total),
         })
 
+    try:
+        from apps.nodos.models import Nodo
+        origen_node = Nodo.objects.filter(id=transferencia.origen_id).only("pais_iso2").first()
+        origen_pais = (origen_node.pais_iso2 or "").upper() if origen_node else ""
+    except Exception:
+        origen_pais = ""
+
+    try:
+        from apps.nodos.models import Nodo
+        destino_node = Nodo.objects.filter(id=transferencia.destino_id).only("pais_iso2").first()
+        destino_pais = (destino_node.pais_iso2 or "").upper() if destino_node else ""
+    except Exception:
+        destino_pais = ""
+
     report = {
         "transfer_id":           str(transferencia.id),
         "codigo":                transferencia.codigo,
@@ -126,10 +140,12 @@ def calcular_liquidacion(transferencia, *, persist=False, actor_id=None, actor_n
         "origen": {
             "id":    str(transferencia.origen_id) if transferencia.origen_id else None,
             "label": transferencia.origen_label or "",
+            "pais_iso2": origen_pais,
         },
         "destino": {
             "id":    str(transferencia.destino_id) if transferencia.destino_id else None,
             "label": transferencia.destino_label or "",
+            "pais_iso2": destino_pais,
         },
         "documents": {
             "dua_document_id": str(transferencia.dua_document_id) if transferencia.dua_document_id else None,
