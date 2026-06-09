@@ -221,12 +221,31 @@ function buildNormalized(item, recipient, lang, fileBase) {
   });
   const destCosts = destLines.reduce((a, c) => a + c.usd, 0);
   const cif = goods + freight + insurance;
-  const daiRate = crr.dai != null ? Number(crr.dai) : 0.14;
   const leyRate = crr.ley != null ? Number(crr.ley) : 0.01;
   const ivaRate = crr.iva != null ? Number(crr.iva) : 0.13;
-  const dai = exc.dai ? 0 : cif * daiRate;
+  // DAI con la tasa VIVA del NCM por línea (payload.dai_rate, resuelta en el
+  // backend por origen→destino), respetando un override EXPLÍCITO
+  // (dai_overridden) — IDÉNTICO a la factura. Antes usaba crr.dai stale o el
+  // hardcode 0.14 → mostraba 14% aunque el NCM fuera 10%.
+  const daiOverridden = crr.dai_overridden === true;
+  const extraTotal = freight + insurance;
+  const qtyTotalAll = lineasRaw.reduce((a, l) => a + lineQty(l), 0) || 0;
+  let dai = 0;
+  if (!exc.dai) {
+    lineasRaw.forEach((l) => {
+      const q = lineQty(l);
+      const lt = q * unitPriceForAudience(l, eff);
+      const extra = qtyTotalAll > 0 ? extraTotal * (q / qtyTotalAll) : 0;
+      const cifLine = lt + extra;
+      const liveDai = (l.dai_rate != null) ? Number(l.dai_rate) : 0.14;
+      const rate = (daiOverridden && crr.dai != null) ? Number(crr.dai) : liveDai;
+      dai += cifLine * rate;
+    });
+  }
+  const daiRate = cif > 0 ? dai / cif : ((daiOverridden && crr.dai != null) ? Number(crr.dai) : 0);
   const ley = exc.ley ? 0 : cif * leyRate;
-  const iva = exc.iva ? 0 : cif * ivaRate;
+  // IVA acreditable sobre CIF + DAI + Ley (igual que la factura), no sólo CIF.
+  const iva = exc.iva ? 0 : (cif + dai + ley) * ivaRate;
   let timbresSum = 0;
   const timbres = (bucket.custom_taxes || []).filter((x) => x && x.type === "TAX").map((x) => {
     const has = x.amount != null && x.amount !== "";
