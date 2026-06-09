@@ -9,7 +9,8 @@
 //  - Deferred price visible only when show_deferred_to_client = true.
 //  - Modo C lines get a subtle "Operado por Muito Work" tag.
 //  - All downloadable docs marked as signed-URL (15-min expiry).
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { clientesApi } from "../lib/api.js";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
 import { Badge, StatusBadge } from "../components/ui/primitives.jsx";
@@ -727,10 +728,23 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
       setExporting(false);
     }
   };
-  // Clientes asignados (derivados de las OCs ya scopeadas a este usuario).
-  const clientOpts = Array.from(new Map(
-    (ocs || []).filter((o) => o.client_id).map((o) => [o.client_id, { id: o.client_id, name: o.client_name || o.client_id }])
-  ).values());
+  // Clientes para el selector (nombre legible). clientesApi.list() ya viene
+  // scopeado por el backend a las empresas del usuario (legal_entity_ids).
+  const [clientOpts, setClientOpts] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    clientesApi.list()
+      .then((rows) => {
+        if (!alive) return;
+        const arr = Array.isArray(rows) ? rows : (rows?.results || []);
+        setClientOpts(arr.map((c) => ({
+          id: c.id,
+          name: c.razon_social || c.nombre_comercial || c.name || c.nombre || c.id,
+        })));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
   return (
     <div className="card">
       <div className="card-head">
