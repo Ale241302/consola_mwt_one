@@ -230,19 +230,35 @@ function buildNormalized(item, recipient, lang, fileBase) {
   const daiOverridden = crr.dai_overridden === true;
   const extraTotal = freight + insurance;
   const qtyTotalAll = lineasRaw.reduce((a, l) => a + lineQty(l), 0) || 0;
-  let dai = 0;
+  // DAI agrupado por NCM (una fila por partida con su tasa viva), IDÉNTICO a la
+  // factura. Un override EXPLÍCITO colapsa a una sola fila a esa tasa.
+  let daiRows = [];
   if (!exc.dai) {
-    lineasRaw.forEach((l) => {
-      const q = lineQty(l);
-      const lt = q * unitPriceForAudience(l, eff);
-      const extra = qtyTotalAll > 0 ? extraTotal * (q / qtyTotalAll) : 0;
-      const cifLine = lt + extra;
-      const liveDai = (l.dai_rate != null) ? Number(l.dai_rate) : 0.14;
-      const rate = (daiOverridden && crr.dai != null) ? Number(crr.dai) : liveDai;
-      dai += cifLine * rate;
-    });
+    if (daiOverridden && crr.dai != null) {
+      const d = cif * Number(crr.dai);
+      daiRows = [{ label: "DAI — Derecho Arancelario " + (Number(crr.dai) * 100).toFixed(2) + "%", usd: d }];
+    } else {
+      const daiGroups = new Map();
+      lineasRaw.forEach((l) => {
+        const q = lineQty(l);
+        const lt = q * unitPriceForAudience(l, eff);
+        const extra = qtyTotalAll > 0 ? extraTotal * (q / qtyTotalAll) : 0;
+        const cifLine = lt + extra;
+        const liveDai = (l.dai_rate != null) ? Number(l.dai_rate) : 0.14;
+        const code = (l.ncm && String(l.ncm).trim()) ? String(l.ncm).trim() : "—";
+        const g = daiGroups.get(code) || { code, cif: 0, dai: 0 };
+        g.cif += cifLine;
+        g.dai += cifLine * liveDai;
+        daiGroups.set(code, g);
+      });
+      daiRows = Array.from(daiGroups.values()).map((g) => ({
+        label: "DAI — Derecho Arancelario" + (g.code !== "—" ? " (" + g.code + ")" : "")
+             + " " + (g.cif > 0 ? (g.dai / g.cif * 100).toFixed(2) : "0.00") + "%",
+        usd: g.dai,
+      }));
+    }
   }
-  const daiRate = cif > 0 ? dai / cif : ((daiOverridden && crr.dai != null) ? Number(crr.dai) : 0);
+  const dai = daiRows.reduce((a, r) => a + r.usd, 0);
   const ley = exc.ley ? 0 : cif * leyRate;
   // IVA acreditable sobre CIF + DAI + Ley (igual que la factura), no sólo CIF.
   const iva = exc.iva ? 0 : (cif + dai + ley) * ivaRate;
@@ -264,7 +280,7 @@ function buildNormalized(item, recipient, lang, fileBase) {
     { label: lang === "es" ? "Flete" : "Freight", usd: freight },
     { label: lang === "es" ? "Seguro" : "Insurance", usd: insurance },
     { label: "CIF", usd: cif, bold: true },
-    { label: "DAI " + (daiRate * 100).toFixed(2) + "%", usd: dai },
+    ...daiRows,
     { label: "Ley 6946 " + (leyRate * 100).toFixed(2) + "%", usd: ley },
     { label: "IVA " + (ivaRate * 100).toFixed(2) + "%" + (lang === "es" ? " (acreditable, no suma)" : " (creditable)"), usd: iva, info: true },
   ].concat(timbres, destLines, customCostRows).filter((r) => r.bold || r.info || Math.abs(r.usd) > 0.0001) : [];
