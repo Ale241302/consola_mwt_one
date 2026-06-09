@@ -104,6 +104,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // GENERAL (editable) · NCM · SKU (lectura; impuestos recalculados por
   // subconjunto). Aplica a ambas vistas MWT/CLIENT.
   const [liqTab, setLiqTab] = useState("GENERAL");
+  // Modal con la lista de SKUs (sku · producto · pares) de un grupo NCM.
+  const [skuModal, setSkuModal] = useState(null);
   // Sprint 2026-05-14 · Fase 14 — scope picker para cost-lines del
   // TransferDetail. Reutiliza CostScopeModal (mismo del wizard).
   //   - scopeOpenFor: cost.id ó null
@@ -743,7 +745,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         const g = map.get(key) || {
           key, qty: 0, fob: 0, extra: 0, cif: 0, dai: 0, ley: 0, iva: 0,
           dest: 0, customTax: 0, customCost: 0, sinIva: 0,
-          skus: new Set(), ncms: new Set(), product: l.product_label || "",
+          skus: new Set(), ncms: new Set(), skuMap: new Map(),
+          product: l.product_label || "",
         };
         g.qty += l.qty;
         g.fob += l.fob_total_usd;
@@ -756,7 +759,12 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         g.customTax += l.customTax || 0;
         g.customCost += l.customCost || 0;
         g.sinIva += l.landed_total_usd;
-        if (l.sku) g.skus.add(l.sku);
+        if (l.sku) {
+          g.skus.add(l.sku);
+          const it = g.skuMap.get(l.sku) || { product: l.product_label || "", qty: 0 };
+          it.qty += l.qty;
+          g.skuMap.set(l.sku, it);
+        }
         if (l.ncmCode && l.ncmCode !== "default") g.ncms.add(l.ncmCode);
         map.set(key, g);
       });
@@ -764,6 +772,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         ...g,
         skus: Array.from(g.skus),
         ncms: Array.from(g.ncms),
+        skuItems: Array.from(g.skuMap, ([sku, v]) => ({ sku, product: v.product, qty: v.qty })),
         daiRatePct: g.cif > 0 ? (g.dai / g.cif) * 100 : 0,
         conIva: g.sinIva + g.iva,
       }));
@@ -1710,19 +1719,19 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   <table className="table" style={{ fontSize: 12 }}>
                     <thead>
                       <tr>
-                        <th>{liqTab === "NCM" ? "NCM" : "SKU"}</th>
-                        <th>{liqTab === "NCM" ? (lang === "es" ? "SKUs incluidos" : "Included SKUs") : "NCM"}</th>
-                        <th style={{ textAlign: "right" }}>{lang === "es" ? "Pares" : "Pairs"}</th>
-                        <th style={{ textAlign: "right" }}>FOB</th>
-                        <th style={{ textAlign: "right" }}>{lang === "es" ? "Flete+Seg" : "Frt+Ins"}</th>
-                        <th style={{ textAlign: "right" }}>CIF</th>
-                        <th style={{ textAlign: "right" }}>DAI</th>
-                        <th style={{ textAlign: "right" }}>L6946</th>
-                        <th style={{ textAlign: "right" }}>{lang === "es" ? "Timbres" : "Stamps"}</th>
-                        <th style={{ textAlign: "right" }}>IVA</th>
-                        <th style={{ textAlign: "right" }}>{lang === "es" ? "C. destino" : "Dest. costs"}</th>
-                        <th style={{ textAlign: "right" }}>{lang === "es" ? "Total sin IVA" : "Total excl. VAT"}</th>
-                        <th style={{ textAlign: "right" }}>{lang === "es" ? "Total con IVA" : "Total incl. VAT"}</th>
+                        <th style={{ whiteSpace: "nowrap" }}>{liqTab === "NCM" ? "NCM" : "SKU"}</th>
+                        <th style={{ whiteSpace: "nowrap" }}>{liqTab === "NCM" ? "SKUs" : "NCM"}</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>{lang === "es" ? "Pares" : "Pairs"}</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>FOB</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>{lang === "es" ? "Flete+Seg" : "Frt+Ins"}</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>CIF</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>DAI</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>L6946</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>{lang === "es" ? "Timbres" : "Stamps"}</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>IVA</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>{lang === "es" ? "C. destino" : "Dest. costs"}</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>{lang === "es" ? "Total sin IVA" : "Total excl. VAT"}</th>
+                        <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>{lang === "es" ? "Total con IVA" : "Total incl. VAT"}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1741,8 +1750,27 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                               </div>
                             )}
                           </td>
-                          <td className="mono-sm" style={{ whiteSpace: "normal", maxWidth: 160 }}>
-                            {liqTab === "NCM" ? (g.skus.join(", ") || "—") : (g.ncms.join(", ") || "—")}
+                          <td className="mono-sm" style={{ whiteSpace: "nowrap" }}>
+                            {liqTab === "NCM" ? (
+                              (g.skuItems || []).length === 0 ? "—" : (
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                  <span>{g.skuItems[0].sku}</span>
+                                  {g.skuItems.length > 1 && (
+                                    <button
+                                      onClick={() => setSkuModal({ code: g.key, desc: getNcmDesc(g.key), items: g.skuItems })}
+                                      title={lang === "es" ? "Ver todos los SKUs de este NCM" : "View all SKUs in this NCM"}
+                                      style={{
+                                        padding: "1px 8px", fontSize: 10.5, fontWeight: 700, borderRadius: 999,
+                                        border: "1.5px solid var(--brand-primary, #0B1E3A)",
+                                        background: "transparent", color: "var(--brand-primary, #0B1E3A)",
+                                        cursor: "pointer", lineHeight: "16px",
+                                      }}>
+                                      +{g.skuItems.length - 1}
+                                    </button>
+                                  )}
+                                </span>
+                              )
+                            ) : (g.ncms.join(", ") || "—")}
                           </td>
                           <td className="tabular-nums" style={{ textAlign: "right" }}>{fmtInt(g.qty)}</td>
                           <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.fob)}</td>
@@ -1780,6 +1808,58 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   </table>
                 </div>
               </div>
+            )}
+
+            {/* Modal: SKUs incluidos en un grupo NCM */}
+            {skuModal && createPortal(
+              <div onClick={() => setSkuModal(null)}
+                   style={{ position: "fixed", inset: 0, background: "rgba(11,30,58,0.45)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+                <motion.div initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ background: "var(--surface-raised, #fff)", borderRadius: 14, width: "min(560px, 94vw)", maxHeight: "72vh", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 24px 60px rgba(11,30,58,0.35)" }}>
+                  <div style={{ padding: "14px 18px", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                    <div>
+                      <div className="micro" style={{ color: "#00B286", letterSpacing: 1, marginBottom: 4 }}>
+                        {lang === "es" ? "SKUS DEL NCM" : "SKUS IN NCM"}
+                      </div>
+                      <div className="mono-sm" style={{ fontSize: 15, fontWeight: 800, color: "#0B1E3A" }}>{skuModal.code}</div>
+                      {skuModal.desc && (
+                        <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>{skuModal.desc}</div>
+                      )}
+                    </div>
+                    <button className="btn btn-ghost btn-xs" onClick={() => setSkuModal(null)} style={{ padding: 4 }}>
+                      <IconX size={14}/>
+                    </button>
+                  </div>
+                  <div style={{ overflowY: "auto" }}>
+                    <table className="table" style={{ fontSize: 12.5 }}>
+                      <thead>
+                        <tr>
+                          <th>SKU</th>
+                          <th>{lang === "es" ? "Producto" : "Product"}</th>
+                          <th style={{ textAlign: "right" }}>{lang === "es" ? "Pares" : "Pairs"}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {skuModal.items.map((it) => (
+                          <tr key={it.sku}>
+                            <td className="mono-sm" style={{ fontWeight: 700, color: "var(--brand-primary)" }}>{it.sku}</td>
+                            <td>{it.product || "—"}</td>
+                            <td className="tabular-nums" style={{ textAlign: "right" }}>{fmtInt(it.qty)}</td>
+                          </tr>
+                        ))}
+                        <tr style={{ background: "rgba(11,30,58,0.04)", fontWeight: 700 }}>
+                          <td colSpan={2}>{lang === "es" ? "Total" : "Total"}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>
+                            {fmtInt(skuModal.items.reduce((a, x) => a + x.qty, 0))}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </motion.div>
+              </div>,
+              document.body
             )}
 
             {/* Tabla 1: Liquidación detallada */}

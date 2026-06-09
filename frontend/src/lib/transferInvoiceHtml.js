@@ -444,62 +444,69 @@ function buildLiquidationBreakdownTable(n, bucket, lang, crcRate, groupBy) {
 
   const sumG = (k) => groups.reduce((a, x) => a + x[k], 0);
 
-  const headGroup = groupBy === "NCM" ? "NCM" : "SKU";
-  const headSecond = groupBy === "NCM"
-    ? (lang === "es" ? "SKUs incluidos" : "Included SKUs")
-    : "NCM";
+  // Celda de grupo: NCM → código + chips de SKUs (wrap); SKU → código +
+  // producto + NCM mono. Una sola columna de identidad = más aire para los
+  // montos sin scroll horizontal (doc 1200px).
+  const groupCell = (g) => {
+    if (groupBy === "NCM") {
+      const chips = Array.from(g.skus)
+        .map((s) => `<span class="kind" style="font-size:9px;padding:1px 7px;">${esc(s)}</span>`)
+        .join("");
+      return `<strong style="font-size:12px;color:var(--navy);">${esc(g.key)}</strong>
+        ${chips ? `<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:3px;">${chips}</div>` : ""}`;
+    }
+    const ncmTag = Array.from(g.ncms).join(", ");
+    return `<strong style="font-size:12px;color:var(--navy);">${esc(g.key)}</strong>
+      <div style="margin-top:3px;font-size:9.5px;color:var(--t2);">${esc(g.product || "")}${ncmTag ? ` &middot; <span style="font-family:'JetBrains Mono',monospace;">${esc(ncmTag)}</span>` : ""}</div>`;
+  };
 
-  const bodyRows = groups.map((g) => `
-      <tr>
-        <td class="m"><strong>${esc(g.key)}</strong>${groupBy === "SKU" && g.product ? `<br><span style="font-size:9px;color:var(--t2);">${esc(g.product)}</span>` : ""}</td>
-        <td class="m" style="font-size:9.5px;">${groupBy === "NCM" ? esc(Array.from(g.skus).join(", ") || "—") : esc(Array.from(g.ncms).join(", ") || "—")}</td>
-        <td class="r">${fmtInt(g.qty)}</td>
-        <td class="r">${usd(g.goods)}</td>
-        <td class="r"><strong>${usd(g.cif)}</strong></td>
-        <td class="r">${usd(g.dai)}<br><span style="font-size:9px;color:var(--t2);">${g.daiRatePct.toFixed(2)}%</span></td>
-        <td class="r">${usd(g.ley)}</td>
-        <td class="r">${usd(g.customTax)}</td>
-        <td class="r" style="color:var(--t2);">${usd(g.iva)}</td>
-        <td class="r">${usd(g.dest + g.customCost)}</td>
-        <td class="r"><strong>${usd(g.sinIva)}</strong></td>
-        <td class="r" style="color:var(--t2);">${crc(g.sinIva)}</td>
-        <td class="r"><strong>${usd(g.conIva)}</strong></td>
+  const nw = 'style="white-space:nowrap;"';
+  const bodyRows = groups.map((g, i) => `
+      <tr${i % 2 === 1 ? ' class="cb"' : ""}>
+        <td style="min-width:170px;">${groupCell(g)}</td>
+        <td class="r" ${nw}>${fmtInt(g.qty)}</td>
+        <td class="r" ${nw}>${usd(g.goods)}</td>
+        <td class="r" ${nw}><strong>${usd(g.cif)}</strong></td>
+        <td class="r" ${nw}>${usd(g.dai)}<br><span style="font-size:9px;color:var(--t2);">${g.daiRatePct.toFixed(2)}%</span></td>
+        <td class="r" ${nw}>${usd(g.ley)}</td>
+        <td class="r" ${nw}>${usd(g.customTax)}</td>
+        <td class="r" style="white-space:nowrap;color:var(--t2);">${usd(g.iva)}</td>
+        <td class="r" ${nw}>${usd(g.dest + g.customCost)}</td>
+        <td class="r" ${nw}><strong style="color:var(--ok);">${usd(g.sinIva)}</strong>${crcRate > 0 ? `<br><span style="font-size:9px;color:var(--t2);">${crc(g.sinIva)}</span>` : ""}</td>
+        <td class="r" ${nw}><strong>${usd(g.conIva)}</strong></td>
       </tr>`).join("");
 
   return `
     <table class="ct">
       <thead>
         <tr>
-          <th>${headGroup}</th>
-          <th>${headSecond}</th>
-          <th class="r">${lang === "es" ? "Pares" : "Pairs"}</th>
-          <th class="r">FOB</th>
-          <th class="r">CIF</th>
-          <th class="r">DAI</th>
-          <th class="r">${lang === "es" ? "Ley 6946" : "Law 6946"}</th>
-          <th class="r">${lang === "es" ? "Timbres" : "Stamps"}</th>
-          <th class="r">IVA</th>
-          <th class="r">${lang === "es" ? "C. destino" : "Dest. costs"}</th>
-          <th class="r">${lang === "es" ? "Total sin IVA" : "Total excl. VAT"}</th>
-          <th class="r">${lang === "es" ? "Total sin IVA ₡" : "Total excl. VAT ₡"}</th>
-          <th class="r">${lang === "es" ? "Total con IVA" : "Total incl. VAT"}</th>
+          <th ${nw}>${groupBy === "NCM" ? (lang === "es" ? "NCM · SKUs incluidos" : "NCM · Included SKUs") : (lang === "es" ? "SKU · Producto" : "SKU · Product")}</th>
+          <th class="r" ${nw}>${lang === "es" ? "Pares" : "Pairs"}</th>
+          <th class="r" ${nw}>FOB</th>
+          <th class="r" ${nw}>CIF</th>
+          <th class="r" ${nw}>DAI</th>
+          <th class="r" ${nw}>${lang === "es" ? "Ley 6946" : "Law 6946"}</th>
+          <th class="r" ${nw}>${lang === "es" ? "Timbres" : "Stamps"}</th>
+          <th class="r" ${nw}>IVA</th>
+          <th class="r" ${nw}>${lang === "es" ? "C. destino" : "Dest. costs"}</th>
+          <th class="r" ${nw}>${lang === "es" ? "Total sin IVA" : "Total excl. VAT"}</th>
+          <th class="r" ${nw}>${lang === "es" ? "Total con IVA" : "Total incl. VAT"}</th>
         </tr>
       </thead>
       <tbody>
         ${bodyRows}
         <tr style="background:var(--navy);color:white;">
-          <td colspan="2" style="padding:8px 12px;"><strong style="color:white;">${lang === "es" ? "TOTALES (= liquidación general)" : "TOTALS (= general liquidation)"}</strong></td>
-          <td class="r" style="color:white;">${fmtInt(sumG("qty"))}</td>
-          <td class="r" style="color:white;">${usd(sumG("goods"))}</td>
-          <td class="r" style="color:white;"><strong>${usd(sumG("cif"))}</strong></td>
-          <td class="r" style="color:white;">${usd(sumG("dai"))}</td>
-          <td class="r" style="color:white;">${usd(sumG("ley"))}</td>
-          <td class="r" style="color:white;">${usd(sumG("customTax"))}</td>
-          <td class="r" style="color:rgba(255,255,255,.7);">${usd(sumG("iva"))}</td>
-          <td class="r" style="color:white;">${usd(groups.reduce((a, x) => a + x.dest + x.customCost, 0))}</td>
-          <td class="r" style="color:var(--ice);"><strong>${usd(sumG("sinIva"))}</strong></td>
-          <td class="r" style="color:var(--ice);">${crc(sumG("sinIva"))}</td>
-          <td class="r" style="color:white;"><strong>${usd(sumG("conIva"))}</strong></td>
+          <td style="padding:10px 14px;"><strong style="color:white;">${lang === "es" ? "TOTALES (= liquidación general)" : "TOTALS (= general liquidation)"}</strong></td>
+          <td class="r" style="color:white;white-space:nowrap;">${fmtInt(sumG("qty"))}</td>
+          <td class="r" style="color:white;white-space:nowrap;">${usd(sumG("goods"))}</td>
+          <td class="r" style="color:white;white-space:nowrap;"><strong>${usd(sumG("cif"))}</strong></td>
+          <td class="r" style="color:white;white-space:nowrap;">${usd(sumG("dai"))}</td>
+          <td class="r" style="color:white;white-space:nowrap;">${usd(sumG("ley"))}</td>
+          <td class="r" style="color:white;white-space:nowrap;">${usd(sumG("customTax"))}</td>
+          <td class="r" style="color:rgba(255,255,255,.7);white-space:nowrap;">${usd(sumG("iva"))}</td>
+          <td class="r" style="color:white;white-space:nowrap;">${usd(groups.reduce((a, x) => a + x.dest + x.customCost, 0))}</td>
+          <td class="r" style="color:var(--ice);white-space:nowrap;"><strong>${usd(sumG("sinIva"))}</strong>${crcRate > 0 ? `<br><span style="font-size:9px;color:var(--ice);opacity:.85;">${crc(sumG("sinIva"))}</span>` : ""}</td>
+          <td class="r" style="color:white;white-space:nowrap;"><strong>${usd(sumG("conIva"))}</strong></td>
         </tr>
       </tbody>
     </table>`;
@@ -1038,6 +1045,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es", crcRa
     <div class="sect">
       <div class="sect-h">
         <h3>${lang === "es" ? "Liquidación por NCM — impuestos del subconjunto" : "Liquidation by NCM — subset taxes"}</h3>
+        <div style="font-size:9.5px;color:var(--t3);margin-top:3px;letter-spacing:.3px;">${lang === "es" ? "DAI del grupo · IVA sobre CIF+DAI+Ley del grupo · timbres y gastos prorrateados por pares" : "Group DAI · VAT on group CIF+DAI+Law · stamps and charges prorated by pairs"}</div>
       </div>
       <div class="card-b" style="padding:0; overflow-x: auto;">
         ${buildLiquidationBreakdownTable(nacAud, viewBucket(t.context_data, audience), lang, crcRate, "NCM")}
@@ -1047,6 +1055,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es", crcRa
     <div class="sect">
       <div class="sect-h">
         <h3>${lang === "es" ? "Liquidación por SKU — impuestos del subconjunto" : "Liquidation by SKU — subset taxes"}</h3>
+        <div style="font-size:9.5px;color:var(--t3);margin-top:3px;letter-spacing:.3px;">${lang === "es" ? "DAI del grupo · IVA sobre CIF+DAI+Ley del grupo · timbres y gastos prorrateados por pares" : "Group DAI · VAT on group CIF+DAI+Law · stamps and charges prorated by pairs"}</div>
       </div>
       <div class="card-b" style="padding:0; overflow-x: auto;">
         ${buildLiquidationBreakdownTable(nacAud, viewBucket(t.context_data, audience), lang, crcRate, "SKU")}
@@ -1124,7 +1133,7 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es", crcRa
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:var(--bg);color:var(--t1);line-height:1.55;-webkit-font-smoothing:antialiased;padding:32px 24px;}
-.doc{max-width:1040px;margin:0 auto;}
+.doc{max-width:1200px;margin:0 auto;}
 .head{position:relative;overflow:hidden;background:var(--srf);border:1px solid var(--brd);border-radius:18px;padding:30px 32px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-start;box-shadow:var(--sh);}
 .head::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--navy) 0%,var(--teal) 100%);}
 .brand .logo-img{height:34px;width:auto;display:block;}
