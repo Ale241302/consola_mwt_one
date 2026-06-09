@@ -12,7 +12,10 @@
 import React, { useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
-import { Badge } from "../components/ui/primitives.jsx";
+import { Badge, StatusBadge } from "../components/ui/primitives.jsx";
+import ExportExpedientesModal from "../components/expedientes/ExportExpedientesModal.jsx";
+import { runExpedienteExport } from "../lib/expedienteExport.js";
+import { INVOICE_AUDIENCE } from "../lib/transferInvoiceHtml.js";
 import {
   IconCheck, IconFileText, IconShield, IconDownload, IconMapPin, IconShip, IconPlane,
   IconClock, IconArrow, IconChevRight, IconBuilding, IconUsers, IconPlus,
@@ -703,12 +706,46 @@ function NoEmpresasState({ lang, userEmail }) {
 // ── Orders tab: table of OCs (not expedientes) ─────
 function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false }) {
   const navigate = useNavigate();
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting]   = useState(false);
+  const [exportErr, setExportErr]   = useState(null);
+  // Export del portal: SIEMPRE vista CLIENT (precio de venta). El modal oculta
+  // la pregunta de audiencia porque isAdmin=false.
+  const handlePortalExport = async (opts) => {
+    setExporting(true); setExportErr(null);
+    try {
+      await runExpedienteExport({
+        expedientes,
+        audience: INVOICE_AUDIENCE.CLIENT,
+        lang,
+        filters: opts,
+      });
+      setExportOpen(false);
+    } catch (e) {
+      setExportErr(e?.message || String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+  // Clientes asignados (derivados de las OCs ya scopeadas a este usuario).
+  const clientOpts = Array.from(new Map(
+    (ocs || []).filter((o) => o.client_id).map((o) => [o.client_id, { id: o.client_id, name: o.client_name || o.client_id }])
+  ).values());
   return (
     <div className="card">
       <div className="card-head">
         <div className="card-title">{lang==='es' ? 'Mis Órdenes' : 'My Orders'}</div>
         <div style={{display:'flex', alignItems:'center', gap:12}}>
           <span className="caption">{ocs.length} {lang==='es'?'órdenes':'orders'}</span>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => { setExportErr(null); setExportOpen(true); }}
+            style={{display:'inline-flex', alignItems:'center', gap:6}}
+          >
+            <IconDownload size={14}/>
+            {lang==='es' ? 'Exportar' : 'Export'}
+          </button>
           {/* CTA primaria para el cliente: subir una nueva OC.
               · Nunca decimos "Crear expediente" — eso es jerga interna MWT.
               · Lleva al CreateExpedienteWizard en modo CLIENT (3 pasos). */}
@@ -763,6 +800,9 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
             const expCount    = relatedExps.length;
             // Estado natural del expediente (CLIENT_STATE_MAP en backend
             // ya devuelve `estado_cliente_es/en/step` en mis_expedientes).
+            // Mismos estados que "Mis Pedidos" (StatusBadge crudo: REGISTRO,
+            // EN_DESTINO, PRODUCCION…), no los labels "amigables" del portal.
+            const rawStatus   = leadExp?.estado || o.estado || null;
             const expStatus   = leadExp?.estado_cliente_es
                               || leadExp?.estado
                               || o.estado
@@ -783,8 +823,8 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
                   )}
                 </td>
                 <td>
-                  {leadExp
-                    ? <ClientStatusPill status={expStatus} lang={lang}/>
+                  {rawStatus
+                    ? <StatusBadge status={rawStatus} lang={lang}/>
                     : <span className="caption">{expStatus}</span>}
                 </td>
                 <td className="td-num">
@@ -796,6 +836,18 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
           })}
         </tbody>
       </table>
+      <ExportExpedientesModal
+        open={exportOpen}
+        lang={lang}
+        isAdmin={false}
+        clients={clientOpts}
+        estados={Object.keys(CLIENT_STATUS_MAP).map((code) => ({ code, label: tr(lang, code) }))}
+        expedientes={expedientes}
+        loading={exporting}
+        error={exportErr || ""}
+        onConfirm={handlePortalExport}
+        onClose={() => { if (!exporting) { setExportOpen(false); setExportErr(null); } }}
+      />
     </div>
   );
 }

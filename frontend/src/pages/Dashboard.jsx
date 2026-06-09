@@ -354,9 +354,6 @@ export default function ScreenDashboard() {
             <IconRefresh size={14} />
             {loading ? (lang === "en" ? "Loading…" : "Cargando…") : tr(lang, "refresh")}
           </button>
-          <button type="button" className="btn btn-secondary">
-            <IconDownload size={14} /> {tr(lang, "export")}
-          </button>
           {can("create_expediente") && (
             <button
               type="button"

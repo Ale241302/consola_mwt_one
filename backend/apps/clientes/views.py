@@ -29,6 +29,31 @@ def _calc_semaforo(tasa_util: float, dias_mora: int) -> str:
     return "VERDE"
 
 
+def _client_scope_ids(request):
+    """IDs de cliente a los que el usuario está limitado, o None si ve todos.
+
+    · Admin / CEO / staff interno (is_staff/is_superuser) → None (todos).
+    · Usuario normal / cliente B2B → su legal_entity_ids (puede ser []).
+    · Override Tweaks Panel (X-Viewport-Role: CLIENT) con empresas → scope.
+    Sprint 2026-06-08.
+    """
+    user = getattr(request, "user", None)
+    if user is None:
+        return None
+    leis = [str(x) for x in (getattr(user, "legal_entity_ids", None) or []) if x]
+    hdr_viewport = (request.headers.get("X-Viewport-Role") or "").upper()
+    if hdr_viewport == "CLIENT" and leis:
+        return leis
+    if getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
+        return None
+    role = (getattr(user, "role", "") or "").lower()
+    is_client_like = role.startswith("client_") or role in {"client", "cliente", "client_b2b"}
+    if is_client_like:
+        return leis
+    # Otros roles internos no-staff: si tienen empresas asignadas, scope; si no, todos.
+    return leis if leis else None
+
+
 class ClienteViewSet(viewsets.ViewSet):
     """
     CRUD de clientes B2B · sprint Cliente M3b.
@@ -77,6 +102,15 @@ class ClienteViewSet(viewsets.ViewSet):
         q = request.query_params.get("q")
         if q:
             qs = qs.filter(razon_social__icontains=q)
+
+        # ── Scope por rol (sprint 2026-06-08) ──
+        # Admin/CEO/staff interno ven TODOS los clientes registrados; un usuario
+        # normal / cliente B2B sólo ve las empresas asignadas en legal_entity_ids
+        # (ignora is_parent y demás filtros admin para no esconderlas).
+        scope_ids = _client_scope_ids(request)
+        if scope_ids is not None:
+            qs = (Cliente.objects.filter(is_active=True, id__in=scope_ids)
+                  .order_by("razon_social"))
         return Response(ClienteListSerializer(qs, many=True, context=self._ctx(request)).data)
 
     def retrieve(self, request, pk=None):

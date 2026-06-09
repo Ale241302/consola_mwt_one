@@ -193,7 +193,8 @@ export default function ExportExpedientesModal({
 
             {/* Body */}
             <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
-              {/* Audiencia */}
+              {/* Audiencia — solo admin/CEO elige; cliente B2B siempre genera vista CLIENT */}
+              {isAdmin && (
               <div>
                 <span style={labelStyle}>{L(lang, "¿Para quién es el reporte?", "Who is the report for?")}</span>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -224,6 +225,7 @@ export default function ExportExpedientesModal({
                   })}
                 </div>
               </div>
+              )}
 
               {/* Cliente + Estado */}
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
