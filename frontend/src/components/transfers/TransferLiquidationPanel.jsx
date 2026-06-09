@@ -100,6 +100,10 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
   // Estado local de cost lines editables (espejo del backend)
   const [costLines,  setCostLines]  = useState([]);
   const [costKinds,  setCostKinds]  = useState(COST_KINDS_FALLBACK);
+  // Sprint 2026-06-09 — Tab de desglose de la factura interna (sección 3):
+  // GENERAL (editable) · NCM · SKU (lectura; impuestos recalculados por
+  // subconjunto). Aplica a ambas vistas MWT/CLIENT.
+  const [liqTab, setLiqTab] = useState("GENERAL");
   // Sprint 2026-05-14 · Fase 14 — scope picker para cost-lines del
   // TransferDetail. Reutiliza CostScopeModal (mismo del wizard).
   //   - scopeOpenFor: cost.id ó null
@@ -673,6 +677,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         iva,
         landed_unit_usd:  landedUnit,
         landed_total_usd: total,
+        customTax:        lineCustomTaxesAmount,
+        customCost:       lineCustomCostsAmount,
         ncmCode:          ncmInfo.ncmCode,
         daiRate:          daiRate,
       };
@@ -722,6 +728,50 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       groups[code].dai += line.dai;
     });
     return Object.values(groups);
+  }, [livePreview.lines]);
+
+  // Sprint 2026-06-09 — Desglose de la liquidación por NCM y por SKU.
+  // Agrupa las líneas YA calculadas de livePreview: DAI/Ley/IVA son aditivos
+  // por línea (IVA = (CIF+DAI+Ley)×tasa de cada línea), por lo que el IVA del
+  // grupo sólo incluye el DAI de SU NCM. Timbres fijos y gastos custom vienen
+  // prorrateados por pares en cada línea (customTax/customCost).
+  const liqBreakdown = useMemo(() => {
+    const make = (keyFn) => {
+      const map = new Map();
+      livePreview.lines.forEach((l) => {
+        const key = keyFn(l);
+        const g = map.get(key) || {
+          key, qty: 0, fob: 0, extra: 0, cif: 0, dai: 0, ley: 0, iva: 0,
+          dest: 0, customTax: 0, customCost: 0, sinIva: 0,
+          skus: new Set(), ncms: new Set(), product: l.product_label || "",
+        };
+        g.qty += l.qty;
+        g.fob += l.fob_total_usd;
+        g.extra += l.extra;
+        g.cif += l.cif;
+        g.dai += l.dai;
+        g.ley += l.ley;
+        g.iva += l.iva;
+        g.dest += l.dest;
+        g.customTax += l.customTax || 0;
+        g.customCost += l.customCost || 0;
+        g.sinIva += l.landed_total_usd;
+        if (l.sku) g.skus.add(l.sku);
+        if (l.ncmCode && l.ncmCode !== "default") g.ncms.add(l.ncmCode);
+        map.set(key, g);
+      });
+      return Array.from(map.values()).map((g) => ({
+        ...g,
+        skus: Array.from(g.skus),
+        ncms: Array.from(g.ncms),
+        daiRatePct: g.cif > 0 ? (g.dai / g.cif) * 100 : 0,
+        conIva: g.sinIva + g.iva,
+      }));
+    };
+    return {
+      NCM: make((l) => (l.ncmCode && l.ncmCode !== "default" ? l.ncmCode : "—")),
+      SKU: make((l) => l.sku || "—"),
+    };
   }, [livePreview.lines]);
 
   const getNcmDesc = useCallback((code) => {
@@ -1605,13 +1655,135 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
           </div>
         </div>
 
+        {/* Tabs de desglose: General · NCM · SKU (ambas vistas MWT/CLIENT) */}
+        {livePreview.lines.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
+            {[
+              { id: "GENERAL", es: "General",       en: "General" },
+              { id: "NCM",     es: "Desglose NCM",  en: "NCM breakdown" },
+              { id: "SKU",     es: "Desglose SKU",  en: "SKU breakdown" },
+            ].map((tb) => (
+              <button key={tb.id}
+                      onClick={() => setLiqTab(tb.id)}
+                      style={{
+                        padding: "4px 14px", fontSize: 11.5, fontWeight: 700, borderRadius: 999,
+                        border: liqTab === tb.id ? "1.5px solid #0B1E3A" : "1.5px solid var(--border-subtle, #E1E6ED)",
+                        background: liqTab === tb.id ? "#0B1E3A" : "transparent",
+                        color: liqTab === tb.id ? "#fff" : "#475569",
+                        cursor: "pointer",
+                      }}>
+                {lang === "es" ? tb.es : tb.en}
+              </button>
+            ))}
+            {liqTab !== "GENERAL" && (
+              <span className="caption" style={{ color: "var(--text-tertiary)", marginLeft: 6 }}>
+                {lang === "es"
+                  ? "Vista de análisis — los montos se editan en la pestaña General"
+                  : "Analysis view — amounts are edited in the General tab"}
+              </span>
+            )}
+          </div>
+        )}
+
         {livePreview.lines.length === 0 ? (
           <div className="caption" style={{ color: "var(--text-tertiary)", padding: 18, textAlign: "center" }}>
             {lang === "es" ? "Sin líneas de mercadería para calcular." : "No lines to compute."}
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Tabla 1-alt: Liquidación por NCM / por SKU (lectura) */}
+            {liqTab !== "GENERAL" && (
+              <div className="card card-pad-0" style={{ overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <h4 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
+                    {liqTab === "NCM"
+                      ? (lang === "es" ? "LIQUIDACIÓN POR NCM" : "LIQUIDATION BY NCM")
+                      : (lang === "es" ? "LIQUIDACIÓN POR SKU" : "LIQUIDATION BY SKU")}
+                  </h4>
+                  <span className="caption" style={{ color: "var(--text-tertiary)" }}>
+                    {lang === "es"
+                      ? "DAI del grupo · IVA sobre CIF+DAI+Ley del grupo · timbres y gastos prorrateados por pares"
+                      : "Group DAI · VAT on group CIF+DAI+Law · stamps and charges prorated by pairs"}
+                  </span>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="table" style={{ fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th>{liqTab === "NCM" ? "NCM" : "SKU"}</th>
+                        <th>{liqTab === "NCM" ? (lang === "es" ? "SKUs incluidos" : "Included SKUs") : "NCM"}</th>
+                        <th style={{ textAlign: "right" }}>{lang === "es" ? "Pares" : "Pairs"}</th>
+                        <th style={{ textAlign: "right" }}>FOB</th>
+                        <th style={{ textAlign: "right" }}>{lang === "es" ? "Flete+Seg" : "Frt+Ins"}</th>
+                        <th style={{ textAlign: "right" }}>CIF</th>
+                        <th style={{ textAlign: "right" }}>DAI</th>
+                        <th style={{ textAlign: "right" }}>L6946</th>
+                        <th style={{ textAlign: "right" }}>{lang === "es" ? "Timbres" : "Stamps"}</th>
+                        <th style={{ textAlign: "right" }}>IVA</th>
+                        <th style={{ textAlign: "right" }}>{lang === "es" ? "C. destino" : "Dest. costs"}</th>
+                        <th style={{ textAlign: "right" }}>{lang === "es" ? "Total sin IVA" : "Total excl. VAT"}</th>
+                        <th style={{ textAlign: "right" }}>{lang === "es" ? "Total con IVA" : "Total incl. VAT"}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(liqTab === "NCM" ? liqBreakdown.NCM : liqBreakdown.SKU).map((g) => (
+                        <tr key={g.key}>
+                          <td className="mono-sm" style={{ fontWeight: 700, color: "var(--brand-primary)" }}>
+                            <div>{g.key}</div>
+                            {liqTab === "NCM" && getNcmDesc(g.key) && (
+                              <div className="caption" style={{ fontWeight: 400, color: "var(--text-tertiary)", maxWidth: 200, whiteSpace: "normal" }}>
+                                {getNcmDesc(g.key)}
+                              </div>
+                            )}
+                            {liqTab === "SKU" && g.product && (
+                              <div className="caption" style={{ fontWeight: 400, color: "var(--text-tertiary)", maxWidth: 200, whiteSpace: "normal" }}>
+                                {g.product}
+                              </div>
+                            )}
+                          </td>
+                          <td className="mono-sm" style={{ whiteSpace: "normal", maxWidth: 160 }}>
+                            {liqTab === "NCM" ? (g.skus.join(", ") || "—") : (g.ncms.join(", ") || "—")}
+                          </td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>{fmtInt(g.qty)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.fob)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.extra)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>${fmt(g.cif)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>
+                            <div>${fmt(g.dai)}</div>
+                            <div className="caption" style={{ color: "var(--text-tertiary)" }}>{g.daiRatePct.toFixed(2)}%</div>
+                          </td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.ley)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.customTax)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>${fmt(g.iva)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.dest + g.customCost)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#00B286" }}>${fmt(g.sinIva)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>${fmt(g.conIva)}</td>
+                        </tr>
+                      ))}
+                      <tr style={{ background: "#0B1E3A", color: "white", fontWeight: 700 }}>
+                        <td colSpan={2} style={{ color: "white" }}>
+                          {lang === "es" ? "TOTALES (= vista General)" : "TOTALS (= General view)"}
+                        </td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>{fmtInt(livePreview.unitsTotal)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>${fmt(livePreview.fobTotal)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>${fmt(livePreview.extraUsd)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>${fmt(livePreview.cifTotal)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>${fmt(livePreview.daiTotal)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>${fmt(livePreview.leyTotal)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>${fmt(livePreview.customTaxesSum)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "rgba(255,255,255,0.8)" }}>${fmt(livePreview.ivaTotal)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>${fmt(livePreview.destTotal + livePreview.customCostsSum)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "#1DE394" }}>${fmt(livePreview.landedTotal)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>${fmt(livePreview.landedTotal + livePreview.ivaTotal)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {/* Tabla 1: Liquidación detallada */}
+            {liqTab === "GENERAL" && (
             <div className="card card-pad-0" style={{ overflow: "hidden" }}>
               <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h4 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
@@ -2349,6 +2521,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                 </tbody>
               </table>
             </div>
+            )}
 
             {/* Tabla 2: Costo nacionalizado por línea */}
             <div className="card card-pad-0" style={{ overflow: "hidden" }}>

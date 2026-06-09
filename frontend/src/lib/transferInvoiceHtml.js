@@ -391,6 +391,120 @@ function buildDetailedLiquidationTable(n, costs, isClient, lang, t = {}, bucket 
   return html;
 }
 
+// Sprint 2026-06-09 — Desglose de la liquidación por NCM o por SKU.
+// computeNac ya entrega filas por SKU con DAI/Ley/IVA propios de su NCM
+// (aditivos por línea: el IVA de cada grupo sólo incluye el DAI de SU
+// subconjunto). Aquí se agrupan las filas y se prorratean: timbres fijos y
+// gastos custom por pares, impuestos % sobre el CIF del grupo — misma regla
+// que el panel y que los totales de la tabla "Liquidación detallada".
+function buildLiquidationBreakdownTable(n, bucket, lang, crcRate, groupBy) {
+  const crc = (v) => (crcRate > 0 ? "₡" + Math.round(Number(v || 0) * crcRate).toLocaleString("es-CR") : "&mdash;");
+  const excluded = bucket.excluded || {};
+  const taxRows = resolveTaxRows(bucket);
+  const customCosts = (bucket.custom_taxes || []).filter((x) => x && x.type === "COST");
+  const qtyAll = Number(n.totals.qty) || 0;
+
+  const map = new Map();
+  (n.rows || []).forEach((r) => {
+    const key = groupBy === "NCM"
+      ? ((r.ncm && r.ncm !== "—") ? r.ncm : "—")
+      : (r.sku || "—");
+    const g = map.get(key) || {
+      key, qty: 0, goods: 0, extra: 0, cif: 0, dai: 0, ley: 0, iva: 0, dest: 0,
+      skus: new Set(), ncms: new Set(), product: r.product_label || "",
+    };
+    g.qty += Number(r.qty || 0);
+    g.goods += Number(r.goods || 0);
+    g.extra += Number(r.extra || 0);
+    g.cif += Number(r.cif || 0);
+    g.dai += excluded.dai ? 0 : Number(r.dai || 0);
+    g.ley += excluded.ley ? 0 : Number(r.ley || 0);
+    g.iva += excluded.iva ? 0 : Number(r.iva || 0);
+    g.dest += Number(r.dest || 0);
+    if (r.sku) g.skus.add(r.sku);
+    if (r.ncm && r.ncm !== "—") g.ncms.add(r.ncm);
+    map.set(key, g);
+  });
+
+  const groups = Array.from(map.values()).map((g) => {
+    const share = qtyAll > 0 ? g.qty / qtyAll : 0;
+    const customTax = taxRows.reduce((sum, x) => {
+      const hasAmt = x.amount != null && x.amount !== "";
+      return sum + (hasAmt ? (Number(x.amount) || 0) * share : g.cif * (Number(x.rate || 0) / 100));
+    }, 0);
+    const customCost = customCosts.reduce((sum, x) => sum + (Number(x.amount) || 0) * share, 0);
+    const sinIva = g.cif + g.dai + g.ley + customTax + g.dest + customCost;
+    return {
+      ...g,
+      customTax, customCost, sinIva,
+      conIva: sinIva + g.iva,
+      daiRatePct: g.cif > 0 ? (g.dai / g.cif) * 100 : 0,
+    };
+  });
+
+  const sumG = (k) => groups.reduce((a, x) => a + x[k], 0);
+
+  const headGroup = groupBy === "NCM" ? "NCM" : "SKU";
+  const headSecond = groupBy === "NCM"
+    ? (lang === "es" ? "SKUs incluidos" : "Included SKUs")
+    : "NCM";
+
+  const bodyRows = groups.map((g) => `
+      <tr>
+        <td class="m"><strong>${esc(g.key)}</strong>${groupBy === "SKU" && g.product ? `<br><span style="font-size:9px;color:var(--t2);">${esc(g.product)}</span>` : ""}</td>
+        <td class="m" style="font-size:9.5px;">${groupBy === "NCM" ? esc(Array.from(g.skus).join(", ") || "—") : esc(Array.from(g.ncms).join(", ") || "—")}</td>
+        <td class="r">${fmtInt(g.qty)}</td>
+        <td class="r">${usd(g.goods)}</td>
+        <td class="r"><strong>${usd(g.cif)}</strong></td>
+        <td class="r">${usd(g.dai)}<br><span style="font-size:9px;color:var(--t2);">${g.daiRatePct.toFixed(2)}%</span></td>
+        <td class="r">${usd(g.ley)}</td>
+        <td class="r">${usd(g.customTax)}</td>
+        <td class="r" style="color:var(--t2);">${usd(g.iva)}</td>
+        <td class="r">${usd(g.dest + g.customCost)}</td>
+        <td class="r"><strong>${usd(g.sinIva)}</strong></td>
+        <td class="r" style="color:var(--t2);">${crc(g.sinIva)}</td>
+        <td class="r"><strong>${usd(g.conIva)}</strong></td>
+      </tr>`).join("");
+
+  return `
+    <table class="ct">
+      <thead>
+        <tr>
+          <th>${headGroup}</th>
+          <th>${headSecond}</th>
+          <th class="r">${lang === "es" ? "Pares" : "Pairs"}</th>
+          <th class="r">FOB</th>
+          <th class="r">CIF</th>
+          <th class="r">DAI</th>
+          <th class="r">${lang === "es" ? "Ley 6946" : "Law 6946"}</th>
+          <th class="r">${lang === "es" ? "Timbres" : "Stamps"}</th>
+          <th class="r">IVA</th>
+          <th class="r">${lang === "es" ? "C. destino" : "Dest. costs"}</th>
+          <th class="r">${lang === "es" ? "Total sin IVA" : "Total excl. VAT"}</th>
+          <th class="r">${lang === "es" ? "Total sin IVA ₡" : "Total excl. VAT ₡"}</th>
+          <th class="r">${lang === "es" ? "Total con IVA" : "Total incl. VAT"}</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${bodyRows}
+        <tr style="background:var(--navy);color:white;">
+          <td colspan="2" style="padding:8px 12px;"><strong style="color:white;">${lang === "es" ? "TOTALES (= liquidación general)" : "TOTALS (= general liquidation)"}</strong></td>
+          <td class="r" style="color:white;">${fmtInt(sumG("qty"))}</td>
+          <td class="r" style="color:white;">${usd(sumG("goods"))}</td>
+          <td class="r" style="color:white;"><strong>${usd(sumG("cif"))}</strong></td>
+          <td class="r" style="color:white;">${usd(sumG("dai"))}</td>
+          <td class="r" style="color:white;">${usd(sumG("ley"))}</td>
+          <td class="r" style="color:white;">${usd(sumG("customTax"))}</td>
+          <td class="r" style="color:rgba(255,255,255,.7);">${usd(sumG("iva"))}</td>
+          <td class="r" style="color:white;">${usd(groups.reduce((a, x) => a + x.dest + x.customCost, 0))}</td>
+          <td class="r" style="color:var(--ice);"><strong>${usd(sumG("sinIva"))}</strong></td>
+          <td class="r" style="color:var(--ice);">${crc(sumG("sinIva"))}</td>
+          <td class="r" style="color:white;"><strong>${usd(sumG("conIva"))}</strong></td>
+        </tr>
+      </tbody>
+    </table>`;
+}
+
 function buildLandedCostTable(n, isClient, lang) {
   const labelFob = isClient
     ? (lang === "es" ? "FOB SN" : "FOB SN")
@@ -923,7 +1037,25 @@ export function buildTransferInvoiceHtml({ payload, audience, lang = "es", crcRa
 
     <div class="sect">
       <div class="sect-h">
-        <h3>${isClient 
+        <h3>${lang === "es" ? "Liquidación por NCM — impuestos del subconjunto" : "Liquidation by NCM — subset taxes"}</h3>
+      </div>
+      <div class="card-b" style="padding:0; overflow-x: auto;">
+        ${buildLiquidationBreakdownTable(nacAud, viewBucket(t.context_data, audience), lang, crcRate, "NCM")}
+      </div>
+    </div>
+
+    <div class="sect">
+      <div class="sect-h">
+        <h3>${lang === "es" ? "Liquidación por SKU — impuestos del subconjunto" : "Liquidation by SKU — subset taxes"}</h3>
+      </div>
+      <div class="card-b" style="padding:0; overflow-x: auto;">
+        ${buildLiquidationBreakdownTable(nacAud, viewBucket(t.context_data, audience), lang, crcRate, "SKU")}
+      </div>
+    </div>
+
+    <div class="sect">
+      <div class="sect-h">
+        <h3>${isClient
           ? (lang === "es" ? `Costo nacionalizado por línea (base precio orden SN, sin IVA)` : `Nationalized cost by line (SN base, excl. VAT)`)
           : (lang === "es" ? "Costo nacionalizado por línea (base UF, sin IVA)" : "Nationalized cost by line (UF base, excl. VAT)")
         }</h3>
