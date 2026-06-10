@@ -304,6 +304,13 @@ function buildNormalized(item, recipient, lang, fileBase) {
   });
   if (!stageAt.REGISTRO && minEv) stageAt.REGISTRO = minEv;
   const hist = STAGE_ORDER.filter((s) => stageAt[s]).map((s) => ({ s, at: stageAt[s] }));
+  // Expedientes recién registrados SIN eventos todavía: el sistema sí
+  // conoce la fecha de creación (fila del listado) — sintetizamos la fase
+  // REGISTRO desde ahí para que el Gantt los grafique y proyecte las fases
+  // siguientes (rayado estimado) en vez de excluirlos como "sin historial".
+  if (!hist.length && item.created_at) {
+    hist.push({ s: "REGISTRO", at: String(item.created_at).slice(0, 10) });
+  }
 
   // Overrides manuales de días por fase (admin/CEO, factura-payload
   // `phase_durations`) — el Gantt, los promedios y la proyección los
@@ -336,7 +343,12 @@ function buildNormalized(item, recipient, lang, fileBase) {
     oc: item.oc_codigo || payload.oc_codigo || "",
     cliente: oc.operating_company_label || (payload.destino || {}).label || "—",
     operador: opByMwt ? "MWT" : "Cliente",
-    modo: log.modo || "",
+    // Modo de envío: ART-05 (AWB/BL) manda; si no existe aún, cae al
+    // freight_mode de la fila (AIR→Aereo, SEA→Maritimo) para que los
+    // promedios y la proyección usen el bucket correcto.
+    modo: log.modo
+      || (String(item.freight_mode || "").toUpperCase() === "AIR" ? "Aereo"
+        : (String(item.freight_mode || "").toUpperCase() === "SEA" ? "Maritimo" : "")),
     tracking: log.tracking || "",
     carrier: log.carrier || "",
     estado,
@@ -345,8 +357,11 @@ function buildNormalized(item, recipient, lang, fileBase) {
     phaseOver,
     phaseOverRange,
     trfId,
-    embarque: log.embarque || "",
+    embarque: log.embarque || (item.shipment_date ? String(item.shipment_date).slice(0, 10) : ""),
     entrega: log.entrega || "",
+    // ETA propia del expediente (campo eta) — la usa etaOf como hint
+    // cuando no hay entrega/ART-05.
+    etaHint: item.eta ? String(item.eta).slice(0, 10) : "",
     volumen,
     priceTag: eff === INVOICE_AUDIENCE.MWT ? "Precio MWT (interno)" : "Precio cliente",
     goods,
@@ -384,6 +399,8 @@ function clientRuntime() {
   function etaOf(e) {
     if (e.entrega) { var d = parseD(e.entrega); if (d) return d; }
     if (delivered(e)) return null;
+    // ETA propia del expediente (campo eta) como hint directo.
+    if (e.etaHint) { var dh = parseD(e.etaHint); if (dh) return dh; }
     if (!e.embarque || !(e.modo in TRANSIT)) return null;
     var emb = parseD(e.embarque); if (!emb) return null;
     return addDays(emb, TRANSIT[e.modo]);
@@ -392,6 +409,16 @@ function clientRuntime() {
     if (e.entrega) { var d = parseD(e.entrega); if (d) return { date: d, done: delivered(e), est: false }; }
     var eta = etaOf(e);
     if (eta) return { date: eta, done: delivered(e), est: false };
+    // Sin ETA conocida: fecha TENTATIVA desde la proyección por fases
+    // (promedios reales por modo / overrides / estándares) — llegada =
+    // inicio estimado de EN_DESTINO. Marca est:true → la UI muestra "(est.)".
+    var seg = stageSegs(e);
+    var dest = null;
+    for (var i = 0; i < seg.est.length; i++) {
+      if (seg.est[i].s === "EN_DESTINO") { dest = seg.est[i].a; break; }
+    }
+    if (!dest && seg.est.length) dest = seg.est[seg.est.length - 1].b;
+    if (dest) return { date: dest, done: delivered(e), est: true };
     return { date: null, done: delivered(e), est: true };
   }
   function startOf(e) { var emb = parseD(e.embarque); return emb || null; }

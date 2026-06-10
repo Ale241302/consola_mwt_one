@@ -181,6 +181,13 @@ export async function runExpedienteExport({
         costLines: [],
         codigo: r.ref || (res.value && res.value.proforma_codigo) || "",
         estado: r.status || "",
+        // Sprint 2026-06-10 — hints de la fila para el Cronograma:
+        // fecha de creación (inicio de REGISTRO cuando no hay eventos),
+        // método de envío y fechas logísticas del expediente.
+        created_at: r.created_at || null,
+        freight_mode: r.freight_mode || "",
+        eta: r.eta || null,
+        shipment_date: r.shipment_date || null,
         sap: r.sap || (Array.isArray(r.sap_codigos) ? r.sap_codigos[0] : "") || "",
         oc_codigo:
           (Array.isArray(r.oc_codigos) ? r.oc_codigos[0] : "") ||
