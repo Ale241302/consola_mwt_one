@@ -317,6 +317,15 @@ function buildNormalized(item, recipient, lang, fileBase) {
     const v = raw && typeof raw === "object" ? Number(raw.days) : Number(raw);
     if (isFinite(v) && v >= 0) phaseOver[String(k).toUpperCase()] = v;
   });
+  // Rango de fechas explícito del override ({start, end}) — el Gantt coloca
+  // la barra EXACTAMENTE en esas fechas (no cascada).
+  const phaseOverRange = {};
+  Object.keys(phaseOverRaw).forEach((k) => {
+    const raw = phaseOverRaw[k];
+    if (raw && typeof raw === "object" && raw.start && raw.end) {
+      phaseOverRange[String(k).toUpperCase()] = { a: raw.start, b: raw.end };
+    }
+  });
 
   // Etiqueta del expediente: MWT → número de proforma; Cliente → número de OC.
   const codeMwt = payload.proforma_codigo || item.codigo || "—";
@@ -334,6 +343,7 @@ function buildNormalized(item, recipient, lang, fileBase) {
     estadoLabel: ESTADO_LABEL[estado] || estado,
     hist,
     phaseOver,
+    phaseOverRange,
     trfId,
     embarque: log.embarque || "",
     entrega: log.entrega || "",
@@ -533,12 +543,14 @@ function clientRuntime() {
       real.push({ s: hist[i].s, a: st, b: en, open: open });
     }
     if (!real.length) return { real: [], est: [] };
-    // Si hay overrides manuales, la cascada real se RE-DIBUJA con esas
-    // duraciones (la gráfica refleja los días fijados por el admin):
-    // cada fase dura override ?? días reales, encadenada desde la primera
-    // entrada real. Las fases SALTADAS en el historial (sin evento, ej.
-    // Producción) entran al gráfico si tienen override manual.
+    // Si hay overrides manuales, los segmentos se RE-DIBUJAN priorizando
+    // las FECHAS del override:
+    //   · override con {start, end} → la barra va EXACTAMENTE en ese rango.
+    //   · override sólo-días (legacy) → encadena desde el fin anterior.
+    //   · sin override pero con historial → fechas reales del event_log.
+    // Las fases SALTADAS (sin evento) entran si tienen override manual.
     var ovAll0 = e.phaseOver || {};
+    var ovRng0 = e.phaseOverRange || {};
     if (Object.keys(ovAll0).length) {
       var byStage = {};
       real.forEach(function (sg) { byStage[sg.s] = sg; });
@@ -546,19 +558,31 @@ function clientRuntime() {
         STAGES.indexOf(real[real.length - 1].s),
         STAGES.indexOf(e.estado)
       );
-      var cursor = real[0].a;
+      var cursor = null;
       var rebuilt = [];
       for (var q = 0; q <= maxIdx; q++) {
         var sName = STAGES[q];
         var rs = byStage[sName];
-        var dq;
-        if (ovAll0[sName] != null) dq = Number(ovAll0[sName]);
-        else if (rs) dq = Math.max(0, (rs.b - rs.a) / 86400000);
-        else continue; // fase saltada y sin override → no se grafica
-        var aq = cursor;
-        var bq = addDays(cursor, Math.max(0, Math.round(dq)));
-        cursor = bq;
+        var rng = ovRng0[sName];
+        var aq = null, bq = null;
+        if (rng) {
+          aq = parseD(rng.a);
+          bq = parseD(rng.b);
+          if (!aq || !bq || bq < aq) { aq = null; bq = null; }
+        }
+        if (!aq) {
+          if (ovAll0[sName] != null) {
+            aq = cursor || (rs ? rs.a : real[0].a);
+            bq = addDays(aq, Math.max(0, Math.round(Number(ovAll0[sName]))));
+          } else if (rs) {
+            aq = rs.a;
+            bq = rs.b;
+          } else {
+            continue; // fase saltada y sin override → no se grafica
+          }
+        }
         rebuilt.push({ s: sName, a: aq, b: bq, open: false });
+        if (!cursor || bq > cursor) cursor = bq;
       }
       if (rebuilt.length) {
         rebuilt[rebuilt.length - 1].open =
