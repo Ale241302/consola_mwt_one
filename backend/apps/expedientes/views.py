@@ -1129,12 +1129,19 @@ class ExpedienteViewSet(viewsets.ViewSet):
             except (TypeError, ValueError):
                 return None
 
-        acc = {"Aereo": {}, "Maritimo": {}}
+        # "_ALL" = agregado de TODOS los expedientes (incluye los que aún no
+        # tienen método de envío) — fallback para fases independientes del
+        # modo (Registro/Producción/Preparación/Despacho/En destino).
+        acc = {"Aereo": {}, "Maritimo": {}, "_ALL": {}}
         all_ids = set(list(entries.keys()) + list(over_by_exp.keys()))
         for eid in all_ids:
             modo = modo_by_exp.get(eid) or ""
-            if modo not in acc:
-                continue
+            buckets = ["_ALL"] + ([modo] if modo in ("Aereo", "Maritimo") else [])
+
+            def _push(fase, days):
+                for b in buckets:
+                    acc[b].setdefault(fase, []).append(days)
+
             fases = entries.get(eid) or {}
             seq = [s for s in order if s in fases]
             over = over_by_exp.get(eid) or {}
@@ -1144,7 +1151,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 fase = str(fase).upper()
                 days = _ov_days(ov)
                 if fase in order and days is not None and days >= 0:
-                    acc[modo].setdefault(fase, []).append(days)
+                    _push(fase, days)
                     done.add(fase)
             # Transiciones cerradas del EventLog (sin override).
             for i in range(len(seq) - 1):
@@ -1152,8 +1159,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 if fase in done:
                     continue
                 delta = fases[seq[i + 1]] - fases[fase]
-                acc[modo].setdefault(fase, []).append(
-                    max(0.0, delta.total_seconds() / 86400.0))
+                _push(fase, max(0.0, delta.total_seconds() / 86400.0))
 
         out = {
             m: {f: {"avg": round(sum(v) / len(v), 2), "n": len(v)}

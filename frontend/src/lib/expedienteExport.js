@@ -276,9 +276,13 @@ export async function runExpedienteExport({
   const fileBase =
     typeof window !== "undefined" && window.location ? window.location.origin : "";
 
-  // Estadísticas globales por fase/modo (historial completo del cliente o
-  // de toda la operación) para las cards y la proyección del Cronograma.
-  const phaseStats = await fetchPhaseStats(filters.clienteId);
+  // Estadísticas por fase/modo: SIEMPRE las globales (toda la operación) y,
+  // si el modal filtró cliente, también las suyas — el Cronograma prioriza
+  // cliente → global del modo → agregado global → estándar.
+  const phaseStatsGlobal = await fetchPhaseStats(null);
+  const phaseStats = (filters.clienteId && filters.clienteId !== "ALL")
+    ? await fetchPhaseStats(filters.clienteId)
+    : null;
 
   const html = buildExpedientesExportHtml({
     items,
@@ -286,6 +290,7 @@ export async function runExpedienteExport({
     lang,
     fileBase,
     phaseStats,
+    phaseStatsGlobal,
     filters: {
       clienteLabel: filters.clienteLabel || "",
       estadoLabel: filters.estadoLabel || "",

@@ -543,17 +543,38 @@ function clientRuntime() {
           : null;
       });
     });
-    // Estadísticas GLOBALES del backend (historial completo / por cliente):
-    // tienen prioridad sobre las muestras del subconjunto exportado, para
-    // que dos exports del mismo cliente proyecten con los mismos tiempos.
-    var GLOBAL = META.phaseStats || null;
-    if (GLOBAL) {
+    // Jerarquía de estimación (backend phase-stats sobre el historial
+    // COMPLETO, no el subconjunto del export):
+    //   1. stats del CLIENTE filtrado, para ese modo/fase
+    //   2. stats GLOBALES de la operación, para ese modo/fase
+    //   3. para fases independientes del modo (todas menos TRANSITO):
+    //      agregado "_ALL" (todos los modos/expedientes) cliente → global
+    //   4. estándar por defecto (sólo si no existe NINGÚN dato real;
+    //      Tránsito mantiene su estándar por modo: ~10d aéreo / ~35d
+    //      marítimo, hasta tener tránsitos reales de ese modo)
+    var CLI = META.phaseStats || null;
+    var GLO = META.phaseStatsGlobal || null;
+    function pickStat(m, s) {
+      var srcs = [];
+      if (CLI) srcs.push((CLI[m] || {})[s]);
+      if (GLO) srcs.push((GLO[m] || {})[s]);
+      if (s !== "TRANSITO") {
+        if (CLI) srcs.push((CLI._ALL || {})[s]);
+        if (GLO) srcs.push((GLO._ALL || {})[s]);
+      }
+      for (var i = 0; i < srcs.length; i++) {
+        var g = srcs[i];
+        if (g && g.avg != null && isFinite(Number(g.avg))) {
+          return { avg: Number(g.avg), n: Number(g.n) || 0 };
+        }
+      }
+      return null;
+    }
+    if (CLI || GLO) {
       ["Aereo", "Maritimo"].forEach(function (m) {
-        var g = GLOBAL[m] || {};
         STAGES.forEach(function (s) {
-          if (g[s] && g[s].avg != null && isFinite(Number(g[s].avg))) {
-            out[m][s] = { avg: Number(g[s].avg), n: Number(g[s].n) || 0 };
-          }
+          var g = pickStat(m, s);
+          if (g) out[m][s] = g;
         });
       });
     }
@@ -2098,6 +2119,7 @@ export function buildExpedientesExportHtml({
   fileBase = "",
   generatedBy = "",
   phaseStats = null,
+  phaseStatsGlobal = null,
 }) {
   const data = items.map((it) => buildNormalized(it, audience, lang, fileBase));
   const dataJson = JSON.stringify(data).replace(/</g, "\\u003c");
@@ -2105,9 +2127,11 @@ export function buildExpedientesExportHtml({
   const meta = {
     recipient: recipientLabel,
     cliente: filters.clienteLabel || "",
-    // Promedios globales por fase/modo (backend phase-stats) — el runtime
-    // los prioriza sobre las muestras del subconjunto exportado.
+    // Promedios por fase/modo (backend phase-stats): los del cliente
+    // filtrado y los globales de toda la operación — el runtime aplica
+    // cliente → global del modo → agregado global → estándar.
     phaseStats: phaseStats || null,
+    phaseStatsGlobal: phaseStatsGlobal || null,
   };
   const now = new Date();
   const fecha = now.toLocaleString("es-CR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
