@@ -288,6 +288,23 @@ function buildNormalized(item, recipient, lang, fileBase) {
   const estado = item.estado || (payload.transferencia || {}).estado || "—";
   const trfId = (payload.transferencia || {}).id || "";
 
+  // Historial de fases (EventLog → Gantt del Cronograma): primera entrada a
+  // cada fase del pipeline, en orden canónico. REGISTRO cae al evento más
+  // antiguo si no hay un phase_to=REGISTRO explícito (evento de creación).
+  const STAGE_ORDER = ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO", "TRANSITO", "EN_DESTINO", "CERRADO"];
+  const stageAt = {};
+  let minEv = null;
+  (Array.isArray(item.events) ? item.events : []).forEach((ev) => {
+    if (!ev || !ev.created_at) return;
+    const d = String(ev.created_at).slice(0, 10);
+    if (!minEv || d < minEv) minEv = d;
+    const st = String(ev.phase_to || "").toUpperCase();
+    if (!st || STAGE_ORDER.indexOf(st) < 0) return;
+    if (!stageAt[st] || d < stageAt[st]) stageAt[st] = d;
+  });
+  if (!stageAt.REGISTRO && minEv) stageAt.REGISTRO = minEv;
+  const hist = STAGE_ORDER.filter((s) => stageAt[s]).map((s) => ({ s, at: stageAt[s] }));
+
   // Etiqueta del expediente: MWT → número de proforma; Cliente → número de OC.
   const codeMwt = payload.proforma_codigo || item.codigo || "—";
   const codeClient = item.oc_codigo || payload.oc_codigo || item.codigo || "—";
@@ -302,6 +319,7 @@ function buildNormalized(item, recipient, lang, fileBase) {
     carrier: log.carrier || "",
     estado,
     estadoLabel: ESTADO_LABEL[estado] || estado,
+    hist,
     trfId,
     embarque: log.embarque || "",
     entrega: log.entrega || "",
@@ -436,43 +454,159 @@ function clientRuntime() {
     }).join("");
   }
 
+  // ── Gantt v2 por fases + tiempos promedio por estado ────────────────
+  // Duraciones por defecto (días) cuando no hay historial suficiente.
+  var DEF_DUR = {
+    Aereo:    { REGISTRO: 3, PRODUCCION: 15, PREPARACION: 5, DESPACHO: 2, TRANSITO: 10, EN_DESTINO: 5 },
+    Maritimo: { REGISTRO: 3, PRODUCCION: 20, PREPARACION: 7, DESPACHO: 3, TRANSITO: 35, EN_DESTINO: 7 },
+  };
+  var _avgCache = null;
+  // Promedio real de días por fase y por modo, a partir del historial
+  // (EventLog) de TODOS los expedientes del export. null = sin muestras.
+  function stageAvgs() {
+    if (_avgCache) return _avgCache;
+    var acc = { Aereo: {}, Maritimo: {} };
+    DATA.forEach(function (e) {
+      var modo = e.modo === "Maritimo" ? "Maritimo" : (e.modo === "Aereo" ? "Aereo" : null);
+      if (!modo) return;
+      var hist = e.hist || [];
+      for (var i = 0; i + 1 < hist.length; i++) {
+        var a = parseD(hist[i].at), b = parseD(hist[i + 1].at);
+        if (!a || !b || b < a) continue;
+        (acc[modo][hist[i].s] || (acc[modo][hist[i].s] = [])).push((b - a) / 86400000);
+      }
+    });
+    var out = { Aereo: {}, Maritimo: {} };
+    ["Aereo", "Maritimo"].forEach(function (m) {
+      STAGES.forEach(function (s) {
+        var arr = acc[m][s] || [];
+        out[m][s] = arr.length
+          ? { avg: arr.reduce(function (x, y) { return x + y; }, 0) / arr.length, n: arr.length }
+          : null;
+      });
+    });
+    _avgCache = out;
+    return out;
+  }
+  // Segmentos del expediente: reales (historial) + estimados (fases futuras
+  // con promedio real del modo o default; TRANSITO honra la ETA conocida).
+  function stageSegs(e) {
+    var hist = (e.hist || []).slice();
+    if (!hist.length) {
+      var emb = parseD(e.embarque);
+      if (emb) hist = [{ s: "TRANSITO", at: fmt(emb) }];
+      else return { real: [], est: [] };
+    }
+    var real = [], est = [];
+    for (var i = 0; i < hist.length; i++) {
+      var st = parseD(hist[i].at);
+      if (!st) continue;
+      var en = (i + 1 < hist.length) ? parseD(hist[i + 1].at) : null;
+      var open = false;
+      if (!en) {
+        if (delivered(e) && parseD(e.entrega)) en = parseD(e.entrega);
+        else if (e.estado === "CERRADO") en = addDays(st, 1);
+        else { en = today(); open = true; }
+      }
+      if (en < st) en = st;
+      real.push({ s: hist[i].s, a: st, b: en, open: open });
+    }
+    if (!real.length) return { real: [], est: [] };
+    var avg = stageAvgs();
+    var modo = e.modo === "Maritimo" ? "Maritimo" : "Aereo";
+    var curIdx = STAGES.indexOf(real[real.length - 1].s);
+    var cur = real[real.length - 1].b;
+    if (!delivered(e)) {
+      for (var j = curIdx + 1; j <= STAGES.indexOf("EN_DESTINO"); j++) {
+        var s2 = STAGES[j];
+        var a2 = avg[modo][s2];
+        var dur = a2 ? a2.avg : (DEF_DUR[modo][s2] || 5);
+        var nb = addDays(cur, Math.max(1, Math.round(dur)));
+        if (s2 === "TRANSITO") { var eta = etaOf(e); if (eta && eta > cur) nb = eta; }
+        est.push({ s: s2, a: cur, b: nb });
+        cur = nb;
+      }
+    }
+    return { real: real, est: est };
+  }
+  function segBar(seg, isEst, tip) {
+    var l = seg._l, w = seg._w;
+    return '<div class="gseg' + (isEst ? " gest" : "") + ' st-' + seg.s + '" data-tip="' + esc(tip) + '" style="left:' + l + '%;width:' + w + '%"></div>';
+  }
+  var gOpen = {};
   function renderProjection(list) {
-    var rows = list.map(function (e) { return { e: e, p: projectedDelivery(e), s: startOf(e) }; });
-    var dated = rows.filter(function (r) { return r.p.date || r.s; });
-    var undated = rows.filter(function (r) { return !r.p.date && !r.s; });
     var g = document.getElementById("gantt");
-    if (!dated.length) { g.innerHTML = '<div class="nodate">Sin fechas suficientes para proyectar.</div>'; }
-    else {
+    var rows = list.map(function (e) { return { e: e, seg: stageSegs(e) }; });
+    var dated = rows.filter(function (r) { return r.seg.real.length; });
+    var undated = rows.filter(function (r) { return !r.seg.real.length; });
+    if (!dated.length) {
+      g.innerHTML = '<div class="nodate">Sin historial de fases para graficar.</div>';
+    } else {
       var ds = [today()];
-      dated.forEach(function (r) { if (r.p.date) ds.push(r.p.date); if (r.s) ds.push(r.s); });
+      dated.forEach(function (r) {
+        r.seg.real.concat(r.seg.est).forEach(function (x) { ds.push(x.a); ds.push(x.b); });
+      });
       var min = addDays(new Date(Math.min.apply(null, ds.map(function (d) { return d.getTime(); }))), -3);
       var max = addDays(new Date(Math.max.apply(null, ds.map(function (d) { return d.getTime(); }))), 5);
       var span = Math.max(1, (max - min) / 86400000);
       var pct = function (d) { return ((d - min) / 86400000) / span * 100; };
-      dated.sort(function (a, b) { return (a.p.date ? a.p.date.getTime() : Infinity) - (b.p.date ? b.p.date.getTime() : Infinity); });
+      dated.sort(function (a, b) { return a.seg.real[0].a - b.seg.real[0].a; });
       var grid = "", axis = "";
       var t = new Date(min); t.setDate(t.getDate() + ((1 - t.getDay() + 7) % 7));
       for (; t <= max; t = addDays(t, 7)) { var x = pct(t); grid += '<div class="gtline" style="left:' + x + '%"></div>'; axis += '<div class="gtick" style="left:' + x + '%">' + shortD(t) + "</div>"; }
       grid += '<div class="gtoday" style="left:' + pct(today()) + '%"><span class="lab">hoy</span></div>';
       var html = '<div class="goverlay">' + grid + "</div>";
       dated.forEach(function (r) {
-        var e = r.e, p = r.p, s = r.s, bar = "";
-        if (s && p.date && pct(p.date) > pct(s)) {
-          var l = pct(s), end = pct(p.date), w = Math.max(2, end - l);
-          var cls = p.done ? "done" : (p.est ? "est" : (e.modo === "Aereo" ? "aereo" : (e.modo === "Maritimo" ? "maritimo" : "est")));
-          var tip = shortD(p.date) + (p.est ? " (est.)" : "") + (p.done ? " · entregado" : "");
-          bar += '<div class="gbar ' + cls + '" data-tip="' + esc(tip) + '" style="left:' + l + "%;width:" + w + '%"></div>';
-        } else if (p.date) {
-          var x = pct(p.date);
-          var tip2 = shortD(p.date) + (p.done ? " · entregado" : (p.est ? " (est.)" : ""));
-          bar += '<div class="gdot" data-tip="' + esc(tip2) + '" style="left:' + x + '%"></div>';
+        var e = r.e, id = e.expediente, open = !!gOpen[id], bar = "";
+        var measure = function (sg) { sg._l = pct(sg.a); sg._w = Math.max(0.6, pct(sg.b) - pct(sg.a)); };
+        r.seg.real.forEach(measure); r.seg.est.forEach(measure);
+        r.seg.real.forEach(function (sg) {
+          bar += segBar(sg, false, SLAB[sg.s] + ": " + shortD(sg.a) + " → " + (sg.open ? "hoy" : shortD(sg.b)));
+        });
+        r.seg.est.forEach(function (sg) {
+          bar += segBar(sg, true, SLAB[sg.s] + " (est.): " + shortD(sg.a) + " → " + shortD(sg.b));
+        });
+        html += '<div class="grow"><div class="glabel"><button class="gexp" data-exp="' + esc(id) + '" title="Desglosar fases">' + (open ? "▾" : "▸") + "</button> " + esc(id) + " · " + fInt(e.volumen) + " prs · " + esc(e.operador) + '</div><div class="gtrack">' + bar + "</div></div>";
+        if (open) {
+          var all = r.seg.real.map(function (sg) { return { sg: sg, est: false }; })
+            .concat(r.seg.est.map(function (sg) { return { sg: sg, est: true }; }));
+          all.forEach(function (it) {
+            var sg = it.sg;
+            var days = Math.max(0, Math.round((sg.b - sg.a) / 86400000));
+            var tag = it.est ? " · est." : (sg.open ? " · en curso" : "");
+            html += '<div class="grow gsub"><div class="glabel gsublabel"><i class="dotL st-' + sg.s + '"></i>' + SLAB[sg.s] + ' <span class="gdays">' + days + "d" + tag + '</span></div><div class="gtrack">'
+                  + segBar(sg, it.est, SLAB[sg.s] + (it.est ? " (est.)" : "") + ": " + shortD(sg.a) + " → " + shortD(sg.b) + " · " + days + "d")
+                  + "</div></div>";
+          });
         }
-        html += '<div class="grow"><div class="glabel">' + esc(e.expediente) + " · " + fInt(e.volumen) + " prs · " + esc(e.operador) + '</div><div class="gtrack">' + bar + "</div></div>";
       });
       html += '<div class="gaxis">' + axis + "</div>";
       g.innerHTML = html;
+      Array.prototype.forEach.call(g.querySelectorAll(".gexp"), function (b) {
+        b.onclick = function (ev) { ev.stopPropagation(); var k = b.getAttribute("data-exp"); gOpen[k] = !gOpen[k]; renderProjection(filtered()); };
+      });
     }
-    if (undated.length) g.innerHTML += '<div class="nodate" style="margin-top:8px">Sin fecha: ' + undated.map(function (r) { return esc(r.e.expediente); }).join(", ") + "</div>";
+    if (undated.length) g.innerHTML += '<div class="nodate" style="margin-top:8px">Sin historial: ' + undated.map(function (r) { return esc(r.e.expediente); }).join(", ") + "</div>";
+  }
+  // Cards de duración promedio por fase, una sección por método de envío.
+  function renderStageCards() {
+    var box = document.getElementById("stagecards");
+    if (!box) return;
+    var avg = stageAvgs();
+    var html = "";
+    [["Aereo", "Aéreo", "aereo"], ["Maritimo", "Marítimo", "maritimo"]].forEach(function (m) {
+      var key = m[0], lab = m[1], cls = m[2], total = 0, anyReal = false;
+      var cards = STAGES.slice(0, 6).map(function (s) {
+        var a = avg[key][s], est = !a;
+        var v = a ? a.avg : (DEF_DUR[key][s] || 0);
+        if (a) anyReal = true;
+        total += v;
+        var n = Math.round(v * 10) / 10;
+        return '<div class="stc st-b-' + s + '"><div class="stc-n">' + n + '<span class="stc-u">d</span>' + (est ? '<span class="stc-est">est.</span>' : '<span class="stc-real">' + a.n + ' real</span>') + '</div><div class="stc-l">' + SLAB[s] + "</div></div>";
+      }).join("");
+      html += '<div class="stsec"><div class="stsec-h"><span class="tag ' + cls + '">' + lab + '</span><span class="stsec-t">ciclo completo ≈ <b>' + Math.round(total) + ' días</b>' + (anyReal ? " · promedio del historial real" : " · estimado por defecto (sin historial)") + "</span></div><div class=\"stgrid\">" + cards + "</div></div>";
+    });
+    box.innerHTML = html;
   }
   function renderUpnext(list) {
     var rows = list.map(function (e) { return { e: e, p: projectedDelivery(e) }; }).filter(function (r) { return r.p.date; });
@@ -607,7 +741,7 @@ function clientRuntime() {
 
   function render() {
     var list = filtered();
-    renderKpis(list); renderProjection(list); renderUpnext(list); renderPipeline(list); renderFlat(list); renderRecep(list); renderTable(list);
+    renderKpis(list); renderProjection(list); renderStageCards(); renderUpnext(list); renderPipeline(list); renderFlat(list); renderRecep(list); renderTable(list);
   }
 
   Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (tb) {
@@ -1468,6 +1602,75 @@ tbody tr:hover td {
   }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* ── Gantt v2 por fases (Cronograma) ─────────────────────────────── */
+.gseg {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  height: 14px; border-radius: 7px; min-width: 6px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / .35);
+  cursor: help;
+}
+.st-REGISTRO    { background: #94a3b8; }
+.st-PRODUCCION  { background: #6366f1; }
+.st-PREPARACION { background: #f59e0b; }
+.st-DESPACHO    { background: #8b5cf6; }
+.st-TRANSITO    { background: #3b82f6; }
+.st-EN_DESTINO  { background: #10b981; }
+.st-CERRADO     { background: #475569; }
+.gseg.gest {
+  opacity: .6;
+  background-image: repeating-linear-gradient(45deg, rgb(255 255 255 / .65) 0 4px, transparent 4px 9px);
+  outline: 1px dashed rgb(15 23 42 / .3); outline-offset: -1px;
+}
+.gseg[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  background: #0f172a; color: #fff; font-size: 11px; font-weight: 600;
+  padding: 4px 9px; border-radius: 6px; white-space: nowrap; z-index: 30;
+  box-shadow: var(--shadow-md);
+}
+.gexp {
+  border: 1px solid var(--border-color); background: #fff; color: var(--text-muted);
+  border-radius: 6px; width: 20px; height: 20px; line-height: 1; font-size: 11px;
+  cursor: pointer; margin-right: 4px; vertical-align: -3px;
+}
+.gexp:hover { color: var(--text-title); border-color: #94a3b8; }
+.grow.gsub { background: #fbfcfe; }
+.glabel.gsublabel {
+  padding-left: 34px; font-weight: 500; color: var(--text-muted); font-size: 11.5px;
+  display: flex; align-items: center; gap: 6px;
+}
+.glabel.gsublabel .dotL { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.gdays { color: #94a3b8; font-variant-numeric: tabular-nums; font-size: 10.5px; }
+.glegend .dotL.gest { background-image: repeating-linear-gradient(45deg, rgb(255 255 255 / .7) 0 3px, transparent 3px 6px); }
+
+/* ── Cards de duración promedio por fase (Aéreo / Marítimo) ──────── */
+.stsec {
+  background: var(--surface-card); border: 1px solid var(--border-color);
+  border-radius: 14px; padding: 14px 16px; margin-bottom: 12px; box-shadow: var(--shadow-sm);
+}
+.stsec-h { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.stsec-t { font-size: 12px; color: var(--text-muted); }
+.stgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.stc {
+  border: 1px solid var(--border-color); border-radius: 10px; padding: 9px 10px;
+  background: #fbfcfe; border-top-width: 3px;
+}
+.st-b-REGISTRO    { border-top-color: #94a3b8; }
+.st-b-PRODUCCION  { border-top-color: #6366f1; }
+.st-b-PREPARACION { border-top-color: #f59e0b; }
+.st-b-DESPACHO    { border-top-color: #8b5cf6; }
+.st-b-TRANSITO    { border-top-color: #3b82f6; }
+.st-b-EN_DESTINO  { border-top-color: #10b981; }
+.stc-n { font-size: 18px; font-weight: 800; color: var(--text-title); font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 4px; }
+.stc-u { font-size: 11px; font-weight: 600; color: var(--text-muted); }
+.stc-est, .stc-real { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 999px; margin-left: auto; }
+.stc-est  { background: #f1f5f9; color: #64748b; }
+.stc-real { background: var(--success-bg); color: var(--success-text); }
+.stc-l { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+@media print {
+  .stsec, .grow { break-inside: avoid; page-break-inside: avoid; }
+}
 `;
 
 /**
@@ -1543,15 +1746,21 @@ export function buildExpedientesExportHtml({
   </div>
 
   <div class="panel" id="p-crono">
-    <div class="sec-h">Proyección de atención de entregas</div>
+    <div class="sec-h">Cronograma por expediente — fases reales y proyección</div>
     <div class="proj"><div class="gantt" id="gantt"></div>
       <div class="glegend">
-        <span><i class="dotL" style="background:#3b82f6"></i>Aéreo (~10d)</span>
-        <span><i class="dotL" style="background:#0ea5e9"></i>Marítimo (~5 sem)</span>
-        <span><i class="dotL" style="background:#cbd5e1"></i>Estimado</span>
-        <span style="color:#10b981">entregado</span>
+        <span><i class="dotL st-REGISTRO"></i>Registro</span>
+        <span><i class="dotL st-PRODUCCION"></i>Producción</span>
+        <span><i class="dotL st-PREPARACION"></i>Preparación</span>
+        <span><i class="dotL st-DESPACHO"></i>Despacho</span>
+        <span><i class="dotL st-TRANSITO"></i>Tránsito</span>
+        <span><i class="dotL st-EN_DESTINO"></i>En destino</span>
+        <span><i class="dotL gest" style="background:#cbd5e1"></i>Rayado = estimado</span>
+        <span style="color:#64748b">▸ desglosa las fases del expediente</span>
       </div>
     </div>
+    <div class="sec-h">Tiempos promedio por fase</div>
+    <div id="stagecards"></div>
     <div class="sec-h">Próximas entregas</div>
     <div class="upnext" id="upnext"></div>
     <div class="sec-h" style="margin-top:8px">Pipeline por estado</div>
@@ -1591,7 +1800,7 @@ export function buildExpedientesExportHtml({
     </table>
   </div>
 
-  <div class="foot">Cronograma: cuándo llega cada expediente. Tránsito: Aéreo ~10 días, Marítimo ~5 semanas. La entrega real manda sobre el ETA. Documento generado por MWT.ONE.</div>
+  <div class="foot">Cronograma: fases reales del expediente (historial del pipeline) en sólido; proyección de fases futuras en rayado, usando el promedio real por método de envío (o el estándar si no hay historial). La entrega real manda sobre el ETA. Documento generado por MWT.ONE.</div>
 </div>
 <script>window.__EXP=${dataJson};window.__AUD=${JSON.stringify(audience)};window.__META=${JSON.stringify(meta)};</script>
 <script>(${clientRuntime.toString()})();</script>

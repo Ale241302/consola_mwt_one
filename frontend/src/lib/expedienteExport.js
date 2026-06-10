@@ -89,6 +89,22 @@ async function fetchCostLines(trfId, expedienteId) {
 }
 
 /**
+ * Event log del expediente (cambios de fase REGISTRO→…→CERRADO) para el
+ * Gantt del Cronograma. GET /expedientes/{id}/events/ — tolerante a fallos
+ * (si el rol no puede verlo, el Gantt cae al fallback embarque/ETA).
+ */
+async function fetchEvents(expedienteId) {
+  try {
+    const r = await fetchJson(
+      `/expedientes/${encodeURIComponent(expedienteId)}/events/?limit=200`,
+    );
+    return Array.isArray(r) ? r : (r?.results || []);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Resuelve el conjunto de expedientes objetivo según los filtros.
  * @param {Array} expedientes  filas cargadas en la pantalla (mapExpedienteFromApi)
  * @param {Object} f  { expedienteUuid, clienteId, estado }
@@ -190,6 +206,14 @@ export async function runExpedienteExport({
   );
   clRes.forEach((r, i) => {
     items[i].costLines = r.status === "fulfilled" ? r.value : [];
+  });
+
+  // Historial de fases (EventLog) → Gantt por estado del Cronograma.
+  const evRes = await Promise.allSettled(
+    items.map((it) => fetchEvents(it.expedienteId)),
+  );
+  evRes.forEach((r, i) => {
+    items[i].events = r.status === "fulfilled" ? r.value : [];
   });
 
   const fileBase =
