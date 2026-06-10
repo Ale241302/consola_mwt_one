@@ -41,6 +41,7 @@ const KEY_TO_PATH = {
   tickets:     '/tickets',
   dashboard:   '/dashboard',
   expedientes: '/expedientes',
+  cronograma:  '/cronograma',  // Sprint 2026-06-10 · Cronograma interactivo
   pipeline:    '/pipeline',
   portal:      '/portal',
   pagos:       '/financiero',
@@ -161,6 +162,7 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
   const allItems = [
     { key: 'dashboard',      icon: <IconHome/>,       label: tr(lang,'dashboard'),     group: 'core' },
     { key: 'expedientes',    icon: <IconFolder/>,     label: expedientesLabel,         group: 'core', counter: expedientesCount },
+    { key: 'cronograma',     icon: <IconHistory/>,    label: lang === 'en' ? 'Timeline' : 'Cronograma', group: 'core' },
     { key: 'portal',         icon: <IconBuilding/>,   label: tr(lang,'portal'),        group: 'core' },
     // Almacén & Logística
     { key: 'transfers',      icon: <IconSwap/>,       label: tr(lang,'transfers'),     group: 'warehouse' },

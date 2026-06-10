@@ -7,6 +7,8 @@ import Login from "./pages/Login.jsx";
 import ScreenPasswordReset from "./pages/PasswordReset.jsx";
 import ScreenDashboard from "./pages/Dashboard.jsx";
 import ScreenExpedientes from "./pages/Expedientes.jsx";
+// Sprint 2026-06-10 · Cronograma interactivo (reemplaza al Resumen .html).
+import ScreenCronograma from "./pages/Cronograma.jsx";
 import ScreenOCDetail from "./pages/OCDetail.jsx";
 import ScreenExpedienteDetail from "./pages/ExpedienteDetail.jsx";
 import ScreenPipeline from "./pages/Pipeline.jsx";
@@ -77,6 +79,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<ScreenDashboard />} />
         <Route path="/expedientes" element={<ScreenExpedientes />} />
+        <Route path="/cronograma" element={<ScreenCronograma />} />
         <Route path="/expedientes/:ocId" element={<ScreenOCDetail />} />
         <Route path="/expedientes/:ocId/exp/:expedienteId" element={<ScreenExpedienteDetail />} />
         <Route path="/pipeline" element={<ScreenPipeline />} />

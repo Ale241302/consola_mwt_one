@@ -287,9 +287,24 @@ def factura_payload(request, expediente_id):
             SELECT l.id, l.sku, COALESCE(l.size, ''), l.qty,
                    l.unit_price_mwt, l.unit_price_client, l.producto_id,
                    COALESCE(p.nombre, ''), p.especificaciones->>'ncm',
-                   l.expediente_id
+                   l.expediente_id,
+                   COALESCE(l.sap, ''),
+                   COALESCE(na.nodo_label, '')
             FROM expedientes.linea l
             LEFT JOIN productos.producto p ON p.id = l.producto_id
+            -- Sprint 2026-06-10 · nodo asignado por línea (mayor qty) para
+            -- el modal de SKUs del Cronograma.
+            LEFT JOIN LATERAL (
+                SELECT n.codigo AS nodo_label
+                FROM inventario.expediente_nodo_assignment a
+                JOIN nodos.nodo n ON n.id = a.nodo_id
+                WHERE a.expediente_id = l.expediente_id
+                  AND a.producto_id = l.producto_id
+                  AND COALESCE(a.talla, '') = COALESCE(l.size, '')
+                  AND a.is_active = TRUE
+                ORDER BY a.qty_asignada DESC
+                LIMIT 1
+            ) na ON TRUE
             WHERE (l.expediente_id = %(id)s::uuid OR l.oc_id = %(id)s::uuid)
               AND l.is_active = TRUE
             ORDER BY l.sku, l.size
@@ -557,6 +572,9 @@ def factura_payload(request, expediente_id):
             "proforma_codigo":   codigo,
             "ncm":               r[8],
             "dai_rate":          ncm_dai_map.get(r[8]),
+            # Sprint 2026-06-10 · SAP y nodo por línea (modal del Cronograma).
+            "sap":               r[10] or "",
+            "nodo":              r[11] or "",
         })
 
     landed = fob + extra

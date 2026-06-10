@@ -57,6 +57,7 @@ function deriveBaseViewport(backendRole) {
 export const CLIENT_ALLOWED_MODULES = new Set([
   "dashboard",
   "expedientes",
+  "cronograma",  // Sprint 2026-06-10 · Cronograma interactivo (precios per-rol)
   "pipeline",
   "portal",
   "pagos",
