@@ -115,6 +115,17 @@ export default function Cronograma() {
     [scopedItems, clienteId, estado, qpExp]
   );
 
+  // Orden cronológico del Gantt: el expediente que arranca antes va arriba
+  // (el listado de la API viene "más reciente primero").
+  const ordered = useMemo(() => {
+    const startTs = (it) => {
+      const segs = computeSegments(it, avgs);
+      const first = segs.real[0] || segs.est[0];
+      return first ? first.a.getTime() : Infinity;
+    };
+    return [...visibles].sort((a, b) => startTs(a) - startTs(b));
+  }, [visibles, avgs]);
+
   // Filas para runExpedienteExport (forma del listado de /expedientes),
   // construidas desde las filas crudas ya cargadas — sin re-fetchear.
   const exportRows = useMemo(() => scopedItems.map((it) => ({
@@ -211,11 +222,11 @@ export default function Cronograma() {
 
   const rows = useMemo(() => {
     if (groupBy === "EXPEDIENTE") {
-      return visibles.map((it) => expedienteRow(it));
+      return ordered.map((it) => expedienteRow(it));
     }
     if (groupBy === "SKU") {
       const map = new Map();
-      visibles.forEach((it) => it.skus.forEach((sku) => {
+      ordered.forEach((it) => it.skus.forEach((sku) => {
         (map.get(sku) || map.set(sku, []).get(sku)).push(it);
       }));
       return Array.from(map.entries())
@@ -246,7 +257,7 @@ export default function Cronograma() {
     }
     // MÉTODO
     const buckets = new Map();
-    visibles.forEach((it) => {
+    ordered.forEach((it) => {
       const k = it.modo || (lang === "es" ? "Aéreo (supuesto)" : "Air (assumed)");
       (buckets.get(k) || buckets.set(k, []).get(k)).push(it);
     });
@@ -269,7 +280,7 @@ export default function Cronograma() {
       summary: true,
       children: list.map((it) => expedienteRow(it, `modo-${modo}-`)),
     }));
-  }, [visibles, groupBy, avgs, expedienteRow, labelOf, lang]);
+  }, [ordered, groupBy, avgs, expedienteRow, labelOf, lang]);
 
   return (
     <div className="page">
