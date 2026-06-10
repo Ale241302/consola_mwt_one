@@ -561,29 +561,49 @@ function clientRuntime() {
       for (; t <= max; t = addDays(t, 7)) { var x = pct(t); grid += '<div class="gtline" style="left:' + x + '%"></div>'; axis += '<div class="gtick" style="left:' + x + '%">' + shortD(t) + "</div>"; }
       grid += '<div class="gtoday" style="left:' + pct(today()) + '%"><span class="lab">hoy</span></div>';
       var html = '<div class="goverlay">' + grid + "</div>";
+      var chevron = '<svg class="gexp-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+      
       dated.forEach(function (r) {
-        var e = r.e, id = e.expediente, open = !!gOpen[id], bar = "";
+        var e = r.e, id = e.expediente, open = !!gOpen[id];
         var measure = function (sg) { var raw = pct(sg.b) - pct(sg.a); sg._ms = raw < 1.1; sg._l = pct(sg.a); sg._w = Math.max(0.6, raw); };
         r.seg.real.forEach(measure); r.seg.est.forEach(measure);
-        r.seg.real.forEach(function (sg) {
-          bar += segBar(sg, false, SLAB[sg.s] + ": " + shortD(sg.a) + " → " + (sg.open ? "hoy" : shortD(sg.b)));
-        });
-        r.seg.est.forEach(function (sg) {
-          bar += segBar(sg, true, SLAB[sg.s] + " (est.): " + shortD(sg.a) + " → " + shortD(sg.b));
-        });
+        
+        // Calculate total span for the unified progress bar on the main row
         var segsAll = r.seg.real.concat(r.seg.est);
-        var lMin = Math.min.apply(null, segsAll.map(function (s4) { return s4._l; }));
-        var lMax = Math.max.apply(null, segsAll.map(function (s4) { return s4._l + (s4._ms ? 0.4 : s4._w); }));
-        var conn = segsAll.length > 1 ? '<div class="gconn" style="left:' + lMin + '%;width:' + Math.max(0.4, lMax - lMin) + '%"></div>' : "";
-        html += '<div class="grow gmain' + (open ? " gopen" : "") + '"><div class="glabel"><button class="gexp' + (open ? " on" : "") + '" data-exp="' + esc(id) + '" title="Desglosar fases">▸</button><span class="gid">' + esc(id) + '</span><span class="gmeta">' + fInt(e.volumen) + " prs · " + esc(e.operador) + (e.modo ? " · " + esc(e.modo) : "") + '</span></div><div class="gtrack">' + conn + bar + "</div></div>";
+        var lMin = Math.min.apply(null, segsAll.map(function (s) { return s._l; }));
+        var lMax = Math.max.apply(null, segsAll.map(function (s) { return s._l + (s._ms ? 0.4 : s._w); }));
+        var totalW = Math.max(1, lMax - lMin);
+        
+        // Color-code based on status
+        var stateCls = "st-active";
+        if (delivered(e)) {
+          stateCls = "st-delivered";
+        } else if (e.estado === "TRANSITO") {
+          stateCls = "st-transito";
+        }
+        
+        // Calculate actual dates for summary tooltip
+        var allDates = segsAll.map(function(s) { return s.a.getTime(); }).concat(segsAll.map(function(s) { return s.b.getTime(); }));
+        var dStart = new Date(Math.min.apply(null, allDates));
+        var dEnd = new Date(Math.max.apply(null, allDates));
+        var summaryTip = "Expediente " + id + ": " + shortD(dStart) + " → " + shortD(dEnd) + " · " + e.estadoLabel;
+        
+        // Render unified progress bar
+        var conn = '<div class="gconn" style="left:' + lMin + '%;width:' + totalW + '%"></div>';
+        var summaryBar = '<div class="gsummary-bar ' + stateCls + '" data-tip="' + esc(summaryTip) + '" style="left:' + lMin + '%;width:' + totalW + '%"></div>';
+        
+        html += '<div class="grow gmain' + (open ? " gopen" : "") + '"><div class="glabel"><button class="gexp' + (open ? " on" : "") + '" data-exp="' + esc(id) + '" title="Desglosar fases">' + chevron + '</button><span class="gid">' + esc(id) + '</span><span class="gmeta">' + fInt(e.volumen) + " prs · " + esc(e.operador) + (e.modo ? " · " + esc(e.modo) : "") + '</span></div><div class="gtrack">' + conn + summaryBar + "</div></div>";
+        
         if (open) {
           var all = r.seg.real.map(function (sg) { return { sg: sg, est: false }; })
             .concat(r.seg.est.map(function (sg) { return { sg: sg, est: true }; }));
-          all.forEach(function (it) {
+          all.forEach(function (it, allIndex) {
             var sg = it.sg;
             var days = Math.max(0, Math.round((sg.b - sg.a) / 86400000));
             var tag = it.est ? " · est." : (sg.open ? " · en curso" : "");
-            html += '<div class="grow gsub"><div class="glabel gsublabel"><i class="dotL st-' + sg.s + '"></i>' + SLAB[sg.s] + ' <span class="gdays">' + days + "d" + tag + '</span></div><div class="gtrack">'
+            var isLastSub = (allIndex === all.length - 1);
+            html += '<div class="grow gsub' + (isLastSub ? " gsub-last" : "") + '"><div class="glabel gsublabel"><i class="dotL st-' + sg.s + '"></i>' + SLAB[sg.s] + ' <span class="gdays">' + days + "d" + tag + '</span></div><div class="gtrack">'
+                  + '<div class="gconn" style="left:' + sg._l + '%;width:' + sg._w + '%"></div>'
                   + segBar(sg, it.est, SLAB[sg.s] + (it.est ? " (est.)" : "") + ": " + shortD(sg.a) + " → " + shortD(sg.b) + " · " + days + "d")
                   + "</div></div>";
           });
@@ -761,6 +781,73 @@ function clientRuntime() {
       document.getElementById("p-" + tb.getAttribute("data-tab")).classList.remove("hide");
     };
   });
+  // Tooltip global setup
+  var tooltipEl = document.getElementById("gantt-tooltip");
+  if (!tooltipEl) {
+    tooltipEl = document.createElement("div");
+    tooltipEl.id = "gantt-tooltip";
+    tooltipEl.className = "gantt-tooltip";
+    tooltipEl.style.display = "none";
+    document.body.appendChild(tooltipEl);
+  }
+
+  var gEl = document.getElementById("gantt");
+  if (gEl && !gEl.dataset.tipBound) {
+    gEl.dataset.tipBound = "true";
+    gEl.addEventListener("mouseover", function (ev) {
+      var target = ev.target;
+      while (target && target !== gEl) {
+        if (target.hasAttribute("data-tip")) {
+          var tip = target.getAttribute("data-tip");
+          var parts = tip.split(" · ");
+          var titleDates = parts[0].split(": ");
+          var title = titleDates[0];
+          var dates = titleDates[1] || "";
+          var duration = parts[1] || "";
+          
+          var html = '<div class="title">' + esc(title) + '</div>';
+          if (dates) html += '<div class="dates">' + esc(dates) + '</div>';
+          if (duration) html += '<div class="duration">' + esc(duration) + '</div>';
+          
+          tooltipEl.innerHTML = html;
+          tooltipEl.style.display = "block";
+          break;
+        }
+        target = target.parentNode;
+      }
+    });
+    gEl.addEventListener("mousemove", function (ev) {
+      if (tooltipEl.style.display === "block") {
+        var x = ev.clientX;
+        var y = ev.clientY;
+        var offset = 15;
+        
+        var left = x + offset;
+        var top = y + offset;
+        
+        if (left + tooltipEl.offsetWidth > window.innerWidth) {
+          left = x - tooltipEl.offsetWidth - offset;
+        }
+        if (top + tooltipEl.offsetHeight > window.innerHeight) {
+          top = y - tooltipEl.offsetHeight - offset;
+        }
+        
+        tooltipEl.style.left = left + "px";
+        tooltipEl.style.top = top + "px";
+      }
+    });
+    gEl.addEventListener("mouseout", function (ev) {
+      var target = ev.target;
+      while (target && target !== gEl) {
+        if (target.hasAttribute("data-tip")) {
+          tooltipEl.style.display = "none";
+          break;
+        }
+        target = target.parentNode;
+      }
+    });
+  }
+
   ["fOp", "fModo", "groupBy", "ft_model", "ft_sort", "hr_show", "hr_model"].forEach(function (idn) { var el = document.getElementById(idn); if (el) el.onchange = render; });
   render();
 }
@@ -1612,97 +1699,214 @@ tbody tr:hover td {
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 
-/* ── Gantt v2 por fases (Cronograma) — paleta de marca navy→mint ── */
-.grow { grid-template-columns: 250px 1fr; }
+/* ── Gantt v3 por fases (Cronograma) — diseño premium de marca ── */
+.grow { 
+  grid-template-columns: 250px 1fr;
+  transition: background-color 0.15s ease;
+}
 .goverlay { left: 250px; }
-.gaxis { margin-left: 250px; }
+.gaxis { 
+  margin-left: 250px; 
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+}
 .gseg {
   position: absolute; top: 50%; transform: translateY(-50%);
-  height: 16px; border-radius: 8px; min-width: 7px;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / .3), 0 1px 2px rgb(1 58 87 / .18);
+  height: 14px; border-radius: 7px; min-width: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 1px 2px rgba(1, 58, 87, 0.15);
   cursor: pointer;
-  transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+  transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
 }
 .gseg:hover {
-  transform: translateY(-50%) scaleY(1.3);
+  transform: translateY(-50%) scaleY(1.25);
   filter: brightness(1.08) saturate(1.05);
-  box-shadow: 0 4px 14px rgb(1 58 87 / .35);
+  box-shadow: 0 4px 10px rgba(1, 58, 87, 0.25);
   z-index: 6;
 }
 .gms {
-  position: absolute; top: 50%; transform: translate(-50%, -50%);
-  width: 13px; height: 13px; border-radius: 50%;
-  box-shadow: 0 0 0 3px #fff, 0 1px 4px rgb(1 58 87 / .3);
+  position: absolute; top: 50%; 
+  width: 10px; height: 10px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 2px currentColor, 0 2px 4px rgba(1, 58, 87, 0.2);
   cursor: pointer;
-  transition: transform .18s ease, box-shadow .18s ease;
+  transition: transform .15s ease, box-shadow .15s ease;
 }
 .gms:hover {
-  transform: translate(-50%, -50%) scale(1.4);
-  box-shadow: 0 0 0 3px #fff, 0 0 0 8px rgb(19 185 138 / .16), 0 2px 8px rgb(1 58 87 / .3);
+  transform: translate(-50%, -50%) scale(1.3) rotate(45deg);
+  box-shadow: 0 0 0 2px currentColor, 0 0 8px currentColor;
   z-index: 6;
 }
 .gconn {
   position: absolute; top: 50%; transform: translateY(-50%);
-  height: 3px; border-radius: 2px;
-  background: linear-gradient(90deg, rgb(1 58 87 / .14), rgb(19 185 138 / .3));
+  height: 4px; border-radius: 2px;
+  background: #f1f5f9;
+  z-index: 1;
+}
+.grow.gsub .gtrack .gconn {
+  background: #e2e8f0;
 }
 /* Pipeline de marca: navy (inicio) → teal → mint (entregado). */
-.st-REGISTRO    { background: #94A7B8; }
-.st-PRODUCCION  { background: #013A57; }
-.st-PREPARACION { background: #075A78; }
-.st-DESPACHO    { background: #0B7E8F; }
-.st-TRANSITO    { background: #0FA3A0; }
-.st-EN_DESTINO  { background: #13B98A; }
-.st-CERRADO     { background: #334155; }
-.gseg.gest, .gms.gest {
-  opacity: .55;
-  background-image: repeating-linear-gradient(45deg, rgb(255 255 255 / .7) 0 4px, transparent 4px 9px);
-  outline: 1.5px dashed rgb(1 58 87 / .35); outline-offset: 1px;
+.st-REGISTRO    { background: #94A7B8; color: #94A7B8; }
+.st-PRODUCCION  { background: #013A57; color: #013A57; }
+.st-PREPARACION { background: #075A78; color: #075A78; }
+.st-DESPACHO    { background: #0B7E8F; color: #0B7E8F; }
+.st-TRANSITO    { background: #0FA3A0; color: #0FA3A0; }
+.st-EN_DESTINO  { background: #13B98A; color: #13B98A; }
+.st-CERRADO     { background: #334155; color: #334155; }
+
+.gseg.gest {
+  opacity: .65;
+  background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.25) 0 4px, transparent 4px 8px);
+  border: 1px dashed currentColor;
   box-shadow: none;
 }
-.gseg[data-tip]::after, .gms[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute; bottom: calc(100% + 8px); left: 50%;
-  transform: translateX(-50%) translateY(4px);
-  background: #013A57; color: #fff; font-size: 11px; font-weight: 600;
-  padding: 5px 10px; border-radius: 8px; white-space: nowrap; z-index: 30;
-  box-shadow: 0 8px 24px rgb(1 58 87 / .35);
-  opacity: 0; pointer-events: none;
-  transition: opacity .15s ease, transform .15s ease;
-}
-.gseg[data-tip]:hover::after, .gms[data-tip]:hover::after {
-  opacity: 1; transform: translateX(-50%) translateY(0);
+.gms.gest {
+  opacity: .65;
+  border: 1.5px dashed #ffffff;
+  box-shadow: 0 0 0 1.5px currentColor;
 }
 .gexp {
-  border: 1px solid var(--border-color); background: #fff; color: #013A57;
-  border-radius: 50%; width: 22px; height: 22px; line-height: 1; font-size: 10px;
-  cursor: pointer; margin-right: 8px; flex: none;
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: transform .2s ease, background .2s ease, color .2s ease, border-color .2s ease;
+  background: none;
+  border: none;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  color: #64748b;
+  transition: color 0.15s ease, background-color 0.15s ease;
+  border-radius: 4px;
+  margin-right: 8px;
+  flex: none;
 }
-.gexp:hover { border-color: #13B98A; color: #0B7E8F; }
-.gexp.on { transform: rotate(90deg); background: #013A57; color: #fff; border-color: #013A57; }
-.gexp.on:hover { background: #075A78; }
+.gexp:hover {
+  background-color: #f1f5f9;
+  color: #013A57;
+}
+.gexp-icon {
+  width: 8px;
+  height: 8px;
+  transition: transform 0.2s ease;
+}
+.gexp.on .gexp-icon {
+  transform: rotate(90deg);
+}
 .grow.gmain .glabel { display: flex; align-items: center; min-width: 0; }
 .gid { font-weight: 800; color: #013A57; white-space: nowrap; }
 .gmeta {
   color: var(--text-muted); font-weight: 500; font-size: 11px; margin-left: 7px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.grow.gopen { background: rgb(19 185 138 / .05); }
-.grow.gsub { background: #fbfdfe; animation: gslide .22s ease both; }
+.grow.gopen { background: rgb(1, 58, 87, 0.02); }
+.grow.gsub { 
+  background: #fbfdfe; 
+  position: relative;
+  animation: gslide .22s ease both; 
+}
+.grow.gsub::before {
+  content: "";
+  position: absolute;
+  left: 20px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  border-left: 1.5px dashed #cbd5e1;
+}
+.grow.gsub.gsub-last::before {
+  bottom: 50%;
+}
 @keyframes gslide {
   from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 .glabel.gsublabel {
-  padding-left: 38px; font-weight: 600; color: #36556B; font-size: 11.5px;
-  display: flex; align-items: center; gap: 7px;
+  padding-left: 38px; 
+  position: relative;
+  font-weight: 600; 
+  color: #36556B; 
+  font-size: 11.5px;
+  display: flex; 
+  align-items: center; 
+  gap: 7px;
+}
+.glabel.gsublabel::before {
+  content: "";
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  width: 12px;
+  height: 1px;
+  border-top: 1.5px dashed #cbd5e1;
+  transform: translateY(-50%);
 }
 .glabel.gsublabel .dotL { width: 9px; height: 9px; border-radius: 3px; flex: none; }
 .gdays { color: #94a3b8; font-variant-numeric: tabular-nums; font-size: 10.5px; font-weight: 500; }
 .glegend .dotL.gest { background-image: repeating-linear-gradient(45deg, rgb(255 255 255 / .7) 0 3px, transparent 3px 6px); }
 .gtoday { box-shadow: 0 0 8px rgb(239 68 68 / .35); }
+
+/* ── Unified Progress Bar en Fila Principal ── */
+.gsummary-bar {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 10px;
+  border-radius: 5px;
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.2), 0 1px 3px rgba(1, 58, 87, 0.18);
+  cursor: pointer;
+  z-index: 2;
+  transition: height 0.15s ease, box-shadow 0.15s ease;
+}
+.gsummary-bar:hover {
+  height: 14px;
+  box-shadow: 0 4px 10px rgba(1, 58, 87, 0.25);
+}
+.gsummary-bar.st-delivered {
+  background: linear-gradient(90deg, #10b981, #13B98A);
+}
+.gsummary-bar.st-transito {
+  background: linear-gradient(90deg, #3b82f6, #0FA3A0);
+}
+.gsummary-bar.st-active {
+  background: linear-gradient(90deg, #013A57, #075A78);
+}
+
+/* ── Tooltip Global Premium ── */
+.gantt-tooltip {
+  position: fixed;
+  z-index: 10000;
+  background: rgba(1, 58, 87, 0.96);
+  color: #ffffff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(1, 58, 87, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+  font-family: inherit;
+  line-height: 1.4;
+  transition: opacity 0.1s ease;
+}
+.gantt-tooltip .title {
+  font-weight: 800;
+  font-size: 12px;
+  color: #13B98A;
+  margin-bottom: 2px;
+}
+.gantt-tooltip .dates {
+  color: #e2e8f0;
+  font-size: 10px;
+}
+.gantt-tooltip .duration {
+  margin-top: 4px;
+  font-weight: 700;
+  color: #94a7b8;
+  font-size: 10px;
+}
 
 /* ── Cards de duración promedio por fase (Aéreo / Marítimo) ──────── */
 .stsec {
