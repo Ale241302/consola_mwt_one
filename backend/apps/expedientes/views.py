@@ -1106,6 +1106,14 @@ class ExpedienteViewSet(viewsets.ViewSet):
         for eid, fm, pdj in exp_rows:
             fm = (fm or "").upper()
             modo_by_exp[eid] = "Aereo" if fm == "AIR" else ("Maritimo" if fm == "SEA" else "")
+            # El cursor crudo puede devolver jsonb como STRING (según el
+            # driver) — sin este parse los overrides se descartaban en
+            # silencio y phase-stats sólo veía las muestras del EventLog.
+            if isinstance(pdj, str):
+                try:
+                    pdj = json.loads(pdj)
+                except (ValueError, TypeError):
+                    pdj = {}
             over_by_exp[eid] = pdj if isinstance(pdj, dict) else {}
 
         # Primera entrada a cada fase por expediente + evento más antiguo.

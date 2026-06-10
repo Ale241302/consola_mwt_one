@@ -586,8 +586,15 @@ def factura_payload(request, expediente_id):
             {"id": pid, "line_ids": _line_exp_ids},
         )
         _pd_row = c.fetchone()
-        if _pd_row and isinstance(_pd_row[0], dict):
-            phase_durations = _pd_row[0]
+        _pd_val = _pd_row[0] if _pd_row else None
+        # jsonb puede llegar como STRING en cursor crudo según el driver.
+        if isinstance(_pd_val, str):
+            try:
+                _pd_val = json.loads(_pd_val)
+            except (ValueError, TypeError):
+                _pd_val = None
+        if isinstance(_pd_val, dict):
+            phase_durations = _pd_val
 
     return Response({
         "kind": "FACTURA_COMERCIAL",
