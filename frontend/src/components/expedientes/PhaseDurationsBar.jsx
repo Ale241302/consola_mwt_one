@@ -1,17 +1,20 @@
 // ─────────────────────────────────────────────────────────────
 // PhaseDurationsBar — Días por fase del expediente
-// Sprint 2026-06-10 · Agente responsable: [AG-03 FRONTEND]
+// Sprint 2026-06-10 (rev2) · Agente responsable: [AG-03 FRONTEND]
 //
 // Se renderiza bajo el StateTimeline en el detalle del expediente.
 //   · Días REALES por fase derivados del EventLog (entrada a la fase →
 //     entrada a la siguiente; fase actual → hoy, marcada "en curso").
-//   · ADMIN/CEO puede fijar un valor manual por fase (override) con click
-//     en el chip → input inline → Enter/✓. El override viaja al backend
-//     (PATCH /expedientes/{id}/phase-durations/) y el Cronograma del
-//     Resumen de Exportación lo prioriza sobre la duración derivada.
+//   · ADMIN/CEO: click en el chip abre un MODAL con Fecha inicio / Fecha
+//     fin (precargadas con las fechas reales del event_log cuando existen)
+//     y muestra en vivo a cuántos días equivale. Al guardar, el backend
+//     calcula los días (end - start) y los persiste como override
+//     ({start, end, days}) — el Cronograma del Resumen de Exportación los
+//     prioriza sobre la duración derivada.
 //   · Clientes B2B sólo ven los días (R3 — sin edición).
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { expedientesApi } from "../../lib/api.js";
 
 const STAGES = ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO", "TRANSITO", "EN_DESTINO", "CERRADO"];
@@ -20,6 +23,17 @@ const LABELS = {
   en: { REGISTRO: "Registry", PRODUCCION: "Production", PREPARACION: "Preparation", DESPACHO: "Dispatch", TRANSITO: "Transit", EN_DESTINO: "At destination", CERRADO: "Closed" },
 };
 const DAY_MS = 86400000;
+
+/** Normaliza un override guardado: número legacy (días) u objeto {start, end, days}. */
+function parseOverride(ov) {
+  if (ov == null || ov === "") return null;
+  if (typeof ov === "object") {
+    const days = Number(ov.days);
+    return { days: isFinite(days) ? days : null, start: ov.start || null, end: ov.end || null };
+  }
+  const n = Number(ov);
+  return isFinite(n) ? { days: n, start: null, end: null } : null;
+}
 
 /**
  * @param {Object} props
@@ -31,10 +45,12 @@ const DAY_MS = 86400000;
 export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = "es", canEdit = false }) {
   const [events, setEvents] = useState(null);
   const [overrides, setOverrides] = useState({});
-  const [editing, setEditing] = useState(null);
-  const [draft, setDraft] = useState("");
+  const [modal, setModal] = useState(null);   // fase en edición o null
+  const [mStart, setMStart] = useState("");
+  const [mEnd, setMEnd] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (!expedienteId) return undefined;
@@ -86,26 +102,20 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
           open = s === currentStatus && s !== "CERRADO";
         }
       }
-      const ov = overrides[s];
-      out[s] = { entry: entry[s] || null, exit, real, open, override: ov != null && ov !== "" ? Number(ov) : null };
+      out[s] = { entry: entry[s] || null, exit, real, open, override: parseOverride(overrides[s]) };
     });
     return out;
   }, [events, overrides, currentStatus]);
-
-  // Evita doble envío (blur + click en ✓) y permite que Escape cancele
-  // sin disparar el guardado del blur.
-  const savingRef = useRef(false);
-  const skipBlurRef = useRef(false);
 
   const save = useCallback(async (stage, value) => {
     if (savingRef.current) return;
     savingRef.current = true;
     setSaving(true); setError("");
     try {
-      const body = {}; body[stage] = (value === "" || value == null) ? null : Number(value);
+      const body = {}; body[stage] = value;
       const r = await expedientesApi.action("phase-durations", expedienteId, body);
       setOverrides((r && r.phase_durations) || {});
-      setEditing(null);
+      setModal(null);
     } catch (e) {
       setError(e?.body?.detail || e?.message || "error");
     } finally {
@@ -114,90 +124,154 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
     }
   }, [expedienteId]);
 
+  // Abre el modal precargando: rango manual guardado → fechas del event_log
+  // (inicio = entrada a la fase; fin = entrada a la siguiente, u hoy).
+  const openModal = useCallback((s) => {
+    const info = phaseInfo[s] || {};
+    const ov = info.override;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    setMStart((ov && ov.start) || info.entry || "");
+    setMEnd((ov && ov.end) || info.exit || (info.entry ? todayIso : ""));
+    setError("");
+    setModal(s);
+  }, [phaseInfo]);
+
+  // Días equivalentes del rango del modal (en vivo).
+  const modalDays = useMemo(() => {
+    if (!mStart || !mEnd) return null;
+    const a = new Date(mStart + "T12:00:00");
+    const b = new Date(mEnd + "T12:00:00");
+    if (isNaN(a.getTime()) || isNaN(b.getTime()) || b < a) return null;
+    return Math.round((b - a) / DAY_MS);
+  }, [mStart, mEnd]);
+
   if (!events) return null;
   const L = LABELS[lang] || LABELS.es;
+  const mInfo = modal ? (phaseInfo[modal] || {}) : {};
 
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`, gap: 4, marginTop: 4 }}>
         {STAGES.map((s) => {
           const info = phaseInfo[s] || {};
-          const has = info.real != null || info.override != null;
-          const shown = info.override != null ? info.override : info.real;
-          const isEd = editing === s;
+          const ov = info.override;
+          const has = info.real != null || (ov && ov.days != null);
+          const shown = ov && ov.days != null ? ov.days : info.real;
+          const rangeTxt = ov && ov.start
+            ? ((lang === "es" ? "del " : "from ") + ov.start + (lang === "es" ? " al " : " to ") + ov.end)
+            : (info.entry
+                ? ((lang === "es" ? "del " : "from ") + info.entry
+                   + (info.exit ? ((lang === "es" ? " al " : " to ") + info.exit) : (lang === "es" ? " a hoy" : " to today")))
+                : null);
           const tip = [
             L[s],
-            // Rango exacto registrado en pipeline.event_log: entrada a la
-            // fase → entrada a la siguiente (o "hoy" si está en curso).
-            info.entry
-              ? ((lang === "es" ? "del " : "from ") + info.entry
-                 + (info.exit
-                    ? ((lang === "es" ? " al " : " to ") + info.exit)
-                    : (lang === "es" ? " a hoy" : " to today")))
-              : null,
+            rangeTxt,
             info.real != null ? ((lang === "es" ? "real: " : "actual: ") + info.real + "d") : null,
-            info.override != null ? ((lang === "es" ? "manual: " : "manual: ") + info.override + "d") : null,
-            canEdit ? (lang === "es" ? "(click para fijar manual)" : "(click to set manual)") : null,
+            ov && ov.days != null ? ((lang === "es" ? "manual: " : "manual: ") + ov.days + "d") : null,
+            canEdit ? (lang === "es" ? "(click para fijar fechas)" : "(click to set dates)") : null,
           ].filter(Boolean).join(" · ");
           return (
             <div key={s} style={{ textAlign: "center" }}>
-              {isEd ? (
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <input className="input tabular-nums" type="number" min="0" max="365" step="0.5" autoFocus
-                         value={draft}
-                         onChange={(ev) => setDraft(ev.target.value)}
-                         onKeyDown={(ev) => {
-                           if (ev.key === "Enter") { skipBlurRef.current = true; save(s, draft); }
-                           if (ev.key === "Escape") { skipBlurRef.current = true; setEditing(null); }
-                         }}
-                         onBlur={() => {
-                           // Persistir SIEMPRE al perder foco (click en otra
-                           // fase, recarga, tab) — antes el valor se perdía
-                           // si no se presionaba Enter/✓.
-                           if (skipBlurRef.current) { skipBlurRef.current = false; return; }
-                           save(s, draft);
-                         }}
-                         disabled={saving}
-                         style={{ width: 54, padding: "1px 4px", fontSize: 11, textAlign: "right", height: "auto" }}/>
-                  <button className="btn btn-ghost btn-xs" disabled={saving}
-                          onMouseDown={(ev) => ev.preventDefault()}
-                          onClick={() => save(s, draft)}
-                          title={lang === "es" ? "Guardar" : "Save"}
-                          style={{ padding: "1px 5px", fontSize: 10, color: "var(--brand-accent, #00B286)" }}>✓</button>
-                  {info.override != null && (
-                    <button className="btn btn-ghost btn-xs" disabled={saving}
-                            onMouseDown={(ev) => ev.preventDefault()}
-                            onClick={() => { skipBlurRef.current = true; save(s, null); }}
-                            title={lang === "es" ? "Quitar manual (volver al real)" : "Clear manual"}
-                            style={{ padding: "1px 4px", fontSize: 10, color: "#D64545" }}>✕</button>
-                  )}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  className="tabular-nums"
-                  title={tip}
-                  onClick={canEdit ? () => { setEditing(s); setDraft(shown != null ? String(shown) : ""); setError(""); } : undefined}
-                  style={{
-                    padding: "1px 9px", fontSize: 10.5, fontWeight: 700, borderRadius: 999,
-                    border: info.override != null
-                      ? "1.5px solid var(--brand-accent, #00B286)"
-                      : "1px solid var(--border-subtle, #E1E6ED)",
-                    background: info.open ? "rgba(0,178,134,0.08)" : "transparent",
-                    color: has ? "var(--text-secondary, #475569)" : "var(--text-tertiary, #94A3B8)",
-                    cursor: canEdit ? "pointer" : "default", lineHeight: "16px",
-                  }}>
-                  {has ? `${shown}d` : "—"}
-                  {info.open && <span style={{ color: "var(--brand-accent, #00B286)", fontWeight: 600 }}>{lang === "es" ? " · en curso" : " · ongoing"}</span>}
-                  {info.override != null && <span title={lang === "es" ? "Valor manual" : "Manual value"}> ✎</span>}
-                </button>
-              )}
+              <button
+                type="button"
+                className="tabular-nums"
+                title={tip}
+                onClick={canEdit ? () => openModal(s) : undefined}
+                style={{
+                  padding: "1px 9px", fontSize: 10.5, fontWeight: 700, borderRadius: 999,
+                  border: ov
+                    ? "1.5px solid var(--brand-accent, #00B286)"
+                    : "1px solid var(--border-subtle, #E1E6ED)",
+                  background: info.open ? "rgba(0,178,134,0.08)" : "transparent",
+                  color: has ? "var(--text-secondary, #475569)" : "var(--text-tertiary, #94A3B8)",
+                  cursor: canEdit ? "pointer" : "default", lineHeight: "16px",
+                }}>
+                {has ? `${shown}d` : "—"}
+                {info.open && <span style={{ color: "var(--brand-accent, #00B286)", fontWeight: 600 }}>{lang === "es" ? " · en curso" : " · ongoing"}</span>}
+                {ov && <span title={lang === "es" ? "Valor manual" : "Manual value"}> ✎</span>}
+              </button>
             </div>
           );
         })}
       </div>
-      {error && (
-        <div className="caption" style={{ color: "#D64545", marginTop: 4, textAlign: "center" }}>{error}</div>
+
+      {/* Modal: fechas de inicio/fin de la fase → días equivalentes */}
+      {modal && createPortal(
+        <div onClick={() => setModal(null)}
+             style={{ position: "fixed", inset: 0, background: "rgba(11,30,58,0.45)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()}
+               style={{ background: "var(--surface-raised, #fff)", borderRadius: 14, width: "min(440px, 94vw)", boxShadow: "0 24px 60px rgba(11,30,58,0.35)", overflow: "hidden" }}>
+            <div style={{ padding: "14px 18px", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)" }}>
+              <div className="micro" style={{ color: "#00B286", letterSpacing: 1, marginBottom: 4 }}>
+                {lang === "es" ? "DÍAS EN FASE" : "DAYS IN PHASE"}
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: "#0B1E3A" }}>{L[modal]}</div>
+              <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
+                {mInfo.entry
+                  ? (lang === "es"
+                      ? `Automático: entró el ${mInfo.entry}${mInfo.exit ? ` · salió el ${mInfo.exit}` : " · aún en esta fase"}`
+                      : `Automatic: entered ${mInfo.entry}${mInfo.exit ? ` · left ${mInfo.exit}` : " · still in this phase"}`)
+                  : (lang === "es" ? "Sin registro automático — fija el rango manualmente." : "No automatic record — set the range manually.")}
+              </div>
+            </div>
+            <div style={{ padding: "16px 18px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <label className="caption" style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--text-secondary, #475569)", fontWeight: 600 }}>
+                {lang === "es" ? "Fecha inicio" : "Start date"}
+                <input className="input tabular-nums" type="date" value={mStart}
+                       onChange={(ev) => setMStart(ev.target.value)} disabled={saving}
+                       style={{ padding: "6px 8px", fontSize: 13 }}/>
+              </label>
+              <label className="caption" style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--text-secondary, #475569)", fontWeight: 600 }}>
+                {lang === "es" ? "Fecha fin" : "End date"}
+                <input className="input tabular-nums" type="date" value={mEnd}
+                       onChange={(ev) => setMEnd(ev.target.value)} disabled={saving}
+                       style={{ padding: "6px 8px", fontSize: 13 }}/>
+              </label>
+              <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "8px 0", borderRadius: 10, background: "rgba(0,178,134,0.07)", border: "1px solid rgba(0,178,134,0.25)" }}>
+                <span className="tabular-nums" style={{ fontSize: 20, fontWeight: 800, color: "#0B1E3A" }}>
+                  {modalDays != null ? modalDays : "—"}
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary, #475569)", marginLeft: 6 }}>
+                  {lang === "es" ? "días en esta fase" : "days in this phase"}
+                </span>
+                {modalDays == null && (mStart || mEnd) && (
+                  <div className="caption" style={{ color: "#D64545", marginTop: 2 }}>
+                    {lang === "es" ? "Rango inválido — fin debe ser ≥ inicio" : "Invalid range — end must be ≥ start"}
+                  </div>
+                )}
+              </div>
+              {error && (
+                <div className="caption" style={{ gridColumn: "1 / -1", color: "#D64545", textAlign: "center" }}>{error}</div>
+              )}
+            </div>
+            <div style={{ padding: "12px 18px", borderTop: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              {mInfo.override ? (
+                <button className="btn btn-ghost btn-xs" disabled={saving}
+                        onClick={() => save(modal, null)}
+                        style={{ color: "#D64545", fontSize: 12 }}>
+                  {lang === "es" ? "Quitar manual" : "Clear manual"}
+                </button>
+              ) : <span/>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-ghost" disabled={saving} onClick={() => setModal(null)} style={{ fontSize: 13 }}>
+                  {lang === "es" ? "Cancelar" : "Cancel"}
+                </button>
+                <button className="btn"
+                        disabled={saving || modalDays == null}
+                        onClick={() => save(modal, { start: mStart, end: mEnd })}
+                        style={{
+                          fontSize: 13, fontWeight: 700, padding: "6px 16px", borderRadius: 8,
+                          background: "#0B1E3A", color: "#fff", border: "1.5px solid #0B1E3A",
+                          opacity: saving || modalDays == null ? 0.6 : 1,
+                          cursor: saving || modalDays == null ? "not-allowed" : "pointer",
+                        }}>
+                  {saving ? (lang === "es" ? "Guardando…" : "Saving…") : (lang === "es" ? "Guardar" : "Save")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

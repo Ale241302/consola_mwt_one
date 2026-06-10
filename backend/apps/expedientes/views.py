@@ -1015,6 +1015,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
         if not isinstance(data, dict):
             return Response({"detail": "payload debe ser objeto {FASE: dias}"}, status=400)
 
+        import datetime as _dt
+
         current = dict(exp.phase_durations_json or {})
         for k, v in data.items():
             key = str(k).strip().upper()
@@ -1023,6 +1025,23 @@ class ExpedienteViewSet(viewsets.ViewSet):
             if v is None or v == "":
                 current.pop(key, None)
                 continue
+            # Sprint 2026-06-10 (rev2) · rango de fechas {start, end}:
+            # el modal del frontend manda fechas ISO; los días se calculan
+            # aquí (end - start) y se persisten junto con el rango.
+            if isinstance(v, dict):
+                try:
+                    d0 = _dt.date.fromisoformat(str(v.get("start") or "").strip())
+                    d1 = _dt.date.fromisoformat(str(v.get("end") or "").strip())
+                except (TypeError, ValueError):
+                    return Response({"detail": f"fechas inválidas para {key} (YYYY-MM-DD)"}, status=400)
+                days = (d1 - d0).days
+                if days < 0:
+                    return Response({"detail": f"fecha fin anterior al inicio en {key}"}, status=400)
+                if days > 365:
+                    return Response({"detail": f"rango fuera de límite (365d) en {key}"}, status=400)
+                current[key] = {"start": d0.isoformat(), "end": d1.isoformat(), "days": days}
+                continue
+            # Legacy: número de días directo.
             try:
                 days = float(v)
             except (TypeError, ValueError):

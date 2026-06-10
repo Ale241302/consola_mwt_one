@@ -311,7 +311,10 @@ function buildNormalized(item, recipient, lang, fileBase) {
   const phaseOverRaw = payload.phase_durations || {};
   const phaseOver = {};
   Object.keys(phaseOverRaw).forEach((k) => {
-    const v = Number(phaseOverRaw[k]);
+    const raw = phaseOverRaw[k];
+    // Formatos soportados: número legacy (días) u objeto {start, end, days}
+    // (modal de fechas — los días los calcula el backend).
+    const v = raw && typeof raw === "object" ? Number(raw.days) : Number(raw);
     if (isFinite(v) && v >= 0) phaseOver[String(k).toUpperCase()] = v;
   });
 
