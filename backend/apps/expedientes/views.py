@@ -1080,13 +1080,15 @@ class ExpedienteViewSet(viewsets.ViewSet):
         order = ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO",
                  "TRANSITO", "EN_DESTINO", "CERRADO"]
         with connection.cursor() as c:
+            # OJO: sin filtrar phase_to IS NOT NULL — el evento de CREACIÓN
+            # trae phase_to NULL y lo necesitamos para sintetizar REGISTRO
+            # (paridad con el Cronograma del frontend).
             c.execute(f"""
                 SELECT el.aggregate_id::text, el.phase_to, el.created_at
                 FROM pipeline.event_log el
                 JOIN expedientes.expediente e ON e.id = el.aggregate_id
                 WHERE el.aggregate_type = 'expediente'
                   AND el.is_active = TRUE
-                  AND el.phase_to IS NOT NULL
                   AND e.is_active = TRUE
                   {client_sql}
                 ORDER BY el.aggregate_id, el.created_at
@@ -1106,15 +1108,25 @@ class ExpedienteViewSet(viewsets.ViewSet):
             modo_by_exp[eid] = "Aereo" if fm == "AIR" else ("Maritimo" if fm == "SEA" else "")
             over_by_exp[eid] = pdj if isinstance(pdj, dict) else {}
 
-        # Primera entrada a cada fase por expediente.
+        # Primera entrada a cada fase por expediente + evento más antiguo.
         entries = {}
+        first_ev = {}
         for eid, fase, at in ev_rows:
+            if eid not in first_ev or at < first_ev[eid]:
+                first_ev[eid] = at
             fase = (fase or "").upper()
             if fase not in order:
                 continue
             d = entries.setdefault(eid, {})
             if fase not in d or at < d[fase]:
                 d[fase] = at
+        # REGISTRO sintético: el evento de creación trae phase_to NULL, así
+        # que sin esto REGISTRO nunca genera muestra (el frontend ya hace
+        # este mismo fallback con el evento más antiguo).
+        for eid, at0 in first_ev.items():
+            d = entries.setdefault(eid, {})
+            if "REGISTRO" not in d:
+                d["REGISTRO"] = at0
 
         def _ov_days(ov):
             if isinstance(ov, dict):
