@@ -115,17 +115,6 @@ export default function Cronograma() {
     [scopedItems, clienteId, estado, qpExp]
   );
 
-  // Orden cronológico del Gantt: el expediente que arranca antes va arriba
-  // (el listado de la API viene "más reciente primero").
-  const ordered = useMemo(() => {
-    const startTs = (it) => {
-      const segs = computeSegments(it, avgs);
-      const first = segs.real[0] || segs.est[0];
-      return first ? first.a.getTime() : Infinity;
-    };
-    return [...visibles].sort((a, b) => startTs(a) - startTs(b));
-  }, [visibles, avgs]);
-
   // Filas para runExpedienteExport (forma del listado de /expedientes),
   // construidas desde las filas crudas ya cargadas — sin re-fetchear.
   const exportRows = useMemo(() => scopedItems.map((it) => ({
@@ -156,6 +145,18 @@ export default function Cronograma() {
 
   const avgs = useMemo(() => buildAvgs(cliStats, statsGlobal), [cliStats, statsGlobal]);
   const skuStats = useMemo(() => buildSkuStats(visibles), [visibles]);
+
+  // Orden cronológico del Gantt: el expediente que arranca antes va arriba
+  // (el listado de la API viene "más reciente primero"). Vive DESPUÉS de
+  // `avgs` — referenciarlo antes dispara TDZ en producción.
+  const ordered = useMemo(() => {
+    const startTs = (it) => {
+      const segs = computeSegments(it, avgs);
+      const first = segs.real[0] || segs.est[0];
+      return first ? first.a.getTime() : Infinity;
+    };
+    return [...visibles].sort((a, b) => startTs(a) - startTs(b));
+  }, [visibles, avgs]);
   const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
 
   const labelOf = useCallback((it) => {
