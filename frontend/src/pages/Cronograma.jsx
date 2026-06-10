@@ -12,13 +12,17 @@
 // =====================================================================
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useOutletContext, useSearchParams } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import { useRole } from "../context/RoleContext.jsx";
 import GanttChart from "../components/cronograma/GanttChart.jsx";
 import PhaseStatsCards from "../components/cronograma/PhaseStatsCards.jsx";
 import ExpedienteSkuModal from "../components/cronograma/ExpedienteSkuModal.jsx";
 import {
+  KpiStrip, UpcomingDeliveries, PipelineBoard, ExpedientesTable,
+} from "../components/cronograma/CronogramaExtras.jsx";
+import {
   loadCronograma, loadClientStats, buildAvgs, buildSkuStats,
-  computeSegments, itemPhaseDur, dayDiff, fmtShort,
+  computeSegments, itemPhaseDur, projectedDelivery, dayDiff, fmtShort,
   STAGES, STAGE_LABELS,
 } from "../lib/cronogramaData.js";
 
@@ -40,6 +44,7 @@ export default function Cronograma() {
   const [statsGlobal, setStatsGlobal] = useState(null);
   const [cliStats, setCliStats] = useState(null);
   const [groupBy, setGroupBy] = useState("EXPEDIENTE");
+  const [tab, setTab] = useState("GANTT");
   const [clienteId, setClienteId] = useState(params.get("cliente") || "ALL");
   const [estado, setEstado] = useState((params.get("estado") || "ALL").toUpperCase());
   const [modalItem, setModalItem] = useState(null);
@@ -113,6 +118,12 @@ export default function Cronograma() {
         bars: [{ ...b, tip: `${L[b.s]}${b.est ? " (est.)" : ""}: ${fmtShort(b.a, lang)} → ${fmtShort(b.b, lang)} · ${days}d` }],
       };
     });
+    // Barra resumen del padre: UNA sola barra continua y delgada (un solo
+    // color: mint si entregado, navy si en proceso). Las fases por color
+    // viven en las sub-filas al desglosar.
+    const spanA = all.length ? all[0].a : null;
+    const spanB = all.length ? all[all.length - 1].b : null;
+    const delivered = it.estado === "EN_DESTINO" || it.estado === "CERRADO";
     return {
       key: `${keyPrefix}${it.id}`,
       label: labelOf(it),
@@ -123,11 +134,16 @@ export default function Cronograma() {
         it.operadoPorMwt ? "MWT" : (lang === "es" ? "Cliente" : "Client"),
         it.modo || (lang === "es" ? "Aéreo (sup.)" : "Air (assumed)"),
       ].filter(Boolean).join(" · "),
-      bars: all.map((b) => ({
-        ...b,
-        tip: `${L[b.s]}${b.est ? " (est.)" : ""}: ${fmtShort(b.a, lang)} → ${fmtShort(b.b, lang)}`,
-      })),
-      summary: false,
+      bars: spanA ? [{
+        s: it.estado,
+        a: spanA,
+        b: spanB,
+        color: delivered ? "#13B98A" : "#013A57",
+        est: false,
+        tip: `${labelOf(it)}: ${fmtShort(spanA, lang)} → ${fmtShort(spanB, lang)}`
+          + (segs.est.length ? (lang === "es" ? " · llegada estimada" : " · estimated arrival") : ""),
+      }] : [],
+      summary: true,
       onLabelClick: () => setModalItem(it),
       children: phaseChildren,
     };
@@ -256,24 +272,91 @@ export default function Cronograma() {
         </div>
       )}
 
-      {!loading && !error && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div className="card card-pad-md">
-            <h4 style={{ margin: "0 0 10px", color: "#013A57", fontSize: 13, fontWeight: 800 }}>
-              {lang === "es"
-                ? `CRONOGRAMA — FASES REALES Y PROYECCIÓN (${visibles.length} EXPEDIENTES)`
-                : `TIMELINE — REAL PHASES & PROJECTION (${visibles.length} FILES)`}
-            </h4>
-            <GanttChart rows={rows} lang={lang}/>
-          </div>
+      {!loading && !error && (() => {
+        // Dataset enriquecido compartido por todas las vistas.
+        const enriched = visibles.map((it) => {
+          const segs = computeSegments(it, avgs);
+          return { it, segs, delivery: projectedDelivery(it, segs) };
+        });
+        const TABS = [
+          { id: "GANTT", es: "Cronograma", en: "Timeline" },
+          { id: "ENTREGAS", es: "Próximas entregas", en: "Upcoming" },
+          { id: "PIPELINE", es: "Pipeline", en: "Pipeline" },
+          { id: "TABLA", es: "Expedientes", en: "Files" },
+        ];
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <KpiStrip enriched={enriched} lang={lang}/>
 
-          <PhaseStatsCards
-            avgs={avgs}
-            skuStats={skuStats}
-            lang={lang}
-            clienteLabel={clienteId !== "ALL" ? (clientes.find((c) => c.id === clienteId) || {}).label || "" : ""}/>
-        </div>
-      )}
+            {/* Tabs */}
+            <div style={{ display: "inline-flex", gap: 2, background: "var(--surface-alt, #E8EDF3)", borderRadius: 10, padding: 4, alignSelf: "flex-start" }}>
+              {TABS.map((t) => (
+                <button key={t.id} onClick={() => setTab(t.id)}
+                        style={{
+                          position: "relative", padding: "6px 16px", fontSize: 12.5, fontWeight: 700,
+                          border: "none", borderRadius: 8, cursor: "pointer",
+                          background: tab === t.id ? "#fff" : "transparent",
+                          color: tab === t.id ? "#013A57" : "var(--text-secondary, #475569)",
+                          boxShadow: tab === t.id ? "0 1px 4px rgba(1,58,87,0.12)" : "none",
+                          transition: "all .18s ease",
+                        }}>
+                  {lang === "es" ? t.es : t.en}
+                </button>
+              ))}
+            </div>
+
+            <AnimatePresence mode="wait">
+              <motion.div key={tab}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -6 }}
+                          transition={{ duration: 0.18 }}>
+                {tab === "GANTT" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                    <div className="card card-pad-md">
+                      <h4 style={{ margin: "0 0 10px", color: "#013A57", fontSize: 13, fontWeight: 800 }}>
+                        {lang === "es"
+                          ? `CRONOGRAMA — FASES REALES Y PROYECCIÓN (${visibles.length} EXPEDIENTES)`
+                          : `TIMELINE — REAL PHASES & PROJECTION (${visibles.length} FILES)`}
+                      </h4>
+                      <GanttChart rows={rows} lang={lang}/>
+                    </div>
+                    <PhaseStatsCards
+                      avgs={avgs}
+                      skuStats={skuStats}
+                      lang={lang}
+                      clienteLabel={clienteId !== "ALL" ? (clientes.find((c) => c.id === clienteId) || {}).label || "" : ""}/>
+                  </div>
+                )}
+                {tab === "ENTREGAS" && (
+                  <div className="card card-pad-md">
+                    <h4 style={{ margin: "0 0 12px", color: "#013A57", fontSize: 13, fontWeight: 800 }}>
+                      {lang === "es" ? "PRÓXIMAS ENTREGAS" : "UPCOMING DELIVERIES"}
+                    </h4>
+                    <UpcomingDeliveries enriched={enriched} lang={lang} labelOf={labelOf} onOpen={setModalItem}/>
+                  </div>
+                )}
+                {tab === "PIPELINE" && (
+                  <div className="card card-pad-md">
+                    <h4 style={{ margin: "0 0 12px", color: "#013A57", fontSize: 13, fontWeight: 800 }}>
+                      {lang === "es" ? "PIPELINE POR ESTADO" : "PIPELINE BY STATE"}
+                    </h4>
+                    <PipelineBoard enriched={enriched} lang={lang} labelOf={labelOf} onOpen={setModalItem}/>
+                  </div>
+                )}
+                {tab === "TABLA" && (
+                  <div className="card card-pad-md">
+                    <h4 style={{ margin: "0 0 12px", color: "#013A57", fontSize: 13, fontWeight: 800 }}>
+                      {lang === "es" ? "EXPEDIENTES" : "FILES"}
+                    </h4>
+                    <ExpedientesTable enriched={enriched} lang={lang} labelOf={labelOf} onOpen={setModalItem}/>
+                  </div>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        );
+      })()}
 
       {modalItem && (
         <ExpedienteSkuModal item={modalItem} isClient={isClient} lang={lang}

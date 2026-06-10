@@ -34,11 +34,18 @@ export const DEF_DUR = {
   Maritimo: { REGISTRO: 3, PRODUCCION: 20, PREPARACION: 7, DESPACHO: 3, TRANSITO: 35, EN_DESTINO: 7 },
 };
 
-async function fetchJson(path) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function fetchJson(path, attempt = 0) {
   const token = getToken();
   const resp = await fetch(`${API_BASE}${path}`, {
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   });
+  // 429 (rate limit nginx/DRF): backoff exponencial suave, hasta 3 reintentos.
+  if (resp.status === 429 && attempt < 3) {
+    await sleep(700 * (attempt + 1));
+    return fetchJson(path, attempt + 1);
+  }
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${path}`);
   return resp.json();
 }
@@ -134,16 +141,24 @@ export async function loadCronograma() {
   const list = await fetchJson("/expedientes/");
   const rows = (Array.isArray(list) ? list : (list && list.results) || [])
     .filter((r) => r && r.is_active !== false);
-  const items = await Promise.all(rows.map(async (r) => {
-    const [payload, events, pd] = await Promise.all([
-      fetchJson(`/expedientes/${r.id}/factura-payload/`).catch(() => null),
-      fetchJson(`/expedientes/${r.id}/events/?limit=200`)
-        .then((v) => (Array.isArray(v) ? v : (v && v.results) || [])).catch(() => []),
-      fetchJson(`/expedientes/${r.id}/phase-durations/`)
-        .then((v) => (v && v.phase_durations) || {}).catch(() => ({})),
-    ]);
-    return normalizeItem(r, payload, events, pd);
-  }));
+  // Carga por LOTES (3 expedientes a la vez = máx. 9 requests paralelos)
+  // para no disparar el rate-limit (429) con muchos expedientes.
+  const items = [];
+  const BATCH = 3;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const slice = rows.slice(i, i + BATCH);
+    const part = await Promise.all(slice.map(async (r) => {
+      const [payload, events, pd] = await Promise.all([
+        fetchJson(`/expedientes/${r.id}/factura-payload/`).catch(() => null),
+        fetchJson(`/expedientes/${r.id}/events/?limit=200`)
+          .then((v) => (Array.isArray(v) ? v : (v && v.results) || [])).catch(() => []),
+        fetchJson(`/expedientes/${r.id}/phase-durations/`)
+          .then((v) => (v && v.phase_durations) || {}).catch(() => ({})),
+      ]);
+      return normalizeItem(r, payload, events, pd);
+    }));
+    items.push(...part);
+  }
   const statsGlobal = await fetchJson("/expedientes/phase-stats/")
     .then((v) => (v && v.phase_stats) || null).catch(() => null);
   return { items, statsGlobal };
@@ -285,6 +300,21 @@ export function itemPhaseDur(item, s) {
     if (a && b) return { days: dayDiff(a, b), manual: false };
   }
   return null;
+}
+
+/** Entrega proyectada: llegada real (entrada a EN_DESTINO) o estimada
+ *  (inicio proyectado de EN_DESTINO en la cadena de estimación). */
+export function projectedDelivery(item, segs) {
+  const delivered = item.estado === "EN_DESTINO" || item.estado === "CERRADO";
+  if (delivered) {
+    const ed = (segs.real || []).find((x) => x.s === "EN_DESTINO");
+    const date = ed ? ed.a : (segs.real.length ? segs.real[segs.real.length - 1].b : null);
+    return { date, est: false, done: true };
+  }
+  const ed = (segs.est || []).find((x) => x.s === "EN_DESTINO");
+  if (ed) return { date: ed.a, est: true, done: false };
+  if (segs.est && segs.est.length) return { date: segs.est[segs.est.length - 1].b, est: true, done: false };
+  return { date: null, est: true, done: false };
 }
 
 /** Promedios por SKU: cada fase promedia los expedientes que contienen el SKU. */

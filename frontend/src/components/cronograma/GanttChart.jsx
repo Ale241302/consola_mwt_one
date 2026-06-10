@@ -10,6 +10,7 @@
 //     barra resumen (summary) delgada. Línea HOY. Tooltips nativos.
 // ─────────────────────────────────────────────────────────────
 import React, { useMemo, useRef, useState, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   STAGE_COLORS, addDays, today, fmtShort,
 } from "../../lib/cronogramaData.js";
@@ -18,7 +19,7 @@ const DAY = 86400000;
 const LABEL_W = 280;
 
 function barStyle(b, h) {
-  const color = STAGE_COLORS[b.s] || "var(--brand-primary, #0B1E3A)";
+  const color = b.color || STAGE_COLORS[b.s] || "var(--brand-primary, #0B1E3A)";
   const base = {
     position: "absolute", top: "50%", transform: "translateY(-50%)",
     height: h, borderRadius: h / 2, background: color,
@@ -39,8 +40,22 @@ function barStyle(b, h) {
 export default function GanttChart({ rows = [], lang = "es" }) {
   const [pxDay, setPxDay] = useState(16);
   const [expanded, setExpanded] = useState(() => new Set());
+  // Tooltip flotante animado (sigue al mouse).
+  const [tip, setTip] = useState(null);
   const scrollRef = useRef(null);
   const dragRef = useRef(null);
+
+  const tipHandlers = useCallback((text) => ({
+    onMouseEnter: (e) => {
+      setTip({ x: e.clientX, y: e.clientY, text });
+      e.currentTarget.style.filter = "brightness(1.15) saturate(1.05)";
+    },
+    onMouseMove: (e) => setTip((t) => (t ? { ...t, x: e.clientX, y: e.clientY } : t)),
+    onMouseLeave: (e) => {
+      setTip(null);
+      e.currentTarget.style.filter = "";
+    },
+  }), []);
 
   const { min, max } = useMemo(() => {
     let mn = today(), mx = addDays(today(), 7);
@@ -205,21 +220,22 @@ export default function GanttChart({ rows = [], lang = "es" }) {
                     if (!b.a || !b.b) return null;
                     const l = x(b.a);
                     const w = Math.max(0, x(b.b) - l);
-                    const tip = b.tip || "";
+                    const tipText = b.tip || "";
                     if (w < 8) {
                       return (
-                        <span key={i} title={tip} style={{
+                        <span key={i} {...tipHandlers(tipText)} style={{
                           position: "absolute", left: l, top: "50%", transform: "translate(-50%, -50%)",
                           width: 11, height: 11, borderRadius: "50%",
-                          background: STAGE_COLORS[b.s] || "#0B1E3A",
+                          background: b.color || STAGE_COLORS[b.s] || "#0B1E3A",
                           boxShadow: "0 0 0 2.5px #fff, 0 1px 4px rgba(1,58,87,0.3)",
                           opacity: b.est ? 0.55 : 1,
+                          transition: "filter .15s ease",
                         }}/>
                       );
                     }
                     return (
-                      <span key={i} title={tip}
-                            style={{ ...barStyle(b, r.summary ? 5 : barH), left: l, width: w }}/>
+                      <span key={i} {...tipHandlers(tipText)}
+                            style={{ ...barStyle(b, r.summary ? 4 : barH), left: l, width: w }}/>
                     );
                   })}
                 </div>
@@ -240,6 +256,25 @@ export default function GanttChart({ rows = [], lang = "es" }) {
           </div>
         </div>
       </div>
+
+      {/* Tooltip flotante */}
+      <AnimatePresence>
+        {tip && (
+          <motion.div
+            initial={{ opacity: 0, y: 6, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.97 }}
+            transition={{ duration: 0.14 }}
+            style={{
+              position: "fixed", left: tip.x + 14, top: tip.y - 38, zIndex: 2000,
+              pointerEvents: "none", background: "#013A57", color: "#fff",
+              fontSize: 11.5, fontWeight: 600, padding: "6px 11px", borderRadius: 8,
+              boxShadow: "0 10px 28px rgba(1,58,87,0.4)", whiteSpace: "nowrap",
+            }}>
+            {tip.text}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Leyenda */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 10, alignItems: "center" }}>
