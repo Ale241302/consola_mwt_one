@@ -750,15 +750,8 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
         <div className="card-title">{lang==='es' ? 'Mis Órdenes' : 'My Orders'}</div>
         <div style={{display:'flex', alignItems:'center', gap:12}}>
           <span className="caption">{ocs.length} {lang==='es'?'órdenes':'orders'}</span>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => { setExportErr(null); setExportOpen(true); }}
-            style={{display:'inline-flex', alignItems:'center', gap:6}}
-          >
-            <IconDownload size={14}/>
-            {lang==='es' ? 'Exportar' : 'Export'}
-          </button>
+          {/* Sprint 2026-06-10 — botón Exportar retirado: el reporte vive
+              en /cronograma (vista React, item del sidebar). */}
           {/* CTA primaria para el cliente: subir una nueva OC.
               · Nunca decimos "Crear expediente" — eso es jerga interna MWT.
               · Lleva al CreateExpedienteWizard en modo CLIENT (3 pasos). */}
@@ -849,18 +842,8 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
           })}
         </tbody>
       </table>
-      <ExportExpedientesModal
-        open={exportOpen}
-        lang={lang}
-        isAdmin={false}
-        clients={clientOpts}
-        estados={Object.keys(CLIENT_STATUS_MAP).map((code) => ({ code, label: tr(lang, code) }))}
-        expedientes={expedientes}
-        loading={exporting}
-        error={exportErr || ""}
-        onConfirm={handlePortalExport}
-        onClose={() => { if (!exporting) { setExportOpen(false); setExportErr(null); } }}
-      />
+      {/* Sprint 2026-06-10 — modal de exportación retirado: el reporte
+          vive en /cronograma (vista React). */}
     </div>
   );
 }

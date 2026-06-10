@@ -536,7 +536,8 @@ export default function ScreenExpedientes() {
           <div className="page-subtitle">{pageSubtitle}</div>
         </div>
         <div className="flex gap-2">
-          <button className="btn btn-secondary" onClick={() => { setExportErr(null); setExportOpen(true); }}><IconDownload size={14}/>{tr(lang,'export')}</button>
+          {/* Sprint 2026-06-10 — botón Exportar retirado: el reporte vive
+              en /cronograma (vista React, item del sidebar). */}
           {/* "+ Crear Expediente" → capability create_expediente (CEO-ONLY).
               ART-01 se origina siempre desde MWT-Factory, nunca desde Portal B2B. */}
           {can('create_expediente') && (
@@ -1166,19 +1167,8 @@ export default function ScreenExpedientes() {
       )}
       </>)}{/* fin del bloque viewMode === 'table' */}
 
-      {/* Sprint 2026-06-04 · Modal de exportación de expedientes (.html). */}
-      <ExportExpedientesModal
-        open={exportOpen}
-        lang={lang}
-        isAdmin={isAdmin}
-        clients={clientOpts.filter((c) => apiExpedientes.some((e) => e.client_id === c.id))}
-        estados={STATES.map((s) => ({ code: s, label: tr(lang, s) }))}
-        expedientes={apiExpedientes}
-        loading={exporting}
-        error={exportErr || ""}
-        onConfirm={handleExportConfirm}
-        onClose={() => { if (!exporting) { setExportOpen(false); setExportErr(null); } }}
-      />
+      {/* Sprint 2026-06-10 — modal de exportación retirado: el reporte
+          vive en /cronograma (vista React). */}
 
       {/* Sprint 2026-05-03 v4 · Modal de confirmación de bulk delete.
           Replica el patrón exacto de Productos.jsx:
