@@ -121,6 +121,23 @@ async function fetchPhaseDurations(expedienteId) {
 }
 
 /**
+ * Promedios GLOBALES de días por fase/modo — historial completo (o del
+ * cliente filtrado), no sólo el subconjunto exportado. El Cronograma los
+ * prioriza sobre las muestras locales del export.
+ */
+async function fetchPhaseStats(clienteId) {
+  try {
+    const qs = clienteId && clienteId !== "ALL"
+      ? `?client=${encodeURIComponent(clienteId)}`
+      : "";
+    const r = await fetchJson(`/expedientes/phase-stats/${qs}`);
+    return (r && r.phase_stats) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Resuelve el conjunto de expedientes objetivo según los filtros.
  * @param {Array} expedientes  filas cargadas en la pantalla (mapExpedienteFromApi)
  * @param {Object} f  { expedienteUuid, clienteId, estado }
@@ -259,11 +276,16 @@ export async function runExpedienteExport({
   const fileBase =
     typeof window !== "undefined" && window.location ? window.location.origin : "";
 
+  // Estadísticas globales por fase/modo (historial completo del cliente o
+  // de toda la operación) para las cards y la proyección del Cronograma.
+  const phaseStats = await fetchPhaseStats(filters.clienteId);
+
   const html = buildExpedientesExportHtml({
     items,
     audience,
     lang,
     fileBase,
+    phaseStats,
     filters: {
       clienteLabel: filters.clienteLabel || "",
       estadoLabel: filters.estadoLabel || "",

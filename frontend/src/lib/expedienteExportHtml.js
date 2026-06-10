@@ -543,6 +543,20 @@ function clientRuntime() {
           : null;
       });
     });
+    // Estadísticas GLOBALES del backend (historial completo / por cliente):
+    // tienen prioridad sobre las muestras del subconjunto exportado, para
+    // que dos exports del mismo cliente proyecten con los mismos tiempos.
+    var GLOBAL = META.phaseStats || null;
+    if (GLOBAL) {
+      ["Aereo", "Maritimo"].forEach(function (m) {
+        var g = GLOBAL[m] || {};
+        STAGES.forEach(function (s) {
+          if (g[s] && g[s].avg != null && isFinite(Number(g[s].avg))) {
+            out[m][s] = { avg: Number(g[s].avg), n: Number(g[s].n) || 0 };
+          }
+        });
+      });
+    }
     _avgCache = out;
     return out;
   }
@@ -757,7 +771,7 @@ function clientRuntime() {
         return '<div class="stc st-b-' + s + '"><div class="stc-n">' + n + '<span class="stc-u">d</span>' + badge + '</div><div class="stc-l">' + SLAB[s] + "</div></div>";
       }).join("");
       var srcTxt = anyReal
-        ? " · estimado con los expedientes de este export" + (META.cliente ? " (cliente: " + esc(META.cliente) + ")" : "")
+        ? " · estimado con el historial" + (META.cliente ? " del cliente " + esc(META.cliente) : " de la operación")
         : " · estimado por defecto (sin historial)";
       html += '<div class="stsec"><div class="stsec-h"><span class="tag ' + cls + '">' + lab + '</span><span class="stsec-t">ciclo completo ≈ <b>' + Math.round(total) + ' días</b>' + srcTxt + "</span></div><div class=\"stgrid\">" + cards + "</div></div>";
     });
@@ -2083,11 +2097,18 @@ export function buildExpedientesExportHtml({
   filters = {},
   fileBase = "",
   generatedBy = "",
+  phaseStats = null,
 }) {
   const data = items.map((it) => buildNormalized(it, audience, lang, fileBase));
   const dataJson = JSON.stringify(data).replace(/</g, "\\u003c");
   const recipientLabel = audience === INVOICE_AUDIENCE.MWT ? "Admin / Interno (MWT)" : "Cliente";
-  const meta = { recipient: recipientLabel, cliente: filters.clienteLabel || "" };
+  const meta = {
+    recipient: recipientLabel,
+    cliente: filters.clienteLabel || "",
+    // Promedios globales por fase/modo (backend phase-stats) — el runtime
+    // los prioriza sobre las muestras del subconjunto exportado.
+    phaseStats: phaseStats || null,
+  };
   const now = new Date();
   const fecha = now.toLocaleString("es-CR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 

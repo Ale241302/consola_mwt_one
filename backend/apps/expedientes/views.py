@@ -1054,6 +1054,114 @@ class ExpedienteViewSet(viewsets.ViewSet):
         exp.save(update_fields=["phase_durations_json", "updated_at"])
         return Response({"phase_durations": current})
 
+    # ── Estadísticas globales de días por fase (Sprint 2026-06-10) ───
+    # GET /api/expedientes/phase-stats/[?client=<uuid>]
+    # Promedios calculados sobre el HISTORIAL COMPLETO (EventLog), no sólo
+    # el subconjunto de un export: entrada a fase → entrada a la siguiente,
+    # con los overrides manuales (phase_durations_json) reemplazando la
+    # duración derivada de SU fase. Bucket por método de envío del
+    # expediente (freight_mode AIR→Aereo / SEA→Maritimo).
+    # Respuesta: {"phase_stats": {"Aereo": {"REGISTRO": {"avg": 5.2, "n": 3},
+    # ...}, "Maritimo": {...}}}
+    @action(detail=False, methods=["get"], url_path="phase-stats")
+    def phase_stats(self, request):
+        """Promedios globales de días por fase y método de envío."""
+        client = (request.query_params.get("client") or "").strip()
+        client_sql = ""
+        params = {}
+        if client:
+            try:
+                uuid.UUID(client)
+            except (TypeError, ValueError):
+                return Response({"detail": "client inválido"}, status=400)
+            client_sql = "AND e.client_id = %(client)s::uuid"
+            params["client"] = client
+
+        order = ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO",
+                 "TRANSITO", "EN_DESTINO", "CERRADO"]
+        with connection.cursor() as c:
+            c.execute(f"""
+                SELECT el.aggregate_id::text, el.phase_to, el.created_at
+                FROM pipeline.event_log el
+                JOIN expedientes.expediente e ON e.id = el.aggregate_id
+                WHERE el.aggregate_type = 'expediente'
+                  AND el.is_active = TRUE
+                  AND el.phase_to IS NOT NULL
+                  AND e.is_active = TRUE
+                  {client_sql}
+                ORDER BY el.aggregate_id, el.created_at
+            """, params)
+            ev_rows = c.fetchall()
+            c.execute(f"""
+                SELECT e.id::text, COALESCE(e.freight_mode, ''),
+                       COALESCE(e.phase_durations_json, '{{}}'::jsonb)
+                FROM expedientes.expediente e
+                WHERE e.is_active = TRUE {client_sql}
+            """, params)
+            exp_rows = c.fetchall()
+
+        modo_by_exp, over_by_exp = {}, {}
+        for eid, fm, pdj in exp_rows:
+            fm = (fm or "").upper()
+            modo_by_exp[eid] = "Aereo" if fm == "AIR" else ("Maritimo" if fm == "SEA" else "")
+            over_by_exp[eid] = pdj if isinstance(pdj, dict) else {}
+
+        # Primera entrada a cada fase por expediente.
+        entries = {}
+        for eid, fase, at in ev_rows:
+            fase = (fase or "").upper()
+            if fase not in order:
+                continue
+            d = entries.setdefault(eid, {})
+            if fase not in d or at < d[fase]:
+                d[fase] = at
+
+        def _ov_days(ov):
+            if isinstance(ov, dict):
+                try:
+                    return float(ov.get("days"))
+                except (TypeError, ValueError):
+                    return None
+            if ov in (None, ""):
+                return None
+            try:
+                return float(ov)
+            except (TypeError, ValueError):
+                return None
+
+        acc = {"Aereo": {}, "Maritimo": {}}
+        all_ids = set(list(entries.keys()) + list(over_by_exp.keys()))
+        for eid in all_ids:
+            modo = modo_by_exp.get(eid) or ""
+            if modo not in acc:
+                continue
+            fases = entries.get(eid) or {}
+            seq = [s for s in order if s in fases]
+            over = over_by_exp.get(eid) or {}
+            done = set()
+            # Overrides manuales: cuentan como muestra de SU fase.
+            for fase, ov in over.items():
+                fase = str(fase).upper()
+                days = _ov_days(ov)
+                if fase in order and days is not None and days >= 0:
+                    acc[modo].setdefault(fase, []).append(days)
+                    done.add(fase)
+            # Transiciones cerradas del EventLog (sin override).
+            for i in range(len(seq) - 1):
+                fase = seq[i]
+                if fase in done:
+                    continue
+                delta = fases[seq[i + 1]] - fases[fase]
+                acc[modo].setdefault(fase, []).append(
+                    max(0.0, delta.total_seconds() / 86400.0))
+
+        out = {
+            m: {f: {"avg": round(sum(v) / len(v), 2), "n": len(v)}
+                for f, v in acc[m].items() if v}
+            for m in acc
+        }
+        return Response({"phase_stats": out})
+
     @action(detail=False, methods=["get"])
     def kanban(self, request):
         """Vista kanban: expedientes agrupados por fase (estado).
