@@ -105,6 +105,22 @@ async function fetchEvents(expedienteId) {
 }
 
 /**
+ * Overrides manuales de días por fase — mismo endpoint que usa el detalle
+ * del expediente. Fallback/refuerzo del campo `phase_durations` del
+ * factura-payload (cubre cualquier mismatch de ids en el backend).
+ */
+async function fetchPhaseDurations(expedienteId) {
+  try {
+    const r = await fetchJson(
+      `/expedientes/${encodeURIComponent(expedienteId)}/phase-durations/`,
+    );
+    return (r && r.phase_durations) || {};
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Resuelve el conjunto de expedientes objetivo según los filtros.
  * @param {Array} expedientes  filas cargadas en la pantalla (mapExpedienteFromApi)
  * @param {Object} f  { expedienteUuid, clienteId, estado }
@@ -214,6 +230,23 @@ export async function runExpedienteExport({
   );
   evRes.forEach((r, i) => {
     items[i].events = r.status === "fulfilled" ? r.value : [];
+  });
+
+  // Overrides manuales de días por fase: refuerza/llena payload.phase_durations
+  // con el endpoint dedicado (el factura-payload puede venir vacío si el id
+  // del export no matchea directo en el backend).
+  const pdRes = await Promise.allSettled(
+    items.map((it) => fetchPhaseDurations(it.expedienteId)),
+  );
+  pdRes.forEach((r, i) => {
+    const pd = r.status === "fulfilled" ? r.value : {};
+    if (pd && Object.keys(pd).length) {
+      const base = (items[i].payload && items[i].payload.phase_durations) || {};
+      items[i].payload = {
+        ...(items[i].payload || {}),
+        phase_durations: { ...base, ...pd },
+      };
+    }
   });
 
   const fileBase =

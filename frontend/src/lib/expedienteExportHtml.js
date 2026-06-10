@@ -530,6 +530,23 @@ function clientRuntime() {
       real.push({ s: hist[i].s, a: st, b: en, open: open });
     }
     if (!real.length) return { real: [], est: [] };
+    // Si hay overrides manuales, la cascada real se RE-DIBUJA con esas
+    // duraciones (la gráfica refleja los días fijados por el admin):
+    // cada fase dura override ?? días reales, encadenada desde la primera
+    // entrada real.
+    var ovAll0 = e.phaseOver || {};
+    if (Object.keys(ovAll0).length) {
+      var cursor = real[0].a;
+      var lastIdx = real.length - 1;
+      real = real.map(function (sg, idx) {
+        var realDays = Math.max(0, (sg.b - sg.a) / 86400000);
+        var d = ovAll0[sg.s] != null ? Number(ovAll0[sg.s]) : realDays;
+        var a3 = cursor;
+        var b3 = addDays(cursor, Math.max(0, Math.round(d)));
+        cursor = b3;
+        return { s: sg.s, a: a3, b: b3, open: sg.open && idx === lastIdx };
+      });
+    }
     var avg = stageAvgs();
     var modo = e.modo === "Maritimo" ? "Maritimo" : "Aereo";
     var ovAll = e.phaseOver || {};

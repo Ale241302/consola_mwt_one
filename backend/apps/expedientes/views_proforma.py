@@ -561,22 +561,29 @@ def factura_payload(request, expediente_id):
 
     landed = fob + extra
 
-    # Sprint 2026-06-10 · overrides manuales de días por fase (admin/CEO).
-    # `pid` puede ser expediente_id u oc_id (página OC-céntrica): tomamos el
-    # expediente más reciente. El Cronograma del export los prioriza sobre
-    # la duración derivada del EventLog.
+    # Sprint 2026-06-10 (rev) · overrides manuales de días por fase.
+    # `pid` puede ser expediente_id u oc_id (página OC-céntrica). Además
+    # matcheamos por los expedientes REALES de las líneas resueltas
+    # (l.expediente_id) — cubre el caso en que el id del export no coincide
+    # 1:1 con expedientes.expediente.id/oc_id. Se prefiere el override
+    # NO-vacío más recientemente actualizado.
     phase_durations = {}
+    _line_exp_ids = sorted({str(r[9]) for r in rows if r[9]})
     with connection.cursor() as c:
         c.execute(
             """
             SELECT e.phase_durations_json
             FROM expedientes.expediente e
-            WHERE (e.id = %(id)s::uuid OR e.oc_id = %(id)s::uuid)
+            WHERE (e.id = %(id)s::uuid
+                   OR e.oc_id = %(id)s::uuid
+                   OR e.id = ANY(%(line_ids)s::uuid[]))
               AND e.is_active = TRUE
-            ORDER BY e.created_at DESC
+            ORDER BY (e.phase_durations_json IS NOT NULL
+                      AND e.phase_durations_json <> '{}'::jsonb) DESC,
+                     e.updated_at DESC
             LIMIT 1
             """,
-            {"id": pid},
+            {"id": pid, "line_ids": _line_exp_ids},
         )
         _pd_row = c.fetchone()
         if _pd_row and isinstance(_pd_row[0], dict):
