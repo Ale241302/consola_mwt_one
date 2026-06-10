@@ -533,19 +533,35 @@ function clientRuntime() {
     // Si hay overrides manuales, la cascada real se RE-DIBUJA con esas
     // duraciones (la gráfica refleja los días fijados por el admin):
     // cada fase dura override ?? días reales, encadenada desde la primera
-    // entrada real.
+    // entrada real. Las fases SALTADAS en el historial (sin evento, ej.
+    // Producción) entran al gráfico si tienen override manual.
     var ovAll0 = e.phaseOver || {};
     if (Object.keys(ovAll0).length) {
+      var byStage = {};
+      real.forEach(function (sg) { byStage[sg.s] = sg; });
+      var maxIdx = Math.max(
+        STAGES.indexOf(real[real.length - 1].s),
+        STAGES.indexOf(e.estado)
+      );
       var cursor = real[0].a;
-      var lastIdx = real.length - 1;
-      real = real.map(function (sg, idx) {
-        var realDays = Math.max(0, (sg.b - sg.a) / 86400000);
-        var d = ovAll0[sg.s] != null ? Number(ovAll0[sg.s]) : realDays;
-        var a3 = cursor;
-        var b3 = addDays(cursor, Math.max(0, Math.round(d)));
-        cursor = b3;
-        return { s: sg.s, a: a3, b: b3, open: sg.open && idx === lastIdx };
-      });
+      var rebuilt = [];
+      for (var q = 0; q <= maxIdx; q++) {
+        var sName = STAGES[q];
+        var rs = byStage[sName];
+        var dq;
+        if (ovAll0[sName] != null) dq = Number(ovAll0[sName]);
+        else if (rs) dq = Math.max(0, (rs.b - rs.a) / 86400000);
+        else continue; // fase saltada y sin override → no se grafica
+        var aq = cursor;
+        var bq = addDays(cursor, Math.max(0, Math.round(dq)));
+        cursor = bq;
+        rebuilt.push({ s: sName, a: aq, b: bq, open: false });
+      }
+      if (rebuilt.length) {
+        rebuilt[rebuilt.length - 1].open =
+          !delivered(e) && rebuilt[rebuilt.length - 1].s === e.estado;
+        real = rebuilt;
+      }
     }
     var avg = stageAvgs();
     var modo = e.modo === "Maritimo" ? "Maritimo" : "Aereo";
