@@ -19,6 +19,7 @@ import PhaseStatsCards from "../components/cronograma/PhaseStatsCards.jsx";
 import ExpedienteSkuModal from "../components/cronograma/ExpedienteSkuModal.jsx";
 import {
   KpiStrip, UpcomingDeliveries, PipelineBoard, ExpedientesTable,
+  PairsTable, ReceptionSheet,
 } from "../components/cronograma/CronogramaExtras.jsx";
 import {
   loadCronograma, loadClientStats, buildAvgs, buildSkuStats,
@@ -282,6 +283,8 @@ export default function Cronograma() {
           { id: "GANTT", es: "Cronograma", en: "Timeline" },
           { id: "ENTREGAS", es: "Próximas entregas", en: "Upcoming" },
           { id: "PIPELINE", es: "Pipeline", en: "Pipeline" },
+          { id: "PARES", es: "Entrada de pares", en: "Pairs intake" },
+          { id: "RECEPCION", es: "Hoja de recepción", en: "Reception sheet" },
           { id: "TABLA", es: "Expedientes", en: "Files" },
         ];
         return (
@@ -344,12 +347,28 @@ export default function Cronograma() {
                     <PipelineBoard enriched={enriched} lang={lang} labelOf={labelOf} onOpen={setModalItem}/>
                   </div>
                 )}
+                {tab === "PARES" && (
+                  <div className="card card-pad-md">
+                    <h4 style={{ margin: "0 0 12px", color: "#013A57", fontSize: 13, fontWeight: 800 }}>
+                      {lang === "es" ? "ENTRADA DE PARES" : "PAIRS INTAKE"}
+                    </h4>
+                    <PairsTable enriched={enriched} lang={lang} labelOf={labelOf}/>
+                  </div>
+                )}
+                {tab === "RECEPCION" && (
+                  <div className="card card-pad-md">
+                    <h4 style={{ margin: "0 0 12px", color: "#013A57", fontSize: 13, fontWeight: 800 }}>
+                      {lang === "es" ? "HOJA DE RECEPCIÓN" : "RECEPTION SHEET"}
+                    </h4>
+                    <ReceptionSheet enriched={enriched} lang={lang} labelOf={labelOf} onOpen={setModalItem}/>
+                  </div>
+                )}
                 {tab === "TABLA" && (
                   <div className="card card-pad-md">
                     <h4 style={{ margin: "0 0 12px", color: "#013A57", fontSize: 13, fontWeight: 800 }}>
                       {lang === "es" ? "EXPEDIENTES" : "FILES"}
                     </h4>
-                    <ExpedientesTable enriched={enriched} lang={lang} labelOf={labelOf} onOpen={setModalItem}/>
+                    <ExpedientesTable enriched={enriched} lang={lang} labelOf={labelOf} onOpen={setModalItem} isClient={isClient}/>
                   </div>
                 )}
               </motion.div>
