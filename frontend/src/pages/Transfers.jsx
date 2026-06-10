@@ -537,12 +537,32 @@ export default function ScreenTransfers() {
                     )}
                   </div>
                   <div className="trf-col-caret">
-                    <motion.div
-                      animate={{ rotate: isExp ? 90 : 0 }}
-                      transition={{ duration:0.2 }}
+                    {/* Sprint 2026-06-10 — la flecha navega al detalle del
+                        movimiento; expandir/colapsar sigue siendo el click
+                        en la fila. (span: no se puede anidar button en
+                        button — la fila ya es un <button>.) */}
+                    <span
+                      role="link"
+                      tabIndex={0}
+                      title={lang==='es'?'Ver detalle del movimiento':'Open transfer detail'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/transferencias/${t._backend_id || t.id}`);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.stopPropagation();
+                          navigate(`/transferencias/${t._backend_id || t.id}`);
+                        }
+                      }}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: 26, height: 26, borderRadius: 6, cursor: 'pointer',
+                        color: 'var(--brand-primary, #0B1E3A)',
+                      }}
                     >
                       <IconChevRight size={14}/>
-                    </motion.div>
+                    </span>
                   </div>
                 </button>
 
