@@ -531,6 +531,11 @@ function clientRuntime() {
   }
   function segBar(seg, isEst, tip) {
     var l = seg._l, w = seg._w;
+    // Fase con duración ~0 (transición el mismo día) → hito circular;
+    // tramo con duración → píldora.
+    if (seg._ms) {
+      return '<div class="gms' + (isEst ? " gest" : "") + ' st-' + seg.s + '" data-tip="' + esc(tip) + '" style="left:' + l + '%"></div>';
+    }
     return '<div class="gseg' + (isEst ? " gest" : "") + ' st-' + seg.s + '" data-tip="' + esc(tip) + '" style="left:' + l + '%;width:' + w + '%"></div>';
   }
   var gOpen = {};
@@ -558,7 +563,7 @@ function clientRuntime() {
       var html = '<div class="goverlay">' + grid + "</div>";
       dated.forEach(function (r) {
         var e = r.e, id = e.expediente, open = !!gOpen[id], bar = "";
-        var measure = function (sg) { sg._l = pct(sg.a); sg._w = Math.max(0.6, pct(sg.b) - pct(sg.a)); };
+        var measure = function (sg) { var raw = pct(sg.b) - pct(sg.a); sg._ms = raw < 1.1; sg._l = pct(sg.a); sg._w = Math.max(0.6, raw); };
         r.seg.real.forEach(measure); r.seg.est.forEach(measure);
         r.seg.real.forEach(function (sg) {
           bar += segBar(sg, false, SLAB[sg.s] + ": " + shortD(sg.a) + " → " + (sg.open ? "hoy" : shortD(sg.b)));
@@ -566,7 +571,11 @@ function clientRuntime() {
         r.seg.est.forEach(function (sg) {
           bar += segBar(sg, true, SLAB[sg.s] + " (est.): " + shortD(sg.a) + " → " + shortD(sg.b));
         });
-        html += '<div class="grow"><div class="glabel"><button class="gexp" data-exp="' + esc(id) + '" title="Desglosar fases">' + (open ? "▾" : "▸") + "</button> " + esc(id) + " · " + fInt(e.volumen) + " prs · " + esc(e.operador) + '</div><div class="gtrack">' + bar + "</div></div>";
+        var segsAll = r.seg.real.concat(r.seg.est);
+        var lMin = Math.min.apply(null, segsAll.map(function (s4) { return s4._l; }));
+        var lMax = Math.max.apply(null, segsAll.map(function (s4) { return s4._l + (s4._ms ? 0.4 : s4._w); }));
+        var conn = segsAll.length > 1 ? '<div class="gconn" style="left:' + lMin + '%;width:' + Math.max(0.4, lMax - lMin) + '%"></div>' : "";
+        html += '<div class="grow gmain' + (open ? " gopen" : "") + '"><div class="glabel"><button class="gexp' + (open ? " on" : "") + '" data-exp="' + esc(id) + '" title="Desglosar fases">▸</button><span class="gid">' + esc(id) + '</span><span class="gmeta">' + fInt(e.volumen) + " prs · " + esc(e.operador) + (e.modo ? " · " + esc(e.modo) : "") + '</span></div><div class="gtrack">' + conn + bar + "</div></div>";
         if (open) {
           var all = r.seg.real.map(function (sg) { return { sg: sg, est: false }; })
             .concat(r.seg.est.map(function (sg) { return { sg: sg, est: true }; }));
@@ -1603,46 +1612,97 @@ tbody tr:hover td {
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 
-/* ── Gantt v2 por fases (Cronograma) ─────────────────────────────── */
+/* ── Gantt v2 por fases (Cronograma) — paleta de marca navy→mint ── */
+.grow { grid-template-columns: 250px 1fr; }
+.goverlay { left: 250px; }
+.gaxis { margin-left: 250px; }
 .gseg {
   position: absolute; top: 50%; transform: translateY(-50%);
-  height: 14px; border-radius: 7px; min-width: 6px;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / .35);
-  cursor: help;
+  height: 16px; border-radius: 8px; min-width: 7px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / .3), 0 1px 2px rgb(1 58 87 / .18);
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
 }
-.st-REGISTRO    { background: #94a3b8; }
-.st-PRODUCCION  { background: #6366f1; }
-.st-PREPARACION { background: #f59e0b; }
-.st-DESPACHO    { background: #8b5cf6; }
-.st-TRANSITO    { background: #3b82f6; }
-.st-EN_DESTINO  { background: #10b981; }
-.st-CERRADO     { background: #475569; }
-.gseg.gest {
-  opacity: .6;
-  background-image: repeating-linear-gradient(45deg, rgb(255 255 255 / .65) 0 4px, transparent 4px 9px);
-  outline: 1px dashed rgb(15 23 42 / .3); outline-offset: -1px;
+.gseg:hover {
+  transform: translateY(-50%) scaleY(1.3);
+  filter: brightness(1.08) saturate(1.05);
+  box-shadow: 0 4px 14px rgb(1 58 87 / .35);
+  z-index: 6;
 }
-.gseg[data-tip]:hover::after {
+.gms {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 13px; height: 13px; border-radius: 50%;
+  box-shadow: 0 0 0 3px #fff, 0 1px 4px rgb(1 58 87 / .3);
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.gms:hover {
+  transform: translate(-50%, -50%) scale(1.4);
+  box-shadow: 0 0 0 3px #fff, 0 0 0 8px rgb(19 185 138 / .16), 0 2px 8px rgb(1 58 87 / .3);
+  z-index: 6;
+}
+.gconn {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  height: 3px; border-radius: 2px;
+  background: linear-gradient(90deg, rgb(1 58 87 / .14), rgb(19 185 138 / .3));
+}
+/* Pipeline de marca: navy (inicio) → teal → mint (entregado). */
+.st-REGISTRO    { background: #94A7B8; }
+.st-PRODUCCION  { background: #013A57; }
+.st-PREPARACION { background: #075A78; }
+.st-DESPACHO    { background: #0B7E8F; }
+.st-TRANSITO    { background: #0FA3A0; }
+.st-EN_DESTINO  { background: #13B98A; }
+.st-CERRADO     { background: #334155; }
+.gseg.gest, .gms.gest {
+  opacity: .55;
+  background-image: repeating-linear-gradient(45deg, rgb(255 255 255 / .7) 0 4px, transparent 4px 9px);
+  outline: 1.5px dashed rgb(1 58 87 / .35); outline-offset: 1px;
+  box-shadow: none;
+}
+.gseg[data-tip]::after, .gms[data-tip]::after {
   content: attr(data-tip);
-  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
-  background: #0f172a; color: #fff; font-size: 11px; font-weight: 600;
-  padding: 4px 9px; border-radius: 6px; white-space: nowrap; z-index: 30;
-  box-shadow: var(--shadow-md);
+  position: absolute; bottom: calc(100% + 8px); left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: #013A57; color: #fff; font-size: 11px; font-weight: 600;
+  padding: 5px 10px; border-radius: 8px; white-space: nowrap; z-index: 30;
+  box-shadow: 0 8px 24px rgb(1 58 87 / .35);
+  opacity: 0; pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease;
+}
+.gseg[data-tip]:hover::after, .gms[data-tip]:hover::after {
+  opacity: 1; transform: translateX(-50%) translateY(0);
 }
 .gexp {
-  border: 1px solid var(--border-color); background: #fff; color: var(--text-muted);
-  border-radius: 6px; width: 20px; height: 20px; line-height: 1; font-size: 11px;
-  cursor: pointer; margin-right: 4px; vertical-align: -3px;
+  border: 1px solid var(--border-color); background: #fff; color: #013A57;
+  border-radius: 50%; width: 22px; height: 22px; line-height: 1; font-size: 10px;
+  cursor: pointer; margin-right: 8px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: transform .2s ease, background .2s ease, color .2s ease, border-color .2s ease;
 }
-.gexp:hover { color: var(--text-title); border-color: #94a3b8; }
-.grow.gsub { background: #fbfcfe; }
+.gexp:hover { border-color: #13B98A; color: #0B7E8F; }
+.gexp.on { transform: rotate(90deg); background: #013A57; color: #fff; border-color: #013A57; }
+.gexp.on:hover { background: #075A78; }
+.grow.gmain .glabel { display: flex; align-items: center; min-width: 0; }
+.gid { font-weight: 800; color: #013A57; white-space: nowrap; }
+.gmeta {
+  color: var(--text-muted); font-weight: 500; font-size: 11px; margin-left: 7px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.grow.gopen { background: rgb(19 185 138 / .05); }
+.grow.gsub { background: #fbfdfe; animation: gslide .22s ease both; }
+@keyframes gslide {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 .glabel.gsublabel {
-  padding-left: 34px; font-weight: 500; color: var(--text-muted); font-size: 11.5px;
-  display: flex; align-items: center; gap: 6px;
+  padding-left: 38px; font-weight: 600; color: #36556B; font-size: 11.5px;
+  display: flex; align-items: center; gap: 7px;
 }
 .glabel.gsublabel .dotL { width: 9px; height: 9px; border-radius: 3px; flex: none; }
-.gdays { color: #94a3b8; font-variant-numeric: tabular-nums; font-size: 10.5px; }
+.gdays { color: #94a3b8; font-variant-numeric: tabular-nums; font-size: 10.5px; font-weight: 500; }
 .glegend .dotL.gest { background-image: repeating-linear-gradient(45deg, rgb(255 255 255 / .7) 0 3px, transparent 3px 6px); }
+.gtoday { box-shadow: 0 0 8px rgb(239 68 68 / .35); }
 
 /* ── Cards de duración promedio por fase (Aéreo / Marítimo) ──────── */
 .stsec {
@@ -1655,13 +1715,15 @@ tbody tr:hover td {
 .stc {
   border: 1px solid var(--border-color); border-radius: 10px; padding: 9px 10px;
   background: #fbfcfe; border-top-width: 3px;
+  transition: transform .18s ease, box-shadow .18s ease;
 }
-.st-b-REGISTRO    { border-top-color: #94a3b8; }
-.st-b-PRODUCCION  { border-top-color: #6366f1; }
-.st-b-PREPARACION { border-top-color: #f59e0b; }
-.st-b-DESPACHO    { border-top-color: #8b5cf6; }
-.st-b-TRANSITO    { border-top-color: #3b82f6; }
-.st-b-EN_DESTINO  { border-top-color: #10b981; }
+.stc:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.st-b-REGISTRO    { border-top-color: #94A7B8; }
+.st-b-PRODUCCION  { border-top-color: #013A57; }
+.st-b-PREPARACION { border-top-color: #075A78; }
+.st-b-DESPACHO    { border-top-color: #0B7E8F; }
+.st-b-TRANSITO    { border-top-color: #0FA3A0; }
+.st-b-EN_DESTINO  { border-top-color: #13B98A; }
 .stc-n { font-size: 18px; font-weight: 800; color: var(--text-title); font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 4px; }
 .stc-u { font-size: 11px; font-weight: 600; color: var(--text-muted); }
 .stc-est, .stc-real { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 999px; margin-left: auto; }
