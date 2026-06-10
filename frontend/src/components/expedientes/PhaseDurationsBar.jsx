@@ -11,7 +11,7 @@
 //     Resumen de Exportación lo prioriza sobre la duración derivada.
 //   · Clientes B2B sólo ven los días (R3 — sin edición).
 // ─────────────────────────────────────────────────────────────
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { expedientesApi } from "../../lib/api.js";
 
 const STAGES = ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO", "TRANSITO", "EN_DESTINO", "CERRADO"];
@@ -91,7 +91,14 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
     return out;
   }, [events, overrides, currentStatus]);
 
+  // Evita doble envío (blur + click en ✓) y permite que Escape cancele
+  // sin disparar el guardado del blur.
+  const savingRef = useRef(false);
+  const skipBlurRef = useRef(false);
+
   const save = useCallback(async (stage, value) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true); setError("");
     try {
       const body = {}; body[stage] = (value === "" || value == null) ? null : Number(value);
@@ -101,6 +108,7 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
     } catch (e) {
       setError(e?.body?.detail || e?.message || "error");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }, [expedienteId]);
@@ -131,16 +139,27 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
                          value={draft}
                          onChange={(ev) => setDraft(ev.target.value)}
                          onKeyDown={(ev) => {
-                           if (ev.key === "Enter") save(s, draft);
-                           if (ev.key === "Escape") setEditing(null);
+                           if (ev.key === "Enter") { skipBlurRef.current = true; save(s, draft); }
+                           if (ev.key === "Escape") { skipBlurRef.current = true; setEditing(null); }
+                         }}
+                         onBlur={() => {
+                           // Persistir SIEMPRE al perder foco (click en otra
+                           // fase, recarga, tab) — antes el valor se perdía
+                           // si no se presionaba Enter/✓.
+                           if (skipBlurRef.current) { skipBlurRef.current = false; return; }
+                           save(s, draft);
                          }}
                          disabled={saving}
                          style={{ width: 54, padding: "1px 4px", fontSize: 11, textAlign: "right", height: "auto" }}/>
-                  <button className="btn btn-ghost btn-xs" disabled={saving} onClick={() => save(s, draft)}
+                  <button className="btn btn-ghost btn-xs" disabled={saving}
+                          onMouseDown={(ev) => ev.preventDefault()}
+                          onClick={() => save(s, draft)}
                           title={lang === "es" ? "Guardar" : "Save"}
                           style={{ padding: "1px 5px", fontSize: 10, color: "var(--brand-accent, #00B286)" }}>✓</button>
                   {info.override != null && (
-                    <button className="btn btn-ghost btn-xs" disabled={saving} onClick={() => save(s, null)}
+                    <button className="btn btn-ghost btn-xs" disabled={saving}
+                            onMouseDown={(ev) => ev.preventDefault()}
+                            onClick={() => { skipBlurRef.current = true; save(s, null); }}
                             title={lang === "es" ? "Quitar manual (volver al real)" : "Clear manual"}
                             style={{ padding: "1px 4px", fontSize: 10, color: "#D64545" }}>✕</button>
                   )}
