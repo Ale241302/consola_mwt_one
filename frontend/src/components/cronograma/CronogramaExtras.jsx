@@ -333,7 +333,7 @@ export function ReceptionSheet({ enriched, lang = "es", labelOf, onOpen }) {
                   {labelOf(it)}
                 </span>
                 {it.ocCodigo && labelOf(it).indexOf(it.ocCodigo) < 0 && (
-                  <span className="caption" style={{ color: "var(--text-tertiary)", fontStyle: "italic" }}>OC PO {it.ocCodigo}</span>
+                  <span className="caption" style={{ color: "var(--text-tertiary)", fontStyle: "italic" }}>OC {it.ocCodigo}</span>
                 )}
                 <b className="tabular-nums" style={{ color: "#0B1E3A" }}>{fInt(it.volumen)} prs</b>
                 <span style={{
@@ -498,7 +498,7 @@ export function ExpedientesTable({ enriched, lang = "es", labelOf, onOpen, isCli
                             {labelOf(it)}
                           </span>
                         </td>
-                        <td className="mono-sm">{it.ocCodigo ? `PO ${it.ocCodigo}` : "—"}</td>
+                        <td className="mono-sm">{it.ocCodigo || "—"}</td>
                         {!isClient && <td style={{ maxWidth: 150, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.cliente || "—"}</td>}
                         <td>
                           <span style={{ fontSize: 10.5, fontWeight: 700, padding: "1px 8px", borderRadius: 999, background: "rgba(1,58,87,0.08)", color: "#013A57" }}>

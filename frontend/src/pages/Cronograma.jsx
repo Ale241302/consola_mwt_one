@@ -36,9 +36,13 @@ export default function Cronograma() {
   //   ?cliente=<uuid> · ?estado=<FASE> · ?exp=<uuid> · ?aud=CLIENT
   const [params] = useSearchParams();
   const qpExp = params.get("exp") || "";
-  // aud=CLIENT → previsualización con reglas de cliente (R3): etiqueta PO
-  // y sin precio MWT, aunque el usuario sea admin.
-  const isClient = roleIsClient || params.get("aud") === "CLIENT";
+  // Vista dual (R3 POL_VISIBILIDAD): ADMIN/CEO alterna Vista MWT ↔ Vista
+  // Cliente; los usuarios CLIENT_* siempre quedan en vista Cliente (sólo
+  // precio de venta). aud=CLIENT del modal inicia en vista Cliente.
+  const [vista, setVista] = useState(
+    roleIsClient || params.get("aud") === "CLIENT" ? "CLIENT" : "MWT"
+  );
+  const isClient = roleIsClient || vista === "CLIENT";
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [items, setItems] = useState([]);
@@ -93,9 +97,14 @@ export default function Cronograma() {
   const skuStats = useMemo(() => buildSkuStats(visibles), [visibles]);
   const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
 
-  const labelOf = useCallback((it) => (
-    isClient ? `PO ${it.ocCodigo || it.expCodigo}` : (it.proforma || it.expCodigo)
-  ), [isClient]);
+  const labelOf = useCallback((it) => {
+    if (!isClient) return it.proforma || it.expCodigo;
+    if (!it.ocCodigo) return it.expCodigo;
+    // El código de OC puede venir YA con prefijo "PO" — no duplicarlo.
+    return String(it.ocCodigo).toUpperCase().startsWith("PO")
+      ? it.ocCodigo
+      : `PO ${it.ocCodigo}`;
+  }, [isClient]);
 
   // Fila de expediente (con sub-filas por fase) — reutilizada por los 3 modos.
   const expedienteRow = useCallback((it, keyPrefix = "") => {
@@ -214,52 +223,72 @@ export default function Cronograma() {
 
   return (
     <div className="page">
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
-        <div>
-          <div className="micro" style={{ color: "#00B286", letterSpacing: 1 }}>
-            {lang === "es" ? "SUPPLY CHAIN · LÍNEA DE TIEMPO" : "SUPPLY CHAIN · TIMELINE"}
-          </div>
-          <h1 className="page-title" style={{ margin: 0 }}>
-            {lang === "es" ? "Cronograma" : "Timeline"}
-          </h1>
+      <div style={{ marginBottom: 12 }}>
+        <div className="micro" style={{ color: "#00B286", letterSpacing: 1 }}>
+          {lang === "es" ? "SUPPLY CHAIN · LÍNEA DE TIEMPO" : "SUPPLY CHAIN · TIMELINE"}
         </div>
-        <div style={{ display: "flex", gap: 10, marginLeft: "auto", alignItems: "center", flexWrap: "wrap" }}>
-          {/* Agrupar */}
-          <div style={{ display: "flex", gap: 4 }}>
+        <h1 className="page-title" style={{ margin: 0 }}>
+          {lang === "es" ? "Cronograma" : "Timeline"}
+        </h1>
+      </div>
+
+      {/* Filtros — a la IZQUIERDA y en línea (no apilados) */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
+        {/* Agrupar */}
+        <div style={{ display: "flex", gap: 4 }}>
+          {[
+            { id: "EXPEDIENTE", es: "Expediente", en: "File" },
+            { id: "SKU", es: "SKU", en: "SKU" },
+            { id: "METODO", es: "Método", en: "Mode" },
+          ].map((g) => (
+            <button key={g.id} onClick={() => setGroupBy(g.id)}
+                    style={{
+                      padding: "4px 14px", fontSize: 11.5, fontWeight: 700, borderRadius: 999,
+                      border: groupBy === g.id ? "1.5px solid #013A57" : "1.5px solid var(--border-subtle, #E1E6ED)",
+                      background: groupBy === g.id ? "#013A57" : "transparent",
+                      color: groupBy === g.id ? "#fff" : "var(--text-secondary, #475569)",
+                      cursor: "pointer",
+                    }}>
+              {lang === "es" ? g.es : g.en}
+            </button>
+          ))}
+        </div>
+        {/* Estado */}
+        <select className="input" value={estado}
+                onChange={(e) => setEstado(e.target.value)}
+                style={{ padding: "5px 10px", fontSize: 12.5, width: "auto", minWidth: 150 }}>
+          <option value="ALL">{lang === "es" ? "Todos los estados" : "All states"}</option>
+          {STAGES.map((s) => <option key={s} value={s}>{L[s]}</option>)}
+        </select>
+        {/* Cliente (los CLIENT_* ya llegan scopeados del backend) */}
+        {!roleIsClient && clientes.length > 0 && (
+          <select className="input" value={clienteId}
+                  onChange={(e) => setClienteId(e.target.value)}
+                  style={{ padding: "5px 10px", fontSize: 12.5, width: "auto", minWidth: 170, maxWidth: 240 }}>
+            <option value="ALL">{lang === "es" ? "Todos los clientes" : "All clients"}</option>
+            {clientes.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
+        )}
+        {/* Vista dual MWT/Cliente — sólo ADMIN/CEO (R3) */}
+        {!roleIsClient && (
+          <div style={{ display: "flex", gap: 2, marginLeft: "auto", background: "var(--surface-alt, #E8EDF3)", borderRadius: 999, padding: 3 }}>
             {[
-              { id: "EXPEDIENTE", es: "Expediente", en: "File" },
-              { id: "SKU", es: "SKU", en: "SKU" },
-              { id: "METODO", es: "Método", en: "Mode" },
-            ].map((g) => (
-              <button key={g.id} onClick={() => setGroupBy(g.id)}
+              { id: "MWT", label: lang === "es" ? "Vista MWT" : "MWT view" },
+              { id: "CLIENT", label: lang === "es" ? "Vista Cliente" : "Client view" },
+            ].map((v) => (
+              <button key={v.id} onClick={() => setVista(v.id)}
                       style={{
                         padding: "4px 14px", fontSize: 11.5, fontWeight: 700, borderRadius: 999,
-                        border: groupBy === g.id ? "1.5px solid #013A57" : "1.5px solid var(--border-subtle, #E1E6ED)",
-                        background: groupBy === g.id ? "#013A57" : "transparent",
-                        color: groupBy === g.id ? "#fff" : "var(--text-secondary, #475569)",
-                        cursor: "pointer",
+                        border: "none", cursor: "pointer",
+                        background: vista === v.id ? "#013A57" : "transparent",
+                        color: vista === v.id ? "#fff" : "var(--text-secondary, #475569)",
+                        transition: "all .18s ease",
                       }}>
-                {lang === "es" ? g.es : g.en}
+                {v.label}
               </button>
             ))}
           </div>
-          {/* Estado */}
-          <select className="input" value={estado}
-                  onChange={(e) => setEstado(e.target.value)}
-                  style={{ padding: "5px 10px", fontSize: 12.5 }}>
-            <option value="ALL">{lang === "es" ? "Todos los estados" : "All states"}</option>
-            {STAGES.map((s) => <option key={s} value={s}>{L[s]}</option>)}
-          </select>
-          {/* Cliente (los CLIENT_* ya llegan scopeados del backend) */}
-          {!roleIsClient && clientes.length > 0 && (
-            <select className="input" value={clienteId}
-                    onChange={(e) => setClienteId(e.target.value)}
-                    style={{ padding: "5px 10px", fontSize: 12.5 }}>
-              <option value="ALL">{lang === "es" ? "Todos los clientes" : "All clients"}</option>
-              {clientes.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-            </select>
-          )}
-        </div>
+        )}
       </div>
 
       {loading && (
