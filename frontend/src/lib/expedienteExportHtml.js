@@ -338,6 +338,23 @@ function buildNormalized(item, recipient, lang, fileBase) {
   const codeMwt = payload.proforma_codigo || item.codigo || "—";
   const codeClient = item.oc_codigo || payload.oc_codigo || item.codigo || "—";
 
+  // Líneas crudas para el modal de SKUs del .html. R3: el precio MWT sólo
+  // se EMBEBE cuando la audiencia es MWT — al cliente ni siquiera le viaja.
+  const audMwt = recipient === INVOICE_AUDIENCE.MWT;
+  const skuLines = lineasRaw.map((l) => {
+    const base = {
+      sku: l.sku || "",
+      modelo: l.product_label || "",
+      talla: l.size || "",
+      qty: lineQty(l),
+      pcli: Number(l.unit_price_client != null ? l.unit_price_client : l.unit_value_usd) || 0,
+      sap: l.sap || "",
+      nodo: l.nodo || "",
+    };
+    if (audMwt) base.pmwt = Number(l.unit_price_mwt || 0) || 0;
+    return base;
+  });
+
   return {
     expediente: recipient === INVOICE_AUDIENCE.MWT ? codeMwt : codeClient,
     oc: item.oc_codigo || payload.oc_codigo || "",
@@ -370,6 +387,8 @@ function buildNormalized(item, recipient, lang, fileBase) {
     costsTotal,
     landed,
     lineas,
+    skuLines,
+    operadoPorMwt: opByMwt,
     artifacts,
   };
 }
@@ -689,6 +708,55 @@ function clientRuntime() {
     return '<div class="gseg' + (isEst ? " gest" : "") + ' st-' + seg.s + '" data-tip="' + esc(tip) + '" style="left:' + l + '%;width:' + w + '%"></div>';
   }
   var gOpen = {};
+  // Zoom del gantt: 0 = auto-fit (porcentual); >0 = px por día con scroll
+  // horizontal + arrastre (paridad con la vista React /cronograma).
+  var pxDay = 0;
+
+  // ── Modal de SKUs del expediente (click en el código) ──────────────
+  // R3: P. MWT sólo existe en el HTML de audiencia MWT (skuLines lo trae
+  // únicamente en ese caso).
+  function closeSkuModal() {
+    var ex = document.querySelector(".skov");
+    if (ex) ex.parentNode.removeChild(ex);
+  }
+  function openSkuModal(code) {
+    var e = null;
+    for (var i = 0; i < DATA.length; i++) {
+      if (DATA[i].expediente === code) { e = DATA[i]; break; }
+    }
+    if (!e) return;
+    closeSkuModal();
+    var hasMwt = AUD === "MWT";
+    var lines = e.skuLines || [];
+    var totQ = 0, totC = 0, totM = 0;
+    var rows = lines.map(function (l) {
+      totQ += l.qty || 0;
+      totC += (l.qty || 0) * (l.pcli || 0);
+      totM += (l.qty || 0) * (l.pmwt || 0);
+      return "<tr><td class='m'><b>" + esc(l.sku) + "</b></td><td>" + esc(l.modelo) + "</td><td class='r'>" + esc(l.talla || "—") + "</td><td class='r'><b>" + fInt(l.qty) + "</b></td>"
+        + (hasMwt ? "<td class='r'>" + fUsd(l.pmwt || 0) + "</td>" : "")
+        + "<td class='r'>" + fUsd(l.pcli || 0) + "</td><td class='m'>" + esc(l.sap || "—") + "</td><td class='m'>" + esc(l.nodo || "—") + "</td></tr>";
+    }).join("");
+    var ov = document.createElement("div");
+    ov.className = "skov";
+    ov.innerHTML = '<div class="skmodal">'
+      + '<div class="skhead"><div><div class="skkicker">SKUS DEL EXPEDIENTE</div><div class="sktitle">' + esc(code) + '</div><div class="sksub">'
+      + esc([(e.oc && e.oc !== e.expediente ? "OC " + e.oc : ""), e.cliente || "", fInt(e.volumen) + " pares", e.operador || ""].filter(Boolean).join(" · "))
+      + '</div></div><button class="skclose" type="button">✕</button></div>'
+      + '<div class="skbody"><table class="det"><thead><tr><th>SKU</th><th>Nombre</th><th class="r">Talla</th><th class="r">Cant.</th>'
+      + (hasMwt ? '<th class="r">P. MWT</th>' : '')
+      + '<th class="r">P. Cliente</th><th>SAP</th><th>Nodo</th></tr></thead><tbody>'
+      + (rows || '<tr><td colspan="8" style="text-align:center;color:#94a3b8;padding:14px">Sin líneas.</td></tr>')
+      + '<tr class="mtot"><td colspan="3">Totales</td><td class="r"><b>' + fInt(totQ) + '</b></td>'
+      + (hasMwt ? '<td class="r"><b>' + fUsd(totM) + '</b></td>' : '')
+      + '<td class="r"><b style="color:#0B7A5C">' + fUsd(totC) + '</b></td><td colspan="2"></td></tr>'
+      + '</tbody></table></div></div>';
+    ov.addEventListener("click", function (ev) {
+      if (ev.target === ov || (ev.target.className || "") === "skclose") closeSkuModal();
+    });
+    document.body.appendChild(ov);
+  }
+
   function renderProjection(list) {
     var g = document.getElementById("gantt");
     var rows = list.map(function (e) { return { e: e, seg: stageSegs(e) }; });
@@ -742,7 +810,7 @@ function clientRuntime() {
         var conn = '<div class="gconn" style="left:' + lMin + '%;width:' + totalW + '%"></div>';
         var summaryBar = '<div class="gsummary-bar ' + stateCls + '" data-tip="' + esc(summaryTip) + '" style="left:' + lMin + '%;width:' + totalW + '%"></div>';
         
-        html += '<div class="grow gmain' + (open ? " gopen" : "") + '"><div class="glabel"><button class="gexp' + (open ? " on" : "") + '" data-exp="' + esc(id) + '" title="Desglosar fases">' + chevron + '</button><span class="gid">' + esc(id) + '</span><span class="gmeta">' + fInt(e.volumen) + " prs · " + esc(e.operador) + (e.modo ? " · " + esc(e.modo) : " · Aereo (sup.)") + '</span></div><div class="gtrack">' + conn + summaryBar + "</div></div>";
+        html += '<div class="grow gmain' + (open ? " gopen" : "") + '"><div class="glabel"><button class="gexp' + (open ? " on" : "") + '" data-exp="' + esc(id) + '" title="Desglosar fases">' + chevron + '</button><span class="gid skopen" data-exp="' + esc(id) + '" title="Ver SKUs y precios">' + esc(id) + '</span><span class="gmeta">' + fInt(e.volumen) + " prs · " + esc(e.operador) + (e.modo ? " · " + esc(e.modo) : " · Aereo (sup.)") + '</span></div><div class="gtrack">' + conn + summaryBar + "</div></div>";
         
         if (open) {
           var all = r.seg.real.map(function (sg) { return { sg: sg, est: false }; })
@@ -763,9 +831,29 @@ function clientRuntime() {
         }
       });
       html += '<div class="gaxis">' + axis + "</div>";
+      // Zoom: con pxDay fijo, ancho real + scroll/arrastre horizontal.
+      var trackW = pxDay > 0 ? Math.round(span * pxDay) : 0;
+      if (trackW) {
+        html = '<div class="ginner" style="position:relative;width:' + (250 + trackW + 24) + 'px">' + html + "</div>";
+      }
       g.innerHTML = html;
+      if (trackW) {
+        Array.prototype.forEach.call(g.querySelectorAll(".gtrack"), function (el) {
+          el.style.width = trackW + "px";
+        });
+        Array.prototype.forEach.call(g.querySelectorAll(".grow"), function (el) {
+          el.style.gridTemplateColumns = "250px " + trackW + "px";
+        });
+        var ovl = g.querySelector(".goverlay");
+        if (ovl) { ovl.style.right = "auto"; ovl.style.width = trackW + "px"; }
+        var axl = g.querySelector(".gaxis");
+        if (axl) { axl.style.width = trackW + "px"; }
+      }
       Array.prototype.forEach.call(g.querySelectorAll(".gexp"), function (b) {
         b.onclick = function (ev) { ev.stopPropagation(); var k = b.getAttribute("data-exp"); gOpen[k] = !gOpen[k]; renderProjection(filtered()); };
+      });
+      Array.prototype.forEach.call(g.querySelectorAll(".skopen"), function (el) {
+        el.onclick = function (ev) { ev.stopPropagation(); openSkuModal(el.getAttribute("data-exp")); };
       });
     }
     if (undated.length) g.innerHTML += '<div class="nodate" style="margin-top:8px">Sin historial: ' + undated.map(function (r) { return esc(r.e.expediente); }).join(", ") + "</div>";
@@ -900,7 +988,7 @@ function clientRuntime() {
     var cell = function (v) { return v ? esc(v) : '<span class="muted">-</span>'; };
     function rowHtml(e) {
       var eta = etaOf(e), op = !!expanded[e.expediente];
-      var h = '<tr class="exprow" data-exp="' + esc(e.expediente) + '" style="cursor:pointer"><td><b>' + (op ? "▾ " : "▸ ") + cell(e.expediente) + "</b></td><td>" + cell(e.oc) + "</td><td>" + cell(e.cliente) + '</td><td><span class="tag ' + (e.operador === "MWT" ? "mwt" : "sondel") + '">' + esc(e.operador) + "</span></td><td>" + (e.modo ? '<span class="tag ' + (e.modo === "Aereo" ? "aereo" : "maritimo") + '">' + esc(e.modo) + "</span>" : '<span class="muted">-</span>') + "</td><td><b>" + fInt(e.volumen) + "</b></td><td>" + esc(e.estadoLabel) + "</td><td>" + cell(e.embarque) + "</td><td>" + (eta ? fmt(eta) + (e.entrega ? ' <span style="color:#2da44e">OK</span>' : "") : '<span class="muted">-</span>') + "</td></tr>";
+      var h = '<tr class="exprow" data-exp="' + esc(e.expediente) + '" style="cursor:pointer"><td><b>' + (op ? "▾ " : "▸ ") + '<span class="skopen gid" data-exp="' + esc(e.expediente) + '" title="Ver SKUs y precios">' + cell(e.expediente) + '</span>' + "</b></td><td>" + cell(e.oc) + "</td><td>" + cell(e.cliente) + '</td><td><span class="tag ' + (e.operador === "MWT" ? "mwt" : "sondel") + '">' + esc(e.operador) + "</span></td><td>" + (e.modo ? '<span class="tag ' + (e.modo === "Aereo" ? "aereo" : "maritimo") + '">' + esc(e.modo) + "</span>" : '<span class="muted">-</span>') + "</td><td><b>" + fInt(e.volumen) + "</b></td><td>" + esc(e.estadoLabel) + "</td><td>" + cell(e.embarque) + "</td><td>" + (eta ? fmt(eta) + (e.entrega ? ' <span style="color:#2da44e">OK</span>' : "") : '<span class="muted">-</span>') + "</td></tr>";
       if (op) h += '<tr class="detrow"><td colspan="9">' + detailHtml(e) + "</td></tr>";
       return h;
     }
@@ -918,6 +1006,9 @@ function clientRuntime() {
     tb.innerHTML = html || '<tr><td colspan="9" class="muted" style="padding:18px;text-align:center">Sin expedientes.</td></tr>';
     Array.prototype.forEach.call(tb.querySelectorAll("tr.exprow"), function (r) {
       r.onclick = function () { var i = r.getAttribute("data-exp"); expanded[i] = !expanded[i]; render(); };
+    });
+    Array.prototype.forEach.call(tb.querySelectorAll(".skopen"), function (el) {
+      el.onclick = function (ev) { ev.stopPropagation(); openSkuModal(el.getAttribute("data-exp")); };
     });
   }
 
@@ -1010,6 +1101,36 @@ function clientRuntime() {
   }
 
   ["fOp", "fModo", "groupBy", "ft_model", "ft_sort", "hr_show", "hr_model"].forEach(function (idn) { var el = document.getElementById(idn); if (el) el.onchange = render; });
+
+  // ── Zoom + arrastre horizontal del gantt ──────────────────────────
+  var gEl = document.getElementById("gantt");
+  if (gEl) {
+    gEl.style.overflowX = "auto";
+    var gdrag = null;
+    gEl.addEventListener("mousedown", function (ev) {
+      if (ev.target.closest && (ev.target.closest("button") || ev.target.closest(".skopen"))) return;
+      gdrag = { x: ev.clientX, sl: gEl.scrollLeft };
+      gEl.style.cursor = "grabbing";
+    });
+    window.addEventListener("mousemove", function (ev) {
+      if (gdrag) gEl.scrollLeft = gdrag.sl - (ev.clientX - gdrag.x);
+    });
+    window.addEventListener("mouseup", function () { gdrag = null; gEl.style.cursor = ""; });
+  }
+  var gzr = document.getElementById("gz-range");
+  var gzv = document.getElementById("gz-val");
+  function applyZoom(v) {
+    pxDay = Number(v) || 0;
+    if (gzv) gzv.textContent = pxDay ? (pxDay + "px/día") : "auto";
+    renderProjection(filtered());
+  }
+  if (gzr) gzr.oninput = function () { applyZoom(gzr.value); };
+  var gzm = document.getElementById("gz-minus");
+  var gzp = document.getElementById("gz-plus");
+  if (gzm) gzm.onclick = function () { if (gzr) { gzr.value = Math.max(0, Number(gzr.value) - 4); applyZoom(gzr.value); } };
+  if (gzp) gzp.onclick = function () { if (gzr) { gzr.value = Math.min(64, Number(gzr.value) + 4); applyZoom(gzr.value); } };
+  document.addEventListener("keydown", function (ev) { if (ev.key === "Escape") closeSkuModal(); });
+
   render();
 }
 
@@ -2098,6 +2219,56 @@ tbody tr:hover td {
 @media print {
   .stsec, .grow { break-inside: avoid; page-break-inside: avoid; }
 }
+
+/* ── Gantt interactivo (zoom/arrastre) + modal SKUs ──────────────── */
+.gzoombar {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px 2px;
+  font-size: 11px; font-weight: 700; color: var(--text-muted);
+}
+.gzoombar button {
+  border: 1px solid var(--border-color); background: #fff; color: #013A57;
+  border-radius: 6px; width: 22px; height: 22px; font-weight: 800; cursor: pointer;
+}
+.gzoombar input[type="range"] { width: 130px; }
+.gzoomhint { margin-left: auto; font-weight: 500; color: #94a3b8; }
+.gantt { cursor: grab; }
+/* Labels fijos a la izquierda al desplazar horizontalmente */
+.grow .glabel { position: sticky; left: 0; z-index: 6; background: var(--surface-card, #fff); }
+.grow.gsub .glabel { background: #fbfdfe; }
+/* Barra resumen del padre: delgada y continua (paridad con la vista React) */
+.gsummary-bar { height: 5px !important; border-radius: 3px !important; top: 50% !important; transform: translateY(-50%); }
+.gid.skopen { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.gid.skopen:hover { color: #0B7E8F; }
+.skov {
+  position: fixed; inset: 0; background: rgba(11,30,58,0.45); z-index: 4000;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  animation: skfade .15s ease;
+}
+@keyframes skfade { from { opacity: 0; } to { opacity: 1; } }
+.skmodal {
+  background: #fff; border-radius: 14px; width: min(840px, 96vw); max-height: 82vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 24px 60px rgba(11,30,58,0.35);
+  animation: skpop .18s ease;
+}
+@keyframes skpop { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+.skhead {
+  padding: 14px 20px; border-bottom: 1.5px solid var(--border-color);
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+}
+.skkicker { font-size: 10px; font-weight: 800; letter-spacing: 1px; color: #13B98A; margin-bottom: 4px; }
+.sktitle { font-size: 16px; font-weight: 800; color: #0B1E3A; }
+.sksub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.skclose {
+  border: none; background: none; font-size: 15px; color: #64748b; cursor: pointer;
+  padding: 4px 8px; border-radius: 8px;
+}
+.skclose:hover { background: #f1f5f9; color: #0B1E3A; }
+.skbody { overflow: auto; padding: 0; }
+.skbody table { width: 100%; }
+.skbody th, .skbody td { padding: 8px 14px; font-size: 12px; }
+.skbody th.r, .skbody td.r { text-align: right; font-variant-numeric: tabular-nums; }
+.skbody td.m { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
 `;
 
 /**
@@ -2184,7 +2355,16 @@ export function buildExpedientesExportHtml({
 
   <div class="panel" id="p-crono">
     <div class="sec-h">Cronograma por expediente — fases reales y proyección</div>
-    <div class="proj"><div class="gantt" id="gantt"></div>
+    <div class="proj">
+      <div class="gzoombar">
+        <span>Zoom</span>
+        <button id="gz-minus" type="button">−</button>
+        <input id="gz-range" type="range" min="0" max="64" step="4" value="0"/>
+        <button id="gz-plus" type="button">+</button>
+        <span id="gz-val">auto</span>
+        <span class="gzoomhint">arrastra el gráfico para desplazarte · click en el código abre los SKUs</span>
+      </div>
+      <div class="gantt" id="gantt"></div>
       <div class="glegend">
         <span><i class="dotL st-REGISTRO"></i>Registro</span>
         <span><i class="dotL st-PRODUCCION"></i>Producción</span>

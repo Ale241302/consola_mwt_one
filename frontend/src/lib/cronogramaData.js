@@ -114,6 +114,9 @@ function normalizeItem(r, payload, events, overrides) {
 
   return {
     id: r.id,
+    // Fila cruda del listado — la usa el botón "Exportar HTML" para
+    // alimentar runExpedienteExport sin re-fetchear.
+    _row: r,
     estado: String(r.estado || "REGISTRO").toUpperCase(),
     proforma: (payload && payload.proforma_codigo)
       || (Array.isArray(r.proforma_codigos) && r.proforma_codigos[0]) || r.codigo || "",

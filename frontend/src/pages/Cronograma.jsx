@@ -21,6 +21,10 @@ import {
   KpiStrip, UpcomingDeliveries, PipelineBoard, ExpedientesTable,
   PairsTable, ReceptionSheet,
 } from "../components/cronograma/CronogramaExtras.jsx";
+// Sprint 2026-06-10 — Exportar HTML desde el Cronograma (mismo modal +
+// generador .html interactivo: zoom/arrastre + modal de SKUs por registro).
+import ExportExpedientesModal from "../components/expedientes/ExportExpedientesModal.jsx";
+import { runExpedienteExport } from "../lib/expedienteExport.js";
 import {
   loadCronograma, loadClientStats, buildAvgs, buildSkuStats,
   computeSegments, itemPhaseDur, projectedDelivery, dayDiff, fmtShort,
@@ -53,6 +57,9 @@ export default function Cronograma() {
   const [clienteId, setClienteId] = useState(params.get("cliente") || "ALL");
   const [estado, setEstado] = useState((params.get("estado") || "ALL").toUpperCase());
   const [modalItem, setModalItem] = useState(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportErr, setExportErr] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -107,6 +114,34 @@ export default function Cronograma() {
     ),
     [scopedItems, clienteId, estado, qpExp]
   );
+
+  // Filas para runExpedienteExport (forma del listado de /expedientes),
+  // construidas desde las filas crudas ya cargadas — sin re-fetchear.
+  const exportRows = useMemo(() => scopedItems.map((it) => ({
+    ...(it._row || {}),
+    uuid: it.id,
+    ref: it.proforma || it.expCodigo || "",
+    status: it.estado,
+    client_id: it.clienteId,
+  })), [scopedItems]);
+
+  const handleExportHtml = useCallback(async (opts) => {
+    setExporting(true);
+    setExportErr(null);
+    try {
+      await runExpedienteExport({
+        expedientes: exportRows,
+        audience: roleIsClient ? "CLIENT" : opts.audience,
+        lang,
+        filters: opts,
+      });
+      setExportOpen(false);
+    } catch (e) {
+      setExportErr(e?.message || String(e));
+    } finally {
+      setExporting(false);
+    }
+  }, [exportRows, roleIsClient, lang]);
 
   const avgs = useMemo(() => buildAvgs(cliStats, statsGlobal), [cliStats, statsGlobal]);
   const skuStats = useMemo(() => buildSkuStats(visibles), [visibles]);
@@ -289,6 +324,13 @@ export default function Cronograma() {
             {clientes.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
           </select>
         )}
+        {/* Exportar HTML — abre el modal de siempre y genera el .html
+            interactivo (zoom/arrastre + modal de SKUs por registro). */}
+        <button className="btn btn-secondary"
+                onClick={() => { setExportErr(null); setExportOpen(true); }}
+                style={{ padding: "5px 14px", fontSize: 12 }}>
+          {lang === "es" ? "Exportar HTML" : "Export HTML"}
+        </button>
         {/* Vista dual MWT/Cliente — sólo ADMIN/CEO (R3) */}
         {!roleIsClient && (
           <div style={{ display: "flex", gap: 2, marginLeft: "auto", background: "var(--surface-alt, #E8EDF3)", borderRadius: 999, padding: 3 }}>
@@ -430,6 +472,19 @@ export default function Cronograma() {
         <ExpedienteSkuModal item={modalItem} isClient={isClient} lang={lang}
                             onClose={() => setModalItem(null)}/>
       )}
+
+      <ExportExpedientesModal
+        open={exportOpen}
+        lang={lang}
+        isAdmin={!roleIsClient}
+        clients={clientes.map((c) => ({ id: c.id, name: c.label }))}
+        estados={STAGES.map((s) => ({ code: s, label: L[s] }))}
+        expedientes={exportRows}
+        loading={exporting}
+        error={exportErr || ""}
+        onConfirm={handleExportHtml}
+        onClose={() => { if (!exporting) { setExportOpen(false); setExportErr(null); } }}
+      />
     </div>
   );
 }
