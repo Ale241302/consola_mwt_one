@@ -1106,6 +1106,10 @@ function clientRuntime() {
   var gEl = document.getElementById("gantt");
   if (gEl) {
     gEl.style.overflowX = "auto";
+    // OJO: fijar overflow-x fuerza overflow-y a "auto" (spec CSS) y aparece
+    // un scroll vertical fantasma. La altura es automática → hidden no
+    // recorta nada.
+    gEl.style.overflowY = "hidden";
     var gdrag = null;
     gEl.addEventListener("mousedown", function (ev) {
       if (ev.target.closest && (ev.target.closest("button") || ev.target.closest(".skopen"))) return;
@@ -2231,7 +2235,7 @@ tbody tr:hover td {
 }
 .gzoombar input[type="range"] { width: 130px; }
 .gzoomhint { margin-left: auto; font-weight: 500; color: #94a3b8; }
-.gantt { cursor: grab; }
+.gantt { cursor: grab; overflow-y: hidden; }
 /* Labels fijos a la izquierda al desplazar horizontalmente */
 .grow .glabel { position: sticky; left: 0; z-index: 6; background: var(--surface-card, #fff); }
 .grow.gsub .glabel { background: #fbfdfe; }
