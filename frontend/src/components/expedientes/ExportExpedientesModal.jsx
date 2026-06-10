@@ -184,10 +184,10 @@ export default function ExportExpedientesModal({
                 {L(lang, "EXPORTAR EXPEDIENTES", "EXPORT FILES")}
               </div>
               <div className="heading-sm" style={{ margin: 0, color: "var(--text-primary, #0F172A)" }}>
-                {L(lang, "Resumen de exportación (.html)", "Export summary (.html)")}
+                {L(lang, "Reporte Cronograma", "Timeline report")}
               </div>
               <div className="body-sm" style={{ color: "var(--text-secondary, #475569)", marginTop: 4 }}>
-                {L(lang, "Todos los filtros son opcionales. Genera SKU, tallas y cantidad por talla.", "All filters are optional. Generates SKU, sizes and qty per size.")}
+                {L(lang, "Todos los filtros son opcionales. Abre el Cronograma interactivo en una pestaña nueva.", "All filters are optional. Opens the interactive Timeline in a new tab.")}
               </div>
             </div>
 
@@ -323,7 +323,7 @@ export default function ExportExpedientesModal({
                 disabled={loading || matchCount === 0}
                 onClick={handleConfirm}
               >
-                {loading ? L(lang, "Generando…", "Generating…") : L(lang, "Generar .html", "Generate .html")}
+                {loading ? L(lang, "Abriendo…", "Opening…") : L(lang, "Generar reporte", "Generate report")}
               </button>
             </div>
           </motion.div>

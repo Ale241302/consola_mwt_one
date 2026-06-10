@@ -712,21 +712,20 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
   const [exportErr, setExportErr]   = useState(null);
   // Export del portal: SIEMPRE vista CLIENT (precio de venta). El modal oculta
   // la pregunta de audiencia porque isAdmin=false.
-  const handlePortalExport = async (opts) => {
-    setExporting(true); setExportErr(null);
-    try {
-      await runExpedienteExport({
-        expedientes,
-        audience: INVOICE_AUDIENCE.CLIENT,
-        lang,
-        filters: opts,
-      });
-      setExportOpen(false);
-    } catch (e) {
-      setExportErr(e?.message || String(e));
-    } finally {
-      setExporting(false);
+  // Sprint 2026-06-10 — abre el Cronograma interactivo en pestaña nueva
+  // (siempre vista CLIENT desde el portal) con los filtros del modal.
+  const handlePortalExport = (opts) => {
+    setExportErr(null);
+    const p = new URLSearchParams();
+    p.set("aud", "CLIENT");
+    if (opts.expedienteUuid) {
+      p.set("exp", opts.expedienteUuid);
+    } else {
+      if (opts.clienteId && opts.clienteId !== "ALL") p.set("cliente", opts.clienteId);
+      if (opts.estado && opts.estado !== "ALL") p.set("estado", opts.estado);
     }
+    window.open(`/cronograma?${p.toString()}`, "_blank", "noopener");
+    setExportOpen(false);
   };
   // Clientes para el selector (nombre legible). clientesApi.list() ya viene
   // scopeado por el backend a las empresas del usuario (legal_entity_ids).

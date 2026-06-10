@@ -11,7 +11,7 @@
 //     precios según rol (R3 POL_VISIBILIDAD).
 // =====================================================================
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { useOutletContext } from "react-router-dom";
+import { useOutletContext, useSearchParams } from "react-router-dom";
 import { useRole } from "../context/RoleContext.jsx";
 import GanttChart from "../components/cronograma/GanttChart.jsx";
 import PhaseStatsCards from "../components/cronograma/PhaseStatsCards.jsx";
@@ -26,14 +26,22 @@ const fInt = (n) => Number(n || 0).toLocaleString("es-CR");
 
 export default function Cronograma() {
   const { lang } = useOutletContext();
-  const { isClient } = useRole();
+  const { isClient: roleIsClient } = useRole();
+  // Query params del modal "Generar reporte" (/expedientes y /portal):
+  //   ?cliente=<uuid> · ?estado=<FASE> · ?exp=<uuid> · ?aud=CLIENT
+  const [params] = useSearchParams();
+  const qpExp = params.get("exp") || "";
+  // aud=CLIENT → previsualización con reglas de cliente (R3): etiqueta PO
+  // y sin precio MWT, aunque el usuario sea admin.
+  const isClient = roleIsClient || params.get("aud") === "CLIENT";
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [items, setItems] = useState([]);
   const [statsGlobal, setStatsGlobal] = useState(null);
   const [cliStats, setCliStats] = useState(null);
   const [groupBy, setGroupBy] = useState("EXPEDIENTE");
-  const [clienteId, setClienteId] = useState("ALL");
+  const [clienteId, setClienteId] = useState(params.get("cliente") || "ALL");
+  const [estado, setEstado] = useState((params.get("estado") || "ALL").toUpperCase());
   const [modalItem, setModalItem] = useState(null);
 
   useEffect(() => {
@@ -67,8 +75,12 @@ export default function Cronograma() {
   }, [items]);
 
   const visibles = useMemo(
-    () => (clienteId === "ALL" ? items : items.filter((it) => it.clienteId === clienteId)),
-    [items, clienteId]
+    () => items.filter((it) =>
+      (qpExp ? it.id === qpExp : true)
+      && (clienteId === "ALL" || it.clienteId === clienteId)
+      && (estado === "ALL" || it.estado === estado)
+    ),
+    [items, clienteId, estado, qpExp]
   );
 
   const avgs = useMemo(() => buildAvgs(cliStats, statsGlobal), [cliStats, statsGlobal]);
@@ -214,8 +226,15 @@ export default function Cronograma() {
               </button>
             ))}
           </div>
+          {/* Estado */}
+          <select className="input" value={estado}
+                  onChange={(e) => setEstado(e.target.value)}
+                  style={{ padding: "5px 10px", fontSize: 12.5 }}>
+            <option value="ALL">{lang === "es" ? "Todos los estados" : "All states"}</option>
+            {STAGES.map((s) => <option key={s} value={s}>{L[s]}</option>)}
+          </select>
           {/* Cliente (los CLIENT_* ya llegan scopeados del backend) */}
-          {!isClient && clientes.length > 0 && (
+          {!roleIsClient && clientes.length > 0 && (
             <select className="input" value={clienteId}
                     onChange={(e) => setClienteId(e.target.value)}
                     style={{ padding: "5px 10px", fontSize: 12.5 }}>

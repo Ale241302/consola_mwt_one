@@ -339,23 +339,22 @@ export default function ScreenExpedientes() {
     return () => { alive = false; };
   }, []);
 
-  const handleExportConfirm = useCallback(async (opts) => {
-    setExporting(true);
+  // Sprint 2026-06-10 — el "reporte" ya no genera un .html: abre el
+  // Cronograma interactivo (/cronograma) en una pestaña nueva con los
+  // filtros del modal como query params.
+  const handleExportConfirm = useCallback((opts) => {
     setExportErr(null);
-    try {
-      await runExpedienteExport({
-        expedientes: apiExpedientes,
-        audience: opts.audience,
-        lang,
-        filters: opts,
-      });
-      setExportOpen(false);
-    } catch (e) {
-      setExportErr(e?.message || String(e));
-    } finally {
-      setExporting(false);
+    const p = new URLSearchParams();
+    if (opts.audience === "CLIENT") p.set("aud", "CLIENT");
+    if (opts.expedienteUuid) {
+      p.set("exp", opts.expedienteUuid);
+    } else {
+      if (opts.clienteId && opts.clienteId !== "ALL") p.set("cliente", opts.clienteId);
+      if (opts.estado && opts.estado !== "ALL") p.set("estado", opts.estado);
     }
-  }, [apiExpedientes, lang]);
+    window.open(`/cronograma${p.toString() ? "?" + p.toString() : ""}`, "_blank", "noopener");
+    setExportOpen(false);
+  }, []);
 
   const toggleOne = (uuid) => {
     setSelected(prev => {
