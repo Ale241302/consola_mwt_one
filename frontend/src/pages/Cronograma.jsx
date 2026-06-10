@@ -31,7 +31,7 @@ const fInt = (n) => Number(n || 0).toLocaleString("es-CR");
 
 export default function Cronograma() {
   const { lang } = useOutletContext();
-  const { isClient: roleIsClient } = useRole();
+  const { isClient: roleIsClient, user } = useRole();
   // Query params del modal "Generar reporte" (/expedientes y /portal):
   //   ?cliente=<uuid> · ?estado=<FASE> · ?exp=<uuid> · ?aud=CLIENT
   const [params] = useSearchParams();
@@ -75,22 +75,37 @@ export default function Cronograma() {
     return () => { alive = false; };
   }, [clienteId]);
 
+  // Entidades legales asignadas al usuario (users.mwtuser.legal_entity_ids):
+  // un usuario normal sólo ve SUS clientes — defensa extra sobre el scope
+  // del backend (R3 POL_VISIBILIDAD). Admin/CEO ve todos.
+  const allowedEntities = useMemo(() => new Set(
+    Array.isArray(user?.legal_entity_ids) && user.legal_entity_ids.length
+      ? user.legal_entity_ids
+      : (user?.legal_entity_id ? [user.legal_entity_id] : [])
+  ), [user]);
+
+  const scopedItems = useMemo(() => (
+    roleIsClient && allowedEntities.size
+      ? items.filter((it) => it.clienteId && allowedEntities.has(it.clienteId))
+      : items
+  ), [items, roleIsClient, allowedEntities]);
+
   const clientes = useMemo(() => {
     const map = new Map();
-    items.forEach((it) => {
+    scopedItems.forEach((it) => {
       if (it.clienteId && it.cliente) map.set(it.clienteId, it.cliente);
     });
     return Array.from(map, ([id, label]) => ({ id, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [items]);
+  }, [scopedItems]);
 
   const visibles = useMemo(
-    () => items.filter((it) =>
+    () => scopedItems.filter((it) =>
       (qpExp ? it.id === qpExp : true)
       && (clienteId === "ALL" || it.clienteId === clienteId)
       && (estado === "ALL" || it.estado === estado)
     ),
-    [items, clienteId, estado, qpExp]
+    [scopedItems, clienteId, estado, qpExp]
   );
 
   const avgs = useMemo(() => buildAvgs(cliStats, statsGlobal), [cliStats, statsGlobal]);
@@ -260,12 +275,17 @@ export default function Cronograma() {
           <option value="ALL">{lang === "es" ? "Todos los estados" : "All states"}</option>
           {STAGES.map((s) => <option key={s} value={s}>{L[s]}</option>)}
         </select>
-        {/* Cliente (los CLIENT_* ya llegan scopeados del backend) */}
-        {!roleIsClient && clientes.length > 0 && (
+        {/* Cliente — admin ve todos; usuario normal SOLO sus entidades
+            asignadas (legal_entity_ids); con una sola, no hay selector. */}
+        {clientes.length > (roleIsClient ? 1 : 0) && (
           <select className="input" value={clienteId}
                   onChange={(e) => setClienteId(e.target.value)}
                   style={{ padding: "5px 10px", fontSize: 12.5, width: "auto", minWidth: 170, maxWidth: 240 }}>
-            <option value="ALL">{lang === "es" ? "Todos los clientes" : "All clients"}</option>
+            <option value="ALL">
+              {roleIsClient
+                ? (lang === "es" ? "Todos mis clientes" : "All my clients")
+                : (lang === "es" ? "Todos los clientes" : "All clients")}
+            </option>
             {clientes.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
           </select>
         )}
