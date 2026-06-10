@@ -560,11 +560,34 @@ def factura_payload(request, expediente_id):
         })
 
     landed = fob + extra
+
+    # Sprint 2026-06-10 · overrides manuales de días por fase (admin/CEO).
+    # `pid` puede ser expediente_id u oc_id (página OC-céntrica): tomamos el
+    # expediente más reciente. El Cronograma del export los prioriza sobre
+    # la duración derivada del EventLog.
+    phase_durations = {}
+    with connection.cursor() as c:
+        c.execute(
+            """
+            SELECT e.phase_durations_json
+            FROM expedientes.expediente e
+            WHERE (e.id = %(id)s::uuid OR e.oc_id = %(id)s::uuid)
+              AND e.is_active = TRUE
+            ORDER BY e.created_at DESC
+            LIMIT 1
+            """,
+            {"id": pid},
+        )
+        _pd_row = c.fetchone()
+        if _pd_row and isinstance(_pd_row[0], dict):
+            phase_durations = _pd_row[0]
+
     return Response({
         "kind": "FACTURA_COMERCIAL",
         "doc_kind_label": "FACTURA COMERCIAL",
         "proforma_codigo": proforma_codigo or codigo,
         "oc_codigo": oc_codigo or proforma_codigo or codigo,
+        "phase_durations": phase_durations,
         "shipping": _sp.get("shipping") or {},
         "packing": _sp.get("packing") or {},
         "transferencia": {

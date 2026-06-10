@@ -305,6 +305,16 @@ function buildNormalized(item, recipient, lang, fileBase) {
   if (!stageAt.REGISTRO && minEv) stageAt.REGISTRO = minEv;
   const hist = STAGE_ORDER.filter((s) => stageAt[s]).map((s) => ({ s, at: stageAt[s] }));
 
+  // Overrides manuales de días por fase (admin/CEO, factura-payload
+  // `phase_durations`) — el Gantt, los promedios y la proyección los
+  // priorizan sobre la duración derivada del EventLog.
+  const phaseOverRaw = payload.phase_durations || {};
+  const phaseOver = {};
+  Object.keys(phaseOverRaw).forEach((k) => {
+    const v = Number(phaseOverRaw[k]);
+    if (isFinite(v) && v >= 0) phaseOver[String(k).toUpperCase()] = v;
+  });
+
   // Etiqueta del expediente: MWT → número de proforma; Cliente → número de OC.
   const codeMwt = payload.proforma_codigo || item.codigo || "—";
   const codeClient = item.oc_codigo || payload.oc_codigo || item.codigo || "—";
@@ -320,6 +330,7 @@ function buildNormalized(item, recipient, lang, fileBase) {
     estado,
     estadoLabel: ESTADO_LABEL[estado] || estado,
     hist,
+    phaseOver,
     trfId,
     embarque: log.embarque || "",
     entrega: log.entrega || "",
@@ -470,11 +481,18 @@ function clientRuntime() {
       var modo = e.modo === "Maritimo" ? "Maritimo" : (e.modo === "Aereo" ? "Aereo" : null);
       if (!modo) return;
       var hist = e.hist || [];
+      var ov = e.phaseOver || {};
       for (var i = 0; i + 1 < hist.length; i++) {
+        var s0 = hist[i].s;
+        if (ov[s0] != null) continue; // el override manual manda (abajo)
         var a = parseD(hist[i].at), b = parseD(hist[i + 1].at);
         if (!a || !b || b < a) continue;
-        (acc[modo][hist[i].s] || (acc[modo][hist[i].s] = [])).push((b - a) / 86400000);
+        (acc[modo][s0] || (acc[modo][s0] = [])).push((b - a) / 86400000);
       }
+      // Overrides manuales del expediente cuentan como muestra real.
+      STAGES.forEach(function (s1) {
+        if (ov[s1] != null) (acc[modo][s1] || (acc[modo][s1] = [])).push(Number(ov[s1]));
+      });
     });
     var out = { Aereo: {}, Maritimo: {} };
     ["Aereo", "Maritimo"].forEach(function (m) {
@@ -514,15 +532,25 @@ function clientRuntime() {
     if (!real.length) return { real: [], est: [] };
     var avg = stageAvgs();
     var modo = e.modo === "Maritimo" ? "Maritimo" : "Aereo";
-    var curIdx = STAGES.indexOf(real[real.length - 1].s);
-    var cur = real[real.length - 1].b;
+    var ovAll = e.phaseOver || {};
+    var lastReal = real[real.length - 1];
+    var curIdx = STAGES.indexOf(lastReal.s);
+    var cur = lastReal.b;
+    // Override manual de la fase ACTUAL: proyecta su fin (entrada + días
+    // manuales) si aún no se cumple.
+    if (lastReal.open && ovAll[lastReal.s] != null) {
+      var pe = addDays(lastReal.a, Math.max(0, Math.round(Number(ovAll[lastReal.s]))));
+      if (pe > cur) cur = pe;
+    }
     if (!delivered(e)) {
       for (var j = curIdx + 1; j <= STAGES.indexOf("EN_DESTINO"); j++) {
         var s2 = STAGES[j];
         var a2 = avg[modo][s2];
-        var dur = a2 ? a2.avg : (DEF_DUR[modo][s2] || 5);
+        // Prioridad: override manual del expediente → promedio real del
+        // modo → estándar por defecto.
+        var dur = ovAll[s2] != null ? Number(ovAll[s2]) : (a2 ? a2.avg : (DEF_DUR[modo][s2] || 5));
         var nb = addDays(cur, Math.max(1, Math.round(dur)));
-        if (s2 === "TRANSITO") { var eta = etaOf(e); if (eta && eta > cur) nb = eta; }
+        if (s2 === "TRANSITO" && ovAll[s2] == null) { var eta = etaOf(e); if (eta && eta > cur) nb = eta; }
         est.push({ s: s2, a: cur, b: nb });
         cur = nb;
       }
@@ -599,8 +627,11 @@ function clientRuntime() {
             .concat(r.seg.est.map(function (sg) { return { sg: sg, est: true }; }));
           all.forEach(function (it, allIndex) {
             var sg = it.sg;
-            var days = Math.max(0, Math.round((sg.b - sg.a) / 86400000));
-            var tag = it.est ? " · est." : (sg.open ? " · en curso" : "");
+            var ovD = (e.phaseOver || {})[sg.s];
+            var days = (ovD != null && !it.est)
+              ? Math.round(Number(ovD) * 10) / 10
+              : Math.max(0, Math.round((sg.b - sg.a) / 86400000));
+            var tag = it.est ? " · est." : (ovD != null ? " · manual" : (sg.open ? " · en curso" : ""));
             var isLastSub = (allIndex === all.length - 1);
             html += '<div class="grow gsub' + (isLastSub ? " gsub-last" : "") + '"><div class="glabel gsublabel"><i class="dotL st-' + sg.s + '"></i>' + SLAB[sg.s] + ' <span class="gdays">' + days + "d" + tag + '</span></div><div class="gtrack">'
                   + '<div class="gconn" style="left:' + sg._l + '%;width:' + sg._w + '%"></div>'

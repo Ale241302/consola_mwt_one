@@ -980,6 +980,61 @@ class ExpedienteViewSet(viewsets.ViewSet):
         limit = int(request.query_params.get("limit") or 200)
         return Response(EventLogSerializer(qs[:limit], many=True).data)
 
+    # ── Días por fase (override manual · Sprint 2026-06-10) ──────────
+    #   GET   /api/expedientes/{id}/phase-durations/  → overrides actuales
+    #   PATCH/POST                                     → guarda (ADMIN/CEO)
+    # Body: {"REGISTRO": 3, "TRANSITO": 12, "PRODUCCION": null}
+    #   · null / "" elimina el override de esa fase.
+    #   · La duración real sigue derivándose del EventLog; esto sólo
+    #     prioriza el valor manual en el detalle y en el Cronograma del
+    #     Resumen de Exportación.
+    _PHASE_KEYS = {
+        "REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO",
+        "TRANSITO", "EN_DESTINO", "CERRADO",
+    }
+
+    @action(detail=True, methods=["get", "post", "patch"], url_path="phase-durations")
+    def phase_durations(self, request, pk=None):
+        """Overrides manuales de días por fase del expediente."""
+        from django.core.exceptions import ValidationError as _DjValidationError
+        try:
+            exp = Expediente.objects.get(pk=pk, is_active=True)
+        except Expediente.DoesNotExist:
+            return Response({"detail": "Expediente no encontrado"}, status=404)
+        except (ValueError, _DjValidationError):
+            return Response({"detail": "expediente_id inválido"}, status=400)
+
+        if request.method.upper() == "GET":
+            return Response({"phase_durations": exp.phase_durations_json or {}})
+
+        denied = _deny_client_mutation(request, action_label="expediente.phase_durations")
+        if denied is not None:
+            return denied
+
+        data = request.data or {}
+        if not isinstance(data, dict):
+            return Response({"detail": "payload debe ser objeto {FASE: dias}"}, status=400)
+
+        current = dict(exp.phase_durations_json or {})
+        for k, v in data.items():
+            key = str(k).strip().upper()
+            if key not in self._PHASE_KEYS:
+                return Response({"detail": f"fase inválida: {k}"}, status=400)
+            if v is None or v == "":
+                current.pop(key, None)
+                continue
+            try:
+                days = float(v)
+            except (TypeError, ValueError):
+                return Response({"detail": f"días inválidos para {key}"}, status=400)
+            if days < 0 or days > 365:
+                return Response({"detail": f"días fuera de rango (0-365) para {key}"}, status=400)
+            current[key] = round(days, 1)
+
+        exp.phase_durations_json = current
+        exp.save(update_fields=["phase_durations_json", "updated_at"])
+        return Response({"phase_durations": current})
+
     @action(detail=False, methods=["get"])
     def kanban(self, request):
         """Vista kanban: expedientes agrupados por fase (estado).

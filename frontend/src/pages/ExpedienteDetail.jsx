@@ -14,6 +14,8 @@ import {
 
 // Sprint 2026-05-11 fase 7+ · modal read-only del artefacto.
 import ArtifactFillModal from "../components/expedientes/builderArtifacts/ArtifactFillModal.jsx";
+// Sprint 2026-06-10 · días por fase (EventLog + override manual admin).
+import PhaseDurationsBar from "../components/expedientes/PhaseDurationsBar.jsx";
 import {
   Badge, StatusBadge, Progress, StateTimeline, CreditBar, CountryFlag,
 } from "../components/ui/primitives.jsx";
@@ -620,6 +622,10 @@ export default function ScreenExpedienteDetail() {
         {/* State timeline strip */}
         <div style={{ padding: '8px 24px 14px', background: 'var(--surface)', borderBottom: '1px solid var(--divider)' }}>
           <StateTimeline currentStatus={exp.status} lang={lang} dates={dates}/>
+          {/* Sprint 2026-06-10 · días por fase (real del EventLog; click
+              admin para fijar valor manual — alimenta el Cronograma). */}
+          <PhaseDurationsBar expedienteId={exp.id} currentStatus={exp.status}
+                             lang={lang} canEdit={!isClient}/>
         </div>
 
         {/* Action bar — SOLO ADMIN. CLIENT B2B es read-only:

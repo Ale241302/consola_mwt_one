@@ -166,6 +166,11 @@ class Expediente(models.Model):
     phase_ratio         = models.DecimalField(max_digits=6, decimal_places=3, default=0)
     phase_signal        = models.CharField(max_length=16, null=True, blank=True)
     last_event_at       = models.DateTimeField(null=True, blank=True)
+    # Sprint 2026-06-10 · overrides manuales de días por fase (admin/CEO).
+    # {"REGISTRO": 3, "PRODUCCION": 12, ...} — el detalle del expediente y
+    # el Cronograma del export los priorizan sobre la duración derivada del
+    # EventLog. Columna: E1_expedientes_phase_durations.sql.
+    phase_durations_json = models.JSONField(default=dict, blank=True)
 
     cost_corrections    = models.BooleanField(default=False)
     proforma_reviewed   = models.BooleanField(default=False)
