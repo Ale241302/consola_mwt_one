@@ -74,11 +74,12 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
     const out = {};
     STAGES.forEach((s) => {
       const i = present.indexOf(s);
-      let real = null, open = false;
+      let real = null, open = false, exit = null;
       if (i >= 0) {
         const a = new Date(entry[s] + "T12:00:00");
         const nxt = present[i + 1];
         if (nxt) {
+          exit = entry[nxt];
           real = Math.max(0, Math.round((new Date(entry[nxt] + "T12:00:00") - a) / DAY_MS));
         } else {
           real = Math.max(0, Math.round((today - a) / DAY_MS));
@@ -86,7 +87,7 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
         }
       }
       const ov = overrides[s];
-      out[s] = { entry: entry[s] || null, real, open, override: ov != null && ov !== "" ? Number(ov) : null };
+      out[s] = { entry: entry[s] || null, exit, real, open, override: ov != null && ov !== "" ? Number(ov) : null };
     });
     return out;
   }, [events, overrides, currentStatus]);
@@ -126,7 +127,14 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
           const isEd = editing === s;
           const tip = [
             L[s],
-            info.entry ? ((lang === "es" ? "desde " : "since ") + info.entry) : null,
+            // Rango exacto registrado en pipeline.event_log: entrada a la
+            // fase → entrada a la siguiente (o "hoy" si está en curso).
+            info.entry
+              ? ((lang === "es" ? "del " : "from ") + info.entry
+                 + (info.exit
+                    ? ((lang === "es" ? " al " : " to ") + info.exit)
+                    : (lang === "es" ? " a hoy" : " to today")))
+              : null,
             info.real != null ? ((lang === "es" ? "real: " : "actual: ") + info.real + "d") : null,
             info.override != null ? ((lang === "es" ? "manual: " : "manual: ") + info.override + "d") : null,
             canEdit ? (lang === "es" ? "(click para fijar manual)" : "(click to set manual)") : null,
