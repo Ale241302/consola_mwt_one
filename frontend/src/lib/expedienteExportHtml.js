@@ -749,9 +749,17 @@ function clientRuntime() {
         if (a) anyReal = true;
         total += v;
         var n = Math.round(v * 10) / 10;
-        return '<div class="stc st-b-' + s + '"><div class="stc-n">' + n + '<span class="stc-u">d</span>' + (est ? '<span class="stc-est">est.</span>' : '<span class="stc-real">' + a.n + ' real</span>') + '</div><div class="stc-l">' + SLAB[s] + "</div></div>";
+        // Todos son tiempos ESTIMADOS — con historial se indica cuántos
+        // expedientes alimentan la estimación; sin historial, el estándar.
+        var badge = est
+          ? '<span class="stc-est">est.</span>'
+          : '<span class="stc-est">est. · ' + a.n + ' exp.</span>';
+        return '<div class="stc st-b-' + s + '"><div class="stc-n">' + n + '<span class="stc-u">d</span>' + badge + '</div><div class="stc-l">' + SLAB[s] + "</div></div>";
       }).join("");
-      html += '<div class="stsec"><div class="stsec-h"><span class="tag ' + cls + '">' + lab + '</span><span class="stsec-t">ciclo completo ≈ <b>' + Math.round(total) + ' días</b>' + (anyReal ? " · promedio del historial real" : " · estimado por defecto (sin historial)") + "</span></div><div class=\"stgrid\">" + cards + "</div></div>";
+      var srcTxt = anyReal
+        ? " · estimado con los expedientes de este export" + (META.cliente ? " (cliente: " + esc(META.cliente) + ")" : "")
+        : " · estimado por defecto (sin historial)";
+      html += '<div class="stsec"><div class="stsec-h"><span class="tag ' + cls + '">' + lab + '</span><span class="stsec-t">ciclo completo ≈ <b>' + Math.round(total) + ' días</b>' + srcTxt + "</span></div><div class=\"stgrid\">" + cards + "</div></div>";
     });
     box.innerHTML = html;
   }
@@ -2079,7 +2087,7 @@ export function buildExpedientesExportHtml({
   const data = items.map((it) => buildNormalized(it, audience, lang, fileBase));
   const dataJson = JSON.stringify(data).replace(/</g, "\\u003c");
   const recipientLabel = audience === INVOICE_AUDIENCE.MWT ? "Admin / Interno (MWT)" : "Cliente";
-  const meta = { recipient: recipientLabel };
+  const meta = { recipient: recipientLabel, cliente: filters.clienteLabel || "" };
   const now = new Date();
   const fecha = now.toLocaleString("es-CR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 

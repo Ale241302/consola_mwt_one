@@ -303,7 +303,9 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             "credit_days", "credit_days_mwt", "credit_days_cliente", "credit_band",
             "is_blocked", "block_reason", "block_cause", "factory_delay",
             "phase_ratio", "phase_signal",
-            "is_active", "updated_at",
+            # Sprint 2026-06-10 · created_at = inicio de REGISTRO en el
+            # Cronograma del export (expedientes sin eventos todavía).
+            "is_active", "created_at", "updated_at",
             # Legacy compat (Sprint 2026-05-10)
             "proforma_codigo",
             # Sprint 2026-05-17 · arrays role-aware
