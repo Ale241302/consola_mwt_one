@@ -113,7 +113,11 @@ function mapExpedienteFromApi(r) {
     phase_signal:  r.phase_signal || 'green',
     currency:      r.moneda || 'USD',
     mode:          r.incoterm || '—',
-    freight_mode:  r.freight_mode || 'SEA',
+    // Sprint 2026-06-10 — SIN default 'SEA': si la columna está vacía el
+    // expediente NO tiene método de envío todavía y el Cronograma del
+    // export asume Aéreo para la proyección (antes el default fantasma
+    // los bucketizaba como Marítimo → tránsito 35d en vez de ~3.7d).
+    freight_mode:  r.freight_mode || '',
     dispatch_mode: r.dispatch_mode || 'FCL',
     origin:        r.origin || '',
     destination:   r.destination || '',
@@ -1059,7 +1063,7 @@ export default function ScreenExpedientes() {
                       )}
                       {!isClient && (
                         <td style={{textAlign:'right'}}>
-                          <span className="caption">{e.mode} · {e.freight_mode}</span>
+                          <span className="caption">{e.mode} · {e.freight_mode || '—'}</span>
                         </td>
                       )}
                       {/* "credit_days" es una señal interna (edad de la cuenta por cobrar).

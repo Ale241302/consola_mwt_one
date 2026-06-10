@@ -742,7 +742,7 @@ function clientRuntime() {
         var conn = '<div class="gconn" style="left:' + lMin + '%;width:' + totalW + '%"></div>';
         var summaryBar = '<div class="gsummary-bar ' + stateCls + '" data-tip="' + esc(summaryTip) + '" style="left:' + lMin + '%;width:' + totalW + '%"></div>';
         
-        html += '<div class="grow gmain' + (open ? " gopen" : "") + '"><div class="glabel"><button class="gexp' + (open ? " on" : "") + '" data-exp="' + esc(id) + '" title="Desglosar fases">' + chevron + '</button><span class="gid">' + esc(id) + '</span><span class="gmeta">' + fInt(e.volumen) + " prs · " + esc(e.operador) + (e.modo ? " · " + esc(e.modo) : "") + '</span></div><div class="gtrack">' + conn + summaryBar + "</div></div>";
+        html += '<div class="grow gmain' + (open ? " gopen" : "") + '"><div class="glabel"><button class="gexp' + (open ? " on" : "") + '" data-exp="' + esc(id) + '" title="Desglosar fases">' + chevron + '</button><span class="gid">' + esc(id) + '</span><span class="gmeta">' + fInt(e.volumen) + " prs · " + esc(e.operador) + (e.modo ? " · " + esc(e.modo) : " · Aereo (sup.)") + '</span></div><div class="gtrack">' + conn + summaryBar + "</div></div>";
         
         if (open) {
           var all = r.seg.real.map(function (sg) { return { sg: sg, est: false }; })
