@@ -440,6 +440,24 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, 
   const proformas = Array.isArray(exp.proforma_codigos) ? exp.proforma_codigos : [];
   const ocs       = Array.isArray(exp.oc_codigos)       ? exp.oc_codigos       : [];
 
+  // Sprint 2026-06-11 (CEO) · título role-aware, SIN código EXP interno:
+  //   CLIENT_* → su PO; ADMIN/CEO → la proforma (PF). Fallback al EXP
+  //   solo si no existe ninguno. El código que sube al título se quita
+  //   de los chips para no duplicarlo.
+  const poFmt = (c) => (/^po[\s_-]/i.test(String(c || "")) ? c : `PO ${c}`);
+  let headRef = exp.ref;
+  let headKind = "exp";
+  if (isClient) {
+    if (ocs.length) { headRef = poFmt(ocs[0]); headKind = "oc"; }
+  } else if (proformas.length) {
+    headRef = /^pf[\s_-]/i.test(String(proformas[0])) ? proformas[0] : `PF ${proformas[0]}`;
+    headKind = "pf";
+  } else if (ocs.length) {
+    headRef = poFmt(ocs[0]); headKind = "oc";
+  }
+  const pfChips = headKind === "pf" ? proformas.slice(1) : proformas;
+  const ocChips = headKind === "oc" ? ocs.slice(1) : ocs;
+
   return (
     <div
       className="k-card-pro k-card-pipeline-v2"
@@ -457,7 +475,7 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, 
       {/* Header: REF + lock (si bloqueado). Sin badge "C" ni "90d". */}
       <div className="k-card-row1">
         <span className="k-card-ref-mono" onClick={(e)=>{ e.stopPropagation(); onOpen(); }}>
-          {exp.ref}
+          {headRef}
         </span>
         {exp.is_blocked && (
           <span className="card-alert card-alert-critical"
@@ -503,13 +521,13 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, 
             ADMIN/CEO → Proforma(s) si existen, fallback a OC(s)
             CLIENT_*  → siempre OC(s) (su PO). */}
       {isClient ? (
-        ocs.length > 0 && (
+        ocChips.length > 0 && (
           <div className="k-card-field">
             <div className="k-card-field-label">
               {lang==='es' ? 'OC' : 'PO'}
             </div>
             <div className="k-card-field-chips">
-              {ocs.map((c) => (
+              {ocChips.map((c) => (
                 <span key={`oc-${c}`} className="ref-chip ref-chip--oc">
                   <span className="ref-chip__value font-mono tabular-nums">{c}</span>
                 </span>
@@ -518,21 +536,21 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, 
           </div>
         )
       ) : (
-        (proformas.length > 0 || ocs.length > 0) && (
+        (pfChips.length > 0 || ocChips.length > 0) && (
           <div className="k-card-field">
             <div className="k-card-field-label">
-              {proformas.length > 0
+              {pfChips.length > 0
                 ? (lang==='es' ? 'Proforma' : 'Proforma')
                 : (lang==='es' ? 'OC' : 'PO')}
             </div>
             <div className="k-card-field-chips">
-              {proformas.length > 0
-                ? proformas.map((c) => (
+              {pfChips.length > 0
+                ? pfChips.map((c) => (
                     <span key={`pf-${c}`} className="ref-chip ref-chip--proforma">
                       <span className="ref-chip__value font-mono tabular-nums">{c}</span>
                     </span>
                   ))
-                : ocs.map((c) => (
+                : ocChips.map((c) => (
                     <span key={`oc-${c}`} className="ref-chip ref-chip--oc">
                       <span className="ref-chip__value font-mono tabular-nums">{c}</span>
                     </span>
