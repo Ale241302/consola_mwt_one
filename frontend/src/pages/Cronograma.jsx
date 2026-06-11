@@ -56,6 +56,10 @@ export default function Cronograma() {
   const [tab, setTab] = useState("GANTT");
   const [clienteId, setClienteId] = useState(params.get("cliente") || "ALL");
   const [estado, setEstado] = useState((params.get("estado") || "ALL").toUpperCase());
+  // Sprint 2026-06-11 — filtro de proformas/PO concretas (multi-selección).
+  // Set de ids de expediente; vacío = todas.
+  const [selProformas, setSelProformas] = useState(() => new Set());
+  const [profOpen, setProfOpen] = useState(false);
   const [modalItem, setModalItem] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -111,8 +115,9 @@ export default function Cronograma() {
       (qpExp ? it.id === qpExp : true)
       && (clienteId === "ALL" || it.clienteId === clienteId)
       && (estado === "ALL" || it.estado === estado)
+      && (selProformas.size === 0 || selProformas.has(it.id))
     ),
-    [scopedItems, clienteId, estado, qpExp]
+    [scopedItems, clienteId, estado, qpExp, selProformas]
   );
 
   // Filas para runExpedienteExport (forma del listado de /expedientes),
@@ -167,6 +172,20 @@ export default function Cronograma() {
       ? it.ocCodigo
       : `PO ${it.ocCodigo}`;
   }, [isClient]);
+
+  // Opciones del filtro de proformas/PO — etiqueta role-aware (proforma
+  // para staff, PO para cliente) + EXP como pista secundaria.
+  const proformaOpts = useMemo(
+    () => scopedItems
+      .map((it) => ({ id: it.id, label: labelOf(it), sub: it.expCodigo }))
+      .sort((a, b) => String(a.label).localeCompare(String(b.label))),
+    [scopedItems, labelOf]
+  );
+  const toggleProforma = (id) => setSelProformas((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   // Fila de expediente (con sub-filas por fase) — reutilizada por los 3 modos.
   const expedienteRow = useCallback((it, keyPrefix = "") => {
@@ -336,6 +355,77 @@ export default function Cronograma() {
             {clientes.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
           </select>
         )}
+        {/* Proformas/PO concretas — multi-selección (vacío = todas).
+            Filtra el Gantt, las stats y las demás tabs. */}
+        <div style={{ position: "relative" }}>
+          <button
+            type="button"
+            className="input"
+            onClick={() => setProfOpen((o) => !o)}
+            style={{
+              padding: "5px 10px", fontSize: 12.5, width: "auto", minWidth: 160,
+              textAlign: "left", cursor: "pointer",
+              border: selProformas.size > 0 ? "1.5px solid #013A57" : undefined,
+            }}
+          >
+            {selProformas.size === 0
+              ? (isClient
+                  ? (lang === "es" ? "Todas las PO" : "All POs")
+                  : (lang === "es" ? "Todas las proformas" : "All proformas"))
+              : `${isClient ? "PO" : (lang === "es" ? "Proformas" : "Proformas")} · ${selProformas.size}`}
+            <span style={{ marginLeft: 6, fontSize: 9, opacity: 0.6 }}>▾</span>
+          </button>
+          {profOpen && (
+            <>
+              {/* overlay: click fuera cierra */}
+              <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setProfOpen(false)}/>
+              <div style={{
+                position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 41,
+                background: "var(--surface, #fff)",
+                border: "1px solid var(--border-subtle, #E1E6ED)",
+                borderRadius: 10, boxShadow: "0 8px 24px -8px rgba(15,27,61,0.18)",
+                minWidth: 250, maxHeight: 300, overflowY: "auto", padding: 6,
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setSelProformas(new Set())}
+                  style={{
+                    width: "100%", textAlign: "left", border: 0, background: "transparent",
+                    padding: "6px 8px", fontSize: 12, cursor: "pointer",
+                    color: "var(--text-secondary, #475569)", fontWeight: 600,
+                    borderBottom: "1px solid var(--border-subtle, #E1E6ED)", marginBottom: 4,
+                  }}
+                >
+                  {lang === "es" ? "Limpiar selección (todas)" : "Clear selection (all)"}
+                </button>
+                {proformaOpts.map((o) => (
+                  <label
+                    key={o.id}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      padding: "6px 8px", borderRadius: 6, cursor: "pointer",
+                      fontSize: 12.5,
+                      background: selProformas.has(o.id) ? "var(--surface-alt, #E8EDF3)" : "transparent",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selProformas.has(o.id)}
+                      onChange={() => toggleProforma(o.id)}
+                      style={{ accentColor: "#013A57", cursor: "pointer" }}
+                    />
+                    <span style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 600 }}>
+                      {o.label}
+                    </span>
+                    <span style={{ color: "var(--text-tertiary, #94A3B8)", fontSize: 10.5, marginLeft: "auto", fontFamily: "JetBrains Mono, monospace" }}>
+                      {o.sub}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         {/* Exportar HTML — abre el modal de siempre y genera el .html
             interactivo (zoom/arrastre + modal de SKUs por registro). */}
         <button className="btn btn-secondary"

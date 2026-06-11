@@ -76,6 +76,11 @@ export default function UploadDocumentModal({
   // y se PATCHee el expediente antes del upload — así el HTML cliente
   // auto-generado refleja el descuento aplicado.
   expedienteCreditDays = 90,
+  // Sprint 2026-06-11 · FUSIÓN: lista de destinos posibles del documento
+  // [{label, ocId, expedienteId, creditDays}]. Si viene, el modal muestra
+  // un selector "Pertenece a" ARRIBA del tipo y resuelve ocId/expedienteId
+  // del destino elegido (los props quedan como fallback).
+  targetOptions = null,
 }) {
   const [kind,    setKind]    = useState("OC");
   const [codigo,  setCodigo]  = useState("");
@@ -91,11 +96,15 @@ export default function UploadDocumentModal({
   // Default al credit_days actual del expediente. Si el admin lo
   // cambia, hacemos PATCH al expediente antes del upload.
   const [paymentDays, setPaymentDays] = useState(Number(expedienteCreditDays) || 90);
+  // Sprint 2026-06-11 · FUSIÓN: índice del destino elegido en targetOptions.
+  const [targetIdx, setTargetIdx] = useState(0);
   // Cuando cambia el expediente o se abre el modal, resetear paymentDays
   // al valor actual del expediente (no al last-seen del modal previo).
   useEffect(() => {
-    setPaymentDays(Number(expedienteCreditDays) || 90);
-  }, [expedienteCreditDays, open]);
+    const cd = (Array.isArray(targetOptions) && targetOptions[targetIdx]?.creditDays)
+      || expedienteCreditDays;
+    setPaymentDays(Number(cd) || 90);
+  }, [expedienteCreditDays, open, targetIdx, targetOptions]);
   const inputRef = useRef(null);
 
   // El selector de audiencia solo aplica a ADMIN/MWT y a Proforma/Factura.
@@ -103,6 +112,17 @@ export default function UploadDocumentModal({
   const audienceApplies = !viewerIsClient && (kind === "PROFORMA" || kind === "FACTURA");
 
   if (!open) return null;
+
+  // Sprint 2026-06-11 · FUSIÓN: si hay targetOptions, ocId/expedienteId
+  // se resuelven del destino elegido. El documento queda relacionado al
+  // expediente/proforma que el usuario indique.
+  const _target = (Array.isArray(targetOptions) && targetOptions.length > 0)
+    ? targetOptions[Math.min(targetIdx, targetOptions.length - 1)]
+    : null;
+  if (_target) {
+    ocId = _target.ocId || ocId;
+    expedienteId = _target.expedienteId || expedienteId;
+  }
 
   const kindObj = DOCUMENT_KINDS.find(k => k.id === kind) || DOCUMENT_KINDS[0];
   const aiEligible = !!(kindObj.aiPipeline && expedienteId && onAiAnalysisReady);
@@ -499,6 +519,36 @@ export default function UploadDocumentModal({
           padding: 20, display: "flex", flexDirection: "column", gap: 14,
           overflowY: "auto",
         }}>
+          {/* Sprint 2026-06-11 · FUSIÓN: a qué proforma/expediente queda
+              relacionado el documento. Se pregunta ANTES del tipo. */}
+          {Array.isArray(targetOptions) && targetOptions.length > 0 && (
+            <div>
+              <div className="micro" style={{
+                fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                color: "var(--text-tertiary)", textTransform: "uppercase",
+                marginBottom: 6,
+              }}>
+                {lang === "es" ? "Pertenece a" : "Belongs to"}{" "}
+                <span style={{ color: "var(--danger, #DC2626)" }}>*</span>
+              </div>
+              <select
+                value={targetIdx}
+                disabled={uploading}
+                onChange={(e) => setTargetIdx(Number(e.target.value) || 0)}
+                style={{
+                  width: "100%", padding: "9px 10px", borderRadius: 8,
+                  border: "1px solid var(--border)", background: "white",
+                  fontSize: 13, fontFamily: "var(--font-mono)",
+                  cursor: uploading ? "not-allowed" : "pointer",
+                }}
+              >
+                {targetOptions.map((t, i) => (
+                  <option key={t.expedienteId || i} value={i}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Tipo de documento */}
           <div>
             <div className="micro" style={{

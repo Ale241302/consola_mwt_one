@@ -202,6 +202,12 @@ export default function AddSAPConfirmationDrawer({
   // estado (permite editar en PRODUCCION) y llama upsert-sap en vez
   // de confirm-sap.
   existingSap = null, // { sap_id, fecha_fabricacion, line_ids, has_file }
+  // Sprint 2026-06-11 · modo FUSIÓN: las líneas vienen de VARIOS
+  // expedientes fusionados (cada línea trae expediente_id + origin —
+  // el número de proforma del miembro, que se muestra como chip). El
+  // submit agrupa por expediente y llama confirm-sap una vez por
+  // miembro con el MISMO número SAP (cada uno genera su ART-04).
+  multiExp = false,
 }) {
   const isEditMode = !!existingSap;
   // ───── state ─────
@@ -348,7 +354,8 @@ export default function AddSAPConfirmationDrawer({
   }, [sapId, fechaFab, expediente, confirmedQtys, addedLines]);
 
   // En edit mode permitimos cualquier estado (PRODUCCION, etc.)
-  const wrongState = !isEditMode && expediente && expediente.estado && expediente.estado !== "REGISTRO";
+  // En modo fusión el padre ya filtró las líneas a miembros en REGISTRO.
+  const wrongState = !multiExp && !isEditMode && expediente && expediente.estado && expediente.estado !== "REGISTRO";
 
   // ───── handlers ─────
   const updateQty = (lineId, raw) => {
@@ -641,13 +648,40 @@ export default function AddSAPConfirmationDrawer({
         qty_confirmada:  Number(confirmedQtys[l.id] ?? l.qty ?? 0),
         unit_price:      Number(l.unit_price || 0),
       }));
-      const result = await (isEditMode ? postUpsertSap : postConfirmSap)({
-        expedienteId:      expediente.id,
-        sapId:             sapId.trim(),
-        fechaFabricacion:  fechaFab,
-        lineasConfirmadas,
-        file,
-      });
+      let result;
+      if (multiExp && !isEditMode) {
+        // Sprint 2026-06-11 · FUSIÓN: agrupar las líneas agregadas por
+        // su expediente de origen y confirmar el MISMO SAP en cada uno
+        // (cada confirmación genera su propio ART-04 y mueve ESE
+        // expediente a PRODUCCIÓN). Secuencial para no perder errores.
+        const byExp = new Map();
+        for (const l of addedLines) {
+          const eid = l.expediente_id || l.exp_id || (expediente && expediente.id);
+          if (!byExp.has(eid)) byExp.set(eid, []);
+          byExp.get(eid).push(l);
+        }
+        for (const [eid, ls] of byExp.entries()) {
+          result = await postConfirmSap({
+            expedienteId:      eid,
+            sapId:             sapId.trim(),
+            fechaFabricacion:  fechaFab,
+            lineasConfirmadas: ls.map(l => ({
+              linea_id:        l.id,
+              qty_confirmada:  Number(confirmedQtys[l.id] ?? l.qty ?? 0),
+              unit_price:      Number(l.unit_price || 0),
+            })),
+            file,
+          });
+        }
+      } else {
+        result = await (isEditMode ? postUpsertSap : postConfirmSap)({
+          expedienteId:      expediente.id,
+          sapId:             sapId.trim(),
+          fechaFabricacion:  fechaFab,
+          lineasConfirmadas,
+          file,
+        });
+      }
       onSuccess?.(result);
       onClose?.();
     } catch (e) {
@@ -1302,7 +1336,7 @@ export default function AddSAPConfirmationDrawer({
                               )}
                             </div>
                             <div className="caption" style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
-                              {fmtNumber(l.qty)} u · {l.descripcion || l.product || l.product_label || ""}
+                              {fmtNumber(l.qty)} u · {l.origin ? `${l.origin} · ` : ""}{l.descripcion || l.product || l.product_label || ""}
                             </div>
                           </div>
                           <IconPlus size={13} style={{ color: MINT }}/>
@@ -1350,8 +1384,20 @@ export default function AddSAPConfirmationDrawer({
                           gridTemplateColumns: "1fr 90px 90px 60px 36px",
                         }}>
                           <div className="sap-line-refs">
-                            <div className="mono heading-sm" style={{ color: NAVY }}>
+                            <div className="mono heading-sm" style={{ color: NAVY, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                               {l.sku || "—"}
+                              {/* Sprint 2026-06-11 · FUSIÓN: a qué proforma
+                                  (admin) / PO (cliente) pertenece la línea. */}
+                              {l.origin && (
+                                <span style={{
+                                  fontSize: 10, fontWeight: 700,
+                                  padding: "1px 7px", borderRadius: 4,
+                                  background: "rgba(15,163,160,0.12)",
+                                  border: "1px solid rgba(15,163,160,0.4)",
+                                }}>
+                                  {l.origin}
+                                </span>
+                              )}
                             </div>
                             <div className="caption text-sec" style={{ marginTop: 2 }}>
                               {(l.size || l.talla) ? `${lang === "es" ? "Talla" : "Size"} ${l.size || l.talla} · ` : ""}

@@ -25,10 +25,15 @@ import { tr, fmtMoney } from "../lib/i18n.js";
 import { StatusBadge, CreditDot } from "../components/ui/primitives.jsx";
 import {
   IconChevLeft, IconChevDown, IconChevRight, IconFolder, IconPlane,
-  IconShip, IconAlert, IconEye,
+  IconShip, IconAlert, IconEye, IconPlus,
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { OCPagosCard, OCTransferCostsCard } from "./OCDetail.jsx";
+// Sprint 2026-06-11 · acciones sobre la fusión: el drawer C5 en modo
+// multiExp (líneas de varios miembros) y el modal de documento con
+// selector "Pertenece a".
+import AddSAPConfirmationDrawer from "../components/expedientes/AddSAPConfirmationDrawer.jsx";
+import UploadDocumentModal from "../components/expedientes/UploadDocumentModal.jsx";
 
 // Chip de ORIGEN del miembro (proforma para staff / PO para cliente).
 function OriginChip({ text }) {
@@ -61,7 +66,7 @@ export default function ScreenFusionDetail() {
   const { fusionId } = useParams();
   const navigate = useNavigate();
   const { lang } = useOutletContext();
-  const { isAdmin, isClient } = useRole();
+  const { isAdmin, isClient, can } = useRole();
   const es = lang === "es";
 
   const [loading, setLoading] = useState(true);
@@ -73,6 +78,10 @@ export default function ScreenFusionDetail() {
   const [openSap, setOpenSap] = useState(null);
   const [viewingDocId, setViewingDocId] = useState(null);
   const [docError, setDocError] = useState(null);
+  // Acciones de la fusión (CEO-ONLY) + re-fetch tras mutación.
+  const [sapOpen, setSapOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   // ORIGEN del miembro (R3): proforma para staff, PO para cliente.
   const badgeOf = (m) =>
@@ -143,7 +152,7 @@ export default function ScreenFusionDetail() {
     })();
     return () => { cancel = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fusionId]);
+  }, [fusionId, reloadKey]);
 
   // Ver documento — mismo flujo que OCDetail.handleViewDoc.
   const openDoc = async (doc) => {
@@ -286,6 +295,29 @@ export default function ScreenFusionDetail() {
     }));
   });
 
+  // Líneas SIN SAP de miembros en REGISTRO — candidatas a "Agregar SAP".
+  // Cada una lleva su ORIGEN (proforma admin / PO cliente) y su
+  // expediente_id para que el drawer (multiExp) confirme contra el
+  // miembro correcto.
+  const sapCandidates = members
+    .filter((m) => String(m.exp.estado || "").toUpperCase() === "REGISTRO")
+    .flatMap((m) => m.lineas
+      .filter((l) => !l.sap)
+      .map((l) => ({
+        id: l.id,
+        sku: l.sku,
+        size: l.talla || l.size || "",
+        qty: Number(l.qty || 0),
+        unit_price: priceOf(l),
+        producto_id: l.producto_id || null,
+        descripcion: nameOf(l),
+        origin: badgeOf(m),
+        expediente_id: m.exp.id,
+      })));
+  const firstRegistro = members.find(
+    (m) => String(m.exp.estado || "").toUpperCase() === "REGISTRO"
+  );
+
   const transportChip = (tm) => {
     const t = tm.normalize("NFD").replace(/[̀-ͯ]/g, "");
     if (t.startsWith("AER") || t === "AIR") {
@@ -333,6 +365,35 @@ export default function ScreenFusionDetail() {
               {allLines.length} {tr(lang, "lines_count").toLowerCase()} · {totalUnits.toLocaleString("en-US")} u · {members.length} {tr(lang, "expedientes").toLowerCase()}
             </span>
           </div>
+        </div>
+
+        {/* Acciones de la fusión (CEO-ONLY, mismos gates que OCDetail). */}
+        <div className="flex gap-2">
+          {can("register_sap") && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setSapOpen(true)}
+              disabled={sapCandidates.length === 0}
+              title={sapCandidates.length === 0
+                ? (es
+                    ? "No hay líneas pendientes de SAP en miembros en REGISTRO"
+                    : "No pending-SAP lines in REGISTRO members")
+                : ""}
+              style={{ background: "var(--brand-primary)" }}
+            >
+              <IconPlus size={14}/>{es ? "Agregar SAP" : "Add SAP"}
+            </button>
+          )}
+          {can("upload_document") && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setUploadOpen(true)}
+            >
+              <IconPlus size={14}/>{tr(lang, "add_document")}
+            </button>
+          )}
         </div>
       </div>
 
@@ -698,6 +759,55 @@ export default function ScreenFusionDetail() {
           <OCPagosCard ocId={m.exp.oc_id} lang={lang}/>
         </div>
       ))}
+
+      {/* ── Drawer C5 · Agregar SAP en modo FUSIÓN ─────────────────
+          Las líneas candidatas vienen de TODOS los miembros en REGISTRO
+          sin SAP, con chip de origen (proforma). El drawer agrupa por
+          expediente al confirmar (mismo SAP → un ART-04 por miembro). */}
+      {can("register_sap") && (
+        <AddSAPConfirmationDrawer
+          open={sapOpen}
+          onClose={() => setSapOpen(false)}
+          lang={lang}
+          multiExp
+          oc={{
+            id: firstRegistro?.exp.oc_id || members[0]?.exp.oc_id || null,
+            codigo: label,
+          }}
+          expediente={{
+            id: firstRegistro?.exp.id || members[0]?.exp.id || null,
+            codigo: label,
+            estado: "REGISTRO",
+          }}
+          lines={sapCandidates}
+          onSuccess={() => {
+            setSapOpen(false);
+            setReloadKey((k) => k + 1);
+          }}
+        />
+      )}
+
+      {/* ── Modal Agregar documento — pregunta "Pertenece a" (miembro)
+          arriba del tipo; el doc queda relacionado a esa proforma/PO. */}
+      {uploadOpen && can("upload_document") && (
+        <UploadDocumentModal
+          open={uploadOpen}
+          onClose={() => setUploadOpen(false)}
+          lang={lang}
+          contextLabel={label}
+          targetOptions={members.map((m) => ({
+            label: `${badgeOf(m)} · ${m.exp.codigo}`,
+            ocId: m.exp.oc_id,
+            expedienteId: m.exp.id,
+            creditDays: Number(m.exp.credit_days) || 90,
+          }))}
+          onUploaded={() => {
+            setUploadOpen(false);
+            // Margen para el HTML autogenerado del backend (PROFORMA/OC).
+            setTimeout(() => setReloadKey((k) => k + 1), 700);
+          }}
+        />
+      )}
     </div>
   );
 }
