@@ -186,7 +186,7 @@ const _isIdempotent = (m) => {
   return u === "GET" || u === "HEAD";
 };
 
-export async function apiFetch(path, { method = "GET", body, token, headers = {}, _isRetry = false, _transientRetried = false } = {}) {
+export async function apiFetch(path, { method = "GET", body, token, headers = {}, signal, _isRetry = false, _transientRetried = false } = {}) {
   // ── Kill-switch: mock mode ──────────────────────────────────────────
   // /auth/* siempre pasa al backend real (login + refresh + me + logout).
   // El resto: GET → [] (o fixtures específicos si hay mock registrado)
@@ -231,15 +231,22 @@ export async function apiFetch(path, { method = "GET", body, token, headers = {}
     },
   };
   if (body !== undefined) opts.body = typeof body === "string" ? body : JSON.stringify(body);
+  // Sprint 2026-06-11 · Auditoría Fable5 (#5): cancelación REAL de
+  // requests al desmontar pantallas. El caller pasa un AbortSignal y el
+  // fetch nativo lo honra; un AbortError NUNCA se reintenta.
+  if (signal) opts.signal = signal;
 
   let resp;
   try {
     resp = await fetch(`${API_BASE}${path}`, opts);
   } catch (e) {
+    // Abort explícito del caller (navegación) → propagar tal cual; el
+    // caller filtra err.name === 'AbortError' y no setea estado.
+    if (e && e.name === "AbortError") throw e;
     // Falla de red (upstream caído durante deploy, DNS, etc.). Reintento 1x.
     if (!_transientRetried && _isIdempotent(method)) {
       await _sleep(1000);
-      return apiFetch(path, { method, body, token, headers, _isRetry, _transientRetried: true });
+      return apiFetch(path, { method, body, token, headers, signal, _isRetry, _transientRetried: true });
     }
     throw new ApiError("No se pudo contactar al servidor", 0, null);
   }
@@ -259,7 +266,7 @@ export async function apiFetch(path, { method = "GET", body, token, headers = {}
     if (resp.status === 401 && !_isRetry && !path.startsWith("/auth/")) {
       const newAccess = await refreshAccessToken();
       if (newAccess) {
-        return apiFetch(path, { method, body, token: newAccess, headers, _isRetry: true });
+        return apiFetch(path, { method, body, token: newAccess, headers, signal, _isRetry: true });
       }
       // No se pudo refrescar (refresh expirado/ausente) → logout limpio.
       emitForcedLogout();
@@ -268,7 +275,7 @@ export async function apiFetch(path, { method = "GET", body, token, headers = {}
     // (deploy en curso: Django reiniciándose). Solo GET/HEAD, una vez.
     if (_TRANSIENT_STATUS.has(resp.status) && !_transientRetried && _isIdempotent(method)) {
       await _sleep(1000);
-      return apiFetch(path, { method, body, token, headers, _isRetry, _transientRetried: true });
+      return apiFetch(path, { method, body, token, headers, signal, _isRetry, _transientRetried: true });
     }
     const msg = data?.detail || data?.message || data?.error || `HTTP ${resp.status}`;
     throw new ApiError(msg, resp.status, data);

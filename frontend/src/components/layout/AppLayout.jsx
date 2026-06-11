@@ -6,6 +6,8 @@ import { TopBar } from "./TopBar.jsx";
 import { CommandPalette } from "../CommandPalette.jsx";
 import { TweaksPanel } from "../TweaksPanel.jsx";
 import TicketWidget from "../tickets/TicketWidget.jsx";
+// Sprint 2026-06-11 · Auditoría Fable5 (#6): límite de error por ruta.
+import ErrorBoundary from "../ui/ErrorBoundary.jsx";
 import { tr } from "../../lib/i18n.js";
 import { OCS, EXPEDIENTES } from "../../data/mockData.js";
 
@@ -138,7 +140,12 @@ export default function AppLayout() {
           onToggleLang={onToggleLang}
           onToggleTweaks={()=>setShowTweaks(s=>!s)}
         />
-        <Outlet context={{ lang }} />
+        {/* Sprint 2026-06-11 · Auditoría Fable5 (#6): aísla los crashes
+            de render de la página activa — el shell sobrevive y se
+            ofrece Reintentar. key=pathname resetea al navegar. */}
+        <ErrorBoundary key={location.pathname}>
+          <Outlet context={{ lang }} />
+        </ErrorBoundary>
       </div>
       {showCmd && <CommandPalette lang={lang} onClose={()=>setShowCmd(false)} />}
       {showTweaks && <TweaksPanel values={tweaks} onChange={updateTweaks} onClose={()=>setShowTweaks(false)} />}

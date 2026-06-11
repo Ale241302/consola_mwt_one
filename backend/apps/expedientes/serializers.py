@@ -96,6 +96,73 @@ class OcSerializer(serializers.ModelSerializer):
             return None
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 2026-06-11 · Auditoría Fable5 (sprint 03 · N+1 del listado).
+# GET /api/expedientes/ ejecutaba 4-5 queries POR FILA dentro de los
+# SerializerMethodField (proforma, proformas[], ocs[] ×2, saps[]) →
+# ~5N queries por listado. Este builder precomputa los tres mapas con
+# 3-4 queries TOTALES; el ViewSet.list los inyecta en el context y los
+# getters los usan con fallback al query por-fila (compatibilidad con
+# usos del serializer fuera del list).
+# ─────────────────────────────────────────────────────────────────────
+def build_expediente_ref_batches(expedientes):
+    exp_ids = [e.id for e in expedientes]
+    out = {"batch_proformas": {}, "batch_ocs": {}, "batch_saps": {}}
+    if not exp_ids:
+        return out
+    proformas = out["batch_proformas"]
+    ocs_docs  = out["batch_ocs"]
+    saps      = out["batch_saps"]
+
+    pf_rows = (Documento.objects
+               .filter(expediente_id__in=exp_ids, kind="PROFORMA", is_active=True)
+               .exclude(codigo__isnull=True).exclude(codigo__exact="")
+               .order_by("-created_at")
+               .values_list("expediente_id", "codigo"))
+    for eid, cod in pf_rows:
+        lst = proformas.setdefault(str(eid), [])
+        if cod not in lst:
+            lst.append(cod)
+
+    oc_rows = (Documento.objects
+               .filter(expediente_id__in=exp_ids, is_active=True)
+               .filter(kind__iregex=r"^OC(\s|_|$)")
+               .exclude(codigo__isnull=True).exclude(codigo__exact="")
+               .order_by("audience", "-created_at")
+               .values_list("expediente_id", "codigo"))
+    for eid, cod in oc_rows:
+        lst = ocs_docs.setdefault(str(eid), [])
+        if cod not in lst:
+            lst.append(cod)
+
+    # Fallback del código interno (commercial.oc) SOLO para expedientes
+    # sin documento OC subido — misma política que el getter por-fila.
+    missing = {str(e.id): e.oc_id for e in expedientes
+               if str(e.id) not in ocs_docs and e.oc_id}
+    if missing:
+        oc_map = {
+            str(i): c for i, c in
+            Oc.objects.filter(id__in=set(missing.values()), is_active=True)
+            .exclude(codigo__isnull=True).exclude(codigo__exact="")
+            .values_list("id", "codigo")
+        }
+        for eid, ocid in missing.items():
+            cod = oc_map.get(str(ocid))
+            if cod:
+                ocs_docs[eid] = [cod]
+
+    sap_rows = (Linea.objects
+                .filter(expediente_id__in=exp_ids, is_active=True)
+                .exclude(sap__isnull=True).exclude(sap__exact="")
+                .values_list("expediente_id", "sap")
+                .distinct())
+    for eid, sap in sap_rows:
+        lst = saps.setdefault(str(eid), [])
+        if sap not in lst:
+            lst.append(sap)
+    return out
+
+
 class ExpedienteListSerializer(serializers.ModelSerializer):
     """
     Serializer del listado de expedientes — `GET /api/expedientes/`.
@@ -140,6 +207,11 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
 
     # ── legacy proforma_codigo (string único, el más reciente) ─
     def get_proforma_codigo(self, obj):
+        # Fable5 · atajo batch (un query para todo el listado).
+        pre = (self.context or {}).get("batch_proformas")
+        if pre is not None:
+            lst = pre.get(str(obj.id), [])
+            return lst[0] if lst else None
         try:
             doc = (
                 Documento.objects
@@ -164,6 +236,10 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
         """Todas las proformas (kind=PROFORMA). CLIENT_* → []."""
         if self._is_client():
             return []
+        # Fable5 · atajo batch.
+        pre = (self.context or {}).get("batch_proformas")
+        if pre is not None:
+            return pre.get(str(obj.id), [])
         try:
             codes = list(
                 Documento.objects
@@ -192,6 +268,11 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
         ej. 'PO-2026-00004') queda como fallback al final para
         reconciliación interna, no como label primario.
         """
+        # Fable5 · atajo batch (incluye el fallback de OC principal,
+        # resuelto en lote por build_expediente_ref_batches).
+        pre = (self.context or {}).get("batch_ocs")
+        if pre is not None:
+            return pre.get(str(obj.id), [])
         try:
             # OCs subidas como documentos — preferimos audience=CLIENT,
             # caemos a ADMIN_ONLY si no hay versión cliente. Aceptamos
@@ -239,6 +320,11 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
         """Todos los SAPs distintos de las líneas. CEO-ONLY (R3)."""
         if self._is_client():
             return []
+        # Fable5 · atajo batch (con el mismo fallback al sap legacy).
+        pre = (self.context or {}).get("batch_saps")
+        if pre is not None:
+            lst = pre.get(str(obj.id), [])
+            return lst if lst else ([obj.sap] if obj.sap else [])
         try:
             saps = list(
                 Linea.objects

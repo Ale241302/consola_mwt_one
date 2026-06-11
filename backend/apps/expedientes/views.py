@@ -313,7 +313,14 @@ class ExpedienteViewSet(viewsets.ViewSet):
             client_field="client_id",
             extra_fields=("operating_company_id",),
         )
-        return Response(ExpedienteListSerializer(qs, many=True, context={"request": request}).data)
+        # Sprint 2026-06-11 · Auditoría Fable5 (N+1): precomputar las
+        # referencias (proformas/OCs/SAPs) en 3-4 queries TOTALES en vez
+        # de 4-5 por fila dentro del serializer.
+        from .serializers import build_expediente_ref_batches
+        rows = list(qs)
+        ctx = {"request": request}
+        ctx.update(build_expediente_ref_batches(rows))
+        return Response(ExpedienteListSerializer(rows, many=True, context=ctx).data)
 
     def retrieve(self, request, pk=None):
         # Lookup tolerante: el `pk` puede venir como UUID (canónico) o
