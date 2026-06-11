@@ -16,6 +16,24 @@ Esta carpeta es el plano de construcción del sistema completo, módulo por mód
     | Editar | `/<modulo>/:id/editar` | `PATCH /api/<recurso>/{id}/` |
     | Eliminar | modal en listado/detalle | `DELETE /api/<recurso>/{id}/` (soft) |
 
+## Mapa Sidebar → Sprint (los 12 sprints agrupan por DOMINIO, no por ítem de menú)
+
+| Ítem del sidebar / ruta | Sprint que lo cubre |
+|---|---|
+| Dashboard | `12_analytics` |
+| Expedientes · Cronograma · /expedientes/nuevo (wizard) · Tallas (/tallas) | `03_expedientes` |
+| Portal (B2B) | `02_clientes` (vista) + `03_expedientes` (datos) |
+| Clientes | `02_clientes` |
+| Marcas · Productos · Historial de precios · Proveedores | `08_brands` |
+| Finanzas · Cartera (/cobros) · Pagos (/financiero) | `05_cobros` |
+| Pipeline (Kanban) | `04_commercial` |
+| Movimientos (/transferencias) · NCM (/ncm) | `09_transfers` |
+| Nodos | `07_nodos` |
+| Inventario · Recepción inbound | `06_inventario` |
+| Notificaciones · Templates (/templates) · tickets | `10_communications` |
+| AI (/ai · /ai/governance) | `11_ai_hub` |
+| users · roles · /perfil · Login/Reset | `01_core` |
+
 ## Orden de construcción recomendado
 `01_core` → `02_clientes` → `08_brands` (catálogos) → `07_nodos` → `03_expedientes` → `04_commercial` → `06_inventario` → `09_transfers` → `05_cobros` → `12_analytics` → `10_communications` → `11_ai_hub`.
 (Core e identidad primero; los catálogos antes que expedientes porque éstos los referencian; analytics al final porque agrega sobre todo lo demás.)
