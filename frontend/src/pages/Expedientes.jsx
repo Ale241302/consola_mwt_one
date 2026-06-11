@@ -48,6 +48,8 @@ import RefCell from "../components/expedientes/RefCell.jsx";
 // Sprint 2026-06-04 · Export de expedientes (modal + .html resumen SKU/talla/qty).
 import ExportExpedientesModal from "../components/expedientes/ExportExpedientesModal.jsx";
 import { runExpedienteExport } from "../lib/expedienteExport.js";
+// Sprint 2026-06-11 · promedios por fase de UN cliente (phase-stats?client=).
+import { loadClientStats } from "../lib/cronogramaData.js";
 
 // ── Mapeo backend → UI ──────── (Sprint 2026-05-03 v4)
 function mapExpedienteFromApi(r) {
@@ -149,7 +151,7 @@ export default function ScreenExpedientes() {
   const { lang } = useOutletContext();
   // Viewport efectivo (ADMIN | CLIENT). Re-renderiza cuando el CEO usa
   // el toggle "Tweaks → Viewport" para simular al cliente.
-  const { isAdmin, isClient, can } = useRole();
+  const { isAdmin, isClient, can, user } = useRole();
 
   // ── Data desde API (fallback a mocks) ────────
   const [apiExpedientes, setApiExpedientes] = useState([]);
@@ -359,27 +361,35 @@ export default function ScreenExpedientes() {
   const [opStats, setOpStats] = useState(null);
   useEffect(() => {
     let alive = true;
-    expedientesApi.action('phase-stats')
-      .then((r) => {
+    // Sprint 2026-06-11 rev2 · CLIENTE: promedios de SUS clientes
+    // asignados (un fetch ?client= por legal_entity y merge ponderado).
+    // ADMIN/CEO: promedio GENERAL (sin filtro).
+    const collect = (isClient && Array.isArray(user?.legal_entity_ids) && user.legal_entity_ids.length)
+      ? Promise.all(user.legal_entity_ids.map((cid) => loadClientStats(cid)))
+      : expedientesApi.action('phase-stats').then((r) => [(r && r.phase_stats) || {}]);
+    collect
+      .then((list) => {
         if (!alive) return;
-        const buckets = (r && r.phase_stats) || {};
-        const merge = (keys) => {
+        const all = (list || []).filter(Boolean);
+        const mergeKeys = (pred) => {
           const acc = {};
-          keys.forEach((k) => {
-            Object.entries(buckets[k] || {}).forEach(([fase, v]) => {
-              if (!v || typeof v.avg !== 'number') return;
-              const a = acc[fase] || { sum: 0, n: 0 };
-              a.sum += v.avg * (v.n || 1);
-              a.n += (v.n || 1);
-              acc[fase] = a;
+          all.forEach((buckets) => {
+            Object.keys(buckets).filter(pred).forEach((k) => {
+              Object.entries(buckets[k] || {}).forEach(([fase, v]) => {
+                if (!v || typeof v.avg !== 'number') return;
+                const a = acc[fase] || { sum: 0, n: 0 };
+                a.sum += v.avg * (v.n || 1);
+                a.n += (v.n || 1);
+                acc[fase] = a;
+              });
             });
           });
           return acc;
         };
         // Buckets con nombre (Aereo/Maritimo…) primero; los "_*" (p.ej.
         // _ALL, expedientes sin método) solo rellenan fases faltantes.
-        const named = merge(Object.keys(buckets).filter((k) => !k.startsWith('_')));
-        const under = merge(Object.keys(buckets).filter((k) => k.startsWith('_')));
+        const named = mergeKeys((k) => !k.startsWith('_'));
+        const under = mergeKeys((k) => k.startsWith('_'));
         const out = {};
         const src = { ...under, ...named };
         Object.entries(src).forEach(([fase, a]) => {
@@ -389,7 +399,7 @@ export default function ScreenExpedientes() {
       })
       .catch(() => { /* la card cae al cálculo local */ });
     return () => { alive = false; };
-  }, []);
+  }, [isClient, user]);
 
   // Sprint 2026-06-10 — el "reporte" ya no genera un .html: abre el
   // Cronograma interactivo (/cronograma) en una pestaña nueva con los
@@ -745,8 +755,13 @@ export default function ScreenExpedientes() {
       </div>
       )}
 
-      {/* ── Row 2: Tiempos operativos & Calidad del proceso ───── */}
-      <div className="grid gap-3 mb-4" style={{gridTemplateColumns:'1.5fr 1fr'}}>
+      </>}
+      {/* ── Fin bloque CEO-ONLY (Row 1) ─────────────────────────────────── */}
+
+      {/* ── Row 2: Tiempos operativos (TODOS los roles · Sprint 2026-06-11)
+          + Calidad del proceso (CEO-ONLY). El cliente ve los promedios de
+          SUS clientes asignados (phase-stats?client=…). */}
+      <div className="grid gap-3 mb-4" style={{gridTemplateColumns: isAdmin ? '1.5fr 1fr' : '1fr'}}>
         <div className="card">
           <div className="card-head">
             <div>
@@ -799,6 +814,8 @@ export default function ScreenExpedientes() {
           </div>
         </div>
 
+        {/* Calidad del proceso — métricas internas, CEO-ONLY (R3). */}
+        {isAdmin && (
         <div className="card">
           <div className="card-head">
             <div>
@@ -831,9 +848,8 @@ export default function ScreenExpedientes() {
             </div>
           </div>
         </div>
+        )}
       </div>
-      </>}
-      {/* ── Fin bloque CEO-ONLY ══════════════════════════════════════════ */}
 
       {/* ── Toolbar ───── */}
       <div className="toolbar">
