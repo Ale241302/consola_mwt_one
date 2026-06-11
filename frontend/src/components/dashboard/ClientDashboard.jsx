@@ -8,7 +8,6 @@
 // server-side; aquí se filtra defensivamente):
 //   · KPIs: expedientes, entregados, en tránsito, por salir, pares.
 //   · Próximas entregas (proyección real del Cronograma).
-//   · Pares por talla (distribución de sus pedidos activos).
 //   · Pipeline por fase.
 //
 // R3 · POL_VISIBILIDAD: todo se etiqueta con la PO del cliente; el
@@ -74,20 +73,6 @@ export default function ClientDashboard({ lang = "es" }) {
     if (ocId) navigate(`/expedientes/${ocId}`);
   };
 
-  // Distribución de pares por talla en sus expedientes activos.
-  const tallas = useMemo(() => {
-    const map = new Map();
-    scoped.forEach((it) => (it.lineas || []).forEach((l) => {
-      const t = String(l.talla || l.size || "");
-      if (!t) return;
-      const q = Number(l.cantidad ?? l.qty ?? 0);
-      map.set(t, (map.get(t) || 0) + q);
-    }));
-    return Array.from(map.entries())
-      .sort((a, b) => Number(a[0]) - Number(b[0]));
-  }, [scoped]);
-  const maxTalla = Math.max(1, ...tallas.map(([, q]) => q));
-
   if (loading) {
     return (
       <div className="card card-pad-lg" style={{ marginBottom: 24 }}>
@@ -119,43 +104,10 @@ export default function ClientDashboard({ lang = "es" }) {
       {/* KPIs de SU operación (expedientes/entregados/tránsito/pares) */}
       <KpiStrip enriched={enriched} lang={lang}/>
 
-      <div className="grid gap-3" style={{ gridTemplateColumns: "1.4fr 1fr", alignItems: "start" }}>
-        {/* Próximas entregas — proyección real del Cronograma */}
-        <UpcomingDeliveries enriched={enriched} lang={lang} labelOf={labelOf} onOpen={onOpen}/>
-
-        {/* Pares por talla */}
-        <div className="card card-pad-lg">
-          <div className="card-title">{es ? "Pares por talla" : "Pairs by size"}</div>
-          <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
-            {es
-              ? "Unidades pedidas en tus expedientes activos"
-              : "Units ordered across your active files"}
-          </div>
-          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-            {tallas.length === 0 && (
-              <div className="caption" style={{ color: "var(--text-tertiary)" }}>
-                {es ? "Sin líneas activas." : "No active lines."}
-              </div>
-            )}
-            {tallas.map(([t, q]) => (
-              <div key={t} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span className="mono-sm" style={{ width: 32, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{t}</span>
-                <div style={{ flex: 1, height: 10, background: "var(--bg-alt, #EEF2F6)", borderRadius: 5, overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%",
-                    width: `${Math.max(2, Math.round((q / maxTalla) * 100))}%`,
-                    background: "var(--brand-accent, #0FA3A0)",
-                    borderRadius: 5,
-                  }}/>
-                </div>
-                <span className="caption tabular-nums" style={{ width: 60, textAlign: "right", fontWeight: 600 }}>
-                  {q.toLocaleString("en-US")}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      {/* Próximas entregas — proyección real del Cronograma.
+          (Sprint 2026-06-11 rev2 · "Pares por talla" retirada a pedido
+          del CEO: no aportaba en el dashboard del cliente.) */}
+      <UpcomingDeliveries enriched={enriched} lang={lang} labelOf={labelOf} onOpen={onOpen}/>
 
       {/* Pipeline por fase — dónde está cada pedido */}
       <PipelineBoard enriched={enriched} lang={lang} labelOf={labelOf} onOpen={onOpen}/>
