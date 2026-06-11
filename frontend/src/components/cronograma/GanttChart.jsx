@@ -127,6 +127,29 @@ export default function GanttChart({ rows = [], lang = "es" }) {
 
   const zoom = (delta) => setPxDay((p) => Math.max(4, Math.min(64, p + delta)));
 
+  // Sprint 2026-06-11 · ancho de la columna de labels ajustable a mano
+  // (los subtítulos largos quedaban tapados por el divisor). Arrastra el
+  // divisor entre labels y gráfico para redimensionar (170–560px).
+  const [labelW, setLabelW] = useState(LABEL_W);
+  const labelWRef = useRef(LABEL_W);
+  const startResize = useCallback((e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = labelWRef.current;
+    const onMove = (ev) => {
+      const w = Math.max(170, Math.min(560, startW + (ev.clientX - startX)));
+      labelWRef.current = w;
+      setLabelW(w);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, []);
+
   if (!rows.length) {
     return (
       <div className="caption" style={{ padding: 24, textAlign: "center", color: "var(--text-tertiary)" }}>
@@ -154,12 +177,15 @@ export default function GanttChart({ rows = [], lang = "es" }) {
         </span>
       </div>
 
+      {/* Wrapper relativo: ancla el divisor arrastrable sobre el borde
+          de la columna sticky de labels (siempre a labelW del borde). */}
+      <div style={{ position: "relative" }}>
       <div ref={scrollRef}
            onMouseDown={onMouseDown}
            style={{ overflowX: "auto", overflowY: "hidden", cursor: "grab", border: "1px solid var(--border-subtle, #E1E6ED)", borderRadius: 12, background: "var(--surface, #fff)", userSelect: "none" }}>
-        <div style={{ position: "relative", width: LABEL_W + width + 24, minWidth: "100%" }}>
+        <div style={{ position: "relative", width: labelW + width + 24, minWidth: "100%" }}>
           {/* Grid + HOY (detrás de las filas, delante del fondo) */}
-          <div style={{ position: "absolute", left: LABEL_W, top: 0, bottom: 26, width, pointerEvents: "none" }}>
+          <div style={{ position: "absolute", left: labelW, top: 0, bottom: 26, width, pointerEvents: "none" }}>
             {ticks.map((t, i) => (
               <div key={i} style={{ position: "absolute", left: x(t), top: 0, bottom: 0, width: 1, background: "var(--border-subtle, #EDF1F5)" }}/>
             ))}
@@ -182,7 +208,7 @@ export default function GanttChart({ rows = [], lang = "es" }) {
                    style={{ display: "flex", height: rowH, borderBottom: "1px dashed var(--border-subtle, #F1F5F9)", background: isParent ? "transparent" : "rgba(248,250,252,0.6)" }}>
                 {/* Label sticky */}
                 <div style={{
-                  position: "sticky", left: 0, zIndex: 5, width: LABEL_W, flex: "none",
+                  position: "sticky", left: 0, zIndex: 5, width: labelW, flex: "none",
                   display: "flex", alignItems: "center", gap: 6,
                   padding: `0 10px 0 ${10 + r.depth * 18}px`,
                   background: "var(--surface, #fff)",
@@ -245,7 +271,7 @@ export default function GanttChart({ rows = [], lang = "es" }) {
 
           {/* Eje */}
           <div style={{ display: "flex", height: 26 }}>
-            <div style={{ position: "sticky", left: 0, zIndex: 5, width: LABEL_W, flex: "none", background: "var(--surface, #fff)", borderRight: "1px solid var(--border-subtle, #E1E6ED)" }}/>
+            <div style={{ position: "sticky", left: 0, zIndex: 5, width: labelW, flex: "none", background: "var(--surface, #fff)", borderRight: "1px solid var(--border-subtle, #E1E6ED)" }}/>
             <div style={{ position: "relative", width, flex: "none" }}>
               {ticks.map((t, i) => (
                 <span key={i} className="tabular-nums" style={{ position: "absolute", left: x(t), top: 5, transform: "translateX(-50%)", fontSize: 10, color: "var(--text-tertiary, #94A3B8)", whiteSpace: "nowrap" }}>
@@ -255,6 +281,22 @@ export default function GanttChart({ rows = [], lang = "es" }) {
             </div>
           </div>
         </div>
+      </div>
+      {/* Divisor arrastrable (ajusta el ancho de la columna de labels) */}
+      <div
+        onMouseDown={startResize}
+        title={lang === "es" ? "Arrastra para ajustar el ancho de la columna" : "Drag to resize the label column"}
+        style={{
+          position: "absolute", left: labelW - 4, top: 0, bottom: 0,
+          width: 9, cursor: "col-resize", zIndex: 8,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}
+      >
+        <div style={{
+          width: 3, height: 34, borderRadius: 2,
+          background: "var(--border-subtle, #CBD5E1)",
+        }}/>
+      </div>
       </div>
 
       {/* Tooltip flotante */}

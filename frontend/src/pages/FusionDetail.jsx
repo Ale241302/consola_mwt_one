@@ -87,9 +87,16 @@ export default function ScreenFusionDetail() {
   const [labelSaving, setLabelSaving] = useState(false);
 
   // ORIGEN del miembro (R3): proforma para staff, PO para cliente.
+  // OJO: NO usar m.oc.codigo — es el código interno del sistema
+  // (PO-2026-00016), no un número real. Staff ve la PROFORMA
+  // (2456-2026); si no hay, cae a la PO real del cliente.
   const badgeOf = (m) =>
     !isClient
-      ? (m.oc?.codigo || m.exp.proforma_codigo || m.exp.codigo)
+      ? (m.exp.proforma_codigo
+          || ((m.exp.proforma_codigos || [])[0])
+          || m.oc?.proforma
+          || ((m.exp.oc_codigos || [])[0])
+          || m.exp.codigo)
       : (((m.exp.oc_codigos || [])[0]) || m.exp.codigo);
 
   useEffect(() => {
