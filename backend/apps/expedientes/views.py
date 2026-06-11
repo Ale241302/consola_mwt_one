@@ -1091,6 +1091,30 @@ class ExpedienteViewSet(viewsets.ViewSet):
             e.save(update_fields=["fusion_id", "fusion_label", "updated_at"])
         return Response({"fusion_id": str(fid), "fusion_label": label, "members": len(exps)})
 
+    @action(detail=False, methods=["post"], url_path="fusion-label")
+    def fusion_label(self, request):
+        """POST /api/expedientes/fusion-label/ {"fusion_id", "label"} — renombra el grupo."""
+        denied = _deny_client_mutation(request, action_label="expediente.fusion_label")
+        if denied is not None:
+            return denied
+        data = request.data or {}
+        fid = str(data.get("fusion_id") or "").strip()
+        try:
+            uuid.UUID(fid)
+        except (TypeError, ValueError):
+            return Response({"detail": "fusion_id inválido"}, status=400)
+        label = (str(data.get("label") or "").strip() or None)
+        if label:
+            label = label[:64]
+        n = 0
+        for e in Expediente.objects.filter(fusion_id=fid):
+            e.fusion_label = label
+            e.save(update_fields=["fusion_label", "updated_at"])
+            n += 1
+        if n == 0:
+            return Response({"detail": "fusión no encontrada"}, status=404)
+        return Response({"fusion_id": fid, "fusion_label": label, "members": n})
+
     @action(detail=False, methods=["post"], url_path="desfusionar")
     def desfusionar(self, request):
         """POST /api/expedientes/desfusionar/ {"fusion_id"} | {"expediente_ids"}."""

@@ -216,6 +216,10 @@ export default function ScreenOCDetail() {
   const [confirmDeleteLine, setConfirmDeleteLine] = useState(null);
   const [deletingLine, setDeletingLine]           = useState(false);
   const [lineError, setLineError]                 = useState(null);
+  // Sprint 2026-06-11 · alias editable del header (oc.display_label · E4).
+  // headerEdit: string en edición | null = no editando.
+  const [headerEdit, setHeaderEdit]               = useState(null);
+  const [headerSaving, setHeaderSaving]           = useState(false);
 
   useEffect(() => {
     if (ocFromMock) return;
@@ -926,9 +930,33 @@ export default function ScreenOCDetail() {
   const latestProformaCode = _docsByKind('PROFORMA')[0]?.codigo || null;
   const latestOcClienteCode = _docsByKind('OC Cliente')[0]?.codigo || null;
   // Codigo a mostrar en el h1 del header.
-  const headerCode = isClient
-    ? (latestOcClienteCode || oc?.code || '—')
-    : (latestProformaCode  || oc?.code || '—');
+  // Sprint 2026-06-11 · si el admin/CEO definió un alias (display_label,
+  // E4), TODOS los roles lo ven. Si no, comportamiento por defecto:
+  // staff ve la proforma; el cliente ve su PO.
+  const headerAlias = String(apiOc?.display_label || '').trim();
+  const headerCode = headerAlias
+    || (isClient
+      ? (latestOcClienteCode || oc?.code || '—')
+      : (latestProformaCode  || oc?.code || '—'));
+
+  // Guardar alias del header (lápiz · ADMIN/CEO-only).
+  const saveHeaderAlias = async () => {
+    // headerEdit === null → Escape acaba de cancelar; el blur posterior
+    // no debe guardar (borraría el alias sin querer).
+    if (headerSaving || !apiOc?.id || headerEdit === null) return;
+    const v = String(headerEdit || '').trim().slice(0, 64);
+    setHeaderSaving(true);
+    try {
+      await ocsApi.update(apiOc.id, { display_label: v || null });
+      setApiOc(prev => (prev ? { ...prev, display_label: v || null } : prev));
+      setHeaderEdit(null);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[OCDetail] guardar display_label falló', err);
+    } finally {
+      setHeaderSaving(false);
+    }
+  };
 
   // Group edited lines by SAP (null → orphan bucket)
   const sapGroups = useMemo(() => {
@@ -1016,7 +1044,50 @@ export default function ScreenOCDetail() {
           <div className="flex ai-center gap-3" style={{marginBottom: 6, flexWrap: 'wrap'}}>
             {/* Sprint 2026-05-17 · header h1 muestra proforma (admin) u
                 OC cliente (client). Si ninguno existe, fallback al PO. */}
-            <h1 className="page-title" style={{margin: 0}}>{headerCode}</h1>
+            {headerEdit === null ? (
+              <>
+                <h1 className="page-title" style={{margin: 0}}>{headerCode}</h1>
+                {/* Lápiz — alias del header (CEO-ONLY). Si se define, el
+                    cliente también lo ve; vacío = volver al default. */}
+                {isAdmin && apiOc && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    title={lang === 'es' ? 'Editar nombre visible' : 'Edit display name'}
+                    onClick={() => setHeaderEdit(headerAlias || (headerCode !== '—' ? headerCode : ''))}
+                    style={{ padding: '4px 6px' }}
+                  >
+                    <IconPencil size={13}/>
+                  </button>
+                )}
+              </>
+            ) : (
+              <div className="flex ai-center gap-2">
+                <input
+                  className="input"
+                  autoFocus
+                  value={headerEdit}
+                  maxLength={64}
+                  disabled={headerSaving}
+                  onChange={(e) => setHeaderEdit(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveHeaderAlias();
+                    if (e.key === 'Escape') setHeaderEdit(null);
+                  }}
+                  onBlur={saveHeaderAlias}
+                  placeholder={lang === 'es' ? 'Nombre visible…' : 'Display name…'}
+                  style={{
+                    font: '800 26px/1.2 var(--font-display)',
+                    padding: '4px 10px', width: 'auto', minWidth: 260,
+                  }}
+                />
+                <span className="caption" style={{ color: 'var(--text-tertiary)' }}>
+                  {headerSaving
+                    ? (lang === 'es' ? 'Guardando…' : 'Saving…')
+                    : (lang === 'es' ? 'Enter guarda · Esc cancela · vacío = default' : 'Enter saves · Esc cancels · empty = default')}
+                </span>
+              </div>
+            )}
             <span className="oc-status-chip" style={{
               color: statusColor, background: 'color-mix(in oklab,' + statusColor + ' 14%, transparent)',
               border: '1px solid color-mix(in oklab,' + statusColor + ' 36%, transparent)',

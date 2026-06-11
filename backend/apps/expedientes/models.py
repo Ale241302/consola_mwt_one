@@ -67,6 +67,10 @@ class Oc(models.Model):
     proveedor_id    = models.UUIDField(null=True, blank=True)   # ⛔ sin FK (71_oc_proveedor.sql)
     proforma        = models.CharField(max_length=32, null=True, blank=True)
     sap             = models.CharField(max_length=32, null=True, blank=True)
+    # Sprint 2026-06-11 · alias visible del header del detalle de la OC
+    # (E4_ocs_display_label.sql). Si está definido, TODOS los roles lo
+    # ven; si es NULL, staff ve la proforma y el cliente su PO.
+    display_label   = models.CharField(max_length=64, null=True, blank=True)
     estado          = models.CharField(max_length=32, default="EMITIDA")
     moneda          = models.CharField(max_length=3,  default="USD")
     issued_at       = models.DateField(null=True, blank=True)

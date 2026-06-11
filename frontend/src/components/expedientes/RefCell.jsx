@@ -130,7 +130,9 @@ export function RefCell({ expediente, isAdmin, onClickOc, lang = "es" }) {
   // Chips: todos los códigos menos el que ya ocupa el head.
   const pfChips = (isAdmin ? proformas : []).filter((c) => !(headKind === "pf" && c === headRaw));
   const ocChips = ocs.filter((c) => !(headKind === "oc" && c === headRaw));
-  const showExpChip = headKind !== "exp";
+  // Sprint 2026-06-11 (CEO) · el código EXP interno NO se muestra al
+  // cliente (R3): su referencia es la PO. Staff lo sigue viendo.
+  const showExpChip = isAdmin && headKind !== "exp";
 
   const hasChips = showExpChip ||
                    pfChips.length > 0 ||

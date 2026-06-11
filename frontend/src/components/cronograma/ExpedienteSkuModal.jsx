@@ -34,13 +34,19 @@ export default function ExpedienteSkuModal({ item, isClient, lang = "es", onClos
               {lang === "es" ? "SKUS DEL EXPEDIENTE" : "FILE SKUS"}
             </div>
             <div style={{ fontSize: 16, fontWeight: 800, color: "#0B1E3A" }}>
-              {isClient
-                ? `PO ${item.ocCodigo || item.expCodigo}`
-                : `${item.proforma}${item.ocCodigo ? " · PO " + item.ocCodigo : ""}`}
+              {/* El código de OC puede venir YA con prefijo "PO" — no
+                  duplicarlo ("PO PO 504802"). */}
+              {(() => {
+                const po = (c) => (/^po[\s_-]/i.test(String(c || "")) ? c : `PO ${c}`);
+                return isClient
+                  ? (item.ocCodigo ? po(item.ocCodigo) : item.expCodigo)
+                  : `${item.proforma}${item.ocCodigo ? " · " + po(item.ocCodigo) : ""}`;
+              })()}
             </div>
             <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
               {[
-                item.expCodigo,
+                // El código EXP interno NO se muestra al cliente (R3).
+                isClient ? null : item.expCodigo,
                 item.cliente,
                 item.operadoPorMwt ? (lang === "es" ? "Operado por MWT" : "Operated by MWT") : null,
                 item.modo || (lang === "es" ? "Aéreo (sup.)" : "Air (assumed)"),

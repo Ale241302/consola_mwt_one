@@ -26,6 +26,9 @@ import { useBrandsLight } from "../hooks/useBrandsLight.js";
 import { useFxUsdBrl } from "../hooks/useFxUsdBrl.js";
 import { useRole } from "../context/RoleContext.jsx";
 import { OCS } from "../data/mockData.js";
+// Sprint 2026-06-11 · resolver la OC real de un expediente para que el
+// click en cualquier registro del dashboard abra el DETALLE de la OC.
+import { expedientesApi } from "../lib/api.js";
 import {
   KpiCard,
   TimeseriesChart,
@@ -217,10 +220,17 @@ export default function ScreenDashboard() {
   const { brands, resolveBrand } = useBrandsLight();
 
   // ── Navegación de drill-downs ─────
-  const onOpenExpediente = useCallback((id) => {
+  const onOpenExpediente = useCallback(async (id) => {
+    // 1) Mocks legacy (HERO scenario).
     const oc = OCS.find((o) => Array.isArray(o.expedientes) && o.expedientes.includes(id));
-    if (oc) navigate(`/expedientes/${oc.id}/exp/${id}`);
-    else navigate("/expedientes");
+    if (oc) { navigate(`/expedientes/${oc.id}/exp/${id}`); return; }
+    // 2) Sprint 2026-06-11 · datos reales: el click debe abrir el DETALLE
+    //    de la OC del expediente (no el listado). Resolvemos oc_id en vivo.
+    try {
+      const exp = await expedientesApi.get(id);
+      if (exp?.oc_id) { navigate(`/expedientes/${exp.oc_id}`); return; }
+    } catch { /* fallthrough al listado */ }
+    navigate("/expedientes");
   }, [navigate]);
 
   const resolveClient = useCallback((id) => {

@@ -25,7 +25,7 @@ import { tr, fmtMoney } from "../lib/i18n.js";
 import { StatusBadge, CreditDot } from "../components/ui/primitives.jsx";
 import {
   IconChevLeft, IconChevDown, IconChevRight, IconFolder, IconPlane,
-  IconShip, IconAlert, IconEye, IconPlus,
+  IconShip, IconAlert, IconEye, IconPlus, IconPencil,
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { OCPagosCard, OCTransferCostsCard } from "./OCDetail.jsx";
@@ -82,6 +82,9 @@ export default function ScreenFusionDetail() {
   const [sapOpen, setSapOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  // Alias editable del grupo (fusion_label · ADMIN/CEO-only).
+  const [labelEdit, setLabelEdit] = useState(null);   // string | null
+  const [labelSaving, setLabelSaving] = useState(false);
 
   // ORIGEN del miembro (R3): proforma para staff, PO para cliente.
   const badgeOf = (m) =>
@@ -346,7 +349,60 @@ export default function ScreenFusionDetail() {
             </span>
           </div>
           <div className="flex ai-center gap-3" style={{ marginBottom: 6, flexWrap: "wrap" }}>
-            <h1 className="page-title" style={{ margin: 0 }}>{label}</h1>
+            {labelEdit === null ? (
+              <>
+                <h1 className="page-title" style={{ margin: 0 }}>{label}</h1>
+                {/* Lápiz — renombrar el grupo (fusion_label · CEO-ONLY).
+                    El cliente también ve el nuevo nombre. */}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    title={es ? "Editar nombre visible" : "Edit display name"}
+                    onClick={() => setLabelEdit(label === (es ? "Fusión" : "Merged") ? "" : label)}
+                    style={{ padding: "4px 6px" }}
+                  >
+                    <IconPencil size={13}/>
+                  </button>
+                )}
+              </>
+            ) : (
+              <div className="flex ai-center gap-2">
+                <input
+                  className="input"
+                  autoFocus
+                  value={labelEdit}
+                  maxLength={64}
+                  disabled={labelSaving}
+                  onChange={(ev) => setLabelEdit(ev.target.value)}
+                  onKeyDown={async (ev) => {
+                    if (ev.key === "Escape") { setLabelEdit(null); return; }
+                    if (ev.key !== "Enter" || labelSaving) return;
+                    const v = String(labelEdit || "").trim().slice(0, 64);
+                    setLabelSaving(true);
+                    try {
+                      await expedientesApi.action("fusion-label", null, {
+                        fusion_id: fusionId,
+                        label: v || null,
+                      });
+                      setLabelEdit(null);
+                      setReloadKey((k) => k + 1);
+                    } catch { /* mantener edición para reintentar */ }
+                    setLabelSaving(false);
+                  }}
+                  placeholder={es ? "Nombre visible…" : "Display name…"}
+                  style={{
+                    font: "800 26px/1.2 var(--font-display)",
+                    padding: "4px 10px", width: "auto", minWidth: 260,
+                  }}
+                />
+                <span className="caption" style={{ color: "var(--text-tertiary)" }}>
+                  {labelSaving
+                    ? (es ? "Guardando…" : "Saving…")
+                    : (es ? "Enter guarda · Esc cancela · vacío = PO común" : "Enter saves · Esc cancels · empty = common PO")}
+                </span>
+              </div>
+            )}
             <span className="oc-status-chip" style={{
               color: "var(--brand-primary)",
               background: "color-mix(in oklab, var(--brand-accent) 12%, transparent)",
