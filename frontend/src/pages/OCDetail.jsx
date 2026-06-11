@@ -1197,7 +1197,8 @@ export default function ScreenOCDetail() {
         </div>
 
         <div className="flex gap-2">
-          <button className="btn btn-secondary"><IconDownload size={14}/>{tr(lang,'export')}</button>
+          {/* Sprint 2026-06-11 (CEO) · botón Exportar retirado: el reporte
+              vive en /cronograma (Exportar HTML) y este botón no hacía nada. */}
           {/* Sprint 2026-05-31 · Editar GENERAL (CEO-ONLY): edita el expediente
               completo (todas las líneas y SAPs) reutilizando el wizard en modo
               ?editExpFull=. Coexiste con la edición por-SAP del detalle. */}

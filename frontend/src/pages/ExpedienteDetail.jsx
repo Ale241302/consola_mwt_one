@@ -653,7 +653,8 @@ export default function ScreenExpedienteDetail() {
                   con audience='CLIENT'. Sin botón dedicado. */}
             </div>
             <div className="flex gap-2">
-              <button className="btn btn-ghost btn-sm"><IconMail size={13}/>{lang==='es' ? 'Enviar portal' : 'Send portal'}</button>
+              {/* Sprint 2026-06-11 (CEO) · botón "Enviar portal" retirado:
+                  no estaba cableado a ningún flujo. */}
               <button className="icon-btn" style={{ width: 32, height: 32 }}><IconMore size={15}/></button>
             </div>
           </div>
