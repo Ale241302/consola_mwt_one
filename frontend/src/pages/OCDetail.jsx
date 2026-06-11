@@ -668,7 +668,7 @@ export default function ScreenOCDetail() {
   // Sprint 2026-05-01: AddOCProductModal devuelve un array de rows con
   // { sku, talla, cantidad, producto_id, product_label, unit_price } —
   // una row por talla con qty > 0. addProduct las inserta como extraLines.
-  const addProduct = (rows) => {
+  const addProduct = async (rows) => {
     const arr = Array.isArray(rows)
       ? rows
       : [{
@@ -679,6 +679,39 @@ export default function ScreenOCDetail() {
           product_label: rows?.name || rows?.sku,
           unit_price: 0,
         }];
+    // Sprint 2026-06-11 · PERSISTIR: antes las líneas nuevas solo se
+    // insertaban como extraLines locales y el reload las perdía. Si la
+    // OC es real (API), se crean vía POST /lineas/ y se hidratan en
+    // caliente; el insert local queda como fallback (HERO mock / error).
+    if (apiOc?.id) {
+      try {
+        const created = [];
+        for (const r of arr) {
+          const qty = Number(r.cantidad || 0);
+          const unit = Number(r.unit_price || 0);
+          const saved = await lineasApi.create({
+            oc_id:             apiOc.id,
+            expediente_id:     primaryExpId || null,
+            producto_id:       r.producto_id || null,
+            sku:               r.sku,
+            size:              r.talla || null,
+            qty,
+            unit_price:        unit,
+            unit_price_mwt:    unit,
+            unit_price_client: unit,
+            total_price:       +(qty * unit).toFixed(2),
+            estado:            'PENDIENTE_SAP',
+          });
+          created.push(saved);
+        }
+        setApiOcLines(prev => [...prev, ...created]);
+        setShowAddProduct(false);
+        return;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[OCDetail] crear línea falló (fallback local):', err);
+      }
+    }
     const newLines = arr.map((r, i) => {
       const qty = Number(r.cantidad || 0);
       const unit = Number(r.unit_price || 0);
@@ -2033,6 +2066,20 @@ export default function ScreenOCDetail() {
                       <input className="edit-input tabular no-spin" type="number" min={0}
                         value={Number(l.qty ?? 0)}
                         onChange={e=>updateLine(l.id, { qty: +e.target.value })}
+                        onBlur={async (e) => {
+                          // Sprint 2026-06-11 · PERSISTIR qty al backend.
+                          // Antes solo quedaba en lineEdits (state local) y
+                          // el reload la revertía. Las líneas locales
+                          // (L-NEW-, aún sin persistir) se saltan.
+                          if (String(l.id).startsWith('L-NEW-')) return;
+                          const v = +e.target.value;
+                          try {
+                            await lineasApi.update(l.id, { qty: v });
+                          } catch (err) {
+                            // eslint-disable-next-line no-console
+                            console.warn('[OCDetail] persistir qty fallo', err);
+                          }
+                        }}
                         style={{width:'100%', minWidth:56, maxWidth:84, textAlign:'right'}}/>
                     </td>
                   ) : (

@@ -20,6 +20,8 @@ import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import {
   expedientesApi, ocsApi, lineasApi, documentosApi, clientesApi,
   productosApi, storageApi, getToken,
+  // Sprint 2026-06-11 (rev3) · tablas combinadas de costos y pagos.
+  nodoAssignmentsApi, financePaymentsApi,
 } from "../lib/api.js";
 import { tr, fmtMoney } from "../lib/i18n.js";
 import { StatusBadge, CreditDot } from "../components/ui/primitives.jsx";
@@ -28,12 +30,13 @@ import {
   IconShip, IconAlert, IconEye, IconPlus, IconPencil,
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
-import { OCPagosCard, OCTransferCostsCard } from "./OCDetail.jsx";
 // Sprint 2026-06-11 · acciones sobre la fusión: el drawer C5 en modo
 // multiExp (líneas de varios miembros) y el modal de documento con
 // selector "Pertenece a".
 import AddSAPConfirmationDrawer from "../components/expedientes/AddSAPConfirmationDrawer.jsx";
 import UploadDocumentModal from "../components/expedientes/UploadDocumentModal.jsx";
+// Sprint 2026-06-11 (rev4) · Productos OC editable también en la fusión.
+import AddOCProductModal from "../components/expedientes/AddOCProductModal.jsx";
 
 // Chip de ORIGEN del miembro (proforma para staff / PO para cliente).
 function OriginChip({ text }) {
@@ -62,6 +65,253 @@ function extOf(d) {
   return String(raw || "file").toLowerCase().replace(/^\./, "");
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Sprint 2026-06-11 (rev3) · Costos de movimientos COMBINADOS: una sola
+// tabla con los costos de todos los miembros, con columna "Pertenece a"
+// (proforma para staff / PO para cliente). sources: [{ocId, origin}].
+// ─────────────────────────────────────────────────────────────────────
+function FusionCostsCard({ sources, lang, navigate }) {
+  const es = lang === "es";
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancel = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const all = await Promise.all(sources.map(async (s) => {
+          const data = await nodoAssignmentsApi.transferenciaCostosPorOC(s.ocId).catch(() => []);
+          const arr = Array.isArray(data) ? data : (data?.results || []);
+          return arr.map((r) => ({ ...r, __origin: s.origin }));
+        }));
+        if (!cancel) setRows(all.flat());
+      } catch (e) {
+        if (!cancel) setError(e?.message || "Error");
+      } finally {
+        if (!cancel) setLoading(false);
+      }
+    })();
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(sources.map((s) => s.ocId))]);
+
+  const totalUsd = rows.reduce((a, r) => a + Number(r.amount_usd || 0), 0);
+
+  return (
+    <div className="card card-pad-lg" style={{ marginTop: 16 }}>
+      <div className="flex ai-center jc-between" style={{ marginBottom: 12 }}>
+        <div>
+          <h3 className="heading-md" style={{ margin: 0 }}>
+            {es ? "Costos de movimientos" : "Transfer costs"}
+          </h3>
+          <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
+            {es
+              ? `Costos combinados de los ${sources.length} expedientes fusionados.`
+              : `Combined costs of the ${sources.length} merged expedientes.`}
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div className="micro" style={{ color: "var(--text-tertiary)", letterSpacing: 0.5 }}>TOTAL USD</div>
+          <div className="tabular-nums" style={{ fontSize: 18, fontWeight: 700, color: "var(--brand-accent, #0E8A6D)" }}>
+            ${totalUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+          </div>
+        </div>
+      </div>
+      {loading ? (
+        <div className="caption" style={{ color: "var(--text-tertiary)", padding: "18px 0" }}>
+          {es ? "Cargando…" : "Loading…"}
+        </div>
+      ) : error ? (
+        <div className="body-sm" style={{ color: "var(--critical)" }}>{error}</div>
+      ) : rows.length === 0 ? (
+        <div className="caption" style={{ color: "var(--text-tertiary)", padding: "18px 0" }}>
+          {es
+            ? "No hay costos de movimientos en los expedientes fusionados."
+            : "No transfer costs in the merged expedientes."}
+        </div>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>{es ? "Pertenece a" : "Belongs to"}</th>
+              <th>{es ? "Movimiento" : "Transfer"}</th>
+              <th>{es ? "Expediente" : "Expediente"}</th>
+              <th>{es ? "Tipo" : "Kind"}</th>
+              <th>{es ? "Detalle" : "Label"}</th>
+              <th style={{ textAlign: "right" }}>{es ? "Monto" : "Amount"}</th>
+              <th style={{ textAlign: "center" }}>{es ? "Mon." : "Curr."}</th>
+              <th style={{ textAlign: "right" }}>USD</th>
+              <th style={{ textAlign: "center" }}>{es ? "Origen" : "Source"}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.cost_line_id}
+                  onClick={() => r.transferencia_id && navigate(`/transferencias/${r.transferencia_id}`)}
+                  style={{ cursor: "pointer" }}
+                  title={es ? "Ver detalle del movimiento" : "Open transfer detail"}>
+                <td><OriginChip text={r.__origin}/></td>
+                <td className="mono-sm" style={{ color: "var(--brand-accent, #0E8A6D)", fontWeight: 700 }}>
+                  {r.transferencia_codigo || "—"}
+                </td>
+                <td className="mono-sm" style={{ color: "var(--brand-primary)", fontWeight: 600 }}>
+                  {r.expediente_codigo || "—"}
+                </td>
+                <td>{r.kind_label || r.kind}</td>
+                <td>{r.label || "—"}</td>
+                <td className="tabular-nums" style={{ textAlign: "right" }}>
+                  {Number(r.amount || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                </td>
+                <td className="mono-sm" style={{ textAlign: "center" }}>{r.currency}</td>
+                <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--brand-accent, #0E8A6D)" }}>
+                  ${Number(r.amount_usd || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                </td>
+                <td style={{ textAlign: "center" }}>
+                  <span style={{
+                    padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700,
+                    background: r.source === "OCR_DUA" ? "rgba(0,178,134,0.12)" : "#F3F5F8",
+                    color: r.source === "OCR_DUA" ? "#00B286" : "#64748B",
+                  }}>
+                    {r.source || "MANUAL"}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Sprint 2026-06-11 (rev3) · Pagos de costos logísticos COMBINADOS:
+// una sola tabla con columna "Pertenece a". Staff-only (el padre gatea).
+// ─────────────────────────────────────────────────────────────────────
+function FusionPagosCard({ sources, lang }) {
+  const es = lang === "es";
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancel = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const all = await Promise.all(sources.map(async (s) => {
+          const data = await financePaymentsApi.list({ oc_id: s.ocId }).catch(() => []);
+          const arr = Array.isArray(data) ? data : (data?.results || []);
+          return arr.map((p) => ({ ...p, __origin: s.origin }));
+        }));
+        if (!cancel) setRows(all.flat());
+      } catch (e) {
+        if (!cancel) setError(e?.message || "Error");
+      } finally {
+        if (!cancel) setLoading(false);
+      }
+    })();
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(sources.map((s) => s.ocId))]);
+
+  return (
+    <div className="card card-pad-lg" style={{ marginTop: 16 }}>
+      <div style={{ marginBottom: 12 }}>
+        <h3 className="heading-md" style={{ margin: 0 }}>
+          {es ? "Pagos de costos logísticos" : "Logistics cost payments"}
+        </h3>
+        <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
+          {es
+            ? `Pagos combinados de los ${sources.length} expedientes fusionados.`
+            : `Combined payments of the ${sources.length} merged expedientes.`}
+        </div>
+      </div>
+      {loading ? (
+        <div className="caption" style={{ color: "var(--text-tertiary)", padding: "18px 0" }}>
+          {es ? "Cargando pagos…" : "Loading payments…"}
+        </div>
+      ) : error ? (
+        <div className="body-sm" style={{ color: "var(--critical)" }}>{error}</div>
+      ) : rows.length === 0 ? (
+        <div className="caption" style={{ color: "var(--text-tertiary)", padding: "18px 0" }}>
+          {es
+            ? "Sin pagos registrados contra costos de los expedientes fusionados."
+            : "No payments registered against costs of the merged expedientes."}
+        </div>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>{es ? "Pertenece a" : "Belongs to"}</th>
+              <th>{es ? "Código" : "Code"}</th>
+              <th>{es ? "Fecha" : "Date"}</th>
+              <th>{es ? "Dirección" : "Direction"}</th>
+              <th>{es ? "Método" : "Method"}</th>
+              <th>{es ? "Referencia" : "Reference"}</th>
+              <th style={{ textAlign: "right" }}>{es ? "Monto" : "Amount"}</th>
+              <th style={{ textAlign: "right" }}>USD</th>
+              <th>{es ? "Estado" : "Status"}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p) => {
+              const dir = p.direction || "OUT";
+              return (
+                <tr key={p.id}>
+                  <td><OriginChip text={p.__origin}/></td>
+                  <td className="mono-sm" style={{ fontWeight: 600 }}>
+                    {p.codigo || (p.id ? String(p.id).slice(0, 8) : "—")}
+                  </td>
+                  <td className="tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                    {p.fecha ? new Date(p.fecha).toLocaleDateString(
+                      es ? "es-PE" : "en-US",
+                      { day: "2-digit", month: "short", year: "numeric" }
+                    ) : "—"}
+                  </td>
+                  <td>
+                    <span style={{
+                      display: "inline-block", padding: "2px 8px", borderRadius: 4,
+                      font: "600 10px/1.4 var(--font-mono)", letterSpacing: "0.06em",
+                      background: dir === "IN"
+                        ? "color-mix(in oklab, var(--success) 10%, transparent)"
+                        : "color-mix(in oklab, var(--warning) 10%, transparent)",
+                      color: dir === "IN" ? "var(--success)" : "var(--warning)",
+                    }}>
+                      {dir}
+                    </span>
+                  </td>
+                  <td>{p.metodo || "—"}</td>
+                  <td className="mono-sm" style={{ fontWeight: 600 }}>{p.referencia || "—"}</td>
+                  <td className="tabular-nums" style={{ textAlign: "right" }}>
+                    {Number(p.monto || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {" "}<span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{p.moneda || "USD"}</span>
+                  </td>
+                  <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--brand-accent)" }}>
+                    ${Number(p.monto_usd ?? p.monto ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td>
+                    <span style={{
+                      padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
+                      background: "var(--bg-alt)", color: "var(--text-secondary)",
+                    }}>
+                      {p.estado || "—"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 export default function ScreenFusionDetail() {
   const { fusionId } = useParams();
   const navigate = useNavigate();
@@ -85,6 +335,12 @@ export default function ScreenFusionDetail() {
   // Alias editable del grupo (fusion_label · ADMIN/CEO-only).
   const [labelEdit, setLabelEdit] = useState(null);   // string | null
   const [labelSaving, setLabelSaving] = useState(false);
+  // Sprint 2026-06-11 (rev4) · edición de Productos OC en la fusión.
+  const [lineDel, setLineDel] = useState(null);            // línea a eliminar
+  const [lineDelBusy, setLineDelBusy] = useState(false);
+  const [addTargetOpen, setAddTargetOpen] = useState(false); // paso 1: ¿a qué proforma?
+  const [addTargetIdx, setAddTargetIdx] = useState(0);
+  const [productOpen, setProductOpen] = useState(false);     // paso 2: catálogo
 
   // ORIGEN del miembro (R3): proforma para staff, PO para cliente.
   // OJO: NO usar m.oc.codigo — es el código interno del sistema
@@ -327,6 +583,78 @@ export default function ScreenFusionDetail() {
   const firstRegistro = members.find(
     (m) => String(m.exp.estado || "").toUpperCase() === "REGISTRO"
   );
+
+  // Fuentes para las tablas combinadas de costos/pagos (una fila de
+  // origen por miembro con OC).
+  const costSources = members
+    .filter((m) => m.exp.oc_id)
+    .map((m) => ({ ocId: m.exp.oc_id, origin: badgeOf(m) }));
+
+  // ── Edición in-place de Productos OC (staff · rev4) ──────────────
+  // patch local optimista + persist onBlur; el backend recalcula
+  // total_price y alinea unit_price legacy con el operador.
+  const patchLineLocal = (lineId, patch) => {
+    setMembers((prev) => prev.map((m) => ({
+      ...m,
+      lineas: m.lineas.map((l) => (l.id === lineId ? { ...l, ...patch } : l)),
+    })));
+  };
+  const persistLine = async (l, patch) => {
+    try {
+      await lineasApi.update(l.id, patch);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[FusionDetail] persistir línea falló", err);
+    }
+  };
+  const confirmDeleteLine = async () => {
+    if (!lineDel?.id || lineDelBusy) return;
+    setLineDelBusy(true);
+    try {
+      await lineasApi.remove(lineDel.id);
+      setMembers((prev) => prev.map((m) => ({
+        ...m,
+        lineas: m.lineas.filter((l) => l.id !== lineDel.id),
+      })));
+      setLineDel(null);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[FusionDetail] eliminar línea falló", err);
+    } finally {
+      setLineDelBusy(false);
+    }
+  };
+  // Crea las líneas del modal contra la proforma/OC elegida (paso 1).
+  const addRowsToTarget = async (rows) => {
+    const withOc = members.filter((m) => m.exp.oc_id);
+    const t = withOc[Math.min(addTargetIdx, withOc.length - 1)];
+    if (!t) { setProductOpen(false); return; }
+    const arr = Array.isArray(rows) ? rows : [];
+    try {
+      for (const r of arr) {
+        const qty = Number(r.cantidad || 0);
+        const unit = Number(r.unit_price || 0);
+        await lineasApi.create({
+          oc_id:             t.exp.oc_id,
+          expediente_id:     t.exp.id,
+          producto_id:       r.producto_id || null,
+          sku:               r.sku,
+          size:              r.talla || null,
+          qty,
+          unit_price:        unit,
+          unit_price_mwt:    unit,
+          unit_price_client: unit,
+          total_price:       +(qty * unit).toFixed(2),
+          estado:            "PENDIENTE_SAP",
+        });
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[FusionDetail] crear línea falló", err);
+    }
+    setProductOpen(false);
+    setReloadKey((k) => k + 1);
+  };
 
   const transportChip = (tm) => {
     const t = tm.normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -615,13 +943,25 @@ export default function ScreenFusionDetail() {
 
           {/* Productos OC (combinado · read-only) */}
           <div className="card">
-            <div className="card-head">
+            <div className="card-head" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
                 <div className="card-title">{es ? "Productos OC" : "PO Products"}</div>
                 <div className="card-subtitle">
-                  {allLines.length} {es ? "líneas" : "lines"} · {members.length} {es ? "expedientes · solo lectura" : "expedientes · read-only"} · {fmtMoney(totalValue)} {es ? "total" : "total"}
+                  {allLines.length} {es ? "líneas" : "lines"} · {members.length} {!isClient ? (es ? "expedientes · editable" : "expedientes · editable") : (es ? "expedientes" : "expedientes")} · {fmtMoney(totalValue)} {es ? "total" : "total"}
                 </div>
               </div>
+              {/* + Agregar producto — pregunta primero a qué proforma/OC
+                  pertenece (paso 1) y luego abre el catálogo (paso 2). */}
+              {!isClient && can("add_oc_line") && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => { setAddTargetIdx(0); setAddTargetOpen(true); }}
+                  style={{ background: "var(--brand-primary)" }}
+                >
+                  <IconPlus size={14}/>{es ? "Agregar producto" : "Add product"}
+                </button>
+              )}
             </div>
             <div style={{ overflowX: "auto", overflowY: "hidden" }}>
               <table className="table">
@@ -646,6 +986,8 @@ export default function ScreenFusionDetail() {
                     </th>
                     <th style={{ width: 110, textAlign: "right" }}>Total</th>
                     <th style={{ width: 120 }}>SAP</th>
+                    {/* Columna acciones (eliminar) — staff only. */}
+                    {!isClient && <th style={{ width: 44 }}/>}
                   </tr>
                 </thead>
                 <tbody>
@@ -657,20 +999,63 @@ export default function ScreenFusionDetail() {
                       <td style={{ textAlign: "center" }}>
                         <span className="size-chip">{l.talla || l.size || "—"}</span>
                       </td>
-                      <td className="td-num" style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                        {Number(l.qty || 0).toLocaleString()}
-                      </td>
-                      {!isClient && (
-                        <td className="td-num tabular-nums" style={{ textAlign: "right", color: "var(--text-secondary)" }}>
-                          ${Number(l.unit_price_mwt || 0).toFixed(2)}
+                      {/* Cant. — editable para staff (persiste onBlur). */}
+                      {!isClient ? (
+                        <td className="td-edit" style={{ textAlign: "right" }}>
+                          <input className="edit-input tabular no-spin" type="number" min={0}
+                            value={Number(l.qty ?? 0)}
+                            onChange={(ev) => {
+                              const v = +ev.target.value;
+                              const unit = Number(l.unit_price_mwt || l.unit_price || 0);
+                              patchLineLocal(l.id, { qty: v, total_price: +(v * unit).toFixed(2) });
+                            }}
+                            onBlur={(ev) => persistLine(l, { qty: +ev.target.value })}
+                            style={{ width: "100%", minWidth: 56, maxWidth: 84, textAlign: "right" }}/>
+                        </td>
+                      ) : (
+                        <td className="td-num" style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                          {Number(l.qty || 0).toLocaleString()}
                         </td>
                       )}
-                      <td className="td-num tabular-nums" style={{
-                        textAlign: "right",
-                        background: "color-mix(in oklab, var(--brand-accent) 4%, transparent)",
-                      }}>
-                        ${Number(l.unit_price_client || 0).toFixed(2)}
-                      </td>
+                      {/* Precio MWT — editable (R3: la columna ni existe en CLIENT). */}
+                      {!isClient && (
+                        <td className="td-edit" style={{ textAlign: "right" }}>
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 4, width: "100%", justifyContent: "flex-end" }}>
+                            <span>$</span>
+                            <input className="edit-input tabular" type="number" min={0} step="0.01"
+                              value={Number(l.unit_price_mwt ?? 0)}
+                              onChange={(ev) => {
+                                const v = +ev.target.value;
+                                patchLineLocal(l.id, { unit_price_mwt: v, total_price: +(Number(l.qty || 0) * v).toFixed(2) });
+                              }}
+                              onBlur={(ev) => persistLine(l, { unit_price_mwt: +ev.target.value })}
+                              style={{ width: "100%", minWidth: 72, maxWidth: 100, textAlign: "right" }}/>
+                          </div>
+                        </td>
+                      )}
+                      {/* Precio Cliente — editable para staff; texto para CLIENT. */}
+                      {!isClient ? (
+                        <td className="td-edit" style={{
+                          textAlign: "right",
+                          background: "color-mix(in oklab, var(--brand-accent) 4%, transparent)",
+                        }}>
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 4, width: "100%", justifyContent: "flex-end" }}>
+                            <span>$</span>
+                            <input className="edit-input tabular" type="number" min={0} step="0.01"
+                              value={Number(l.unit_price_client ?? 0)}
+                              onChange={(ev) => patchLineLocal(l.id, { unit_price_client: +ev.target.value })}
+                              onBlur={(ev) => persistLine(l, { unit_price_client: +ev.target.value })}
+                              style={{ width: "100%", minWidth: 72, maxWidth: 100, textAlign: "right" }}/>
+                          </div>
+                        </td>
+                      ) : (
+                        <td className="td-num tabular-nums" style={{
+                          textAlign: "right",
+                          background: "color-mix(in oklab, var(--brand-accent) 4%, transparent)",
+                        }}>
+                          ${Number(l.unit_price_client || 0).toFixed(2)}
+                        </td>
+                      )}
                       <td className="td-money">{fmtMoney(lineTotal(l))}</td>
                       <td className="mono" style={{ fontSize: 11.5 }}>
                         {l.sap || (
@@ -679,22 +1064,39 @@ export default function ScreenFusionDetail() {
                           </span>
                         )}
                       </td>
+                      {/* Eliminar línea — staff only. */}
+                      {!isClient && (
+                        <td style={{ textAlign: "center" }}>
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            title={es ? "Eliminar línea" : "Delete line"}
+                            onClick={() => setLineDel(l)}
+                            style={{ color: "var(--critical, #DC2626)", border: 0, background: "transparent", cursor: "pointer", fontSize: 14, lineHeight: 1 }}
+                          >
+                            ×
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
-                <tfoot>
-                  <tr style={{ fontWeight: 700 }}>
-                    <td colSpan={4}>{es ? "Total fusionado" : "Merged total"}</td>
-                    <td className="td-num" style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                      {totalUnits.toLocaleString()}
-                    </td>
-                    {!isClient && <td/>}
-                    <td/>
-                    <td className="td-money">{fmtMoney(totalValue)}</td>
-                    <td/>
-                  </tr>
-                </tfoot>
               </table>
+            </div>
+            {/* Total al estilo OCDetail (banda inferior, no fila huérfana). */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "flex-end",
+              gap: 18, padding: "14px 22px",
+              borderTop: "1px solid var(--divider)",
+              background: "var(--bg-alt)",
+            }}>
+              <span className="micro">{es ? "Total fusionado" : "Merged total"}</span>
+              <span className="tabular-nums" style={{ fontWeight: 700, color: "var(--text-secondary)" }}>
+                {totalUnits.toLocaleString("en-US")} u
+              </span>
+              <span style={{ font: "800 18px/1 var(--font-display)", fontVariantNumeric: "tabular-nums" }}>
+                {fmtMoney(totalValue)}
+              </span>
             </div>
           </div>
         </div>
@@ -801,27 +1203,12 @@ export default function ScreenFusionDetail() {
         </div>
       </div>
 
-      {/* ── Costos de movimientos (card por miembro) ───────────── */}
-      {members.map((m) => m.exp.oc_id && (
-        <div key={`cost-${m.exp.id}`}>
-          <div className="flex ai-center gap-2" style={{ marginTop: 16 }}>
-            <OriginChip text={badgeOf(m)}/>
-            <span className="caption" style={{ fontFamily: "var(--font-mono)" }}>{m.exp.codigo}</span>
-          </div>
-          <OCTransferCostsCard ocId={m.exp.oc_id} lang={lang} navigate={navigate}/>
-        </div>
-      ))}
+      {/* ── Costos de movimientos — UNA tabla combinada con columna
+          "Pertenece a" (proforma staff / PO cliente). ─────────── */}
+      <FusionCostsCard sources={costSources} lang={lang} navigate={navigate}/>
 
-      {/* ── Pagos de costos logísticos (card por miembro · staff) ─ */}
-      {isAdmin && members.map((m) => m.exp.oc_id && (
-        <div key={`pago-${m.exp.id}`}>
-          <div className="flex ai-center gap-2" style={{ marginTop: 16 }}>
-            <OriginChip text={badgeOf(m)}/>
-            <span className="caption" style={{ fontFamily: "var(--font-mono)" }}>{m.exp.codigo}</span>
-          </div>
-          <OCPagosCard ocId={m.exp.oc_id} lang={lang}/>
-        </div>
-      ))}
+      {/* ── Pagos de costos logísticos — UNA tabla combinada (staff). */}
+      {isAdmin && <FusionPagosCard sources={costSources} lang={lang}/>}
 
       {/* ── Drawer C5 · Agregar SAP en modo FUSIÓN ─────────────────
           Las líneas candidatas vienen de TODOS los miembros en REGISTRO
@@ -869,6 +1256,83 @@ export default function ScreenFusionDetail() {
             // Margen para el HTML autogenerado del backend (PROFORMA/OC).
             setTimeout(() => setReloadKey((k) => k + 1), 700);
           }}
+        />
+      )}
+
+      {/* ── Confirmación de borrado de línea (rev4) ────────────── */}
+      {lineDel && (
+        <div onClick={() => !lineDelBusy && setLineDel(null)}
+             style={{ position: "fixed", inset: 0, zIndex: 1300, background: "rgba(11,30,58,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={(ev) => ev.stopPropagation()}
+               style={{ background: "var(--surface, #fff)", borderRadius: 12, padding: 20, width: "min(440px, 92vw)", boxShadow: "0 24px 60px rgba(11,30,58,0.35)" }}>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>
+              {es ? "Eliminar línea de la OC" : "Delete OC line"}
+            </div>
+            <div className="caption" style={{ marginTop: 8 }}>
+              <span className="mono" style={{ fontWeight: 700 }}>{lineDel.sku || "—"}</span>
+              {" · "}{es ? "Talla" : "Size"} {lineDel.talla || lineDel.size || "—"}
+              {" · "}{Number(lineDel.qty || 0)} u
+            </div>
+            <div className="caption" style={{ marginTop: 6, color: "var(--text-tertiary)" }}>
+              {es
+                ? "Se elimina del expediente al que pertenece (soft-delete en BD)."
+                : "Removed from its expediente (soft-delete in DB)."}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button className="btn btn-secondary" disabled={lineDelBusy} onClick={() => setLineDel(null)}>
+                {es ? "Cancelar" : "Cancel"}
+              </button>
+              <button className="btn" disabled={lineDelBusy} onClick={confirmDeleteLine}
+                      style={{ background: "var(--critical, #DC2626)", color: "#fff", fontWeight: 700 }}>
+                {lineDelBusy ? (es ? "Eliminando…" : "Deleting…") : (es ? "Eliminar" : "Delete")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Paso 1 · ¿A qué proforma/OC pertenece el producto? ──── */}
+      {addTargetOpen && (
+        <div onClick={() => setAddTargetOpen(false)}
+             style={{ position: "fixed", inset: 0, zIndex: 1300, background: "rgba(11,30,58,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={(ev) => ev.stopPropagation()}
+               style={{ background: "var(--surface, #fff)", borderRadius: 12, padding: 20, width: "min(440px, 92vw)", boxShadow: "0 24px 60px rgba(11,30,58,0.35)" }}>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>
+              {es ? "Agregar producto" : "Add product"}
+            </div>
+            <div className="caption" style={{ marginTop: 6 }}>
+              {es
+                ? "¿A qué proforma / OC pertenece el producto nuevo?"
+                : "Which proforma / PO does the new product belong to?"}
+            </div>
+            <select className="input" value={addTargetIdx}
+                    onChange={(ev) => setAddTargetIdx(Number(ev.target.value) || 0)}
+                    style={{ width: "100%", marginTop: 10, fontFamily: "var(--font-mono)" }}>
+              {members.filter((m) => m.exp.oc_id).map((m, i) => (
+                <option key={m.exp.id} value={i}>{badgeOf(m)} · {m.exp.codigo}</option>
+              ))}
+            </select>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button className="btn btn-secondary" onClick={() => setAddTargetOpen(false)}>
+                {es ? "Cancelar" : "Cancel"}
+              </button>
+              <button className="btn btn-primary" onClick={() => { setAddTargetOpen(false); setProductOpen(true); }}>
+                {es ? "Continuar" : "Continue"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Paso 2 · catálogo (mismo modal que OCDetail) ────────── */}
+      {productOpen && (
+        <AddOCProductModal
+          open={productOpen}
+          lang={lang}
+          clientId={members[0]?.exp.client_id || null}
+          clientLabel={clientName}
+          onPick={addRowsToTarget}
+          onClose={() => setProductOpen(false)}
         />
       )}
     </div>
