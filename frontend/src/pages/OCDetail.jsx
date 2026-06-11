@@ -2399,7 +2399,9 @@ export default function ScreenOCDetail() {
 // Card al pie de OCDetail con la lista de pagos cuyo oc_id = ocId.
 // Solo visible para roles internos (isAdmin).
 // ─────────────────────────────────────────────────────────────
-function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
+// Sprint 2026-06-11 · exportada para reutilizarla en FusionDetail
+// (vista combinada de expedientes fusionados, una card por miembro).
+export function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
   const [pagos,        setPagos]        = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [error,        setError]        = useState(null);
@@ -2556,7 +2558,8 @@ function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
 // que tocaron a cualquier expediente bajo esta OC. Cada fila es
 // clickable y navega al detalle de la transferencia correspondiente.
 // ─────────────────────────────────────────────────────────────
-function OCTransferCostsCard({ ocId, lang, navigate }) {
+// Sprint 2026-06-11 · exportada para reutilizarla en FusionDetail.
+export function OCTransferCostsCard({ ocId, lang, navigate }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

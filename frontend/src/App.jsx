@@ -10,6 +10,8 @@ import ScreenExpedientes from "./pages/Expedientes.jsx";
 // Sprint 2026-06-10 · Cronograma interactivo (reemplaza al Resumen .html).
 import ScreenCronograma from "./pages/Cronograma.jsx";
 import ScreenOCDetail from "./pages/OCDetail.jsx";
+// Sprint 2026-06-11 · detalle combinado de expedientes fusionados (E3).
+import ScreenFusionDetail from "./pages/FusionDetail.jsx";
 import ScreenExpedienteDetail from "./pages/ExpedienteDetail.jsx";
 import ScreenPipeline from "./pages/Pipeline.jsx";
 import ScreenPortal from "./pages/Portal.jsx";
@@ -80,6 +82,9 @@ export default function App() {
         <Route path="/dashboard" element={<ScreenDashboard />} />
         <Route path="/expedientes" element={<ScreenExpedientes />} />
         <Route path="/cronograma" element={<ScreenCronograma />} />
+        {/* Sprint 2026-06-11 · detalle fusionado ANTES de :ocId (el
+            segmento estático "fusion" gana ranking en React Router 6). */}
+        <Route path="/expedientes/fusion/:fusionId" element={<ScreenFusionDetail />} />
         <Route path="/expedientes/:ocId" element={<ScreenOCDetail />} />
         <Route path="/expedientes/:ocId/exp/:expedienteId" element={<ScreenExpedienteDetail />} />
         <Route path="/pipeline" element={<ScreenPipeline />} />

@@ -1026,28 +1026,38 @@ export default function ScreenExpedientes() {
                   || ((members[0].oc_codigos || []).find(c =>
                         members.every(m => (m.oc_codigos || []).includes(c)))
                   || (lang === 'es' ? 'Fusión' : 'Merged'));
-                const totalInv = members.reduce((a, m) => a + (m.total_invoiced || 0), 0);
+                const totalInv  = members.reduce((a, m) => a + (m.total_invoiced || 0), 0);
+                const totalPaid = members.reduce((a, m) => a + (m.total_paid || 0), 0);
+                const maxCredit = Math.max(...members.map(m => m.credit_days || 0));
                 const sts = Array.from(new Set(members.map(m => m.status)));
+                const toggleFusion = () => setFusionOpen(prev => {
+                  const next = new Set(prev);
+                  if (next.has(e.fid)) next.delete(e.fid); else next.add(e.fid);
+                  return next;
+                });
+                // Misma estructura de celdas que una fila normal para que
+                // las columnas alineen; la flecha navega al detalle fusionado.
                 return (
                   <tr
                     key={`fusion-${e.fid}`}
                     data-selected={open}
-                    style={{ cursor: 'pointer', background: 'var(--surface-alt)' }}
-                    onClick={() => setFusionOpen(prev => {
-                      const next = new Set(prev);
-                      if (next.has(e.fid)) next.delete(e.fid); else next.add(e.fid);
-                      return next;
-                    })}
+                    style={{ cursor: 'pointer' }}
+                    onClick={toggleFusion}
                   >
-                    <td colSpan={99} style={{ borderLeft: '3px solid var(--brand-accent)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                        <IconChevDown size={14} style={{ color: 'var(--text-tertiary)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 160ms' }}/>
+                    {isAdmin && <td style={{ borderLeft: '3px solid var(--brand-accent)' }}/>}
+                    <td onClick={(ev) => { ev.stopPropagation(); toggleFusion(); }}>
+                      <IconChevDown size={14} style={{ color: 'var(--text-tertiary)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 160ms' }}/>
+                    </td>
+                    <td>
+                      <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>{label}</span>
                         <span className="caption">
                           {lang === 'es'
                             ? `Fusión · ${members.length} expedientes`
                             : `Merged · ${members.length} expedientes`}
                         </span>
+                      </div>
+                      <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap', marginTop: 4 }}>
                         {members.map(m => (
                           <span
                             key={m.id}
@@ -1061,27 +1071,17 @@ export default function ScreenExpedientes() {
                             {m.ref}
                           </span>
                         ))}
-                        <span style={{ fontWeight: 500 }}>{members[0].client || ''}</span>
-                        {sts.map(s => <StatusBadge key={s} status={s} lang={lang}/>)}
-                        <div style={{ marginLeft: 'auto' }}/>
-                        {!isClient && (
-                          <span className="td-money tabular" style={{ fontWeight: 600 }}>
-                            {fmtMoney(totalInv)}
-                          </span>
-                        )}
                         {isAdmin && (
                           <button
                             type="button"
-                            className="btn btn-sm"
                             disabled={fusing}
                             onClick={(ev) => { ev.stopPropagation(); handleUnfuse(e.fid); }}
                             style={{
-                              border: '1px solid var(--border-subtle)',
-                              background: 'transparent',
-                              color: 'var(--text-secondary)',
-                              padding: '4px 10px', borderRadius: 6, fontSize: 12,
+                              border: 0, background: 'transparent',
+                              color: 'var(--text-tertiary)', fontSize: 11,
+                              textDecoration: 'underline', padding: 0,
                               cursor: fusing ? 'not-allowed' : 'pointer',
-                              opacity: fusing ? 0.6 : 1,
+                              opacity: fusing ? 0.5 : 1,
                             }}
                           >
                             {lang === 'es' ? 'Desfusionar' : 'Unmerge'}
@@ -1089,6 +1089,55 @@ export default function ScreenExpedientes() {
                         )}
                       </div>
                     </td>
+                    <td>
+                      <span style={{ fontWeight: 500 }}>{members[0].client || '—'}</span>
+                    </td>
+                    <td>
+                      <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap' }}>
+                        {sts.map(s => <StatusBadge key={s} status={s} lang={lang}/>)}
+                      </div>
+                    </td>
+                    {effectiveView === 'ops' && <>
+                      <td><span className="caption">—</span></td>
+                      <td style={{ textAlign: 'right' }}><span className="caption">—</span></td>
+                    </>}
+                    {effectiveView === 'financial' && <>
+                      <td className="td-money">{fmtMoney(totalInv)}</td>
+                      <td style={{ textAlign: 'right' }}><span className="caption">—</span></td>
+                      <td className="td-num">
+                        <div className="flex ai-center gap-2" style={{ justifyContent: 'flex-end' }}>
+                          <CreditDot band={maxCredit > 75 ? 'RED' : maxCredit > 60 ? 'AMBER' : 'GREEN'}/>
+                          <span className="tabular">{maxCredit}d</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="caption tabular">
+                          {fmtMoney(totalPaid)} / {fmtMoney(totalInv)}
+                        </span>
+                      </td>
+                    </>}
+                    {effectiveView === 'fleet' && <>
+                      {!isClient && <td><span className="caption">—</span></td>}
+                      {!isClient && <td style={{ textAlign: 'right' }}><span className="caption">—</span></td>}
+                      {isAdmin && (
+                        <td className="td-num">
+                          <div className="flex ai-center gap-2" style={{ justifyContent: 'flex-end' }}>
+                            <CreditDot band={maxCredit > 75 ? 'RED' : maxCredit > 60 ? 'AMBER' : 'GREEN'}/>
+                            <span className="tabular">{maxCredit}d</span>
+                          </div>
+                        </td>
+                      )}
+                      {!isClient && <td className="td-money">{fmtMoney(totalInv)}</td>}
+                    </>}
+                    {isAdmin && <td><span className="caption">—</span></td>}
+                    <td onClick={(ev) => {
+                          ev.stopPropagation();
+                          navigate(`/expedientes/fusion/${e.fid}`);
+                        }}
+                        title={lang === 'es' ? 'Detalle fusionado' : 'Merged detail'}>
+                      <IconChevRight size={14} style={{ color: 'var(--text-tertiary)' }}/>
+                    </td>
+                    {isAdmin && <td/>}
                   </tr>
                 );
               }
