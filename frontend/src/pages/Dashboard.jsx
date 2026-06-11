@@ -408,6 +408,11 @@ export default function ScreenDashboard() {
       {/* ──────────────────────────────────────────────────────────────
           BANDA 1 — 6 KPIs (cableados al backend)
           ────────────────────────────────────────────────────────────── */}
+      {/* Sprint 2026-06-11 rev2 (CEO) · BANDA 1 ahora es CEO-ONLY: el
+          cliente veía "Expedientes activos" cargar primero y luego su
+          banda propia (doble carga escalonada). Su KpiStrip ya trae el
+          conteo de expedientes — una sola carga, una sola fuente. */}
+      {isAdmin && (
       <div
         className="grid gap-3 mb-6"
         style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}
@@ -590,6 +595,7 @@ export default function ScreenDashboard() {
         </SafeWidget>
         </>)}
       </div>
+      )}
 
       {/* ──────────────────────────────────────────────────────────────
           BANDA CLIENTE — Sprint 2026-06-11 (CEO). El usuario B2B ve SU
@@ -630,6 +636,10 @@ export default function ScreenDashboard() {
       {/* ──────────────────────────────────────────────────────────────
           BANDA 3 — Operación
           ────────────────────────────────────────────────────────────── */}
+      {/* Sprint 2026-06-11 rev2 (CEO) · BANDA 3 entera CEO-ONLY: la
+          tabla "Acciones urgentes" se retiró de la vista cliente (su
+          banda propia ya muestra el estado de sus pedidos). */}
+      {isAdmin && (
       <div
         className="grid gap-3 mb-6"
         style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}
@@ -692,6 +702,7 @@ export default function ScreenDashboard() {
         </DashboardCard>
         )}
       </div>
+      )}
 
       {/* ──────────────────────────────────────────────────────────────
           BANDA 4 — Análisis multidimensional · CEO-ONLY entera
