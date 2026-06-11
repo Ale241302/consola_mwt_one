@@ -34,6 +34,28 @@ Esta carpeta es el plano de construcción del sistema completo, módulo por mód
 | AI (/ai · /ai/governance) | `11_ai_hub` |
 | users · roles · /perfil · Login/Reset | `01_core` |
 
+## Sub-sprints por módulo (granularidad de ejecución)
+
+Cada sprint de dominio NO se ejecuta de un golpe: se divide en **7 sub-sprints verticales**, cada uno entregable y verificable por sí solo. La numeración es `NN.k` (ej. `03.4 = Expedientes · vista Crear`).
+
+| Sub | Entregable | Definición de terminado |
+|---|---|---|
+| **NN.1** | **Base de datos** — schema, tablas, índices, seeds (`backend/sql/`) | SQL idempotente aplicado; índices en toda columna UUID de enlace |
+| **NN.2** | **Backend API** — modelos, serializers, ViewSet CRUD + permisos R3 | `py_compile` OK; list sin N+1; CLIENT_* bloqueado en writes; smoke con curl |
+| **NN.3** | **Ver registros** — listado (tabla Zebra, búsqueda, filtros, paginación) | Carga real desde API; loading/empty/error states; `tabular-nums` |
+| **NN.4** | **Crear** — FormView/wizard `/nuevo` | Alta persiste (reload la conserva); validaciones server-side visibles; doble submit bloqueado |
+| **NN.5** | **Editar + Eliminar** — `/:id/editar` + modal de borrado | PATCH persiste; soft-delete con confirmación; re-fetch tras mutación |
+| **NN.6** | **Ver detalle** — `/:id` con secciones del dominio | Navegación listado↔detalle; datos anidados con guards |
+| **NN.7** | **Integración + QA** — cruces con otros módulos, rol CLIENT, ErrorBoundary | Criterios de aceptación del módulo en verde; prueba como cliente B2B |
+
+> **Por qué NO un sprint global por operación** (un sprint "crear" para todo el
+> sistema, otro "editar", etc.): cada sprint tocaría los 12 dominios a la vez,
+> ningún módulo quedaría terminado/usable hasta el final, y se pierde el
+> contexto vertical (quien edita productos necesita lo mismo que quien los
+> crea). Las rebanadas verticales por dominio + sub-sprints por vista dan la
+> misma granularidad SIN esos costos: 12 × 7 = 84 entregas pequeñas, cada una
+> con su "terminado" claro.
+
 ## Orden de construcción recomendado
 `01_core` → `02_clientes` → `08_brands` (catálogos) → `07_nodos` → `03_expedientes` → `04_commercial` → `06_inventario` → `09_transfers` → `05_cobros` → `12_analytics` → `10_communications` → `11_ai_hub`.
 (Core e identidad primero; los catálogos antes que expedientes porque éstos los referencian; analytics al final porque agrega sobre todo lo demás.)
