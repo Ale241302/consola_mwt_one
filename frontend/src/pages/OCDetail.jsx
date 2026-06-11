@@ -977,7 +977,13 @@ export default function ScreenOCDetail() {
     .sort((a, b) => String(b.created_at || b.fecha || '')
                        .localeCompare(String(a.created_at || a.fecha || '')));
   const latestProformaCode = _docsByKind('PROFORMA')[0]?.codigo || null;
-  const latestOcClienteCode = _docsByKind('OC Cliente')[0]?.codigo || null;
+  // Sprint 2026-06-11 (CEO) · FIX: el kind RAW del documento es 'OC'
+  // (DOCUMENT_KINDS.id) — 'OC Cliente' era solo la etiqueta de display y
+  // nunca matcheaba, así que el cliente veía el código interno
+  // (PO-2026-00016) en vez de su PO real (PO 504983).
+  const latestOcClienteCode = _docsByKind('OC')[0]?.codigo
+    || _docsByKind('OC Cliente')[0]?.codigo
+    || null;
   // Codigo a mostrar en el h1 del header.
   // Sprint 2026-06-11 · si el admin/CEO definió un alias (display_label,
   // E4), TODOS los roles lo ven. Si no, comportamiento por defecto:
