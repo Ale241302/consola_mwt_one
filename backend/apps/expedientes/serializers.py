@@ -312,6 +312,9 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             "proforma_codigos", "oc_codigos", "sap_codigos",
             # Sprint 2026-05-31 · flag de operador (visibilidad de costo MWT)
             "viewer_is_operator",
+            # Sprint 2026-06-11 · fusión visual de expedientes (E3). No es
+            # dato sensible: solo agrupa filas en el listado.
+            "fusion_id", "fusion_label",
         )
 
 

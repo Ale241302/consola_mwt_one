@@ -135,6 +135,11 @@ function mapExpedienteFromApi(r) {
     // expedientes recien creados sin facturacion). NO calculamos un
     // estimado de payables — ese KPI muestra solo costos reales.
     order_value:  0,
+    // Sprint 2026-06-11 · fusión visual (E3): los miembros de un grupo
+    // comparten fusion_id y el listado los pinta como UNA fila padre
+    // expandible. Cada miembro conserva su OC/SAP/proforma/documentos.
+    fusion_id:    r.fusion_id || null,
+    fusion_label: r.fusion_label || '',
     _raw:  r,
   };
 }
@@ -315,6 +320,13 @@ export default function ScreenExpedientes() {
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleteErr, setDeleteErr] = useState(null);
 
+  // ── Fusión visual (sprint 2026-06-11) ──────────────────────
+  // fusionOpen: Set de fusion_ids expandidos (colapsado por defecto: el
+  // grupo se ve como UNA sola fila). fusing bloquea botones durante el POST.
+  const [fusionOpen, setFusionOpen] = useState(() => new Set());
+  const [fusing, setFusing] = useState(false);
+  const [fusionErr, setFusionErr] = useState(null);
+
   // ── Export (sprint 2026-06-04) ─────────────────────────────
   // Modal con filtros NO obligatorios (cliente / estado / expediente) +
   // audiencia (cliente vs admin) → genera un .html resumen SKU/talla/qty.
@@ -401,6 +413,49 @@ export default function ScreenExpedientes() {
     }
   };
 
+  // ── Fusionar / desfusionar (sprint 2026-06-11) ─────────────
+  // Fusionar agrupa la selección bajo un fusion_id (agrupación SOLO
+  // visual del listado). La etiqueta por defecto es la PO común entre
+  // los miembros si existe (caso: una PO dividida en N expedientes).
+  const handleFuse = async () => {
+    if (selected.size < 2 || fusing || deleting) return;
+    setFusing(true);
+    setFusionErr(null);
+    try {
+      const ids = Array.from(selected);
+      const members = EXPEDIENTES.filter(e => e.uuid && selected.has(e.uuid));
+      const common = members.length
+        ? ((members[0].oc_codigos || []).find(code =>
+            members.every(m => (m.oc_codigos || []).includes(code))
+          ) || null)
+        : null;
+      await expedientesApi.action('fusionar', null, {
+        expediente_ids: ids,
+        ...(common ? { label: common } : {}),
+      });
+      clearSelection();
+      await load();   // refrescar listado desde API (cache invalidation)
+    } catch (err) {
+      setFusionErr(err?.message || String(err));
+    } finally {
+      setFusing(false);
+    }
+  };
+
+  const handleUnfuse = async (fid) => {
+    if (!fid || fusing) return;
+    setFusing(true);
+    setFusionErr(null);
+    try {
+      await expedientesApi.action('desfusionar', null, { fusion_id: fid });
+      await load();
+    } catch (err) {
+      setFusionErr(err?.message || String(err));
+    } finally {
+      setFusing(false);
+    }
+  };
+
   // ── Global dataset: all expedientes ─────
   const filtered = useMemo(() => {
     return EXPEDIENTES.filter(e => {
@@ -439,6 +494,34 @@ export default function ScreenExpedientes() {
       return true;
     });
   }, [q, statusFilter, brandFilter, clientFilter, signalFilter, alertFilter, EXPEDIENTES]);
+
+  // ── Agrupación visual por fusión (sprint 2026-06-11) ───────
+  // Miembros del mismo fusion_id se vuelven adyacentes (en la posición
+  // del primero) bajo una fila padre sintética; colapsado por defecto.
+  // Grupos con un solo miembro visible se pintan como fila normal.
+  const fusionGroups = useMemo(() => {
+    const map = new Map();
+    for (const e of filtered) {
+      if (!e.fusion_id) continue;
+      if (!map.has(e.fusion_id)) map.set(e.fusion_id, []);
+      map.get(e.fusion_id).push(e);
+    }
+    return map;
+  }, [filtered]);
+
+  const displayRows = useMemo(() => {
+    const out = [];
+    const seen = new Set();
+    for (const e of filtered) {
+      const grp = e.fusion_id ? fusionGroups.get(e.fusion_id) : null;
+      if (!grp || grp.length < 2) { out.push(e); continue; }
+      if (seen.has(e.fusion_id)) continue;
+      seen.add(e.fusion_id);
+      out.push({ __fusionHeader: true, fid: e.fusion_id, members: grp });
+      if (fusionOpen.has(e.fusion_id)) out.push(...grp);
+    }
+    return out;
+  }, [filtered, fusionGroups, fusionOpen]);
 
   // ── CEO KPIs (live) ─────
   const kpi = useMemo(() => {
@@ -795,7 +878,34 @@ export default function ScreenExpedientes() {
           >
             {lang === 'es' ? 'Limpiar' : 'Clear'}
           </button>
+          {fusionErr && (
+            <span style={{ fontSize: 12, opacity: 0.9 }}>{fusionErr}</span>
+          )}
           <div style={{ marginLeft: 'auto' }}/>
+          {/* Sprint 2026-06-11 · Fusionar selección (agrupación visual).
+              Requiere ≥2 expedientes; cada miembro conserva su OC, SAP,
+              proforma y documentos. */}
+          {selected.size >= 2 && (
+            <button
+              type="button"
+              onClick={handleFuse}
+              disabled={fusing || deleting}
+              className="btn btn-sm"
+              style={{
+                background: 'var(--brand-accent)',
+                color: '#fff', border: 0, fontWeight: 600,
+                padding: '6px 14px', borderRadius: 6,
+                opacity: fusing ? 0.6 : 1,
+                cursor: fusing ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {fusing
+                ? (lang === 'es' ? 'Fusionando…' : 'Merging…')
+                : (lang === 'es'
+                    ? `Fusionar ${selected.size}`
+                    : `Merge ${selected.size}`)}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => handleBulkDelete(Array.from(selected))}
@@ -905,7 +1015,83 @@ export default function ScreenExpedientes() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(e => {
+            {displayRows.map(e => {
+              // ── Fila padre de una fusión (sprint 2026-06-11) ──────
+              // Agrupación SOLO visual: click expande/colapsa los
+              // miembros (filas normales debajo). Desfusionar es CEO-only.
+              if (e.__fusionHeader) {
+                const open = fusionOpen.has(e.fid);
+                const members = e.members;
+                const label = members[0].fusion_label
+                  || ((members[0].oc_codigos || []).find(c =>
+                        members.every(m => (m.oc_codigos || []).includes(c)))
+                  || (lang === 'es' ? 'Fusión' : 'Merged'));
+                const totalInv = members.reduce((a, m) => a + (m.total_invoiced || 0), 0);
+                const sts = Array.from(new Set(members.map(m => m.status)));
+                return (
+                  <tr
+                    key={`fusion-${e.fid}`}
+                    data-selected={open}
+                    style={{ cursor: 'pointer', background: 'var(--surface-alt)' }}
+                    onClick={() => setFusionOpen(prev => {
+                      const next = new Set(prev);
+                      if (next.has(e.fid)) next.delete(e.fid); else next.add(e.fid);
+                      return next;
+                    })}
+                  >
+                    <td colSpan={99} style={{ borderLeft: '3px solid var(--brand-accent)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <IconChevDown size={14} style={{ color: 'var(--text-tertiary)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 160ms' }}/>
+                        <span style={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>{label}</span>
+                        <span className="caption">
+                          {lang === 'es'
+                            ? `Fusión · ${members.length} expedientes`
+                            : `Merged · ${members.length} expedientes`}
+                        </span>
+                        {members.map(m => (
+                          <span
+                            key={m.id}
+                            style={{
+                              fontFamily: 'JetBrains Mono, monospace', fontSize: 11,
+                              padding: '2px 8px', borderRadius: 6,
+                              background: 'var(--surface-raised)',
+                              border: '1px solid var(--border-subtle)',
+                            }}
+                          >
+                            {m.ref}
+                          </span>
+                        ))}
+                        <span style={{ fontWeight: 500 }}>{members[0].client || ''}</span>
+                        {sts.map(s => <StatusBadge key={s} status={s} lang={lang}/>)}
+                        <div style={{ marginLeft: 'auto' }}/>
+                        {!isClient && (
+                          <span className="td-money tabular" style={{ fontWeight: 600 }}>
+                            {fmtMoney(totalInv)}
+                          </span>
+                        )}
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            disabled={fusing}
+                            onClick={(ev) => { ev.stopPropagation(); handleUnfuse(e.fid); }}
+                            style={{
+                              border: '1px solid var(--border-subtle)',
+                              background: 'transparent',
+                              color: 'var(--text-secondary)',
+                              padding: '4px 10px', borderRadius: 6, fontSize: 12,
+                              cursor: fusing ? 'not-allowed' : 'pointer',
+                              opacity: fusing ? 0.6 : 1,
+                            }}
+                          >
+                            {lang === 'es' ? 'Desfusionar' : 'Unmerge'}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              }
               const brand = BRANDS.find(b => b.id === e.brand_id);
               const isOpen = expandedId === e.id;
               const driftE = e.real_margin - e.projected_margin;

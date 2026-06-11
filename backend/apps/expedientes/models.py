@@ -171,6 +171,13 @@ class Expediente(models.Model):
     # el Cronograma del export los priorizan sobre la duración derivada del
     # EventLog. Columna: E1_expedientes_phase_durations.sql.
     phase_durations_json = models.JSONField(default=dict, blank=True)
+    # Sprint 2026-06-11 · fusión VISUAL de expedientes (E3_expedientes_fusion.sql).
+    # Una PO dividida en N partes (distintos operadores/SAP/proforma) se
+    # agrupa en el listado /expedientes bajo un fusion_id compartido. Cada
+    # miembro conserva TODO (OC, SAP, proforma, documentos, pipeline);
+    # ningún otro módulo consume estos campos.
+    fusion_id           = models.UUIDField(null=True, blank=True)
+    fusion_label        = models.CharField(max_length=64, null=True, blank=True)
 
     cost_corrections    = models.BooleanField(default=False)
     proforma_reviewed   = models.BooleanField(default=False)

@@ -1054,6 +1054,74 @@ class ExpedienteViewSet(viewsets.ViewSet):
         exp.save(update_fields=["phase_durations_json", "updated_at"])
         return Response({"phase_durations": current})
 
+    # ── Fusión visual de expedientes (Sprint 2026-06-11 · E3) ────────
+    # Una PO del cliente dividida en N partes (operadores/SAP/proforma
+    # distintos) se agrupa en el listado bajo un fusion_id compartido.
+    # SOLO visual: cada miembro conserva su OC, SAP, proforma, documentos
+    # y pipeline. Ningún otro módulo consume estos campos.
+    @action(detail=False, methods=["post"], url_path="fusionar")
+    def fusionar(self, request):
+        """POST /api/expedientes/fusionar/ {"expediente_ids": [...], "label"?}."""
+        denied = _deny_client_mutation(request, action_label="expediente.fusionar")
+        if denied is not None:
+            return denied
+        data = request.data or {}
+        raw_ids = data.get("expediente_ids") or []
+        if not isinstance(raw_ids, list) or len(raw_ids) < 2:
+            return Response({"detail": "se requieren al menos 2 expediente_ids"}, status=400)
+        try:
+            ids = [str(uuid.UUID(str(x))) for x in raw_ids]
+        except (TypeError, ValueError):
+            return Response({"detail": "expediente_ids inválidos"}, status=400)
+        label = (str(data.get("label") or "").strip() or None)
+        if label:
+            label = label[:64]
+        exps = list(Expediente.objects.filter(id__in=ids, is_active=True))
+        if len(exps) != len(set(ids)):
+            return Response(
+                {"detail": f"expedientes no encontrados ({len(exps)}/{len(set(ids))})"},
+                status=404,
+            )
+        fid = uuid.uuid4()
+        # Si un miembro ya pertenecía a otra fusión, migra a la nueva
+        # (re-fusionar selección = sobrescribir).
+        for e in exps:
+            e.fusion_id = fid
+            e.fusion_label = label
+            e.save(update_fields=["fusion_id", "fusion_label", "updated_at"])
+        return Response({"fusion_id": str(fid), "fusion_label": label, "members": len(exps)})
+
+    @action(detail=False, methods=["post"], url_path="desfusionar")
+    def desfusionar(self, request):
+        """POST /api/expedientes/desfusionar/ {"fusion_id"} | {"expediente_ids"}."""
+        denied = _deny_client_mutation(request, action_label="expediente.desfusionar")
+        if denied is not None:
+            return denied
+        data = request.data or {}
+        fid = str(data.get("fusion_id") or "").strip()
+        raw_ids = data.get("expediente_ids") or []
+        if fid:
+            try:
+                uuid.UUID(fid)
+            except (TypeError, ValueError):
+                return Response({"detail": "fusion_id inválido"}, status=400)
+            qs = Expediente.objects.filter(fusion_id=fid)
+        elif isinstance(raw_ids, list) and raw_ids:
+            try:
+                ids = [str(uuid.UUID(str(x))) for x in raw_ids]
+            except (TypeError, ValueError):
+                return Response({"detail": "expediente_ids inválidos"}, status=400)
+            qs = Expediente.objects.filter(id__in=ids)
+        else:
+            return Response({"detail": "se requiere fusion_id o expediente_ids"}, status=400)
+        n = 0
+        for e in qs:
+            e.fusion_id = None
+            e.fusion_label = None
+            e.save(update_fields=["fusion_id", "fusion_label", "updated_at"])
+            n += 1
+        return Response({"unfused": n})
+
     # ── Estadísticas globales de días por fase (Sprint 2026-06-10) ───
     # GET /api/expedientes/phase-stats/[?client=<uuid>]
     # Promedios calculados sobre el HISTORIAL COMPLETO (EventLog), no sólo
