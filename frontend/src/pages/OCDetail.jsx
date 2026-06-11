@@ -220,6 +220,8 @@ export default function ScreenOCDetail() {
   // headerEdit: string en edición | null = no editando.
   const [headerEdit, setHeaderEdit]               = useState(null);
   const [headerSaving, setHeaderSaving]           = useState(false);
+  // Sprint 2026-06-11 (rev2) · error visible del alta de líneas.
+  const [addLineError, setAddLineError]           = useState(null);
 
   useEffect(() => {
     if (ocFromMock) return;
@@ -684,17 +686,21 @@ export default function ScreenOCDetail() {
     // OC es real (API), se crean vía POST /lineas/ y se hidratan en
     // caliente; el insert local queda como fallback (HERO mock / error).
     if (apiOc?.id) {
-      try {
-        const created = [];
-        for (const r of arr) {
-          const qty = Number(r.cantidad || 0);
-          const unit = Number(r.unit_price || 0);
+      // Sprint 2026-06-11 (rev2) · creación POR FILA con error VISIBLE.
+      // Antes un fallo caía al insert local silencioso: la fila fantasma
+      // se veía en pantalla pero desaparecía al recargar.
+      const created = [];
+      const failed = [];
+      for (const r of arr) {
+        const qty = Number(r.cantidad || 0);
+        const unit = Number(r.unit_price || 0);
+        try {
           const saved = await lineasApi.create({
             oc_id:             apiOc.id,
             expediente_id:     primaryExpId || null,
             producto_id:       r.producto_id || null,
             sku:               r.sku,
-            size:              r.talla || null,
+            size:              r.talla != null ? String(r.talla) : null,
             qty,
             unit_price:        unit,
             unit_price_mwt:    unit,
@@ -703,14 +709,24 @@ export default function ScreenOCDetail() {
             estado:            'PENDIENTE_SAP',
           });
           created.push(saved);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('[OCDetail] crear línea falló:', r, err);
+          failed.push(
+            `${r.sku || '—'}${r.talla != null ? ` T${r.talla}` : ''}: ${err?.body?.detail || err?.message || 'error'}`
+          );
         }
-        setApiOcLines(prev => [...prev, ...created]);
-        setShowAddProduct(false);
-        return;
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('[OCDetail] crear línea falló (fallback local):', err);
       }
+      if (created.length) {
+        setApiOcLines(prev => [...prev, ...created]);
+      }
+      setAddLineError(failed.length
+        ? (lang === 'es'
+            ? `No se pudo guardar ${failed.length} línea(s) — ${failed.join(' · ')}`
+            : `Couldn't save ${failed.length} line(s) — ${failed.join(' · ')}`)
+        : null);
+      setShowAddProduct(false);
+      return;
     }
     const newLines = arr.map((r, i) => {
       const qty = Number(r.cantidad || 0);
@@ -2006,6 +2022,26 @@ export default function ScreenOCDetail() {
             </button>
           )}
         </div>
+        {/* Sprint 2026-06-11 (rev2) · error VISIBLE al crear líneas. Antes
+            el fallo del POST /lineas/ caía a un insert local silencioso y
+            la fila fantasma desaparecía al recargar. */}
+        {addLineError && (
+          <div style={{
+            margin: '10px 22px 0', padding: '8px 12px', borderRadius: 8,
+            background: 'color-mix(in oklab, var(--danger, #DC2626) 12%, transparent)',
+            color: 'var(--danger, #991B1B)',
+            border: '1px solid color-mix(in oklab, var(--danger, #DC2626) 30%, transparent)',
+            fontSize: 12, display: 'flex', alignItems: 'flex-start', gap: 6,
+          }}>
+            <IconAlert size={11} style={{flexShrink: 0, marginTop: 2}}/>
+            <div style={{flex: 1}}>{addLineError}</div>
+            <button type="button"
+                    onClick={() => setAddLineError(null)}
+                    style={{background:'transparent', border:0, cursor:'pointer', color:'inherit'}}>
+              <IconX size={10}/>
+            </button>
+          </div>
+        )}
         <div style={{overflowX:'auto'}}>
           <table className="oc-products-table" data-viewport={isClient ? 'CLIENT' : 'ADMIN'}>
             <thead>

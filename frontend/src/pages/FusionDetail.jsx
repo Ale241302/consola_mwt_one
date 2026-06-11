@@ -341,6 +341,7 @@ export default function ScreenFusionDetail() {
   const [addTargetOpen, setAddTargetOpen] = useState(false); // paso 1: ¿a qué proforma?
   const [addTargetIdx, setAddTargetIdx] = useState(0);
   const [productOpen, setProductOpen] = useState(false);     // paso 2: catálogo
+  const [addErr, setAddErr] = useState(null);                // error visible del alta
 
   // ORIGEN del miembro (R3): proforma para staff, PO para cliente.
   // OJO: NO usar m.oc.codigo — es el código interno del sistema
@@ -630,16 +631,18 @@ export default function ScreenFusionDetail() {
     const t = withOc[Math.min(addTargetIdx, withOc.length - 1)];
     if (!t) { setProductOpen(false); return; }
     const arr = Array.isArray(rows) ? rows : [];
-    try {
-      for (const r of arr) {
-        const qty = Number(r.cantidad || 0);
-        const unit = Number(r.unit_price || 0);
+    // Creación POR FILA con error VISIBLE (sin filas fantasma).
+    const failed = [];
+    for (const r of arr) {
+      const qty = Number(r.cantidad || 0);
+      const unit = Number(r.unit_price || 0);
+      try {
         await lineasApi.create({
           oc_id:             t.exp.oc_id,
           expediente_id:     t.exp.id,
           producto_id:       r.producto_id || null,
           sku:               r.sku,
-          size:              r.talla || null,
+          size:              r.talla != null ? String(r.talla) : null,
           qty,
           unit_price:        unit,
           unit_price_mwt:    unit,
@@ -647,11 +650,19 @@ export default function ScreenFusionDetail() {
           total_price:       +(qty * unit).toFixed(2),
           estado:            "PENDIENTE_SAP",
         });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[FusionDetail] crear línea falló", r, err);
+        failed.push(
+          `${r.sku || "—"}${r.talla != null ? ` T${r.talla}` : ""}: ${err?.body?.detail || err?.message || "error"}`
+        );
       }
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error("[FusionDetail] crear línea falló", err);
     }
+    setAddErr(failed.length
+      ? (es
+          ? `No se pudo guardar ${failed.length} línea(s) — ${failed.join(" · ")}`
+          : `Couldn't save ${failed.length} line(s) — ${failed.join(" · ")}`)
+      : null);
     setProductOpen(false);
     setReloadKey((k) => k + 1);
   };
@@ -963,6 +974,24 @@ export default function ScreenFusionDetail() {
                 </button>
               )}
             </div>
+            {/* Error visible del alta de líneas (sin filas fantasma). */}
+            {addErr && (
+              <div style={{
+                margin: "10px 22px 0", padding: "8px 12px", borderRadius: 8,
+                background: "color-mix(in oklab, var(--danger, #DC2626) 12%, transparent)",
+                color: "var(--danger, #991B1B)",
+                border: "1px solid color-mix(in oklab, var(--danger, #DC2626) 30%, transparent)",
+                fontSize: 12, display: "flex", alignItems: "flex-start", gap: 6,
+              }}>
+                <IconAlert size={11} style={{ flexShrink: 0, marginTop: 2 }}/>
+                <div style={{ flex: 1 }}>{addErr}</div>
+                <button type="button"
+                        onClick={() => setAddErr(null)}
+                        style={{ background: "transparent", border: 0, cursor: "pointer", color: "inherit" }}>
+                  ✕
+                </button>
+              </div>
+            )}
             <div style={{ overflowX: "auto", overflowY: "hidden" }}>
               <table className="table">
                 <thead>
