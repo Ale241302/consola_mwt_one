@@ -177,7 +177,7 @@ export default function Cronograma() {
   // para staff, PO para cliente) + EXP como pista secundaria.
   const proformaOpts = useMemo(
     () => scopedItems
-      .map((it) => ({ id: it.id, label: labelOf(it), sub: isClient ? "" : it.expCodigo }))
+      .map((it) => ({ id: it.id, label: labelOf(it), sub: isClient ? "" : (it.sap || "") }))
       .sort((a, b) => String(a.label).localeCompare(String(b.label))),
     [scopedItems, labelOf, isClient]
   );
@@ -220,8 +220,9 @@ export default function Cronograma() {
       label: labelOf(it),
       labelTip: lang === "es" ? "Ver SKUs y precios" : "View SKUs & prices",
       sub: [
-        // El código EXP interno NO se muestra al cliente (R3).
-        (!isClient && it.expCodigo !== labelOf(it)) ? it.expCodigo : null,
+        // Sprint 2026-06-11 (CEO) · sin código EXP interno en ninguna
+        // vista: admin ve el número SAP (vacío si no hay); cliente nada.
+        (!isClient && it.sap) ? it.sap : null,
         `${fInt(it.volumen)} prs`,
         it.operadoPorMwt ? "MWT" : (lang === "es" ? "Cliente" : "Client"),
         it.modo || (lang === "es" ? "Aéreo (sup.)" : "Air (assumed)"),

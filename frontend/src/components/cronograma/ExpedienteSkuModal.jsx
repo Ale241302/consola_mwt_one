@@ -45,8 +45,9 @@ export default function ExpedienteSkuModal({ item, isClient, lang = "es", onClos
             </div>
             <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
               {[
-                // El código EXP interno NO se muestra al cliente (R3).
-                isClient ? null : item.expCodigo,
+                // Sprint 2026-06-11 (CEO) · sin EXP interno: admin ve el
+                // número SAP (si existe); cliente nada.
+                isClient ? null : (item.sap || null),
                 item.cliente,
                 item.operadoPorMwt ? (lang === "es" ? "Operado por MWT" : "Operated by MWT") : null,
                 item.modo || (lang === "es" ? "Aéreo (sup.)" : "Air (assumed)"),

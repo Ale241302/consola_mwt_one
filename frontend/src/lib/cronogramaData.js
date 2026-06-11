@@ -123,6 +123,12 @@ function normalizeItem(r, payload, events, overrides) {
     ocCodigo: (payload && payload.oc_codigo)
       || (Array.isArray(r.oc_codigos) && r.oc_codigos[0]) || "",
     expCodigo: r.codigo || "",
+    // Sprint 2026-06-11 · número(s) SAP — la vista admin los muestra en
+    // lugar del código EXP interno; si no hay SAP queda vacío.
+    // sap_codigos solo llega a staff (R3); el cliente recibe [].
+    sap: (Array.isArray(r.sap_codigos) && r.sap_codigos.length)
+      ? r.sap_codigos.join(", ")
+      : (r.sap || ""),
     cliente: oc.client_name || "",
     clienteId: r.client_id || null,
     operadoPorMwt: !!oc.operated_by_mwt,
