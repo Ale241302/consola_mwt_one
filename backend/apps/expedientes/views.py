@@ -3928,9 +3928,18 @@ class LineaViewSet(viewsets.ViewSet):
     def create(self, request):
         denied = _deny_client_mutation(request, action_label="linea.create")
         if denied is not None: return denied
-        s = LineaSerializer(data=request.data)
+        # Sprint 2026-06-11 (CEO) · FIX "Agregar producto no persiste":
+        # `id` es PK UUID sin default y LineaSerializer (fields="__all__",
+        # sin read_only_fields) lo EXIGÍA en el payload → todo POST sin id
+        # moría con 400 {"id": ["Este campo es requerido."]} ANTES de
+        # llegar al s.save(id=...). Lo generamos server-side; si el
+        # cliente manda uno explícito, se respeta (compat).
+        data = dict(request.data or {})
+        if not data.get("id"):
+            data["id"] = str(uuid.uuid4())
+        s = LineaSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
+        s.save()
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
