@@ -351,6 +351,46 @@ export default function ScreenExpedientes() {
     return () => { alive = false; };
   }, []);
 
+  // ── Tiempos operativos REALES (Sprint 2026-06-11 · CEO) ────────────
+  // GET /expedientes/phase-stats/ SIN cliente = promedio GENERAL de días
+  // por fase, calculado del historial completo (EventLog + overrides
+  // manuales), ponderado entre métodos de envío. Antes la card usaba el
+  // time_in_phase local (casi siempre 0) — "no estaba conectada a nada".
+  const [opStats, setOpStats] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    expedientesApi.action('phase-stats')
+      .then((r) => {
+        if (!alive) return;
+        const buckets = (r && r.phase_stats) || {};
+        const merge = (keys) => {
+          const acc = {};
+          keys.forEach((k) => {
+            Object.entries(buckets[k] || {}).forEach(([fase, v]) => {
+              if (!v || typeof v.avg !== 'number') return;
+              const a = acc[fase] || { sum: 0, n: 0 };
+              a.sum += v.avg * (v.n || 1);
+              a.n += (v.n || 1);
+              acc[fase] = a;
+            });
+          });
+          return acc;
+        };
+        // Buckets con nombre (Aereo/Maritimo…) primero; los "_*" (p.ej.
+        // _ALL, expedientes sin método) solo rellenan fases faltantes.
+        const named = merge(Object.keys(buckets).filter((k) => !k.startsWith('_')));
+        const under = merge(Object.keys(buckets).filter((k) => k.startsWith('_')));
+        const out = {};
+        const src = { ...under, ...named };
+        Object.entries(src).forEach(([fase, a]) => {
+          if (a.n > 0) out[fase] = { avg: a.sum / a.n, n: a.n };
+        });
+        setOpStats(out);
+      })
+      .catch(() => { /* la card cae al cálculo local */ });
+    return () => { alive = false; };
+  }, []);
+
   // Sprint 2026-06-10 — el "reporte" ya no genera un .html: abre el
   // Cronograma interactivo (/cronograma) en una pestaña nueva con los
   // filtros del modal como query params.
@@ -717,7 +757,18 @@ export default function ScreenExpedientes() {
           <div style={{padding:'18px 22px'}}>
             <div style={{display:'grid', gridTemplateColumns:'repeat(6, 1fr)', gap: 16}}>
               {STATES.slice(0,6).map(s => {
-                const ps = kpi.phase_stats[s];
+                // Sprint 2026-06-11 · promedio REAL del endpoint
+                // phase-stats (general); el cálculo local queda como
+                // fallback mientras carga o si el endpoint falla.
+                const psLocal = kpi.phase_stats[s];
+                const real = opStats ? opStats[s] : null;
+                const ps = real
+                  ? {
+                      avg: real.avg,
+                      baseline: (psLocal && psLocal.baseline) || real.avg,
+                      n: real.n,
+                    }
+                  : psLocal;
                 if (!ps) return (
                   <div key={s}>
                     <div className="micro" style={{marginBottom:6}}>{tr(lang,s)}</div>
@@ -738,7 +789,8 @@ export default function ScreenExpedientes() {
                       <div style={{height:'100%', width: Math.min(100, ratio*60) + '%', background: color}}/>
                     </div>
                     <div className="caption" style={{marginTop:4, color:'var(--text-tertiary)'}}>
-                      {lang==='es'?'hist.':'avg'} {ps.baseline}d · {(ratio*100-100).toFixed(0)}%
+                      {lang==='es'?'hist.':'avg'} {Number(ps.baseline).toFixed(0)}d · {(ratio*100-100).toFixed(0)}%
+                      {ps.n ? ` · ${ps.n} exp.` : ''}
                     </div>
                   </div>
                 );

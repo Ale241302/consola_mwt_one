@@ -29,6 +29,8 @@ import { OCS } from "../data/mockData.js";
 // Sprint 2026-06-11 · resolver la OC real de un expediente para que el
 // click en cualquier registro del dashboard abra el DETALLE de la OC.
 import { expedientesApi } from "../lib/api.js";
+// Sprint 2026-06-11 (CEO) · dashboard enriquecido para usuarios CLIENTE.
+import ClientDashboard from "../components/dashboard/ClientDashboard.jsx";
 import {
   KpiCard,
   TimeseriesChart,
@@ -588,6 +590,13 @@ export default function ScreenDashboard() {
         </SafeWidget>
         </>)}
       </div>
+
+      {/* ──────────────────────────────────────────────────────────────
+          BANDA CLIENTE — Sprint 2026-06-11 (CEO). El usuario B2B ve SU
+          operación completa: KPIs, próximas entregas, pares por talla y
+          pipeline por fase (scoped a sus legal_entity_ids, R3).
+          ────────────────────────────────────────────────────────────── */}
+      {!isAdmin && <ClientDashboard lang={lang}/>}
 
       {/* ──────────────────────────────────────────────────────────────
           BANDA 2 — Heatmap tallas × mercado (full-width)
