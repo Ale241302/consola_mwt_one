@@ -26,10 +26,24 @@ class TransferenciaListSerializer(serializers.ModelSerializer):
             "lines_count", "total_qty_transfer", "total_qty_received",
         )
 
+    # Fable5 · atajo batch: el list() del ViewSet precalcula los agregados
+    # de líneas (UN solo query agrupado) y los pasa por context como
+    # `batch_linea_agg` = {str(transferencia_id): {"n", "qt", "qr"}}.
+    # Si el context no trae el mapa, FALLBACK al query por-fila (compat).
     def get_lines_count(self, obj):
+        pre = (self.context or {}).get("batch_linea_agg")
+        if isinstance(pre, dict):
+            row = pre.get(str(obj.id))
+            if row is not None:
+                return int(row.get("n") or 0)
         return Linea.objects.filter(transferencia_id=obj.id, is_active=True).count()
 
     def get_total_qty_transfer(self, obj):
+        pre = (self.context or {}).get("batch_linea_agg")
+        if isinstance(pre, dict):
+            row = pre.get(str(obj.id))
+            if row is not None:
+                return int(row.get("qt") or 0)
         from django.db.models import Sum
         agg = Linea.objects.filter(
             transferencia_id=obj.id, is_active=True
@@ -37,6 +51,11 @@ class TransferenciaListSerializer(serializers.ModelSerializer):
         return int(agg["t"] or 0)
 
     def get_total_qty_received(self, obj):
+        pre = (self.context or {}).get("batch_linea_agg")
+        if isinstance(pre, dict):
+            row = pre.get(str(obj.id))
+            if row is not None:
+                return int(row.get("qr") or 0)
         from django.db.models import Sum
         agg = Linea.objects.filter(
             transferencia_id=obj.id, is_active=True

@@ -55,7 +55,11 @@ export function useDashboardKpis() {
     error: null,
   });
 
-  const load = useCallback(async () => {
+  // Fable5 · cancelación: los wrappers analyticsApi.* no aceptan opciones
+  // (no hay forma de pasar AbortSignal), así que usamos el patrón `isAlive`:
+  // el efecto de montaje pasa su flag y load() no toca el estado si el
+  // componente ya se desmontó. `reload` (uso manual) usa el default.
+  const load = useCallback(async (isAlive = () => true) => {
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
       const [
@@ -81,6 +85,7 @@ export function useDashboardKpis() {
         analyticsApi.sizeMarketDistribution().catch(emptyObj),
         analyticsApi.tacosFbaUs().catch(emptyObj),
       ]);
+      if (!isAlive()) return;   // Fable5 · desmontado mientras cargaba
       setState({
         kpis:            kpis || null,
         cashflow:        Array.isArray(cashflow)        ? cashflow        : [],
@@ -101,11 +106,19 @@ export function useDashboardKpis() {
         error:           null,
       });
     } catch (err) {
+      // Fable5 · un abort no es un error de dashboard — no setear error.
+      if (err?.name === "AbortError") return;
+      if (!isAlive()) return;
       setState((s) => ({ ...s, loading: false, error: err }));
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Fable5 · cleanup en desmontaje (cancela los setState pendientes).
+  useEffect(() => {
+    let alive = true;
+    load(() => alive);
+    return () => { alive = false; };
+  }, [load]);
 
   return { ...state, reload: load };
 }

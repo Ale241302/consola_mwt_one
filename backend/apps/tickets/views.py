@@ -163,7 +163,24 @@ class TicketViewSet(viewsets.ViewSet):
                 Q(user_full_name__icontains=q)
             )
         qs = qs.order_by("-created_at")
-        return Response(TicketListSerializer(qs, many=True).data)
+        # Fable5 · batch: counts de mensajes + catálogos en 3 queries totales
+        # (antes 3 queries POR TICKET vía SerializerMethodFields).
+        rows = list(qs)
+        ids = [t.id for t in rows]
+        msg_count = {}
+        if ids:
+            aggs = (TicketMessage.objects
+                    .filter(ticket_id__in=ids, is_active=True)
+                    .values("ticket_id")
+                    .annotate(n=Count("id")))
+            for a in aggs:
+                msg_count[str(a["ticket_id"])] = int(a["n"] or 0)
+        ctx = {
+            "batch_msg_count":     msg_count,
+            "batch_reason_labels": {r.pk: r.label_es for r in ReasonCat.objects.all()},
+            "batch_status_labels": {s.pk: s.label_es for s in StatusCat.objects.all()},
+        }
+        return Response(TicketListSerializer(rows, many=True, context=ctx).data)
 
     def retrieve(self, request, pk=None):
         try:

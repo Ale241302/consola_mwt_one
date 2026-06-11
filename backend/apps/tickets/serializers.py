@@ -142,19 +142,32 @@ class TicketListSerializer(serializers.ModelSerializer):
             "message_count",
         )
 
+    # Fable5 · atajos batch: el list() del ViewSet precarga los catálogos
+    # completos (`batch_reason_labels` / `batch_status_labels`) y el count
+    # de mensajes agrupado (`batch_msg_count`) — antes 3 queries POR FILA.
+    # FALLBACK al query por-fila si el context no trae el mapa (compat).
     def get_reason_label(self, obj):
+        pre = (self.context or {}).get("batch_reason_labels")
+        if isinstance(pre, dict):
+            return pre.get(obj.reason, obj.reason)
         try:
             return ReasonCat.objects.get(pk=obj.reason).label_es
         except ReasonCat.DoesNotExist:
             return obj.reason
 
     def get_status_label(self, obj):
+        pre = (self.context or {}).get("batch_status_labels")
+        if isinstance(pre, dict):
+            return pre.get(obj.status, obj.status)
         try:
             return StatusCat.objects.get(pk=obj.status).label_es
         except StatusCat.DoesNotExist:
             return obj.status
 
     def get_message_count(self, obj):
+        pre = (self.context or {}).get("batch_msg_count")
+        if isinstance(pre, dict):
+            return int(pre.get(str(obj.id), 0))
         return TicketMessage.objects.filter(ticket_id=obj.id, is_active=True).count()
 
     def get_is_finalized(self, obj):

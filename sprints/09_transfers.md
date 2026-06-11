@@ -29,6 +29,6 @@ Movimientos de stock entre nodos con liquidación completa: costos (manual + OCR
 ## 6. Hallazgos y correcciones
 **Auditoría 2026-06-11 (Fable 5):**
 - ✅ **CORREGIDO (índices)** — `E5`: `cost_line(transferencia_id)` + `expediente_nodo_assignment(transferencia_id)`.
-- 🔴 **PENDIENTE (N+1)** — `transfers/serializers.py:29-44` `count()` + `aggregate()` por transferencia en el listado.
-- 🟡 **PENDIENTE (frontend)** — `Transfers.jsx:138` accede `tot.units_total` sin guard de objeto.
-- 🟡 **PENDIENTE (SQL)** — `scope_json`: candidato GIN para el prorrateo por scope.
+- ✅ **CORREGIDO (WAVE A)** — Los 3 getters (lines_count/qty_transfer/qty_received) batcheados: UN query `values().annotate(Count, Sum, Sum)` en el list, atajo `batch_linea_agg` con fallback.
+- ✅ **CORREGIDO (WAVE B)** — `Transfers.jsx`: `(tot?.units_total ?? 0)` y `(tot?.has_discrepancy ?? false)` en los KPIs.
+- ✅ **CORREGIDO (WAVE D)** — `E6`: GIN en `cost_line(scope_json)`.

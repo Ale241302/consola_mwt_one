@@ -121,7 +121,9 @@ export default function ScreenClientes() {
 
   // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
   // Si la API devuelve [] mostramos estado vacío real, no demo.
-  const CLIENTS = apiClients;
+  // Fable5 · guard: si apiClients llegara en un shape inesperado (null,
+  // objeto paginado crudo), los .filter()/.reduce() de KPIs no revientan.
+  const CLIENTS = Array.isArray(apiClients) ? apiClients : [];
 
   // Países únicos para filtro
   const countries = useMemo(() => {

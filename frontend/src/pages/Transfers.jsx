@@ -135,8 +135,9 @@ export default function ScreenTransfers() {
       let unitsInTransit = 0;
       for (const t of TRANSFERS) {
         if (t.status === 'in_transit') {
+          // Fable5 · guard: getTransferTotals puede devolver undefined/parcial.
           const tot = getTransferTotals(t);
-          unitsInTransit += tot.units_total;
+          unitsInTransit += (tot?.units_total ?? 0);
         }
       }
       return {
@@ -151,13 +152,14 @@ export default function ScreenTransfers() {
     let pendingApproval = 0;
     let pendingReconcile = 0;
     for (const t of TRANSFERS) {
+      // Fable5 · guard: mismos accesos blindados que en la rama con apiKpis.
       const tot = getTransferTotals(t);
       if (t.status === 'in_transit') {
         activeCount += 1;
-        unitsInTransit += tot.units_total;
+        unitsInTransit += (tot?.units_total ?? 0);
       }
       if (t.status === 'planned' && t.needs_approval) pendingApproval += 1;
-      if (t.status === 'received' && tot.has_discrepancy) pendingReconcile += 1;
+      if (t.status === 'received' && (tot?.has_discrepancy ?? false)) pendingReconcile += 1;
     }
     return { unitsInTransit, activeCount, pendingApproval, pendingReconcile };
   }, [TRANSFERS, apiKpis]);

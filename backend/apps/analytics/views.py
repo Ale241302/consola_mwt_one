@@ -1413,6 +1413,54 @@ class AnalyticsViewSet(viewsets.ViewSet):
 
         return Response(out)
 
+    # ── Fable5 · Observabilidad self-hosted (equivalente Sentry) ──────
+    # POST: el frontend (ErrorBoundary + window.onerror) reporta crashes
+    #       de render y promesas no manejadas. Best-effort: NUNCA rompe
+    #       al caller. Tabla: analytics.client_error_log (E6).
+    # GET : listado de errores recientes — staff only.
+    @action(detail=False, methods=["post", "get"], url_path="client-errors")
+    def client_errors(self, request):
+        if request.method.upper() == "POST":
+            d = request.data if isinstance(request.data, dict) else {}
+            msg = str(d.get("message") or "")[:2000]
+            stack = str(d.get("stack") or "")[:8000]
+            path = str(d.get("path") or "")[:512]
+            ua = str(request.META.get("HTTP_USER_AGENT") or "")[:512]
+            uid = getattr(request.user, "id", None)
+            if not msg:
+                return Response({"ok": False, "detail": "message requerido"}, status=400)
+            try:
+                with connection.cursor() as c:
+                    c.execute("""
+                        INSERT INTO analytics.client_error_log
+                               (user_id, path, message, stack, user_agent)
+                        VALUES (%s::uuid, %s, %s, %s, %s)
+                    """, [str(uid) if uid else None, path, msg, stack, ua])
+            except Exception:  # noqa: BLE001 — reporter best-effort
+                return Response({"ok": False}, status=202)
+            return Response({"ok": True}, status=201)
+        # GET — staff only (los stacks pueden contener datos internos).
+        role = str(getattr(request.user, "role_default", "")
+                   or getattr(request.user, "role", "") or "").upper()
+        if not (getattr(request.user, "is_superuser", False)
+                or role in ("ADMIN", "CEO")):
+            return Response({"detail": "forbidden"}, status=403)
+        try:
+            limit = min(int(request.query_params.get("limit", 100) or 100), 500)
+        except ValueError:
+            limit = 100
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT id::text, user_id::text, path, message,
+                       created_at
+                  FROM analytics.client_error_log
+                 ORDER BY created_at DESC
+                 LIMIT %s
+            """, [limit])
+            cols = [x[0] for x in c.description]
+            rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        return Response(rows)
+
 
 # ══════════════════════════════════════════════════════════════
 # DashboardSnapshotViewSet — CRUD con idempotencia

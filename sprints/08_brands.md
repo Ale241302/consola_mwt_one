@@ -27,6 +27,6 @@ Catálogos maestros: marcas (feature flags), productos (tallas, especificaciones
 ## 6. Hallazgos y correcciones
 **Auditoría 2026-06-11 (Fable 5):**
 - ✅ **CORREGIDO (índices)** — `E5`: `linea(producto_id)` acelera los cruces producto↔líneas.
-- 🔴 **PENDIENTE (paginación)** — `productos/views.py` listado `.all()` sin límite (escala mal con 10k+ SKUs); el modal Agregar Producto ya filtra con `?q=` pero el catálogo completo sigue expuesto.
-- 🟡 **PENDIENTE (frontend)** — `Brands.jsx:43-45,102-103` mapper accede `r.slug`/`r.nombre` sin `?.` y `.map()` sin guard de array.
-- ⏳ **PENDIENTE** — Cascada `productosApi.get(pid)` por producto único en OCDetail/FusionDetail → endpoint batch `?ids=` (objetivo: detalle de 20 líneas en ≤2 requests).
+- ✅ **CORREGIDO (WAVE A)** — `productos/views.py` list con `limit/offset` y cap duro 2000 (ValueError→400).
+- ✅ **CORREGIDO (WAVE B)** — `Brands.jsx`: mapper blindado con `?.` y `.map()` con guard de array.
+- ✅ **CORREGIDO (WAVE D)** — Endpoint batch `?ids=` en productos (cap 500) y OCDetail/FusionDetail hidratan nombres/precios en UN request en vez de un GET por producto.

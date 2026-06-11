@@ -98,7 +98,10 @@ export default function ScreenPipeline() {
   const [apiOcs,         setApiOcs]         = useState([]);
   const [loading,        setLoading]        = useState(true);
 
-  const load = useCallback(async () => {
+  // Fable5 · `isAlive` cancela el enriquecimiento (cadena de Promise.all
+  // lenta: líneas + productos + clientes + marcas) si el usuario navega
+  // antes de que resuelva — evita setState sobre componente desmontado.
+  const load = useCallback(async (isAlive = () => true) => {
     setLoading(true);
     try {
       const [expRaw, ocRaw] = await Promise.all([
@@ -209,17 +212,25 @@ export default function ScreenPipeline() {
         };
       });
 
+      if (!isAlive()) return;   // Fable5 · desmontado durante el enrichment
       setApiExpedientes(enriched);
       setApiOcs(ocItems);
     } catch {
+      if (!isAlive()) return;   // Fable5
       setApiExpedientes([]);
       setApiOcs([]);
     } finally {
-      setLoading(false);
+      if (isAlive()) setLoading(false);   // Fable5
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Fable5 · cleanup: marca alive=false al desmontar para que load() no
+  // toque el estado de un componente muerto.
+  useEffect(() => {
+    let alive = true;
+    load(() => alive);
+    return () => { alive = false; };
+  }, [load]);
 
   // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
   const EXPEDIENTES = apiExpedientes;

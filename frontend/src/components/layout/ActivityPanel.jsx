@@ -48,20 +48,29 @@ export default function ActivityPanel({ open, onClose, lang = "es" }) {
   const [filter, setFilter]   = useState("ALL");    // ALL | UNREAD
   const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async () => {
+  // Fable5 · `isAlive` evita setState si el panel se cierra/desmonta antes
+  // de que responda el feed (silencioso, sin cambio de UX).
+  const load = useCallback(async (isAlive = () => true) => {
     setLoading(true);
     try {
       const qs = filter === "UNREAD" ? "?unread_only=true&limit=50" : "?limit=50";
       const data = await apiFetch(`/activity-feed/${qs}`, { token: getToken() });
+      if (!isAlive()) return;
       setItems(Array.isArray(data) ? data : (data?.results || []));
     } catch (e) {
-      setItems([]);
+      if (isAlive()) setItems([]);
     } finally {
-      setLoading(false);
+      if (isAlive()) setLoading(false);
     }
   }, [filter]);
 
-  useEffect(() => { if (open) load(); }, [open, load]);
+  // Fable5 · cleanup: cancela la carga pendiente al cerrar el panel.
+  useEffect(() => {
+    if (!open) return undefined;
+    let alive = true;
+    load(() => alive);
+    return () => { alive = false; };
+  }, [open, load]);
 
   const markOne = useCallback(async (item) => {
     if (item.read_at) return;

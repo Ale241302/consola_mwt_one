@@ -25,6 +25,6 @@ Nodos de distribución (almacenes/hubs por país): catálogo, detalle con stock 
 
 ## 6. Hallazgos y correcciones
 **Auditoría 2026-06-11 (Fable 5):**
-- 🟡 **PENDIENTE** — `Nodos.jsx:130-136` KPIs calculados sobre el mock `NODE_INVENTORY` (dato no real) — cablear al endpoint de coverage.
-- 🟡 **PENDIENTE (SQL)** — `transfers.cost_line.scope_json`: evaluar índice GIN para el filtrado por nodo.
-- 🟢 Listado de nodos sin paginación es tolerable (catálogo pequeño), pero el backend lo devuelve completo: confirmar límite defensivo.
+- ✅ **CORREGIDO (WAVE B)** — `Nodos.jsx`: KPIs derivan SOLO de los nodos reales del API; el valor sin fuente real muestra "—"; `NODE_INVENTORY` (mock) eliminado del cálculo y del import.
+- ✅ **CORREGIDO (WAVE D)** — `E6`: índice GIN en `transfers.cost_line(scope_json)` (guardado por information_schema).
+- 🟢 Catálogo de nodos pequeño: sin límite necesario (decisión cerrada).

@@ -14,8 +14,10 @@ import {
   IconGlobe, IconBoxes, IconDollar, IconTrend, IconCheck,
 } from "../lib/icons.jsx";
 import { tr, fmtMoney } from "../lib/i18n.js";
+// Fable5 · NODE_INVENTORY (mock) removido de los KPIs — solo quedan los
+// lookups de entidad legal / operador, que el backend aún no expone.
 import {
-  NODES as MOCK_NODES, LEGAL_ENTITIES, OPERATORS, NODE_INVENTORY,
+  NODES as MOCK_NODES, LEGAL_ENTITIES, OPERATORS,
 } from "../data/mockData.js";
 import { nodosApi } from "../lib/api.js";
 import CreateNodeModal from "../components/nodos/CreateNodeModal.jsx";
@@ -127,12 +129,17 @@ export default function ScreenNodos() {
   }, [q, typeFilter, statusFilter, NODES]);
 
   // KPIs agregados (header)
+  // Fable5 · Derivan SOLO de los nodos reales del API. El valor de
+  // inventario salía del mock NODE_INVENTORY (dato falso en producción);
+  // hasta que exista un endpoint de valorización, invValue queda en null
+  // y el tile muestra "—".
   const kpis = useMemo(() => {
-    const active   = NODES.filter(n => n.status === 'ACTIVE').length;
-    const planned  = NODES.filter(n => n.status === 'PLANNED').length;
-    const invValue = NODE_INVENTORY.reduce((a, r) => a + (r.value || 0), 0);
-    const capTotal = NODES.reduce((a, n) => a + (n.capacity_units || 0), 0);
-    const capUsed  = NODES.reduce((a, n) => a + (n.capacity_used  || 0), 0);
+    const list     = Array.isArray(NODES) ? NODES : [];
+    const active   = list.filter(n => n.status === 'ACTIVE').length;
+    const planned  = list.filter(n => n.status === 'PLANNED').length;
+    const invValue = null;   // sin fuente real todavía — nunca mock
+    const capTotal = list.reduce((a, n) => a + (n.capacity_units || 0), 0);
+    const capUsed  = list.reduce((a, n) => a + (n.capacity_used  || 0), 0);
     return { active, planned, invValue, capTotal, capUsed, util: capTotal ? (capUsed / capTotal) : 0 };
   }, [NODES]);
 
@@ -169,8 +176,9 @@ export default function ScreenNodos() {
         </div>
         <div className="kpi-tile">
           <div className="k-label">{lang==='es'?'Inventario total':'Total inventory'}</div>
-          <div className="k-value">{fmtMoney(kpis.invValue)}</div>
-          <div className="k-sub">{NODE_INVENTORY.length} SKU · {NODES.length} {lang==='es'?'nodos':'nodes'}</div>
+          {/* Fable5 · sin dato real de valorización: "—" en vez del mock */}
+          <div className="k-value">{kpis.invValue != null ? fmtMoney(kpis.invValue) : '—'}</div>
+          <div className="k-sub">{NODES.length} {lang==='es'?'nodos':'nodes'}</div>
         </div>
         <div className="kpi-tile">
           <div className="k-label">{lang==='es'?'Utilización de red':'Network utilization'}</div>

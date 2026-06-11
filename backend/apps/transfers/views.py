@@ -291,7 +291,26 @@ class TransferenciaViewSet(viewsets.ViewSet):
         q = request.query_params.get("q")
         if q:
             qs = qs.filter(codigo__icontains=q)
-        return Response(TransferenciaListSerializer(qs, many=True).data)
+        # Fable5 · batch: agregados de líneas en UN query agrupado
+        # (antes 3 queries POR transferencia vía SerializerMethodFields).
+        from django.db.models import Count, Sum
+        rows = list(qs)
+        ids = [r.id for r in rows]
+        batch = {str(i): {"n": 0, "qt": 0, "qr": 0} for i in ids}
+        if ids:
+            aggs = (Linea.objects
+                    .filter(transferencia_id__in=ids, is_active=True)
+                    .values("transferencia_id")
+                    .annotate(n=Count("id"),
+                              qt=Sum("qty_transfer"),
+                              qr=Sum("qty_received")))
+            for a in aggs:
+                batch[str(a["transferencia_id"])] = {
+                    "n": a["n"], "qt": a["qt"], "qr": a["qr"],
+                }
+        return Response(TransferenciaListSerializer(
+            rows, many=True, context={"batch_linea_agg": batch},
+        ).data)
 
     def retrieve(self, request, pk=None):
         try:

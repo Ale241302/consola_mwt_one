@@ -27,7 +27,6 @@ Gestión de clientes finales y entidades legales: datos comerciales, jerarquía 
 
 ## 6. Hallazgos y correcciones
 **Auditoría 2026-06-11 (Fable 5):**
-- 🔴 **PENDIENTE (N+1)** — `clientes/serializers.py:294` `get_subsidiarias_count()` ejecuta un `count()` por fila del listado.
-- 🔴 **PENDIENTE (N+1)** — `clientes/models.py:115-226` `calcular_consumo_credito_pool()` abre cursor SQL por cliente; agregarlo en un solo query con `client_id IN (...)`.
-- 🟡 **PENDIENTE (frontend)** — `Clientes.jsx:151-154` `.reduce()` sobre `CLIENTS` sin guard de array tras catch.
+- ✅ **CORREGIDO (WAVE A)** — `get_subsidiarias_count` + `get_expedientes_activos` + consumo de crédito ahora se precomputan en 3 queries TOTALES (`_build_cliente_list_batches` en views.py: Count por parent_id, expedientes activos con réplica exacta del filtro, y el MISMO SQL del modelo con `GROUP BY` pool) con fallback por-fila.
+- ✅ **CORREGIDO (WAVE B)** — `Clientes.jsx`: `CLIENTS = Array.isArray(apiClients) ? apiClients : []` blinda reduce/filter/memos.
 - ✅ Mitigado transversalmente: ErrorBoundary por ruta + `signal` disponible en `apiFetch` (sprint 01).

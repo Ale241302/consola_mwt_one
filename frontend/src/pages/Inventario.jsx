@@ -30,21 +30,23 @@ import { stockApi, nodosApi, nodoAssignmentsApi } from "../lib/api.js";
 // El backend ahora enriquece el payload con producto_sku, producto_nombre,
 // nodo_codigo, nodo_nombre — ya no necesitamos los maps externos.
 function mapStockFromApi(r) {
-  const qty      = Number(r.cantidad_disponible || 0) + Number(r.cantidad_reservada || 0);
-  const reserved = Number(r.cantidad_reservada || 0);
+  // Fable5 · blindaje: r puede llegar null/incompleto desde el API — `?.`
+  // evita un TypeError que tumbaría toda la tabla por una fila corrupta.
+  const qty      = Number(r?.cantidad_disponible || 0) + Number(r?.cantidad_reservada || 0);
+  const reserved = Number(r?.cantidad_reservada || 0);
   return {
-    sku:       r.producto_sku    || (r.producto_id ? r.producto_id.slice(0, 8) : '—'),
-    product:   r.producto_nombre || r.producto_sku || '—',
-    node:      r.nodo_nombre     || r.nodo_codigo  || '—',
-    nodeId:    r.nodo_id || null,
-    productId: r.producto_id || null,
+    sku:       r?.producto_sku    || (r?.producto_id ? r.producto_id.slice(0, 8) : '—'),
+    product:   r?.producto_nombre || r?.producto_sku || '—',
+    node:      r?.nodo_nombre     || r?.nodo_codigo  || '—',
+    nodeId:    r?.nodo_id || null,
+    productId: r?.producto_id || null,
     // Sprint Inbound v2 — talla del lote (granularidad por size)
-    size:      r.size || r.talla || '',
-    lot:       r.lote || '—',
+    size:      r?.size || r?.talla || '',
+    lot:       r?.lote || '—',
     qty,
     reserved,
     vendidos:  0,
-    received:  (r.last_movement_at || r.updated_at || '').slice(0, 10),
+    received:  (r?.last_movement_at || r?.updated_at || '').slice(0, 10),
     expediente: '',                                  // legacy stock no tiene exp
     _source:   'stock',
     _raw: r,
@@ -55,20 +57,21 @@ function mapStockFromApi(r) {
 // (inventario.expediente_nodo_assignment). Se renderiza en la MISMA tabla
 // que `mapStockFromApi`, distinguiéndose por la columna "Expediente".
 function mapAllocationToInventoryRow(r) {
+  // Fable5 · mismo blindaje `?.` que mapStockFromApi.
   return {
-    sku:       r.sku || '—',
-    product:   r.nombre || '—',
-    node:      r.nodo_nombre || r.nodo_codigo || '—',
-    nodeId:    r.nodo_id || null,
-    productId: r.producto_id || null,
-    size:      r.talla || '',
+    sku:       r?.sku || '—',
+    product:   r?.nombre || '—',
+    node:      r?.nodo_nombre || r?.nodo_codigo || '—',
+    nodeId:    r?.nodo_id || null,
+    productId: r?.producto_id || null,
+    size:      r?.talla || '',
     lot:       '—',                                  // assignments no usan lote
-    qty:       Number(r.qty || 0),
+    qty:       Number(r?.qty || 0),
     reserved:  0,                                    // assignments no reservan
     vendidos:  0,
     received:  '',
-    expediente: r.expediente_codigo || '',
-    expedienteId: r.expediente_id || null,
+    expediente: r?.expediente_codigo || '',
+    expedienteId: r?.expediente_id || null,
     _source:   'allocation',
     _raw:      r,
   };
@@ -101,7 +104,9 @@ export default function ScreenInventario() {
   const [apiNodes,       setApiNodes]       = useState([]);
   const [loading,        setLoading]        = useState(true);
 
-  const load = useCallback(async () => {
+  // Fable5 · `isAlive` permite cancelar desde el efecto de montaje sin
+  // perder la reutilización de load() (p.ej. refresh tras recibir lote).
+  const load = useCallback(async (isAlive = () => true) => {
     setLoading(true);
     try {
       // El backend ahora enriquece /api/stock/ con sku/nombre/nodo —
@@ -111,6 +116,7 @@ export default function ScreenInventario() {
         nodoAssignmentsApi.allocationsOverview().catch(() => []),
         nodosApi.list().catch(() => []),
       ]);
+      if (!isAlive()) return;   // Fable5 · componente desmontado: no setState
       const stockItems = Array.isArray(stockRaw) ? stockRaw : (stockRaw?.results || []);
       const allocItems = Array.isArray(allocRaw) ? allocRaw : (allocRaw?.results || []);
       const nodoItems  = Array.isArray(nodoRaw)  ? nodoRaw  : (nodoRaw?.results  || []);
@@ -125,15 +131,22 @@ export default function ScreenInventario() {
         status:  n.is_active === false ? 'INACTIVE' : 'ACTIVE',
       })));
     } catch {
+      if (!isAlive()) return;   // Fable5
       setApiStock([]);
       setApiAllocations([]);
       setApiNodes([]);
     } finally {
-      setLoading(false);
+      if (isAlive()) setLoading(false);   // Fable5
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Fable5 · cancelación: si el usuario navega antes de que resuelva el
+  // Promise.all, el cleanup marca alive=false y load() no toca el estado.
+  useEffect(() => {
+    let alive = true;
+    load(() => alive);
+    return () => { alive = false; };
+  }, [load]);
 
   // Sin fallback a mock: si el backend no devuelve nada, mostramos
   // la UI con arrays vacíos (la tabla / cards muestran "Sin datos"

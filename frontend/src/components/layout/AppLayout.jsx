@@ -8,6 +8,8 @@ import { TweaksPanel } from "../TweaksPanel.jsx";
 import TicketWidget from "../tickets/TicketWidget.jsx";
 // Sprint 2026-06-11 · Auditoría Fable5 (#6): límite de error por ruta.
 import ErrorBoundary from "../ui/ErrorBoundary.jsx";
+// Fable5 · WAVE C: errores globales (no atrapados por React) → backend.
+import { reportClientError } from "../../lib/errorReporter.js";
 import { tr } from "../../lib/i18n.js";
 import { OCS, EXPEDIENTES } from "../../data/mockData.js";
 
@@ -22,6 +24,20 @@ const DEFAULT_TWEAKS = {
 export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Fable5 · WAVE C: listeners globales de error → reporter best-effort.
+  useEffect(() => {
+    const onErr = (e) =>
+      reportClientError(e?.message || "window.onerror", e?.error?.stack, window.location.pathname);
+    const onRej = (e) =>
+      reportClientError(e?.reason?.message || "unhandledrejection", e?.reason?.stack, window.location.pathname);
+    window.addEventListener("error", onErr);
+    window.addEventListener("unhandledrejection", onRej);
+    return () => {
+      window.removeEventListener("error", onErr);
+      window.removeEventListener("unhandledrejection", onRej);
+    };
+  }, []);
 
   const [tweaks, setTweaks] = useState(() => {
     try {

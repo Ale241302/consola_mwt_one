@@ -100,15 +100,29 @@ class PaymentDetailSerializer(serializers.ModelSerializer):
             "aplicaciones", "evidencia", "ai_verdict",
         )
 
+    # Fable5 · atajos batch: el list() del ViewSet precalcula los tres
+    # mapas (`batch_apps` / `batch_evidencia` / `batch_verdict`, key =
+    # str(payment_id)) con queries `payment_id__in=ids` — antes 3 queries
+    # POR PAGO. FALLBACK al query por-fila si el context no trae el mapa
+    # (compat: retrieve y otros callers siguen sin pasar context).
     def get_aplicaciones(self, obj: Payment):
+        pre = (self.context or {}).get("batch_apps")
+        if isinstance(pre, dict):
+            return pre.get(str(obj.id), [])
         qs = PaymentApplication.objects.filter(payment_id=obj.id).order_by("created_at")
         return PaymentApplicationSerializer(qs, many=True).data
 
     def get_evidencia(self, obj: Payment):
+        pre = (self.context or {}).get("batch_evidencia")
+        if isinstance(pre, dict):
+            return pre.get(str(obj.id))
         ev = PaymentEvidence.objects.filter(payment_id=obj.id).first()
         return PaymentEvidenceSerializer(ev).data if ev else None
 
     def get_ai_verdict(self, obj: Payment):
+        pre = (self.context or {}).get("batch_verdict")
+        if isinstance(pre, dict):
+            return pre.get(str(obj.id))
         v = (PaymentAIVerdict.objects
              .filter(payment_id=obj.id, is_current=True)
              .order_by("-analyzed_at")

@@ -28,5 +28,5 @@ Flujo comercial: pipeline Kanban de expedientes por fase (drag & drop para avanz
 ## 6. Hallazgos y correcciones
 **Auditoría 2026-06-11 (Fable 5):**
 - ✅ **HEREDADO** — El Kanban usa el listado de expedientes: se beneficia directo del fix N+1 del sprint 03.
-- 🔴 **PENDIENTE (N+1)** — `commercial/serializers.py:51` `get_items_count()` query por PriceList.
-- 🟡 **PENDIENTE (frontend)** — `Pipeline.jsx:164-210` Promise.all de enriquecimiento sin cancelación (adoptar `signal`); `Pipeline.jsx:227-236` navegación vía mocks `OCS` con flujo quebrado cuando el array está vacío.
+- ✅ **CORREGIDO (WAVE A)** — `get_items_count`: override de `list()` en PriceListVersionViewSet construye el conteo con UN query agrupado y lo inyecta por context (atajo `batch_items_count` con fallback).
+- ✅ **CORREGIDO (WAVE B)** — `Pipeline.jsx`: enriquecimiento cancelable (`load(isAlive)` + cleanup); sin setState tras desmontar.

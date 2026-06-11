@@ -41,24 +41,26 @@ const ESTADO_API_TO_UI = {
   CERRADO:   "INACTIVO",
 };
 function mapBrandFromApi(r) {
-  const slug = r.slug || (r.nombre || "").toLowerCase().replace(/\W+/g, "-").slice(0, 12);
-  const mono = (r.nombre || "").split(/\s+/).map(s => s[0]).join("").slice(0, 3).toUpperCase();
+  // Fable5 · blindaje: r puede llegar null/incompleto — `?.` evita que una
+  // fila corrupta del API tumbe el listado completo de marcas.
+  const slug = r?.slug || (r?.nombre || "").toLowerCase().replace(/\W+/g, "-").slice(0, 12);
+  const mono = (r?.nombre || "").split(/\s+/).map(s => s[0]).join("").slice(0, 3).toUpperCase();
   // ⚠️ El backend devuelve `mercados_activos` (array). `territorios` es un
   // nombre legacy que NUNCA fue serializado — leerlo siempre daba undefined
   // y caía al fallback `pais_origen_iso2`, que es el PAÍS DE ORIGEN, no los
   // mercados donde la marca opera. Por eso el listado mostraba MX (el default
   // del seed) mientras el detalle mostraba CO correctamente.
-  const mercados = Array.isArray(r.mercados_activos) && r.mercados_activos.length > 0
+  const mercados = Array.isArray(r?.mercados_activos) && r.mercados_activos.length > 0
     ? r.mercados_activos
-    : (Array.isArray(r.territorios) && r.territorios.length > 0
+    : (Array.isArray(r?.territorios) && r.territorios.length > 0
         ? r.territorios
-        : (r.pais_origen_iso2 ? [r.pais_origen_iso2] : []));
+        : (r?.pais_origen_iso2 ? [r.pais_origen_iso2] : []));
   return {
-    id:              r.id,
+    id:              r?.id,
     brand_id:        mono || slug.slice(0, 3).toUpperCase(),
-    name:            r.nombre || "",
+    name:            r?.nombre || "",
     tipo:            "PROPIA",   // backend no distingue aún — se corregirá con ENT_PLAT_BRANDS v2
-    status:          ESTADO_API_TO_UI[r.estado_comercial] || (r.is_active ? "ACTIVO" : "INACTIVO"),
+    status:          ESTADO_API_TO_UI[r?.estado_comercial] || (r?.is_active ? "ACTIVO" : "INACTIVO"),
     mercados_activos: mercados,
     description:     "",
     active_skus:     0,
@@ -100,7 +102,8 @@ export default function ScreenBrands() {
     try {
       const data = await marcasApi.list();
       const arr  = Array.isArray(data) ? data : (data?.results || []);
-      setApiBrands(arr.map(mapBrandFromApi));
+      // Fable5 · guard: blindaje extra por si `results` no es un array.
+      setApiBrands((Array.isArray(arr) ? arr : []).map(mapBrandFromApi));
     } catch (e) {
       setErr(e); setApiBrands([]);
     } finally {

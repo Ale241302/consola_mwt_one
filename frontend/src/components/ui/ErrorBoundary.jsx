@@ -11,6 +11,9 @@
 // el boundary se RESETEA solo al navegar a otra ruta.
 // ─────────────────────────────────────────────────────────────────────
 import React from "react";
+// Fable5 · WAVE C: cada crash atrapado se reporta al backend
+// (analytics.client_error_log) — observabilidad self-hosted.
+import { reportClientError } from "../../lib/errorReporter.js";
 
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -28,6 +31,11 @@ export default class ErrorBoundary extends React.Component {
       "[ErrorBoundary] crash de render atrapado:",
       error,
       info && info.componentStack
+    );
+    // Fable5 · reporte best-effort al backend.
+    reportClientError(
+      (error && error.message) || String(error),
+      `${(error && error.stack) || ""}\n--component--${(info && info.componentStack) || ""}`
     );
   }
 

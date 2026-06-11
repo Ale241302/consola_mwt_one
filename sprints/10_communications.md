@@ -26,7 +26,7 @@ Comunicación interna y con clientes: feed de notificaciones (ActivityPanel), pl
 
 ## 6. Hallazgos y correcciones
 **Auditoría 2026-06-11 (Fable 5):**
-- 🔴 **PENDIENTE (N+1)** — `tickets/serializers.py:94-101` queries de mensajes/adjuntos por ticket sin prefetch/lote.
-- 🟡 **PENDIENTE (paginación)** — `notifications/views.py` `notification_log` sin límite default.
-- 🟢 **VERIFICADO** — No hay setInterval recurrentes sueltos en pages/; `ActivityPanel.jsx:51-78` carga al abrir sin cleanup pero con `catch {}` silencioso (tolerable; adoptar `signal` como mejora).
+- ✅ **CORREGIDO (WAVE A)** — TicketListSerializer batcheado (`batch_msg_count` + catálogos reason/status a dict UNA vez en el list). El serializer de detalle (un solo ticket) quedó intacto por diseño.
+- ✅ **CORREGIDO (WAVE A)** — `notification_log` con `?limit=` default 200, cap 1000.
+- ✅ **CORREGIDO (WAVE B/D)** — `ActivityPanel` con `alive`+cleanup; índice `notification_log(created_at DESC)` en E6.
 - ✅ `Notificaciones.jsx:76-82` valida `Array.isArray` antes de mapear (patrón correcto).

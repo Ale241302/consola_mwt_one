@@ -29,6 +29,7 @@ Cockpit operativo: KPIs del CEO (cash en riesgo, margen ponderado, reloj de cré
 ## 6. Hallazgos y correcciones
 **Auditoría 2026-06-11 (Fable 5):**
 - ✅ **CORREGIDO (transversal)** — ErrorBoundary por ruta + SafeWidget por widget: un crash de un panel ya no deja el Dashboard en blanco.
-- 🟡 **PENDIENTE** — `hooks/useDashboardKpis.js:67-83` dispara ~15 endpoints en paralelo sin cancelación (el `signal` de apiFetch ya está disponible para adoptarlo); evaluar consolidación de agregados base + cache 30-60s.
-- 🟡 **PENDIENTE (frontend)** — `Dashboard.jsx:280-290` `.filter()/.map()` sobre `marginScatter` sin guard inicial si llega null.
+- ✅ **CORREGIDO (WAVE B)** — `useDashboardKpis`: patrón `alive` + cleanup (los wrappers no aceptan opciones, así que se aplicó la alternativa de guard) — sin setState tras desmontar; `reload` manual intacto.
+- ✅ **VERIFICADO OK (WAVE B)** — `Dashboard.jsx:279`: el guard `Array.isArray(marginScatter)` YA existía en main; falso positivo del barrido.
+- ✅ **NUEVO (WAVE C)** — Observabilidad self-hosted: `analytics.client_error_log` + `POST/GET /analytics/client-errors/` (GET staff-only) — equivalente Sentry sin dependencia externa, alimentado por ErrorBoundary y listeners globales.
 - ✅ **HEREDADO** — `phase-stats` con índice nuevo `event_log(aggregate_id, created_at)` (E5) acelera Tiempos operativos, Cronograma y export.

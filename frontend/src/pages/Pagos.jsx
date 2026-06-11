@@ -93,8 +93,9 @@ export default function ScreenPagos() {
       ]);
       const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
       const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
-      setApiExpedientes(expItems.map(mapExpedienteForPagos));
-      setApiOcs(ocItems);
+      // Fable5 · guard: blindaje extra por si el shape del API cambia.
+      setApiExpedientes(Array.isArray(expItems) ? expItems.map(mapExpedienteForPagos) : []);
+      setApiOcs(Array.isArray(ocItems) ? ocItems : []);
     } catch {
       setApiExpedientes([]);
       setApiOcs([]);

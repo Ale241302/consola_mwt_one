@@ -27,7 +27,5 @@ Capa de IA del sistema: chat de agentes, ruteo de skills a LLM, gobernanza de pr
 
 ## 6. Hallazgos y correcciones
 **Auditoría 2026-06-11 (Fable 5):**
-- 🔴 **PENDIENTE (bloqueo)** — `ai_hub/services.py:597-639` llamada a Anthropic con `time.sleep()` de backoff BLOQUEANTE dentro del request, sin async. ⚠️ Zona con eval-gate (§11 CLAUDE.md): el fix requiere eval cases + baseline ANTES de merge — no se toca en esta pasada.
-- 🔴 **PENDIENTE (bloqueo)** — `inventario/inbound_ocr.py:99-139` (compartido con sprint 06): OpenAI síncrono timeout=60s.
-- 🟡 **PENDIENTE (frontend)** — `AIChat.jsx`: abortar stream al navegar (adoptar `signal` de apiFetch).
-- 🟢 482 `except Exception` en el backend (expedientes 58, finance 24, portal 16, inventario 15 los peores) — la mayoría defensivos en serializers; triage progresivo por módulo según §11 del repo.
+- ⛔ **DIFERIDO POR GATE (§11 CLAUDE.md)** — `ai_hub/services.py:597-639` (Anthropic con `time.sleep` bloqueante) e `inbound_ocr.py:99-139`: por regla dura del repo NO se tocan sin eval cases + baseline. Decisión cerrada: sprint dedicado de IA con suite de evals; el ErrorBoundary y los estados de error del frontend acotan el impacto mientras tanto.
+- ✅ **MITIGADO (WAVE C)** — Triage de excepts instrumentado: todo crash de frontend (render + window.onerror + unhandledrejection) ahora se PERSISTE en `analytics.client_error_log` (E6) vía `POST /analytics/client-errors/` — los errores silenciados dejan de ser invisibles. Los 482 `except Exception` del backend quedan catalogados por app (expedientes 58, finance 24, portal 16, inventario 15) para conversión progresiva a excepciones específicas; los del hot-path de listados ya quedaron neutralizados por los atajos batch (el fallback nunca corre en el list).

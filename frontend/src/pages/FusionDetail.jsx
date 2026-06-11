@@ -400,9 +400,14 @@ export default function ScreenFusionDetail() {
           loaded.flatMap((m) => m.lineas.map((l) => l.producto_id)).filter(Boolean)
         ));
         if (pids.length) {
-          const prods = await Promise.all(
-            pids.map((pid) => productosApi.get(pid).catch(() => null))
-          );
+          // Fable5 · WAVE D: UN request batch (?ids=) en vez de un GET
+          // por producto.
+          const prodResp = await productosApi
+            .list({ ids: pids.join(",") })
+            .catch(() => []);
+          const prods = Array.isArray(prodResp)
+            ? prodResp
+            : (prodResp?.results || []);
           if (!cancel) {
             const nm = {};
             for (const p of prods) {

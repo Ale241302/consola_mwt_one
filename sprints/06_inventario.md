@@ -28,5 +28,5 @@ Control de inventario por nodo: stock por talla, recepción inbound con OCR, asi
 ## 6. Hallazgos y correcciones
 **Auditoría 2026-06-11 (Fable 5):**
 - ✅ **CORREGIDO (índices)** — `E5`: `expediente_nodo_assignment(expediente_id)` y `(transferencia_id)`.
-- 🔴 **PENDIENTE (bloqueo)** — `inventario/inbound_ocr.py:99-139` llamada OpenAI con `timeout=60` SÍNCRONA dentro del request (zona con eval-gate §11: corregir con suite de evals antes de merge).
-- 🟡 **PENDIENTE (frontend)** — `Inventario.jsx:109-119` Promise.all sin cancelación + mapper (`:32-52`) accede `.producto_sku`/`.nodo_nombre` sin `?.`.
+- ⛔ **DIFERIDO POR GATE (§11 CLAUDE.md)** — `inbound_ocr.py:99-139` (OpenAI síncrono timeout=60): por regla dura del repo NO se toca sin suite de evals + baseline. Decisión cerrada: se aborda en un sprint dedicado con evals; mientras tanto el riesgo está acotado (solo afecta al wizard de recepción, con estado de error en UI).
+- ✅ **CORREGIDO (WAVE B)** — `Inventario.jsx`: mappers blindados con `?.` y carga cancelable (`load(isAlive)` + cleanup).

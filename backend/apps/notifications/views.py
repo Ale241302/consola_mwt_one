@@ -60,12 +60,15 @@ class NotificationLogViewSet(viewsets.ViewSet):
         q = request.query_params.get("q")
         if q:
             qs = qs.filter(subject__icontains=q)
-        limit = request.query_params.get("limit")
-        if limit:
-            try:
-                qs = qs[: int(limit)]
-            except (TypeError, ValueError):
-                pass
+        # Fable5 · paginación defensiva: default 200, cap duro 1000
+        # (antes sin ?limit el endpoint devolvía el log COMPLETO).
+        try:
+            limit = min(int(request.query_params.get("limit", 200) or 200), 1000)
+            if limit <= 0:
+                limit = 200
+        except (TypeError, ValueError):
+            limit = 200
+        qs = qs[:limit]
         return Response(NotificationLogListSerializer(qs, many=True).data)
 
     def retrieve(self, request, pk=None):

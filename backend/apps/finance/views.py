@@ -170,8 +170,48 @@ class PaymentViewSet(viewsets.ViewSet):
                 )
 
         try:
-            qs = qs.order_by("-created_at")[:200]
-            data = PaymentDetailSerializer(qs, many=True).data
+            # Fable5 · limit configurable (antes slice fijo [:200]).
+            # Default 200, cap duro 1000; input inválido → vuelve al default.
+            try:
+                limit = min(int(request.query_params.get("limit", 200) or 200), 1000)
+                if limit <= 0:
+                    limit = 200
+            except (TypeError, ValueError):
+                limit = 200
+            rows = list(qs.order_by("-created_at")[:limit])
+
+            # Fable5 · batch: aplicaciones / evidencia / verdict en 3 queries
+            # totales (antes 3 queries POR PAGO vía SerializerMethodFields).
+            from .models import PaymentAIVerdict
+            from .serializers import (
+                PaymentApplicationSerializer, PaymentEvidenceSerializer,
+                PaymentAIVerdictSerializer,
+            )
+            pay_ids = [p.id for p in rows]
+            batch_apps, batch_evidencia, batch_verdict = {}, {}, {}
+            if pay_ids:
+                for a in (PaymentApplication.objects
+                          .filter(payment_id__in=pay_ids)
+                          .order_by("created_at")):
+                    batch_apps.setdefault(str(a.payment_id), []).append(
+                        PaymentApplicationSerializer(a).data)
+                # Evidencia: replica el .first() por payment (primera fila
+                # según el orden por defecto del modelo).
+                for ev in PaymentEvidence.objects.filter(payment_id__in=pay_ids):
+                    batch_evidencia.setdefault(
+                        str(ev.payment_id), PaymentEvidenceSerializer(ev).data)
+                # Verdict vigente: is_current=True, el más reciente por pago.
+                for v in (PaymentAIVerdict.objects
+                          .filter(payment_id__in=pay_ids, is_current=True)
+                          .order_by("-analyzed_at")):
+                    batch_verdict.setdefault(
+                        str(v.payment_id), PaymentAIVerdictSerializer(v).data)
+
+            data = PaymentDetailSerializer(rows, many=True, context={
+                "batch_apps":      batch_apps,
+                "batch_evidencia": batch_evidencia,
+                "batch_verdict":   batch_verdict,
+            }).data
 
             # Sprint 2026-05-26 (CEO) - visibility de pagos con
             # aplicacion FACTURA: solo bypass o user en scope del

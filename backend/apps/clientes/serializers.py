@@ -377,6 +377,13 @@ class ClienteListSerializer(serializers.ModelSerializer):
         )
 
     def _consumo_pool(self, o):
+        # Fable5 · atajo batch: el list() del ViewSet precalcula el consumo
+        # de crédito del pool (UN query agrupado por entidad) y lo pasa por
+        # context como `batch_credito` = {str(cliente_id): float consumo}.
+        # FALLBACK al cómputo por-fila si el context no trae el mapa (compat).
+        pre = (self.context or {}).get("batch_credito")
+        if isinstance(pre, dict) and str(o.id) in pre:
+            return float(pre[str(o.id)])
         cache = getattr(self, "_cached_consumo", None) or {}
         key = str(o.id)
         if key in cache:
@@ -398,6 +405,11 @@ class ClienteListSerializer(serializers.ModelSerializer):
         return round((usado / aprobado) * 100, 2) if aprobado > 0 else 0.0
 
     def get_subsidiarias_count(self, o):
+        # Fable5 · atajo batch: mapa `batch_subs_count` precalculado en el
+        # list() del ViewSet (1 query agrupado). FALLBACK por-fila (compat).
+        pre = (self.context or {}).get("batch_subs_count")
+        if isinstance(pre, dict) and str(o.id) in pre:
+            return int(pre[str(o.id)])
         return o.get_subsidiaries().count() if o.is_parent else 0
 
     def get_expedientes_activos(self, o):
@@ -410,6 +422,12 @@ class ClienteListSerializer(serializers.ModelSerializer):
         existió → la query rompía y siempre devolvía 0). Añadido también
         el filtro ``is_active = TRUE`` para no contar expedientes borrados.
         """
+        # Fable5 · atajo batch: mapa `batch_exp_activos` (str(id) → count,
+        # ya consolidado por pool) precalculado en el list() del ViewSet.
+        # FALLBACK al query por-fila si el context no trae el mapa (compat).
+        pre = (self.context or {}).get("batch_exp_activos")
+        if isinstance(pre, dict) and str(o.id) in pre:
+            return int(pre[str(o.id)])
         from django.db import connection
         ids = o.pool_ids() if o.is_parent else [str(o.id)]
         if not ids:

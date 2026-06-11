@@ -56,6 +56,13 @@ class ProductoViewSet(viewsets.ViewSet):
             v = request.query_params.get(param)
             if v:
                 qs = qs.filter(**{field: v})
+        # Fable5 · batch por ids — hidratación de nombres/precios en UN
+        # request desde OCDetail/FusionDetail (antes: un GET por producto).
+        ids = request.query_params.get("ids")
+        if ids:
+            id_list = [s for s in (x.strip() for x in str(ids).split(",")) if s][:500]
+            if id_list:
+                qs = qs.filter(id__in=id_list)
         # Búsqueda libre — busca en NOMBRE, SKU y descripción.
         # Bug previo: sólo buscaba en `nombre`, así que si el usuario tipeaba
         # el SKU (ej. "701805") y el nombre era "50B21-A-GR-DRB", no aparecía.
@@ -68,6 +75,23 @@ class ProductoViewSet(viewsets.ViewSet):
                 Q(sku__icontains=qq) |
                 Q(descripcion__icontains=qq)
             )
+        # Fable5 · paginación defensiva: limit/offset opcionales con cap
+        # duro de 2000 filas (un catálogo gigante no debe tumbar el list).
+        qp = request.query_params
+        try:
+            limit  = min(int(qp.get("limit", 2000) or 2000), 2000)
+            offset = max(int(qp.get("offset", 0) or 0), 0)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "limit/offset inválidos: deben ser enteros."},
+                status=400,
+            )
+        if limit < 0:
+            return Response(
+                {"detail": "limit inválido: debe ser >= 0."},
+                status=400,
+            )
+        qs = qs[offset:offset + limit]
         return Response(ProductoListSerializer(qs, many=True).data)
 
     def retrieve(self, request, pk=None):

@@ -30,6 +30,5 @@ Gestión financiera: cobros a clientes, pagos de costos logísticos (wizard Regi
 ## 6. Hallazgos y correcciones
 **Auditoría 2026-06-11 (Fable 5):**
 - ✅ **CORREGIDO (índices)** — `E5_audit_indexes.sql`: `finance.payment(oc_id)`, `(expediente_id)`, `(transferencia_id)`.
-- 🔴 **PENDIENTE (N+1)** — `finance/serializers.py:103-116`: 3 getters (aplicaciones, evidencia, ai_verdict) con query por pago.
-- 🟡 **PENDIENTE** — `finance/views.py` listado con `[:200]` hardcodeado: convertir a paginación real con parámetro.
-- ✅ **VERIFICADO OK** — `Pagos.jsx:75-85` usa el patrón `alive` + cleanup correctamente (modelo a replicar). 🟡 `Pagos.jsx:96` `.map()` sin guard si el backend devuelve `results: null`.
+- ✅ **CORREGIDO (WAVE A)** — Los 3 getters (aplicaciones/evidencia/ai_verdict) batcheados con `payment_id__in` en el list (atajos `batch_apps/batch_evidencia/batch_verdict` con fallback) y el slice `[:200]` ahora es `?limit=` (default 200, cap 1000).
+- ✅ **CORREGIDO (WAVE B)** — `Pagos.jsx`: guards `Array.isArray` en `expItems`/`ocItems` antes de mapear. El patrón `alive` ya era correcto.

@@ -49,6 +49,13 @@ class PriceListVersionListSerializer(serializers.ModelSerializer):
         )
 
     def get_items_count(self, obj):
+        # Fable5 · atajo batch: el list() del ViewSet precalcula los counts
+        # en UN query agrupado y los pasa por context como
+        # `batch_items_count` = {str(version_id): n}.
+        # FALLBACK al query por-fila si el context no trae el mapa (compat).
+        pre = (self.context or {}).get("batch_items_count")
+        if isinstance(pre, dict) and str(obj.id) in pre:
+            return int(pre[str(obj.id)])
         return GradeItem.objects.filter(
             pricelist_version_id=obj.id, is_active=True).count()
 

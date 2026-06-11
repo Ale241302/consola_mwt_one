@@ -124,6 +124,27 @@ class PriceListVersionViewSet(viewsets.ModelViewSet):
             qs = qs.filter(nombre__icontains=q) | qs.filter(codigo__icontains=q)
         return qs.order_by("-valid_from", "codigo")
 
+    def list(self, request, *args, **kwargs):
+        # Fable5 · batch: count de grade_items en UN query agrupado
+        # (antes 1 query POR versión vía SerializerMethodField).
+        from django.db.models import Count
+        qs = self.filter_queryset(self.get_queryset())
+        rows = list(qs)
+        ids = [r.id for r in rows]
+        counts = {str(i): 0 for i in ids}
+        if ids:
+            aggs = (GradeItem.objects
+                    .filter(pricelist_version_id__in=ids, is_active=True)
+                    .values("pricelist_version_id")
+                    .annotate(n=Count("id")))
+            for a in aggs:
+                counts[str(a["pricelist_version_id"])] = int(a["n"] or 0)
+        serializer = PriceListVersionListSerializer(
+            rows, many=True,
+            context={**self.get_serializer_context(), "batch_items_count": counts},
+        )
+        return Response(serializer.data)
+
     def create(self, request, *args, **kwargs):
         data = _ensure_uuid(_request_data_copy(request))
         serializer = self.get_serializer(data=data)

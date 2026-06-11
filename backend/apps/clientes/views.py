@@ -54,6 +54,116 @@ def _client_scope_ids(request):
     return leis if leis else None
 
 
+def _build_cliente_list_batches(rows):
+    """Fable5 · pre-cómputo batch para ClienteListSerializer.
+
+    Antes el serializer disparaba 3+ queries POR FILA (subsidiarias,
+    expedientes activos y consumo de crédito del pool). Aquí resolvemos
+    todo con 3 queries totales y pasamos los mapas por context:
+      · batch_subs_count   str(id) → int
+      · batch_exp_activos  str(id) → int   (padre = pool padre+subsidiarias)
+      · batch_credito      str(id) → float (consumo del pool en vivo)
+
+    NOTA Fable5 (adaptación documentada): en vez de invocar
+    calcular_consumo_credito_pool() una vez por root, replicamos su MISMO
+    SQL agrupando por entidad (COALESCE(operating_company_id, client_id)).
+    Como el consumo del pool es la suma de los consumos por entidad
+    miembro, el valor del padre = Σ(padre + subsidiarias) y el de una
+    subsidiaria = solo el suyo — semántica idéntica al método del modelo
+    (que en subsidiarias usa pool=[self]), pero en 1 query para todo el
+    listado en lugar de 1 query por fila.
+    """
+    out = {"batch_subs_count": {}, "batch_exp_activos": {}, "batch_credito": {}}
+    if not rows:
+        return out
+    row_ids = [str(r.id) for r in rows]
+    parent_ids = [str(r.id) for r in rows if not r.parent_id]
+
+    # 1) Subsidiarias activas por padre (1 query) — define también los pools.
+    subs_by_parent = {}
+    if parent_ids:
+        for pid, sid in (Cliente.objects
+                         .filter(is_active=True, parent_id__in=parent_ids)
+                         .values_list("parent_id", "id")):
+            subs_by_parent.setdefault(str(pid), []).append(str(sid))
+    pool_by_row = {}
+    for r in rows:
+        rid = str(r.id)
+        if r.parent_id:           # subsidiaria → 0 subs, pool = sí misma
+            out["batch_subs_count"][rid] = 0
+            pool_by_row[rid] = [rid]
+        else:                     # top-level → pool = padre + subsidiarias
+            subs = subs_by_parent.get(rid, [])
+            out["batch_subs_count"][rid] = len(subs)
+            pool_by_row[rid] = [rid] + subs
+    all_ids = sorted({i for pool in pool_by_row.values() for i in pool})
+    placeholders = ",".join(["%s"] * len(all_ids))
+
+    # 2) Expedientes activos agrupados por client_id (1 query).
+    #    Replica EXACTO el filtro de ClienteListSerializer.get_expedientes_activos.
+    try:
+        with connection.cursor() as c:
+            c.execute(
+                f"SELECT client_id::text, COUNT(*) "
+                f"FROM expedientes.expediente "
+                f"WHERE client_id::text IN ({placeholders}) "
+                f"AND is_active = TRUE "
+                f"AND estado NOT IN ('CERRADO','CANCELADO') "
+                f"GROUP BY client_id::text",
+                all_ids,
+            )
+            exp_by_client = {row[0]: int(row[1] or 0) for row in c.fetchall()}
+        for rid, pool in pool_by_row.items():
+            out["batch_exp_activos"][rid] = sum(exp_by_client.get(i, 0) for i in pool)
+    except Exception:  # noqa: BLE001 — mismo comportamiento que el getter (→ 0)
+        out["batch_exp_activos"] = {rid: 0 for rid in row_ids}
+
+    # 3) Consumo de crédito agrupado por entidad (1 query — SQL del modelo
+    #    calcular_consumo_credito_pool, con GROUP BY entidad añadido).
+    try:
+        with connection.cursor() as c:
+            c.execute(
+                f"""
+                SELECT COALESCE(e.operating_company_id, e.client_id)::text AS entidad,
+                       COALESCE(SUM(
+                    l.qty * COALESCE(
+                        NULLIF(l.unit_price, 0),
+                        CASE
+                            WHEN p.especificaciones IS NOT NULL
+                             AND jsonb_typeof(p.especificaciones->'client_prices') = 'object'
+                             AND jsonb_typeof(p.especificaciones->'client_prices'->(e.client_id::text)) = 'number'
+                            THEN (p.especificaciones->'client_prices'->>(e.client_id::text))::numeric
+                            ELSE NULL
+                        END,
+                        NULLIF(p.precio_lista, 0),
+                        0
+                    )
+                ), 0)
+                FROM expedientes.linea l
+                INNER JOIN expedientes.expediente e
+                        ON e.id = l.expediente_id
+                       AND (
+                         (e.is_active = TRUE AND e.estado NOT IN ('CERRADO','CANCELADO'))
+                         OR
+                         (e.is_active = FALSE AND l.sap IS NOT NULL AND l.sap <> '')
+                       )
+                       AND (e.forma_pago = 'CREDITO' OR e.forma_pago IS NULL)
+                LEFT JOIN productos.producto p ON p.id = l.producto_id
+                WHERE l.is_active = TRUE
+                  AND COALESCE(e.operating_company_id, e.client_id)::text IN ({placeholders})
+                GROUP BY 1
+                """,
+                all_ids,
+            )
+            consumo_ent = {row[0]: float(row[1] or 0) for row in c.fetchall()}
+        for rid, pool in pool_by_row.items():
+            out["batch_credito"][rid] = float(sum(consumo_ent.get(i, 0.0) for i in pool))
+    except Exception:  # noqa: BLE001 — BD sin migrar: mapa vacío → el
+        # serializer cae al cómputo por-fila (que tiene su propio fallback).
+        out["batch_credito"] = {}
+    return out
+
+
 class ClienteViewSet(viewsets.ViewSet):
     """
     CRUD de clientes B2B · sprint Cliente M3b.
@@ -111,7 +221,12 @@ class ClienteViewSet(viewsets.ViewSet):
         if scope_ids is not None:
             qs = (Cliente.objects.filter(is_active=True, id__in=scope_ids)
                   .order_by("razon_social"))
-        return Response(ClienteListSerializer(qs, many=True, context=self._ctx(request)).data)
+        # Fable5 · batch: subsidiarias + expedientes activos + crédito del
+        # pool en 3 queries totales (antes 3+ POR FILA). Ver helper arriba.
+        rows = list(qs)
+        ctx = self._ctx(request)
+        ctx.update(_build_cliente_list_batches(rows))
+        return Response(ClienteListSerializer(rows, many=True, context=ctx).data)
 
     def retrieve(self, request, pk=None):
         try:
