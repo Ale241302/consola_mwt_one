@@ -69,6 +69,19 @@ from apps.ocr.services import parse_oc_auto
 # bundles cacheados, etc.) — los precios siempre coinciden con la matriz.
 from apps.commercial.services import get_client_price_matrix
 from apps.core.constants import MWT_OPERATING_CLIENT_ID
+# Sprint 2026-06-12 · PO B2B por alias de cliente (R1-R4):
+#   · funciones PURAS de matching/banda/plazo/codigo en po_alias_matcher
+#   · FX USD/BRL server-side (mismo servicio core.fx_service + cache del
+#     endpoint /api/commercial/exchange-rate/usd-brl/) con tolerancia a
+#     fallo: si no hay FX el flujo sigue con el precio que ya traiga.
+from apps.expedientes.po_alias_matcher import (
+    build_alias_index,
+    extract_size,
+    format_po_codigo,
+    match_part_number,
+    pick_band,
+    pick_plazo_price,
+)
 
 log = logging.getLogger(__name__)
 
@@ -147,10 +160,14 @@ def _resolve_client_defaults(client_id: str) -> dict:
     }
     try:
         with connection.cursor() as c:
+            # FIX 2026-06-12: las columnas reales de clientes.cliente son
+            # `dias_credito` y `moneda` (sql/30_clientes.sql) —
+            # credit_days/moneda_default no existen y el SELECT fallido
+            # dejaba los defaults vacíos (y abortaba la tx en tests).
             c.execute("""
                 SELECT
-                    COALESCE(credit_days, 0),
-                    COALESCE(moneda_default, 'USD')
+                    COALESCE(dias_credito, 0),
+                    COALESCE(moneda, 'USD')
                 FROM clientes.cliente
                 WHERE id = %s AND is_active = TRUE
                 LIMIT 1
@@ -205,6 +222,169 @@ def _store_file_bytes(file_bytes: bytes, filename: str,
     return out
 
 
+def _fetch_client_aliases(client_id: str) -> list[dict]:
+    """Filas activas de `productos.product_client_alias` para ESE cliente,
+    enriquecidas con sku/marca del producto (JOIN lógico, sin FK física).
+    Best-effort: devuelve [] si la tabla no existe en el entorno."""
+    rows: list[dict] = []
+    try:
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT pca.alias, pca.cliente_sku,
+                       pca.producto_id::text,
+                       p.sku, p.marca_id::text
+                  FROM productos.product_client_alias pca
+                  LEFT JOIN productos.producto p
+                         ON p.id = pca.producto_id AND p.is_active = TRUE
+                 WHERE pca.cliente_id = %s::uuid
+                   AND pca.is_active = TRUE
+            """, [str(client_id)])
+            for r in c.fetchall():
+                rows.append({
+                    "alias":       r[0],
+                    "cliente_sku": r[1],
+                    "producto_id": r[2],
+                    "sku":         r[3],
+                    "marca_id":    r[4],
+                })
+    except Exception as e:
+        log.warning("_fetch_client_aliases best-effort falló (cliente=%s): %s",
+                    client_id, e)
+    return rows
+
+
+def _match_by_sku_or_name(part_number: str) -> Optional[dict]:
+    """Fallback al comportamiento de HOY: lookup exacto por SKU o por
+    nombre canónico MWT. NUNCA inventa producto — None si no hay match."""
+    pn = (part_number or "").strip()
+    if not pn:
+        return None
+    try:
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT id::text, sku, marca_id::text
+                  FROM productos.producto
+                 WHERE is_active = TRUE
+                   AND (sku = %s OR upper(nombre) = upper(%s))
+                 LIMIT 1
+            """, [pn, pn])
+            r = c.fetchone()
+            if r:
+                return {"producto_id": r[0], "sku": r[1], "marca_id": r[2],
+                        "matched_via": "sku_or_name"}
+    except Exception as e:
+        log.warning("_match_by_sku_or_name best-effort falló (%s): %s", pn, e)
+    return None
+
+
+def _resolve_tc_usd_brl() -> Optional[float]:
+    """Cotización USD/BRL vigente, server-side. Cadena:
+      1. Cache compartido del endpoint /api/commercial/exchange-rate/usd-brl/
+         (key `commercial:fx:usd-brl`, lo llena MarluvasExchangeRateView).
+      2. apps.core.fx_service.get_fx_to_usd("BRL") invertido (BRL→USD →
+         USD/BRL), que ya trae su propia cadena Frankfurter + fallback.
+      3. None — el caller deja el precio que ya traiga el flujo actual.
+    NUNCA lanza."""
+    try:
+        from django.core.cache import cache
+        cached = cache.get("commercial:fx:usd-brl")
+        if isinstance(cached, dict) and cached.get("rate"):
+            rate = float(cached["rate"])
+            if rate > 0:
+                return rate
+    except Exception as e:
+        log.debug("_resolve_tc_usd_brl cache falló: %s", e)
+    try:
+        from apps.core.fx_service import get_fx_to_usd
+        brl_to_usd = get_fx_to_usd("BRL")
+        if brl_to_usd and float(brl_to_usd) > 0:
+            return round(1.0 / float(brl_to_usd), 4)
+    except Exception as e:
+        log.warning("_resolve_tc_usd_brl fx_service falló: %s", e)
+    return None
+
+
+def _apply_alias_matching(ocr_lines: list, client_id: str) -> dict:
+    """R1/R2 · Resuelve producto_id por ALIAS DEL CLIENTE para cada línea
+    de la PO. Muta `ocr_lines` in-place (solo AGREGA campos — el payload
+    ADMIN completo se respeta) y devuelve stats para la respuesta.
+
+    Por línea:
+      · Si ya trae producto_id (flujo ADMIN / parse-oc previo) → intacta,
+        solo completamos `size` desde el sufijo del Part Nº si faltaba.
+      · Alias match (alias más largo, prefijo del Part Nº sin talla) →
+        producto_id + sku MWT + marca_id + talla. El Part Nº original se
+        preserva en `client_part_number`.
+      · Fallback: lookup exacto por SKU/nombre (comportamiento de hoy).
+      · Sin match → la línea queda SIN producto_id con
+        `needs_review=True` (flag para revisión manual del CEO).
+    UNA FILA POR TALLA: jamás colapsamos líneas — cada entrada de
+    `ocr_lines` produce su propio INSERT en expedientes.linea.
+    """
+    stats = {"total": len(ocr_lines), "pre_resolved": 0,
+             "matched_alias": 0, "matched_sku_or_name": 0, "unmatched": 0}
+    alias_index = build_alias_index(_fetch_client_aliases(client_id))
+
+    for ln in ocr_lines:
+        if not isinstance(ln, dict):
+            continue
+        part = str(ln.get("client_part_number") or ln.get("sku") or "").strip()
+
+        if ln.get("producto_id"):
+            stats["pre_resolved"] += 1
+            if not ln.get("size") and part:
+                _, sz = extract_size(part)
+                if sz:
+                    ln["size"] = sz
+            continue
+
+        m = match_part_number(part, alias_index,
+                              explicit_size=ln.get("size")) if part else None
+        if m:
+            stats["matched_alias"] += 1
+            ln["producto_id"] = m["producto_id"]
+            ln["client_part_number"] = part
+            ln["matched_alias"] = m["alias"]
+            ln["matched_via"] = "client_alias"
+            if m.get("marca_id"):
+                ln["marca_id"] = m["marca_id"]
+            if m.get("sku"):
+                ln["sku"] = m["sku"]          # SKU MWT → motor de pricing
+            if not ln.get("size") and m.get("size"):
+                ln["size"] = m["size"]
+            ln["_notas"] = f"PO Part Nº: {part} · alias: {m['alias']}"
+            continue
+
+        fb = _match_by_sku_or_name(part)
+        if fb:
+            stats["matched_sku_or_name"] += 1
+            ln["producto_id"] = fb["producto_id"]
+            ln["client_part_number"] = part
+            ln["matched_via"] = "sku_or_name"
+            if fb.get("marca_id"):
+                ln["marca_id"] = fb["marca_id"]
+            if fb.get("sku"):
+                ln["sku"] = fb["sku"]
+            if not ln.get("size") and part:
+                _, sz = extract_size(part)
+                if sz:
+                    ln["size"] = sz
+            continue
+
+        # Sin match — NUNCA inventamos producto.
+        stats["unmatched"] += 1
+        ln["needs_review"] = True
+        ln["matched_via"] = None
+        ln["client_part_number"] = part
+        if not ln.get("size") and part:
+            _, sz = extract_size(part)
+            if sz:
+                ln["size"] = sz
+        ln["_notas"] = f"SIN MATCH DE PRODUCTO · PO Part Nº: {part} · requiere revisión"
+
+    return stats
+
+
 def _idempotence_replay(token: str) -> Optional[dict]:
     """Busca un wizard_submission_log previo con este token.
     Devuelve el expediente que produjo (si alguno) o None."""
@@ -213,7 +393,10 @@ def _idempotence_replay(token: str) -> Optional[dict]:
     try:
         with connection.cursor() as c:
             c.execute("""
-                SELECT expediente_id, client_id, submitted_at, payload, status
+                -- FIX 2026-06-12: la columna real es created_at
+                -- (sql/95_expediente_wizard.sql) — submitted_at no existe y el
+                -- SELECT fallido rompía el replay idempotente silenciosamente.
+                SELECT expediente_id, client_id, created_at, payload, status
                 FROM expedientes.wizard_submission_log
                 WHERE idempotence_token = %s
                 LIMIT 1
@@ -307,6 +490,11 @@ def create_from_oc(request):
         forced_cid = (getattr(user, "legal_entity_id", None)
                       or getattr(user, "portal_client_id", None)
                       or getattr(user, "client_id", None))
+        # MwtUser (JWT real) expone `legal_entity_ids` (plural, multi-
+        # empresa). Si no hay singular, usamos la empresa primaria.
+        if not forced_cid:
+            _leids = getattr(user, "legal_entity_ids", None) or []
+            forced_cid = _leids[0] if _leids else None
         if not forced_cid:
             return Response({
                 "ok":    False,
@@ -346,6 +534,21 @@ def create_from_oc(request):
             brand_id = b_cand[0].get("id")
     # (brand_id puede quedar NULL — el CEO lo completa después en CLIENT)
 
+    # ── 4b. R1/R2 · Match por ALIAS DEL CLIENTE (Part Nº de la PO) ──
+    # Construimos el índice alias→producto de ESE cliente
+    # (productos.product_client_alias) y resolvemos producto_id, SKU MWT,
+    # marca y talla por línea. Fallback = lookup por SKU/nombre (hoy).
+    # Líneas sin match quedan SIN producto_id con needs_review=True.
+    alias_stats = _apply_alias_matching(ocr_lines, client_id)
+
+    # Si el wizard no trajo brand_id, lo derivamos de la marca de los
+    # productos matcheados cuando es ÚNICA (aditivo: antes quedaba NULL).
+    if not brand_id:
+        _marcas = {ln.get("marca_id") for ln in ocr_lines
+                   if isinstance(ln, dict) and ln.get("marca_id")}
+        if len(_marcas) == 1:
+            brand_id = next(iter(_marcas))
+
     # ── 5. Campos comerciales/logísticos: NULL forzado para CLIENT ─
     client_defaults = _resolve_client_defaults(client_id) if is_client else {}
 
@@ -368,6 +571,11 @@ def create_from_oc(request):
         price_basis           = None
         deferred_total_price  = None
         credit_days           = client_defaults.get("credit_days")
+        # FIX 2026-06-12: estos dos solo se asignaban en la rama ADMIN →
+        # UnboundLocalError en el INSERT para CLIENT (la ruta B2B moría
+        # con 500). El cliente no tiene autoridad sobre plazos duales.
+        credit_days_mwt       = None
+        credit_days_cliente   = None
         moneda                = client_defaults.get("moneda") or (
             (ocr_payload.get("po") or {}).get("currency") or "USD"
         )
@@ -518,24 +726,33 @@ def create_from_oc(request):
                     _tc_val = float(_tc_payload) if _tc_payload else None
                 except (TypeError, ValueError):
                     _tc_val = None
-                _cd_mwt    = int(credit_days_mwt    or credit_days or 90)
-                _cd_client = int(credit_days_cliente or credit_days or 90)
+                # R3 · Si el caller no mandó TC (portal B2B), lo resolvemos
+                # server-side con el MISMO servicio FX (cache commercial +
+                # core.fx_service). Tolerante a fallo: None → el motor usa
+                # su banda default y/o se conserva el precio del payload.
+                if _tc_val is None:
+                    _tc_val = _resolve_tc_usd_brl()
+                _banda_vigente = pick_band(_tc_val)
+                # R3 (Sprint 2026-06-12) · Para el flujo CLIENT B2B el
+                # precio de referencia es SIEMPRE el plazo 90d de la banda
+                # vigente (la matriz congelada por contrato); los descuentos
+                # por pronto pago se negocian después en el pipeline. El
+                # flujo ADMIN conserva el plazo del payload (plazos duales).
+                if is_client:
+                    _cd_mwt    = 90
+                    _cd_client = 90
+                else:
+                    _cd_mwt    = int(credit_days_mwt    or credit_days or 90)
+                    _cd_client = int(credit_days_cliente or credit_days or 90)
                 _is_mwt_op = (
                     operating_company_id_val is not None and
                     str(operating_company_id_val).lower() == str(MWT_OPERATING_CLIENT_ID).lower()
                 ) if 'operating_company_id_val' in dir() else True  # default: asumir MWT operador
 
-                def _pick_plazo_price(matrix, days):
-                    if not matrix or not matrix.get("ok"):
-                        return None
-                    for p in (matrix.get("plazos") or []):
-                        if int(p.get("dias") or 0) == int(days):
-                            try:
-                                v = Decimal(str(p.get("price") or 0))
-                                return v if v > 0 else None
-                            except (TypeError, ValueError, InvalidOperation):
-                                return None
-                    return None
+                # Sprint 2026-06-12 · _pick_plazo_price ahora vive como
+                # función PURA en po_alias_matcher.pick_plazo_price (mismo
+                # contrato, testeable). Alias local para el código de abajo.
+                _pick_plazo_price = pick_plazo_price
 
                 # Para cada SKU, hacemos UN solo lookup a la matriz y cacheamos
                 # (matrix_client por sku, matrix_mwt por sku) para evitar N+1.
@@ -546,18 +763,23 @@ def create_from_oc(request):
                     _pid = ln.get("producto_id")
                     if not (_sku and _pid):
                         continue
-                    # Brand_id del producto (necesario para el motor)
-                    _brand_id = None
-                    try:
-                        with connection.cursor() as _c:
-                            _c.execute(
-                                "SELECT brand_id FROM productos.producto WHERE id = %s::uuid",
-                                [str(_pid)],
-                            )
-                            _row = _c.fetchone()
-                            _brand_id = _row[0] if _row else None
-                    except Exception as _e:
-                        log.warning("[wizard.create] brand_id lookup falló sku=%s: %s", _sku, _e)
+                    # Marca del producto (necesaria para el motor). FIX
+                    # 2026-06-12: la columna real es `marca_id`
+                    # (sql/40_productos.sql) — `brand_id` no existe y el
+                    # SELECT fallido abortaba la transacción atómica.
+                    # Si el alias-match ya resolvió la marca, no hay query.
+                    _brand_id = ln.get("marca_id")
+                    if not _brand_id:
+                        try:
+                            with connection.cursor() as _c:
+                                _c.execute(
+                                    "SELECT marca_id FROM productos.producto WHERE id = %s::uuid",
+                                    [str(_pid)],
+                                )
+                                _row = _c.fetchone()
+                                _brand_id = _row[0] if _row else None
+                        except Exception as _e:
+                            log.warning("[wizard.create] marca_id lookup falló sku=%s: %s", _sku, _e)
                     if not _brand_id:
                         continue
 
@@ -598,6 +820,7 @@ def create_from_oc(request):
                 # Sprint 2026-05-24 · persistir unit_price_mwt y unit_price_client
                 # separados (vienen del wizard Paso 3 segun plazo de cada perspectiva).
                 # unit_price (legacy) = unit_price_client si existe, sino unit_price.
+                created_lines = []
                 for ln in ocr_lines:
                     line_id = uuid.uuid4()
                     qty = _safe_decimal(ln.get("qty"))
@@ -610,13 +833,13 @@ def create_from_oc(request):
                             id, oc_id, expediente_id, producto_id,
                             sku, size, qty,
                             unit_price, unit_price_client, unit_price_mwt,
-                            total_price,
+                            total_price, notas,
                             estado, is_active
                         ) VALUES (
                             %s, %s, %s, %s,
                             %s, %s, %s,
                             %s, %s, %s,
-                            %s,
+                            %s, %s,
                             'PENDIENTE', TRUE
                         )
                     """, [
@@ -626,7 +849,23 @@ def create_from_oc(request):
                         str(qty),
                         str(up), str(up_client), str(up_mwt),
                         str(total_price),
+                        ln.get("_notas") or ln.get("notas"),
                     ])
+                    created_lines.append({
+                        "id":                 str(line_id),
+                        "producto_id":        (str(ln.get("producto_id"))
+                                               if ln.get("producto_id") else None),
+                        "sku":                ln.get("sku"),
+                        "client_part_number": ln.get("client_part_number"),
+                        "size":               ln.get("size"),
+                        "qty":                float(qty),
+                        "unit_price":         float(up),
+                        "unit_price_client":  float(up_client),
+                        "unit_price_mwt":     float(up_mwt),
+                        "matched_via":        ln.get("matched_via"),
+                        "matched_alias":      ln.get("matched_alias"),
+                        "needs_review":       bool(ln.get("needs_review")),
+                    })
 
                 # 7.4 — Insertar ART-01 (OC Cliente) en artifact_instances
                 art01_payload = {
@@ -666,6 +905,32 @@ def create_from_oc(request):
                     str(corr_id),
                     submitted_by_email or "system",
                     "PARTNER_B2B" if is_client else "INTERNAL",
+                ])
+
+                # 7.4b — R4 · expedientes.documento kind='OC' con código
+                # "PO <numero>" — ligado al expediente recién creado y con
+                # audience='CLIENT' para que aparezca en "Documentos
+                # comerciales" del detalle (el front lee _docsByKind('OC')).
+                documento_id = uuid.uuid4()
+                po_codigo = format_po_codigo(po_number) or f"PO {po_number}"
+                c.execute("""
+                    INSERT INTO expedientes.documento (
+                        id, oc_id, expediente_id,
+                        kind, codigo,
+                        file_ext, file_size_bytes, storage_url,
+                        author, fecha, audience, is_active
+                    ) VALUES (
+                        %s, %s, %s,
+                        'OC', %s,
+                        %s, %s, %s,
+                        %s, CURRENT_DATE, 'CLIENT', TRUE
+                    )
+                """, [
+                    str(documento_id), str(oc_id), str(expediente_id),
+                    po_codigo,
+                    file_meta.get("ext"), file_meta.get("size_bytes") or 0,
+                    file_meta.get("storage_url"),
+                    submitted_by_email or "system",
                 ])
 
                 # 7.5 — Event log (pipeline.event_log)
@@ -798,6 +1063,18 @@ def create_from_oc(request):
             "id":        str(oc_id),
             "codigo":    po_number,
             "lines_count": len(ocr_lines),
+        },
+        "document": {
+            "id":       str(documento_id),
+            "kind":     "OC",
+            "codigo":   po_codigo,
+            "audience": "CLIENT",
+        },
+        "lines":          created_lines,
+        "alias_match": {
+            **alias_stats,
+            "tc_usd_brl": _tc_val,
+            "banda_id":   _banda_vigente,
         },
         "artifact_id":    str(artifact_id),
         "correlation_id": str(corr_id),
