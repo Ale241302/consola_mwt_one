@@ -156,6 +156,36 @@ class TestPortalEndpoints:
         assert r.status_code == 200, r.content
         assert isinstance(r.json(), list)
 
+    def test_mis_ocs_client_ref_prefiere_documento_oc(self, authenticated_client):
+        """Fable5-QA 2026-06-12 · El portal debe mostrar la MISMA referencia
+        que /expedientes para el cliente: 1) codigo del documento OC subido,
+        2) display_label (E4), 3) fallback codigo interno PO-2026-N."""
+        import uuid as _uuid
+        from apps.expedientes.models import Documento, Expediente, Oc
+        cid = new_uuid()
+        oc = Oc.objects.create(
+            id=_uuid.uuid4(), codigo=f"PO-2026-{_uuid.uuid4().hex[:5]}",
+            client_id=cid, is_active=True, display_label="ALIAS-E4",
+        )
+        exp = Expediente.objects.create(
+            id=_uuid.uuid4(), codigo=f"EXP-QA-{_uuid.uuid4().hex[:6]}",
+            oc_id=oc.id, client_id=cid, is_active=True, estado="REGISTRO",
+        )
+        Documento.objects.create(
+            id=_uuid.uuid4(), expediente_id=exp.id, oc_id=oc.id,
+            kind="OC", codigo="PO 504960", is_active=True,
+        )
+        r = authenticated_client.get(f"/api/portal/mis_ocs/?client_id={cid}")
+        assert r.status_code == 200, r.content
+        rows = [x for x in r.json() if x["id"] == str(oc.id)]
+        assert rows, "la OC creada no aparece en mis_ocs"
+        # precedencia 1: codigo del documento OC (lo que ve en /expedientes)
+        assert rows[0].get("client_ref") == "PO 504960", rows[0]
+        # mis_expedientes expone el mismo campo
+        r2 = authenticated_client.get(f"/api/portal/mis_expedientes/?client_id={cid}")
+        fila = [x for x in r2.json() if x["id"] == str(exp.id)]
+        assert fila and fila[0].get("client_ref") == "PO 504960", fila
+
     def test_mis_pagos_devuelve_lista(self, authenticated_client, cid):
         r = authenticated_client.get(f"/api/portal/mis_pagos/?client_id={cid}")
         assert r.status_code == 200, r.content

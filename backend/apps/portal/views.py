@@ -468,9 +468,36 @@ class PortalViewSet(viewsets.ViewSet):
               o.id, o.codigo, o.brand_id, o.proforma, o.moneda,
               o.total_value, o.total_invoiced, o.total_paid, o.balance,
               o.coverage_pct, o.lines_count, o.issued_at, o.estado,
+              -- Fable5-QA 2026-06-12: o.created_at DEBE estar en el SELECT.
+              -- Con SELECT DISTINCT, Postgres exige que las columnas del
+              -- ORDER BY esten seleccionadas; sin esta linea el query
+              -- erroraba SIEMPRE y _fetchall (catch-all) devolvia [] —
+              -- mis_ocs llevaba roto en silencio y el portal vivia del
+              -- fallback sintetico (que muestra el codigo interno).
+              o.created_at,
               COALESCE(o.client_id, exp_first.client_id) AS client_id,
-              COALESCE(c.nombre_comercial, c.razon_social) AS client_name
+              COALESCE(c.nombre_comercial, c.razon_social) AS client_name,
+              -- Fable5-QA 2026-06-12: referencia VISIBLE para el cliente.
+              -- Misma politica que ExpedienteListSerializer.get_oc_codigos:
+              -- 1) codigo del documento OC subido (kind OC*), 2) alias
+              -- display_label (E4), 3) fallback codigo interno PO-2026-N.
+              -- El portal mostraba el codigo interno y no coincidia con
+              -- lo que el mismo usuario ve en /expedientes.
+              COALESCE(doc_oc.codigo, NULLIF(o.display_label, ''), o.codigo)
+                AS client_ref
             FROM expedientes.oc o
+            LEFT JOIN LATERAL (
+              SELECT d.codigo
+                FROM expedientes.documento d
+               WHERE d.is_active = TRUE
+                 AND d.kind ~* '^OC([ _]|$)'
+                 AND COALESCE(d.codigo, '') <> ''
+                 AND (d.oc_id = o.id OR d.expediente_id IN (
+                       SELECT e9.id FROM expedientes.expediente e9
+                        WHERE e9.oc_id = o.id))
+               ORDER BY d.audience ASC, d.created_at DESC
+               LIMIT 1
+            ) doc_oc ON TRUE
             LEFT JOIN LATERAL (
               SELECT e.client_id, e.operating_company_id
                 FROM expedientes.expediente e
@@ -535,11 +562,24 @@ class PortalViewSet(viewsets.ViewSet):
               e.total_invoiced, e.total_paid, e.balance,
               e.client_id,
               o.codigo   AS oc_codigo,
+              -- Fable5-QA 2026-06-12: ver client_ref en mis_ocs (misma regla).
+              COALESCE(doc_oc.codigo, NULLIF(o.display_label, ''), o.codigo)
+                AS client_ref,
               o.proforma AS oc_proforma,
               COALESCE(c.nombre_comercial, c.razon_social) AS client_name,
               m.nombre   AS brand_name
             FROM expedientes.expediente e
             LEFT JOIN expedientes.oc    o ON o.id = e.oc_id
+            LEFT JOIN LATERAL (
+              SELECT d.codigo
+                FROM expedientes.documento d
+               WHERE d.is_active = TRUE
+                 AND d.kind ~* '^OC([ _]|$)'
+                 AND COALESCE(d.codigo, '') <> ''
+                 AND (d.oc_id = o.id OR d.expediente_id = e.id)
+               ORDER BY d.audience ASC, d.created_at DESC
+               LIMIT 1
+            ) doc_oc ON TRUE
             LEFT JOIN clientes.cliente  c ON c.id = e.client_id
             LEFT JOIN brands.marca      m ON m.id = e.brand_id
             WHERE e.is_active = TRUE

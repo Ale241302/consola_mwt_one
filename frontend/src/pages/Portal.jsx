@@ -40,7 +40,10 @@ function mapApiOcToPortalOc(r, allApiExpedientes) {
     .map(e => e.id);
   return {
     id:          r.id,
-    po_code:     r.codigo || r.po_code || '',
+    // Fable5-QA 2026-06-12: client_ref = referencia visible del cliente
+    // (codigo del documento OC subido / alias E4), igual que /expedientes.
+    // El codigo interno PO-2026-N queda como fallback.
+    po_code:     r.client_ref || r.codigo || r.po_code || '',
     client_id:   r.client_id || null,
     brand:       r.brand_id || '—',            // UUID — ver TODO resolver nombre
     total_value: Number(r.total_value) || 0,
@@ -331,7 +334,8 @@ export default function ScreenPortal() {
       if (!acc[ocId]) {
         acc[ocId] = {
           id:             ocId,
-          codigo:         e.oc_codigo || '',
+          codigo:         e.client_ref || e.oc_codigo || '',  // Fable5-QA: ref del cliente
+          client_ref:     e.client_ref || null,
           proforma:       e.oc_proforma || null,
           client_id:      e.client_id || null,
           client_name:    e.client_name || null,
@@ -799,7 +803,7 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
             //     lines_count, issued_at, estado, client_id, client_name }
             // Backend NO devuelve `expedientes[]` ni `brand` ni `po_code`.
             // Derivamos lead expediente buscando expedientes con oc_id === o.id.
-            const ocCode    = o.codigo || o.po_code || '—';
+            const ocCode    = o.client_ref || o.codigo || o.po_code || '—';  // Fable5-QA
             const lineCount = o.lines_count ?? (o.lines?.length || 0);
             const relatedExps = expedientes.filter(e => e.oc_id === o.id);
             const leadExp     = relatedExps[0];
