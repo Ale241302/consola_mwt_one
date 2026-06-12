@@ -73,6 +73,9 @@ const KEY_TO_PATH = {
 function screenFromPath(pathname) {
   if (pathname.startsWith('/tickets')) return 'tickets';
   if (pathname.startsWith('/dashboard')) return 'dashboard';
+  // Fable5-QA 2026-06-11: /cronograma caia al fallback 'dashboard' y la
+  // sidebar marcaba Dashboard como activo (mismo bug en /usuarios y /roles).
+  if (pathname.startsWith('/cronograma')) return 'cronograma';
   if (pathname.startsWith('/expedientes/') && pathname.match(/\/expedientes\/[^/]+\/exp\//)) return 'expediente-detail';
   if (pathname.startsWith('/expedientes/')) return 'oc-detail';
   if (pathname === '/expedientes') return 'expedientes';
@@ -94,6 +97,8 @@ function screenFromPath(pathname) {
   if (pathname.startsWith('/wizard')) return 'wizard';
   if (pathname.startsWith('/ai/governance')) return 'ai-governance';
   if (pathname.startsWith('/ai')) return 'ai-hub';
+  if (pathname.startsWith('/usuarios')) return 'usuarios';
+  if (pathname.startsWith('/roles')) return 'roles';
   return 'dashboard';
 }
 
