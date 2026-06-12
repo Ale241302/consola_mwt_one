@@ -21,7 +21,7 @@
 //   Critical #DC2626 (CEO-ONLY)
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useOutletContext, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IconPlus, IconUpload, IconCheck, IconX, IconPaperclip,
@@ -102,6 +102,11 @@ const CLIENT_VISIBLE_TABS = new Set(['detalles']);
 
 export default function ScreenProductFormView() {
   const navigate = useNavigate();
+  // Fable5-QA 2026-06-12: si el producto se abrio desde el Portal B2B
+  // (/portal/productos/:id), el boton Volver debe regresar al Portal,
+  // no al catalogo interno /productos.
+  const location = useLocation();
+  const backTarget = location.pathname.startsWith('/portal') ? '/portal' : '/productos';
   const { lang } = useOutletContext();
   const { productId } = useParams();
 
@@ -888,7 +893,7 @@ export default function ScreenProductFormView() {
       } else {
         await productosApi.create(body);
       }
-      navigate('/productos');
+      navigate(backTarget);
     } catch (e) {
       // Renderiza mensaje del backend si es JSON DRF
       let msg = String(e?.message || e);
@@ -2048,7 +2053,7 @@ export default function ScreenProductFormView() {
     <div className="page page-form">
       <div className="page-header">
         <div style={{display:'flex', alignItems:'center', gap:12}}>
-          <button className="btn btn-sm btn-ghost" onClick={()=>navigate('/productos')} aria-label="Back">
+          <button className="btn btn-sm btn-ghost" onClick={()=>navigate(backTarget)} aria-label="Back">
             <IconChevLeft size={14}/>
           </button>
           <div>
@@ -2066,7 +2071,7 @@ export default function ScreenProductFormView() {
           </div>
         </div>
         <div className="flex ai-center gap-2">
-          <button className="btn" onClick={()=>navigate(isClient ? '/portal' : '/productos')}>
+          <button className="btn" onClick={()=>navigate(isClient ? '/portal' : backTarget)}>
             {lang==='es'?(isClient?'Volver':'Cancelar'):(isClient?'Back':'Cancel')}
           </button>
           {/* CLIENT no puede editar → botón Save oculto. Doble defensa:

@@ -756,10 +756,13 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
           <span className="caption">{ocs.length} {lang==='es'?'órdenes':'orders'}</span>
           {/* Sprint 2026-06-10 — botón Exportar retirado: el reporte vive
               en /cronograma (vista React, item del sidebar). */}
-          {/* CTA primaria para el cliente: subir una nueva OC.
+          {/* CTA primaria: subir una nueva OC.
               · Nunca decimos "Crear expediente" — eso es jerga interna MWT.
-              · Lleva al CreateExpedienteWizard en modo CLIENT (3 pasos). */}
-          {isClient && (
+              · Fable5-QA 2026-06-12: visible para TODOS los roles (antes
+                solo isClient; el CEO pidio que cualquier usuario pueda
+                iniciar una orden desde el portal). La ruta es role-aware:
+                CLIENT -> wizard 3 pasos (create-from-oc), staff -> Lite. */}
+          {(
             <motion.button
               type="button"
               className="btn btn-primary"

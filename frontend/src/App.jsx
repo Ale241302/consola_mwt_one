@@ -69,6 +69,12 @@ function AdminOnlyRoute({ children }) {
   return children;
 }
 
+// Fable5-QA 2026-06-12 · ver comentario en las rutas /portal/nueva-oc.
+function NuevaOcRoleSwitch() {
+  const { isClient } = useRole();
+  return isClient ? <CreateExpedienteWizard /> : <CreateExpedienteWizardLite />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -103,10 +109,17 @@ export default function App() {
             legacy con OCR pesado; el nuevo wizard de 3 pasos vive
             en /portal/nueva-oc y /expedientes/nuevo. */}
         <Route path="/wizard" element={<Navigate to="/portal/nueva-oc" replace />} />
+        {/* Fable5-QA 2026-06-12 · Wizard role-aware:
+            · CLIENT_*  -> CreateExpedienteWizard (multirol, 3 pasos CLIENT,
+              POST /expedientes/create-from-oc/ con client_id forzado del JWT
+              y mode/freight NULL pendientes de review CEO).
+            · ADMIN/staff -> CreateExpedienteWizardLite (flujo interno).
+            Bug previo: el cliente caia en el Lite, que postea al endpoint
+            crudo /api/expedientes/ -> hard-shield R3 -> 403 al confirmar. */}
         {/* Nuevo wizard multirol (ADMIN 4 pasos / CLIENT 3 pasos) — reemplazo de /wizard */}
         {/* Sprint Wizard Lite (2026-04-29) — wizard simplificado de 3 pasos */}
-        <Route path="/expedientes/nuevo" element={<CreateExpedienteWizardLite />} />
-        <Route path="/portal/nueva-oc"  element={<CreateExpedienteWizardLite />} />
+        <Route path="/expedientes/nuevo" element={<NuevaOcRoleSwitch />} />
+        <Route path="/portal/nueva-oc"  element={<NuevaOcRoleSwitch />} />
         {/* Wizard pesado legacy (con OCR/marca/moneda) — accesible solo para fallback */}
         <Route path="/expedientes/nuevo-completo" element={<CreateExpedienteWizard />} />
         <Route path="/transferencias" element={<ScreenTransfers />} />
