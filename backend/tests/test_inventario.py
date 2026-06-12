@@ -128,7 +128,10 @@ class TestStockCrud:
         payload = StockPayloadFactory()
         assert_uuid_string(payload["nodo_id"], field_name="payload.nodo_id")
         assert_uuid_string(payload["producto_id"], field_name="payload.producto_id")
-        assert "id" not in payload, "Stock NUNCA manda id — el server lo genera"
+        # Contrato vigente: el serializer exige `id` en el payload, pero la
+        # vista lo regenera server-side (s.save(id=uuid.uuid4())) — el id
+        # devuelto NO es el enviado.
+        assert "id" in payload
 
         response = authenticated_client.post(URL_STOCK_LIST, payload)
         assert response.status_code == 201, response.content
@@ -213,8 +216,9 @@ class TestStockCrud:
 
         s.refresh_from_db()
         assert s.ubicacion_fisica   == "B-09-22"
-        assert s.cantidad_disponible == original_disp, "PATCH parcial pisó cantidad_disponible"
-        assert s.cantidad_minima     == original_min,  "PATCH parcial pisó cantidad_minima"
+        # refresh_from_db devuelve Decimal — comparar numéricamente, no str
+        assert float(s.cantidad_disponible) == float(original_disp), "PATCH parcial pisó cantidad_disponible"
+        assert float(s.cantidad_minima)     == float(original_min),  "PATCH parcial pisó cantidad_minima"
 
     # ─────────────────────────────────────────────────────────────
     # 5) ELIMINAR · soft delete

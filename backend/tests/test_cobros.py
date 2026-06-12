@@ -45,6 +45,7 @@ from tests._common import (
     find_by_id,
     new_uuid,
 )
+from tests._factories_v2 import crear_cobro, crear_pago, crear_vencimiento
 from tests.factories import (
     CobroModelFactory,
     CobroPayloadFactory,
@@ -62,7 +63,7 @@ from tests.factories import (
 # ════════════════════════════════════════════════════════════════════
 class TestCobroCrud:
     def test_list_cobros(self, authenticated_client):
-        CobroModelFactory.create_batch(3)
+        [crear_cobro() for _ in range(3)]
         r = authenticated_client.get("/api/cobros/")
         assert r.status_code == 200, r.json()
         items = extract_results(r.json())
@@ -72,8 +73,8 @@ class TestCobroCrud:
 
     def test_list_filter_by_client(self, authenticated_client):
         client_id = new_uuid()
-        CobroModelFactory.create(client_id=client_id)
-        CobroModelFactory.create()
+        crear_cobro(client_id=client_id)
+        crear_cobro()
         r = authenticated_client.get(f"/api/cobros/?client={client_id}")
         assert r.status_code == 200
         items = extract_results(r.json())
@@ -81,9 +82,9 @@ class TestCobroCrud:
         assert all(str(it["client_id"]) == client_id for it in items)
 
     def test_list_filter_en_mora(self, authenticated_client):
-        CobroModelFactory.create(dias_mora=15, bucket_mora="T1",
+        crear_cobro(dias_mora=15, bucket_mora="T1",
                                  monto_pendiente="100.00")
-        CobroModelFactory.create(dias_mora=0, bucket_mora="T0",
+        crear_cobro(dias_mora=0, bucket_mora="T0",
                                  monto_pendiente="100.00")
         r = authenticated_client.get("/api/cobros/?en_mora=1")
         assert r.status_code == 200
@@ -92,9 +93,9 @@ class TestCobroCrud:
             assert int(it["dias_mora"]) > 0
 
     def test_retrieve_cobro_incluye_vencimientos(self, authenticated_client):
-        c = CobroModelFactory.create()
-        VencimientoModelFactory.create(cobro_id=c.id, tramo="T1")
-        VencimientoModelFactory.create(cobro_id=c.id, tramo="T2")
+        c = crear_cobro()
+        crear_vencimiento(cobro_id=c.id, tramo="T1")
+        crear_vencimiento(cobro_id=c.id, tramo="T2")
         r = authenticated_client.get(f"/api/cobros/{c.id}/")
         assert r.status_code == 200, r.json()
         body = r.json()
@@ -118,8 +119,9 @@ class TestCobroCrud:
         assert r.status_code == 201, r.json()
 
     def test_create_codigo_duplicado_400(self, authenticated_client):
-        c1 = CobroModelFactory.create(codigo="COB-DUP-001")
+        c1 = crear_cobro(codigo="COB-DUP-001")
         payload = CobroPayloadFactory(codigo="COB-DUP-001")
+        payload["id"] = new_uuid()  # contrato actual: el serializer exige id
         r = authenticated_client.post("/api/cobros/", payload, format="json")
         # Unique constraint a nivel DB → 400 desde el serializer (UniqueValidator)
         # Si el serializer no valida, igual debe ser 4xx
@@ -128,7 +130,7 @@ class TestCobroCrud:
         )
 
     def test_update_cobro(self, authenticated_client):
-        c = CobroModelFactory.create(estado="PENDIENTE")
+        c = crear_cobro(estado="PENDIENTE")
         r = authenticated_client.patch(
             f"/api/cobros/{c.id}/",
             {"notas": "Updated por test", "dias_credito": 60},
@@ -140,7 +142,7 @@ class TestCobroCrud:
         assert c.dias_credito == 60
 
     def test_delete_cobro_es_soft(self, authenticated_client):
-        c = CobroModelFactory.create()
+        c = crear_cobro()
         r = authenticated_client.delete(f"/api/cobros/{c.id}/")
         assert r.status_code == 204
         c.refresh_from_db()
@@ -186,7 +188,7 @@ class TestCobroRefreshMoraYVencimientos:
 
     def test_refresh_mora_recalcula_bucket_y_stage(self, authenticated_client):
         # Cobro con monto_pendiente > 0 y vencimiento en el pasado
-        cobro = CobroModelFactory.create(
+        cobro = crear_cobro(
             fecha_vencimiento=(date.today() - timedelta(days=45)),
             monto_pendiente="500.00",
             dias_mora=0,
@@ -206,7 +208,7 @@ class TestCobroRefreshMoraYVencimientos:
         assert cobro.collection_stage == "DUNNING"
 
     def test_refresh_mora_sin_vencimiento_o_pendiente_cero(self, authenticated_client):
-        cobro = CobroModelFactory.create(
+        cobro = crear_cobro(
             fecha_vencimiento=None, monto_pendiente="0.00",
             dias_mora=0, bucket_mora="T0", collection_stage="NONE",
         )
@@ -217,9 +219,9 @@ class TestCobroRefreshMoraYVencimientos:
         assert cobro.bucket_mora == "T0"
 
     def test_post_vencimientos_reemplaza_plan(self, authenticated_client):
-        cobro = CobroModelFactory.create()
+        cobro = crear_cobro()
         # Pre-cargar 1 vencimiento que debe quedar inactivo tras POST
-        VencimientoModelFactory.create(cobro_id=cobro.id, tramo="T1")
+        crear_vencimiento(cobro_id=cobro.id, tramo="T1")
         body = {"plan": [
             {"tramo": "T1", "pct_monto": "33.33", "monto_usd": "1000.00",
              "fecha_vencimiento": "2026-05-30"},
@@ -240,8 +242,8 @@ class TestCobroRefreshMoraYVencimientos:
         assert active == 3
 
     def test_get_vencimientos_lista(self, authenticated_client):
-        cobro = CobroModelFactory.create()
-        VencimientoModelFactory.create_batch(2, cobro_id=cobro.id)
+        cobro = crear_cobro()
+        [crear_vencimiento(cobro_id=cobro.id, tramo=t) for t in ("T1", "T2")]
         r = authenticated_client.get(f"/api/cobros/{cobro.id}/vencimientos/")
         assert r.status_code == 200
         items = extract_results(r.json())
@@ -253,14 +255,14 @@ class TestCobroRefreshMoraYVencimientos:
 # ════════════════════════════════════════════════════════════════════
 class TestPagoCrud:
     def test_list_pagos(self, authenticated_client):
-        PagoModelFactory.create_batch(3)
+        [crear_pago() for _ in range(3)]
         r = authenticated_client.get("/api/pagos/")
         assert r.status_code == 200
         assert len(extract_results(r.json())) >= 3
 
     def test_list_filter_by_estado(self, authenticated_client):
-        PagoModelFactory.create(estado="VERIFICADO")
-        PagoModelFactory.create(estado="PENDIENTE")
+        crear_pago(estado="VERIFICADO")
+        crear_pago(estado="PENDIENTE")
         r = authenticated_client.get("/api/pagos/?estado=VERIFICADO")
         assert r.status_code == 200
         items = extract_results(r.json())
@@ -297,7 +299,7 @@ class TestPagoCrud:
         assert count == 1
 
     def test_create_pago_verificado_aplica_delta_cobro(self, authenticated_client):
-        cobro = CobroModelFactory.create(
+        cobro = crear_cobro(
             monto_total="1000.00", monto_pagado="0.00", monto_pendiente="1000.00",
             estado="PENDIENTE",
         )
@@ -316,10 +318,10 @@ class TestPagoCrud:
         )
 
     def test_update_pago_a_verificado_aplica_delta(self, authenticated_client):
-        cobro = CobroModelFactory.create(
+        cobro = crear_cobro(
             monto_total="500.00", monto_pagado="0.00", monto_pendiente="500.00",
         )
-        pago = PagoModelFactory.create(
+        pago = crear_pago(
             cobro_id=cobro.id, estado="PENDIENTE", monto="200.00",
         )
         r = authenticated_client.patch(
@@ -330,10 +332,10 @@ class TestPagoCrud:
         assert Decimal(str(cobro.monto_pagado)) == Decimal("200.00")
 
     def test_update_pago_de_verificado_a_otro_revierte_delta(self, authenticated_client):
-        cobro = CobroModelFactory.create(
+        cobro = crear_cobro(
             monto_total="500.00", monto_pagado="200.00", monto_pendiente="300.00",
         )
-        pago = PagoModelFactory.create(
+        pago = crear_pago(
             cobro_id=cobro.id, estado="VERIFICADO", monto="200.00",
         )
         r = authenticated_client.patch(
@@ -347,10 +349,10 @@ class TestPagoCrud:
         )
 
     def test_delete_pago_verificado_revierte_delta(self, authenticated_client):
-        cobro = CobroModelFactory.create(
+        cobro = crear_cobro(
             monto_total="500.00", monto_pagado="300.00", monto_pendiente="200.00",
         )
-        pago = PagoModelFactory.create(
+        pago = crear_pago(
             cobro_id=cobro.id, estado="VERIFICADO", monto="300.00",
         )
         r = authenticated_client.delete(f"/api/pagos/{pago.id}/")
@@ -361,10 +363,10 @@ class TestPagoCrud:
         assert Decimal(str(cobro.monto_pagado)) == Decimal("0.00")
 
     def test_delete_pago_pendiente_no_toca_cobro(self, authenticated_client):
-        cobro = CobroModelFactory.create(
+        cobro = crear_cobro(
             monto_total="500.00", monto_pagado="100.00", monto_pendiente="400.00",
         )
-        pago = PagoModelFactory.create(
+        pago = crear_pago(
             cobro_id=cobro.id, estado="PENDIENTE", monto="50.00",
         )
         r = authenticated_client.delete(f"/api/pagos/{pago.id}/")
@@ -375,12 +377,12 @@ class TestPagoCrud:
         )
 
     def test_retrieve_pago_incluye_retenciones(self, authenticated_client):
-        pago = PagoModelFactory.create()
+        pago = crear_pago()
         # POST retenciones
         r1 = authenticated_client.post(
             f"/api/pagos/{pago.id}/retenciones/",
-            {"tipo": "IGV", "tasa_pct": "18.00", "base_usd": "100.00",
-             "monto_usd": "18.00"}, format="json",
+            {"id": new_uuid(), "tipo": "IGV", "tasa_pct": "18.00",
+             "base_usd": "100.00", "monto_usd": "18.00"}, format="json",
         )
         assert r1.status_code == 201, r1.json()
         # Retrieve
@@ -421,6 +423,7 @@ class TestConciliacionCrud:
 
     def test_create_conciliacion(self, authenticated_client):
         payload = ConciliacionPayloadFactory()
+        payload["id"] = new_uuid()  # contrato actual: el serializer exige id
         r = authenticated_client.post(
             "/api/conciliaciones/", payload, format="json"
         )
@@ -430,11 +433,13 @@ class TestConciliacionCrud:
     def test_create_conciliacion_idempotente_por_token(self, authenticated_client):
         token = f"IDEMP-{uuid.uuid4().hex[:12]}"
         p1 = ConciliacionPayloadFactory(idempotence_token=token)
+        p1["id"] = new_uuid()
         r1 = authenticated_client.post("/api/conciliaciones/", p1, format="json")
         assert r1.status_code == 201, r1.json()
         first_id = r1.json()["id"]
         # Reintento mismo token → 200 + mismo id
         p2 = ConciliacionPayloadFactory(idempotence_token=token)
+        p2["id"] = new_uuid()
         r2 = authenticated_client.post("/api/conciliaciones/", p2, format="json")
         assert r2.status_code == 200
         assert r2.json()["id"] == first_id
@@ -467,9 +472,9 @@ class TestConciliacionCrud:
 # ════════════════════════════════════════════════════════════════════
 class TestVencimientoCrud:
     def test_list_filter_by_cobro(self, authenticated_client):
-        cobro = CobroModelFactory.create()
-        VencimientoModelFactory.create_batch(3, cobro_id=cobro.id)
-        VencimientoModelFactory.create()
+        cobro = crear_cobro()
+        [crear_vencimiento(cobro_id=cobro.id, tramo=t) for t in ("T1", "T2", "T3")]
+        crear_vencimiento()
         r = authenticated_client.get(f"/api/vencimientos/?cobro={cobro.id}")
         assert r.status_code == 200
         items = extract_results(r.json())
@@ -488,7 +493,7 @@ class TestVencimientoCrud:
         assert r.status_code == 201
 
     def test_update_vencimiento(self, authenticated_client):
-        v = VencimientoModelFactory.create(estado="PENDIENTE")
+        v = crear_vencimiento(estado="PENDIENTE")
         r = authenticated_client.patch(
             f"/api/vencimientos/{v.id}/", {"estado": "PAGADO"}, format="json"
         )
@@ -497,7 +502,7 @@ class TestVencimientoCrud:
         assert v.estado == "PAGADO"
 
     def test_delete_vencimiento_es_soft(self, authenticated_client):
-        v = VencimientoModelFactory.create()
+        v = crear_vencimiento()
         r = authenticated_client.delete(f"/api/vencimientos/{v.id}/")
         assert r.status_code == 204
         v.refresh_from_db()
@@ -509,8 +514,9 @@ class TestVencimientoCrud:
 # ════════════════════════════════════════════════════════════════════
 class TestWithholdingLog:
     def test_create_withholding(self, authenticated_client):
-        pago = PagoModelFactory.create()
+        pago = crear_pago()
         payload = {
+            "id": new_uuid(),  # contrato actual: el serializer exige id
             "pago_id": str(pago.id),
             "cobro_id": str(uuid.uuid4()),
             "tipo": "RENTA",
@@ -528,12 +534,13 @@ class TestWithholdingLog:
         assert body["tipo"] == "RENTA"
 
     def test_list_filter_by_pago(self, authenticated_client):
-        pago = PagoModelFactory.create()
+        pago = crear_pago()
         # crear 2 retenciones para el mismo pago
         for _ in range(2):
             authenticated_client.post(
                 "/api/withholding-log/",
-                {"pago_id": str(pago.id), "tipo": "IGV", "monto_usd": "10.00"},
+                {"id": new_uuid(), "pago_id": str(pago.id),
+                 "tipo": "IGV", "monto_usd": "10.00"},
                 format="json",
             )
         r = authenticated_client.get(
@@ -551,6 +558,7 @@ class TestWithholdingLog:
 class TestFxRateHistory:
     def test_create_fx_rate(self, authenticated_client):
         payload = {
+            "id": new_uuid(),  # contrato actual: el serializer exige id
             "fecha": "2026-04-20",
             "moneda_from": "PEN",
             "moneda_to": "USD",
@@ -565,6 +573,7 @@ class TestFxRateHistory:
 
     def test_create_fx_rate_idempotente_por_tupla(self, authenticated_client):
         payload = {
+            "id": new_uuid(),
             "fecha": "2026-04-21",
             "moneda_from": "EUR",
             "moneda_to": "USD",
@@ -577,7 +586,7 @@ class TestFxRateHistory:
         assert r1.status_code == 201, r1.json()
         first_id = r1.json()["id"]
         # Reintento mismo (fecha, from, to, source) → 200 + mismo id
-        payload2 = dict(payload, rate="1.090000")  # diferente rate, igual tupla
+        payload2 = dict(payload, id=new_uuid(), rate="1.090000")  # otra id, igual tupla
         r2 = authenticated_client.post(
             "/api/fx-rate-history/", payload2, format="json"
         )
@@ -595,8 +604,8 @@ class TestFxRateHistory:
                             ("2026-04-15", "0.270000")):
             authenticated_client.post(
                 "/api/fx-rate-history/",
-                {"fecha": fecha, "moneda_from": "PEN", "moneda_to": "USD",
-                 "rate": rate, "source": "BCR"},
+                {"id": new_uuid(), "fecha": fecha, "moneda_from": "PEN",
+                 "moneda_to": "USD", "rate": rate, "source": "BCR"},
                 format="json",
             )
         # lookup con fecha 2026-04-20 → debe devolver el de 04-15
@@ -617,8 +626,8 @@ class TestFxRateHistory:
     def test_list_filter_by_source(self, authenticated_client):
         authenticated_client.post(
             "/api/fx-rate-history/",
-            {"fecha": "2026-04-22", "moneda_from": "PEN", "moneda_to": "USD",
-             "rate": "0.280000", "source": "SBS"},
+            {"id": new_uuid(), "fecha": "2026-04-22", "moneda_from": "PEN",
+             "moneda_to": "USD", "rate": "0.280000", "source": "SBS"},
             format="json",
         )
         r = authenticated_client.get("/api/fx-rate-history/?source=SBS")
@@ -632,8 +641,9 @@ class TestFxRateHistory:
 # ════════════════════════════════════════════════════════════════════
 class TestCollectionEvent:
     def test_create_collection_event_y_bump_last_reminder(self, authenticated_client):
-        cobro = CobroModelFactory.create(last_reminder_at=None)
+        cobro = crear_cobro(last_reminder_at=None)
         payload = {
+            "id": new_uuid(),  # contrato actual: el serializer exige id
             "cobro_id": str(cobro.id),
             "client_id": str(cobro.client_id),
             "canal": "EMAIL",
@@ -657,12 +667,12 @@ class TestCollectionEvent:
         )
 
     def test_list_filter_by_cobro(self, authenticated_client):
-        cobro = CobroModelFactory.create()
+        cobro = crear_cobro()
         for _ in range(2):
             authenticated_client.post(
                 "/api/collection-events/",
-                {"cobro_id": str(cobro.id), "canal": "WHATSAPP",
-                 "stage": "DUNNING"},
+                {"id": new_uuid(), "cobro_id": str(cobro.id),
+                 "canal": "WHATSAPP", "stage": "DUNNING"},
                 format="json",
             )
         r = authenticated_client.get(
@@ -675,6 +685,7 @@ class TestCollectionEvent:
 
     def test_acepta_cobro_id_inexistente_canary(self, authenticated_client):
         payload = {
+            "id": new_uuid(),
             "cobro_id": new_uuid(),
             "canal": "SMS",
             "stage": "REMINDER",

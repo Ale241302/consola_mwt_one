@@ -69,3 +69,8 @@ coverage/
 graphify-out/
 .agents/
 .obsidian/
+# QA suite (Fable5 2026-06-11)
+frontend/tests/.build/
+tests/.db_guard_snapshot.json
+backend/tests/__pycache__/
+tests/**/__pycache__/

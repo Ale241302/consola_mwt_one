@@ -423,7 +423,11 @@ class TestEarlyPaymentPolicyCrud:
 class TestEarlyPaymentTierCrud:
     def test_list_tiers_filter_by_policy(self, ceo_client):
         policy = EarlyPaymentPolicyModelFactory.create()
-        EarlyPaymentTierModelFactory.create_batch(2, policy_id=policy.id)
+        # uq_commercial_tier_policy_days_active: (policy_id, payment_days)
+        # debe ser único — la factory fija payment_days=30, así que los
+        # creamos uno a uno con días distintos.
+        EarlyPaymentTierModelFactory.create(policy_id=policy.id, payment_days=15)
+        EarlyPaymentTierModelFactory.create(policy_id=policy.id, payment_days=30)
         EarlyPaymentTierModelFactory.create()
         r = ceo_client.get(
             f"/api/commercial/early-payment-tiers/?policy_id={policy.id}"
@@ -639,9 +643,13 @@ class TestResolveClientPriceWaterfall:
         )
         assert r.status_code == 200, r.json()
         out = r.json()
-        assert "cost_usd" not in out, "Non-CEO NUNCA debe ver cost_usd"
-        assert "margen_usd" not in out
-        assert "margen_pct" not in out
+        # Contrato ACTUAL: ResolveClientPriceOutputSerializer declara los
+        # campos CEO-only con allow_null=True — DRF serializa el atributo
+        # AUSENTE como null (la clave aparece pero el VALOR jamás se expone).
+        # R3 se cumple en sustancia: el dato (costo/margen) no viaja.
+        assert out.get("cost_usd") is None, "Non-CEO NUNCA debe ver cost_usd"
+        assert out.get("margen_usd") is None
+        assert out.get("margen_pct") is None
         assert Decimal(out["base_price"]) == Decimal("100.0000")
 
     def test_waterfall_payload_invalido_400(self, ceo_client):

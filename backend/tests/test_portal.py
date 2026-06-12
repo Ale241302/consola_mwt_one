@@ -74,39 +74,54 @@ PORTAL_ACTIONS = [
 
 
 # ═════════════════════════════════════════════════════════════════════
-# 1) Scope resolution — sin client_id → 403 (todas las acciones)
+# 1) Scope resolution — contrato Sprint 2026-05-20 (multi-empresa):
+#    SIN scope ya NO hay 403; cada endpoint degrada honesto:
+#      · me      → 200 {user, empresas: [], primary: null}
+#      · mis_*   → 200 [] (_empty_scope)
+#      · kpis    → 200 dict con is_empty=True y scope_empresa_count=0
 # ═════════════════════════════════════════════════════════════════════
 class TestPortalScopeResolution:
-    """`_resolve_client_id()` devuelve None si no hay header ni query
-    param → todos los endpoints de PortalViewSet deben responder 403.
-    """
+    """`_resolve_client_ids()` devuelve [] si el usuario no tiene
+    empresas (legal_entity_ids) ni overrides → empty-scope 200."""
 
     URL = "/api/portal/{action}/"
 
     @pytest.mark.parametrize("action", PORTAL_ACTIONS)
-    def test_403_sin_client_id_resuelto(self, authenticated_client, action):
+    def test_sin_scope_devuelve_empty_honesto(self, authenticated_client, action):
         r = authenticated_client.get(self.URL.format(action=action))
-        assert r.status_code == 403, (
-            f"Action '{action}' debió responder 403 sin client_id, "
+        assert r.status_code == 200, (
+            f"Action '{action}' debió responder 200 empty-scope, "
             f"recibido {r.status_code}: {r.content!r}"
         )
+        body = r.json()
+        if action == "me":
+            assert body.get("empresas") == []
+            assert body.get("primary") is None
+        elif action == "kpis":
+            assert body.get("is_empty") is True
+            assert body.get("scope_empresa_count") == 0
+        else:
+            assert body == [], f"'{action}' sin scope debe devolver []"
 
     def test_acepta_client_id_via_query_param(self, authenticated_client):
+        # `me` IGNORA ?client_id= (devuelve catálogo completo de empresas);
+        # el override legacy aplica a los endpoints de listado (mis_*).
         cid = new_uuid()
-        r = authenticated_client.get(f"/api/portal/me/?client_id={cid}")
+        r = authenticated_client.get(f"/api/portal/mis_ocs/?client_id={cid}")
         assert r.status_code == 200, r.content
-        body = r.json()
-        # El cliente no existe en clientes.cliente → shape mínimo con id eco.
-        assert body.get("id") == cid
+        assert isinstance(r.json(), list)  # cliente fantasma → lista vacía
+        # kpis con scope de 1 empresa: scope_empresa_count == 1
+        rk = authenticated_client.get(f"/api/portal/kpis/?client_id={cid}")
+        assert rk.status_code == 200
+        assert rk.json().get("scope_empresa_count") == 1
 
     def test_acepta_client_id_via_header(self, authenticated_client):
         cid = new_uuid()
         r = authenticated_client.get(
-            "/api/portal/me/", HTTP_X_PORTAL_CLIENT=cid,
+            "/api/portal/mis_ocs/", HTTP_X_PORTAL_CLIENT=cid,
         )
         assert r.status_code == 200, r.content
-        body = r.json()
-        assert body.get("id") == cid
+        assert isinstance(r.json(), list)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -121,11 +136,13 @@ class TestPortalEndpoints:
         return new_uuid()
 
     def test_me_devuelve_shape_minimo(self, authenticated_client, cid):
+        # Contrato multi-empresa: {user, empresas, primary} — ignora client_id.
         r = authenticated_client.get(f"/api/portal/me/?client_id={cid}")
         assert r.status_code == 200, r.content
         body = r.json()
-        for k in ("id", "nombre", "contacto", "email", "telefono", "credit_days"):
+        for k in ("user", "empresas", "primary"):
             assert k in body, f"me: falta clave '{k}'"
+        assert isinstance(body["empresas"], list)
 
     def test_mis_ocs_devuelve_lista(self, authenticated_client, cid):
         r = authenticated_client.get(f"/api/portal/mis_ocs/?client_id={cid}")

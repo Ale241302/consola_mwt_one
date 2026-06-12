@@ -85,6 +85,18 @@ from tests._common import (  # noqa: F401, E402
 
 
 # =====================================================================
+# 0) DB REAL · sin base test_* — los tests corren sobre la DB configurada
+#    (DB_NAME) y CADA test se envuelve en una transaccion con ROLLBACK.
+#    Garantia MWT: al finalizar la suite NO queda ningun dato de prueba.
+#    Verificacion independiente: tests/db_guard.py (snapshot + diff de PKs).
+# =====================================================================
+@pytest.fixture(scope="session")
+def django_db_setup():
+    """No-op: impide que pytest-django cree/use test_<DB_NAME>."""
+    yield
+
+
+# =====================================================================
 # 1) HOOK GLOBAL · auto django_db en cualquier test bajo tests/
 # =====================================================================
 def pytest_collection_modifyitems(config, items):
@@ -96,7 +108,7 @@ def pytest_collection_modifyitems(config, items):
       · `transaction=True` permite testear vistas que hacen `transaction.atomic()`
         internamente (ej. ExpedienteViewSet.confirm_sap → C5).
     """
-    db_marker = pytest.mark.django_db(transaction=True)
+    db_marker = pytest.mark.django_db(transaction=False)
     for item in items:
         item.add_marker(db_marker)
 
@@ -274,7 +286,7 @@ def authenticated_client(api_client: AuthenticatedAPIClient,
         `core.users`. Esto es correcto y deseable: queremos testear las
         vistas, no el mecanismo de autenticación.
     """
-    api_client.force_authenticate(user=mwt_user_admin)
+    api_client.force_authenticate(user=mwt_user_admin, token={"role": "admin"})
     return api_client
 
 
@@ -282,5 +294,5 @@ def authenticated_client(api_client: AuthenticatedAPIClient,
 def client_authenticated(api_client: AuthenticatedAPIClient,
                          mwt_user_client: MwtUser) -> AuthenticatedAPIClient:
     """Cliente autenticado con rol 'cliente' (para tests de permisos)."""
-    api_client.force_authenticate(user=mwt_user_client)
+    api_client.force_authenticate(user=mwt_user_client, token={"role": "cliente"})
     return api_client

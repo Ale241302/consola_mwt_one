@@ -253,7 +253,6 @@ class TestMarcaPricingEngine:
 
     def _url_code_detail(self, marca_id, code_id):
         return f"/api/marcas/{marca_id}/discount_codes/{code_id}/"
-
     def test_list_discount_codes_vacio_para_marca_nueva(self, authenticated_client):
         m = MarcaModelFactory()
         response = authenticated_client.get(self._url_codes(m.id))
@@ -263,7 +262,6 @@ class TestMarcaPricingEngine:
             assert body.get("results", []) == []
         else:
             assert body == []
-
     def test_create_discount_code_marca_devuelve_201(self, authenticated_client):
         m = MarcaModelFactory()
         payload = BrandDiscountCodePayloadFactory()
@@ -283,7 +281,6 @@ class TestMarcaPricingEngine:
         assert BrandDiscountCode.objects.filter(
             pk=body["id"], marca_id=m.id, is_active=True
         ).exists()
-
     def test_update_discount_code_marca_actualiza_valor(self, authenticated_client):
         m = MarcaModelFactory()
         # Crear via API para obtener id devuelto
@@ -293,12 +290,11 @@ class TestMarcaPricingEngine:
         assert create_resp.status_code == 201, create_resp.content
         code_id = create_resp.json()["id"]
 
-        # PATCH cambiando valor_pct
+        # PATCH cambiando descuento_pct
         url = self._url_code_detail(m.id, code_id)
-        patch_resp = authenticated_client.patch(url, {"valor_pct": "25.50"})
+        patch_resp = authenticated_client.patch(url, {"descuento_pct": "25.50"})
         assert patch_resp.status_code == 200, patch_resp.content
-        assert str(patch_resp.json()["valor_pct"]) == "25.50"
-
+        assert str(patch_resp.json()["descuento_pct"]) == "25.50"
     def test_soft_delete_discount_code_marca(self, authenticated_client):
         m = MarcaModelFactory()
         create_resp = authenticated_client.post(

@@ -118,6 +118,7 @@ class TestNotificationLogCRUD:
 
     def test_create_genera_uuid_server_side(self, authenticated_client):
         payload = NotificationLogPayloadFactory()
+        payload["id"] = new_uuid()  # contrato actual: el serializer exige id
         r = authenticated_client.post(self.URL, data=payload, format="json")
         assert r.status_code == 201, r.content
         body = r.json()
@@ -126,6 +127,7 @@ class TestNotificationLogCRUD:
     def test_create_acepta_expediente_id_inexistente(self, authenticated_client):
         """REGLA DE ORO: expediente_id es UUID string sin FK enforcement."""
         payload = NotificationLogPayloadFactory(expediente_id=new_uuid())
+        payload["id"] = new_uuid()  # contrato actual: el serializer exige id
         r = authenticated_client.post(self.URL, data=payload, format="json")
         assert r.status_code == 201, r.content
         assert_uuid_string(r.json()["expediente_id"], "expediente_id")
@@ -133,6 +135,7 @@ class TestNotificationLogCRUD:
     def test_create_idempotente_por_token(self, authenticated_client):
         token = new_uuid()
         payload = NotificationLogPayloadFactory(idempotence_token=token)
+        payload["id"] = new_uuid()  # contrato actual: el serializer exige id
 
         r1 = authenticated_client.post(self.URL, data=payload, format="json")
         assert r1.status_code == 201, r1.content
@@ -140,6 +143,7 @@ class TestNotificationLogCRUD:
 
         # Replay
         payload2 = NotificationLogPayloadFactory(idempotence_token=token)
+        payload2["id"] = new_uuid()  # contrato actual: el serializer exige id
         r2 = authenticated_client.post(self.URL, data=payload2, format="json")
         assert r2.status_code == 200, r2.content
         assert r2.json().get("idempotent") is True
@@ -449,6 +453,7 @@ class TestEmailQueueLogViewSet:
 
     def test_create_genera_uuid_server_side(self, authenticated_client):
         payload = EmailQueueLogPayloadFactory()
+        payload["id"] = new_uuid()  # contrato actual: el serializer exige id
         r = authenticated_client.post(self.URL, data=payload, format="json")
         assert r.status_code == 201, r.content
         assert_uuid_string(r.json()["id"], "id")
@@ -456,6 +461,7 @@ class TestEmailQueueLogViewSet:
     def test_create_idempotente_por_celery_task_id(self, authenticated_client):
         ctid = "celery-task-fixed-12345"
         payload = EmailQueueLogPayloadFactory(celery_task_id=ctid)
+        payload["id"] = new_uuid()  # contrato actual: el serializer exige id
 
         r1 = authenticated_client.post(self.URL, data=payload, format="json")
         assert r1.status_code == 201, r1.content
@@ -463,6 +469,7 @@ class TestEmailQueueLogViewSet:
 
         # Replay con mismo celery_task_id
         payload2 = EmailQueueLogPayloadFactory(celery_task_id=ctid)
+        payload2["id"] = new_uuid()  # contrato actual: el serializer exige id
         r2 = authenticated_client.post(self.URL, data=payload2, format="json")
         assert r2.status_code == 200, r2.content
         assert r2.json().get("idempotent") is True
@@ -471,6 +478,7 @@ class TestEmailQueueLogViewSet:
     def test_create_acepta_notification_id_inexistente(self, authenticated_client):
         """REGLA DE ORO: notification_id es UUID string sin FK enforcement."""
         payload = EmailQueueLogPayloadFactory(notification_id=new_uuid())
+        payload["id"] = new_uuid()  # contrato actual: el serializer exige id
         r = authenticated_client.post(self.URL, data=payload, format="json")
         assert r.status_code == 201, r.content
 

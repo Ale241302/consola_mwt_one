@@ -17,12 +17,12 @@ COBERTURA
 
 3. ExpedienteViewSet.transition
    · POST /api/expedientes/{id}/transition/
-   · Validación contra TransicionCat (409 si no existe en el catálogo)
-   · Validación de documento_id si requiere_documento
+   · Validación FLEXIBLE contra TransicionCat (si la fila no existe en
+     el catálogo, el avance se permite igual — política operativa)
+   · requiere_documento ya NO bloquea (solo telemetría)
    · Idempotencia por idempotence_token (200 + idempotent=True)
    · Update de estado + last_event_at + insert en pipeline.event_log
-   · Acepta_fase_to_inexistente → 409 (no FK enforcement, validación
-     pura por catálogo)
+   · Acepta fase_to fuera de catálogo → 200 (avance dinámico)
 
 4. ExpedienteViewSet.events
    · GET /api/expedientes/{id}/events/
@@ -257,34 +257,46 @@ class TestExpedienteTransition:
         )
         assert r.status_code == 404, r.content
 
-    def test_transition_409_si_no_existe_en_catalogo(
+    def test_transition_avanza_aunque_no_este_en_catalogo(
         self, authenticated_client,
     ):
-        """REGISTRO → CERRADO no está en el catálogo → 409 (no salto)."""
+        """Contrato vigente: la validación contra el catálogo es FLEXIBLE
+        (política operativa documentada en transition()): si la fila no
+        existe en transicion_cat se permite el avance con defaults — ya
+        NO devuelve 409."""
         exp = ExpedienteModelFactory(estado="REGISTRO")
         r = authenticated_client.post(
             self.URL.format(id=str(exp.id)),
             data={"fase_to": "CERRADO"},
             format="json",
         )
-        assert r.status_code == 409, r.content
+        assert r.status_code == 200, r.content
         body = r.json()
-        assert body["current_state"] == "REGISTRO"
-        assert body["requested_state"] == "CERRADO"
+        assert body.get("ok") is True
+        assert body.get("idempotent") is False
 
-    def test_transition_400_si_requiere_documento_y_no_se_pasa(
+        exp.refresh_from_db()
+        assert exp.estado == "CERRADO", (
+            f"El avance dinámico no aplicó el estado: {exp.estado}"
+        )
+
+    def test_transition_sin_documento_requerido_no_bloquea(
         self, authenticated_client, transicion_con_documento,
     ):
-        """Catálogo dice requiere_documento='BL' → 400 sin documento_id."""
+        """Contrato vigente: aunque el catálogo marque requiere_documento,
+        la transición NO se bloquea (antes era 400; hoy solo se loguea
+        telemetría transition.skip_required_doc y avanza igual)."""
         exp = ExpedienteModelFactory(estado="PREPARACION")
         r = authenticated_client.post(
             self.URL.format(id=str(exp.id)),
             data={"fase_to": "DESPACHO"},
             format="json",
         )
-        assert r.status_code == 400, r.content
-        body = r.json()
-        assert body.get("required_doc") == "BL"
+        assert r.status_code == 200, r.content
+        assert r.json().get("ok") is True
+
+        exp.refresh_from_db()
+        assert exp.estado == "DESPACHO"
 
     def test_transition_idempotencia_replay_devuelve_200(
         self, authenticated_client, transicion_registro_to_produccion,

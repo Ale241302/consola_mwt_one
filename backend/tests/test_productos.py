@@ -267,14 +267,15 @@ def test_update_producto_partial_no_pisa_otros_campos(authenticated_client):
 # ═════════════════════════════════════════════════════════════════════
 # 5) ELIMINAR · soft delete (204 + is_active=False)
 # ═════════════════════════════════════════════════════════════════════
-def test_soft_delete_producto_returns_204(authenticated_client):
+def test_hard_delete_producto_returns_204(authenticated_client):
     """
     GIVEN: producto activo.
     WHEN:  DELETE /api/productos/<id>/
     THEN:  · HTTP 204 (sin body)
-           · La fila SIGUE existiendo (no es hard delete)
-           · is_active = False
-           · Subsiguiente GET devuelve 404 (filtro is_active=True)
+           · La fila YA NO existe — HARD DELETE por decisión de producto
+             (ver docstring de ProductoViewSet.destroy: permite reusar el
+             SKU sin chocar con UNIQUE(sku)).
+           · Subsiguiente GET devuelve 404.
     """
     p = ProductoModelFactory()
     url = URL_DETAIL.format(pk=p.id)
@@ -285,33 +286,27 @@ def test_soft_delete_producto_returns_204(authenticated_client):
         f"DELETE devolvió body inesperado: {response.content!r}"
     )
 
-    # La fila persiste (soft delete)
-    assert Producto.objects.filter(pk=p.id).exists(), (
-        "Producto HARD-DELETED — debería ser soft delete (is_active=False)"
-    )
-
-    p.refresh_from_db()
-    assert p.is_active is False, (
-        f"Soft delete no cambió is_active a False (actual: {p.is_active})"
+    # La fila NO persiste (hard delete — contrato vigente)
+    assert not Producto.objects.filter(pk=p.id).exists(), (
+        "Producto sigue en DB tras DELETE — el contrato actual es HARD delete"
     )
 
     # Y ya no aparece en retrieve
     followup = authenticated_client.get(url)
     assert followup.status_code == 404, (
-        f"Producto soft-deleted sigue accesible vía retrieve "
+        f"Producto borrado sigue accesible vía retrieve "
         f"(status={followup.status_code})"
     )
 
 
-def test_soft_deleted_producto_no_aparece_en_listado(authenticated_client):
+def test_deleted_producto_no_aparece_en_listado(authenticated_client):
     """
-    Después de soft-delete, el producto NO debe aparecer en GET /api/productos/.
-    (El listado filtra is_active=True.)
+    Después del HARD delete, el producto NO debe aparecer en GET /api/productos/.
     """
     p = ProductoModelFactory()
     target_id = str(p.id)
 
-    # Soft delete
+    # Hard delete
     del_resp = authenticated_client.delete(URL_DETAIL.format(pk=target_id))
     assert del_resp.status_code == 204
 
@@ -322,6 +317,5 @@ def test_soft_deleted_producto_no_aparece_en_listado(authenticated_client):
     returned_ids = {str(item["id"]) for item in results}
 
     assert target_id not in returned_ids, (
-        f"Producto {target_id} sigue apareciendo en listado tras soft delete.\n"
-        f"  Probable causa: list() no filtra is_active=True."
+        f"Producto {target_id} sigue apareciendo en listado tras el hard delete."
     )

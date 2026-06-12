@@ -179,17 +179,24 @@ class SupplierAuditEvent(models.Model):
                            # CONTACT_CHANGE / STATUS_CHANGE / NOTE / OTHER
     entidad_afectada    = models.CharField(max_length=64, null=True, blank=True)
     entidad_id          = models.UUIDField(null=True, blank=True)   # ⛔ sin FK
-    valor_anterior      = models.TextField(null=True, blank=True)
-    valor_nuevo         = models.TextField(null=True, blank=True)
-    descripcion         = models.TextField(null=True, blank=True)
-    payload_json        = models.JSONField(default=dict, blank=True)
+    campo               = models.CharField(max_length=64, null=True, blank=True)
+    # NAMING FIX (QA): columnas reales = delta_resumen (text) y contexto_json
+    # (jsonb); valor_anterior / valor_nuevo son jsonb (no text) en la DB.
+    # Ningun consumidor de frontend usa /audit_log/, asi que renombramos el
+    # atributo Python al nombre real de la columna en vez de mapear db_column=.
+    valor_anterior      = models.JSONField(null=True, blank=True)
+    valor_nuevo         = models.JSONField(null=True, blank=True)
+    delta_resumen       = models.TextField(null=True, blank=True)
+    contexto_json       = models.JSONField(default=dict, blank=True)
 
     actor_id            = models.UUIDField(null=True, blank=True)   # ⛔ sin FK
     actor_type          = models.CharField(max_length=16, default='USER')
                            # USER / BOT / SYSTEM
+    ip_address          = models.CharField(max_length=64, null=True, blank=True)
 
     is_active           = models.BooleanField(default=True)
     created_at          = models.DateTimeField(auto_now_add=True)
+    updated_at          = models.DateTimeField(auto_now=True)
 
     class Meta:
         managed  = False
@@ -201,21 +208,29 @@ class SupplierImportLog(models.Model):
     """Subida masiva de catálogo de proveedor — 2-step preview/commit."""
     id                = models.UUIDField(primary_key=True)
     proveedor_id      = models.UUIDField()                          # ⛔ sin FK
+    # NAMING FIX (QA): mismo drift que brands.BrandImportLog — columnas reales
+    # rows_total/rows_valid/rows_invalid/rows_inserted/rows_updated + user_id/
+    # committed_by/summary_json. idempotence_token NO existe como columna:
+    # se persiste dentro de summary_json (jsonb) desde upload_catalogo_commit.
     filename          = models.CharField(max_length=255, null=True, blank=True)
-    total_rows        = models.IntegerField(default=0)
-    valid_rows        = models.IntegerField(default=0)
-    invalid_rows      = models.IntegerField(default=0)
+    content_type      = models.CharField(max_length=128, null=True, blank=True)
+    source_url        = models.TextField(null=True, blank=True)
+    rows_total        = models.IntegerField(default=0)
+    rows_valid        = models.IntegerField(default=0)
+    rows_invalid      = models.IntegerField(default=0)
+    rows_inserted     = models.IntegerField(default=0)
+    rows_updated      = models.IntegerField(default=0)
 
     mapping_json      = models.JSONField(default=dict, blank=True)
     preview_json      = models.JSONField(default=list, blank=True)
     errors_json       = models.JSONField(default=list, blank=True)
+    summary_json      = models.JSONField(default=dict, blank=True)
 
     status            = models.CharField(max_length=16, default='VALIDATING')
                          # VALIDATING / VALID / PARTIAL / COMMITTED / REJECTED / FAILED
-    committed_rows    = models.IntegerField(default=0)
-    idempotence_token = models.CharField(max_length=64, null=True, blank=True)
 
-    started_by        = models.UUIDField(null=True, blank=True)     # ⛔ sin FK
+    user_id           = models.UUIDField(null=True, blank=True)     # ⛔ sin FK
+    committed_by      = models.UUIDField(null=True, blank=True)     # ⛔ sin FK
     committed_at      = models.DateTimeField(null=True, blank=True)
     is_active         = models.BooleanField(default=True)
     created_at        = models.DateTimeField(auto_now_add=True)
@@ -297,14 +312,23 @@ class SupplierCertificacion(models.Model):
     """Certificaciones ISO con vencimientos — 51_proveedores_audit.sql."""
     id                = models.UUIDField(primary_key=True)
     proveedor_id      = models.UUIDField()                          # ⛔ sin FK
-    tipo              = models.CharField(max_length=32)
-                         # ISO_9001 / ISO_14001 / ISO_45001 / ISO_20345 / OTHER
-    descripcion       = models.TextField(null=True, blank=True)
-    numero_certif     = models.CharField(max_length=64, null=True, blank=True)
-    fecha_emision     = models.DateField(null=True, blank=True)
-    fecha_vencimiento = models.DateField(null=True, blank=True)
-    alert_dias_antes  = models.IntegerField(default=60)
-    documento_url     = models.CharField(max_length=500, null=True, blank=True)
+    # NAMING FIX (QA): columnas reales = tipo_certificacion / numero_certificado /
+    # archivo_url (+ organismo_certificador / alcance / score / notas). NO existe
+    # `descripcion` en la tabla. El campo `certificaciones` que usa la UI es el
+    # JSONField del Proveedor, no este satelite, asi que renombramos el atributo
+    # Python al nombre real de la columna en vez de mapear con db_column=.
+    tipo_certificacion     = models.CharField(max_length=32)
+                              # ISO_9001 / ISO_14001 / ISO_45001 / ISO_20345 / OTHER
+    numero_certificado     = models.CharField(max_length=64, null=True, blank=True)
+    fecha_emision          = models.DateField(null=True, blank=True)
+    fecha_vencimiento      = models.DateField(null=True, blank=True)
+    organismo_certificador = models.CharField(max_length=128, null=True, blank=True)
+    alcance                = models.TextField(null=True, blank=True)
+    archivo_url            = models.TextField(null=True, blank=True)
+    alert_dias_antes       = models.IntegerField(default=60)
+    score                  = models.DecimalField(max_digits=5, decimal_places=2,
+                                                  null=True, blank=True)
+    notas                  = models.TextField(null=True, blank=True)
 
     is_active         = models.BooleanField(default=True)
     created_at        = models.DateTimeField(auto_now_add=True)

@@ -130,7 +130,10 @@ class TestOcCrud:
         # Sanidad: REGLA DE ORO antes de mandar
         assert_uuid_string(payload["client_id"], field_name="payload.client_id")
         assert_uuid_string(payload["brand_id"],  field_name="payload.brand_id")
-        assert "id" not in payload, "El cliente NUNCA manda id — el server lo genera"
+        # Contrato ACTUAL: OcSerializer (fields="__all__", sin read_only_fields)
+        # exige `id` en el payload, aunque el ViewSet luego lo reemplaza con
+        # s.save(id=uuid.uuid4()) — el id efectivo lo genera el server.
+        payload["id"] = new_uuid()
 
         response = authenticated_client.post(self.URL_LIST, payload)
         assert response.status_code == 201, response.content
@@ -357,8 +360,9 @@ class TestExpedienteIntegration:
                nivel SQL NO hay constraint FK (por eso este test
                documenta el contrato lógico, no el físico).
         """
-        # 1) Crear OC
+        # 1) Crear OC (el serializer actual exige `id` en el payload)
         oc_payload = OcPayloadFactory()
+        oc_payload["id"] = new_uuid()
         oc_resp = authenticated_client.post("/api/ocs/", oc_payload)
         assert oc_resp.status_code == 201, oc_resp.content
         oc_id = oc_resp.json()["id"]

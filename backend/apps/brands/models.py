@@ -1,4 +1,6 @@
 """apps.brands.models — tabla `brands.marca` (SQL puro, Meta.managed=False)."""
+from datetime import date
+
 from django.db import models
 
 
@@ -86,11 +88,20 @@ class BrandDiscountCode(models.Model):
 
     tipo_descuento  = models.CharField(max_length=16, default='PCT')
                         # PCT / FIXED / COMBO
-    valor_pct       = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    valor_fijo_usd  = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    # NAMING FIX (QA): la tabla real brands.brand_discount_code usa
+    # descuento_pct / descuento_monto / moneda / vigencia_inicio / vigencia_fin.
+    # Ningun consumidor de frontend usa aun este endpoint (el Promo Engine del
+    # front es de proveedores.SupplierPromoCode, que si mapea con db_column=),
+    # asi que renombramos el atributo Python al nombre real de la columna:
+    # contrato API = schema SQL.
+    descuento_pct   = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    descuento_monto = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    moneda          = models.CharField(max_length=3, default='USD')
 
-    vigente_desde   = models.DateField(null=True, blank=True)
-    vigente_hasta   = models.DateField(null=True, blank=True)
+    # vigencia_inicio es NOT NULL sin default en la DB — default app-side:
+    # un codigo creado sin fecha explicita queda vigente desde hoy.
+    vigencia_inicio = models.DateField(default=date.today)
+    vigencia_fin    = models.DateField(null=True, blank=True)
 
     max_usos        = models.IntegerField(null=True, blank=True)
     usos_actuales   = models.IntegerField(default=0)
@@ -115,21 +126,32 @@ class BrandImportLog(models.Model):
     """Subidas masivas de productos — 2-step preview/commit."""
     id                = models.UUIDField(primary_key=True)
     marca_id          = models.UUIDField()                          # ⛔ sin FK
+    # NAMING FIX (QA): columnas reales = rows_total/rows_valid/rows_invalid/
+    # rows_inserted/rows_updated + user_id/committed_by/summary_json.
+    # NO existe idempotence_token en la tabla: el token se persiste dentro de
+    # summary_json (jsonb) desde views.upload_productos_commit. El frontend
+    # (ProductMassiveUpload.jsx) solo consume las keys de la respuesta del view
+    # (total/valid/invalid/committed_rows), no los nombres del modelo, asi que
+    # renombramos al nombre real de la DB.
     filename          = models.CharField(max_length=255, null=True, blank=True)
-    total_rows        = models.IntegerField(default=0)
-    valid_rows        = models.IntegerField(default=0)
-    invalid_rows      = models.IntegerField(default=0)
+    content_type      = models.CharField(max_length=128, null=True, blank=True)
+    source_url        = models.TextField(null=True, blank=True)
+    rows_total        = models.IntegerField(default=0)
+    rows_valid        = models.IntegerField(default=0)
+    rows_invalid      = models.IntegerField(default=0)
+    rows_inserted     = models.IntegerField(default=0)
+    rows_updated      = models.IntegerField(default=0)
 
     mapping_json      = models.JSONField(default=dict, blank=True)
     preview_json      = models.JSONField(default=list, blank=True)
     errors_json       = models.JSONField(default=list, blank=True)
+    summary_json      = models.JSONField(default=dict, blank=True)
 
     status            = models.CharField(max_length=16, default='VALIDATING')
                          # VALIDATING / VALID / PARTIAL / COMMITTED / REJECTED / FAILED
-    committed_rows    = models.IntegerField(default=0)
-    idempotence_token = models.CharField(max_length=64, null=True, blank=True)
 
-    started_by        = models.UUIDField(null=True, blank=True)     # ⛔ sin FK
+    user_id           = models.UUIDField(null=True, blank=True)     # ⛔ sin FK
+    committed_by      = models.UUIDField(null=True, blank=True)     # ⛔ sin FK
     committed_at      = models.DateTimeField(null=True, blank=True)
     is_active         = models.BooleanField(default=True)
     created_at        = models.DateTimeField(auto_now_add=True)

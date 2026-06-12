@@ -22,7 +22,7 @@ class CobroSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Cobro
         fields = "__all__"
-        read_only_fields = ("monto_pendiente",)
+        read_only_fields = ("id", "monto_pendiente")  # id server-side (Fable5-QA)
 
 
 class PagoListSerializer(serializers.ModelSerializer):
@@ -45,35 +45,39 @@ class PagoSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Pago
         fields = "__all__"
-        read_only_fields = ("monto_neto_usd",)
+        read_only_fields = ("id", "monto_neto_usd")  # id server-side (Fable5-QA)
 
 
 class ConciliacionSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Conciliacion
         fields = "__all__"
+        read_only_fields = ("id",)  # id server-side (Fable5-QA)
 
 
 class VencimientoSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Vencimiento
         fields = "__all__"
-        read_only_fields = ("monto_pendiente_usd",)
+        read_only_fields = ("id", "monto_pendiente_usd")  # id server-side (Fable5-QA)
 
 
 class WithholdingLogSerializer(serializers.ModelSerializer):
     class Meta:
         model  = WithholdingLog
         fields = "__all__"
+        read_only_fields = ("id",)  # id server-side (Fable5-QA)
 
 
 class FxRateHistorySerializer(serializers.ModelSerializer):
     class Meta:
         model  = FxRateHistory
         fields = "__all__"
+        read_only_fields = ("id",)  # id server-side (Fable5-QA)
 
 
 class CollectionEventSerializer(serializers.ModelSerializer):
     class Meta:
         model  = CollectionEvent
         fields = "__all__"
+        read_only_fields = ("id",)  # id server-side (Fable5-QA)

@@ -1,0 +1,7 @@
+# MWT.ONE · backend/requirements-dev.txt — dependencias SOLO de QA/tests
+# (no se instalan en la imagen de producción)
+# Uso:  pip install -r requirements.txt -r requirements-dev.txt
+pytest==8.*
+pytest-django==4.*
+factory_boy==3.*
+requests==2.32.3

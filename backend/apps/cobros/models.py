@@ -20,6 +20,8 @@ BLOQUE 3 añade:
 =====================================================================
 """
 from django.db import models
+from django.db.models import F, Value
+from django.db.models.functions import Coalesce, Greatest
 
 
 # ── Catálogos ────────────────────────────────────────────────
@@ -95,7 +97,11 @@ class Cobro(models.Model):
     moneda            = models.CharField(max_length=3, default="USD")
     monto_total       = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     monto_pagado      = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    monto_pendiente   = models.DecimalField(max_digits=14, decimal_places=2, default=0)  # generada
+    # Fable5-QA 2026-06-11: GENERATED ALWAYS en la DB — el ORM no debe
+    # escribirla (antes: 500 GeneratedAlways en todo POST/PATCH).
+    monto_pendiente   = models.GeneratedField(
+        expression=Greatest(F("monto_total") - F("monto_pagado"), Value(0)),
+        output_field=models.DecimalField(max_digits=14, decimal_places=2), db_persist=True)
     fecha_vencimiento = models.DateField(null=True, blank=True)
     dias_credito      = models.IntegerField(default=0)
     estado            = models.CharField(max_length=32, default="PENDIENTE")
@@ -155,7 +161,10 @@ class Pago(models.Model):
     fx_rate_date      = models.DateField(null=True, blank=True)
     withholding_usd   = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     fees_bank_usd     = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    monto_neto_usd    = models.DecimalField(max_digits=14, decimal_places=2, default=0)  # generada
+    monto_neto_usd    = models.GeneratedField(  # GENERATED ALWAYS (Fable5-QA)
+        expression=F("monto_usd") - Coalesce(F("withholding_usd"), Value(0))
+                   - Coalesce(F("fees_bank_usd"), Value(0)),
+        output_field=models.DecimalField(max_digits=14, decimal_places=2), db_persist=True)
 
     is_active          = models.BooleanField(default=True)
     created_at         = models.DateTimeField(auto_now_add=True)
@@ -200,7 +209,9 @@ class Vencimiento(models.Model):
     monto_usd           = models.DecimalField(max_digits=14, decimal_places=2)
     fecha_vencimiento   = models.DateField()
     monto_pagado_usd    = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    monto_pendiente_usd = models.DecimalField(max_digits=14, decimal_places=2, default=0)  # generada
+    monto_pendiente_usd = models.GeneratedField(  # GENERATED ALWAYS (Fable5-QA)
+        expression=F("monto_usd") - Coalesce(F("monto_pagado_usd"), Value(0)),
+        output_field=models.DecimalField(max_digits=14, decimal_places=2), db_persist=True)
     dias_mora           = models.IntegerField(default=0)
     estado              = models.CharField(max_length=16, default="PENDIENTE")
     notas               = models.TextField(null=True, blank=True)

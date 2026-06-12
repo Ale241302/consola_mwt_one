@@ -511,14 +511,24 @@ class MovimientoViewSet(viewsets.ViewSet):
 
     @staticmethod
     def _aplicar_delta(nodo_id, producto_id, lote, delta):
-        """UPSERT en inventario.stock por (nodo, producto, lote)."""
+        """UPSERT en inventario.stock por (nodo, producto, lote, size-coalesced).
+
+        Fable5-QA 2026-06-11: el unique index vigente es
+        uq_stock_nodo_producto_lote_size (nodo_id, producto_id, lote,
+        COALESCE(size, '')). El conflict target debe espejar EXACTAMENTE esa
+        expresion; con solo (nodo_id, producto_id, lote) Postgres no infiere
+        el indice y todo movimiento devolvia 400 "no unique or exclusion
+        constraint matching the ON CONFLICT specification". Este INSERT no
+        envia size (queda NULL), asi que el delta de un movimiento sin size
+        acumula sobre la fila cuyo COALESCE(size,'') = '' (NULL o '').
+        """
         with connection.cursor() as c:
             c.execute("""
                 INSERT INTO inventario.stock
                     (id, nodo_id, producto_id, lote,
                      cantidad_disponible, last_movement_at)
                 VALUES (gen_random_uuid(), %s, %s, %s, %s, NOW())
-                ON CONFLICT (nodo_id, producto_id, lote)
+                ON CONFLICT (nodo_id, producto_id, lote, COALESCE(size, ''))
                 DO UPDATE SET
                     cantidad_disponible = inventario.stock.cantidad_disponible + EXCLUDED.cantidad_disponible,
                     last_movement_at    = NOW(),

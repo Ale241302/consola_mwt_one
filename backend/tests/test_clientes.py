@@ -163,30 +163,35 @@ def test_create_cliente_acepta_nodo_id_inexistente(authenticated_client):
 
 
 # ═════════════════════════════════════════════════════════════════════
-# 3b) ERRORES · payload incompleto → 400
+# 3b) CAMPOS OPCIONALES · payload incompleto → 201 (contrato vigente)
 # ═════════════════════════════════════════════════════════════════════
-def test_create_cliente_sin_razon_social_devuelve_400(authenticated_client):
-    """razon_social es obligatorio (max_length=200, no null) → 400."""
+def test_create_cliente_sin_razon_social_devuelve_201(authenticated_client):
+    """
+    Contrato vigente (ClienteSerializer): razon_social es OPCIONAL.
+    Filosofía MWT: "si el form no se lo pide al humano, BD/API no lo exigen".
+    """
     payload = ClientePayloadFactory()
     payload.pop("razon_social", None)
 
     response = authenticated_client.post(URL_LIST, payload)
-    assert response.status_code == 400, (
-        f"Esperado 400 por falta de razon_social, recibido {response.status_code}.\n"
+    assert response.status_code == 201, (
+        f"Esperado 201 (razon_social es opcional), recibido {response.status_code}.\n"
         f"  body: {response.content[:300]!r}"
     )
     body = response.json()
-    assert "razon_social" in body, f"El error debe nombrar razon_social. body={body}"
+    assert body.get("razon_social") in (None, ""), (
+        f"razon_social omitido debe quedar null/vacío. body={body.get('razon_social')!r}"
+    )
 
 
-def test_create_cliente_sin_tax_id_devuelve_400(authenticated_client):
-    """tax_id es obligatorio → 400."""
+def test_create_cliente_sin_tax_id_devuelve_201(authenticated_client):
+    """Contrato vigente: tax_id también es opcional → 201."""
     payload = ClientePayloadFactory()
     payload.pop("tax_id", None)
 
     response = authenticated_client.post(URL_LIST, payload)
-    assert response.status_code == 400, (
-        f"Esperado 400 por falta de tax_id, recibido {response.status_code}"
+    assert response.status_code == 201, (
+        f"Esperado 201 (tax_id es opcional), recibido {response.status_code}"
     )
 
 

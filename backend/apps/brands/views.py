@@ -1,5 +1,6 @@
 import uuid
 from django.db import connection, transaction
+from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -334,20 +335,20 @@ class MarcaViewSet(viewsets.ViewSet):
             id             = uuid.uuid4(),
             marca_id       = pk,
             filename       = filename[:255],
-            total_rows     = len(rows),
-            valid_rows     = len(valid_rows),
-            invalid_rows   = len(rows) - len(valid_rows),
+            rows_total     = len(rows),
+            rows_valid     = len(valid_rows),
+            rows_invalid   = len(rows) - len(valid_rows),
             mapping_json   = mapping,
             preview_json   = valid_rows[:50],   # muestra primeros 50
             errors_json    = errors[:200],      # tope defensivo
             status         = "VALID" if not errors else ("PARTIAL" if valid_rows else "REJECTED"),
-            started_by     = getattr(request.user, "id", None),
+            user_id        = getattr(request.user, "id", None),
         )
         return Response({
             "import_id":    str(log.id),
-            "total":        log.total_rows,
-            "valid":        log.valid_rows,
-            "invalid":      log.invalid_rows,
+            "total":        log.rows_total,
+            "valid":        log.rows_valid,
+            "invalid":      log.rows_invalid,
             "status":       log.status,
             "errors":       errors[:200],
             "preview":      valid_rows[:50],
@@ -370,11 +371,12 @@ class MarcaViewSet(viewsets.ViewSet):
             return Response({"detail": "Import no existe"}, status=404)
 
         # Idempotencia: si ya fue committed con mismo token, devolvemos estado.
-        if log.status == "COMMITTED" and log.idempotence_token == idem_token:
+        if (log.status == "COMMITTED"
+                and (log.summary_json or {}).get("idempotence_token") == idem_token):
             return Response({
                 "import_id":      str(log.id),
                 "status":         log.status,
-                "committed_rows": log.committed_rows,
+                "committed_rows": log.rows_inserted,
                 "idempotent":     True,
             })
 
@@ -400,10 +402,14 @@ class MarcaViewSet(viewsets.ViewSet):
                         # No abortamos todo el lote — registramos a nivel de status.
                         continue
 
-            log.committed_rows    = inserted
-            log.status            = "COMMITTED"
-            log.idempotence_token = idem_token
-            log.save(update_fields=["committed_rows", "status", "idempotence_token", "updated_at"])
+            log.rows_inserted = inserted
+            log.status        = "COMMITTED"
+            # idempotence_token no existe como columna — vive en summary_json (jsonb)
+            log.summary_json  = {**(log.summary_json or {}), "idempotence_token": idem_token}
+            log.committed_at  = timezone.now()
+            log.committed_by  = getattr(request.user, "id", None)
+            log.save(update_fields=["rows_inserted", "status", "summary_json",
+                                    "committed_at", "committed_by", "updated_at"])
 
         return Response({
             "import_id":      str(log.id),

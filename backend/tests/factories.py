@@ -475,8 +475,8 @@ class BrandDiscountCodePayloadFactory(factory.DictFactory):
     codigo         = factory.Sequence(lambda n: f"PROMO-{n:05d}")
     descripcion    = "Descuento de prueba — suite QA"
     tipo_descuento = "PCT"
-    valor_pct      = "10.00"
-    valor_fijo_usd = "0.00"
+    descuento_pct   = "10.00"
+    descuento_monto = "0.00"
     max_usos       = 100
     scope          = "GLOBAL"
     scope_ids      = factory.LazyFunction(list)
@@ -492,7 +492,7 @@ class BrandDiscountCodeModelFactory(factory.django.DjangoModelFactory):
     codigo          = factory.Sequence(lambda n: f"PROMO-SEED-{n:05d}")
     descripcion     = "Promo seedeada"
     tipo_descuento  = "PCT"
-    valor_pct       = "5.00"
+    descuento_pct   = "5.00"
     scope           = "GLOBAL"
     is_active       = True
 
@@ -561,13 +561,13 @@ class ProveedorModelFactory(factory.django.DjangoModelFactory):
 # ═════════════════════════════════════════════════════════════════════
 class SupplierCertificacionPayloadFactory(factory.DictFactory):
     """POST /api/proveedores/{id}/certificaciones/. proveedor_id lo inyecta el viewset."""
-    tipo              = "ISO_9001"
-    descripcion       = "Sistema de gestión de calidad"
-    numero_certif     = factory.Sequence(lambda n: f"CERT-{n:06d}")
+    tipo_certificacion = "ISO_9001"
+    alcance            = "Sistema de gestión de calidad"
+    numero_certificado = factory.Sequence(lambda n: f"CERT-{n:06d}")
     fecha_emision     = LazyFunction(lambda: date(2024, 1, 15).isoformat())
     fecha_vencimiento = LazyFunction(lambda: date(2027, 1, 15).isoformat())
     alert_dias_antes  = 60
-    documento_url     = "https://docs.test.local/cert.pdf"
+    archivo_url        = "https://docs.test.local/cert.pdf"
 
 
 class SupplierCertificacionModelFactory(factory.django.DjangoModelFactory):
@@ -576,8 +576,8 @@ class SupplierCertificacionModelFactory(factory.django.DjangoModelFactory):
 
     id                = LazyFunction(lambda: uuid.uuid4())
     proveedor_id      = LazyFunction(lambda: uuid.uuid4())
-    tipo              = "ISO_9001"
-    numero_certif     = factory.Sequence(lambda n: f"CERT-SEED-{n:06d}")
+    tipo_certificacion = "ISO_9001"
+    numero_certificado = factory.Sequence(lambda n: f"CERT-SEED-{n:06d}")
     fecha_emision     = LazyFunction(lambda: date(2024, 1, 15))
     fecha_vencimiento = LazyFunction(lambda: date(2027, 1, 15))
     alert_dias_antes  = 60
@@ -672,6 +672,9 @@ class StockPayloadFactory(factory.DictFactory):
       nodo_id, producto_id, cantidad_disponible.
     UUIDs cruzados sin FK.
     """
+    # Contrato vigente: StockSerializer (fields="__all__", sin read_only_fields)
+    # exige `id` en el POST; la vista luego lo regenera server-side.
+    id                   = LazyFunction(lambda: str(uuid.uuid4()))
     nodo_id              = LazyFunction(fake_nodo_id)
     producto_id          = LazyFunction(fake_producto_id)
     lote                 = factory.Sequence(lambda n: f"LOTE-{n:05d}")
@@ -711,6 +714,9 @@ class MovimientoPayloadFactory(factory.DictFactory):
     Para ENTRADA: nodo_destino_id; para SALIDA: nodo_origen_id;
     para TRANSFER: ambos.
     """
+    # Contrato vigente: MovimientoSerializer exige `id` en el POST
+    # (la vista lo regenera server-side con s.save(id=uuid.uuid4())).
+    id                 = LazyFunction(lambda: str(uuid.uuid4()))
     tipo               = "ENTRADA"
     motivo             = "RECEPCION_OC"
     producto_id        = LazyFunction(fake_producto_id)
@@ -1414,7 +1420,13 @@ class EmailQueueLogModelFactory(factory.django.DjangoModelFactory):
 # BLOQUE 4 · PIPELINE — TransicionCat + EventLog
 # ═════════════════════════════════════════════════════════════════════
 class TransicionCatModelFactory(factory.django.DjangoModelFactory):
-    """Seed de transiciones permitidas (motor de fases)."""
+    """Seed de transiciones permitidas (motor de fases).
+
+    UPSERT por (fase_from, fase_to): la DB ya viene sembrada con el
+    catálogo canónico (UNIQUE fase_from+fase_to), así que si la fila
+    existe la actualizamos en vez de insertar (el rollback transaccional
+    de la suite restaura los valores originales al terminar el test).
+    """
     class Meta:
         model = TransicionCat
 
@@ -1425,6 +1437,20 @@ class TransicionCatModelFactory(factory.django.DjangoModelFactory):
     is_rollback  = False
     orden        = 100
     is_active    = True
+
+    @classmethod
+    def _create(cls, model_class, *args, **kwargs):
+        existing = model_class.objects.filter(
+            fase_from=kwargs.get("fase_from"),
+            fase_to=kwargs.get("fase_to"),
+        ).first()
+        if existing is not None:
+            for k, v in kwargs.items():
+                if k != "id":
+                    setattr(existing, k, v)
+            existing.save()
+            return existing
+        return super()._create(model_class, *args, **kwargs)
 
 
 class EventLogModelFactory(factory.django.DjangoModelFactory):

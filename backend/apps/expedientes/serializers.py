@@ -207,6 +207,12 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
 
     # ── legacy proforma_codigo (string único, el más reciente) ─
     def get_proforma_codigo(self, obj):
+        # R3 (POL_VISIBILIDAD): el codigo de proforma es CEO/ADMIN-only.
+        # Fix Fable5-QA 2026-06-11: este campo legacy no tenia el gate
+        # _is_client() que si tienen proforma_codigos[]/sap_codigos[] —
+        # el codigo llegaba al rol cliente en el listado (leak R3).
+        if self._is_client():
+            return None
         # Fable5 · atajo batch (un query para todo el listado).
         pre = (self.context or {}).get("batch_proformas")
         if pre is not None:

@@ -99,6 +99,7 @@ class TestTemplateCRUD:
 
     def test_create_genera_uuid_server_side(self, authenticated_client):
         payload = EmailTemplatePayloadFactory()
+        payload["id"] = new_uuid()  # contrato actual: el serializer exige id (el server luego lo regenera)
         r = authenticated_client.post(self.URL, data=payload, format="json")
         assert r.status_code == 201, r.content
         body = r.json()
@@ -106,6 +107,7 @@ class TestTemplateCRUD:
 
     def test_create_default_status_DRAFT(self, authenticated_client):
         payload = EmailTemplatePayloadFactory()
+        payload["id"] = new_uuid()
         payload.pop("status", None)  # eliminar para validar default
         r = authenticated_client.post(self.URL, data=payload, format="json")
         assert r.status_code == 201, r.content
@@ -114,6 +116,7 @@ class TestTemplateCRUD:
     def test_create_idempotente_por_token(self, authenticated_client):
         token = new_uuid()
         payload = EmailTemplatePayloadFactory(idempotence_token=token)
+        payload["id"] = new_uuid()
 
         r1 = authenticated_client.post(self.URL, data=payload, format="json")
         assert r1.status_code == 201, r1.content
@@ -121,6 +124,7 @@ class TestTemplateCRUD:
 
         # Replay: mismo token → 200 con flag idempotent
         payload2 = EmailTemplatePayloadFactory(idempotence_token=token)
+        payload2["id"] = new_uuid()
         r2 = authenticated_client.post(self.URL, data=payload2, format="json")
         assert r2.status_code == 200, r2.content
         assert r2.json().get("idempotent") is True
@@ -129,6 +133,7 @@ class TestTemplateCRUD:
     def test_create_acepta_brand_id_inexistente(self, authenticated_client):
         """REGLA DE ORO: brand_id es UUID string sin FK enforcement."""
         payload = EmailTemplatePayloadFactory(brand_id=new_uuid())
+        payload["id"] = new_uuid()
         r = authenticated_client.post(self.URL, data=payload, format="json")
         assert r.status_code == 201, r.content
 
@@ -450,6 +455,7 @@ class TestVersionViewSet:
     def test_create_acepta_template_id_inexistente(self, authenticated_client):
         """REGLA DE ORO: template_id es UUID string sin FK enforcement."""
         payload = {
+            "id":               new_uuid(),  # contrato actual: el serializer exige id (el server luego lo regenera)
             "template_id":      new_uuid(),
             "subject_template": "Subject post",
             "body_template":    "Body post",

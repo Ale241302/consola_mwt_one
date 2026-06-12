@@ -57,7 +57,7 @@ from tests.factories import (
     fake_nodo_id,
 )
 
-pytestmark = [pytest.mark.transfers, pytest.mark.crud]
+pytestmark = [pytest.mark.transferencias, pytest.mark.crud]
 
 
 URL_TR_LIST     = "/api/transferencias/"
@@ -200,6 +200,9 @@ class TestTransferenciaCrud:
     # ─────────────────────────────────────────────────────────────
     def test_update_transferencia_changes_updated_at(self, authenticated_client):
         t = TransferenciaModelFactory(notes="Original")
+        # refresh: la columna updated_at es timestamp sin tz en DB — comparar
+        # naive vs naive (el valor in-memory de auto_now es aware).
+        t.refresh_from_db()
         original_updated_at = t.updated_at
 
         time.sleep(0.05)

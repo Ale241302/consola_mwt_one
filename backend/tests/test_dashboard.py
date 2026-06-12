@@ -329,13 +329,14 @@ class TestWidgetCat:
         assert r.status_code == 405
 
     def test_update_widget_no_permitido(self, authenticated_client):
-        w = WidgetCatModelFactory.create()
+        # NOTA: el lookup del router DRF es `[^/.]+` — un codigo con puntos
+        # (ej. "widget.test.0001") NI SIQUIERA resuelve la URL (404).
+        # Usamos un slug sin puntos para verificar el 405 del ReadOnlyModelViewSet.
         r = authenticated_client.patch(
-            f"{self.URL}{w.codigo}/", data={"label": "Otra"}, format="json"
+            f"{self.URL}qa-widget-slug/", data={"label": "Otra"}, format="json"
         )
         assert r.status_code == 405
 
     def test_delete_widget_no_permitido(self, authenticated_client):
-        w = WidgetCatModelFactory.create()
-        r = authenticated_client.delete(f"{self.URL}{w.codigo}/")
+        r = authenticated_client.delete(f"{self.URL}qa-widget-slug/")
         assert r.status_code == 405

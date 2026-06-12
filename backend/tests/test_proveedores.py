@@ -153,13 +153,16 @@ def test_create_proveedor_with_cross_uuid_y_score(authenticated_client):
 # ═════════════════════════════════════════════════════════════════════
 # 3b) ERRORES · payload incompleto → 400
 # ═════════════════════════════════════════════════════════════════════
-def test_create_proveedor_sin_razon_social_devuelve_400(authenticated_client):
+def test_create_proveedor_sin_razon_social_devuelve_201(authenticated_client):
+    """
+    Contrato vigente: razon_social es OPCIONAL en el serializer de proveedores
+    (filosofía MWT: el form no lo exige, la API tampoco) → 201.
+    """
     payload = ProveedorPayloadFactory()
     payload.pop("razon_social", None)
 
     response = authenticated_client.post(URL_LIST, payload)
-    assert response.status_code == 400, response.content
-    assert "razon_social" in response.json()
+    assert response.status_code == 201, response.content
 
 
 def test_create_proveedor_codigo_duplicado_devuelve_400(authenticated_client):
@@ -313,7 +316,6 @@ class TestProveedorCertificaciones:
 
     def _url(self, pid):
         return f"/api/proveedores/{pid}/certificaciones/"
-
     def test_list_certificaciones_vacio(self, authenticated_client):
         p = ProveedorModelFactory()
         response = authenticated_client.get(self._url(p.id))
@@ -323,7 +325,6 @@ class TestProveedorCertificaciones:
             assert body.get("results", []) == []
         else:
             assert body == []
-
     def test_create_certificacion_proveedor_devuelve_201(self, authenticated_client):
         p = ProveedorModelFactory()
         payload = SupplierCertificacionPayloadFactory()
@@ -335,25 +336,24 @@ class TestProveedorCertificaciones:
         assert_uuid_string(body["id"],           field_name="cert.id")
         assert_uuid_string(body["proveedor_id"], field_name="cert.proveedor_id")
         assert str(body["proveedor_id"]) == str(p.id)
-        assert body["tipo"]          == payload["tipo"]
-        assert body["numero_certif"] == payload["numero_certif"]
+        assert body["tipo_certificacion"] == payload["tipo_certificacion"]
+        assert body["numero_certificado"] == payload["numero_certificado"]
 
         assert SupplierCertificacion.objects.filter(
             pk=body["id"], proveedor_id=p.id, is_active=True
         ).exists()
-
     def test_create_multiple_certificaciones_y_listar(self, authenticated_client):
         """Un proveedor puede tener varias certs (ISO 9001, 14001, 45001)."""
         p = ProveedorModelFactory()
         for tipo in ("ISO_9001", "ISO_14001", "ISO_45001"):
-            payload = SupplierCertificacionPayloadFactory(tipo=tipo)
+            payload = SupplierCertificacionPayloadFactory(tipo_certificacion=tipo)
             r = authenticated_client.post(self._url(p.id), payload)
             assert r.status_code == 201, r.content
 
         list_resp = authenticated_client.get(self._url(p.id))
         assert list_resp.status_code == 200
         results = extract_results(list_resp.json())
-        tipos = {item["tipo"] for item in results}
+        tipos = {item["tipo_certificacion"] for item in results}
         assert tipos == {"ISO_9001", "ISO_14001", "ISO_45001"}
 
 
@@ -374,7 +374,7 @@ def test_audit_log_proveedor_append_y_listar(authenticated_client):
         "entidad_afectada": "producto.precio_usd",
         "valor_anterior":   "29.90",
         "valor_nuevo":      "32.50",
-        "descripcion":      "Ajuste de precio por inflación",
+        "delta_resumen":    "Ajuste de precio por inflación",
         "actor_type":       "USER",
     }
 

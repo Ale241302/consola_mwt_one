@@ -24,6 +24,7 @@ from django.db import connection, transaction, IntegrityError, DataError
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 
 log = logging.getLogger(__name__)
@@ -573,6 +574,13 @@ class TransferenciaViewSet(viewsets.ViewSet):
         except (IntegrityError, DataError) as e:
             log.warning("[transferencia.create] DB error payload=%s : %s", dict(data), e)
             return Response({"detail": str(e)}, status=400)
+        # Fable5-QA 2026-06-11: la ValidationError de DRF (p.ej. codigo
+        # duplicado) debe PROPAGAR para que el exception handler la convierta
+        # en 400 con el detalle de validacion; el catch-all generico la
+        # tragaba y devolvia 500. Solo errores genuinamente inesperados
+        # quedan en el except Exception con log.exception estructurado.
+        except DRFValidationError:
+            raise
         except Exception as e:
             log.exception("[transferencia.create] unexpected error payload=%s", dict(data))
             return Response(
@@ -1634,12 +1642,11 @@ class TransferenciaViewSet(viewsets.ViewSet):
         except Transferencia.DoesNotExist:
             return Response({"detail": "Transferencia no existe"}, status=404)
 
-        if not _validate_transition(t.estado, nuevo_estado, t.legal_context):
-            return Response(
-                {"detail": f"Transición ilegal: {t.estado} → {nuevo_estado}"},
-                status=400,
-            )
-
+        # Fable5-QA 2026-06-11: el chequeo de idempotence_token debe correr
+        # ANTES de _validate_transition. En un retry con el mismo token el
+        # estado ya cambio (p.ej. APPROVED) y la validacion devolvia 400
+        # "Transicion ilegal: APPROVED → APPROVED", dejando muerto el 200
+        # idempotente que este mismo metodo implementa.
         body = request.data or {}
         token = body.get("idempotence_token")
         if token:
@@ -1648,6 +1655,12 @@ class TransferenciaViewSet(viewsets.ViewSet):
             if prev:
                 t.refresh_from_db()
                 return Response(TransferenciaSerializer(t).data, status=200)
+
+        if not _validate_transition(t.estado, nuevo_estado, t.legal_context):
+            return Response(
+                {"detail": f"Transición ilegal: {t.estado} → {nuevo_estado}"},
+                status=400,
+            )
 
         prev_estado = t.estado
         with transaction.atomic():
