@@ -1134,9 +1134,19 @@ export default function ScreenExpedientes() {
                         </span>
                       </div>
                       <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap', marginTop: 4 }}>
-                        {members.map(m => (
+                        {/* Fable5-QA 2026-06-12 · R3: los chips de miembros
+                            mostraban el codigo interno EXP- a TODOS los roles.
+                            Identificacion por rol (spec de la fusion):
+                            ADMIN/CEO -> numero de proforma (o SAP); CLIENT ->
+                            su numero de PO. Sin valor -> el chip no se pinta;
+                            duplicados (PO compartida) se deduplican. */}
+                        {Array.from(new Set(members.map(m => (
+                          isAdmin
+                            ? ((m.proforma_codigos || [])[0] || m.proforma || m.sap || '')
+                            : ((m.oc_codigos || [])[0] || '')
+                        )).filter(Boolean))).map(tag => (
                           <span
-                            key={m.id}
+                            key={tag}
                             style={{
                               fontFamily: 'JetBrains Mono, monospace', fontSize: 11,
                               padding: '2px 8px', borderRadius: 6,
@@ -1144,7 +1154,7 @@ export default function ScreenExpedientes() {
                               border: '1px solid var(--border-subtle)',
                             }}
                           >
-                            {m.ref}
+                            {tag}
                           </span>
                         ))}
                         {isAdmin && (
