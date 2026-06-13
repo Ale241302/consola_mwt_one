@@ -87,6 +87,10 @@ function screenFromPath(pathname) {
   if (pathname.startsWith('/nodos')) return 'nodos';
   if (pathname.startsWith('/clientes')) return 'clientes';
   if (pathname.startsWith('/marcas')) return 'brands';
+  // Sub-motores del catálogo de Productos: mantienen 'Productos' activo
+  // en la sidebar (antes caían al fallback 'dashboard').
+  if (pathname.startsWith('/tallas')) return 'productos';
+  if (pathname.startsWith('/ncm')) return 'productos';
   if (pathname.startsWith('/productos')) return 'productos';
   if (pathname.startsWith('/proveedores')) return 'suppliers';
   if (pathname.startsWith('/inventario')) return 'inventario';

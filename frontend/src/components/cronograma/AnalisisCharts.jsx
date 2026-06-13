@@ -2,20 +2,21 @@
 // AnalisisCharts — Tab "Análisis" del Cronograma (React)
 // Sprint 2026-06-13 · Agente responsable: [AG-03 FRONTEND]
 //
-// Gráficos dependency-free (SVG puro, sin librerías externas — coherente
-// con GanttChart) sobre el dataset ya cargado de /cronograma:
-//   1. TALLAS  — pares pedidos por talla, desglose por SKU (apilado) o
-//                invertido (por SKU, sus tallas). Filtro de SKU.
-//   2. SKU × MÉTODO — comporta de UN SKU en Aéreo vs Marítimo: pares
-//                totales, nº de expedientes y días promedio por fase.
-//   3. USD → BRL — serie histórica (Frankfurter/ECB) en línea/área +
-//                medidor de hoy + campana de Gauss (histograma + normal).
+// Gráficos dependency-free (SVG puro, sin librerías externas):
+//   1. TALLAS  — pares por talla (apilado por SKU) o por SKU (apilado por
+//                talla, coloreado por escala de talla). SKU + nombre de
+//                producto + tooltip con desglose por expediente.
+//   2. SKU × MÉTODO — multi-selección de SKU (Todos / comparar varios):
+//                pares, nº de expedientes y días promedio por fase en
+//                Aéreo vs Marítimo (Aéreo incluye "aéreo supuesto").
+//   3. USD → BRL — serie histórica (Frankfurter/ECB) con hover por punto +
+//                medidor de hoy + campana de Gauss con hover por rango.
 //
-// R3 POL_VISIBILIDAD: en vista Cliente la cartera USD usa precio cliente;
-// admin/CEO usa precio MWT. R5: tabular-nums en toda métrica.
+// R3 POL_VISIBILIDAD: vista Cliente → desglose por OC/PO y precio cliente;
+// admin/CEO → proforma y precio MWT. R5: tabular-nums en toda métrica.
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { STAGES, STAGE_LABELS, STAGE_COLORS, itemPhaseDur } from "../../lib/cronogramaData.js";
+import { STAGES, STAGE_LABELS, itemPhaseDur } from "../../lib/cronogramaData.js";
 import { fxApi } from "../../lib/api.js";
 
 const NAVY = "#013A57";
@@ -35,6 +36,24 @@ const colorForSku = (sku, list) => {
   return SKU_PALETTE[i % SKU_PALETTE.length];
 };
 
+// Escala secuencial (clara → oscura) para distinguir TALLAS dentro de un
+// mismo SKU en el modo "Por SKU".
+const SIZE_SCALE = ["#CDE7E3", "#A9D6D0", "#7FC2BC", "#4FA8A6", "#2E8B8C", "#1C6E78", "#0B5063", "#013A57"];
+const colorForSize = (size, sortedSizes) => {
+  const i = sortedSizes.indexOf(size);
+  if (i < 0 || sortedSizes.length <= 1) return "#0B7E8F";
+  const t = i / (sortedSizes.length - 1);
+  return SIZE_SCALE[Math.round(t * (SIZE_SCALE.length - 1))];
+};
+
+// Color de texto legible sobre un fondo hex.
+function textOn(bg) {
+  const h = String(bg || "").replace("#", "");
+  if (h.length < 6) return "#fff";
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.62 ? "#0B1E3A" : "#fff";
+}
+
 const qtyOf = (l) => Number(l.qty_planned != null ? l.qty_planned : l.qty) || 0;
 
 // Orden natural de tallas: numéricas primero (asc), luego alfabéticas.
@@ -47,6 +66,19 @@ function sortSizes(sizes) {
     if (bNum) return 1;
     return String(a).localeCompare(String(b));
   });
+}
+
+// Mapa sku -> nombre de producto, compartido por las sub-vistas.
+function useSkuMeta(items) {
+  return useMemo(() => {
+    const s = new Set(); const nm = new Map();
+    items.forEach((it) => (it.lineas || []).forEach((l) => {
+      if (!l.sku) return;
+      s.add(l.sku);
+      if (l.product_label && !nm.has(l.sku)) nm.set(l.sku, l.product_label);
+    }));
+    return { skuList: Array.from(s).sort((a, b) => a.localeCompare(b)), nameBySku: nm };
+  }, [items]);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -80,7 +112,7 @@ export default function AnalisisCharts({ items = [], lang = "es", isClient = fal
         ))}
       </div>
 
-      {sub === "TALLAS" && <SizesChart items={items} lang={lang} />}
+      {sub === "TALLAS" && <SizesChart items={items} lang={lang} isClient={isClient} />}
       {sub === "METODO" && <SkuMethodChart items={items} lang={lang} />}
       {sub === "FX" && <FxChart items={items} lang={lang} isClient={isClient} />}
     </div>
@@ -88,76 +120,95 @@ export default function AnalisisCharts({ items = [], lang = "es", isClient = fal
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 1 · TALLAS — pares por talla, desglose por SKU (apilado) / por SKU
+// Chips de filtro de SKU (reutilizable). "Todos" + uno por SKU con
+// el nombre de producto en el title.
 // ═══════════════════════════════════════════════════════════════
-function SizesChart({ items, lang }) {
+function SkuChips({ skuList, selSkus, setSelSkus, nameOf, lang }) {
+  const es = lang === "es";
+  const toggle = (k) => setSelSkus((prev) => {
+    const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n;
+  });
+  if (skuList.length <= 1) return null;
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+      <button onClick={() => setSelSkus(new Set())} style={chipStyle(selSkus.size === 0, "#64748B")}>
+        {es ? "Todos los SKU" : "All SKUs"}
+      </button>
+      {skuList.map((k) => (
+        <button key={k} title={nameOf(k)} onClick={() => toggle(k)} style={chipStyle(selSkus.has(k), colorForSku(k, skuList))}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: colorForSku(k, skuList), display: "inline-block", marginRight: 6 }} />
+          {k}
+          {nameOf(k) && <span style={{ marginLeft: 5, fontWeight: 500, opacity: 0.8, fontFamily: "inherit" }}>· {nameOf(k)}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 1 · TALLAS — pares por talla (apilado por SKU) / por SKU (apilado por talla)
+// ═══════════════════════════════════════════════════════════════
+function SizesChart({ items, lang, isClient = false }) {
   const es = lang === "es";
   const [orient, setOrient] = useState("SIZE");      // SIZE | SKU
   const [selSkus, setSelSkus] = useState(() => new Set());
+  const [hover, setHover] = useState(null);          // { meta, x, y }
+  const { skuList, nameBySku } = useSkuMeta(items);
+  const nameOf = (k) => nameBySku.get(k) || "";
 
-  // SKUs presentes en las líneas de los expedientes visibles.
-  const skuList = useMemo(() => {
-    const s = new Set();
-    items.forEach((it) => (it.lineas || []).forEach((l) => l.sku && s.add(l.sku)));
-    return Array.from(s).sort((a, b) => a.localeCompare(b));
-  }, [items]);
+  // Etiqueta del expediente: proforma (MWT) · OC/PO (cliente) — R3.
+  const labelOf = (it) => {
+    if (!isClient) return it.proforma || it.expCodigo || "—";
+    if (!it.ocCodigo) return it.expCodigo || "—";
+    return String(it.ocCodigo).toUpperCase().startsWith("PO") ? it.ocCodigo : `PO ${it.ocCodigo}`;
+  };
 
   const activeSkus = useMemo(
     () => (selSkus.size ? skuList.filter((k) => selSkus.has(k)) : skuList),
     [skuList, selSkus]
   );
 
-  // Agregación talla × sku (sólo SKUs activos).
-  const { sizes, bySize, totalsBySize, totalGeneral } = useMemo(() => {
-    const bySize = new Map();      // size -> Map(sku -> qty)
-    items.forEach((it) => (it.lineas || []).forEach((l) => {
-      if (!l.sku || (selSkus.size && !selSkus.has(l.sku))) return;
-      const size = (l.size && String(l.size).trim()) || (es ? "s/talla" : "no size");
-      const q = qtyOf(l);
-      if (!q) return;
-      const m = bySize.get(size) || bySize.set(size, new Map()).get(size);
-      m.set(l.sku, (m.get(l.sku) || 0) + q);
-    }));
-    const sizes = sortSizes(Array.from(bySize.keys()));
-    const totalsBySize = new Map();
-    let totalGeneral = 0;
-    sizes.forEach((s) => {
-      let t = 0; bySize.get(s).forEach((v) => { t += v; });
-      totalsBySize.set(s, t); totalGeneral += t;
+  // sizeMap: size -> sku -> { value, byExp }   ·   skuMap: sku -> size -> {…}
+  const { sizes, sizeMap, totalsBySize, totalGeneral, skuMap, totalsBySku, skuOrder } = useMemo(() => {
+    const sizeMap = new Map(); const skuMap = new Map();
+    items.forEach((it) => {
+      const lbl = labelOf(it);
+      (it.lineas || []).forEach((l) => {
+        if (!l.sku || (selSkus.size && !selSkus.has(l.sku))) return;
+        const size = (l.size && String(l.size).trim()) || (es ? "s/talla" : "no size");
+        const q = qtyOf(l);
+        if (!q) return;
+        const sm = sizeMap.get(size) || sizeMap.set(size, new Map()).get(size);
+        const c1 = sm.get(l.sku) || sm.set(l.sku, { value: 0, byExp: new Map() }).get(l.sku);
+        c1.value += q; c1.byExp.set(lbl, (c1.byExp.get(lbl) || 0) + q);
+        const km = skuMap.get(l.sku) || skuMap.set(l.sku, new Map()).get(l.sku);
+        const c2 = km.get(size) || km.set(size, { value: 0, byExp: new Map() }).get(size);
+        c2.value += q; c2.byExp.set(lbl, (c2.byExp.get(lbl) || 0) + q);
+      });
     });
-    return { sizes, bySize, totalsBySize, totalGeneral };
-  }, [items, selSkus, es]);
-
-  // Agregación por SKU (para orient=SKU): sku -> Map(size->qty), total.
-  const { bySku, totalsBySku, skuOrder } = useMemo(() => {
-    const bySku = new Map();
-    items.forEach((it) => (it.lineas || []).forEach((l) => {
-      if (!l.sku || (selSkus.size && !selSkus.has(l.sku))) return;
-      const size = (l.size && String(l.size).trim()) || (es ? "s/talla" : "no size");
-      const q = qtyOf(l);
-      if (!q) return;
-      const m = bySku.get(l.sku) || bySku.set(l.sku, new Map()).get(l.sku);
-      m.set(size, (m.get(size) || 0) + q);
-    }));
+    const sizes = sortSizes(Array.from(sizeMap.keys()));
+    const totalsBySize = new Map(); let totalGeneral = 0;
+    sizes.forEach((s) => { let t = 0; sizeMap.get(s).forEach((c) => { t += c.value; }); totalsBySize.set(s, t); totalGeneral += t; });
     const totalsBySku = new Map();
-    bySku.forEach((m, k) => { let t = 0; m.forEach((v) => { t += v; }); totalsBySku.set(k, t); });
-    const skuOrder = Array.from(bySku.keys()).sort((a, b) => (totalsBySku.get(b) || 0) - (totalsBySku.get(a) || 0));
-    return { bySku, totalsBySku, skuOrder };
-  }, [items, selSkus, es]);
-
-  const toggleSku = (k) => setSelSkus((prev) => {
-    const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n;
-  });
+    skuMap.forEach((m, k) => { let t = 0; m.forEach((c) => { t += c.value; }); totalsBySku.set(k, t); });
+    const skuOrder = Array.from(skuMap.keys()).sort((a, b) => (totalsBySku.get(b) || 0) - (totalsBySku.get(a) || 0));
+    return { sizes, sizeMap, totalsBySize, totalGeneral, skuMap, totalsBySku, skuOrder };
+  }, [items, selSkus, es, isClient]);
 
   const maxBar = orient === "SIZE"
     ? Math.max(1, ...sizes.map((s) => totalsBySize.get(s) || 0))
     : Math.max(1, ...skuOrder.map((k) => totalsBySku.get(k) || 0));
-
   const hasData = totalGeneral > 0;
+
+  const mkMeta = (sku, size, cell) => ({
+    sku, name: nameOf(sku), size, value: cell.value,
+    byExp: Array.from(cell.byExp.entries()).map(([label, pairs]) => ({ label, pairs })).sort((a, b) => b.pairs - a.pairs),
+  });
+  const onHover = (meta, e) => { if (!meta) { setHover(null); return; } setHover({ meta, x: e.clientX, y: e.clientY }); };
 
   return (
     <div className="card card-pad-md">
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
         <h4 style={{ margin: 0, color: NAVY, fontSize: 13, fontWeight: 800 }}>
           {es ? "PARES PEDIDOS POR TALLA" : "PAIRS ORDERED BY SIZE"}
         </h4>
@@ -169,93 +220,146 @@ function SizesChart({ items, lang }) {
             { id: "SIZE", es: "Por talla", en: "By size" },
             { id: "SKU", es: "Por SKU", en: "By SKU" },
           ].map((o) => (
-            <button key={o.id} onClick={() => setOrient(o.id)}
-                    style={pillStyle(orient === o.id)}>
+            <button key={o.id} onClick={() => setOrient(o.id)} style={pillStyle(orient === o.id)}>
               {es ? o.es : o.en}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Chips de SKU (filtro multiselección) */}
-      {skuList.length > 1 && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-          <button onClick={() => setSelSkus(new Set())} style={chipStyle(selSkus.size === 0, "#64748B")}>
-            {es ? "Todos los SKU" : "All SKUs"}
-          </button>
-          {skuList.map((k) => (
-            <button key={k} onClick={() => toggleSku(k)} style={chipStyle(selSkus.has(k), colorForSku(k, skuList))}>
-              <span style={{ width: 8, height: 8, borderRadius: 2, background: colorForSku(k, skuList), display: "inline-block", marginRight: 6 }} />
-              {k}
-            </button>
-          ))}
-        </div>
-      )}
+      <p className="caption" style={{ margin: "0 0 12px", color: "var(--text-tertiary, #94A3B8)", maxWidth: 780, lineHeight: 1.4 }}>
+        {orient === "SIZE"
+          ? (es
+              ? `Cada fila es una talla; los colores son los SKUs que la componen y el número de la derecha es el total de pares. Pasa el cursor por un segmento para ver el producto y en qué ${isClient ? "OC/PO" : "proformas"} están esos pares.`
+              : `Each row is a size; colors are the SKUs that make it up. Hover a segment for the product and which ${isClient ? "POs" : "proformas"} the pairs are in.`)
+          : (es
+              ? `Cada fila es un SKU (con su nombre de producto); los segmentos son sus tallas, de la más chica (claro) a la más grande (oscuro). Pasa el cursor por un segmento para ver la talla, los pares y en qué ${isClient ? "OC/PO" : "proformas"} están.`
+              : `Each row is a SKU (with product name); segments are its sizes from small (light) to large (dark). Hover for size, pairs and which ${isClient ? "POs" : "proformas"}.`)}
+      </p>
+
+      <SkuChips skuList={skuList} selSkus={selSkus} setSelSkus={setSelSkus} nameOf={nameOf} lang={lang} />
 
       {!hasData ? (
         <EmptyState lang={lang} />
       ) : orient === "SIZE" ? (
         <StackedBars
+          labelWidth={46}
           rows={sizes.map((s) => ({
             key: s, label: s, total: totalsBySize.get(s) || 0,
-            segments: activeSkus
-              .map((k) => ({ key: k, value: bySize.get(s).get(k) || 0, color: colorForSku(k, skuList) }))
-              .filter((seg) => seg.value > 0),
+            segments: activeSkus.map((k) => {
+              const cell = sizeMap.get(s).get(k);
+              if (!cell) return null;
+              return { key: k, value: cell.value, color: colorForSku(k, skuList), meta: mkMeta(k, s, cell) };
+            }).filter(Boolean),
           }))}
-          max={maxBar} lang={lang} unitNumeric
+          max={maxBar} lang={lang} onHover={onHover}
         />
       ) : (
         <StackedBars
+          labelWidth={132}
           rows={skuOrder.map((k) => ({
-            key: k, label: k, total: totalsBySku.get(k) || 0, mono: true,
-            segments: sortSizes(Array.from(bySku.get(k).keys()))
-              .map((s) => ({ key: s, value: bySku.get(k).get(s) || 0, color: NAVY })),
+            key: k, total: totalsBySku.get(k) || 0,
+            labelNode: (
+              <div style={{ lineHeight: 1.15, overflow: "hidden" }}>
+                <div style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 700, fontSize: 11.5, color: NAVY }}>{k}</div>
+                {nameOf(k) && (
+                  <div title={nameOf(k)} style={{ fontSize: 9.5, color: "var(--text-tertiary, #94A3B8)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {nameOf(k)}
+                  </div>
+                )}
+              </div>
+            ),
+            segments: sortSizes(Array.from(skuMap.get(k).keys())).map((s) => {
+              const cell = skuMap.get(k).get(s);
+              return { key: s, label: s, value: cell.value, color: colorForSize(s, sizes), meta: mkMeta(k, s, cell) };
+            }),
           }))}
-          max={maxBar} lang={lang} showSegLabels
+          max={maxBar} lang={lang} showSegLabels onHover={onHover}
         />
       )}
 
-      {/* Leyenda de SKUs (sólo apilado por talla) */}
+      {/* Leyenda */}
       {hasData && orient === "SIZE" && activeSkus.length > 1 && (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 14 }}>
           {activeSkus.map((k) => (
             <span key={k} className="caption" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--text-secondary, #475569)" }}>
-              <span style={{ width: 10, height: 10, borderRadius: 2, background: colorForSku(k, skuList) }} />
-              <span style={{ fontFamily: "JetBrains Mono, monospace" }}>{k}</span>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: colorForSku(k, skuList), flexShrink: 0 }} />
+              <span style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 700 }}>{k}</span>
+              {nameOf(k) && <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>· {nameOf(k)}</span>}
             </span>
           ))}
+        </div>
+      )}
+      {hasData && orient === "SKU" && sizes.length > 1 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14 }}>
+          <span className="caption" style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "Talla" : "Size"}</span>
+          <span className="caption tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>{sizes[0]}</span>
+          <div style={{ height: 10, width: 180, borderRadius: 6, background: `linear-gradient(90deg, ${colorForSize(sizes[0], sizes)}, ${colorForSize(sizes[sizes.length - 1], sizes)})` }} />
+          <span className="caption tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>{sizes[sizes.length - 1]}</span>
+        </div>
+      )}
+
+      {/* Tooltip flotante con desglose por expediente. */}
+      {hover && (
+        <div style={{
+          position: "fixed",
+          left: Math.min(hover.x + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 286),
+          top: hover.y + 14, zIndex: 1500, pointerEvents: "none", width: 264,
+          background: "var(--surface-raised, #fff)", border: "1px solid var(--border-subtle, #E1E6ED)",
+          borderRadius: 10, boxShadow: "0 12px 30px rgba(11,30,58,0.22)", padding: "10px 12px",
+        }}>
+          <div style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 800, color: NAVY, fontSize: 12.5 }}>{hover.meta.sku}</div>
+          {hover.meta.name && <div style={{ fontSize: 11, color: "var(--text-secondary, #475569)", marginBottom: 5 }}>{hover.meta.name}</div>}
+          <div style={{ fontSize: 11.5, color: "var(--text-primary, #0B1E3A)", marginBottom: 7 }}>
+            {es ? "Talla" : "Size"} <b>{hover.meta.size}</b>{" · "}
+            <b className="tabular-nums">{fInt(hover.meta.value)}</b> {es ? "pares" : "pairs"}
+          </div>
+          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.6, color: "var(--text-tertiary, #94A3B8)", marginBottom: 4 }}>
+            {(isClient ? (es ? "EN OC / PO" : "IN PO") : (es ? "EN PROFORMA" : "IN PROFORMA"))}{" · "}{hover.meta.byExp.length}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3, maxHeight: 168, overflowY: "auto" }}>
+            {hover.meta.byExp.map((x, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11 }}>
+                <span style={{ fontFamily: "JetBrains Mono, monospace", color: "var(--text-secondary, #475569)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.label}</span>
+                <span className="tabular-nums" style={{ fontWeight: 800, color: NAVY, flexShrink: 0 }}>
+                  {fInt(x.pairs)}<span style={{ fontWeight: 500, color: "var(--text-tertiary, #94A3B8)" }}> prs</span>
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-// Barras horizontales apiladas reutilizables.
-function StackedBars({ rows, max, lang, unitNumeric = false, showSegLabels = false, mono = false }) {
-  const es = lang === "es";
+// Barras horizontales apiladas. Cada segmento dispara onHover(meta, event).
+function StackedBars({ rows, max, lang, showSegLabels = false, labelWidth = 64, onHover }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
       {rows.map((r) => (
         <div key={r.key} style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{
-            width: 64, textAlign: "right", flexShrink: 0,
+            width: labelWidth, textAlign: r.labelNode ? "left" : "right", flexShrink: 0,
             fontSize: 12, fontWeight: 700, color: "var(--text-primary, #0B1E3A)",
-            fontFamily: r.mono ? "JetBrains Mono, monospace" : undefined,
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }} title={r.label}>{r.label}</div>
+          }} title={r.labelNode ? undefined : r.label}>
+            {r.labelNode || r.label}
+          </div>
           <div style={{ flex: 1, display: "flex", alignItems: "center", height: 22, background: "var(--surface-alt, #F1F5F9)", borderRadius: 6, overflow: "hidden" }}>
             <div style={{ display: "flex", width: `${(r.total / max) * 100}%`, height: "100%", minWidth: 2, transition: "width .3s ease" }}>
               {r.segments.map((seg, i) => (
                 <div key={seg.key + i}
-                     title={`${seg.key}: ${fInt(seg.value)} ${es ? "prs" : "prs"}`}
+                     onMouseEnter={(e) => onHover && onHover(seg.meta, e)}
+                     onMouseMove={(e) => onHover && onHover(seg.meta, e)}
+                     onMouseLeave={() => onHover && onHover(null)}
                      style={{
-                       width: `${(seg.value / r.total) * 100}%`, height: "100%",
-                       background: seg.color,
-                       borderRight: r.segments.length > 1 ? "1px solid rgba(255,255,255,0.5)" : "none",
-                       display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
+                       width: `${(seg.value / r.total) * 100}%`, height: "100%", background: seg.color,
+                       borderRight: r.segments.length > 1 ? "1px solid rgba(255,255,255,0.55)" : "none",
+                       display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", cursor: "pointer",
                      }}>
-                  {showSegLabels && (seg.value / max) > 0.05 && (
-                    <span className="tabular-nums" style={{ fontSize: 9.5, color: "#fff", fontWeight: 700 }}>{seg.key}</span>
+                  {showSegLabels && (seg.value / max) > 0.045 && (
+                    <span className="tabular-nums" style={{ fontSize: 9.5, color: textOn(seg.color), fontWeight: 700 }}>{seg.label}</span>
                   )}
                 </div>
               ))}
@@ -271,7 +375,7 @@ function StackedBars({ rows, max, lang, unitNumeric = false, showSegLabels = fal
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 2 · SKU × MÉTODO — Aéreo vs Marítimo para un SKU
+// 2 · SKU × MÉTODO — Aéreo vs Marítimo (multi-selección de SKU)
 // ═══════════════════════════════════════════════════════════════
 const MODES = [
   { key: "Aereo", es: "Aéreo", en: "Air", color: NAVY },
@@ -280,33 +384,30 @@ const MODES = [
 
 function SkuMethodChart({ items, lang }) {
   const es = lang === "es";
-  const skuList = useMemo(() => {
-    const s = new Set();
-    items.forEach((it) => (it.skus || []).forEach((k) => s.add(k)));
-    return Array.from(s).sort((a, b) => a.localeCompare(b));
-  }, [items]);
-  const [sku, setSku] = useState("");
-  const activeSku = sku && skuList.includes(sku) ? sku : (skuList[0] || "");
+  const { skuList, nameBySku } = useSkuMeta(items);
+  const nameOf = (k) => nameBySku.get(k) || "";
+  const [selSkus, setSelSkus] = useState(() => new Set());
+  const activeSet = useMemo(() => (selSkus.size ? selSkus : new Set(skuList)), [selSkus, skuList]);
 
   const fases = STAGES.slice(0, 6);
   const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
 
-  // Para cada modo: expedientes con el SKU, pares totales y días promedio
-  // por fase (modo desconocido se asume Aéreo, coherente con la app).
+  // Por modo: expedientes que contienen algún SKU activo; pares de esos SKU;
+  // días promedio por fase (historial real del expediente). El bucket "Aereo"
+  // incluye los expedientes sin método definido (aéreo supuesto).
   const byMode = useMemo(() => {
     const out = {};
     MODES.forEach((m) => { out[m.key] = { items: [], pares: 0, phases: {} }; });
     items.forEach((it) => {
-      if (!(it.skus || []).includes(activeSku)) return;
+      const has = (it.skus || []).some((k) => activeSet.has(k));
+      if (!has) return;
       const mk = it.modo === "Maritimo" ? "Maritimo" : "Aereo";
-      const bucket = out[mk];
-      bucket.items.push(it);
-      bucket.pares += (it.lineas || [])
-        .filter((l) => l.sku === activeSku)
-        .reduce((a, l) => a + qtyOf(l), 0);
+      const b = out[mk];
+      b.items.push(it);
+      b.pares += (it.lineas || []).filter((l) => activeSet.has(l.sku)).reduce((a, l) => a + qtyOf(l), 0);
       fases.forEach((s) => {
         const d = itemPhaseDur(it, s);
-        if (d) (bucket.phases[s] || (bucket.phases[s] = [])).push(d.days);
+        if (d) (b.phases[s] || (b.phases[s] = [])).push(d.days);
       });
     });
     MODES.forEach((m) => {
@@ -319,36 +420,45 @@ function SkuMethodChart({ items, lang }) {
       b.ciclo = fases.reduce((a, s) => a + (b.avg[s] || 0), 0);
     });
     return out;
-  }, [items, activeSku]);
+  }, [items, activeSet]);
 
   const maxPhase = Math.max(1, ...fases.flatMap((s) => MODES.map((m) => byMode[m.key].avg[s] || 0)));
   const anyData = MODES.some((m) => byMode[m.key].items.length);
+  const selCount = selSkus.size || skuList.length;
+  const onlyOne = (selSkus.size === 1) ? Array.from(selSkus)[0] : null;
 
   return (
     <div className="card card-pad-md">
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
         <h4 style={{ margin: 0, color: NAVY, fontSize: 13, fontWeight: 800 }}>
           {es ? "COMPORTAMIENTO POR MÉTODO DE ENVÍO" : "BEHAVIOR BY SHIPPING MODE"}
         </h4>
-        <select className="input" value={activeSku} onChange={(e) => setSku(e.target.value)}
-                style={{ padding: "5px 10px", fontSize: 12.5, width: "auto", minWidth: 200, marginLeft: "auto", fontFamily: "JetBrains Mono, monospace" }}>
-          {skuList.length === 0 && <option value="">{es ? "Sin SKUs" : "No SKUs"}</option>}
-          {skuList.map((k) => <option key={k} value={k}>{k}</option>)}
-        </select>
+        <span className="caption" style={{ color: "var(--text-secondary, #475569)" }}>
+          {selSkus.size === 0
+            ? (es ? `Todos los SKU (${skuList.length})` : `All SKUs (${skuList.length})`)
+            : (onlyOne ? `${onlyOne}${nameOf(onlyOne) ? " · " + nameOf(onlyOne) : ""}` : `${selCount} SKU`)}
+        </span>
       </div>
 
+      <p className="caption" style={{ margin: "0 0 12px", color: "var(--text-tertiary, #94A3B8)", maxWidth: 780, lineHeight: 1.4 }}>
+        {es
+          ? "Compara los expedientes que contienen los SKU seleccionados según su método de envío. El bucket Aéreo incluye los expedientes sin método aún definido (aéreo supuesto). Elegí varios SKU para sumarlos, o dejá «Todos»."
+          : "Compares the files containing the selected SKUs by shipping mode. The Air bucket includes files with no defined mode yet (assumed air). Pick several SKUs to combine, or keep \"All\"."}
+      </p>
+
+      <SkuChips skuList={skuList} selSkus={selSkus} setSelSkus={setSelSkus} nameOf={nameOf} lang={lang} />
+
       {!anyData ? (
-        <EmptyState lang={lang} text={es ? "Este SKU no aparece en los expedientes filtrados." : "This SKU is not in the filtered files."} />
+        <EmptyState lang={lang} text={es ? "Ningún expediente filtrado contiene los SKU seleccionados." : "No filtered file contains the selected SKUs."} />
       ) : (
         <>
-          {/* KPIs por modo */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 16 }}>
             {MODES.map((m) => {
               const b = byMode[m.key];
               return (
                 <div key={m.key} style={{ border: "1px solid var(--border-subtle, #E1E6ED)", borderLeft: `4px solid ${m.color}`, borderRadius: 10, padding: "10px 12px", background: "var(--surface-alt, #FBFCFE)" }}>
                   <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 1, color: m.color, marginBottom: 6 }}>
-                    {(es ? m.es : m.en).toUpperCase()}
+                    {(es ? m.es : m.en).toUpperCase()}{m.key === "Aereo" ? (es ? " (incl. supuesto)" : " (incl. assumed)") : ""}
                   </div>
                   <div style={{ display: "flex", gap: 16 }}>
                     <Metric label={es ? "Pares" : "Pairs"} value={fInt(b.pares)} />
@@ -360,9 +470,8 @@ function SkuMethodChart({ items, lang }) {
             })}
           </div>
 
-          {/* Días promedio por fase — barras agrupadas Aéreo vs Marítimo */}
           <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary, #475569)", marginBottom: 8 }}>
-            {es ? "Días promedio por fase" : "Average days per phase"}
+            {es ? "Días promedio por fase (historial real)" : "Average days per phase (real history)"}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
             {fases.map((s) => (
@@ -412,18 +521,17 @@ function Metric({ label, value, accent }) {
 // ═══════════════════════════════════════════════════════════════
 // 3 · USD → BRL — serie histórica + medidor + campana de Gauss
 // ═══════════════════════════════════════════════════════════════
-const FX_RANGES = [
-  { days: 90, label: "90d" },
-  { days: 180, label: "180d" },
-  { days: 365, label: "1a" },
-];
-
 function FxChart({ items, lang, isClient }) {
   const es = lang === "es";
-  const [days, setDays] = useState(180);
+  const [days, setDays] = useState(90);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+
+  const ranges = [
+    { days: 90, label: "90d" },
+    { days: 365, label: es ? "1 año" : "1y" },
+  ];
 
   useEffect(() => {
     let alive = true;
@@ -435,13 +543,10 @@ function FxChart({ items, lang, isClient }) {
     return () => { alive = false; };
   }, [days]);
 
-  // Cartera USD de los expedientes visibles (R3: precio cliente vs MWT).
   const carteraUsd = useMemo(() => {
     let t = 0;
     items.forEach((it) => (it.lineas || []).forEach((l) => {
-      const price = isClient
-        ? Number(l.unit_price_client) || 0
-        : (Number(l.unit_price_mwt) || Number(l.unit_price_client) || 0);
+      const price = isClient ? Number(l.unit_price_client) || 0 : (Number(l.unit_price_mwt) || Number(l.unit_price_client) || 0);
       t += qtyOf(l) * price;
     }));
     return t;
@@ -461,7 +566,7 @@ function FxChart({ items, lang, isClient }) {
           {data && data.source ? data.source : "Frankfurter (ECB)"}
         </span>
         <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
-          {FX_RANGES.map((r) => (
+          {ranges.map((r) => (
             <button key={r.days} onClick={() => setDays(r.days)} style={pillStyle(days === r.days)}>{r.label}</button>
           ))}
         </div>
@@ -475,7 +580,6 @@ function FxChart({ items, lang, isClient }) {
         <EmptyState lang={lang} text={es ? "No se pudo cargar la serie USD/BRL." : "Could not load USD/BRL series."} />
       ) : (
         <>
-          {/* KPIs */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginBottom: 16 }}>
             <Gauge stats={stats} lang={lang} />
             <FxStat label={es ? "Mín · Máx" : "Min · Max"} value={`${fmt2(stats.min)} – ${fmt2(stats.max)}`} />
@@ -488,13 +592,16 @@ function FxChart({ items, lang, isClient }) {
             />
           </div>
 
-          {/* Línea / área de la serie */}
           <FxLine series={series} stats={stats} lang={lang} />
 
-          {/* Campana de Gauss: histograma de tasas + curva normal */}
-          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary, #475569)", margin: "18px 0 8px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary, #475569)", margin: "18px 0 4px" }}>
             {es ? "Distribución de la cotización (campana de Gauss)" : "Rate distribution (Gaussian bell)"}
           </div>
+          <p className="caption" style={{ margin: "0 0 8px", color: "var(--text-tertiary, #94A3B8)", maxWidth: 780, lineHeight: 1.4 }}>
+            {es
+              ? "Cada barra cuenta cuántos días la cotización cayó en ese rango de precio; la curva es la normal teórica con el promedio (μ) y la desviación (±σ). Pasa el cursor por una barra para ver el rango y los días."
+              : "Each bar counts how many days the rate fell in that price range; the curve is the theoretical normal with mean (μ) and deviation (±σ). Hover a bar for its range and day count."}
+          </p>
           <Gauss series={series} stats={stats} lang={lang} />
         </>
       )}
@@ -512,15 +619,13 @@ function FxStat({ label, value, sub }) {
   );
 }
 
-// Medidor radial simple de la tasa de hoy dentro del rango [min,max].
 function Gauge({ stats, lang }) {
   const es = lang === "es";
   const { min, max, last } = stats;
   const span = max - min || 1;
   const frac = Math.max(0, Math.min(1, (last - min) / span));
   const R = 34, cx = 44, cy = 42;
-  const a0 = Math.PI, a1 = 0;                       // semicírculo superior
-  const ang = a0 + (a1 - a0) * frac;
+  const ang = Math.PI + (0 - Math.PI) * frac;
   const px = cx + R * Math.cos(ang), py = cy + R * Math.sin(ang) * -1;
   const arc = (from, to, color, w) => {
     const x0 = cx + R * Math.cos(from), y0 = cy - R * Math.sin(from);
@@ -529,25 +634,24 @@ function Gauge({ stats, lang }) {
     return <path d={`M ${x0} ${y0} A ${R} ${R} 0 ${large} 1 ${x1} ${y1}`} fill="none" stroke={color} strokeWidth={w} strokeLinecap="round" />;
   };
   return (
-    <div style={{ border: "1px solid var(--border-subtle, #E1E6ED)", borderRadius: 10, padding: "8px 11px", background: "linear-gradient(180deg, rgba(1,58,87,0.04), transparent)", gridColumn: "span 1" }}>
+    <div style={{ border: "1px solid var(--border-subtle, #E1E6ED)", borderRadius: 10, padding: "8px 11px", background: "linear-gradient(180deg, rgba(1,58,87,0.04), transparent)" }}>
       <svg viewBox="0 0 88 52" width="100%" height="46" style={{ display: "block" }}>
         {arc(Math.PI, 0, "var(--surface-alt, #E2E8F0)", 6)}
         {arc(Math.PI, Math.PI + (0 - Math.PI) * frac, MINT, 6)}
         <line x1={cx} y1={cy} x2={px} y2={py} stroke={NAVY} strokeWidth={2.2} strokeLinecap="round" />
         <circle cx={cx} cy={cy} r={3} fill={NAVY} />
       </svg>
-      <div className="tabular-nums" style={{ fontSize: 16, fontWeight: 800, color: NAVY, textAlign: "center", lineHeight: 1 }}>
-        R$ {fmt4(last)}
-      </div>
-      <div className="caption" style={{ color: "var(--text-tertiary, #94A3B8)", textAlign: "center" }}>
-        {es ? "Hoy · por US$1" : "Today · per US$1"}
-      </div>
+      <div className="tabular-nums" style={{ fontSize: 16, fontWeight: 800, color: NAVY, textAlign: "center", lineHeight: 1 }}>R$ {fmt4(last)}</div>
+      <div className="caption" style={{ color: "var(--text-tertiary, #94A3B8)", textAlign: "center" }}>{es ? "Hoy · por US$1" : "Today · per US$1"}</div>
     </div>
   );
 }
 
-// Gráfica de línea/área de la serie temporal (SVG responsivo por viewBox).
+// Línea/área con HOVER por punto (guía vertical + tooltip fecha/cotización).
 function FxLine({ series, stats, lang }) {
+  const es = lang === "es";
+  const svgRef = useRef(null);
+  const [hi, setHi] = useState(null);
   const W = 720, H = 200, padL = 46, padR = 12, padT = 14, padB = 24;
   const min = stats.min, max = stats.max, span = (max - min) || 1;
   const n = series.length;
@@ -556,40 +660,70 @@ function FxLine({ series, stats, lang }) {
   const linePts = series.map((p, i) => `${x(i).toFixed(1)},${y(p.rate).toFixed(1)}`).join(" ");
   const areaPts = `${padL},${H - padB} ${linePts} ${x(n - 1)},${H - padB}`;
   const gridVals = [min, min + span / 2, max];
-  // Ticks de fecha: ~6 etiquetas.
   const tickIdx = [];
   const step = Math.max(1, Math.floor(n / 6));
   for (let i = 0; i < n; i += step) tickIdx.push(i);
   if (tickIdx[tickIdx.length - 1] !== n - 1) tickIdx.push(n - 1);
-  const fmtDate = (s) => { const d = String(s).slice(5); return d.replace("-", "/"); };
+  const fmtDate = (s) => String(s).slice(5).replace("-", "/");
+
+  const onMove = (e) => {
+    const el = svgRef.current; if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    let i = Math.round(((ratio * W) - padL) / (W - padL - padR) * (n - 1));
+    i = Math.max(0, Math.min(n - 1, i));
+    setHi({ i, cx: e.clientX, cy: e.clientY });
+  };
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", overflow: "visible" }}>
-      <defs>
-        <linearGradient id="fxgrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={MINT} stopOpacity="0.28" />
-          <stop offset="100%" stopColor={MINT} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      {gridVals.map((gv, i) => (
-        <g key={i}>
-          <line x1={padL} y1={y(gv)} x2={W - padR} y2={y(gv)} stroke="var(--border-subtle, #E2E8F0)" strokeWidth="1" strokeDasharray={i === 1 ? "3 3" : "0"} />
-          <text x={padL - 6} y={y(gv) + 3} textAnchor="end" fontSize="10" fill="#94A3B8" className="tabular-nums">{fmt2(gv)}</text>
-        </g>
-      ))}
-      <polygon points={areaPts} fill="url(#fxgrad)" />
-      <polyline points={linePts} fill="none" stroke={NAVY} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={x(n - 1)} cy={y(series[n - 1].rate)} r="3.5" fill={MINT} stroke="#fff" strokeWidth="1.5" />
-      {tickIdx.map((i) => (
-        <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="9.5" fill="#94A3B8" className="tabular-nums">{fmtDate(series[i].date)}</text>
-      ))}
-    </svg>
+    <div style={{ position: "relative" }}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", overflow: "visible" }}
+           onMouseMove={onMove} onMouseLeave={() => setHi(null)}>
+        <defs>
+          <linearGradient id="fxgrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={MINT} stopOpacity="0.28" />
+            <stop offset="100%" stopColor={MINT} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {gridVals.map((gv, i) => (
+          <g key={i}>
+            <line x1={padL} y1={y(gv)} x2={W - padR} y2={y(gv)} stroke="var(--border-subtle, #E2E8F0)" strokeWidth="1" strokeDasharray={i === 1 ? "3 3" : "0"} />
+            <text x={padL - 6} y={y(gv) + 3} textAnchor="end" fontSize="10" fill="#94A3B8" className="tabular-nums">{fmt2(gv)}</text>
+          </g>
+        ))}
+        <polygon points={areaPts} fill="url(#fxgrad)" />
+        <polyline points={linePts} fill="none" stroke={NAVY} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {hi && (
+          <g>
+            <line x1={x(hi.i)} y1={padT} x2={x(hi.i)} y2={H - padB} stroke={NAVY} strokeWidth="1" strokeDasharray="3 3" opacity="0.5" />
+            <circle cx={x(hi.i)} cy={y(series[hi.i].rate)} r="4" fill={NAVY} stroke="#fff" strokeWidth="1.5" />
+          </g>
+        )}
+        <circle cx={x(n - 1)} cy={y(series[n - 1].rate)} r="3.5" fill={MINT} stroke="#fff" strokeWidth="1.5" />
+        {tickIdx.map((i) => (
+          <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="9.5" fill="#94A3B8" className="tabular-nums">{fmtDate(series[i].date)}</text>
+        ))}
+      </svg>
+      {hi && (
+        <div style={{
+          position: "fixed", left: Math.min(hi.cx + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 180),
+          top: hi.cy + 14, zIndex: 1500, pointerEvents: "none",
+          background: "var(--surface-raised, #fff)", border: "1px solid var(--border-subtle, #E1E6ED)",
+          borderRadius: 8, boxShadow: "0 10px 24px rgba(11,30,58,0.2)", padding: "7px 10px",
+        }}>
+          <div className="tabular-nums" style={{ fontSize: 11, color: "var(--text-secondary, #475569)" }}>{series[hi.i].date}</div>
+          <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 800, color: NAVY }}>R$ {fmt4(series[hi.i].rate)}</div>
+          <div className="caption" style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "por US$1" : "per US$1"}</div>
+        </div>
+      )}
+    </div>
   );
 }
 
-// Histograma + curva normal (media μ ± σ marcadas).
+// Histograma + curva normal, con HOVER por barra (rango + días).
 function Gauss({ series, stats, lang }) {
   const es = lang === "es";
+  const [hb, setHb] = useState(null);
   const vals = series.map((p) => p.rate);
   const { avg: mu, std: sigma, min, max } = stats;
   const W = 720, H = 180, padL = 30, padR = 12, padT = 10, padB = 22;
@@ -601,12 +735,12 @@ function Gauss({ series, stats, lang }) {
     if (b >= BINS) b = BINS - 1; if (b < 0) b = 0;
     counts[b]++;
   });
+  const total = vals.length || 1;
   const maxCount = Math.max(1, ...counts);
   const bw = (W - padL - padR) / BINS;
   const xVal = (v) => padL + ((v - lo) / span) * (W - padL - padR);
   const yCount = (c) => padT + (1 - c / maxCount) * (H - padT - padB);
 
-  // Curva normal escalada al pico del histograma.
   const normal = (v) => Math.exp(-0.5 * Math.pow((v - mu) / (sigma || 1e-6), 2));
   const peakN = normal(mu) || 1;
   const curve = [];
@@ -618,31 +752,57 @@ function Gauss({ series, stats, lang }) {
   }
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", overflow: "visible" }}>
-      {/* histograma */}
-      {counts.map((c, i) => {
-        const x0 = padL + i * bw;
-        const yTop = yCount(c);
-        return <rect key={i} x={x0 + 1} y={yTop} width={Math.max(1, bw - 2)} height={(H - padB) - yTop} rx="2" fill={NAVY} opacity="0.18" />;
-      })}
-      {/* curva normal */}
-      <polyline points={curve.join(" ")} fill="none" stroke={MINT} strokeWidth="2.4" strokeLinejoin="round" />
-      {/* μ y ±σ */}
-      {[
-        { v: mu, c: NAVY, dash: "0", lbl: "μ" },
-        { v: mu - sigma, c: "#94A3B8", dash: "4 3", lbl: "−σ" },
-        { v: mu + sigma, c: "#94A3B8", dash: "4 3", lbl: "+σ" },
-      ].filter((m) => m.v >= lo && m.v <= hi).map((m, i) => (
-        <g key={i}>
-          <line x1={xVal(m.v)} y1={padT} x2={xVal(m.v)} y2={H - padB} stroke={m.c} strokeWidth="1.3" strokeDasharray={m.dash} />
-          <text x={xVal(m.v)} y={padT - 1} textAnchor="middle" fontSize="10" fill={m.c} fontWeight="700">{m.lbl}</text>
-        </g>
-      ))}
-      {/* eje x: lo, μ, hi */}
-      {[lo, mu, hi].map((v, i) => (
-        <text key={i} x={xVal(v)} y={H - 6} textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"} fontSize="9.5" fill="#94A3B8" className="tabular-nums">{fmt2(v)}</text>
-      ))}
-    </svg>
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", overflow: "visible" }}>
+        {counts.map((c, i) => {
+          const x0 = padL + i * bw;
+          const yTop = yCount(c);
+          const binLo = lo + (i / BINS) * span;
+          const binHi = lo + ((i + 1) / BINS) * span;
+          return (
+            <rect key={i} x={x0 + 1} y={padT} width={Math.max(1, bw - 2)} height={(H - padB) - padT}
+                  fill="transparent"
+                  onMouseMove={(e) => setHb({ binLo, binHi, c, cx: e.clientX, cy: e.clientY })}
+                  onMouseLeave={() => setHb(null)}
+                  style={{ cursor: "pointer" }}>
+              <title></title>
+            </rect>
+          );
+        })}
+        {counts.map((c, i) => {
+          const x0 = padL + i * bw;
+          const yTop = yCount(c);
+          return <rect key={`b${i}`} x={x0 + 1} y={yTop} width={Math.max(1, bw - 2)} height={(H - padB) - yTop} rx="2" fill={NAVY} opacity="0.18" pointerEvents="none" />;
+        })}
+        <polyline points={curve.join(" ")} fill="none" stroke={MINT} strokeWidth="2.4" strokeLinejoin="round" pointerEvents="none" />
+        {[
+          { v: mu, c: NAVY, dash: "0", lbl: "μ" },
+          { v: mu - sigma, c: "#94A3B8", dash: "4 3", lbl: "−σ" },
+          { v: mu + sigma, c: "#94A3B8", dash: "4 3", lbl: "+σ" },
+        ].filter((m) => m.v >= lo && m.v <= hi).map((m, i) => (
+          <g key={i} pointerEvents="none">
+            <line x1={xVal(m.v)} y1={padT} x2={xVal(m.v)} y2={H - padB} stroke={m.c} strokeWidth="1.3" strokeDasharray={m.dash} />
+            <text x={xVal(m.v)} y={padT - 1} textAnchor="middle" fontSize="10" fill={m.c} fontWeight="700">{m.lbl}</text>
+          </g>
+        ))}
+        {[lo, mu, hi].map((v, i) => (
+          <text key={i} x={xVal(v)} y={H - 6} textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"} fontSize="9.5" fill="#94A3B8" className="tabular-nums" pointerEvents="none">{fmt2(v)}</text>
+        ))}
+      </svg>
+      {hb && (
+        <div style={{
+          position: "fixed", left: Math.min(hb.cx + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 190),
+          top: hb.cy + 14, zIndex: 1500, pointerEvents: "none",
+          background: "var(--surface-raised, #fff)", border: "1px solid var(--border-subtle, #E1E6ED)",
+          borderRadius: 8, boxShadow: "0 10px 24px rgba(11,30,58,0.2)", padding: "7px 10px",
+        }}>
+          <div className="tabular-nums" style={{ fontSize: 12, fontWeight: 800, color: NAVY }}>R$ {fmt2(hb.binLo)} – {fmt2(hb.binHi)}</div>
+          <div className="tabular-nums caption" style={{ color: "var(--text-secondary, #475569)" }}>
+            {fInt(hb.c)} {es ? "días" : "days"} · {Math.round((hb.c / total) * 100)}%
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

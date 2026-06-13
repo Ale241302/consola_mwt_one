@@ -1,5 +1,5 @@
 // App layout — sidebar + topbar + routed outlet
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Outlet, useLocation, useNavigate, useParams, matchPath } from "react-router-dom";
 import { Sidebar, screenFromPath } from "./Sidebar.jsx";
 import { TopBar } from "./TopBar.jsx";
@@ -11,6 +11,7 @@ import ErrorBoundary from "../ui/ErrorBoundary.jsx";
 // Fable5 · WAVE C: errores globales (no atrapados por React) → backend.
 import { reportClientError } from "../../lib/errorReporter.js";
 import { tr } from "../../lib/i18n.js";
+import { abortInflightGets } from "../../lib/api.js";
 import { OCS, EXPEDIENTES } from "../../data/mockData.js";
 
 const DEFAULT_TWEAKS = {
@@ -24,6 +25,16 @@ const DEFAULT_TWEAKS = {
 export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Sprint 2026-06-13 · Cancelar los GET en vuelo al cambiar de ruta para
+  // liberar el pool de conexiones (antes la vista siguiente quedaba en
+  // blanco hasta que terminaba la anterior). Se ejecuta en render —antes de
+  // montar la nueva página— para no abortar los fetches de la página nueva.
+  const _prevPath = useRef(location.pathname);
+  if (_prevPath.current !== location.pathname) {
+    abortInflightGets();
+    _prevPath.current = location.pathname;
+  }
 
   // Fable5 · WAVE C: listeners globales de error → reporter best-effort.
   useEffect(() => {

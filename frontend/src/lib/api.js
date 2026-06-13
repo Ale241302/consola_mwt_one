@@ -186,6 +186,18 @@ const _isIdempotent = (m) => {
   return u === "GET" || u === "HEAD";
 };
 
+// ── Cancelación global por navegación (GET idempotentes) ────────────
+// Los GET sin signal explícito se atan a este controlador; el AppLayout
+// llama abortInflightGets() al cambiar de ruta y se liberan las conexiones
+// en vuelo (los flags isAlive/cancelled NO cancelaban el HTTP, por eso la
+// página siguiente quedaba en cola). Las mutaciones nunca se auto-cancelan.
+let _navController = (typeof AbortController !== "undefined") ? new AbortController() : null;
+export function abortInflightGets() {
+  if (!_navController) return;
+  try { _navController.abort(); } catch { /* noop */ }
+  _navController = new AbortController();
+}
+
 export async function apiFetch(path, { method = "GET", body, token, headers = {}, signal, _isRetry = false, _transientRetried = false } = {}) {
   // ── Kill-switch: mock mode ──────────────────────────────────────────
   // /auth/* siempre pasa al backend real (login + refresh + me + logout).
@@ -234,7 +246,13 @@ export async function apiFetch(path, { method = "GET", body, token, headers = {}
   // Sprint 2026-06-11 · Auditoría Fable5 (#5): cancelación REAL de
   // requests al desmontar pantallas. El caller pasa un AbortSignal y el
   // fetch nativo lo honra; un AbortError NUNCA se reintenta.
-  if (signal) opts.signal = signal;
+  // Cancelación: el signal explícito del caller manda; si no, los GET
+  // idempotentes (excepto /auth/*) se atan al controlador de navegación.
+  if (signal) {
+    opts.signal = signal;
+  } else if (_isIdempotent(method) && _navController && !path.startsWith("/auth/")) {
+    opts.signal = _navController.signal;
+  }
 
   let resp;
   try {
