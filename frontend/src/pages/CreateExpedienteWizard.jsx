@@ -29,6 +29,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useRole } from "../context/RoleContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { getToken, ApiError, postMultipart } from "../lib/api.js";
+import { RequestAssignmentDialog } from "../components/expedientes/ManualLineModal.jsx";
 
 // ---------------------------------------------------------------------
 // Paleta MWT (hardcoded en constantes, no en clases — permite que el
@@ -516,6 +517,23 @@ function StepUpload({ state, patch, isClient }) {
         brandName:  brandCand?.nombre || brandCand?.name || pl.brand?.name || "",
         lines:      (pl.lines || []).map((l) => ({ ...l })),
       });
+      // Resolver líneas contra el catálogo: alias del cliente → SKU/nombre
+      // real + precio de la banda vigente (base 90d) o flag "no asignado".
+      // R3: para CLIENT el backend fuerza el client_id del JWT (ignora éste).
+      try {
+        const rr = await postJSON(
+          "/expedientes/resolve-oc-preview/",
+          { lines: (pl.lines || []).map((l) => ({ ...l })), client_id: clientCand?.id || undefined },
+          { token },
+        );
+        if (rr?.ok && Array.isArray(rr.lines)) {
+          patch({ lines: rr.lines.map((l) => ({
+            ...l,
+            descripcion: l.product_label || l.descripcion || "",
+            unit_price:  l.unit_price != null ? l.unit_price : 0,
+          })) });
+        }
+      } catch { /* best-effort: si falla, quedan las líneas crudas del OCR */ }
     } catch (e) {
       patch({
         loadingOcr: false,
@@ -1013,8 +1031,14 @@ function StepProducts({ state, patch, isClient }) {
     patch({ lines: state.lines.filter((_, j) => j !== i) });
   };
 
+  const cur = state.ocrPayload?.po?.currency || "USD";
+  const [reqLine, setReqLine] = useState(null);
+  const [reqDone, setReqDone] = useState({});   // sku -> true (solicitud enviada)
+  // Una línea está "asignada" si el preview lo marcó así; si no vino del
+  // preview (flujo admin / OCR crudo) asumimos asignada (precio editable).
+  const isAssigned = (l) => (l.assigned === undefined ? true : !!l.assigned);
   const subtotal = state.lines.reduce(
-    (acc, l) => acc + (Number(l.qty) || 0) * (Number(l.unit_price) || 0),
+    (acc, l) => acc + (isAssigned(l) ? (Number(l.qty) || 0) * (Number(l.unit_price) || 0) : 0),
     0,
   );
 
@@ -1025,9 +1049,9 @@ function StepProducts({ state, patch, isClient }) {
       </h2>
       {isClient && (
         <p style={styles.lede}>
-          Estos son los productos que leímos de tu archivo, con los precios
-          pre-negociados que tienes con Rana Walk. Puedes ajustar la cantidad
-          si es necesario.
+          Estos son los productos que leímos de tu archivo, resueltos contra el
+          catálogo con tus precios pre-negociados. Los que aún no tienes
+          asignados aparecen sin precio: pedí su asignación con un clic.
         </p>
       )}
 
@@ -1045,7 +1069,10 @@ function StepProducts({ state, patch, isClient }) {
           </tr>
         </thead>
         <tbody>
-          {state.lines.map((l, i) => (
+          {state.lines.map((l, i) => {
+            const assigned = isAssigned(l);
+            const sent = !!(l.unassigned_request_sent || reqDone[l.sku]);
+            return (
             <tr key={i} style={i % 2 ? { background: "#FAFBFD" } : null}>
               <td style={styles.td}>
                 {isClient ? <code>{l.sku}</code> : (
@@ -1056,7 +1083,7 @@ function StepProducts({ state, patch, isClient }) {
                   />
                 )}
               </td>
-              <td style={styles.td}>{l.descripcion || "—"}</td>
+              <td style={styles.td}>{l.product_label || l.descripcion || "—"}</td>
               <td style={styles.td}>{l.size || "—"}</td>
               <td style={styles.tdRight}>
                 <input
@@ -1069,8 +1096,10 @@ function StepProducts({ state, patch, isClient }) {
                 />
               </td>
               <td style={styles.tdRight}>
-                {isClient ? (
-                  fmtMoney(l.unit_price, state.ocrPayload?.po?.currency)
+                {!assigned ? (
+                  <span style={{ color: COLORS.inkSoft }}>—</span>
+                ) : isClient ? (
+                  fmtMoney(l.unit_price, cur)
                 ) : (
                   <input
                     type="number"
@@ -1082,9 +1111,26 @@ function StepProducts({ state, patch, isClient }) {
                 )}
               </td>
               <td style={styles.tdRight}>
-                {fmtMoney(
-                  (Number(l.qty) || 0) * (Number(l.unit_price) || 0),
-                  state.ocrPayload?.po?.currency,
+                {assigned ? (
+                  fmtMoney((Number(l.qty) || 0) * (Number(l.unit_price) || 0), cur)
+                ) : sent ? (
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "#0E9F6E" }}>
+                    Solicitud enviada
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setReqLine({ sku: l.sku, talla: l.size, cantidad: l.qty })}
+                    style={{
+                      padding: "5px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer",
+                      borderRadius: 8, whiteSpace: "nowrap",
+                      color: "#B45309", border: "1px solid rgba(180,83,9,0.40)",
+                      background: "rgba(180,83,9,0.06)",
+                    }}
+                    title="Pedir que MWT te asigne este producto"
+                  >
+                    Solicitar asignación
+                  </button>
                 )}
               </td>
               {!isClient && (
@@ -1105,7 +1151,8 @@ function StepProducts({ state, patch, isClient }) {
                 </td>
               )}
             </tr>
-          ))}
+            );
+          })}
           {state.lines.length === 0 && (
             <tr>
               <td
@@ -1123,12 +1170,24 @@ function StepProducts({ state, patch, isClient }) {
               Subtotal
             </td>
             <td style={{ ...styles.tdRight, fontWeight: 700, color: COLORS.navy }}>
-              {fmtMoney(subtotal, state.ocrPayload?.po?.currency)}
+              {fmtMoney(subtotal, cur)}
             </td>
             {!isClient && <td colSpan={2} />}
           </tr>
         </tfoot>
       </table>
+
+      {reqLine && (
+        <RequestAssignmentDialog
+          lang="es"
+          sku={reqLine.sku}
+          clientId={state.clientId}
+          clientEmail={state.clientEmail || ""}
+          onClose={() => setReqLine(null)}
+          onSent={() => { setReqDone((p) => ({ ...p, [reqLine.sku]: true })); setReqLine(null); }}
+          onError={() => setReqLine(null)}
+        />
+      )}
     </section>
   );
 }

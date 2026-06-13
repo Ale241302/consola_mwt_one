@@ -4,7 +4,7 @@ from .views import (
     OcViewSet, ExpedienteViewSet, LineaViewSet, DocumentoViewSet,
     TransicionCatViewSet, EventLogViewSet, OcrParsingLogViewSet,
 )
-from .views_wizard import create_from_oc
+from .views_wizard import create_from_oc, resolve_oc_preview
 from .views_simplified_wizard import (
     ParseTemplateView, CatalogRequestAssignmentView,
 )
@@ -50,6 +50,10 @@ urlpatterns = [
     # client_id se fuerza al del JWT (ignora payload), y mode/freight/transport
     # se setean a NULL para esperar review del CEO.
     path("expedientes/create-from-oc/", create_from_oc, name="expedientes-create-from-oc"),
+    # Preview Paso 2 (wizard B2B): resuelve líneas OCR → producto por alias +
+    # precio de banda vigente (90d) o flag de "no asignado". NO crea nada.
+    path("expedientes/resolve-oc-preview/", resolve_oc_preview,
+         name="expedientes-resolve-oc-preview"),
     # Sprint Wizard Simplificado (2026-04-29)
     path("expedientes/parse-template/", ParseTemplateView.as_view(),
          name="expedientes-parse-template"),

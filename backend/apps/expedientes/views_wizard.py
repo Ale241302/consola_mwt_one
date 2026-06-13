@@ -441,6 +441,132 @@ def _idempotence_replay(token: str) -> Optional[dict]:
 
 
 # ═════════════════════════════════════════════════════════════════════
+# Helper: info de catálogo (sku, nombre, marca, visibilidad) por producto_id
+# ═════════════════════════════════════════════════════════════════════
+def _fetch_products_info(producto_ids: list) -> dict:
+    """Por producto_id: sku, nombre, marca_id y visibilidad (visible_to_all +
+    client_overrides). Una sola query (sin N+1)."""
+    out = {}
+    pids = [str(p) for p in producto_ids if p]
+    if not pids:
+        return out
+    try:
+        with connection.cursor() as c:
+            c.execute(
+                """
+                SELECT id::text, sku, COALESCE(nombre, ''),
+                       marca_id::text,
+                       COALESCE(especificaciones->'visibility'->>'visible_to_all','false'),
+                       COALESCE(especificaciones->'visibility'->'client_overrides','{}'::jsonb)
+                  FROM productos.producto
+                 WHERE id = ANY(%s::uuid[]) AND COALESCE(is_active, TRUE) = TRUE
+                """,
+                [pids],
+            )
+            for pid, sku, nombre, marca_id, vta, overrides in c.fetchall():
+                if isinstance(overrides, str):
+                    try:
+                        overrides = json.loads(overrides)
+                    except (ValueError, TypeError):
+                        overrides = {}
+                out[pid] = {
+                    "sku":            sku,
+                    "nombre":         nombre,
+                    "marca_id":       marca_id,
+                    "visible_to_all": str(vta).lower() == "true",
+                    "overrides":      overrides or {},
+                }
+    except Exception as e:  # noqa: BLE001
+        log.warning("_fetch_products_info best-effort falló: %s", e)
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════
+# POST /api/expedientes/resolve-oc-preview/
+# Preview del Paso 2 (wizard B2B): resuelve cada línea del OCR a un producto
+# del catálogo por ALIAS del cliente → SKU real + nombre (descripción),
+# marca asignación y trae el precio de la banda VIGENTE (base 90d) de la
+# matriz congelada del cliente. NO crea expediente. CLIENT → client_id del
+# JWT (R3 anti-spoofing).
+# ═════════════════════════════════════════════════════════════════════
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def resolve_oc_preview(request):
+    user = request.user
+    is_client = _is_client_role(getattr(user, "role", None))
+    body = request.data or {}
+    raw_lines = body.get("lines") or []
+
+    if is_client:
+        forced_cid = (getattr(user, "legal_entity_id", None)
+                      or getattr(user, "portal_client_id", None)
+                      or getattr(user, "client_id", None))
+        if not forced_cid:
+            _leids = getattr(user, "legal_entity_ids", None) or []
+            forced_cid = _leids[0] if _leids else None
+        client_id = str(forced_cid) if forced_cid else None
+    else:
+        client_id = body.get("client_id") or None
+
+    if not client_id:
+        return Response({"ok": False, "detail": "client_id requerido"}, status=400)
+
+    # 1) Resolución por alias del cliente (muta in-place: producto_id/sku/size).
+    lines = [dict(l) for l in raw_lines if isinstance(l, dict)]
+    _apply_alias_matching(lines, client_id)
+
+    # 2) TC en vivo + banda vigente (base SIEMPRE 90d).
+    tc = _resolve_tc_usd_brl()
+    banda = pick_band(tc) if tc else None
+
+    # 3) Enriquecer por línea: nombre, asignación y precio 90d de la banda.
+    info_by_pid = _fetch_products_info([l.get("producto_id") for l in lines])
+    matrix_cache = {}
+    out = []
+    cid_low = str(client_id).lower()
+    for l in lines:
+        pid = l.get("producto_id")
+        info = info_by_pid.get(pid) if pid else None
+        sku = (info or {}).get("sku") or l.get("sku")
+        nombre = (info or {}).get("nombre") or ""
+        assigned = False
+        unit_price = None
+        if info:
+            ov = info.get("overrides") or {}
+            assigned = bool(info.get("visible_to_all")) or bool(
+                ov.get(client_id) or ov.get(cid_low) or ov.get(str(client_id))
+            )
+            if assigned and tc and sku:
+                if sku not in matrix_cache:
+                    try:
+                        matrix_cache[sku] = get_client_price_matrix(
+                            client_id, info.get("marca_id"), sku, tc)
+                    except Exception:  # noqa: BLE001
+                        matrix_cache[sku] = None
+                price = pick_plazo_price(matrix_cache.get(sku), 90)
+                unit_price = float(price) if price else None
+
+        try:
+            qty = float(l.get("qty") if l.get("qty") is not None else l.get("cantidad") or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+
+        out.append({
+            "client_part_number": l.get("client_part_number") or l.get("sku") or "",
+            "producto_id":  pid,
+            "sku":          sku,
+            "product_label": nombre,
+            "size":         l.get("size"),
+            "qty":          qty,
+            "assigned":     bool(assigned and unit_price is not None),
+            "unit_price":   unit_price,
+            "needs_review": bool(l.get("needs_review") or not pid),
+        })
+
+    return Response({"ok": True, "tc": tc, "banda_id": banda, "lines": out})
+
+
+# ═════════════════════════════════════════════════════════════════════
 # POST /api/expedientes/create-from-oc/
 # ═════════════════════════════════════════════════════════════════════
 @api_view(["POST"])
