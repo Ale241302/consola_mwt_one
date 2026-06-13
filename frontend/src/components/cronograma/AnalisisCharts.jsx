@@ -124,7 +124,9 @@ function SkuCarousel({ skuList, selSkus, setSelSkus, nameOf, lang }) {
       <button onClick={() => setSelSkus(new Set())} style={{ ...chipStyle(selSkus.size === 0, "#64748B"), flexShrink: 0 }}>
         {es ? "Todos los SKU" : "All SKUs"}
       </button>
-      <button onClick={() => scroll(-1)} aria-label="prev" style={arrowStyle()}>‹</button>
+      <button onClick={() => scroll(-1)} aria-label="prev" style={arrowStyle()}>
+        <svg width="9" height="10" viewBox="0 0 10 10"><polyline points="6.5,2 3.5,5 6.5,8" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
       <div ref={ref} style={{ flex: 1, display: "flex", gap: 6, overflowX: "hidden", whiteSpace: "nowrap", padding: "2px 0", minWidth: 0 }}>
         {skuList.map((k) => (
           <button key={k} title={nameOf(k)} onClick={() => toggle(k)} style={{ ...chipStyle(selSkus.has(k), colorForSku(k, skuList)), flexShrink: 0 }}>
@@ -134,7 +136,9 @@ function SkuCarousel({ skuList, selSkus, setSelSkus, nameOf, lang }) {
           </button>
         ))}
       </div>
-      <button onClick={() => scroll(1)} aria-label="next" style={arrowStyle()}>›</button>
+      <button onClick={() => scroll(1)} aria-label="next" style={arrowStyle()}>
+        <svg width="9" height="10" viewBox="0 0 10 10"><polyline points="3.5,2 6.5,5 3.5,8" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
     </div>
   );
 }
@@ -342,17 +346,6 @@ function SizesChart({ items, lang, isClient = false }) {
         />
       )}
 
-      {hasData && orient === "SIZE" && activeSkus.length > 1 && (
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 14 }}>
-          {activeSkus.map((k) => (
-            <span key={k} className="caption" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--text-secondary, #475569)" }}>
-              <span style={{ width: 10, height: 10, borderRadius: 2, background: colorForSku(k, skuList), flexShrink: 0 }} />
-              <span style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 700 }}>{k}</span>
-              {nameOf(k) && <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>· {nameOf(k)}</span>}
-            </span>
-          ))}
-        </div>
-      )}
       {hasData && orient === "SKU" && sizes.length > 1 && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14 }}>
           <span className="caption" style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "Talla" : "Size"}</span>
