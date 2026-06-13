@@ -193,9 +193,12 @@ class OcViewSet(viewsets.ViewSet):
         except Exception:
             o = None
         if o is None:
-            try:
-                o = Oc.objects.get(codigo=pk, is_active=True)
-            except Oc.DoesNotExist:
+            # Sprint 2026-06-13 · oc.codigo YA NO es único (se permiten OCs
+            # duplicadas por PO). El lookup por codigo puede devolver varias;
+            # tomamos la más reciente activa.
+            o = (Oc.objects.filter(codigo=pk, is_active=True)
+                   .order_by("-issued_at", "-created_at").first())
+            if o is None:
                 return Response({"detail": "OC no existe"}, status=404)
         return Response(OcSerializer(o, context={"request": request}).data)
 

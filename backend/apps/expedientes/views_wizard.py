@@ -766,6 +766,20 @@ def create_from_oc(request):
         with transaction.atomic():
             with connection.cursor() as c:
 
+                # Sprint 2026-06-13 · Se permiten OCs duplicadas por PO
+                # (oc.codigo dejó de ser único). Pero expedientes.expediente.
+                # codigo SÍ sigue siendo único, así que si el PO se re-registra
+                # desambiguamos SOLO el codigo del expediente con sufijo
+                # -2, -3… El número de OC/PO (po_number) se conserva tal cual.
+                c.execute(
+                    "SELECT COUNT(*) FROM expedientes.expediente "
+                    "WHERE codigo = %s OR codigo LIKE %s",
+                    [expediente_codigo, expediente_codigo + "-%"],
+                )
+                _exp_dups = int((c.fetchone() or [0])[0] or 0)
+                if _exp_dups > 0:
+                    expediente_codigo = f"{expediente_codigo}-{_exp_dups + 1}"
+
                 # 7.1 — Insertar OC
                 c.execute("""
                     INSERT INTO expedientes.oc (
@@ -1130,15 +1144,6 @@ def create_from_oc(request):
 
     except Exception as e:
         log.exception("create_from_oc atomic tx falló: %s", e)
-        # Sprint 2026-06-13 · Colisión de codigo de OC. Con el índice parcial
-        # `oc_codigo_active_uniq` esto solo ocurre si YA existe otra OC ACTIVA
-        # con el mismo número de PO. Devolvemos 409 legible (no un 500 críptico
-        # de "duplicate key").
-        _emsg = str(e).lower()
-        _dup_codigo = (
-            ("codigo" in _emsg or "oc_codigo" in _emsg)
-            and ("unique" in _emsg or "duplicate key" in _emsg or "ya existe" in _emsg)
-        )
         # Log de submission en modo CRASHED (best-effort, fuera de la tx rollbacked)
         try:
             with connection.cursor() as c:
@@ -1165,16 +1170,6 @@ def create_from_oc(request):
                 ])
         except Exception:
             pass
-        if _dup_codigo:
-            return Response({
-                "ok":    False,
-                "error": "oc_codigo_duplicada",
-                "detail": (
-                    f"Ya existe una OC activa con el número {po_number}. "
-                    "Si fue eliminada y querés volver a registrarla, pedí al "
-                    "equipo MWT que la libere, o usá otro número de OC."
-                ),
-            }, status=409)
         return Response({
             "ok":    False,
             "error": "transaction_failed",
