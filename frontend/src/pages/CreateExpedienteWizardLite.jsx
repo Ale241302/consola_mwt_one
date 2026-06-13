@@ -562,15 +562,13 @@ export default function CreateExpedienteWizardLite() {
         // un subconjunto de líneas y cambió operador o cliente, esas líneas se
         // mueven a un expediente NUEVO (misma OC); el original conserva el resto.
         if (isFullEdit) {
-          const operatorChanged = !!(
-            initialOperatorRef.current
-            && operatingCompanyId
-            && String(operatingCompanyId).toLowerCase() !== String(initialOperatorRef.current).toLowerCase()
-          );
+          // SPLIT: basta con seleccionar líneas reales (existentes en el
+          // expediente). Se mueven a un expediente NUEVO con el operador/
+          // cliente actuales (cambien o no). Sin selección → todo se mantiene.
           const split_line_ids = orderLines
             .filter((l) => l.isSelected && l.tmpId && initialIds.has(l.tmpId))
             .map((l) => l.tmpId);
-          if (split_line_ids.length && (operatorChanged || clientChanged)) {
+          if (split_line_ids.length) {
             body.split_line_ids = split_line_ids;
             if (clientChanged) body.client_id = selClient.id;
           }
@@ -1732,8 +1730,8 @@ function Step2Productos({
         <div className="card card-pad-md" style={{ marginTop: 12, background: "#ECFDF5", border: "1px solid #00B286" }}>
           <div className="caption" style={{ color: "#0B1E3A" }}>
             {lang === "es"
-              ? `${selectedCount} línea${selectedCount === 1 ? "" : "s"} seleccionada${selectedCount === 1 ? "" : "s"}: al cambiar operador o cliente y dar Siguiente, se moverán a un expediente NUEVO con la misma OC. Las no seleccionadas quedan en este expediente.`
-              : `${selectedCount} line(s) selected: on changing operator or client and clicking Next, they move to a NEW expediente with the same PO. Unselected stay in this one.`}
+              ? `${selectedCount} línea${selectedCount === 1 ? "" : "s"} seleccionada${selectedCount === 1 ? "" : "s"}: al guardar, se moverán a un expediente NUEVO con la misma OC (operador/cliente actuales). Las no seleccionadas quedan en este expediente.`
+              : `${selectedCount} line(s) selected: on save, they move to a NEW expediente with the same PO. Unselected stay in this one.`}
           </div>
         </div>
       )}

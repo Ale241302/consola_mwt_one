@@ -3280,6 +3280,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
             "lines_updated": updated_ids or [],
             "full": True,
             "split": split_res,
+            "new_expediente_id": (split_res or {}).get("new_expediente_id"),
+            "new_expediente_codigo": (split_res or {}).get("new_codigo"),
         }, status=200)
 
     def _get_full(self, request, pk=None):

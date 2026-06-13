@@ -260,7 +260,15 @@ export async function apiFetch(path, { method = "GET", body, token, headers = {}
   } catch (e) {
     // Abort explícito del caller (navegación) → propagar tal cual; el
     // caller filtra err.name === 'AbortError' y no setea estado.
-    if (e && e.name === "AbortError") throw e;
+    if (e && e.name === "AbortError") {
+      // Abort explícito del caller (su propio signal) → propagar; el caller lo
+      // filtra (err.name === "AbortError"). Abort del controlador GLOBAL de
+      // navegación (GET idempotente sin signal): el componente se está
+      // desmontando → devolvemos una promesa que NUNCA resuelve, evitando el
+      // "Uncaught (in promise) AbortError" y que un .then corra a medias.
+      if (signal) throw e;
+      return new Promise(() => {});
+    }
     // Falla de red (upstream caído durante deploy, DNS, etc.). Reintento 1x.
     if (!_transientRetried && _isIdempotent(method)) {
       await _sleep(1000);
