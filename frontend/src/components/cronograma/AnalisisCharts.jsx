@@ -4,11 +4,11 @@
 //
 // Gráficos dependency-free (SVG puro, sin librerías externas):
 //   1. TALLAS  — pares por talla (apilado por SKU) o por SKU (apilado por
-//                talla, coloreado por escala de talla). SKU + nombre de
-//                producto + tooltip con desglose por expediente.
+//                talla). Filtro de SKU en carrusel + nombre de producto +
+//                tooltip por expediente + campana de Gauss de demanda.
 //   2. SKU × MÉTODO — multi-selección de SKU (Todos / comparar varios):
-//                pares, nº de expedientes y días promedio por fase en
-//                Aéreo vs Marítimo (Aéreo incluye "aéreo supuesto").
+//                pares, nº de expedientes y días por fase Aéreo vs Marítimo,
+//                + campana de Gauss de tallas de los SKU elegidos.
 //   3. USD → BRL — serie histórica (Frankfurter/ECB) con hover por punto +
 //                medidor de hoy + campana de Gauss con hover por rango.
 //
@@ -26,7 +26,6 @@ const fmt1 = (n) => (Math.round(Number(n) * 10) / 10).toLocaleString("en-US");
 const fmt2 = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt4 = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 
-// Paleta cualitativa para SKUs (navy → teal → mint, marca MWT).
 const SKU_PALETTE = [
   "#013A57", "#075A78", "#0B7E8F", "#0FA3A0", "#13B98A",
   "#3C6E91", "#5A8FB0", "#2E8B7F", "#6FB3A6", "#94A7B8",
@@ -36,8 +35,6 @@ const colorForSku = (sku, list) => {
   return SKU_PALETTE[i % SKU_PALETTE.length];
 };
 
-// Escala secuencial (clara → oscura) para distinguir TALLAS dentro de un
-// mismo SKU en el modo "Por SKU".
 const SIZE_SCALE = ["#CDE7E3", "#A9D6D0", "#7FC2BC", "#4FA8A6", "#2E8B8C", "#1C6E78", "#0B5063", "#013A57"];
 const colorForSize = (size, sortedSizes) => {
   const i = sortedSizes.indexOf(size);
@@ -46,7 +43,6 @@ const colorForSize = (size, sortedSizes) => {
   return SIZE_SCALE[Math.round(t * (SIZE_SCALE.length - 1))];
 };
 
-// Color de texto legible sobre un fondo hex.
 function textOn(bg) {
   const h = String(bg || "").replace("#", "");
   if (h.length < 6) return "#fff";
@@ -56,7 +52,6 @@ function textOn(bg) {
 
 const qtyOf = (l) => Number(l.qty_planned != null ? l.qty_planned : l.qty) || 0;
 
-// Orden natural de tallas: numéricas primero (asc), luego alfabéticas.
 function sortSizes(sizes) {
   return [...sizes].sort((a, b) => {
     const na = parseFloat(a), nb = parseFloat(b);
@@ -68,7 +63,6 @@ function sortSizes(sizes) {
   });
 }
 
-// Mapa sku -> nombre de producto, compartido por las sub-vistas.
 function useSkuMeta(items) {
   return useMemo(() => {
     const s = new Set(); const nm = new Map();
@@ -82,7 +76,7 @@ function useSkuMeta(items) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Subtabs internos
+// Subtabs
 // ═══════════════════════════════════════════════════════════════
 const SUBTABS = [
   { id: "TALLAS", es: "Tallas", en: "Sizes" },
@@ -93,25 +87,21 @@ const SUBTABS = [
 export default function AnalisisCharts({ items = [], lang = "es", isClient = false }) {
   const [sub, setSub] = useState("TALLAS");
   const es = lang === "es";
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "inline-flex", gap: 2, background: "var(--surface-alt, #E8EDF3)", borderRadius: 10, padding: 4, alignSelf: "flex-start" }}>
         {SUBTABS.map((t) => (
           <button key={t.id} onClick={() => setSub(t.id)}
                   style={{
-                    padding: "6px 16px", fontSize: 12.5, fontWeight: 700,
-                    border: "none", borderRadius: 8, cursor: "pointer",
+                    padding: "6px 16px", fontSize: 12.5, fontWeight: 700, border: "none", borderRadius: 8, cursor: "pointer",
                     background: sub === t.id ? "#fff" : "transparent",
                     color: sub === t.id ? NAVY : "var(--text-secondary, #475569)",
-                    boxShadow: sub === t.id ? "0 1px 4px rgba(1,58,87,0.12)" : "none",
-                    transition: "all .18s ease",
+                    boxShadow: sub === t.id ? "0 1px 4px rgba(1,58,87,0.12)" : "none", transition: "all .18s ease",
                   }}>
             {es ? t.es : t.en}
           </button>
         ))}
       </div>
-
       {sub === "TALLAS" && <SizesChart items={items} lang={lang} isClient={isClient} />}
       {sub === "METODO" && <SkuMethodChart items={items} lang={lang} />}
       {sub === "FX" && <FxChart items={items} lang={lang} isClient={isClient} />}
@@ -120,43 +110,128 @@ export default function AnalisisCharts({ items = [], lang = "es", isClient = fal
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Chips de filtro de SKU (reutilizable). "Todos" + uno por SKU con
-// el nombre de producto en el title.
+// Carrusel de filtro de SKU — "Todos" fijo afuera + chips en una sola
+// línea desplazable con flechas ‹ ›.
 // ═══════════════════════════════════════════════════════════════
-function SkuChips({ skuList, selSkus, setSelSkus, nameOf, lang }) {
+function SkuCarousel({ skuList, selSkus, setSelSkus, nameOf, lang }) {
   const es = lang === "es";
-  const toggle = (k) => setSelSkus((prev) => {
-    const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n;
-  });
+  const ref = useRef(null);
+  const toggle = (k) => setSelSkus((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const scroll = (dir) => { const el = ref.current; if (el) el.scrollBy({ left: dir * 280, behavior: "smooth" }); };
   if (skuList.length <= 1) return null;
   return (
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-      <button onClick={() => setSelSkus(new Set())} style={chipStyle(selSkus.size === 0, "#64748B")}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+      <button onClick={() => setSelSkus(new Set())} style={{ ...chipStyle(selSkus.size === 0, "#64748B"), flexShrink: 0 }}>
         {es ? "Todos los SKU" : "All SKUs"}
       </button>
-      {skuList.map((k) => (
-        <button key={k} title={nameOf(k)} onClick={() => toggle(k)} style={chipStyle(selSkus.has(k), colorForSku(k, skuList))}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: colorForSku(k, skuList), display: "inline-block", marginRight: 6 }} />
-          {k}
-          {nameOf(k) && <span style={{ marginLeft: 5, fontWeight: 500, opacity: 0.8, fontFamily: "inherit" }}>· {nameOf(k)}</span>}
-        </button>
-      ))}
+      <button onClick={() => scroll(-1)} aria-label="prev" style={arrowStyle()}>‹</button>
+      <div ref={ref} style={{ flex: 1, display: "flex", gap: 6, overflowX: "hidden", whiteSpace: "nowrap", padding: "2px 0", minWidth: 0 }}>
+        {skuList.map((k) => (
+          <button key={k} title={nameOf(k)} onClick={() => toggle(k)} style={{ ...chipStyle(selSkus.has(k), colorForSku(k, skuList)), flexShrink: 0 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: colorForSku(k, skuList), display: "inline-block", marginRight: 6 }} />
+            {k}
+            {nameOf(k) && <span style={{ marginLeft: 5, fontWeight: 500, opacity: 0.8 }}>· {nameOf(k)}</span>}
+          </button>
+        ))}
+      </div>
+      <button onClick={() => scroll(1)} aria-label="next" style={arrowStyle()}>›</button>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 1 · TALLAS — pares por talla (apilado por SKU) / por SKU (apilado por talla)
+// Campana de Gauss de TALLAS — distribución de pares por talla + curva
+// normal ajustada (μ, σ en espacio de talla) y hover por barra.
+// ═══════════════════════════════════════════════════════════════
+function SizeGauss({ dist, lang, title }) {
+  const es = lang === "es";
+  const [hb, setHb] = useState(null);
+  const data = (dist || []).filter((d) => d.pairs > 0);
+  if (data.length < 2) return null;
+  const n = data.length;
+  const total = data.reduce((a, d) => a + d.pairs, 0) || 1;
+  const maxP = Math.max(...data.map((d) => d.pairs));
+  let mu = 0; data.forEach((d, i) => { mu += i * d.pairs; }); mu /= total;
+  let varr = 0; data.forEach((d, i) => { varr += d.pairs * (i - mu) * (i - mu); }); varr /= total;
+  const sigma = Math.sqrt(varr) || 1e-6;
+  const muSize = data[Math.max(0, Math.min(n - 1, Math.round(mu)))].size;
+
+  const W = 720, H = 210, padL = 30, padR = 12, padT = 16, padB = 26;
+  const bw = (W - padL - padR) / n;
+  const xPix = (x) => padL + (x + 0.5) * bw;
+  const yP = (p) => padT + (1 - p / maxP) * (H - padT - padB);
+  const normal = (x) => Math.exp(-0.5 * ((x - mu) / sigma) * ((x - mu) / sigma));
+  const peak = normal(mu) || 1;
+  const curve = [];
+  const STEPS = 120;
+  for (let s = 0; s <= STEPS; s++) {
+    const x = (s / STEPS) * (n - 1);
+    const yy = padT + (1 - normal(x) / peak) * (H - padT - padB);
+    curve.push(`${xPix(x).toFixed(1)},${yy.toFixed(1)}`);
+  }
+  const labelStep = Math.ceil(n / 16);
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary, #475569)", marginBottom: 2 }}>
+        {title || (es ? "Curva de demanda por talla (campana de Gauss)" : "Size demand curve (Gaussian bell)")}
+      </div>
+      <p className="caption" style={{ margin: "0 0 6px", color: "var(--text-tertiary, #94A3B8)" }}>
+        {es
+          ? <>Talla central <b>μ ≈ {muSize}</b> · dispersión <b className="tabular-nums">σ ≈ {fmt1(sigma)}</b> tallas. Pasa el cursor por una barra para ver pares y %.</>
+          : <>Center size <b>μ ≈ {muSize}</b> · spread <b className="tabular-nums">σ ≈ {fmt1(sigma)}</b> sizes. Hover a bar for pairs and %.</>}
+      </p>
+      <div style={{ position: "relative" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", overflow: "visible" }}>
+          {data.map((d, i) => {
+            const yTop = yP(d.pairs);
+            const x0 = padL + i * bw;
+            return (
+              <g key={d.size}>
+                <rect x={x0 + 1.5} y={yTop} width={Math.max(1, bw - 3)} height={(H - padB) - yTop} rx="2"
+                      fill={colorForSize(d.size, data.map((x) => x.size))} opacity="0.9" />
+                <rect x={x0} y={padT} width={bw} height={(H - padB) - padT} fill="transparent"
+                      onMouseMove={(e) => setHb({ d, pct: Math.round((d.pairs / total) * 100), cx: e.clientX, cy: e.clientY })}
+                      onMouseLeave={() => setHb(null)} style={{ cursor: "pointer" }} />
+                {(i % labelStep === 0) && (
+                  <text x={xPix(i)} y={H - 8} textAnchor="middle" fontSize="9.5" fill="#94A3B8" className="tabular-nums" pointerEvents="none">{d.size}</text>
+                )}
+              </g>
+            );
+          })}
+          <polyline points={curve.join(" ")} fill="none" stroke={NAVY} strokeWidth="2.4" strokeLinejoin="round" pointerEvents="none" />
+          <line x1={xPix(mu)} y1={padT} x2={xPix(mu)} y2={H - padB} stroke={MINT} strokeWidth="1.6" strokeDasharray="4 3" pointerEvents="none" />
+          <text x={xPix(mu)} y={padT - 3} textAnchor="middle" fontSize="10" fill={MINT} fontWeight="800" pointerEvents="none">μ</text>
+        </svg>
+        {hb && (
+          <div style={{
+            position: "fixed", left: Math.min(hb.cx + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 170),
+            top: hb.cy + 14, zIndex: 1500, pointerEvents: "none",
+            background: "var(--surface-raised, #fff)", border: "1px solid var(--border-subtle, #E1E6ED)",
+            borderRadius: 8, boxShadow: "0 10px 24px rgba(11,30,58,0.2)", padding: "7px 10px",
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: NAVY }}>{es ? "Talla" : "Size"} {hb.d.size}</div>
+            <div className="tabular-nums caption" style={{ color: "var(--text-secondary, #475569)" }}>
+              {fInt(hb.d.pairs)} {es ? "pares" : "pairs"} · {hb.pct}%
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 1 · TALLAS
 // ═══════════════════════════════════════════════════════════════
 function SizesChart({ items, lang, isClient = false }) {
   const es = lang === "es";
-  const [orient, setOrient] = useState("SIZE");      // SIZE | SKU
+  const [orient, setOrient] = useState("SIZE");
   const [selSkus, setSelSkus] = useState(() => new Set());
-  const [hover, setHover] = useState(null);          // { meta, x, y }
+  const [hover, setHover] = useState(null);
   const { skuList, nameBySku } = useSkuMeta(items);
   const nameOf = (k) => nameBySku.get(k) || "";
 
-  // Etiqueta del expediente: proforma (MWT) · OC/PO (cliente) — R3.
   const labelOf = (it) => {
     if (!isClient) return it.proforma || it.expCodigo || "—";
     if (!it.ocCodigo) return it.expCodigo || "—";
@@ -168,7 +243,6 @@ function SizesChart({ items, lang, isClient = false }) {
     [skuList, selSkus]
   );
 
-  // sizeMap: size -> sku -> { value, byExp }   ·   skuMap: sku -> size -> {…}
   const { sizes, sizeMap, totalsBySize, totalGeneral, skuMap, totalsBySku, skuOrder } = useMemo(() => {
     const sizeMap = new Map(); const skuMap = new Map();
     items.forEach((it) => {
@@ -199,6 +273,7 @@ function SizesChart({ items, lang, isClient = false }) {
     ? Math.max(1, ...sizes.map((s) => totalsBySize.get(s) || 0))
     : Math.max(1, ...skuOrder.map((k) => totalsBySku.get(k) || 0));
   const hasData = totalGeneral > 0;
+  const gaussDist = sizes.map((s) => ({ size: s, pairs: totalsBySize.get(s) || 0 }));
 
   const mkMeta = (sku, size, cell) => ({
     sku, name: nameOf(sku), size, value: cell.value,
@@ -209,20 +284,13 @@ function SizesChart({ items, lang, isClient = false }) {
   return (
     <div className="card card-pad-md">
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-        <h4 style={{ margin: 0, color: NAVY, fontSize: 13, fontWeight: 800 }}>
-          {es ? "PARES PEDIDOS POR TALLA" : "PAIRS ORDERED BY SIZE"}
-        </h4>
+        <h4 style={{ margin: 0, color: NAVY, fontSize: 13, fontWeight: 800 }}>{es ? "PARES PEDIDOS POR TALLA" : "PAIRS ORDERED BY SIZE"}</h4>
         <span className="caption tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>
           {fInt(totalGeneral)} {es ? "pares" : "pairs"} · {activeSkus.length} SKU{activeSkus.length === 1 ? "" : "s"}
         </span>
         <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
-          {[
-            { id: "SIZE", es: "Por talla", en: "By size" },
-            { id: "SKU", es: "Por SKU", en: "By SKU" },
-          ].map((o) => (
-            <button key={o.id} onClick={() => setOrient(o.id)} style={pillStyle(orient === o.id)}>
-              {es ? o.es : o.en}
-            </button>
+          {[{ id: "SIZE", es: "Por talla", en: "By size" }, { id: "SKU", es: "Por SKU", en: "By SKU" }].map((o) => (
+            <button key={o.id} onClick={() => setOrient(o.id)} style={pillStyle(orient === o.id)}>{es ? o.es : o.en}</button>
           ))}
         </div>
       </div>
@@ -233,11 +301,11 @@ function SizesChart({ items, lang, isClient = false }) {
               ? `Cada fila es una talla; los colores son los SKUs que la componen y el número de la derecha es el total de pares. Pasa el cursor por un segmento para ver el producto y en qué ${isClient ? "OC/PO" : "proformas"} están esos pares.`
               : `Each row is a size; colors are the SKUs that make it up. Hover a segment for the product and which ${isClient ? "POs" : "proformas"} the pairs are in.`)
           : (es
-              ? `Cada fila es un SKU (con su nombre de producto); los segmentos son sus tallas, de la más chica (claro) a la más grande (oscuro). Pasa el cursor por un segmento para ver la talla, los pares y en qué ${isClient ? "OC/PO" : "proformas"} están.`
-              : `Each row is a SKU (with product name); segments are its sizes from small (light) to large (dark). Hover for size, pairs and which ${isClient ? "POs" : "proformas"}.`)}
+              ? `Cada fila es un SKU (con su nombre); los segmentos son sus tallas, de la más chica (claro) a la más grande (oscuro). Pasa el cursor por un segmento para ver talla, pares y en qué ${isClient ? "OC/PO" : "proformas"} están.`
+              : `Each row is a SKU; segments are its sizes from small (light) to large (dark). Hover for size, pairs and which ${isClient ? "POs" : "proformas"}.`)}
       </p>
 
-      <SkuChips skuList={skuList} selSkus={selSkus} setSelSkus={setSelSkus} nameOf={nameOf} lang={lang} />
+      <SkuCarousel skuList={skuList} selSkus={selSkus} setSelSkus={setSelSkus} nameOf={nameOf} lang={lang} />
 
       {!hasData ? (
         <EmptyState lang={lang} />
@@ -262,11 +330,7 @@ function SizesChart({ items, lang, isClient = false }) {
             labelNode: (
               <div style={{ lineHeight: 1.15, overflow: "hidden" }}>
                 <div style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 700, fontSize: 11.5, color: NAVY }}>{k}</div>
-                {nameOf(k) && (
-                  <div title={nameOf(k)} style={{ fontSize: 9.5, color: "var(--text-tertiary, #94A3B8)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {nameOf(k)}
-                  </div>
-                )}
+                {nameOf(k) && <div title={nameOf(k)} style={{ fontSize: 9.5, color: "var(--text-tertiary, #94A3B8)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nameOf(k)}</div>}
               </div>
             ),
             segments: sortSizes(Array.from(skuMap.get(k).keys())).map((s) => {
@@ -278,7 +342,6 @@ function SizesChart({ items, lang, isClient = false }) {
         />
       )}
 
-      {/* Leyenda */}
       {hasData && orient === "SIZE" && activeSkus.length > 1 && (
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 14 }}>
           {activeSkus.map((k) => (
@@ -299,11 +362,11 @@ function SizesChart({ items, lang, isClient = false }) {
         </div>
       )}
 
-      {/* Tooltip flotante con desglose por expediente. */}
+      {hasData && <SizeGauss dist={gaussDist} lang={lang} />}
+
       {hover && (
         <div style={{
-          position: "fixed",
-          left: Math.min(hover.x + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 286),
+          position: "fixed", left: Math.min(hover.x + 14, (typeof window !== "undefined" ? window.innerWidth : 1200) - 286),
           top: hover.y + 14, zIndex: 1500, pointerEvents: "none", width: 264,
           background: "var(--surface-raised, #fff)", border: "1px solid var(--border-subtle, #E1E6ED)",
           borderRadius: 10, boxShadow: "0 12px 30px rgba(11,30,58,0.22)", padding: "10px 12px",
@@ -311,8 +374,7 @@ function SizesChart({ items, lang, isClient = false }) {
           <div style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 800, color: NAVY, fontSize: 12.5 }}>{hover.meta.sku}</div>
           {hover.meta.name && <div style={{ fontSize: 11, color: "var(--text-secondary, #475569)", marginBottom: 5 }}>{hover.meta.name}</div>}
           <div style={{ fontSize: 11.5, color: "var(--text-primary, #0B1E3A)", marginBottom: 7 }}>
-            {es ? "Talla" : "Size"} <b>{hover.meta.size}</b>{" · "}
-            <b className="tabular-nums">{fInt(hover.meta.value)}</b> {es ? "pares" : "pairs"}
+            {es ? "Talla" : "Size"} <b>{hover.meta.size}</b>{" · "}<b className="tabular-nums">{fInt(hover.meta.value)}</b> {es ? "pares" : "pairs"}
           </div>
           <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.6, color: "var(--text-tertiary, #94A3B8)", marginBottom: 4 }}>
             {(isClient ? (es ? "EN OC / PO" : "IN PO") : (es ? "EN PROFORMA" : "IN PROFORMA"))}{" · "}{hover.meta.byExp.length}
@@ -321,9 +383,7 @@ function SizesChart({ items, lang, isClient = false }) {
             {hover.meta.byExp.map((x, i) => (
               <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11 }}>
                 <span style={{ fontFamily: "JetBrains Mono, monospace", color: "var(--text-secondary, #475569)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.label}</span>
-                <span className="tabular-nums" style={{ fontWeight: 800, color: NAVY, flexShrink: 0 }}>
-                  {fInt(x.pairs)}<span style={{ fontWeight: 500, color: "var(--text-tertiary, #94A3B8)" }}> prs</span>
-                </span>
+                <span className="tabular-nums" style={{ fontWeight: 800, color: NAVY, flexShrink: 0 }}>{fInt(x.pairs)}<span style={{ fontWeight: 500, color: "var(--text-tertiary, #94A3B8)" }}> prs</span></span>
               </div>
             ))}
           </div>
@@ -333,7 +393,6 @@ function SizesChart({ items, lang, isClient = false }) {
   );
 }
 
-// Barras horizontales apiladas. Cada segmento dispara onHover(meta, event).
 function StackedBars({ rows, max, lang, showSegLabels = false, labelWidth = 64, onHover }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
@@ -365,9 +424,7 @@ function StackedBars({ rows, max, lang, showSegLabels = false, labelWidth = 64, 
               ))}
             </div>
           </div>
-          <div className="tabular-nums" style={{ width: 60, textAlign: "right", flexShrink: 0, fontSize: 12, fontWeight: 800, color: NAVY }}>
-            {fInt(r.total)}
-          </div>
+          <div className="tabular-nums" style={{ width: 60, textAlign: "right", flexShrink: 0, fontSize: 12, fontWeight: 800, color: NAVY }}>{fInt(r.total)}</div>
         </div>
       ))}
     </div>
@@ -375,7 +432,7 @@ function StackedBars({ rows, max, lang, showSegLabels = false, labelWidth = 64, 
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 2 · SKU × MÉTODO — Aéreo vs Marítimo (multi-selección de SKU)
+// 2 · SKU × MÉTODO
 // ═══════════════════════════════════════════════════════════════
 const MODES = [
   { key: "Aereo", es: "Aéreo", en: "Air", color: NAVY },
@@ -392,9 +449,6 @@ function SkuMethodChart({ items, lang }) {
   const fases = STAGES.slice(0, 6);
   const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
 
-  // Por modo: expedientes que contienen algún SKU activo; pares de esos SKU;
-  // días promedio por fase (historial real del expediente). El bucket "Aereo"
-  // incluye los expedientes sin método definido (aéreo supuesto).
   const byMode = useMemo(() => {
     const out = {};
     MODES.forEach((m) => { out[m.key] = { items: [], pares: 0, phases: {} }; });
@@ -405,48 +459,48 @@ function SkuMethodChart({ items, lang }) {
       const b = out[mk];
       b.items.push(it);
       b.pares += (it.lineas || []).filter((l) => activeSet.has(l.sku)).reduce((a, l) => a + qtyOf(l), 0);
-      fases.forEach((s) => {
-        const d = itemPhaseDur(it, s);
-        if (d) (b.phases[s] || (b.phases[s] = [])).push(d.days);
-      });
+      fases.forEach((s) => { const d = itemPhaseDur(it, s); if (d) (b.phases[s] || (b.phases[s] = [])).push(d.days); });
     });
     MODES.forEach((m) => {
-      const b = out[m.key];
-      b.avg = {};
-      fases.forEach((s) => {
-        const arr = b.phases[s] || [];
-        b.avg[s] = arr.length ? arr.reduce((x, y) => x + y, 0) / arr.length : null;
-      });
+      const b = out[m.key]; b.avg = {};
+      fases.forEach((s) => { const arr = b.phases[s] || []; b.avg[s] = arr.length ? arr.reduce((x, y) => x + y, 0) / arr.length : null; });
       b.ciclo = fases.reduce((a, s) => a + (b.avg[s] || 0), 0);
     });
     return out;
   }, [items, activeSet]);
 
+  const sizeDist = useMemo(() => {
+    const m = new Map();
+    items.forEach((it) => (it.lineas || []).forEach((l) => {
+      if (!l.sku || !activeSet.has(l.sku)) return;
+      const size = (l.size && String(l.size).trim()) || (es ? "s/talla" : "no size");
+      const q = qtyOf(l); if (!q) return;
+      m.set(size, (m.get(size) || 0) + q);
+    }));
+    return sortSizes(Array.from(m.keys())).map((s) => ({ size: s, pairs: m.get(s) }));
+  }, [items, activeSet, es]);
+
   const maxPhase = Math.max(1, ...fases.flatMap((s) => MODES.map((m) => byMode[m.key].avg[s] || 0)));
   const anyData = MODES.some((m) => byMode[m.key].items.length);
-  const selCount = selSkus.size || skuList.length;
   const onlyOne = (selSkus.size === 1) ? Array.from(selSkus)[0] : null;
 
   return (
     <div className="card card-pad-md">
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-        <h4 style={{ margin: 0, color: NAVY, fontSize: 13, fontWeight: 800 }}>
-          {es ? "COMPORTAMIENTO POR MÉTODO DE ENVÍO" : "BEHAVIOR BY SHIPPING MODE"}
-        </h4>
+        <h4 style={{ margin: 0, color: NAVY, fontSize: 13, fontWeight: 800 }}>{es ? "COMPORTAMIENTO POR MÉTODO DE ENVÍO" : "BEHAVIOR BY SHIPPING MODE"}</h4>
         <span className="caption" style={{ color: "var(--text-secondary, #475569)" }}>
-          {selSkus.size === 0
-            ? (es ? `Todos los SKU (${skuList.length})` : `All SKUs (${skuList.length})`)
-            : (onlyOne ? `${onlyOne}${nameOf(onlyOne) ? " · " + nameOf(onlyOne) : ""}` : `${selCount} SKU`)}
+          {selSkus.size === 0 ? (es ? `Todos los SKU (${skuList.length})` : `All SKUs (${skuList.length})`)
+            : (onlyOne ? `${onlyOne}${nameOf(onlyOne) ? " · " + nameOf(onlyOne) : ""}` : `${selSkus.size} SKU`)}
         </span>
       </div>
 
       <p className="caption" style={{ margin: "0 0 12px", color: "var(--text-tertiary, #94A3B8)", maxWidth: 780, lineHeight: 1.4 }}>
         {es
           ? "Compara los expedientes que contienen los SKU seleccionados según su método de envío. El bucket Aéreo incluye los expedientes sin método aún definido (aéreo supuesto). Elegí varios SKU para sumarlos, o dejá «Todos»."
-          : "Compares the files containing the selected SKUs by shipping mode. The Air bucket includes files with no defined mode yet (assumed air). Pick several SKUs to combine, or keep \"All\"."}
+          : "Compares files containing the selected SKUs by shipping mode. The Air bucket includes files with no defined mode yet (assumed air). Pick several SKUs to combine, or keep \"All\"."}
       </p>
 
-      <SkuChips skuList={skuList} selSkus={selSkus} setSelSkus={setSelSkus} nameOf={nameOf} lang={lang} />
+      <SkuCarousel skuList={skuList} selSkus={selSkus} setSelSkus={setSelSkus} nameOf={nameOf} lang={lang} />
 
       {!anyData ? (
         <EmptyState lang={lang} text={es ? "Ningún expediente filtrado contiene los SKU seleccionados." : "No filtered file contains the selected SKUs."} />
@@ -485,9 +539,7 @@ function SkuMethodChart({ items, lang }) {
                         <div style={{ flex: 1, height: "100%", background: "var(--surface-alt, #F1F5F9)", borderRadius: 4, overflow: "hidden" }}>
                           <div style={{ width: `${((v || 0) / maxPhase) * 100}%`, height: "100%", background: m.color, minWidth: v ? 2 : 0, borderRadius: 4, transition: "width .3s ease" }} />
                         </div>
-                        <div className="tabular-nums" style={{ width: 40, textAlign: "right", fontSize: 10.5, fontWeight: 700, color: v ? m.color : "var(--text-tertiary, #CBD5E1)" }}>
-                          {v ? `${fmt1(v)}d` : "—"}
-                        </div>
+                        <div className="tabular-nums" style={{ width: 40, textAlign: "right", fontSize: 10.5, fontWeight: 700, color: v ? m.color : "var(--text-tertiary, #CBD5E1)" }}>{v ? `${fmt1(v)}d` : "—"}</div>
                       </div>
                     );
                   })}
@@ -498,11 +550,12 @@ function SkuMethodChart({ items, lang }) {
           <div style={{ display: "flex", gap: 14, marginTop: 12 }}>
             {MODES.map((m) => (
               <span key={m.key} className="caption" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--text-secondary, #475569)" }}>
-                <span style={{ width: 10, height: 10, borderRadius: 2, background: m.color }} />
-                {es ? m.es : m.en}
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: m.color }} />{es ? m.es : m.en}
               </span>
             ))}
           </div>
+
+          <SizeGauss dist={sizeDist} lang={lang} title={es ? "Tallas pedidas de los SKU seleccionados (campana de Gauss)" : "Sizes ordered for selected SKUs (Gaussian bell)"} />
         </>
       )}
     </div>
@@ -519,7 +572,7 @@ function Metric({ label, value, accent }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 3 · USD → BRL — serie histórica + medidor + campana de Gauss
+// 3 · USD → BRL
 // ═══════════════════════════════════════════════════════════════
 function FxChart({ items, lang, isClient }) {
   const es = lang === "es";
@@ -527,11 +580,7 @@ function FxChart({ items, lang, isClient }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-
-  const ranges = [
-    { days: 90, label: "90d" },
-    { days: 365, label: es ? "1 año" : "1y" },
-  ];
+  const ranges = [{ days: 90, label: "90d" }, { days: 365, label: es ? "1 año" : "1y" }];
 
   useEffect(() => {
     let alive = true;
@@ -559,23 +608,15 @@ function FxChart({ items, lang, isClient }) {
   return (
     <div className="card card-pad-md">
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-        <h4 style={{ margin: 0, color: NAVY, fontSize: 13, fontWeight: 800 }}>
-          {es ? "DÓLAR → REAL (USD/BRL)" : "USD → BRL"}
-        </h4>
-        <span className="caption" style={{ color: "var(--text-tertiary, #94A3B8)" }}>
-          {data && data.source ? data.source : "Frankfurter (ECB)"}
-        </span>
+        <h4 style={{ margin: 0, color: NAVY, fontSize: 13, fontWeight: 800 }}>{es ? "DÓLAR → REAL (USD/BRL)" : "USD → BRL"}</h4>
+        <span className="caption" style={{ color: "var(--text-tertiary, #94A3B8)" }}>{data && data.source ? data.source : "Frankfurter (ECB)"}</span>
         <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
-          {ranges.map((r) => (
-            <button key={r.days} onClick={() => setDays(r.days)} style={pillStyle(days === r.days)}>{r.label}</button>
-          ))}
+          {ranges.map((r) => (<button key={r.days} onClick={() => setDays(r.days)} style={pillStyle(days === r.days)}>{r.label}</button>))}
         </div>
       </div>
 
       {loading ? (
-        <div className="caption" style={{ padding: 30, textAlign: "center", color: "var(--text-tertiary)" }}>
-          {es ? "Cargando serie histórica…" : "Loading history…"}
-        </div>
+        <div className="caption" style={{ padding: 30, textAlign: "center", color: "var(--text-tertiary)" }}>{es ? "Cargando serie histórica…" : "Loading history…"}</div>
       ) : err || !series.length ? (
         <EmptyState lang={lang} text={es ? "No se pudo cargar la serie USD/BRL." : "Could not load USD/BRL series."} />
       ) : (
@@ -585,24 +626,15 @@ function FxChart({ items, lang, isClient }) {
             <FxStat label={es ? "Mín · Máx" : "Min · Max"} value={`${fmt2(stats.min)} – ${fmt2(stats.max)}`} />
             <FxStat label={es ? "Promedio" : "Average"} value={`R$ ${fmt4(stats.avg)}`} />
             <FxStat label={es ? "Desv. est. (σ)" : "Std dev (σ)"} value={fmt4(stats.std)} />
-            <FxStat
-              label={es ? "Cartera visible → BRL" : "Visible book → BRL"}
-              value={lastRate ? `R$ ${fInt(Math.round(carteraUsd * lastRate))}` : "—"}
-              sub={`$ ${fInt(Math.round(carteraUsd))} USD`}
-            />
+            <FxStat label={es ? "Cartera visible → BRL" : "Visible book → BRL"} value={lastRate ? `R$ ${fInt(Math.round(carteraUsd * lastRate))}` : "—"} sub={`$ ${fInt(Math.round(carteraUsd))} USD`} />
           </div>
-
           <FxLine series={series} stats={stats} lang={lang} />
-
-          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary, #475569)", margin: "18px 0 4px" }}>
-            {es ? "Distribución de la cotización (campana de Gauss)" : "Rate distribution (Gaussian bell)"}
-          </div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary, #475569)", margin: "18px 0 4px" }}>{es ? "Distribución de la cotización (campana de Gauss)" : "Rate distribution (Gaussian bell)"}</div>
           <p className="caption" style={{ margin: "0 0 8px", color: "var(--text-tertiary, #94A3B8)", maxWidth: 780, lineHeight: 1.4 }}>
-            {es
-              ? "Cada barra cuenta cuántos días la cotización cayó en ese rango de precio; la curva es la normal teórica con el promedio (μ) y la desviación (±σ). Pasa el cursor por una barra para ver el rango y los días."
-              : "Each bar counts how many days the rate fell in that price range; the curve is the theoretical normal with mean (μ) and deviation (±σ). Hover a bar for its range and day count."}
+            {es ? "Cada barra cuenta cuántos días la cotización cayó en ese rango de precio; la curva es la normal teórica con el promedio (μ) y la desviación (±σ). Pasa el cursor por una barra para ver el rango y los días."
+                : "Each bar counts how many days the rate fell in that price range; the curve is the theoretical normal with mean (μ) and deviation (±σ). Hover a bar for its range and day count."}
           </p>
-          <Gauss series={series} stats={stats} lang={lang} />
+          <FxGauss series={series} stats={stats} lang={lang} />
         </>
       )}
     </div>
@@ -647,7 +679,6 @@ function Gauge({ stats, lang }) {
   );
 }
 
-// Línea/área con HOVER por punto (guía vertical + tooltip fecha/cotización).
 function FxLine({ series, stats, lang }) {
   const es = lang === "es";
   const svgRef = useRef(null);
@@ -677,8 +708,7 @@ function FxLine({ series, stats, lang }) {
 
   return (
     <div style={{ position: "relative" }}>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", overflow: "visible" }}
-           onMouseMove={onMove} onMouseLeave={() => setHi(null)}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", overflow: "visible" }} onMouseMove={onMove} onMouseLeave={() => setHi(null)}>
         <defs>
           <linearGradient id="fxgrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={MINT} stopOpacity="0.28" />
@@ -700,9 +730,7 @@ function FxLine({ series, stats, lang }) {
           </g>
         )}
         <circle cx={x(n - 1)} cy={y(series[n - 1].rate)} r="3.5" fill={MINT} stroke="#fff" strokeWidth="1.5" />
-        {tickIdx.map((i) => (
-          <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="9.5" fill="#94A3B8" className="tabular-nums">{fmtDate(series[i].date)}</text>
-        ))}
+        {tickIdx.map((i) => (<text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="9.5" fill="#94A3B8" className="tabular-nums">{fmtDate(series[i].date)}</text>))}
       </svg>
       {hi && (
         <div style={{
@@ -720,8 +748,7 @@ function FxLine({ series, stats, lang }) {
   );
 }
 
-// Histograma + curva normal, con HOVER por barra (rango + días).
-function Gauss({ series, stats, lang }) {
+function FxGauss({ series, stats, lang }) {
   const es = lang === "es";
   const [hb, setHb] = useState(null);
   const vals = series.map((p) => p.rate);
@@ -730,64 +757,37 @@ function Gauss({ series, stats, lang }) {
   const lo = min, hi = max, span = (hi - lo) || 1;
   const BINS = Math.min(24, Math.max(8, Math.round(Math.sqrt(vals.length))));
   const counts = new Array(BINS).fill(0);
-  vals.forEach((v) => {
-    let b = Math.floor(((v - lo) / span) * BINS);
-    if (b >= BINS) b = BINS - 1; if (b < 0) b = 0;
-    counts[b]++;
-  });
+  vals.forEach((v) => { let b = Math.floor(((v - lo) / span) * BINS); if (b >= BINS) b = BINS - 1; if (b < 0) b = 0; counts[b]++; });
   const total = vals.length || 1;
   const maxCount = Math.max(1, ...counts);
   const bw = (W - padL - padR) / BINS;
   const xVal = (v) => padL + ((v - lo) / span) * (W - padL - padR);
   const yCount = (c) => padT + (1 - c / maxCount) * (H - padT - padB);
-
   const normal = (v) => Math.exp(-0.5 * Math.pow((v - mu) / (sigma || 1e-6), 2));
   const peakN = normal(mu) || 1;
   const curve = [];
-  const STEPS = 80;
-  for (let i = 0; i <= STEPS; i++) {
-    const v = lo + (span * i) / STEPS;
-    const yy = padT + (1 - normal(v) / peakN) * (H - padT - padB);
-    curve.push(`${xVal(v).toFixed(1)},${yy.toFixed(1)}`);
-  }
+  for (let i = 0; i <= 80; i++) { const v = lo + (span * i) / 80; const yy = padT + (1 - normal(v) / peakN) * (H - padT - padB); curve.push(`${xVal(v).toFixed(1)},${yy.toFixed(1)}`); }
 
   return (
     <div style={{ position: "relative" }}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", overflow: "visible" }}>
         {counts.map((c, i) => {
           const x0 = padL + i * bw;
-          const yTop = yCount(c);
-          const binLo = lo + (i / BINS) * span;
-          const binHi = lo + ((i + 1) / BINS) * span;
+          const binLo = lo + (i / BINS) * span, binHi = lo + ((i + 1) / BINS) * span;
           return (
-            <rect key={i} x={x0 + 1} y={padT} width={Math.max(1, bw - 2)} height={(H - padB) - padT}
-                  fill="transparent"
-                  onMouseMove={(e) => setHb({ binLo, binHi, c, cx: e.clientX, cy: e.clientY })}
-                  onMouseLeave={() => setHb(null)}
-                  style={{ cursor: "pointer" }}>
-              <title></title>
-            </rect>
+            <rect key={i} x={x0 + 1} y={padT} width={Math.max(1, bw - 2)} height={(H - padB) - padT} fill="transparent"
+                  onMouseMove={(e) => setHb({ binLo, binHi, c, cx: e.clientX, cy: e.clientY })} onMouseLeave={() => setHb(null)} style={{ cursor: "pointer" }} />
           );
         })}
-        {counts.map((c, i) => {
-          const x0 = padL + i * bw;
-          const yTop = yCount(c);
-          return <rect key={`b${i}`} x={x0 + 1} y={yTop} width={Math.max(1, bw - 2)} height={(H - padB) - yTop} rx="2" fill={NAVY} opacity="0.18" pointerEvents="none" />;
-        })}
+        {counts.map((c, i) => { const x0 = padL + i * bw; const yTop = yCount(c); return <rect key={`b${i}`} x={x0 + 1} y={yTop} width={Math.max(1, bw - 2)} height={(H - padB) - yTop} rx="2" fill={NAVY} opacity="0.18" pointerEvents="none" />; })}
         <polyline points={curve.join(" ")} fill="none" stroke={MINT} strokeWidth="2.4" strokeLinejoin="round" pointerEvents="none" />
-        {[
-          { v: mu, c: NAVY, dash: "0", lbl: "μ" },
-          { v: mu - sigma, c: "#94A3B8", dash: "4 3", lbl: "−σ" },
-          { v: mu + sigma, c: "#94A3B8", dash: "4 3", lbl: "+σ" },
-        ].filter((m) => m.v >= lo && m.v <= hi).map((m, i) => (
+        {[{ v: mu, c: NAVY, dash: "0", lbl: "μ" }, { v: mu - sigma, c: "#94A3B8", dash: "4 3", lbl: "−σ" }, { v: mu + sigma, c: "#94A3B8", dash: "4 3", lbl: "+σ" }].filter((m) => m.v >= lo && m.v <= hi).map((m, i) => (
           <g key={i} pointerEvents="none">
             <line x1={xVal(m.v)} y1={padT} x2={xVal(m.v)} y2={H - padB} stroke={m.c} strokeWidth="1.3" strokeDasharray={m.dash} />
             <text x={xVal(m.v)} y={padT - 1} textAnchor="middle" fontSize="10" fill={m.c} fontWeight="700">{m.lbl}</text>
           </g>
         ))}
-        {[lo, mu, hi].map((v, i) => (
-          <text key={i} x={xVal(v)} y={H - 6} textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"} fontSize="9.5" fill="#94A3B8" className="tabular-nums" pointerEvents="none">{fmt2(v)}</text>
-        ))}
+        {[lo, mu, hi].map((v, i) => (<text key={i} x={xVal(v)} y={H - 6} textAnchor={i === 0 ? "start" : i === 2 ? "end" : "middle"} fontSize="9.5" fill="#94A3B8" className="tabular-nums" pointerEvents="none">{fmt2(v)}</text>))}
       </svg>
       {hb && (
         <div style={{
@@ -797,9 +797,7 @@ function Gauss({ series, stats, lang }) {
           borderRadius: 8, boxShadow: "0 10px 24px rgba(11,30,58,0.2)", padding: "7px 10px",
         }}>
           <div className="tabular-nums" style={{ fontSize: 12, fontWeight: 800, color: NAVY }}>R$ {fmt2(hb.binLo)} – {fmt2(hb.binHi)}</div>
-          <div className="tabular-nums caption" style={{ color: "var(--text-secondary, #475569)" }}>
-            {fInt(hb.c)} {es ? "días" : "days"} · {Math.round((hb.c / total) * 100)}%
-          </div>
+          <div className="tabular-nums caption" style={{ color: "var(--text-secondary, #475569)" }}>{fInt(hb.c)} {es ? "días" : "days"} · {Math.round((hb.c / total) * 100)}%</div>
         </div>
       )}
     </div>
@@ -813,26 +811,25 @@ function pillStyle(active) {
   return {
     padding: "3px 13px", fontSize: 11.5, fontWeight: 700, borderRadius: 999,
     border: active ? `1.5px solid ${NAVY}` : "1.5px solid var(--border-subtle, #E1E6ED)",
-    background: active ? NAVY : "transparent",
-    color: active ? "#fff" : "var(--text-secondary, #475569)",
-    cursor: "pointer",
+    background: active ? NAVY : "transparent", color: active ? "#fff" : "var(--text-secondary, #475569)", cursor: "pointer",
   };
 }
 function chipStyle(active, color) {
   return {
-    display: "inline-flex", alignItems: "center",
-    padding: "3px 11px", fontSize: 11, fontWeight: 700, borderRadius: 999,
+    display: "inline-flex", alignItems: "center", padding: "3px 11px", fontSize: 11, fontWeight: 700, borderRadius: 999,
     border: `1.5px solid ${active ? color : "var(--border-subtle, #E1E6ED)"}`,
-    background: active ? `${color}14` : "transparent",
-    color: active ? color : "var(--text-secondary, #475569)",
+    background: active ? `${color}14` : "transparent", color: active ? color : "var(--text-secondary, #475569)",
     cursor: "pointer", fontFamily: "JetBrains Mono, monospace",
+  };
+}
+function arrowStyle() {
+  return {
+    flexShrink: 0, width: 26, height: 26, borderRadius: 999, border: "1.5px solid var(--border-subtle, #E1E6ED)",
+    background: "var(--surface, #fff)", color: NAVY, cursor: "pointer", fontSize: 16, lineHeight: 1,
+    display: "flex", alignItems: "center", justifyContent: "center",
   };
 }
 function EmptyState({ lang, text }) {
   const es = lang === "es";
-  return (
-    <div className="caption" style={{ padding: 28, textAlign: "center", color: "var(--text-tertiary)" }}>
-      {text || (es ? "Sin datos para los filtros actuales." : "No data for current filters.")}
-    </div>
-  );
+  return (<div className="caption" style={{ padding: 28, textAlign: "center", color: "var(--text-tertiary)" }}>{text || (es ? "Sin datos para los filtros actuales." : "No data for current filters.")}</div>);
 }
