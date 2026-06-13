@@ -3701,6 +3701,33 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 [new_oc_id, new_id, orig_oc_id],
             )
 
+        # ── Costos operativos por SKU/talla: las asignaciones a nodo
+        #    (inventario.expediente_nodo_assignment) llevan
+        #    costo_operativo_unitario_usd. Reasignamos al expediente NUEVO las
+        #    de los (producto, talla) que quedaron SOLO en el nuevo (movidos por
+        #    completo). En split parcial la línea sigue en el original, así que
+        #    el costo del stock físico permanece allí. No-op si no hay
+        #    asignaciones (caso típico en REGISTRO/Pendiente-SAP).
+        cursor.execute(
+            """
+            UPDATE inventario.expediente_nodo_assignment a
+               SET expediente_id = %s::uuid, updated_at = NOW()
+             WHERE a.expediente_id = %s::uuid
+               AND a.is_active = TRUE
+               AND EXISTS (
+                     SELECT 1 FROM expedientes.linea l
+                      WHERE l.expediente_id = %s::uuid AND l.is_active = TRUE
+                        AND l.producto_id = a.producto_id
+                        AND COALESCE(l.size, '') = COALESCE(a.talla, ''))
+               AND NOT EXISTS (
+                     SELECT 1 FROM expedientes.linea l2
+                      WHERE l2.expediente_id = %s::uuid AND l2.is_active = TRUE
+                        AND l2.producto_id = a.producto_id
+                        AND COALESCE(l2.size, '') = COALESCE(a.talla, ''))
+            """,
+            [new_id, str(exp.id), new_id, str(exp.id)],
+        )
+
         # ── Recalcular totales: ambos expedientes y ambas OCs.
         cursor.execute(
             """
