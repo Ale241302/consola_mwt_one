@@ -537,12 +537,6 @@ export default function ScreenPortal() {
 
         {/* Client KPIs (safe, no $ exposure) */}
         <div className="portal-kpi-grid mb-6">
-          <div className="card card-pad-lg">
-            <CoverageKPI pct={coveragePct} hasData={coverageHasData} lang={lang}/>
-          </div>
-          <div className="card card-pad-lg">
-            <CreditDaysKPI used={creditUsed} limit={creditLimit} lang={lang}/>
-          </div>
           <div className="card card-pad-lg portal-orders-stat">
             <div className="micro" style={{color:'var(--text-tertiary)', marginBottom:8}}>
               {lang==='es' ? 'MIS ÓRDENES' : 'MY ORDERS'}
@@ -748,12 +742,17 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
       .catch(() => {});
     return () => { alive = false; };
   }, []);
+  // Sólo órdenes con estado real (las "sin estado" / sin envíos no se muestran).
+  const visibleOcs = ocs.filter((o) => {
+    const lead = expedientes.find((e) => e.oc_id === o.id);
+    return !!(lead?.estado || o.estado);
+  });
   return (
     <div className="card">
       <div className="card-head">
         <div className="card-title">{lang==='es' ? 'Mis Órdenes' : 'My Orders'}</div>
         <div style={{display:'flex', alignItems:'center', gap:12}}>
-          <span className="caption">{ocs.length} {lang==='es'?'órdenes':'orders'}</span>
+          <span className="caption">{visibleOcs.length} {lang==='es'?'órdenes':'orders'}</span>
           {/* Sprint 2026-06-10 — botón Exportar retirado: el reporte vive
               en /cronograma (vista React, item del sidebar). */}
           {/* CTA primaria: subir una nueva OC.
@@ -794,11 +793,11 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
         <thead><tr>
           <th>{lang==='es' ? 'Orden' : 'Order'}</th>
           <th>{lang==='es' ? 'Estado' : 'Status'}</th>
-          <th style={{textAlign:'right'}}>{lang==='es' ? 'Cobertura' : 'Coverage'}</th>
+          <th>{lang==='es' ? 'Cliente' : 'Client'}</th>
           <th/>
         </tr></thead>
         <tbody>
-          {ocs.map(o => {
+          {visibleOcs.map(o => {
             // Sprint 2026-05-21 · Match real con shape backend
             // (apps.portal.views.mis_ocs):
             //   { id, codigo, brand_id, proforma, moneda, total_value,
@@ -831,17 +830,14 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
                   <div className="caption" style={{marginTop:2}}>
                     {expCount} {lang==='es'?'envíos':'shipments'}
                   </div>
-                  {o.client_name && (
-                    <div className="caption" style={{marginTop:2}}>{o.client_name}</div>
-                  )}
                 </td>
                 <td>
                   {rawStatus
                     ? <StatusBadge status={rawStatus} lang={lang}/>
                     : <span className="caption">{expStatus}</span>}
                 </td>
-                <td className="td-num">
-                  <CoverageMini pct={coverage} lang={lang}/>
+                <td>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{o.client_name || '—'}</span>
                 </td>
                 <td><IconChevRight size={14} style={{color:'var(--text-tertiary)'}}/></td>
               </tr>
