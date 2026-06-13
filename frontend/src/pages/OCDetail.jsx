@@ -2492,22 +2492,37 @@ export default function ScreenOCDetail() {
           {/* Expedientes pill list */}
           <div style={{borderTop:'1px solid var(--divider)', padding: '16px 22px'}}>
             <div className="micro" style={{marginBottom: 10}}>{tr(lang,'expedientes_in_oc')}</div>
-            {oc.expedientes.map(eid => {
-              const e = EXPEDIENTES.find(x => x.id === eid);
-              if (!e) return null;
+            {/* Sprint 2026-06-13 · FIX split: render desde apiOcExpedientes
+                (datos reales) en vez del array MOCK `EXPEDIENTES`, que dejaba
+                la lista vacía y ocultaba los expedientes hijos del split.
+                Cada fila abre su detalle per-expediente (líneas filtradas por
+                expediente_id), NO el agregado de la OC. */}
+            {(apiOcExpedientes || []).length === 0 && (
+              <div className="caption" style={{color:'var(--text-tertiary)'}}>
+                {lang === 'es' ? 'Sin expedientes' : 'No files'}
+              </div>
+            )}
+            {(apiOcExpedientes || []).map(e => {
+              const eid = e.id;
+              const nLines = (apiOcLines || []).filter(
+                l => String(l.expediente_id) === String(eid)
+              ).length;
+              const sap = Array.isArray(e.sap_codigos) ? e.sap_codigos[0] : (e.sap || null);
               return (
                 <div key={eid} className="exp-link-row" onClick={()=>onOpenExpediente(eid)}>
                   <div style={{flex: 1, minWidth: 0}}>
                     <div className="flex ai-center gap-2">
                       <IconFolder size={12} style={{color:'var(--text-tertiary)'}}/>
-                      <span className="body-sm" style={{fontWeight: 600}}>{e.ref}</span>
-                      {e.sap && <span className="caption" style={{fontFamily:'var(--font-mono)'}}>{e.sap}</span>}
+                      <span className="body-sm" style={{fontWeight: 600}}>{e.codigo || eid}</span>
+                      {sap && <span className="caption" style={{fontFamily:'var(--font-mono)'}}>{sap}</span>}
                     </div>
-                    <div className="caption" style={{marginTop: 2}}>
-                      {e.origin} → {e.destination}
+                    <div className="caption tabular-nums" style={{marginTop: 2}}>
+                      {nLines} {lang === 'es'
+                        ? (nLines === 1 ? 'línea' : 'líneas')
+                        : (nLines === 1 ? 'line' : 'lines')}
                     </div>
                   </div>
-                  <StatusBadge status={e.status} lang={lang}/>
+                  <StatusBadge status={(e.estado || 'REGISTRO').toUpperCase()} lang={lang}/>
                   <IconChevRight size={13} style={{color:'var(--text-tertiary)'}}/>
                 </div>
               );
