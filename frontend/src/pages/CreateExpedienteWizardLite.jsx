@@ -837,7 +837,14 @@ export default function CreateExpedienteWizardLite() {
               client={selClient}
               operatingMode={operatingMode}
               operatingCompanyId={operatingCompanyId}
-              orderLines={orderLines}
+              orderLines={
+                // SPLIT: si en edición general hay líneas seleccionadas, el
+                // Paso 3 (preview del expediente NUEVO) muestra SOLO esas; las
+                // no seleccionadas quedan en el original y no se revisan aquí.
+                (isFullEdit && orderLines.some((l) => l.isSelected))
+                  ? orderLines.filter((l) => l.isSelected)
+                  : orderLines
+              }
               priceMap={priceMap}
               creditProjection={creditProjection}
               isAdmin={isAdmin}
