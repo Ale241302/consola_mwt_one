@@ -13,9 +13,32 @@ echo "==> git fetch + reset"
 git fetch --all --prune
 git reset --hard origin/main
 
-echo "==> docker compose up -d --build"
+echo "==> build de imágenes (los contenedores viejos siguen sirviendo durante el build)"
 docker compose pull --ignore-pull-failures || true
-docker compose up -d --build --remove-orphans
+docker compose build
+
+echo "==> recreate desde las imágenes ya construidas (ventana mínima) + espera de healthy"
+# --wait bloquea hasta que los healthchecks pasen; --no-build evita reconstruir
+# (ya construimos arriba). Si expira, seguimos y verificamos con el gate de abajo.
+docker compose up -d --no-build --remove-orphans --wait --wait-timeout 180 || {
+    echo "[WARN] 'compose up --wait' expiró antes de healthy; continúo y verifico la API abajo."
+    docker compose ps
+}
+
+# Gate anti-502: no terminamos el deploy hasta que la API responda de verdad.
+# Durante esta ventana el nginx sirve la página de "Actualizando" (consola.conf),
+# así el usuario NO ve el 502 de Cloudflare.
+echo "==> esperando a que la API responda (gate anti-502)…"
+api_up=0
+for i in $(seq 1 40); do
+    if curl -fsS -o /dev/null --max-time 4 -X OPTIONS http://127.0.0.1:8100/api/auth/login/; then
+        echo "[OK] API arriba tras ${i} intento(s)."
+        api_up=1
+        break
+    fi
+    sleep 3
+done
+[ "$api_up" -eq 1 ] || echo "[WARN] la API no respondió en ~120s — revisar 'docker compose logs django'."
 
 echo "==> conectando contenedores a la red mwt_default"
 if docker network inspect mwt_default >/dev/null 2>&1; then
