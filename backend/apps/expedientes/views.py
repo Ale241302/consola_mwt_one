@@ -3334,6 +3334,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
             "split": split_res,
             "new_expediente_id": (split_res or {}).get("new_expediente_id"),
             "new_expediente_codigo": (split_res or {}).get("new_codigo"),
+            "new_oc_id": (split_res or {}).get("new_oc_id"),
         }, status=200)
 
     def _get_full(self, request, pk=None):
@@ -3516,7 +3517,45 @@ class ExpedienteViewSet(viewsets.ViewSet):
             str(getattr(exp, "client_id", "") or "") or None)
         eff_op_new = str(new_op) if new_op else (
             str(getattr(exp, "operating_company_id", "") or "") or None)
+        orig_oc_id = str(getattr(exp, "oc_id", "") or "") or None
 
+        # ── OC NUEVA: clona la original (MISMO codigo/PO + proforma/sap + doc).
+        #    Los codigos de OC duplicados están permitidos (ver E8). Así cada
+        #    expediente queda 1:1 con su propia OC y tiene su detalle limpio en
+        #    /expedientes/{ocId} (en vez de agregar varias bajo la misma OC).
+        new_oc_id = str(uuid.uuid4())
+        if orig_oc_id:
+            cursor.execute(
+                """
+                INSERT INTO expedientes.oc
+                  (id, codigo, client_id, brand_id, proforma, sap, estado, moneda,
+                   issued_at, total_value, total_invoiced, total_paid, balance,
+                   coverage_pct, lines_count, lines_with_sap, air_pct, sea_pct,
+                   credit_days_max, credit_band, notas, visibility_tier,
+                   is_active, created_at, updated_at)
+                SELECT %s, codigo, %s::uuid, brand_id, proforma, sap, estado, moneda,
+                       issued_at, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,
+                       credit_days_max, credit_band, notas, visibility_tier,
+                       TRUE, NOW(), NOW()
+                  FROM expedientes.oc
+                 WHERE id = %s::uuid
+                """,
+                [new_oc_id, eff_client, orig_oc_id],
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO expedientes.oc
+                  (id, codigo, client_id, estado, moneda, issued_at,
+                   is_active, created_at, updated_at)
+                VALUES (%s, %s, %s::uuid, 'PENDIENTE', 'USD', NOW(),
+                        TRUE, NOW(), NOW())
+                """,
+                [new_oc_id, str(getattr(exp, "codigo", "") or new_oc_id)[:32], eff_client],
+            )
+
+        # ── Expediente NUEVO bajo la OC nueva (1:1).
         cursor.execute(
             """
             INSERT INTO expedientes.expediente
@@ -3525,7 +3564,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                total_cost, total_invoiced, total_paid, balance,
                forma_pago, credit_days, credit_days_cliente,
                is_active, created_at, updated_at, last_event_at)
-            SELECT %s, %s, e.oc_id, %s::uuid, e.brand_id, %s::uuid,
+            SELECT %s, %s, %s::uuid, %s::uuid, e.brand_id, %s::uuid,
                    'REGISTRO', e.modo_operacion, e.moneda,
                    0, 0, 0, 0,
                    COALESCE(%s, e.forma_pago),
@@ -3535,7 +3574,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
               FROM expedientes.expediente e
              WHERE e.id = %s::uuid
             """,
-            [new_id, new_codigo, eff_client, eff_op_new,
+            [new_id, new_codigo, new_oc_id, eff_client, eff_op_new,
              forma_pago, payment_days, payment_days, str(exp.id)],
         )
 
@@ -3598,16 +3637,16 @@ class ExpedienteViewSet(viewsets.ViewSet):
             new_total = (Decimal(unit) * Decimal(split_q)).quantize(Decimal("0.01"))
 
             if split_q >= orig_qty:
-                # MOVER la línea entera al nuevo expediente (con repricing).
+                # MOVER la línea entera a la OC+expediente nuevos (con repricing).
                 cursor.execute(
                     """
                     UPDATE expedientes.linea
-                       SET expediente_id = %s::uuid, qty = %s,
+                       SET oc_id = %s::uuid, expediente_id = %s::uuid, qty = %s,
                            unit_price = %s, unit_price_mwt = %s, unit_price_client = %s,
                            total_price = %s, updated_at = NOW()
                      WHERE id = %s::uuid
                     """,
-                    [new_id, split_q, str(unit), str(p_mwt), str(p_cli), str(new_total), lid],
+                    [new_oc_id, new_id, split_q, str(unit), str(p_mwt), str(p_cli), str(new_total), lid],
                 )
                 moved.append(lid)
             else:
@@ -3633,17 +3672,36 @@ class ExpedienteViewSet(viewsets.ViewSet):
                       (id, oc_id, expediente_id, producto_id, sku, size, qty,
                        unit_price, unit_price_mwt, unit_price_client, total_price,
                        estado, is_active, created_at, updated_at)
-                    SELECT %s::uuid, oc_id, %s::uuid, producto_id, sku, size, %s,
+                    SELECT %s::uuid, %s::uuid, %s::uuid, producto_id, sku, size, %s,
                            %s, %s, %s, %s,
                            'PENDIENTE_SAP', TRUE, NOW(), NOW()
                       FROM expedientes.linea
                      WHERE id = %s::uuid
                     """,
-                    [new_line_id, new_id, split_q,
+                    [new_line_id, new_oc_id, new_id, split_q,
                      str(unit), str(p_mwt), str(p_cli), str(new_total), lid],
                 )
                 moved.append(new_line_id)
 
+        # ── Clonar documentos comerciales de la OC original → OC nueva.
+        if orig_oc_id:
+            cursor.execute(
+                """
+                INSERT INTO expedientes.documento
+                  (id, oc_id, expediente_id, kind, codigo, file_ext,
+                   file_size_bytes, storage_url, author, fecha,
+                   is_active, created_at, updated_at)
+                SELECT gen_random_uuid(), %s::uuid,
+                       CASE WHEN expediente_id IS NOT NULL THEN %s::uuid ELSE NULL END,
+                       kind, codigo, file_ext, file_size_bytes, storage_url,
+                       author, fecha, TRUE, NOW(), NOW()
+                  FROM expedientes.documento
+                 WHERE oc_id = %s::uuid AND is_active = TRUE
+                """,
+                [new_oc_id, new_id, orig_oc_id],
+            )
+
+        # ── Recalcular totales: ambos expedientes y ambas OCs.
         cursor.execute(
             """
             UPDATE expedientes.expediente e
@@ -3655,7 +3713,26 @@ class ExpedienteViewSet(viewsets.ViewSet):
             """,
             [new_id, str(exp.id)],
         )
-        return {"new_expediente_id": new_id, "new_codigo": new_codigo,
+        for _oc in (new_oc_id, orig_oc_id):
+            if not _oc:
+                continue
+            cursor.execute(
+                """
+                UPDATE expedientes.oc o
+                   SET total_value = COALESCE((
+                         SELECT SUM(l.total_price) FROM expedientes.linea l
+                          WHERE l.oc_id = o.id AND l.is_active = TRUE), 0),
+                       lines_count = COALESCE((
+                         SELECT COUNT(*) FROM expedientes.linea l
+                          WHERE l.oc_id = o.id AND l.is_active = TRUE), 0),
+                       updated_at = NOW()
+                 WHERE o.id = %s::uuid
+                """,
+                [_oc],
+            )
+
+        return {"new_expediente_id": new_id, "new_oc_id": new_oc_id,
+                "new_codigo": new_codigo,
                 "moved_line_ids": moved, "moved_count": len(moved)}
 
     # ══════════════════════════════════════════════════════════

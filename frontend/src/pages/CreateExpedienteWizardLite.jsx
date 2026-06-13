@@ -627,11 +627,15 @@ export default function CreateExpedienteWizardLite() {
         const didSplit = !!respData?.split;
 
         // OK → resolver oc_id del expediente final (puede ser el nuevo).
-        let ocId = 'none';
-        try {
-          const exp = await expedientesApi.get(targetExpId);
-          ocId = exp?.oc_id || exp?.oc?.id || 'none';
-        } catch { /* fallthrough */ }
+        // El split CLONA la OC: el backend devuelve new_oc_id directo. Si no
+        // viene, lo resolvemos con un fetch del expediente final.
+        let ocId = respData?.new_oc_id || 'none';
+        if (!ocId || ocId === 'none') {
+          try {
+            const exp = await expedientesApi.get(targetExpId);
+            ocId = exp?.oc_id || exp?.oc?.id || 'none';
+          } catch { /* fallthrough */ }
+        }
         setToast({
           kind: 'ok',
           msg: didSplit
