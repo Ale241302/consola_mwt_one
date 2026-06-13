@@ -146,8 +146,14 @@ class Cliente(models.Model):
                     INNER JOIN expedientes.expediente e
                             ON e.id = l.expediente_id
                            AND (
-                             -- (a) Expediente vivo y operativo: todas sus líneas activas cuentan.
-                             (e.is_active = TRUE AND e.estado NOT IN ('CERRADO','CANCELADO'))
+                             -- (a) Expediente vivo y CONFIRMADO (fuera de REGISTRO): todas sus
+                             -- líneas activas cuentan. Sprint 2026-06-13 · una OC recién subida
+                             -- por el portal (estado REGISTRO) NO consume crédito hasta que MWT
+                             -- la confirma (pasa a PRODUCCION) o le asigna SAP.
+                             (e.is_active = TRUE AND e.estado NOT IN ('CERRADO','CANCELADO','REGISTRO'))
+                             OR
+                             -- (a2) REGISTRO pero ya con SAP = compromiso real con fábrica → cuenta.
+                             (e.is_active = TRUE AND e.estado = 'REGISTRO' AND l.sap IS NOT NULL AND l.sap <> '')
                              OR
                              -- (b) Expediente soft-deleted: SOLO las líneas con SAP siguen
                              -- consumiendo crédito (compromiso con fábrica). Sin SAP → libera.
@@ -204,8 +210,14 @@ class Cliente(models.Model):
                     INNER JOIN expedientes.expediente e
                             ON e.id = l.expediente_id
                            AND (
-                             -- (a) Expediente vivo y operativo: todas sus líneas activas cuentan.
-                             (e.is_active = TRUE AND e.estado NOT IN ('CERRADO','CANCELADO'))
+                             -- (a) Expediente vivo y CONFIRMADO (fuera de REGISTRO): todas sus
+                             -- líneas activas cuentan. Sprint 2026-06-13 · una OC recién subida
+                             -- por el portal (estado REGISTRO) NO consume crédito hasta que MWT
+                             -- la confirma (pasa a PRODUCCION) o le asigna SAP.
+                             (e.is_active = TRUE AND e.estado NOT IN ('CERRADO','CANCELADO','REGISTRO'))
+                             OR
+                             -- (a2) REGISTRO pero ya con SAP = compromiso real con fábrica → cuenta.
+                             (e.is_active = TRUE AND e.estado = 'REGISTRO' AND l.sap IS NOT NULL AND l.sap <> '')
                              OR
                              -- (b) Expediente soft-deleted: SOLO las líneas con SAP siguen
                              -- consumiendo crédito (compromiso con fábrica). Sin SAP → libera.
