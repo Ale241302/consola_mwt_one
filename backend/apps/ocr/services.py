@@ -122,6 +122,42 @@ _RE_LINE       = re.compile(
 )
 
 
+# Layout "qty-first" (OC Marluvas/Sondel extraídas por pdfminer): el total
+# queda PEGADO al part nº → "300 03/19/2026 19,96 5988,0050B22CPAP-40 ... Size 40".
+#   qty · req.date · unit_price · total<pegado>part-<talla> · descripción
+_RE_LINE_QTYFIRST = re.compile(
+    r"^\s*(?P<qty>\d{1,6})\s+"
+    r"\d{1,2}/\d{1,2}/\d{2,4}\s+"
+    r"(?P<price>\d+[.,]\d{2})\s+"
+    r"\d+[.,]\d{2}"
+    r"(?P<part>[A-Z0-9][^\s]*?)-(?P<size>\d{2,3})(?=[^\d]|$)"
+    r"(?P<desc>.*?)$",
+    re.I | re.M,
+)
+
+
+def _extract_po_number(raw: str) -> Optional[str]:
+    """Número de OC robusto. Orden: prefijo explícito que contenga un
+    dígito (evita capturar 'Date'/'Supplier') → patrón 'SI<item> <po>'
+    de las OC Marluvas → primer número aislado de 6 dígitos."""
+    if not raw:
+        return None
+    m = re.search(
+        r"(?:P\.?O\.?|Orden(?:\s+de\s+Compra)?|Purchase\s+Order)[\s#:\-]*"
+        r"((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,24})",
+        raw, re.I,
+    )
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"\bSI\d+\s+(\d{5,7})\b", raw, re.I)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"(?<![\d/\-])(\d{6})(?![\d/\-])", raw)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
 def _safe_decimal(x: str | None) -> Optional[Decimal]:
     if not x:
         return None
@@ -147,8 +183,7 @@ def _parse_text(raw: str) -> dict:
         return out
 
     # OC number / date / currency / incoterm / tax_id
-    m = _RE_PO_NUMBER.search(raw)
-    if m: out["po"]["number"] = m.group(1).strip()
+    out["po"]["number"] = _extract_po_number(raw)
     m = _RE_PO_DATE.search(raw)
     if m: out["po"]["date"] = m.group(1).strip()
     m = _RE_CURRENCY.search(raw)
@@ -172,23 +207,44 @@ def _parse_text(raw: str) -> dict:
     if m:
         out["brand"]["name"] = m.group(1).strip()
 
-    # Líneas (tabla de productos)
-    for m in _RE_LINE.finditer(raw):
-        sku   = m.group("sku").strip()
-        desc  = (m.group("desc") or "").strip()
-        size  = (m.group("size") or "").strip() or None
-        qty   = _safe_decimal(m.group("qty"))
-        price = _safe_decimal(m.group("price"))
-        if sku and qty and price:
-            out["lines"].append({
-                "sku":           sku,
-                "descripcion":   desc,
-                "size":          size,
-                "qty":           float(qty),
-                "unit_price":    float(price),
-                "ocr_raw_line":  m.group(0).strip(),
-                "confidence":    0.78,   # heurístico fijo; el verdadero score lo calcula el motor OCR
-            })
+    # Líneas (tabla de productos). Primero el layout "qty-first" típico de
+    # las OC Marluvas/Sondel (pdfminer pega el total al part nº); si no hay
+    # match, caemos al regex legacy SKU-first para otros formatos.
+    qf = list(_RE_LINE_QTYFIRST.finditer(raw))
+    if qf:
+        for m in qf:
+            qty   = _safe_decimal(m.group("qty"))
+            price = _safe_decimal(m.group("price"))
+            part  = (m.group("part") or "").strip()
+            size  = (m.group("size") or "").strip() or None
+            desc  = (m.group("desc") or "").strip()
+            if part and qty and price:
+                out["lines"].append({
+                    "sku":           part,
+                    "descripcion":   desc[:120],
+                    "size":          size,
+                    "qty":           float(qty),
+                    "unit_price":    float(price),
+                    "ocr_raw_line":  m.group(0).strip(),
+                    "confidence":    0.82,
+                })
+    else:
+        for m in _RE_LINE.finditer(raw):
+            sku   = m.group("sku").strip()
+            desc  = (m.group("desc") or "").strip()
+            size  = (m.group("size") or "").strip() or None
+            qty   = _safe_decimal(m.group("qty"))
+            price = _safe_decimal(m.group("price"))
+            if sku and qty and price:
+                out["lines"].append({
+                    "sku":           sku,
+                    "descripcion":   desc,
+                    "size":          size,
+                    "qty":           float(qty),
+                    "unit_price":    float(price),
+                    "ocr_raw_line":  m.group(0).strip(),
+                    "confidence":    0.78,
+                })
 
     # Total = sum(qty * unit_price) si no lo detectamos en texto
     if out["lines"]:
