@@ -792,21 +792,52 @@ class ExpedienteViewSet(viewsets.ViewSet):
     def destroy(self, request, pk=None):
         # Soft-delete: is_active=False. El listado filtra por is_active=true,
         # asi que el expediente desaparece de la UI pero queda auditable.
+        #
+        # Sprint 2026-06-13 · CASCADE OC: al borrar el ULTIMO expediente
+        # activo de una OC, la OC tambien se soft-deletea. Sin esto la OC
+        # quedaba huerfana ACTIVA y su `codigo` (PO) seguia ocupado, asi que
+        # el re-registro del mismo PO desde el portal chocaba con el UNIQUE
+        # de codigo. Combinado con el indice parcial `oc_codigo_active_uniq`
+        # (ver database/03_oc_codigo_partial_unique.sql), libera el numero
+        # para re-registro.
         denied = _deny_client_mutation(request, action_label="expediente.destroy")
         if denied is not None: return denied
         # Lookup tolerante: pk puede ser UUID o codigo (mismo patron que retrieve).
-        n = 0
+        exp = None
         try:
-            n = Expediente.objects.filter(pk=pk).update(is_active=False)
+            exp = Expediente.objects.filter(pk=pk).first()
         except Exception:
-            n = 0
-        if n == 0:
+            exp = None
+        if exp is None:
             try:
-                n = Expediente.objects.filter(codigo=pk).update(is_active=False)
+                exp = Expediente.objects.filter(codigo=pk).first()
             except Exception:
-                n = 0
-        if n == 0:
+                exp = None
+        if exp is None:
             return Response({"detail": "Expediente no existe"}, status=404)
+
+        oc_id = getattr(exp, "oc_id", None)
+        Expediente.objects.filter(pk=exp.id).update(is_active=False)
+
+        # CASCADE: soft-delete la OC si ya no le quedan expedientes activos.
+        if oc_id:
+            try:
+                with connection.cursor() as c:
+                    c.execute(
+                        """
+                        UPDATE expedientes.oc o
+                           SET is_active = FALSE,
+                               updated_at = NOW()
+                         WHERE o.id = %s::uuid
+                           AND o.is_active = TRUE
+                           AND NOT EXISTS (
+                                 SELECT 1 FROM expedientes.expediente e
+                                  WHERE e.oc_id = o.id AND e.is_active = TRUE)
+                        """,
+                        [str(oc_id)],
+                    )
+            except Exception as e:
+                log.warning("[expediente.destroy] cascade OC %s fallo: %s", oc_id, e)
         return Response(status=204)
 
     # ── Selects ────────────────────────────────────────
