@@ -3143,6 +3143,24 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 return Response({"detail": "split_line_ids no es JSON válido"}, status=400)
         split_ids = [str(x) for x in (split_ids or []) if x]
 
+        # Sprint 2026-06-13 · SPLIT PARCIAL — cantidades a separar por línea
+        # ({line_id: qty}). Si una línea seleccionada trae aquí una cantidad
+        # MENOR a su total, el original conserva el resto y solo `qty` se va al
+        # nuevo expediente. Sin entrada (o >= total) -> se mueve la línea entera.
+        _split_qty_raw = payload.get("split_quantities")
+        if isinstance(_split_qty_raw, str):
+            try:
+                _split_qty_raw = json.loads(_split_qty_raw) if _split_qty_raw.strip() else {}
+            except json.JSONDecodeError:
+                _split_qty_raw = {}
+        _split_qty_by_id = {}
+        if isinstance(_split_qty_raw, dict):
+            for _k, _v in _split_qty_raw.items():
+                try:
+                    _split_qty_by_id[str(_k)] = int(_v)
+                except (TypeError, ValueError):
+                    continue
+
         # operating_company efectivo (para resolver unit_price legacy de adds).
         eff_op = (
             str(new_op) if new_op is not None
@@ -3167,7 +3185,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                             cursor=c, exp=exp, line_ids=split_ids,
                             new_op=new_op, new_client_id=new_client_id,
                             forma_pago=new_fp, payment_days=new_pd_val,
-                            qty_by_id=_qty_by_id,
+                            qty_by_id=_qty_by_id, split_qty_by_id=_split_qty_by_id,
                         )
                         # El original NO cambia operador/cliente/forma_pago al
                         # partir; y las líneas movidas se excluyen de las ops.
@@ -3449,11 +3467,12 @@ class ExpedienteViewSet(viewsets.ViewSet):
     # ══════════════════════════════════════════════════════════
     def _split_lines_to_new_expediente(
         self, *, cursor, exp, line_ids, new_op, new_client_id,
-        forma_pago, payment_days, qty_by_id=None,
+        forma_pago, payment_days, qty_by_id=None, split_qty_by_id=None,
     ):
         import re as _re
         from apps.commercial.views import compute_client_price  # noqa: PLC0415
         qty_by_id = qty_by_id or {}
+        split_qty_by_id = split_qty_by_id or {}
         if not line_ids:
             return None
         placeholders = ",".join(["%s::uuid"] * len(line_ids))
@@ -3477,13 +3496,20 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # Sólo se quita un sufijo de split previo (-2, -3…), NUNCA el número de
         # OC (>=4 dígitos). Así EXP-504960 → EXP-504960-2 (no "EXP-2").
         base = _re.sub(r"-\d{1,3}$", "", str(getattr(exp, "codigo", "") or "EXP"))
+        # Sprint 2026-06-13 · codigo del expediente nuevo: base-2, base-3, …
+        # hasta encontrar uno LIBRE. expediente.codigo es UNIQUE GLOBAL (incluye
+        # inactivos), así que comparamos contra TODOS los codigos existentes —
+        # no contra un COUNT de activos (que colisionaba con splits previos).
         cursor.execute(
-            "SELECT COUNT(*) FROM expedientes.expediente "
-            "WHERE oc_id = %s::uuid AND is_active = TRUE",
-            [str(exp.oc_id)],
+            "SELECT codigo FROM expedientes.expediente "
+            "WHERE codigo = %s OR codigo LIKE %s",
+            [base, base + "-%"],
         )
-        n = int((cursor.fetchone() or [1])[0] or 1)
-        new_codigo = f"{base}-{n + 1}"
+        _existing = {str(r[0]) for r in cursor.fetchall()}
+        _k = 2
+        while f"{base}-{_k}" in _existing:
+            _k += 1
+        new_codigo = f"{base}-{_k}"
         new_id = str(uuid.uuid4())
 
         eff_client = str(new_client_id) if new_client_id else (
@@ -3552,23 +3578,71 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         p_cli = None
             if not (p_cli and p_cli > 0):
                 p_cli = p_mwt
+            # Cantidad TOTAL de la línea (permite total editado vía qty_by_id;
+            # por defecto la cantidad real en BD).
             try:
-                qty = int(qty_by_id.get(lid, qty_db) or qty_db or 0)
+                orig_qty = int(qty_by_id.get(lid, qty_db) or qty_db or 0)
             except (TypeError, ValueError):
-                qty = int(qty_db or 0)
+                orig_qty = int(qty_db or 0)
+            # Cantidad a SEPARAR hacia el nuevo expediente. Default = total
+            # (mover la línea entera). Clamp a [0, orig_qty].
+            try:
+                split_q = int(split_qty_by_id.get(lid, orig_qty) or orig_qty)
+            except (TypeError, ValueError):
+                split_q = orig_qty
+            split_q = max(0, min(split_q, orig_qty))
+            if split_q <= 0:
+                continue  # nada que separar
+
             unit = p_mwt if is_mwt_op else p_cli
-            total = (Decimal(unit) * Decimal(qty)).quantize(Decimal("0.01"))
-            cursor.execute(
-                """
-                UPDATE expedientes.linea
-                   SET expediente_id = %s::uuid, qty = %s,
-                       unit_price = %s, unit_price_mwt = %s, unit_price_client = %s,
-                       total_price = %s, updated_at = NOW()
-                 WHERE id = %s::uuid
-                """,
-                [new_id, qty, str(unit), str(p_mwt), str(p_cli), str(total), lid],
-            )
-            moved.append(lid)
+            new_total = (Decimal(unit) * Decimal(split_q)).quantize(Decimal("0.01"))
+
+            if split_q >= orig_qty:
+                # MOVER la línea entera al nuevo expediente (con repricing).
+                cursor.execute(
+                    """
+                    UPDATE expedientes.linea
+                       SET expediente_id = %s::uuid, qty = %s,
+                           unit_price = %s, unit_price_mwt = %s, unit_price_client = %s,
+                           total_price = %s, updated_at = NOW()
+                     WHERE id = %s::uuid
+                    """,
+                    [new_id, split_q, str(unit), str(p_mwt), str(p_cli), str(new_total), lid],
+                )
+                moved.append(lid)
+            else:
+                # PARCIAL: el ORIGINAL conserva (orig_qty - split_q) con su
+                # precio por unidad intacto; se CREA una línea nueva en el
+                # nuevo expediente con split_q (repriced).
+                remain = orig_qty - split_q
+                cursor.execute(
+                    """
+                    UPDATE expedientes.linea
+                       SET total_price = ROUND(
+                               (CASE WHEN qty > 0 THEN total_price / qty
+                                     ELSE unit_price END) * %s, 2),
+                           qty = %s, updated_at = NOW()
+                     WHERE id = %s::uuid
+                    """,
+                    [remain, remain, lid],
+                )
+                new_line_id = str(uuid.uuid4())
+                cursor.execute(
+                    """
+                    INSERT INTO expedientes.linea
+                      (id, oc_id, expediente_id, producto_id, sku, size, qty,
+                       unit_price, unit_price_mwt, unit_price_client, total_price,
+                       estado, is_active, created_at, updated_at)
+                    SELECT %s::uuid, oc_id, %s::uuid, producto_id, sku, size, %s,
+                           %s, %s, %s, %s,
+                           'PENDIENTE_SAP', TRUE, NOW(), NOW()
+                      FROM expedientes.linea
+                     WHERE id = %s::uuid
+                    """,
+                    [new_line_id, new_id, split_q,
+                     str(unit), str(p_mwt), str(p_cli), str(new_total), lid],
+                )
+                moved.append(new_line_id)
 
         cursor.execute(
             """

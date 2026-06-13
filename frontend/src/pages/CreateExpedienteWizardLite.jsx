@@ -570,6 +570,16 @@ export default function CreateExpedienteWizardLite() {
             .map((l) => l.tmpId);
           if (split_line_ids.length) {
             body.split_line_ids = split_line_ids;
+            // Split PARCIAL: cantidades a separar por línea (default = total).
+            const split_quantities = {};
+            orderLines.forEach((l) => {
+              if (l.isSelected && l.tmpId && initialIds.has(l.tmpId)) {
+                const tot = Number(l.cantidad) || 0;
+                const sq = (l.splitQty == null ? tot : Number(l.splitQty));
+                split_quantities[l.tmpId] = Math.max(0, Math.min(sq || tot, tot));
+              }
+            });
+            body.split_quantities = split_quantities;
             if (clientChanged) body.client_id = selClient.id;
           }
         }
@@ -1666,7 +1676,11 @@ function Step2Productos({
                     {splitEnabled && (
                       <td style={{ textAlign: "center", width: 36 }}>
                         <input type="checkbox" checked={!!l.isSelected}
-                               onChange={(e) => updateLine(l.tmpId, { isSelected: e.target.checked })}
+                               onChange={(e) => updateLine(l.tmpId, {
+                                 isSelected: e.target.checked,
+                                 ...(e.target.checked && l.splitQty == null
+                                     ? { splitQty: Number(l.cantidad) || 0 } : {}),
+                               })}
                                style={{ accentColor: "#00B286", cursor: "pointer" }} />
                       </td>
                     )}
@@ -1679,6 +1693,24 @@ function Step2Productos({
                              onChange={(e) => updateLine(l.tmpId, { cantidad: Number(e.target.value) })}
                              style={{ width: 90, textAlign: "right",
                                       display: "inline-block" }}/>
+                      {splitEnabled && l.isSelected && (
+                        <div style={{ marginTop: 6, fontSize: 11, color: "#0B7E8F",
+                                      whiteSpace: "nowrap", display: "flex",
+                                      alignItems: "center", gap: 4,
+                                      justifyContent: "flex-end" }}>
+                          <span>{lang === "es" ? "Separar" : "Split"}</span>
+                          <input className="input tabular-nums" type="number" min="1"
+                                 max={Number(l.cantidad) || 1}
+                                 value={l.splitQty == null ? l.cantidad : l.splitQty}
+                                 onChange={(e) => {
+                                   const tot = Number(l.cantidad) || 1;
+                                   const v = Math.max(1, Math.min(Number(e.target.value) || 1, tot));
+                                   updateLine(l.tmpId, { splitQty: v });
+                                 }}
+                                 style={{ width: 64, textAlign: "right", display: "inline-block" }}/>
+                          <span style={{ color: "#64748B" }}>/ {l.cantidad}</span>
+                        </div>
+                      )}
                     </td>
                     {/* Sprint 2026-05-03 v3.8 · TDs P. unit y Subtotal eliminados. */}
                     <td>
@@ -1730,7 +1762,7 @@ function Step2Productos({
         <div className="card card-pad-md" style={{ marginTop: 12, background: "#ECFDF5", border: "1px solid #00B286" }}>
           <div className="caption" style={{ color: "#0B1E3A" }}>
             {lang === "es"
-              ? `${selectedCount} línea${selectedCount === 1 ? "" : "s"} seleccionada${selectedCount === 1 ? "" : "s"}: al guardar, se moverán a un expediente NUEVO con la misma OC (operador/cliente actuales). Las no seleccionadas quedan en este expediente.`
+              ? `${selectedCount} línea${selectedCount === 1 ? "" : "s"} seleccionada${selectedCount === 1 ? "" : "s"}: al guardar se separan a un expediente NUEVO con la misma OC. Si "Separar" es menor al total, el resto queda en este expediente (split por cantidad).`
               : `${selectedCount} line(s) selected: on save, they move to a NEW expediente with the same PO. Unselected stay in this one.`}
           </div>
         </div>
