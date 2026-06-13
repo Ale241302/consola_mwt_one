@@ -434,46 +434,7 @@ function ProductCard({
             </>
           ) : (lang === "es" ? "Consultar precio" : "Quote on request")}
         </div>
-        {!inCart ? (
-          <button
-            type="button"
-            className="btn btn-primary catalog-card-cta"
-            onClick={(e) => { e.stopPropagation(); onBuy(); }}
-          >
-            {lang === "es" ? "Comprar" : "Buy"}
-          </button>
-        ) : (
-          <div
-            className="catalog-card-stepper"
-            onClick={(e) => e.stopPropagation()}
-            role="group"
-            aria-label={lang === "es" ? "Cantidad" : "Quantity"}
-          >
-            <button
-              type="button"
-              className="catalog-stepper-btn"
-              onClick={() => onChangeQty && onChangeQty(cartQty - 1)}
-              aria-label={lang === "es" ? "Quitar uno" : "Remove one"}
-            >
-              −
-            </button>
-            <input
-              type="number"
-              min={0}
-              className="catalog-stepper-input tabular-nums"
-              value={cartQty}
-              onChange={(e) => onChangeQty && onChangeQty(Number(e.target.value))}
-            />
-            <button
-              type="button"
-              className="catalog-stepper-btn"
-              onClick={() => onChangeQty && onChangeQty(cartQty + 1)}
-              aria-label={lang === "es" ? "Agregar uno" : "Add one"}
-            >
-              +
-            </button>
-          </div>
-        )}
+        {/* CTA de compra removido — catálogo del Portal solo-lectura. */}
       </footer>
     </motion.article>
   );
