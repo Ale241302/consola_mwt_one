@@ -284,6 +284,13 @@ export default function ScreenExpedientes() {
     if (map[key]) navigate(map[key]);
   };
   const onOpenOC = (ocId) => navigate(`/expedientes/${ocId}`);
+  // Sprint 2026-06-13 · #expedientes por OC. Si una OC tiene >1 (split),
+  // cada fila abre SU expediente (/exp/<id>) en vez de la vista OC común.
+  const ocExpCount = {};
+  (apiExpedientes || []).forEach((x) => {
+    const k = x.oc_id || x._raw?.oc_id;
+    if (k) ocExpCount[k] = (ocExpCount[k] || 0) + 1;
+  });
   const onOpenExpediente = (id) => {
     // 1) Buscar el expediente en la lista para leer su oc_id directamente.
     //    El backend devuelve oc_id como UUID en expedientes.expediente; los
@@ -1248,6 +1255,7 @@ export default function ScreenExpedientes() {
                         // Para CLIENT, el click directo en la fila abre el
                         // detalle de la OC (no hay expandible con data interna).
                         if (isClient) {
+                          if (e.oc_id && (ocExpCount[e.oc_id] || 0) > 1) { onOpenExpediente(e.id); return; }
                           const oc = OCS.find(o => o.code === e.oc_client)
                                   || OCS.find(o => o.id === e.oc_id)
                                   || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));
@@ -1425,6 +1433,8 @@ export default function ScreenExpedientes() {
                          // Va a la vista intermedia de la OC (PO-xxxx-xxxxx).
                          // Buscar primero por code (mocks) y luego por oc_id (real),
                          // con fallback al detalle del expediente si no hay OC.
+                         // Si la OC tiene >1 expediente (split), abrir el expediente concreto.
+                         if (e.oc_id && (ocExpCount[e.oc_id] || 0) > 1) { onOpenExpediente(e.id); return; }
                          const oc = OCS.find(o => o.code === e.oc_client)
                                  || OCS.find(o => o.id === e.oc_id)
                                  || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));

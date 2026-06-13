@@ -3440,7 +3440,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
         if not rows:
             return None
 
-        base = _re.sub(r"-\d+$", "", str(getattr(exp, "codigo", "") or "EXP"))
+        # Sólo se quita un sufijo de split previo (-2, -3…), NUNCA el número de
+        # OC (>=4 dígitos). Así EXP-504960 → EXP-504960-2 (no "EXP-2").
+        base = _re.sub(r"-\d{1,3}$", "", str(getattr(exp, "codigo", "") or "EXP"))
         cursor.execute(
             "SELECT COUNT(*) FROM expedientes.expediente "
             "WHERE oc_id = %s::uuid AND is_active = TRUE",
