@@ -383,9 +383,21 @@ export default function ScreenPortal() {
   const client = activeEmpresa ? {
     id: activeEmpresa.id,
     name: activeEmpresa.nombre || 'Cliente',
+    razon_social: activeEmpresa.razon_social || activeEmpresa.nombre || '',
+    tax_id: activeEmpresa.tax_id || '',
+    country: activeEmpresa.pais_iso2 || '',
+    address: activeEmpresa.direccion || '',
     contact: activeEmpresa.contacto || '',
     email: activeEmpresa.email || '',
     phone: activeEmpresa.telefono || '',
+    incoterm: activeEmpresa.incoterm || '',
+    medio_pago: activeEmpresa.medio_pago || '',
+    moneda: activeEmpresa.moneda || 'USD',
+    credit_days: activeEmpresa.credit_days ?? null,
+    credito_limit_usd: activeEmpresa.credito_limit_usd ?? null,
+    credito_usado: activeEmpresa.credito_usado ?? null,
+    credito_disponible: activeEmpresa.credito_disponible ?? null,
+    tasa_utilizacion: activeEmpresa.tasa_utilizacion ?? null,
   } : null;
 
   // Orders = OCs belonging to the user's empresas (already scoped by backend).
@@ -942,13 +954,13 @@ function PortalPayments({ lang, ocs }) {
 // Los campos vienen del serializer del Portal (me.*); si falta alguno,
 // cae al mock (--) como placeholder visual.
 function MyCompanyCard({ lang, client, creditLimit, creditUsed }) {
-  const _raw = client?._raw || {};
-  const fiscalId       = _raw.fiscal_id || _raw.ruc || _raw.cuit || client.fiscal_id || '—';
-  const fiscalName     = _raw.fiscal_name || _raw.razon_social || client.name || '—';
-  const fiscalAddress  = _raw.fiscal_address || _raw.address || client.address || '—';
-  const accountManager = _raw.account_manager_name || _raw.am_name || client.account_manager || '—';
-  const paymentTerms   = _raw.payment_terms || client.payment_terms || '—';
-  const country        = _raw.country || client.country || '—';
+  const fiscalId       = client.tax_id || '—';
+  const fiscalName     = client.razon_social || client.name || '—';
+  const fiscalAddress  = client.address || '—';
+  const accountManager = client.contact || '—';
+  const country        = client.country || '—';
+  const PAY_LABEL = { TRANSFER_BANCARIA: lang==='es'?'Transferencia':'Bank transfer', CONTADO: lang==='es'?'Contado':'Cash', CREDITO: lang==='es'?'Crédito':'Credit' };
+  const paymentTerms   = [PAY_LABEL[client.medio_pago] || client.medio_pago, client.incoterm].filter(Boolean).join(' · ') || '—';
 
   return (
     <div className="card card-pad-lg mb-6 my-company-card">
@@ -992,6 +1004,34 @@ function MyCompanyCard({ lang, client, creditLimit, creditUsed }) {
         <CompanyField label={lang==='es'?'Condiciones de pago':'Payment terms'} value={paymentTerms}/>
       </div>
 
+      <div className="flex ai-center gap-4 mt-4" style={{paddingTop:14, borderTop:'1px solid var(--divider)'}}>
+        <div style={{flex:1}}>
+          <div className="micro" style={{marginBottom:4}}>{lang==='es'?'LÍMITE DE CRÉDITO':'CREDIT LIMIT'}</div>
+          <div style={{font:'700 15px/1.2 var(--font-mono)', color:'var(--text-primary)'}}>
+            {client.credito_limit_usd != null ? fmtMoney(client.credito_limit_usd, client.moneda) : '—'}
+          </div>
+        </div>
+        <div style={{flex:1}}>
+          <div className="micro" style={{marginBottom:4}}>{lang==='es'?'CRÉDITO USADO':'CREDIT USED'}</div>
+          <div style={{font:'700 15px/1.2 var(--font-mono)', color:(client.tasa_utilizacion||0) >= 100 ? 'var(--critical)' : 'var(--text-primary)'}}>
+            {client.credito_usado != null ? fmtMoney(client.credito_usado, client.moneda) : '—'}
+            {client.tasa_utilizacion != null && (
+              <span style={{fontSize:11, marginLeft:6, color:'var(--text-tertiary)'}}>({Math.round(client.tasa_utilizacion)}%)</span>
+            )}
+          </div>
+          {client.credito_disponible != null && (
+            <div className="caption" style={{marginTop:2}}>
+              {fmtMoney(client.credito_disponible, client.moneda)} {lang==='es'?'disponible':'available'}
+            </div>
+          )}
+        </div>
+        <div style={{flex:1}}>
+          <div className="micro" style={{marginBottom:4}}>{lang==='es'?'DÍAS DE CRÉDITO':'CREDIT DAYS'}</div>
+          <div style={{font:'700 15px/1.2 var(--font-mono)', color:'var(--text-primary)'}}>
+            {client.credit_days != null ? `${client.credit_days} ${lang==='es'?'días':'days'}` : '—'}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

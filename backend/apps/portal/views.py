@@ -403,25 +403,42 @@ class PortalViewSet(viewsets.ViewSet):
         if not cids:
             return Response({"user": user, "empresas": [], "primary": None})
 
-        # Una sola query con IN (...) — sin N+1
-        placeholders = ",".join(["%s"] * len(cids))
-        rows = _fetchall(
-            f"""
-            SELECT id::text,
-                   COALESCE(nombre_comercial, razon_social) AS nombre,
-                   contacto_nombre AS contacto,
-                   contacto_email  AS email,
-                   contacto_tel    AS telefono,
-                   dias_credito    AS credit_days,
-                   pais_iso2
-              FROM clientes.cliente
-             WHERE lower(id::text) IN ({placeholders})
-               AND is_active = TRUE
-             ORDER BY COALESCE(nombre_comercial, razon_social)
-            """,
-            cids,
+        # Sprint 2026-06-13 · Enriquecemos cada empresa con su ficha
+        # completa + KPIs de crédito reales (límite / usado / disponible /
+        # %), vía el modelo Cliente (calcular_kpis_consolidados es la fuente
+        # de verdad, igual que el detalle de /clientes).
+        from apps.clientes.models import Cliente
+        qs = Cliente.objects.filter(id__in=cids, is_active=True)
+        clientes_sorted = sorted(
+            qs, key=lambda c: (c.nombre_comercial or c.razon_social or "").lower()
         )
-        empresas = rows or []
+        empresas = []
+        for c in clientes_sorted:
+            try:
+                k = c.calcular_kpis_consolidados()
+            except Exception:  # noqa: BLE001
+                k = {}
+            empresas.append({
+                "id":                 str(c.id),
+                "nombre":             c.nombre_comercial or c.razon_social or "",
+                "razon_social":       c.razon_social or "",
+                "tax_id":             c.tax_id or getattr(c, "cedula_juridica", "") or "",
+                "ciudad":             c.ciudad or "",
+                "pais_iso2":          c.pais_iso2 or "",
+                "direccion":          c.direccion_entrega or getattr(c, "direccion", "") or "",
+                "contacto":           c.contacto_nombre or "",
+                "email":              c.contacto_email or "",
+                "telefono":           c.contacto_tel or "",
+                "incoterm":           c.incoterm or "",
+                "medio_pago":         c.medio_pago or "",
+                "moneda":             getattr(c, "moneda", "") or "USD",
+                "credit_days":        c.dias_credito or 0,
+                "credito_limit_usd":  k.get("limite_credito", float(c.credito_aprobado or 0)),
+                "credito_usado":      k.get("credito_usado", 0),
+                "credito_disponible": k.get("credito_disponible", 0),
+                "tasa_utilizacion":   k.get("tasa_utilizacion", 0),
+                "credito_porcentaje": k.get("credito_porcentaje", 0),
+            })
         return Response({
             "user":     user,
             "empresas": empresas,
