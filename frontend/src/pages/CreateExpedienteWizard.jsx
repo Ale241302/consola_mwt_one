@@ -254,6 +254,7 @@ export default function CreateExpedienteWizard() {
         isClient={isClient}
         onGoToDetail={() =>
           navigate(`/expedientes/${state.createdExpediente.id}`)}
+        onMyOrders={() => navigate("/expedientes")}
         onNewOne={() => {
           // Reset + nuevo token
           setIdx(0);
@@ -282,7 +283,7 @@ export default function CreateExpedienteWizard() {
           </h1>
           {isClient && (
             <p style={styles.lede}>
-              Sube tu orden de compra y el equipo de Rana Walk la procesará en
+              Sube tu orden de compra y nuestro equipo comercial la procesará en
               breve. No necesitas configurar logística — ya la tenemos acordada
               en tu contrato.
             </p>
@@ -1271,28 +1272,12 @@ function StepReview({ state, isClient }) {
         />
       </div>
 
-      {isClient && (
-        <div style={{
-          background: "#E6F7F1",
-          border:     `1px solid ${COLORS.mint}`,
-          borderRadius: 8,
-          padding:    "12px 14px",
-          fontSize:   13,
-          color:      COLORS.ink,
-          marginTop:  16,
-        }}>
-          <strong>📬 Próximos pasos.</strong> Al enviar, tu orden queda
-          registrada en el sistema de Rana Walk y nuestro equipo comercial te
-          confirmará los plazos de producción en las próximas horas hábiles.
-          Recibirás confirmación por email y verás el estado en tu Portal.
-        </div>
-      )}
     </section>
   );
 }
 
 
-function SuccessView({ expediente, isClient, onGoToDetail, onNewOne }) {
+function SuccessView({ expediente, isClient, onGoToDetail, onNewOne, onMyOrders }) {
   return (
     <div style={{ ...styles.page, paddingTop: 60 }}>
       <motion.div
@@ -1310,13 +1295,18 @@ function SuccessView({ expediente, isClient, onGoToDetail, onNewOne }) {
         </p>
         {isClient && (
           <p style={{ ...styles.lede, color: COLORS.inkSoft }}>
-            Estado inicial: pendiente de revisión por el equipo de Rana Walk.
+            Estado inicial: pendiente de revisión por nuestro equipo comercial.
           </p>
         )}
-        <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 20 }}>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 20, flexWrap: "wrap" }}>
           {!isClient && (
             <button type="button" onClick={onGoToDetail} style={styles.btnPrimary}>
               Ver expediente →
+            </button>
+          )}
+          {isClient && (
+            <button type="button" onClick={onMyOrders} style={styles.btnPrimary}>
+              Mis pedidos →
             </button>
           )}
           <button type="button" onClick={onNewOne} style={styles.btnSecondary}>
