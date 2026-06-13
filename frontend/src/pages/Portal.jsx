@@ -992,24 +992,6 @@ function MyCompanyCard({ lang, client, creditLimit, creditUsed }) {
         <CompanyField label={lang==='es'?'Condiciones de pago':'Payment terms'} value={paymentTerms}/>
       </div>
 
-      <div className="flex ai-center gap-4 mt-4" style={{paddingTop:14, borderTop:'1px solid var(--divider)'}}>
-        <div style={{flex:1}}>
-          <div className="micro" style={{marginBottom:4}}>
-            {lang==='es'?'LÍMITE DE CRÉDITO':'CREDIT LIMIT'}
-          </div>
-          <div style={{font:'700 15px/1.2 var(--font-mono)', color:'var(--text-primary)'}}>
-            {fmtMoney(_raw.credit_limit || client.credit_limit || 0)}
-          </div>
-        </div>
-        <div style={{flex:1}}>
-          <div className="micro" style={{marginBottom:4}}>
-            {lang==='es'?'DÍAS DE CRÉDITO USADOS':'CREDIT DAYS USED'}
-          </div>
-          <div style={{font:'700 15px/1.2 var(--font-mono)', color:'var(--text-primary)'}}>
-            {creditUsed} / {creditLimit} {lang==='es'?'días':'days'}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
