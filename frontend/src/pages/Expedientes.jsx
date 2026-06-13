@@ -158,12 +158,12 @@ export default function ScreenExpedientes() {
   const [apiOcs,         setApiOcs]         = useState([]);
   const [loading,        setLoading]        = useState(true);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal) => {
     setLoading(true);
     try {
       const [expRaw, ocRaw] = await Promise.all([
-        expedientesApi.list().catch(() => []),
-        ocsApi.list().catch(() => []),
+        expedientesApi.list(undefined, { signal }).catch(() => []),
+        ocsApi.list(undefined, { signal }).catch(() => []),
       ]);
       const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
       const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
@@ -177,7 +177,7 @@ export default function ScreenExpedientes() {
       //     costos reales del backend (total_cost - pg_verified - pg_released).
       let lineasArr = [];
       try {
-        const lnRaw = await lineasApi.list({ is_active: true });
+        const lnRaw = await lineasApi.list({ is_active: true }, { signal });
         lineasArr = Array.isArray(lnRaw) ? lnRaw : (lnRaw?.results || []);
       } catch { lineasArr = []; }
 
@@ -188,7 +188,7 @@ export default function ScreenExpedientes() {
       // (que ademas disparaban 404 ruidosos en producto_ids huerfanos).
       const productMap = {};
       try {
-        const prodList = await productosApi.list();
+        const prodList = await productosApi.list(undefined, { signal });
         const arr = Array.isArray(prodList) ? prodList : (prodList?.results || []);
         for (const p of arr) {
           if (p?.id) productMap[p.id] = p;
@@ -207,7 +207,7 @@ export default function ScreenExpedientes() {
       if (uniqueClientIds.length > 0) {
         try {
           const cliResults = await Promise.all(
-            uniqueClientIds.map(id => clientesApi.get(id).catch(() => null))
+            uniqueClientIds.map(id => clientesApi.get(id, { signal }).catch(() => null))
           );
           clientMap = cliResults.reduce((acc, c) => {
             if (c?.id) acc[c.id] = c;
@@ -254,17 +254,25 @@ export default function ScreenExpedientes() {
         };
       });
 
+      if (signal?.aborted) return;
       setApiExpedientes(enriched);
       setApiOcs(ocItems);
-    } catch {
+    } catch (e) {
+      if (e?.name === "AbortError" || signal?.aborted) return;
       setApiExpedientes([]);
       setApiOcs([]);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Sprint 2026-06-13 · AbortController: cancela los fetches (lineas/productos/
+  // N·clientes) al navegar fuera, liberando el pool de conexiones.
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
   // Si el backend devuelve [] mostramos estado vacío real, no demo.

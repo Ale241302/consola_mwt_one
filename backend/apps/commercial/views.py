@@ -1747,6 +1747,114 @@ class MarluvasExchangeRateView(APIView):
 
 
 # =====================================================================
+# MarluvasExchangeRateHistoryView · serie histórica USD/BRL (Frankfurter)
+# ---------------------------------------------------------------------
+# Proxy de la serie temporal diaria de Frankfurter (ECB) para alimentar
+# la gráfica de línea/área del Cronograma (/cronograma → tab Análisis).
+# Frankfurter expone rangos: /{start}..{end}?from=USD&to=BRL → {rates:{
+#   "YYYY-MM-DD": {"BRL": 5.10}, ...}}. Cacheamos 6h en Redis porque la
+# serie sólo cambia una vez al día (días hábiles).
+#
+# GET /api/commercial/exchange-rate/usd-brl/history/?days=180
+#   → { series:[{date, rate}], count, start, end,
+#       stats:{min,max,avg,std,last,first,change_pct}, source, cached }
+# =====================================================================
+class MarluvasExchangeRateHistoryView(APIView):
+    """Proxy + cache para la serie histórica USD/BRL (ECB/Frankfurter)."""
+    permission_classes = [IsAuthenticated]
+
+    CACHE_TTL = 60 * 60 * 6                    # 6 horas
+    UPSTREAM_TIMEOUT = 8                       # segundos
+    MIN_DAYS = 7
+    MAX_DAYS = 365
+
+    @classmethod
+    def _fetch_series(cls, days):
+        import datetime as _dt
+        end = _dt.date.today()
+        start = end - _dt.timedelta(days=days)
+        url = (
+            f"https://api.frankfurter.app/{start.isoformat()}.."
+            f"{end.isoformat()}?from=USD&to=BRL"
+        )
+        resp = requests.get(url, timeout=cls.UPSTREAM_TIMEOUT)
+        resp.raise_for_status()
+        raw = resp.json() or {}
+        rates = raw.get("rates") or {}
+        series = []
+        for date_str in sorted(rates.keys()):
+            brl = (rates[date_str] or {}).get("BRL")
+            if brl in (None, ""):
+                continue
+            series.append({"date": date_str, "rate": round(float(brl), 4)})
+        return series
+
+    @staticmethod
+    def _stats(series):
+        if not series:
+            return None
+        vals = [p["rate"] for p in series]
+        n = len(vals)
+        avg = sum(vals) / n
+        var = sum((v - avg) ** 2 for v in vals) / n
+        first, last = vals[0], vals[-1]
+        change_pct = ((last - first) / first * 100.0) if first else 0.0
+        return {
+            "min":        round(min(vals), 4),
+            "max":        round(max(vals), 4),
+            "avg":        round(avg, 4),
+            "std":        round(var ** 0.5, 4),
+            "first":      round(first, 4),
+            "last":       round(last, 4),
+            "change_pct": round(change_pct, 2),
+        }
+
+    def get(self, request):
+        try:
+            days = int(request.query_params.get("days", 180))
+        except (TypeError, ValueError):
+            days = 180
+        days = max(self.MIN_DAYS, min(self.MAX_DAYS, days))
+        force = str(request.query_params.get("refresh", "")).lower() in ("1", "true", "yes")
+        cache_key = f"commercial:fx:usd-brl:history:{days}"
+
+        if not force:
+            cached = cache.get(cache_key)
+            if cached:
+                payload = dict(cached)
+                payload["cached"] = True
+                return Response(payload, status=200)
+
+        try:
+            series = self._fetch_series(days)
+            payload = {
+                "series":  series,
+                "count":   len(series),
+                "start":   series[0]["date"] if series else None,
+                "end":     series[-1]["date"] if series else None,
+                "stats":   self._stats(series),
+                "source":  "Frankfurter (ECB)",
+                "cached":  False,
+            }
+            cache.set(cache_key, payload, timeout=self.CACHE_TTL)
+            return Response(payload, status=200)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("MarluvasExchangeRateHistoryView upstream failed: %s", exc)
+            stale = cache.get(cache_key)
+            if stale:
+                payload = dict(stale)
+                payload["cached"] = True
+                payload["error"] = "Upstream sin respuesta; usando último valor cacheado."
+                return Response(payload, status=200)
+            return Response(
+                {"series": [], "count": 0, "stats": None,
+                 "source": "Frankfurter (ECB)", "cached": False,
+                 "error": f"No se pudo obtener la serie histórica: {exc}"},
+                status=200,
+            )
+
+
+# =====================================================================
 # UsdCrcExchangeRateView · cotización USD/CRC (colón costarricense) en vivo
 # ---------------------------------------------------------------------
 # Mismo patrón que MarluvasExchangeRateView (proxy + cache 60min + cadena

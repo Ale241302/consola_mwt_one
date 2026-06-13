@@ -398,8 +398,9 @@ export function resource(name) {
   };
 
   return {
-    list:   (params)      => apiFetch(`${base}${qs(params)}`,                { ...tokenOpt() }),
-    get:    (id)          => apiFetch(`${base}${id}/`,                       { ...tokenOpt() }),
+    // `opts` opcional (p.ej. { signal }) para cancelar la request on-unmount.
+    list:   (params, opts = {}) => apiFetch(`${base}${qs(params)}`,          { ...tokenOpt(), ...opts }),
+    get:    (id, opts = {})     => apiFetch(`${base}${id}/`,                 { ...tokenOpt(), ...opts }),
     create: (body)        => apiFetch(base,                                  { method: "POST",   body, ...tokenOpt() }),
     update: (id, body)    => apiFetch(`${base}${id}/`,                       { method: "PATCH",  body, ...tokenOpt() }),
     replace:(id, body)    => apiFetch(`${base}${id}/`,                       { method: "PUT",    body, ...tokenOpt() }),
@@ -1192,6 +1193,11 @@ export const analyticsApi = {
 export const fxApi = {
   usdBrl:        (refresh = false) =>
     apiFetch(`/commercial/exchange-rate/usd-brl/${refresh ? "?refresh=1" : ""}`,
+             { token: getToken() }),
+  // Cronograma · serie historica USD/BRL (Frankfurter/ECB), cacheada 6h.
+  // Shape: { series:[{date, rate}], count, start, end, stats:{...}, source, cached }
+  usdBrlHistory: (days = 180, refresh = false) =>
+    apiFetch(`/commercial/exchange-rate/usd-brl/history/?days=${encodeURIComponent(days)}${refresh ? "&refresh=1" : ""}`,
              { token: getToken() }),
   usdCrc:        (refresh = false) =>
     apiFetch(`/commercial/exchange-rate/usd-crc/${refresh ? "?refresh=1" : ""}`,

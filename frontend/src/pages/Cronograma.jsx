@@ -17,6 +17,7 @@ import { useRole } from "../context/RoleContext.jsx";
 import GanttChart from "../components/cronograma/GanttChart.jsx";
 import PhaseStatsCards from "../components/cronograma/PhaseStatsCards.jsx";
 import ExpedienteSkuModal from "../components/cronograma/ExpedienteSkuModal.jsx";
+import AnalisisCharts from "../components/cronograma/AnalisisCharts.jsx";
 import {
   KpiStrip, UpcomingDeliveries, PipelineBoard, ExpedientesTable,
   PairsTable, ReceptionSheet,
@@ -60,22 +61,30 @@ export default function Cronograma() {
   // Set de ids de expediente; vacío = todas.
   const [selProformas, setSelProformas] = useState(() => new Set());
   const [profOpen, setProfOpen] = useState(false);
+  // Sprint 2026-06-13 — filtro de SKU concretos (multi-selección).
+  // Vacío = todos. Filtra Gantt, stats, gráficos y demás tabs.
+  const [selSkus, setSelSkus] = useState(() => new Set());
+  const [skuOpen, setSkuOpen] = useState(false);
   const [modalItem, setModalItem] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportErr, setExportErr] = useState(null);
 
   useEffect(() => {
+    // Sprint 2026-06-13 · AbortController: al cambiar de vista en el sidebar
+    // se cancelan los fetches en vuelo y se libera el pool de conexiones —
+    // antes la página siguiente quedaba en blanco hasta que terminaba esta.
+    const controller = new AbortController();
     let alive = true;
     setLoading(true); setError("");
-    loadCronograma()
+    loadCronograma(controller.signal)
       .then(({ items: its, statsGlobal: glo }) => {
         if (!alive) return;
         setItems(its); setStatsGlobal(glo);
       })
-      .catch((e) => { if (alive) setError(e?.message || "error"); })
+      .catch((e) => { if (alive && e?.name !== "AbortError") setError(e?.message || "error"); })
       .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
+    return () => { alive = false; controller.abort(); };
   }, []);
 
   // Stats del cliente filtrado (los clientes B2B ya llegan scopeados).
@@ -116,9 +125,22 @@ export default function Cronograma() {
       && (clienteId === "ALL" || it.clienteId === clienteId)
       && (estado === "ALL" || it.estado === estado)
       && (selProformas.size === 0 || selProformas.has(it.id))
+      && (selSkus.size === 0 || (it.skus || []).some((k) => selSkus.has(k)))
     ),
-    [scopedItems, clienteId, estado, qpExp, selProformas]
+    [scopedItems, clienteId, estado, qpExp, selProformas, selSkus]
   );
+
+  // Catálogo de SKUs presente en los expedientes en alcance (para el filtro).
+  const allSkus = useMemo(() => {
+    const s = new Set();
+    scopedItems.forEach((it) => (it.skus || []).forEach((k) => k && s.add(k)));
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [scopedItems]);
+  const toggleSku = (k) => setSelSkus((prev) => {
+    const next = new Set(prev);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    return next;
+  });
 
   // Filas para runExpedienteExport (forma del listado de /expedientes),
   // construidas desde las filas crudas ya cargadas — sin re-fetchear.
@@ -428,6 +450,70 @@ export default function Cronograma() {
             </>
           )}
         </div>
+        {/* SKU concretos — multi-selección (vacío = todos). Filtra el
+            Gantt, las stats, los gráficos y las demás tabs. */}
+        {allSkus.length > 1 && (
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              className="input"
+              onClick={() => setSkuOpen((o) => !o)}
+              style={{
+                padding: "5px 10px", fontSize: 12.5, width: "auto", minWidth: 150,
+                textAlign: "left", cursor: "pointer",
+                border: selSkus.size > 0 ? "1.5px solid #013A57" : undefined,
+              }}
+            >
+              {selSkus.size === 0
+                ? (lang === "es" ? "Todos los SKU" : "All SKUs")
+                : `SKU · ${selSkus.size}`}
+              <span style={{ marginLeft: 6, fontSize: 9, opacity: 0.6 }}>▾</span>
+            </button>
+            {skuOpen && (
+              <>
+                <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setSkuOpen(false)}/>
+                <div style={{
+                  position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 41,
+                  background: "var(--surface, #fff)",
+                  border: "1px solid var(--border-subtle, #E1E6ED)",
+                  borderRadius: 10, boxShadow: "0 8px 24px -8px rgba(15,27,61,0.18)",
+                  minWidth: 220, maxHeight: 300, overflowY: "auto", padding: 6,
+                }}>
+                  <button
+                    type="button"
+                    onClick={() => setSelSkus(new Set())}
+                    style={{
+                      width: "100%", textAlign: "left", border: 0, background: "transparent",
+                      padding: "6px 8px", fontSize: 12, cursor: "pointer",
+                      color: "var(--text-secondary, #475569)", fontWeight: 600,
+                      borderBottom: "1px solid var(--border-subtle, #E1E6ED)", marginBottom: 4,
+                    }}
+                  >
+                    {lang === "es" ? "Limpiar selección (todos)" : "Clear selection (all)"}
+                  </button>
+                  {allSkus.map((k) => (
+                    <label
+                      key={k}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        padding: "6px 8px", borderRadius: 6, cursor: "pointer", fontSize: 12.5,
+                        background: selSkus.has(k) ? "var(--surface-alt, #E8EDF3)" : "transparent",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selSkus.has(k)}
+                        onChange={() => toggleSku(k)}
+                        style={{ accentColor: "#013A57", cursor: "pointer" }}
+                      />
+                      <span style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 600 }}>{k}</span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {/* Exportar HTML — abre el modal de siempre y genera el .html
             interactivo (zoom/arrastre + modal de SKUs por registro). */}
         <button className="btn btn-secondary"
@@ -476,6 +562,7 @@ export default function Cronograma() {
         });
         const TABS = [
           { id: "GANTT", es: "Cronograma", en: "Timeline" },
+          { id: "ANALISIS", es: "Análisis", en: "Analytics" },
           { id: "ENTREGAS", es: "Próximas entregas", en: "Upcoming" },
           { id: "PIPELINE", es: "Pipeline", en: "Pipeline" },
           { id: "PARES", es: "Entrada de pares", en: "Pairs intake" },
@@ -525,6 +612,9 @@ export default function Cronograma() {
                       lang={lang}
                       clienteLabel={clienteId !== "ALL" ? (clientes.find((c) => c.id === clienteId) || {}).label || "" : ""}/>
                   </div>
+                )}
+                {tab === "ANALISIS" && (
+                  <AnalisisCharts items={visibles} lang={lang} isClient={isClient}/>
                 )}
                 {tab === "ENTREGAS" && (
                   <div className="card card-pad-md">

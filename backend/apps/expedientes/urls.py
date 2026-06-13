@@ -21,6 +21,7 @@ from .views_builder_artifacts import (
 from .views_proforma import generate_proforma, proforma_html_dynamic, factura_payload
 from .views_pronto_pago import apply_pronto_pago
 from .views_product_ocs import ProductOcsView
+from .views_timeline import ExpedienteTimelineBundleView
 
 router = DefaultRouter()
 router.register(r"ocs",             OcViewSet,           basename="ocs")
@@ -39,6 +40,11 @@ router.register(r"ocr-parsing-log",      OcrParsingLogViewSet,  basename="ocr-pa
 # Listándolos primero garantizamos que Django los resuelva antes de
 # delegar al router.
 urlpatterns = [
+    # Sprint 2026-06-13 · Cronograma agregado (mata el N+1 del front).
+    # ANTES del router para no chocar con expedientes/<pk>/.
+    path("expedientes/timeline-bundle/",
+         ExpedienteTimelineBundleView.as_view(),
+         name="expedientes-timeline-bundle"),
     # Orchestrator atómico del Wizard de Creación de Expedientes
     # Reglas B2B (ver apps/expedientes/views_wizard.py): si role=CLIENT,
     # client_id se fuerza al del JWT (ignora payload), y mode/freight/transport

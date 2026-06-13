@@ -36,15 +36,19 @@ export const DEF_DUR = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function fetchJson(path, attempt = 0) {
+async function fetchJson(path, { signal, attempt = 0 } = {}) {
   const token = getToken();
   const resp = await fetch(`${API_BASE}${path}`, {
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    // Sprint 2026-06-13 · cancelacion on-unmount: al navegar fuera de
+    // /cronograma se abortan los fetches en vuelo y se libera el pool de
+    // conexiones del navegador (antes bloqueaban la pagina siguiente).
+    signal,
   });
   // 429 (rate limit nginx/DRF): backoff exponencial suave, hasta 3 reintentos.
   if (resp.status === 429 && attempt < 3) {
     await sleep(700 * (attempt + 1));
-    return fetchJson(path, attempt + 1);
+    return fetchJson(path, { signal, attempt: attempt + 1 });
   }
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${path}`);
   return resp.json();
@@ -145,37 +149,61 @@ function normalizeItem(r, payload, events, overrides) {
   };
 }
 
-/** Carga listado + payload/eventos/overrides por expediente + stats globales. */
-export async function loadCronograma() {
-  const list = await fetchJson("/expedientes/");
+/** Carga listado + payload/eventos/overrides por expediente + stats globales.
+ *
+ *  Sprint 2026-06-13 · CAMINO RAPIDO: endpoint agregado timeline-bundle —
+ *  UNA request en vez de 1 + 3·N + 1. Fallback al legacy N+1 si el backend
+ *  aun no lo expone (404 durante el rollout) para no romper la vista.
+ *  Acepta un AbortSignal opcional para cancelar al desmontar. */
+export async function loadCronograma(signal) {
+  try {
+    const bundle = await fetchJson("/expedientes/timeline-bundle/", { signal });
+    const arr = (bundle && Array.isArray(bundle.expedientes)) ? bundle.expedientes : null;
+    if (!arr) throw new Error("bundle vacio/forma inesperada");
+    const items = arr
+      .filter((b) => b && b.row && b.row.is_active !== false)
+      .map((b) => normalizeItem(b.row, b.payload || {}, b.events || [], b.phase_durations || {}));
+    const statsGlobal = await fetchJson("/expedientes/phase-stats/", { signal })
+      .then((v) => (v && v.phase_stats) || null).catch(() => null);
+    return { items, statsGlobal };
+  } catch (e) {
+    if (e && e.name === "AbortError") throw e;
+    // El agregado no existe o devolvio algo inesperado -> legacy N+1.
+    return loadCronogramaLegacy(signal);
+  }
+}
+
+/** Camino legacy (N+1): un fetch de factura-payload/events/phase-durations
+ *  por expediente, en lotes de 3 para no disparar el 429. Se conserva como
+ *  red de seguridad mientras el endpoint agregado se despliega. */
+async function loadCronogramaLegacy(signal) {
+  const list = await fetchJson("/expedientes/", { signal });
   const rows = (Array.isArray(list) ? list : (list && list.results) || [])
     .filter((r) => r && r.is_active !== false);
-  // Carga por LOTES (3 expedientes a la vez = máx. 9 requests paralelos)
-  // para no disparar el rate-limit (429) con muchos expedientes.
   const items = [];
   const BATCH = 3;
   for (let i = 0; i < rows.length; i += BATCH) {
     const slice = rows.slice(i, i + BATCH);
     const part = await Promise.all(slice.map(async (r) => {
       const [payload, events, pd] = await Promise.all([
-        fetchJson(`/expedientes/${r.id}/factura-payload/`).catch(() => null),
-        fetchJson(`/expedientes/${r.id}/events/?limit=200`)
+        fetchJson(`/expedientes/${r.id}/factura-payload/`, { signal }).catch(() => null),
+        fetchJson(`/expedientes/${r.id}/events/?limit=200`, { signal })
           .then((v) => (Array.isArray(v) ? v : (v && v.results) || [])).catch(() => []),
-        fetchJson(`/expedientes/${r.id}/phase-durations/`)
+        fetchJson(`/expedientes/${r.id}/phase-durations/`, { signal })
           .then((v) => (v && v.phase_durations) || {}).catch(() => ({})),
       ]);
       return normalizeItem(r, payload, events, pd);
     }));
     items.push(...part);
   }
-  const statsGlobal = await fetchJson("/expedientes/phase-stats/")
+  const statsGlobal = await fetchJson("/expedientes/phase-stats/", { signal })
     .then((v) => (v && v.phase_stats) || null).catch(() => null);
   return { items, statsGlobal };
 }
 
-export async function loadClientStats(clienteId) {
+export async function loadClientStats(clienteId, signal) {
   if (!clienteId || clienteId === "ALL") return null;
-  return fetchJson(`/expedientes/phase-stats/?client=${encodeURIComponent(clienteId)}`)
+  return fetchJson(`/expedientes/phase-stats/?client=${encodeURIComponent(clienteId)}`, { signal })
     .then((v) => (v && v.phase_stats) || null).catch(() => null);
 }
 

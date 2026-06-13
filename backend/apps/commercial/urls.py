@@ -39,6 +39,8 @@ from .views import (
     ResolvedPricesByAssignmentView, ProductClientsPricingView,
     # Simulador Marluvas v7 · cotización USD/BRL en vivo
     MarluvasExchangeRateView,
+    # Cronograma · serie histórica USD/BRL (Frankfurter/ECB)
+    MarluvasExchangeRateHistoryView,
     # Liquidación movimientos · cotización USD/CRC (colón) en vivo
     UsdCrcExchangeRateView,
     # Simulador Marluvas v7 · SKUs habilitados por cliente
@@ -109,6 +111,10 @@ urlpatterns = [
     path("commercial/exchange-rate/usd-brl/",
          MarluvasExchangeRateView.as_view(),
          name="commercial-fx-usd-brl"),
+    # Cronograma · serie histórica USD/BRL (?days=180)
+    path("commercial/exchange-rate/usd-brl/history/",
+         MarluvasExchangeRateHistoryView.as_view(),
+         name="commercial-fx-usd-brl-history"),
     # Liquidación movimientos · proxy USD/CRC (AwesomeAPI + open.er-api + cache)
     path("commercial/exchange-rate/usd-crc/",
          UsdCrcExchangeRateView.as_view(),
