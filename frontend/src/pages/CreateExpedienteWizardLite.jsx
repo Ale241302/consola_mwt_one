@@ -416,6 +416,7 @@ export default function CreateExpedienteWizardLite() {
   // el submit (lines_added / lines_removed / lines_updated).
   const initialLinesRef = useRef([]);
   const initialClientIdRef = useRef(null);
+  const initialOperatorRef = useRef(null);
   // Sprint 2026-05-07 · Modal de confirmación split.
   // pendingSplitBodyRef contiene el body listo para PATCH cuando el
   // usuario confirma; showSplitConfirm controla el modal.
@@ -441,6 +442,7 @@ export default function CreateExpedienteWizardLite() {
         const opIsMwt = String(data.operating_company_id || '').toLowerCase()
           === String(MWT_OPERATING_CLIENT_ID || '').toLowerCase();
         setOperatingMode(opIsMwt ? 'mwt' : 'client');
+        initialOperatorRef.current = data.operating_company_id || null;
 
         // 2. selClient: resolver objeto completo (necesitamos dias_credito, etc.)
         if (data.client_id) {
@@ -555,6 +557,23 @@ export default function CreateExpedienteWizardLite() {
         // el cambio de cliente se aplica directo al expediente completo.
         if (isFullEdit && clientChanged) {
           body.client_id = selClient.id;
+        }
+        // Sprint 2026-06-13 · SPLIT — en edición GENERAL, si el admin seleccionó
+        // un subconjunto de líneas y cambió operador o cliente, esas líneas se
+        // mueven a un expediente NUEVO (misma OC); el original conserva el resto.
+        if (isFullEdit) {
+          const operatorChanged = !!(
+            initialOperatorRef.current
+            && operatingCompanyId
+            && String(operatingCompanyId).toLowerCase() !== String(initialOperatorRef.current).toLowerCase()
+          );
+          const split_line_ids = orderLines
+            .filter((l) => l.isSelected && l.tmpId && initialIds.has(l.tmpId))
+            .map((l) => l.tmpId);
+          if (split_line_ids.length && (operatorChanged || clientChanged)) {
+            body.split_line_ids = split_line_ids;
+            if (clientChanged) body.client_id = selClient.id;
+          }
         }
         if (clientChanged && !isFullEdit && !pendingSplitBodyRef.current) {
           body.client_id = selClient.id;
@@ -809,6 +828,7 @@ export default function CreateExpedienteWizardLite() {
               priceMap={priceMap}
               creditProjection={creditProjection}
               isAdmin={isAdmin}
+              splitEnabled={isFullEdit}
             />
           )}
           {step === 3 && (
@@ -1456,6 +1476,7 @@ function Step2Productos({
   manualOpen, setManualOpen,
   setReqDialog, setToast,
   priceMap = {}, creditProjection, isAdmin = false,
+  splitEnabled = false,
 }) {
   const dropRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
@@ -1516,6 +1537,7 @@ function Step2Productos({
 
   const totalUnits = orderLines.reduce((a, l) => a + Number(l.cantidad || 0), 0);
   const unassignedCount = orderLines.filter((l) => l.is_assigned === false).length;
+  const selectedCount = orderLines.filter((l) => l.isSelected).length;
 
   return (
     <div className="card card-pad-lg">
@@ -1618,6 +1640,7 @@ function Step2Productos({
           <table className="table">
             <thead>
               <tr>
+                {splitEnabled && <th style={{ width: 36, textAlign: "center" }}></th>}
                 <th>SKU</th>
                 <th>{lang === "es" ? "Producto" : "Product"}</th>
                 <th>{lang === "es" ? "Talla" : "Size"}</th>
@@ -1634,7 +1657,14 @@ function Step2Productos({
                 const unassigned = l.is_assigned === false;
                 return (
                   <tr key={l.tmpId}
-                      style={unassigned ? { background: "#FEF3C7" } : null}>
+                      style={l.isSelected ? { background: "#ECFDF5" } : (unassigned ? { background: "#FEF3C7" } : null)}>
+                    {splitEnabled && (
+                      <td style={{ textAlign: "center", width: 36 }}>
+                        <input type="checkbox" checked={!!l.isSelected}
+                               onChange={(e) => updateLine(l.tmpId, { isSelected: e.target.checked })}
+                               style={{ accentColor: "#00B286", cursor: "pointer" }} />
+                      </td>
+                    )}
                     <td className="mono-sm">{l.sku}</td>
                     <td>{l.product_label || "—"}</td>
                     <td>{l.talla || "—"}</td>
@@ -1688,6 +1718,16 @@ function Step2Productos({
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {splitEnabled && selectedCount > 0 && (
+        <div className="card card-pad-md" style={{ marginTop: 12, background: "#ECFDF5", border: "1px solid #00B286" }}>
+          <div className="caption" style={{ color: "#0B1E3A" }}>
+            {lang === "es"
+              ? `${selectedCount} línea${selectedCount === 1 ? "" : "s"} seleccionada${selectedCount === 1 ? "" : "s"}: al cambiar operador o cliente y dar Siguiente, se moverán a un expediente NUEVO con la misma OC. Las no seleccionadas quedan en este expediente.`
+              : `${selectedCount} line(s) selected: on changing operator or client and clicking Next, they move to a NEW expediente with the same PO. Unselected stay in this one.`}
+          </div>
         </div>
       )}
 

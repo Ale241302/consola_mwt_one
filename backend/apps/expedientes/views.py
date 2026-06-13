@@ -3098,6 +3098,17 @@ class ExpedienteViewSet(viewsets.ViewSet):
         lines_removed = lines_removed or []
         lines_updated = lines_updated or []
 
+        # Sprint 2026-06-13 · SPLIT — ids de líneas seleccionadas para mover
+        # a un expediente NUEVO (misma OC + documentos) con el nuevo operador/
+        # cliente. Vacío = sin split (comportamiento normal: todo en el mismo).
+        split_ids = payload.get("split_line_ids")
+        if isinstance(split_ids, str):
+            try:
+                split_ids = json.loads(split_ids) if split_ids.strip() else []
+            except json.JSONDecodeError:
+                return Response({"detail": "split_line_ids no es JSON válido"}, status=400)
+        split_ids = [str(x) for x in (split_ids or []) if x]
+
         # operating_company efectivo (para resolver unit_price legacy de adds).
         eff_op = (
             str(new_op) if new_op is not None
@@ -3105,9 +3116,34 @@ class ExpedienteViewSet(viewsets.ViewSet):
         )
 
         added_ids = removed_ids = updated_ids = None
+        split_res = None
         try:
             with transaction.atomic():
                 with connection.cursor() as c:
+                    # 0) SPLIT — si hay líneas seleccionadas, se MUEVEN a un
+                    #    expediente nuevo con el nuevo operador/cliente; el
+                    #    ORIGINAL queda intacto (no se le cambian operador ni
+                    #    cliente) y conserva las líneas no seleccionadas.
+                    if split_ids:
+                        _qty_by_id = {}
+                        for _u in (lines_updated or []):
+                            if isinstance(_u, dict) and _u.get("id"):
+                                _qty_by_id[str(_u["id"])] = _u.get("qty")
+                        split_res = self._split_lines_to_new_expediente(
+                            cursor=c, exp=exp, line_ids=split_ids,
+                            new_op=new_op, new_client_id=new_client_id,
+                            forma_pago=new_fp, payment_days=new_pd_val,
+                            qty_by_id=_qty_by_id,
+                        )
+                        # El original NO cambia operador/cliente/forma_pago al
+                        # partir; y las líneas movidas se excluyen de las ops.
+                        new_op = None; new_fp = None; new_pd_val = None; new_client_id = None
+                        eff_op = str(getattr(exp, "operating_company_id", "") or "") or None
+                        _sset = {str(x) for x in split_ids}
+                        lines_removed = [r for r in lines_removed if str(r) not in _sset]
+                        lines_updated = [u for u in lines_updated
+                                         if not (isinstance(u, dict) and str(u.get("id")) in _sset)]
+
                     # 1) Metadatos a nivel expediente.
                     sets, args = [], []
                     if new_op is not None:
@@ -3243,6 +3279,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
             "lines_removed": removed_ids or [],
             "lines_updated": updated_ids or [],
             "full": True,
+            "split": split_res,
         }, status=200)
 
     def _get_full(self, request, pk=None):
@@ -3368,6 +3405,146 @@ class ExpedienteViewSet(viewsets.ViewSet):
             "sap_value_client":     float(sap_value_client.quantize(Decimal("0.01"))),
             "lines":                lines_out,
         }, status=200)
+
+    # ══════════════════════════════════════════════════════════
+    # Helper · SPLIT — mueve un subconjunto de líneas a un expediente
+    # NUEVO (misma OC + documentos vía oc_id) con el nuevo operador/
+    # cliente y precios recalculados. Devuelve dict o None.
+    # ══════════════════════════════════════════════════════════
+    def _split_lines_to_new_expediente(
+        self, *, cursor, exp, line_ids, new_op, new_client_id,
+        forma_pago, payment_days, qty_by_id=None,
+    ):
+        import re as _re
+        from apps.commercial.views import compute_client_price  # noqa: PLC0415
+        qty_by_id = qty_by_id or {}
+        if not line_ids:
+            return None
+        placeholders = ",".join(["%s::uuid"] * len(line_ids))
+        cursor.execute(
+            f"""
+            SELECT l.id::text, l.producto_id::text, l.sku, COALESCE(l.size, ''),
+                   l.qty, p.marca_id::text, p.precio_lista, p.precio_mwt,
+                   COALESCE(p.especificaciones->'client_prices', '{{}}'::jsonb)
+              FROM expedientes.linea l
+              LEFT JOIN productos.producto p ON p.id = l.producto_id
+             WHERE l.id IN ({placeholders})
+               AND l.expediente_id = %s::uuid
+               AND l.is_active = TRUE
+            """,
+            line_ids + [str(exp.id)],
+        )
+        rows = cursor.fetchall()
+        if not rows:
+            return None
+
+        base = _re.sub(r"-\d+$", "", str(getattr(exp, "codigo", "") or "EXP"))
+        cursor.execute(
+            "SELECT COUNT(*) FROM expedientes.expediente "
+            "WHERE oc_id = %s::uuid AND is_active = TRUE",
+            [str(exp.oc_id)],
+        )
+        n = int((cursor.fetchone() or [1])[0] or 1)
+        new_codigo = f"{base}-{n + 1}"
+        new_id = str(uuid.uuid4())
+
+        eff_client = str(new_client_id) if new_client_id else (
+            str(getattr(exp, "client_id", "") or "") or None)
+        eff_op_new = str(new_op) if new_op else (
+            str(getattr(exp, "operating_company_id", "") or "") or None)
+
+        cursor.execute(
+            """
+            INSERT INTO expedientes.expediente
+              (id, codigo, oc_id, client_id, brand_id, operating_company_id,
+               estado, modo_operacion, moneda,
+               total_cost, total_invoiced, total_paid, balance,
+               forma_pago, credit_days, credit_days_cliente,
+               is_active, created_at, updated_at, last_event_at)
+            SELECT %s, %s, e.oc_id, %s::uuid, e.brand_id, %s::uuid,
+                   'REGISTRO', e.modo_operacion, e.moneda,
+                   0, 0, 0, 0,
+                   COALESCE(%s, e.forma_pago),
+                   COALESCE(%s, e.credit_days),
+                   COALESCE(%s, e.credit_days_cliente),
+                   TRUE, NOW(), NOW(), NOW()
+              FROM expedientes.expediente e
+             WHERE e.id = %s::uuid
+            """,
+            [new_id, new_codigo, eff_client, eff_op_new,
+             forma_pago, payment_days, payment_days, str(exp.id)],
+        )
+
+        is_mwt_op = bool(eff_op_new) and eff_op_new.lower() == str(MWT_OPERATING_CLIENT_ID).lower()
+
+        def _dec(v):
+            try:
+                d = Decimal(str(v))
+                return d if d > 0 else None
+            except (TypeError, ValueError, ArithmeticError):
+                return None
+
+        moved = []
+        for (lid, pid, sku_db, size_db, qty_db, brand_id, pl, p_mwt_override, cp_json) in rows:
+            cp = cp_json or {}
+            if isinstance(cp, str):
+                try:
+                    cp = json.loads(cp)
+                except (TypeError, ValueError):
+                    cp = {}
+            p_mwt = _dec(cp.get(MWT_OPERATING_CLIENT_ID) or cp.get(str(MWT_OPERATING_CLIENT_ID)))
+            if p_mwt is None:
+                p_mwt = _dec(p_mwt_override)
+            if p_mwt is None and brand_id and sku_db:
+                try:
+                    p_mwt = compute_client_price(client_id=MWT_OPERATING_CLIENT_ID,
+                                                 brand_id=brand_id, product_sku=sku_db, days_req=0)
+                except (TypeError, ValueError, ArithmeticError):
+                    p_mwt = None
+            if not (p_mwt and p_mwt > 0):
+                p_mwt = _dec(pl) or Decimal("0")
+            p_cli = None
+            if eff_client:
+                p_cli = _dec(cp.get(str(eff_client)) or cp.get(eff_client))
+                if p_cli is None and brand_id and sku_db:
+                    try:
+                        p_cli = compute_client_price(client_id=eff_client,
+                                                     brand_id=brand_id, product_sku=sku_db, days_req=0)
+                    except (TypeError, ValueError, ArithmeticError):
+                        p_cli = None
+            if not (p_cli and p_cli > 0):
+                p_cli = p_mwt
+            try:
+                qty = int(qty_by_id.get(lid, qty_db) or qty_db or 0)
+            except (TypeError, ValueError):
+                qty = int(qty_db or 0)
+            unit = p_mwt if is_mwt_op else p_cli
+            total = (Decimal(unit) * Decimal(qty)).quantize(Decimal("0.01"))
+            cursor.execute(
+                """
+                UPDATE expedientes.linea
+                   SET expediente_id = %s::uuid, qty = %s,
+                       unit_price = %s, unit_price_mwt = %s, unit_price_client = %s,
+                       total_price = %s, updated_at = NOW()
+                 WHERE id = %s::uuid
+                """,
+                [new_id, qty, str(unit), str(p_mwt), str(p_cli), str(total), lid],
+            )
+            moved.append(lid)
+
+        cursor.execute(
+            """
+            UPDATE expedientes.expediente e
+               SET total_cost = COALESCE((
+                     SELECT SUM(l.total_price) FROM expedientes.linea l
+                      WHERE l.expediente_id = e.id AND l.is_active = TRUE
+                   ), 0), updated_at = NOW()
+             WHERE e.id IN (%s::uuid, %s::uuid)
+            """,
+            [new_id, str(exp.id)],
+        )
+        return {"new_expediente_id": new_id, "new_codigo": new_codigo,
+                "moved_line_ids": moved, "moved_count": len(moved)}
 
     # ══════════════════════════════════════════════════════════
     # Helper · operaciones de líneas sobre TODO el expediente.
