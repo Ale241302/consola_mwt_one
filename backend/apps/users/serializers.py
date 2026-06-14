@@ -173,7 +173,9 @@ class ProfileMeSerializer(serializers.ModelSerializer):
         read_only_fields = (
             "id",
             "email_plain",
-            "full_name",
+            # full_name: self-editable desde /perfil (2026-06-14). El admin lo
+            # sigue gestionando vía /users/<id>/; aquí el propio usuario puede
+            # corregir su nombre. role_default/email_plain SIGUEN blindados.
             "role_default",
             "legal_entity_id",
             "is_active",

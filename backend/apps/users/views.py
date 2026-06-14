@@ -257,74 +257,10 @@ class MwtUserViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Usuario no encontrado."},
                             status=status.HTTP_404_NOT_FOUND)
 
-        raw_token = secrets.token_urlsafe(48)
-        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-        ttl_hours = int(request.data.get("ttl_hours") or 24)
-        expires = timezone.now() + timedelta(hours=max(1, min(ttl_hours, 72)))
-
-        PasswordResetToken.objects.create(
-            id         = uuid.uuid4(),
-            user_id    = u.id,
-            token_hash = token_hash,
-            issued_by  = getattr(request.user, "id", None),
-            expires_at = expires,
-            ip_address = request.META.get("REMOTE_ADDR"),
-            user_agent = (request.META.get("HTTP_USER_AGENT") or "")[:250],
+        return Response(
+            _issue_password_reset(u, request, request.data.get("ttl_hours")),
+            status=200,
         )
-
-        # Disparar email · usa templates Django (HTML + texto plano).
-        # Las plantillas viven en apps/users/templates/users/email/.
-        from django.template.loader import render_to_string  # noqa: PLC0415
-        from django.utils import timezone as _tz             # noqa: PLC0415
-        from apps.storage.services import send_test_email    # noqa: PLC0415
-
-        reset_url = f"https://consola.mwt.one/reset?token={raw_token}"
-        ctx = {
-            "full_name":     u.full_name or "",
-            "email":         u.email_plain,
-            "reset_url":     reset_url,
-            "ttl_hours":     ttl_hours,
-            "support_email": "info@mwt.one",
-            "header_title":  "Restablecimiento de contraseña",
-            "preheader":     f"Solicitud de restablecimiento de contraseña — válida por {ttl_hours} horas.",
-            "year":          _tz.now().year,
-        }
-        subject   = "[MWT·ONE] Restablece tu contraseña"
-        try:
-            html_body = render_to_string("users/email/password_reset.html", ctx)
-            text_body = render_to_string("users/email/password_reset.txt",  ctx)
-        except Exception as e:
-            log.exception("render_to_string falló para password_reset: %s", e)
-            html_body = None
-            text_body = (
-                f"Hola {u.full_name or u.email_plain},\n\n"
-                f"Para restablecer tu contraseña entra a:\n{reset_url}\n\n"
-                f"Válido {ttl_hours} horas."
-            )
-
-        result = send_test_email(
-            to=u.contact_email or u.email_plain,
-            subject=subject,
-            body=text_body,
-            html_body=html_body,
-        )
-
-        resp = {
-            "ok":             True,
-            "token_preview":  raw_token[-8:],
-            "expires_at":     expires.isoformat(),
-            "email_sent":     bool(result.get("ok")),
-            "email_template": "auth.password_reset",
-        }
-        # Para depurar desde el front, devolvemos el shape extendido directamente
-        # (el serializer es opcional y no falla si añadimos campos extra).
-        return Response({
-            **resp,
-            "email_to":      result.get("to"),
-            "email_from":    result.get("from"),
-            "email_backend": result.get("backend"),
-            "email_error":   result.get("error"),
-        }, status=200)
 
     # ── POST /api/users/<id>/toggle-active/ ────────────────────
     @action(detail=True, methods=["post"], url_path="toggle-active")
@@ -536,12 +472,80 @@ def _sync_active_to_core_users(*, email: str, user_uuid: str,
 #   · password_hash, api_key_hash
 # ══════════════════════════════════════════════════════════════════════
 _PROFILE_SELF_EDITABLE_FIELDS = {
+    "full_name",          # self-editable desde /perfil (2026-06-14)
     "contact_email",
     "phone",
     "preferred_language",
     "timezone",
     "avatar_url",
 }
+
+
+def _issue_password_reset(u, request, ttl_hours=24):
+    """Crea token de reset + envía email. Compartido por el reset admin
+    (/users/<id>/reset-password/) y el self-service (/users/me/reset-password/).
+    Devuelve el shape de respuesta (dict) listo para Response()."""
+    raw_token = secrets.token_urlsafe(48)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    ttl_hours = int(ttl_hours or 24)
+    expires = timezone.now() + timedelta(hours=max(1, min(ttl_hours, 72)))
+
+    PasswordResetToken.objects.create(
+        id         = uuid.uuid4(),
+        user_id    = u.id,
+        token_hash = token_hash,
+        issued_by  = getattr(request.user, "id", None),
+        expires_at = expires,
+        ip_address = request.META.get("REMOTE_ADDR"),
+        user_agent = (request.META.get("HTTP_USER_AGENT") or "")[:250],
+    )
+
+    # Disparar email · usa templates Django (HTML + texto plano).
+    from django.template.loader import render_to_string  # noqa: PLC0415
+    from django.utils import timezone as _tz             # noqa: PLC0415
+    from apps.storage.services import send_test_email    # noqa: PLC0415
+
+    reset_url = f"https://consola.mwt.one/reset?token={raw_token}"
+    ctx = {
+        "full_name":     u.full_name or "",
+        "email":         u.email_plain,
+        "reset_url":     reset_url,
+        "ttl_hours":     ttl_hours,
+        "support_email": "info@mwt.one",
+        "header_title":  "Restablecimiento de contraseña",
+        "preheader":     f"Solicitud de restablecimiento de contraseña — válida por {ttl_hours} horas.",
+        "year":          _tz.now().year,
+    }
+    subject = "[MWT·ONE] Restablece tu contraseña"
+    try:
+        html_body = render_to_string("users/email/password_reset.html", ctx)
+        text_body = render_to_string("users/email/password_reset.txt",  ctx)
+    except Exception as e:
+        log.exception("render_to_string falló para password_reset: %s", e)
+        html_body = None
+        text_body = (
+            f"Hola {u.full_name or u.email_plain},\n\n"
+            f"Para restablecer tu contraseña entra a:\n{reset_url}\n\n"
+            f"Válido {ttl_hours} horas."
+        )
+
+    result = send_test_email(
+        to=u.contact_email or u.email_plain,
+        subject=subject,
+        body=text_body,
+        html_body=html_body,
+    )
+    return {
+        "ok":             True,
+        "token_preview":  raw_token[-8:],
+        "expires_at":     expires.isoformat(),
+        "email_sent":     bool(result.get("ok")),
+        "email_template": "auth.password_reset",
+        "email_to":       result.get("to"),
+        "email_from":     result.get("from"),
+        "email_backend":  result.get("backend"),
+        "email_error":    result.get("error"),
+    }
 
 
 def _process_addresses_atomic(user_id, payload_addresses):
@@ -773,6 +777,18 @@ class ProfileMeView(APIView):
                     ser.is_valid(raise_exception=True)
                     ser.save()
                     u.refresh_from_db()
+                    # Si cambió el nombre, lo replicamos a core.users (tabla de
+                    # auth) para que login/JWT y mwtuser no diverjan. Mismo UUID
+                    # en ambas tablas. Best-effort: no rompe el PATCH si falla.
+                    if "full_name" in safe_payload:
+                        try:
+                            with connection.cursor() as _c:
+                                _c.execute(
+                                    "UPDATE core.users SET full_name = %s WHERE id = %s",
+                                    [u.full_name or "", str(u.id)],
+                                )
+                        except Exception:
+                            log.warning("sync full_name -> core.users falló para %s", u.id)
 
                 if payload_addresses is not None:
                     _process_addresses_atomic(u.id, payload_addresses)
@@ -788,6 +804,29 @@ class ProfileMeView(APIView):
 
         # Respuesta final: perfil COMPLETO con direcciones actualizadas.
         return Response(ProfileMeSerializer(u).data)
+
+
+class ProfileResetPasswordView(APIView):
+    """POST /api/users/me/reset-password/ — el propio usuario pide un enlace
+    de restablecimiento de contraseña a su email de contacto.
+
+    Accesible para CUALQUIER usuario autenticado (staff + CLIENT B2B). Reusa
+    la misma lógica de token+email que el reset admin (_issue_password_reset).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        uid   = getattr(request.user, "id", None) or getattr(request.user, "pk", None)
+        email = getattr(request.user, "email", None)
+        u = None
+        if uid:
+            u = MwtUser.objects.filter(pk=uid).first()
+        if u is None and email:
+            u = MwtUser.objects.filter(email_plain__iexact=email).first()
+        if u is None:
+            return Response({"detail": "Usuario no resuelto."},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        return Response(_issue_password_reset(u, request, 24), status=200)
 
 
 

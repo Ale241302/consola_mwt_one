@@ -18,7 +18,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from .views import (
-    MwtUserViewSet, ProfileMeView,
+    MwtUserViewSet, ProfileMeView, ProfileResetPasswordView,
     ActivityFeedViewSet, UserAddressAdminViewSet,
 )
 
@@ -33,5 +33,6 @@ urlpatterns = [
     # /users/me/profile/ va ANTES del router para no chocar con el
     # detail path /api/users/<uuid>/.
     path("users/me/profile/", ProfileMeView.as_view(), name="users-me-profile"),
+    path("users/me/reset-password/", ProfileResetPasswordView.as_view(), name="users-me-reset-password"),
     path("", include(router.urls)),
 ]

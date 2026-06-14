@@ -38,7 +38,6 @@ import {
 const TABS = [
   { key: "personal",  label: "Datos personales", icon: "👤" },
   { key: "addresses", label: "Direcciones",      icon: "📍" },
-  { key: "company",   label: "Mi empresa",       icon: "🏢" },
   { key: "system",    label: "Sistema",          icon: "⚙️" },  // admin only
 ];
 
@@ -48,56 +47,30 @@ export default function ProfilePage() {
   const { isClient, isAdmin } = useRole();
 
   const [profile, setProfile] = useState(null);
-  const [company, setCompany] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("personal");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // Sprint 2026-05-06 · todas las empresas asociadas al usuario.
-  // Primera = empresa primaria (legal_entity_id legacy / lehgal_entity_ids[0]).
-  const [companies, setCompanies] = useState([]);
-
-  // ── Cargar perfil + empresa(s) (si aplica) ─────────────────────
+  // ── Cargar perfil ──────────────────────────────────────────────
+  // 2026-06-14 · Quitada la tab "Mi empresa" y su fetch a /legal-entities/
+  // (ese endpoint no existe en el backend → devolvía 404 en cada carga).
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const me = await apiFetch("/users/me/profile/", { token: getToken() });
       setProfile(me);
-      // Resolver el array completo legal_entity_ids; compat con singular.
-      const ids = Array.isArray(me?.legal_entity_ids) ? me.legal_entity_ids.slice() : [];
-      if (me?.legal_entity_id && !ids.includes(me.legal_entity_id)) {
-        ids.unshift(me.legal_entity_id);
-      }
-      if (ids.length === 0) {
-        setCompany(null);
-        setCompanies([]);
-        return;
-      }
-      // Empresa primaria → tab "Mi empresa" (compat existente).
-      try {
-        const co = await apiFetch(`/legal-entities/${ids[0]}/`,
-          { token: getToken() });
-        setCompany(co);
-      } catch { setCompany(null); }
-      // Lista completa para mostrar todas las asociadas (read-only).
-      try {
-        const all = await Promise.all(
-          ids.map((id) => apiFetch(`/legal-entities/${id}/`, { token: getToken() }).catch(() => null))
-        );
-        setCompanies(all.filter(Boolean));
-      } catch { setCompanies([]); }
     } finally {
       setLoading(false);
     }
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // Filtrar tabs visibles por rol + si tiene empresa
+  // Filtrar tabs visibles por rol.
   const visibleTabs = TABS.filter((t) => {
-    if (t.key === "system")  return isAdmin;                 // admin-only
-    if (t.key === "company") return !!profile?.legal_entity_id;
+    if (t.key === "system") return isAdmin;                 // admin-only
     return true;
   });
 
@@ -115,21 +88,21 @@ export default function ProfilePage() {
   };
 
   const save = async () => {
-    if (!dirty || !profile) return;
+    if (!profile) return;
     setSaving(true);
     try {
+      // 2026-06-14 · full_name + phone son editables también por CLIENT
+      // (whitelist self-service del backend). Email (login) y Rol principal
+      // siguen blindados (read-only).
       const body = {
+        full_name:          profile.full_name || "",
+        phone:              profile.phone || "",
         contact_email:      profile.contact_email || "",
         preferred_language: profile.preferred_language || "es",
         timezone:           profile.timezone || "America/Lima",
         // Direcciones viajan dentro de preferences (JSONB libre)
         preferences: { ...(profile.preferences || {}), addresses: profile.addresses || [] },
       };
-      // Admin puede cambiar más cosas
-      if (!isClient) {
-        body.full_name = profile.full_name || "";
-        body.phone     = profile.phone || "";
-      }
       const updated = await apiFetch("/users/me/profile/", {
         method: "PATCH", body, token: getToken(),
       });
@@ -153,6 +126,30 @@ export default function ProfilePage() {
     setToast({ msg, kind });
     setTimeout(() => setToast(null), 3200);
   }
+
+  // Self-service · restablecer mi propia contraseña (envía enlace al email).
+  const resetPassword = async () => {
+    if (resetting) return;
+    const dest = profile?.contact_email || profile?.email_plain || "tu email";
+    if (!window.confirm(`Te enviaremos un enlace para restablecer tu contraseña a ${dest}. ¿Continuar?`)) return;
+    setResetting(true);
+    try {
+      const r = await apiFetch("/users/me/reset-password/", {
+        method: "POST", body: {}, token: getToken(),
+      });
+      showToast(r?.email_sent
+        ? "✓ Enlace de restablecimiento enviado a tu email"
+        : "✓ Solicitud registrada (revisa con soporte si no llega)");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 0) {
+        showToast("✓ (demo) Restablecimiento simulado");
+      } else {
+        showToast(`⚠️ ${e?.message || "Error"}`, "err");
+      }
+    } finally {
+      setResetting(false);
+    }
+  };
 
   if (loading && !profile) {
     return (
@@ -207,13 +204,14 @@ export default function ProfilePage() {
         )}
         <button
           onClick={save}
-          disabled={!dirty || saving}
+          disabled={saving}
           style={{
-            background: dirty ? "var(--mint, #00B286)" : "#E1E6ED",
-            color: dirty ? "#fff" : "var(--text-tertiary)",
+            background: "var(--mint, #00B286)",
+            color: "#fff",
             border: "none", padding: "9px 18px", borderRadius: 8,
             fontSize: 13, fontWeight: 600,
-            cursor: (dirty && !saving) ? "pointer" : "default",
+            opacity: saving ? 0.7 : 1,
+            cursor: saving ? "default" : "pointer",
           }}
         >
           <IconCheck size={12}/> {saving ? "Guardando…" : "Guardar cambios"}
@@ -245,9 +243,8 @@ export default function ProfilePage() {
       </div>
 
       {/* Panels */}
-      {activeTab === "personal"  && <PersonalTab profile={profile} patch={patch} isClient={isClient}/>}
+      {activeTab === "personal"  && <PersonalTab profile={profile} patch={patch} isClient={isClient} onResetPassword={resetPassword} resetting={resetting}/>}
       {activeTab === "addresses" && <AddressesTab profile={profile} patch={patch}/>}
-      {activeTab === "company"   && <CompanyTab   company={company} companies={companies} primaryId={profile?.legal_entity_id}/>}
       {activeTab === "system" && isAdmin && <SystemTab/>}
 
       {/* Toast */}
@@ -275,16 +272,13 @@ export default function ProfilePage() {
 // =====================================================================
 // Tabs
 // =====================================================================
-function PersonalTab({ profile, patch, isClient }) {
-  // CLIENT puede modificar: contact_email, preferred_language, timezone.
-  // ADMIN puede modificar TODO (incluyendo full_name + phone).
-  // email_plain es SIEMPRE read-only (es el login — cambiarlo rompería auth).
+function PersonalTab({ profile, patch, isClient, onResetPassword, resetting }) {
+  // Editable por TODOS (incl. CLIENT): nombre, teléfono, email de contacto,
+  // idioma, zona horaria. BLINDADOS: Email (login) y Rol principal.
   return (
     <Section
       title="Datos personales"
-      hint={isClient
-        ? "Tu email de login, nombre y rol los gestiona tu Account Manager. Puedes actualizar tu email de contacto, idioma y zona horaria."
-        : "Información de tu cuenta en MWT.ONE."}
+      hint="Puedes actualizar tu nombre, teléfono, email de contacto, idioma y zona horaria. Tu email de login y tu rol los gestiona tu Account Manager."
     >
       <div style={styles.grid2}>
         <Field label="Email (login)" readOnly>
@@ -294,19 +288,17 @@ function PersonalTab({ profile, patch, isClient }) {
           <input value={profile.role_default} disabled style={styles.input}/>
         </Field>
 
-        <Field label="Nombre completo" readOnly={isClient}>
+        <Field label="Nombre completo">
           <input
             value={profile.full_name || ""}
             onChange={(e) => patch({ full_name: e.target.value })}
-            disabled={isClient}
             style={styles.input}
           />
         </Field>
-        <Field label="Teléfono" readOnly={isClient}>
+        <Field label="Teléfono">
           <input
             value={profile.phone || ""}
             onChange={(e) => patch({ phone: e.target.value })}
-            disabled={isClient}
             style={styles.input}
           />
         </Field>
@@ -345,6 +337,38 @@ function PersonalTab({ profile, patch, isClient }) {
             <option>America/Sao_Paulo</option>
           </select>
         </Field>
+      </div>
+
+      {/* Seguridad · restablecer contraseña (self-service) */}
+      <div style={{
+        marginTop: 18, paddingTop: 16,
+        borderTop: "1px solid var(--border, #E1E6ED)",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        gap: 12, flexWrap: "wrap",
+      }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--navy, #0B1E3A)" }}>
+            Contraseña
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
+            Te enviaremos un enlace seguro a tu email de contacto para crear una nueva contraseña.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onResetPassword}
+          disabled={resetting}
+          className="btn btn-ghost"
+          style={{
+            border: "1px solid var(--border, #E1E6ED)",
+            padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+            color: "var(--navy, #0B1E3A)", background: "#fff",
+            display: "inline-flex", alignItems: "center", gap: 6,
+            cursor: resetting ? "default" : "pointer", opacity: resetting ? 0.7 : 1,
+          }}
+        >
+          <IconLock size={13}/> {resetting ? "Enviando…" : "Restablecer contraseña"}
+        </button>
       </div>
     </Section>
   );
