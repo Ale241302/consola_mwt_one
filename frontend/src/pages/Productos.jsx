@@ -29,6 +29,7 @@ import {
   PRODUCT_EXPEDIENTE_LINES, PRODUCT_NODE_ASSIGNMENTS,
 } from "../data/mockData.js";
 import { productosApi } from "../lib/api.js";
+import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
 
 // ─────────────────────────────────────────────────────────────
 // Adaptador backend productos.producto → shape UI.
@@ -454,6 +455,7 @@ export default function ScreenProductos() {
             </tr>
           </thead>
           <tbody>
+            {loading && rows.length === 0 && <TableSkeletonRows rows={8} />}
             <AnimatePresence mode="popLayout">
               {rows.map((p, idx) => {
                 const brand = brandMap[p.brand_id];
@@ -615,7 +617,7 @@ export default function ScreenProductos() {
           </tbody>
         </table>
 
-        {rows.length === 0 && (
+        {!loading && rows.length === 0 && (
           <div className="empty-state" style={{padding:'28px 12px'}}>
             <IconTag size={24} style={{color:'var(--text-tertiary)'}}/>
             <div className="heading-md">{lang==='es'?'Sin resultados':'No results'}</div>

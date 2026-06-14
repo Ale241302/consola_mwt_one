@@ -3,6 +3,17 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import models
 
+# Auditoría de carga 2026-06-14 · calcular_kpis_consolidados() corre 2 sumas
+# de crédito en vivo sobre toda la tabla `linea` y se llamaba por CADA empresa
+# en /api/portal/me/ (sin caché). Cacheamos el resultado agregado (display
+# dashboard, no gating) con TTL corto → auto-consistencia en ≤60 s sin tener
+# que invalidar en cada mutación de expediente/línea/pago. Los métodos crudos
+# (calcular_consumo_credito_pool / calcular_credito_consumido) quedan SIN
+# caché para que cualquier ruta de gating siga 100% en vivo.
+CREDIT_KPIS_TTL = 60  # segundos
+def _credit_kpis_cache_key(client_id) -> str:
+    return f"portal:credit_kpis:{client_id}"
+
 
 class Cliente(models.Model):
     id               = models.UUIDField(primary_key=True)
@@ -237,7 +248,7 @@ class Cliente(models.Model):
         except Exception:
             return Decimal(self.credito_usado or 0)
 
-    def calcular_kpis_consolidados(self) -> dict:
+    def calcular_kpis_consolidados(self, use_cache: bool = True) -> dict:
         """KPIs financieros del cliente.
 
         Reglas:
@@ -249,7 +260,18 @@ class Cliente(models.Model):
         El BACKEND es la fuente de verdad de estos números — el FE solo
         renderiza. Si Expedientes/Facturación todavía no tienen datos,
         los valores quedan en 0 sin romper el endpoint.
+
+        `use_cache=True` (default) sirve el agregado desde Redis con TTL corto
+        (CREDIT_KPIS_TTL). Pasa `use_cache=False` si necesitas el número
+        absolutamente en vivo (p.ej. una decisión de gating de crédito).
         """
+        from apps.core.cache_utils import cache_get, cache_set
+        ck = _credit_kpis_cache_key(self.id)
+        if use_cache:
+            cached = cache_get(ck)
+            if cached is not None:
+                return cached
+
         if self.is_parent:
             limite = Decimal(self.credito_aprobado or 0)
             usado_pool = self.calcular_consumo_credito_pool()
@@ -265,7 +287,7 @@ class Cliente(models.Model):
         tasa = float((usado_pool / limite) * 100) if limite > 0 else 0.0
         tasa = round(tasa, 2)
 
-        return {
+        result = {
             "limite_credito":      float(limite),
             "credito_usado":       float(usado_pool),
             "credito_usado_self":  float(usado_self),
@@ -276,6 +298,20 @@ class Cliente(models.Model):
             "is_subsidiary":       self.is_subsidiary,
             "subsidiarias_count":  self.get_subsidiaries().count() if self.is_parent else 0,
         }
+        if use_cache:
+            cache_set(ck, result, CREDIT_KPIS_TTL)
+        return result
+
+    @staticmethod
+    def invalidate_credit_kpis(*client_ids):
+        """Purga el cache de KPIs de crédito de uno o varios clientes.
+
+        Úsalo tras una mutación que afecte el crédito (cambio de
+        credito_aprobado, expediente/línea/pago) si quieres consistencia
+        inmediata en vez de esperar el TTL. Best-effort (no rompe si Redis
+        está caído)."""
+        from apps.core.cache_utils import cache_delete
+        cache_delete(*[_credit_kpis_cache_key(cid) for cid in client_ids if cid])
 
     def clean(self):
         """Validación canónica de la regla 2 niveles.

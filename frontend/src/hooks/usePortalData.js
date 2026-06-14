@@ -21,16 +21,29 @@
 // =====================================================================
 import { useEffect, useState, useCallback } from "react";
 import { portalApi } from "../lib/api.js";
+import { readCache, writeCache } from "../lib/swrCache.js";
+
+const EMPTY = {
+  me: null, kpis: null,
+  ocs: [], expedientes: [], pagos: [], cobros: [], documentos: [],
+};
 
 export function usePortalData(clientId) {
-  const [state, setState] = useState({
-    me: null, kpis: null,
-    ocs: [], expedientes: [], pagos: [], cobros: [], documentos: [],
-    loading: true, error: null,
+  const cacheKey = `portal:${clientId || "self"}`;
+
+  // Stale-while-revalidate: si hay un snapshot previo en caché lo pintamos
+  // AL INSTANTE (loading:false) y revalidamos en segundo plano. Así volver
+  // a entrar al portal ya no deja la vista en blanco 1-2 s.
+  const [state, setState] = useState(() => {
+    const cached = readCache(cacheKey);
+    return cached
+      ? { ...cached, loading: false, error: null }
+      : { ...EMPTY, loading: true, error: null };
   });
 
   const load = useCallback(async () => {
-    setState((s) => ({ ...s, loading: true, error: null }));
+    // Solo mostramos el spinner cuando NO hay datos cacheados que enseñar.
+    setState((s) => ({ ...s, loading: !readCache(cacheKey), error: null }));
     try {
       const [me, kpis, ocs, expedientes, pagos, cobros, documentos] =
         await Promise.all([
@@ -42,7 +55,7 @@ export function usePortalData(clientId) {
           portalApi.misCobros(clientId).catch(() => []),
           portalApi.misDocumentos(clientId).catch(() => []),
         ]);
-      setState({
+      const fresh = {
         me:          me || null,
         kpis:        kpis || null,
         ocs:         Array.isArray(ocs)         ? ocs         : [],
@@ -50,15 +63,22 @@ export function usePortalData(clientId) {
         pagos:       Array.isArray(pagos)       ? pagos       : [],
         cobros:      Array.isArray(cobros)      ? cobros      : [],
         documentos:  Array.isArray(documentos)  ? documentos  : [],
-        loading:     false,
-        error:       null,
-      });
+      };
+      writeCache(cacheKey, fresh);
+      setState({ ...fresh, loading: false, error: null });
     } catch (err) {
       setState((s) => ({ ...s, loading: false, error: err }));
     }
-  }, [clientId]);
+  }, [clientId, cacheKey]);
 
-  useEffect(() => { load(); }, [load]);
+  // Re-sembramos desde caché cuando cambia la empresa activa (clientId),
+  // para que el cambio de empresa tampoco parpadee en blanco.
+  useEffect(() => {
+    const cached = readCache(cacheKey);
+    if (cached) setState({ ...cached, loading: false, error: null });
+    else setState({ ...EMPTY, loading: true, error: null });
+    load();
+  }, [load, cacheKey]);
 
   return { ...state, reload: load };
 }

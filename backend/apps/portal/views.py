@@ -44,6 +44,28 @@ from apps.expedientes.models import Expediente
 
 log = logging.getLogger(__name__)
 
+# Auditoría de carga 2026-06-14 · TTLs de cache (segundos).
+PORTAL_KPIS_TTL = 60        # /api/portal/kpis/ (3 queries agregadas en vivo)
+# Paginación de listados del portal (antes LIMIT 100 hard-coded → truncaba
+# en silencio). Sigue devolviendo array plano (retro-compat con el FE) pero
+# acepta ?limit= y ?offset= y sube el default para no recortar a clientes reales.
+PORTAL_PAGE_DEFAULT_LIMIT = 200
+PORTAL_PAGE_MAX_LIMIT     = 1000
+
+
+def _page_limits(request, default=PORTAL_PAGE_DEFAULT_LIMIT, maximum=PORTAL_PAGE_MAX_LIMIT):
+    """Lee ?limit=&?offset= con saneo. Devuelve (limit, offset) seguros para
+    bind como parámetros SQL. limit se acota a [1, maximum]; offset a >= 0."""
+    def _int(name, fallback, lo, hi):
+        try:
+            v = int(request.query_params.get(name, fallback))
+        except (TypeError, ValueError):
+            return fallback
+        return max(lo, min(hi, v))
+    limit  = _int("limit", default, 1, maximum)
+    offset = _int("offset", 0, 0, 10_000_000)
+    return limit, offset
+
 
 def _hash_password(raw: str) -> str:
     """pbkdf2 simple — en prod reemplazar por argon2/bcrypt."""
@@ -472,6 +494,7 @@ class PortalViewSet(viewsets.ViewSet):
         if not cids:
             return _empty_scope()
 
+        limit, offset = _page_limits(request)
         placeholders = ",".join(["%s"] * len(cids))
         # Rev 2026-05-21c · EXISTS en vez de LATERAL+LIMIT 1.
         # Bug previo: el LATERAL solo evaluaba EL PRIMER expediente hijo, así
@@ -541,9 +564,9 @@ class PortalViewSet(viewsets.ViewSet):
                 )
               )
             ORDER BY o.issued_at DESC NULLS LAST, o.created_at DESC
-            LIMIT 100
+            LIMIT %s OFFSET %s
             """,
-            list(cids) + list(cids) + list(cids),
+            list(cids) + list(cids) + list(cids) + [limit, offset],
         )
         return Response(rows)
 
@@ -564,6 +587,7 @@ class PortalViewSet(viewsets.ViewSet):
         if not cids:
             return _empty_scope()
 
+        limit, offset = _page_limits(request)
         # Rev 2026-05-21b · Scope dual: client_id ∪ operating_company_id.
         # Alineado con apps.expedientes.views.ExpedienteViewSet.list().
         # Una empresa asignada al usuario puede actuar como cliente final
@@ -605,9 +629,9 @@ class PortalViewSet(viewsets.ViewSet):
                 OR lower(e.operating_company_id::text) IN ({placeholders})
               )
             ORDER BY e.last_event_at DESC, e.created_at DESC
-            LIMIT 100
+            LIMIT %s OFFSET %s
             """,
-            list(cids) + list(cids),
+            list(cids) + list(cids) + [limit, offset],
         )
         # Traducir estado técnico → natural
         for r in rows:
@@ -1169,6 +1193,15 @@ class PortalViewSet(viewsets.ViewSet):
             # Usuario sin empresas asignadas
             return Response(out)
 
+        # Cache del agregado (3 queries en vivo) por scope de empresas. TTL
+        # corto → auto-consistencia sin invalidación explícita. Degradado a
+        # miss si Redis no está disponible (cache_get nunca lanza).
+        from apps.core.cache_utils import cache_get, cache_set
+        ck = "portal:kpis_agg:" + ",".join(sorted(cids))
+        cached = cache_get(ck)
+        if cached is not None:
+            return Response(cached)
+
         placeholders = ",".join(["%s"] * len(cids))
 
         # KPI principal: OCs y montos sumados sobre las empresas del usuario
@@ -1223,6 +1256,7 @@ class PortalViewSet(viewsets.ViewSet):
         if r:
             out["credit_days_used"] = r[0] or 0
 
+        cache_set(ck, out, PORTAL_KPIS_TTL)
         return Response(out)
 
 

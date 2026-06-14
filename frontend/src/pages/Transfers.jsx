@@ -26,6 +26,7 @@ import {
 } from "../data/mockData.js";
 import CreateTransferDrawer from "../components/inventario/CreateTransferDrawer.jsx";
 import { useTransfersData } from "../hooks/useTransfersData.js";
+import { Skeleton } from "../components/ui/Skeleton.jsx";
 import { transferenciasApi } from "../lib/api.js";
 import ConfirmModal from "../components/common/ConfirmModal.jsx";
 import { useRole } from "../context/RoleContext.jsx";
@@ -767,7 +768,12 @@ export default function ScreenTransfers() {
           })}
         </AnimatePresence>
 
-        {rows.length === 0 && (
+        {loadingBackend && rows.length === 0 &&
+          Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} height={52} radius={10} style={{ marginBottom: 8 }} />
+          ))}
+
+        {!loadingBackend && rows.length === 0 && (
           <div className="trf-empty">
             <IconClipboard size={20} style={{ opacity:0.35 }}/>
             <div className="heading-sm">

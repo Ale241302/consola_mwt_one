@@ -7776,6 +7776,23 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   100% { background-position:  200px 0; }
 }
 
+/* Skeleton reutilizable (components/ui/Skeleton.jsx).
+   Gradiente con tokens MWT → shimmer real y dark-mode automático (R1). */
+.mwt-skel {
+  background: linear-gradient(
+    90deg,
+    var(--surface-alt) 25%,
+    var(--border-subtle) 37%,
+    var(--surface-alt) 63%
+  );
+  background-size: 400px 100%;
+  animation: skelShimmer 1.2s infinite linear;
+}
+.mwt-skel-row td { border-bottom: 1px solid var(--border-subtle); }
+@media (prefers-reduced-motion: reduce) {
+  .mwt-skel { animation: none; }
+}
+
 /* =====================================================================
    Portal B2B · Cart flotante + stepper de cantidad en cards
    ===================================================================== */

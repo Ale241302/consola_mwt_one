@@ -13,6 +13,7 @@
 // =====================================================================
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { authApi, ApiError, refreshAccessToken } from "../lib/api.js";
+import { clearCache } from "../lib/swrCache.js";
 
 const AUTH_KEY = "mwt-auth";
 
@@ -159,6 +160,7 @@ export function AuthProvider({ children }) {
     setAccessToken(null);
     setRefresh(null);
     clearPersist();
+    clearCache(); // purga la caché SWR de datos del usuario saliente (R3)
   }, [accessToken, refresh]);
 
   // --- autorización ---

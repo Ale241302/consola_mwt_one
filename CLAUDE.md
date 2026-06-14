@@ -10,8 +10,8 @@
 **Consola MWT.ONE** es la plataforma interna de control de Muito Work Trading (MWT) — gestiona expedientes de importación, pipeline comercial, inventario, cobros, portal B2B para clientes y un AI Hub. Monorepo con:
 
 - `frontend/` — SPA React + Vite (UI ejecutiva, alta densidad de datos)
-- `backend/` — Django + DRF + JWT (API + reglas de negocio)
-- `database/` — SQL semilla (schemas: `core`, `clientes`, `expedientes`, `commercial`, `cobros`, `inventario`, `brands`, `email_templates`, `analytics`, `ai_hub`)
+- `backend/` — Django + DRF + JWT (API + reglas de negocio). **El esquema NO lo gestiona Django** (ver §1).
+- `database/` + `backend/sql/` — **esquema SQL-first**. `database/01_init.sql` + `database/02_auth_admin.sql` son el bootstrap; `backend/sql/*.sql` (≈50 archivos numerados e idempotentes) son la fuente de verdad del esquema. Schemas Postgres: `core`, `clientes`, `expedientes`, `nodos`, `brands`, `productos`, `proveedores`, `inventario`, `cobros`, `transfers`, `pipeline`, `financiero`, `portal`, `dashboard`, `email_templates`, `notificaciones`, `ai`.
 - `infra/`, `scripts/`, `.github/workflows/` — DevOps (Docker Compose en VPS Hostinger)
 
 Repo: <https://github.com/Ale241302/consola_mwt_one> · rama principal: `main`
@@ -70,8 +70,22 @@ frontend/src/
 
 ### Backend (`backend/`)
 
-Django 4 + DRF + SimpleJWT. Apps en `backend/apps/`:
-`ai_hub`, `analytics`, `brands`, `clientes`, `cobros`, `commercial`, `core` (auth + permisos + JWT), `email_templates`, `expedientes` (con wizard y document matchmaker), `inventario` (con OCR de inbound).
+Django 4 + DRF + SimpleJWT. **24 apps** en `backend/apps/`:
+`ai_hub`, `analytics`, `brands`, `clientes`, `cobros`, `commercial`, `core` (auth + permisos + JWT), `email_templates`, `expedientes` (con wizard y document matchmaker), `finance` (pagos v2 con análisis IA), `finanzas` (vistas CEO-only: márgenes/comisiones), `inventario` (con OCR de inbound), `nodos`, `notifications`, `ocr`, `portal` (B2B), `productos`, `proveedores`, `roles` (RBAC matriz CRUD por rol×módulo), `sizing`, `storage` (MinIO/S3), `tickets`, `transfers`, `users`.
+
+> ⚠️ **Notas de redundancia conocida:** `cobros` (v1) y `finance` (v2) coexisten — `finance` es el módulo moderno con verdict IA y log append-only; `cobros` sigue activo para morosidad/retenciones. `users.MwtUser` (staff) vs `portal.MwtUser` (cliente B2B) son tablas separadas.
+
+#### ⚠️ Esquema SQL-first — NO hay migraciones Django
+
+Esto es **crítico** y a menudo malentendido. Verificable en `backend/config/settings.py`:
+
+- `MIGRATION_MODULES = _DisableMigrations()` → **las migraciones de Django están desactivadas**.
+- **Todos los modelos son `managed = False`** → Django NO crea ni altera tablas.
+- **No hay foreign keys en la base de datos.** Las relaciones son campos UUID sueltos; la integridad referencial se aplica en la capa de aplicación, no en Postgres.
+- El esquema vive en `backend/sql/*.sql` — archivos numerados (`05_…`, `10_…`, `70_expedientes.sql`, `91l_cost_line_scope.sql`…) aplicados en orden por `docker-entrypoint.sh`, **idempotentes** (`CREATE … IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`).
+- `search_path` del Postgres incluye todos los schemas (`core,clientes,expedientes,pipeline,…`).
+
+**Para cambiar el esquema: NUNCA `makemigrations`/`migrate`.** Escribe un nuevo archivo SQL numerado e idempotente en `backend/sql/`, backward-compatible (el deploy es rolling sobre VPS único). Ver §6 y §12.
 
 ### Infra
 
@@ -164,8 +178,10 @@ npm run preview     # serve estático del build
 ```bash
 cd backend
 python manage.py runserver 0.0.0.0:8000
-python manage.py migrate
-python manage.py seed_admins   # crea usuario CEO inicial
+# ❌ NO uses `migrate` / `makemigrations`: el esquema es SQL-first (ver §1).
+# El esquema se aplica corriendo los .sql numerados contra Postgres, p.ej.:
+#   docker exec -i consola-mwt-one-postgres psql -U mwt -d mwt_one < backend/sql/<archivo>.sql
+# El bootstrap inicial (init + admin CEO) lo ejecuta docker-entrypoint.sh al primer arranque.
 ```
 
 ### Stack completo (Docker, igual que en VPS)
@@ -185,17 +201,23 @@ consola_mwt_one/
 ├── DEPLOY.md                  # guía VPS Hostinger + GitHub Actions
 ├── .github/workflows/deploy.yml
 ├── backend/
-│   ├── apps/
-│   │   ├── ai_hub/            # chat, skills, ruteo a LLM
-│   │   ├── analytics/         # feed de actividad, métricas
-│   │   ├── brands/
-│   │   ├── clientes/
-│   │   ├── cobros/
-│   │   ├── commercial/        # pipeline + OCs
+│   ├── apps/                  # 24 apps (ver lista completa en §1)
+│   │   ├── ai_hub/            # chat, skills, ruteo a LLM (Anthropic)
+│   │   ├── analytics/         # KPIs cross-schema, snapshots dashboard
+│   │   ├── brands/  clientes/  productos/  proveedores/  nodos/
+│   │   ├── commercial/        # pricing, early-payment, comisiones
+│   │   ├── cobros/            # pagos v1 (morosidad/retenciones)
 │   │   ├── core/              # auth JWT + permisos + exception handler
-│   │   ├── email_templates/
-│   │   ├── expedientes/       # wizard + matchmaker de docs
-│   │   └── inventario/        # inbound + OCR
+│   │   ├── email_templates/  notifications/
+│   │   ├── expedientes/       # OC + expediente + wizard + matchmaker docs
+│   │   ├── finance/           # pagos v2 (análisis IA + audit append-only)
+│   │   ├── finanzas/          # vistas CEO-only (márgenes, comisiones)
+│   │   ├── inventario/        # stock multi-nodo + inbound + OCR
+│   │   ├── ocr/  storage/  sizing/  tickets/  transfers/
+│   │   ├── portal/            # B2B (cliente)
+│   │   ├── roles/  users/     # RBAC + identidad
+│   │   └── config/            # settings.py (MIGRATION_MODULES desactivado), urls.py
+│   ├── sql/                   # ⚠️ ESQUEMA REAL: *.sql numerados e idempotentes (§1)
 │   └── Dockerfile
 ├── frontend/
 │   ├── src/                   # SPA React+Vite (ver §1)
@@ -203,9 +225,9 @@ consola_mwt_one/
 │   ├── vite.config.js
 │   ├── nginx.conf             # nginx interno del contenedor frontend
 │   └── Dockerfile
-├── database/                  # init.sql + 02_auth_admin.sql
+├── database/                  # 01_init.sql + 02_auth_admin.sql (bootstrap)
 ├── infra/nginx/consola.conf   # routing público (consola.mwt.one)
-└── scripts/                   # deploy_consola.ps1, bootstrap_vps.sh, etc.
+└── scripts/                   # deploy_consola.ps1, bootstrap_vps.sh, redeploy_vps.sh, etc.
 ```
 
 ---
@@ -304,6 +326,7 @@ Cuando una skill de gstack (ej. `/plan-eng-review`, `/review`) audite cambios en
 
 ## 12. Cosas que NO hacer
 
+- ❌ **No correr `python manage.py makemigrations` / `migrate`.** El esquema es SQL-first (`MIGRATION_MODULES` desactivado, modelos `managed = False`, sin FKs). Cambios de esquema = nuevo `.sql` numerado e idempotente en `backend/sql/` (ver §1).
 - ❌ No introducir Next.js, Server Components ni App Router sin RFC previo. El stack es Vite + React.
 - ❌ No agregar dependencias UI grandes (Material UI, Chakra, Ant Design). El sistema visual MWT es propio.
 - ❌ No commitear `node_modules/`, `.env`, `dist/`, `pgdata/` (ya en `.gitignore`).

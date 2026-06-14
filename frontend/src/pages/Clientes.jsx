@@ -20,6 +20,7 @@ import {
 import { fmtMoney } from "../lib/i18n.js";
 import { CLIENTS as MOCK_CLIENTS, EXPEDIENTES } from "../data/mockData.js";
 import { clientesApi } from "../lib/api.js";
+import { Skeleton } from "../components/ui/Skeleton.jsx";
 import ClientFormDrawer from "../components/clientes/ClientFormDrawer.jsx";
 
 // ─────────────────────────────────────────────────────────────
@@ -348,7 +349,12 @@ export default function ScreenClientes() {
           })}
         </AnimatePresence>
 
-        {filtered.length === 0 && (
+        {loading && filtered.length === 0 &&
+          Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} height={120} radius={12} />
+          ))}
+
+        {!loading && filtered.length === 0 && (
           <div className="empty-state" style={{gridColumn: '1 / -1'}}>
             <IconUsers size={26} style={{color:'var(--text-tertiary)'}}/>
             <div className="heading-md">{lang==='es'?'Sin resultados':'No results'}</div>

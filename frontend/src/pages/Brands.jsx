@@ -20,6 +20,7 @@ import {
 import { fmtMoney } from "../lib/i18n.js";
 import { BRANDS as MOCK_BRANDS, LEGAL_ENTITIES, EXPEDIENTES } from "../data/mockData.js";
 import { marcasApi } from "../lib/api.js";
+import { Skeleton } from "../components/ui/Skeleton.jsx";
 import CreateBrandDrawer from "../components/brands/CreateBrandDrawer.jsx";
 
 // ─────────────────────────────────────────────────────────────
@@ -297,7 +298,12 @@ export default function ScreenBrands() {
           })}
         </AnimatePresence>
 
-        {filtered.length === 0 && (
+        {loading && filtered.length === 0 &&
+          Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} height={140} radius={12} />
+          ))}
+
+        {!loading && filtered.length === 0 && (
           <div className="empty-state" style={{gridColumn:'1 / -1'}}>
             <IconTag size={26} style={{color:'var(--text-tertiary)'}}/>
             <div className="heading-md">{lang==='es'?'Sin resultados':'No results'}</div>

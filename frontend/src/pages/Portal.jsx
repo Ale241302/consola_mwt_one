@@ -14,6 +14,7 @@ import { clientesApi } from "../lib/api.js";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
 import { Badge, StatusBadge } from "../components/ui/primitives.jsx";
+import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
 import ExportExpedientesModal from "../components/expedientes/ExportExpedientesModal.jsx";
 import { runExpedienteExport } from "../lib/expedienteExport.js";
 import { INVOICE_AUDIENCE } from "../lib/transferInvoiceHtml.js";
@@ -809,6 +810,9 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
           <th/>
         </tr></thead>
         <tbody>
+          {loadingPortal && visibleOcs.length === 0 && (
+            <TableSkeletonRows rows={6} />
+          )}
           {visibleOcs.map(o => {
             // Sprint 2026-05-21 · Match real con shape backend
             // (apps.portal.views.mis_ocs):

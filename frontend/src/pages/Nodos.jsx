@@ -20,6 +20,7 @@ import {
   NODES as MOCK_NODES, LEGAL_ENTITIES, OPERATORS,
 } from "../data/mockData.js";
 import { nodosApi } from "../lib/api.js";
+import { Skeleton } from "../components/ui/Skeleton.jsx";
 import CreateNodeModal from "../components/nodos/CreateNodeModal.jsx";
 
 // ─────────────────────────────────────────────────────────────
@@ -308,7 +309,12 @@ export default function ScreenNodos() {
           })}
         </AnimatePresence>
 
-        {filtered.length === 0 && (
+        {loading && filtered.length === 0 &&
+          Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} height={140} radius={12} />
+          ))}
+
+        {!loading && filtered.length === 0 && (
           <div className="empty-state" style={{gridColumn: '1 / -1'}}>
             <IconGlobe size={26} style={{color:'var(--text-tertiary)'}}/>
             <div className="heading-md">{lang==='es'?'Sin resultados':'No results'}</div>

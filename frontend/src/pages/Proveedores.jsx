@@ -28,6 +28,7 @@ import {
   SUPPLIERS as MOCK_SUPPLIERS, SUPPLIER_AUDIT_SCORES,
 } from "../data/mockData.js";
 import { proveedoresApi } from "../lib/api.js";
+import { Skeleton } from "../components/ui/Skeleton.jsx";
 
 // ── Helpers de mapeo backend → UI ────────
 const COUNTRY_NAME = {
@@ -366,7 +367,12 @@ export default function ScreenProveedores() {
           })}
         </AnimatePresence>
 
-        {rows.length === 0 && (
+        {loading && rows.length === 0 &&
+          Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} height={140} radius={12} />
+          ))}
+
+        {!loading && rows.length === 0 && (
           <div className="card card-pad-lg empty" style={{gridColumn:'1 / -1'}}>
             <IconShield size={22} style={{color:'var(--text-tertiary)'}}/>
             <div className="heading-md">{lang==='es'?'Sin resultados':'No results'}</div>

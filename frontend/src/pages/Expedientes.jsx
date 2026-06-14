@@ -38,6 +38,8 @@ import {
   OCS as MOCK_OCS,
 } from "../data/mockData.js";
 import { expedientesApi, ocsApi, clientesApi, lineasApi, productosApi } from "../lib/api.js";
+import { readCache, writeCache } from "../lib/swrCache.js";
+import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
 // Sprint 2026-05-20 · Fusión Pipeline → Expedientes.
 // Tabla/Kanban toggle reemplaza Vista Financial/Ops/Fleet. El render del
 // Kanban delega 100% al ScreenPipeline (mismo fetch, mismo UX, sin reescritura).
@@ -153,47 +155,46 @@ export default function ScreenExpedientes() {
   // el toggle "Tweaks → Viewport" para simular al cliente.
   const { isAdmin, isClient, can, user } = useRole();
 
-  // ── Data desde API (fallback a mocks) ────────
-  const [apiExpedientes, setApiExpedientes] = useState([]);
-  const [apiOcs,         setApiOcs]         = useState([]);
-  const [loading,        setLoading]        = useState(true);
+  // ── Data desde API (con caché stale-while-revalidate) ────────
+  // Auditoría de carga 2026-06-14: sembramos el último snapshot conocido
+  // para pintar la tabla AL INSTANTE en vez de dejarla en blanco 1-2 s.
+  const cacheKey = `expedientes:${user?.id || "me"}:${isClient ? "c" : "a"}`;
+  const _seed = readCache(cacheKey);
+  const [apiExpedientes, setApiExpedientes] = useState(() => _seed?.exp || []);
+  const [apiOcs,         setApiOcs]         = useState(() => _seed?.ocs || []);
+  const [loading,        setLoading]        = useState(() => !_seed);
 
   const load = useCallback(async (signal) => {
-    setLoading(true);
+    // Spinner solo si no hay snapshot cacheado que mostrar mientras revalida.
+    setLoading(!readCache(cacheKey));
     try {
-      const [expRaw, ocRaw] = await Promise.all([
+      // ── Sprint 2026-06-14: matamos el waterfall. `lineas` y `productos`
+      // son listados independientes del resultado de expedientes, así que
+      // viajan en el MISMO Promise.all (4 en paralelo) en lugar de en serie.
+      // Solo el enriquecimiento de clientes espera (depende de los client_id).
+      const [expRaw, ocRaw, lnRaw, prodRaw] = await Promise.all([
         expedientesApi.list(undefined, { signal }).catch(() => []),
         ocsApi.list(undefined, { signal }).catch(() => []),
+        lineasApi.list({ is_active: true }, { signal }).catch(() => []),
+        productosApi.list(undefined, { signal }).catch(() => []),
       ]);
       const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
       const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
       const mapped   = expItems.map(mapExpedienteFromApi);
 
-      // ── Sprint 2026-05-01: KPIs reales cuando no hay facturacion ─────
-      // Fetch de todas las lineas activas + catalogo de productos para
-      // computar order_value por expediente. Esto alimenta:
-      //   · receivables (Total por cobrar) cuando total_invoiced = 0
-      //   · NO calculamos payables_est — Pagos por salir muestra solo
-      //     costos reales del backend (total_cost - pg_verified - pg_released).
-      let lineasArr = [];
-      try {
-        const lnRaw = await lineasApi.list({ is_active: true }, { signal });
-        lineasArr = Array.isArray(lnRaw) ? lnRaw : (lnRaw?.results || []);
-      } catch { lineasArr = []; }
+      // Lineas activas + catalogo de productos para computar order_value por
+      // expediente (alimenta receivables cuando total_invoiced = 0).
+      const lineasArr = Array.isArray(lnRaw) ? lnRaw : (lnRaw?.results || []);
 
       // Productos para resolver precio cuando linea.unit_price = 0.
-      // Sprint 2026-05-01: usamos UN SOLO list() en lugar de N gets.
-      // El ProductoListSerializer ya incluye `precio_lista` y
-      // `especificaciones`, asi que no necesitamos los retrieves individuales
-      // (que ademas disparaban 404 ruidosos en producto_ids huerfanos).
+      // El ProductoListSerializer ya incluye `precio_lista` y `especificaciones`.
       const productMap = {};
-      try {
-        const prodList = await productosApi.list(undefined, { signal });
-        const arr = Array.isArray(prodList) ? prodList : (prodList?.results || []);
+      {
+        const arr = Array.isArray(prodRaw) ? prodRaw : (prodRaw?.results || []);
         for (const p of arr) {
           if (p?.id) productMap[p.id] = p;
         }
-      } catch { /* fallthrough — order_value queda en 0 */ }
+      }
 
       // ── Enriquecimiento batch: hidratar nombre de cliente y días
       // de crédito desde /api/clientes (un fetch por client_id único).
@@ -255,16 +256,20 @@ export default function ScreenExpedientes() {
       });
 
       if (signal?.aborted) return;
+      writeCache(cacheKey, { exp: enriched, ocs: ocItems });
       setApiExpedientes(enriched);
       setApiOcs(ocItems);
     } catch (e) {
       if (e?.name === "AbortError" || signal?.aborted) return;
-      setApiExpedientes([]);
-      setApiOcs([]);
+      // No pisamos con [] si ya teníamos datos cacheados en pantalla.
+      if (!readCache(cacheKey)) {
+        setApiExpedientes([]);
+        setApiOcs([]);
+      }
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, []);
+  }, [cacheKey]);
 
   // Sprint 2026-06-13 · AbortController: cancela los fetches (lineas/productos/
   // N·clientes) al navegar fuera, liberando el pool de conexiones.
@@ -1106,6 +1111,9 @@ export default function ScreenExpedientes() {
             </tr>
           </thead>
           <tbody>
+            {loading && displayRows.length === 0 && (
+              <TableSkeletonRows rows={8} />
+            )}
             {displayRows.map(e => {
               // ── Fila padre de una fusión (sprint 2026-06-11) ──────
               // Agrupación SOLO visual: click expande/colapsa los
@@ -1498,7 +1506,7 @@ export default function ScreenExpedientes() {
         </table>
       </div>
 
-      {filtered.length === 0 && (
+      {!loading && filtered.length === 0 && (
         <div className="card" style={{padding:40, textAlign:'center', marginTop:16}}>
           <div className="heading-md" style={{marginBottom:6}}>{lang==='es'?'Sin resultados':'No results'}</div>
           <div className="caption">{lang==='es'?'Ajusta los filtros para ver expedientes.':'Adjust filters to see files.'}</div>

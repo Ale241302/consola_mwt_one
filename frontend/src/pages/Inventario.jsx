@@ -25,6 +25,7 @@ import ReceiveBatchModal      from "../components/inventario/ReceiveBatchModal.j
 import StockMovementsDrawer   from "../components/inventario/StockMovementsDrawer.jsx";
 import { createPortal } from "react-dom";
 import { stockApi, nodosApi, nodoAssignmentsApi } from "../lib/api.js";
+import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
 
 // ── Helpers backend → UI ────────
 // El backend ahora enriquece el payload con producto_sku, producto_nombre,
@@ -373,6 +374,7 @@ export default function ScreenInventario() {
             </tr>
           </thead>
           <tbody>
+            {loading && rows.length === 0 && <TableSkeletonRows rows={8} />}
             <AnimatePresence mode="popLayout">
               {rows.map((i, idx) => {
                 const available = i.qty - i.reserved;
@@ -516,7 +518,7 @@ export default function ScreenInventario() {
           </tbody>
         </table>
 
-        {rows.length === 0 && (
+        {!loading && rows.length === 0 && (
           <div className="empty-state" style={{padding:'28px 12px'}}>
             <IconGrid size={24} style={{color:'var(--text-tertiary)'}}/>
             <div className="heading-md">{lang==='es'?'Sin resultados':'No results'}</div>

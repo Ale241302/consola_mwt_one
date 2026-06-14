@@ -22,6 +22,7 @@ import {
   OCS as MOCK_OCS,
 } from "../data/mockData.js";
 import { expedientesApi, ocsApi, financePaymentsApi } from "../lib/api.js";
+import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 // Sprint Registrar Pago (Fase 2) · Wizard ensamblador.
 import RegisterPaymentWizard from "../components/finance/RegisterPaymentWizard.jsx";
@@ -377,6 +378,7 @@ export default function ScreenPagos() {
               <th style={{width:60}}/>
             </tr></thead>
             <tbody>
+              {loading && <TableSkeletonRows rows={6} />}
               {EXPEDIENTES.filter(e=>e.balance>0).slice(0,14).map(e => (
                 <tr key={e.id} onClick={() => onOpenExpediente(e.id)} style={{cursor:'pointer'}}>
                   <td><span className="td-ref">{e.ref}</span></td>
@@ -721,6 +723,7 @@ function PaymentHistoryTable({ lang }) {
           <th style={{textAlign:'right'}}>{tr(lang,'amount')}</th>
         </tr></thead>
         <tbody>
+          {loading && <TableSkeletonRows rows={6} />}
           {EXPEDIENTES.slice(0,14).map((e,i) => {
             const st = stateOf(i);
             return (
@@ -886,6 +889,7 @@ function ClientFinanciero({ lang, expedientes, ocs, totalInvoiced, totalReceivab
               <th>{lang==='es'?'Días restantes':'Days left'}</th>
             </tr></thead>
             <tbody>
+              {loading && <TableSkeletonRows rows={6} />}
               {upcoming.map(e => {
                 const due = e.eta || e.due_date || e.last_event_at;
                 const days = daysUntil(due);
