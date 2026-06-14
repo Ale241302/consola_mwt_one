@@ -609,7 +609,7 @@ export default function ScreenPortal() {
           ))}
         </div>
 
-        {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC} isClient={isClient} showEmpresaCol={hasMultiEmpresa}/>}
+        {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC} isClient={isClient} showEmpresaCol={hasMultiEmpresa} loading={loadingPortal}/>}
         {tab === 'payments' && <PortalPayments lang={lang} ocs={myOCs} showEmpresaCol={hasMultiEmpresa}/>}
         {tab === 'products' && <ProductCatalogGrid lang={lang} clientId={activeEmpresa?.id || null} />}
       </div>
@@ -716,7 +716,7 @@ function NoEmpresasState({ lang, userEmail }) {
 }
 
 // ── Orders tab: table of OCs (not expedientes) ─────
-function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false }) {
+function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false, loading = false }) {
   const navigate = useNavigate();
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting]   = useState(false);
@@ -810,7 +810,7 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false 
           <th/>
         </tr></thead>
         <tbody>
-          {loadingPortal && visibleOcs.length === 0 && (
+          {loading && visibleOcs.length === 0 && (
             <TableSkeletonRows rows={6} />
           )}
           {visibleOcs.map(o => {

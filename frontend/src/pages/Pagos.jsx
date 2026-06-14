@@ -181,6 +181,7 @@ export default function ScreenPagos() {
         totalInvoiced={totalInvoiced}
         totalReceivable={totalReceivable}
         onOpenExpediente={onOpenExpediente}
+        loading={loading}
       />
     );
   }
@@ -723,7 +724,6 @@ function PaymentHistoryTable({ lang }) {
           <th style={{textAlign:'right'}}>{tr(lang,'amount')}</th>
         </tr></thead>
         <tbody>
-          {loading && <TableSkeletonRows rows={6} />}
           {EXPEDIENTES.slice(0,14).map((e,i) => {
             const st = stateOf(i);
             return (
@@ -776,7 +776,7 @@ function PaymentStateBadge({ state, lang }) {
  *     su pago desde /portal → tab "Pagos" con botón "Reportar pago",
  *     fuera del scope de este sprint).
  * ────────────────────────────────────────────────────────────────── */
-function ClientFinanciero({ lang, expedientes, ocs, totalInvoiced, totalReceivable, onOpenExpediente }) {
+function ClientFinanciero({ lang, expedientes, ocs, totalInvoiced, totalReceivable, onOpenExpediente, loading = false }) {
   // Saldo actual = receivable (lo que aún no se liberó a crédito).
   // Heurística: el cliente ve sus expedientes con balance > 0 ordenados
   // por ETA ascendente (o last_event_at descendente si no hay ETA).
