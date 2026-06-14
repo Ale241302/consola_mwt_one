@@ -176,7 +176,7 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
                 type="button"
                 className="tabular-nums"
                 title={tip}
-                onClick={canEdit ? () => openModal(s) : undefined}
+                onClick={(has || info.entry || canEdit) ? () => openModal(s) : undefined}
                 style={{
                   padding: "1px 9px", fontSize: 10.5, fontWeight: 700, borderRadius: 999,
                   border: ov
@@ -184,11 +184,24 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
                     : "1px solid var(--border-subtle, #E1E6ED)",
                   background: info.open ? "rgba(0,178,134,0.08)" : "transparent",
                   color: has ? "var(--text-secondary, #475569)" : "var(--text-tertiary, #94A3B8)",
-                  cursor: canEdit ? "pointer" : "default", lineHeight: "16px",
+                  cursor: (has || info.entry || canEdit) ? "pointer" : "default", lineHeight: "16px",
                 }}>
                 {has ? `${shown}d` : "—"}
                 {info.open && <span style={{ color: "var(--brand-accent, #00B286)", fontWeight: 600 }}>{lang === "es" ? " · en curso" : " · ongoing"}</span>}
-                {ov && <span title={lang === "es" ? "Valor manual" : "Manual value"}> ✎</span>}
+                {/* ADMIN/CEO: lápiz cuando hay valor manual (editable). */}
+                {canEdit && ov && (
+                  <span title={lang === "es" ? "Valor manual (editar)" : "Manual value (edit)"}> ✎</span>
+                )}
+                {/* Cliente/normal (R3): icono OJO → modal de SOLO LECTURA. */}
+                {!canEdit && (has || info.entry) && (
+                  <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden="true"
+                       style={{ marginLeft: 3, verticalAlign: "-1px" }}
+                       fill="none" stroke="currentColor" strokeWidth="2"
+                       strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                )}
               </button>
             </div>
           );
@@ -211,20 +224,22 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
                   ? (lang === "es"
                       ? `Automático: entró el ${mInfo.entry}${mInfo.exit ? ` · salió el ${mInfo.exit}` : " · aún en esta fase"}`
                       : `Automatic: entered ${mInfo.entry}${mInfo.exit ? ` · left ${mInfo.exit}` : " · still in this phase"}`)
-                  : (lang === "es" ? "Sin registro automático — fija el rango manualmente." : "No automatic record — set the range manually.")}
+                  : (canEdit
+                      ? (lang === "es" ? "Sin registro automático — fija el rango manualmente." : "No automatic record — set the range manually.")
+                      : (lang === "es" ? "Sin registro de fechas para esta fase." : "No date record for this phase."))}
               </div>
             </div>
             <div style={{ padding: "16px 18px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <label className="caption" style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--text-secondary, #475569)", fontWeight: 600 }}>
                 {lang === "es" ? "Fecha inicio" : "Start date"}
                 <input className="input tabular-nums" type="date" value={mStart}
-                       onChange={(ev) => setMStart(ev.target.value)} disabled={saving}
+                       onChange={(ev) => setMStart(ev.target.value)} disabled={saving || !canEdit}
                        style={{ padding: "6px 8px", fontSize: 13 }}/>
               </label>
               <label className="caption" style={{ display: "flex", flexDirection: "column", gap: 4, color: "var(--text-secondary, #475569)", fontWeight: 600 }}>
                 {lang === "es" ? "Fecha fin" : "End date"}
                 <input className="input tabular-nums" type="date" value={mEnd}
-                       onChange={(ev) => setMEnd(ev.target.value)} disabled={saving}
+                       onChange={(ev) => setMEnd(ev.target.value)} disabled={saving || !canEdit}
                        style={{ padding: "6px 8px", fontSize: 13 }}/>
               </label>
               <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "8px 0", borderRadius: 10, background: "rgba(0,178,134,0.07)", border: "1px solid rgba(0,178,134,0.25)" }}>
@@ -244,30 +259,39 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
                 <div className="caption" style={{ gridColumn: "1 / -1", color: "#D64545", textAlign: "center" }}>{error}</div>
               )}
             </div>
-            <div style={{ padding: "12px 18px", borderTop: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              {mInfo.override ? (
-                <button className="btn btn-ghost btn-xs" disabled={saving}
-                        onClick={() => save(modal, null)}
-                        style={{ color: "#D64545", fontSize: 12 }}>
-                  {lang === "es" ? "Quitar manual" : "Clear manual"}
+            <div style={{ padding: "12px 18px", borderTop: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: canEdit ? "space-between" : "flex-end", alignItems: "center", gap: 8 }}>
+              {!canEdit ? (
+                // Cliente/normal (R3): solo lectura — únicamente "Cerrar".
+                <button className="btn btn-ghost" onClick={() => setModal(null)} style={{ fontSize: 13 }}>
+                  {lang === "es" ? "Cerrar" : "Close"}
                 </button>
-              ) : <span/>}
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className="btn btn-ghost" disabled={saving} onClick={() => setModal(null)} style={{ fontSize: 13 }}>
-                  {lang === "es" ? "Cancelar" : "Cancel"}
-                </button>
-                <button className="btn"
-                        disabled={saving || modalDays == null}
-                        onClick={() => save(modal, { start: mStart, end: mEnd })}
-                        style={{
-                          fontSize: 13, fontWeight: 700, padding: "6px 16px", borderRadius: 8,
-                          background: "#0B1E3A", color: "#fff", border: "1.5px solid #0B1E3A",
-                          opacity: saving || modalDays == null ? 0.6 : 1,
-                          cursor: saving || modalDays == null ? "not-allowed" : "pointer",
-                        }}>
-                  {saving ? (lang === "es" ? "Guardando…" : "Saving…") : (lang === "es" ? "Guardar" : "Save")}
-                </button>
-              </div>
+              ) : (
+                <>
+                  {mInfo.override ? (
+                    <button className="btn btn-ghost btn-xs" disabled={saving}
+                            onClick={() => save(modal, null)}
+                            style={{ color: "#D64545", fontSize: 12 }}>
+                      {lang === "es" ? "Quitar manual" : "Clear manual"}
+                    </button>
+                  ) : <span/>}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="btn btn-ghost" disabled={saving} onClick={() => setModal(null)} style={{ fontSize: 13 }}>
+                      {lang === "es" ? "Cancelar" : "Cancel"}
+                    </button>
+                    <button className="btn"
+                            disabled={saving || modalDays == null}
+                            onClick={() => save(modal, { start: mStart, end: mEnd })}
+                            style={{
+                              fontSize: 13, fontWeight: 700, padding: "6px 16px", borderRadius: 8,
+                              background: "#0B1E3A", color: "#fff", border: "1.5px solid #0B1E3A",
+                              opacity: saving || modalDays == null ? 0.6 : 1,
+                              cursor: saving || modalDays == null ? "not-allowed" : "pointer",
+                            }}>
+                      {saving ? (lang === "es" ? "Guardando…" : "Saving…") : (lang === "es" ? "Guardar" : "Save")}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>,

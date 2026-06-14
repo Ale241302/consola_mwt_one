@@ -890,7 +890,7 @@ export default function ScreenFusionDetail() {
                         {g.sap ? (
                           <a
                             className="sap-link"
-                            onClick={(ev) => { ev.stopPropagation(); g.m.exp.oc_id && navigate(`/expedientes/${g.m.exp.oc_id}`); }}
+                            onClick={(ev) => { ev.stopPropagation(); g.m.exp.oc_id && navigate(`/expedientes/${g.m.exp.oc_id}/exp/${g.m.exp.id}`); }}
                             title={es ? "Abrir detalle del expediente" : "Open expediente detail"}
                           >
                             <IconFolder size={12}/> {g.sap}
@@ -1217,7 +1217,7 @@ export default function ScreenFusionDetail() {
               <div
                 key={m.exp.id}
                 className="exp-link-row"
-                onClick={() => m.exp.oc_id && navigate(`/expedientes/${m.exp.oc_id}`)}
+                onClick={() => m.exp.oc_id && navigate(`/expedientes/${m.exp.oc_id}/exp/${m.exp.id}`)}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="flex ai-center gap-2">
