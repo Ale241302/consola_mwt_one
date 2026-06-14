@@ -245,7 +245,12 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
       <div className="sidebar-head">
         <div className="sidebar-logo">
           <img
-            src="https://mwt.one/images/2024/12/04/recurso-1logo_foot.png"
+            // Colapsado → logo compacto (icono cuadrado). Expandido → logo largo.
+            // El recorte por CSS del logo ancho mostraba "MWT ON" cortado; el
+            // logo de login es el ícono correcto para el estado colapsado.
+            src={collapsed
+              ? "/img/Recurso%203logo_login.png"
+              : "https://mwt.one/images/2024/12/04/recurso-1logo_foot.png"}
             alt="MWT ONE"
             className="sidebar-logo-img"
             onError={(e) => {
