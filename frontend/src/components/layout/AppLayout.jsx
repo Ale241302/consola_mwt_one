@@ -66,6 +66,24 @@ export default function AppLayout() {
   // Persist tweaks
   useEffect(() => { localStorage.setItem('mwt-tweaks', JSON.stringify(tweaks)); }, [tweaks]);
 
+  // 2026-06-14 · Auto-colapsar el sidebar en viewports angostos (tablet/móvil)
+  // para no comerse el ancho de contenido. Solo cambia al CRUZAR el umbral
+  // (820px), así no pisa el toggle manual mientras el tamaño no cambia.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    let wasNarrow = window.innerWidth < 820;
+    setCollapsed(wasNarrow);
+    const onResize = () => {
+      const narrow = window.innerWidth < 820;
+      if (narrow !== wasNarrow) {
+        wasNarrow = narrow;
+        setCollapsed(narrow);
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // Apply theme/accent/density attrs to <html>
   useEffect(() => {
     const root = document.documentElement;

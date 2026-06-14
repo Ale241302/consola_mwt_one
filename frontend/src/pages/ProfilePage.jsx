@@ -160,7 +160,7 @@ export default function ProfilePage() {
   }
   if (!profile) {
     return (
-      <div style={{ padding: 48, color: "#D64545" }}>
+      <div style={{ padding: 48, color: "var(--critical)" }}>
         ⚠️ No se pudo resolver tu perfil. Intenta recargar.
       </div>
     );
@@ -180,7 +180,7 @@ export default function ProfilePage() {
           }}>
             Mi perfil
           </div>
-          <h1 style={{ margin: 0, font: "700 22px/1.1 var(--font-display)", color: "var(--navy, #0B1E3A)" }}>
+          <h1 style={{ margin: 0, font: "700 22px/1.1 var(--font-display)", color: "var(--text-primary)" }}>
             {profile.full_name || profile.email_plain}
           </h1>
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 2 }}>
@@ -189,7 +189,7 @@ export default function ProfilePage() {
               <span style={{
                 marginLeft: 10,
                 padding: "2px 8px", borderRadius: 999,
-                background: "rgba(11,30,58,0.08)", color: "var(--navy)",
+                background: "var(--surface-active)", color: "var(--text-secondary)",
                 fontSize: 10, fontWeight: 700, letterSpacing: 0.4,
               }}>
                 {profile.role_default.toUpperCase()}
@@ -229,8 +229,8 @@ export default function ProfilePage() {
             onClick={() => setActiveTab(t.key)}
             style={{
               padding: "10px 16px", border: "none", background: "transparent",
-              borderBottom: `2px solid ${activeTab === t.key ? "var(--mint, #00B286)" : "transparent"}`,
-              color: activeTab === t.key ? "var(--navy)" : "var(--text-tertiary)",
+              borderBottom: `2px solid ${activeTab === t.key ? "var(--brand-accent)" : "transparent"}`,
+              color: activeTab === t.key ? "var(--text-primary)" : "var(--text-tertiary)",
               fontWeight: activeTab === t.key ? 600 : 500,
               fontSize: 13, cursor: "pointer",
               marginBottom: -1,
@@ -255,7 +255,7 @@ export default function ProfilePage() {
             style={{
               position: "fixed", bottom: 24, right: 24, zIndex: 200,
               padding: "10px 16px",
-              background: toast.kind === "err" ? "#D64545" : "var(--navy, #0B1E3A)",
+              background: toast.kind === "err" ? "var(--critical)" : "var(--brand-primary)",
               color: "#fff", borderRadius: 8, fontSize: 13,
               boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
             }}
@@ -280,7 +280,7 @@ function PersonalTab({ profile, patch, isClient, onResetPassword, resetting }) {
       title="Datos personales"
       hint="Puedes actualizar tu nombre, teléfono, email de contacto, idioma y zona horaria. Tu email de login y tu rol los gestiona tu Account Manager."
     >
-      <div style={styles.grid2}>
+      <div className="mwt-grid-2">
         <Field label="Email (login)" readOnly>
           <input type="email" value={profile.email_plain} disabled style={styles.input}/>
         </Field>
@@ -347,7 +347,7 @@ function PersonalTab({ profile, patch, isClient, onResetPassword, resetting }) {
         gap: 12, flexWrap: "wrap",
       }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--navy, #0B1E3A)" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>
             Contraseña
           </div>
           <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
@@ -362,7 +362,7 @@ function PersonalTab({ profile, patch, isClient, onResetPassword, resetting }) {
           style={{
             border: "1px solid var(--border, #E1E6ED)",
             padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-            color: "var(--navy, #0B1E3A)", background: "#fff",
+            color: "var(--text-primary)", background: "var(--surface-raised)",
             display: "inline-flex", alignItems: "center", gap: 6,
             cursor: resetting ? "default" : "pointer", opacity: resetting ? 0.7 : 1,
           }}
@@ -473,14 +473,14 @@ function AddressesTab({ profile, patch }) {
                   type="button"
                   onClick={() => removeAddress(a.id)}
                   className="btn btn-ghost btn-sm"
-                  style={{ color: "#D64545" }}
+                  style={{ color: "var(--critical)" }}
                   title="Eliminar"
                 >
                   <IconX size={12}/>
                 </button>
               </div>
 
-              <div style={styles.grid2}>
+              <div className="mwt-grid-2">
                 <Field label="Calle y número" className="span-2">
                   <input
                     value={a.street}
@@ -582,7 +582,7 @@ function CompanyTab({ company, companies = [], primaryId = null }) {
                   border: isPrimary ? "1px solid rgba(0,178,134,0.40)" : "1px solid var(--border)",
                   borderRadius: 999, fontSize: 12,
                   fontWeight: isPrimary ? 700 : 500,
-                  color: "var(--navy, #0B1E3A)",
+                  color: "var(--text-primary)",
                 }}>
                   {isPrimary && (
                     <span style={{
@@ -604,12 +604,12 @@ function CompanyTab({ company, companies = [], primaryId = null }) {
       )}
       <div style={{
         padding: 20, border: "1px solid var(--border)", borderRadius: 10,
-        background: "#FAFBFD",
+        background: "var(--surface)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
           <span style={{ fontSize: 22 }}>{company.flag || "🏢"}</span>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 17, fontWeight: 700, color: "var(--navy)" }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "var(--text-primary)" }}>
               {company.razon_social}
             </div>
             <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
@@ -630,7 +630,7 @@ function CompanyTab({ company, companies = [], primaryId = null }) {
           )}
         </div>
 
-        <div style={styles.grid2}>
+        <div className="mwt-grid-2">
           <ReadOnlyField label="RUC / CUIT / Tax ID" value={company.tax_id}/>
           <ReadOnlyField label="País"                 value={company.country || "—"}/>
           <ReadOnlyField label="Email corporativo"    value={company.email || "—"}/>
@@ -678,13 +678,13 @@ function SystemTab() {
 function Section({ title, hint, action, children }) {
   return (
     <section style={{
-      background: "#fff", border: "1px solid var(--border)", borderRadius: 10,
+      background: "var(--surface-raised)", border: "1px solid var(--border)", borderRadius: 10,
       padding: "18px 22px", marginBottom: 14,
     }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
         <div style={{ flex: 1 }}>
           <div style={{
-            fontSize: 16, fontWeight: 700, color: "var(--navy)",
+            fontSize: 16, fontWeight: 700, color: "var(--text-primary)",
           }}>
             {title}
           </div>
@@ -725,7 +725,7 @@ function ReadOnlyField({ label, value }) {
       }}>
         {label}
       </div>
-      <div style={{ fontSize: 13, color: "var(--navy)", fontWeight: 500 }}>
+      <div style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 500 }}>
         {value || "—"}
       </div>
     </div>
@@ -736,10 +736,10 @@ function SystemCard({ icon, title, body, meta }) {
   return (
     <div style={{
       padding: 14, border: "1px solid var(--border)", borderRadius: 10,
-      background: "#FAFBFD",
+      background: "var(--surface)",
     }}>
       <div style={{ fontSize: 22, marginBottom: 6 }}>{icon}</div>
-      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--navy)", marginBottom: 4 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>
         {title}
       </div>
       <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10, lineHeight: 1.4 }}>
@@ -747,7 +747,7 @@ function SystemCard({ icon, title, body, meta }) {
       </div>
       <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: 11 }}>
         {(meta || []).map((m, i) => (
-          <li key={i} style={{ color: "var(--text-secondary)", padding: "3px 0", borderBottom: "1px dashed #EEF2F7" }}>
+          <li key={i} style={{ color: "var(--text-secondary)", padding: "3px 0", borderBottom: "1px dashed var(--divider)" }}>
             {m}
           </li>
         ))}
@@ -779,8 +779,8 @@ const styles = {
     border: "1px solid var(--border, #E1E6ED)",
     borderRadius: 8,
     fontSize: 13,
-    color: "var(--navy, #0B1E3A)",
-    background: "#fff",
+    color: "var(--text-primary)",
+    background: "var(--surface-raised)",
     outline: "none",
     boxSizing: "border-box",
   },
