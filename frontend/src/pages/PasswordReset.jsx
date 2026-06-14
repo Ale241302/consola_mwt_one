@@ -20,12 +20,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 
-const NAVY  = "#0F1B3D";
+const NAVY  = "var(--text-primary)";
 const MINT  = "#10B981";
 const LIGHT = "#1FD39A";
-const RED   = "#DC2626";
-const MUTED = "#6B7894";
-const INK   = "#3D4A6B";
+const RED   = "var(--critical)";
+const MUTED = "var(--text-tertiary)";
+const INK   = "var(--text-secondary)";
 
 export default function ScreenPasswordReset() {
   const [params] = useSearchParams();
@@ -91,7 +91,7 @@ export default function ScreenPasswordReset() {
         animate={{ opacity: 1, y: 0 }}
         style={{
           width: "100%", maxWidth: 440,
-          background: "#FFFFFF",
+          background: "var(--surface-raised)",
           borderRadius: 16,
           overflow: "hidden",
           boxShadow: "0 20px 60px -20px rgba(15, 27, 61, 0.45)",
@@ -244,10 +244,10 @@ export default function ScreenPasswordReset() {
         {/* Footer */}
         <div style={{
           padding: "16px 32px",
-          background: "#F7F9FC",
-          borderTop: "1px solid #EAEEF5",
+          background: "var(--surface)",
+          borderTop: "1px solid var(--border)",
           font: "500 11px/1.5 inherit",
-          color: "#8893AC",
+          color: "var(--text-tertiary)",
           textAlign: "center",
         }}>
           ¿Necesitas ayuda? <a href="mailto:info@mwt.one"
@@ -296,11 +296,11 @@ const labelStyle = {
 const inputStyle = {
   width: "100%",
   padding: "12px 14px",
-  border: "1.5px solid #E5EAF2",
+  border: "1.5px solid var(--border)",
   borderRadius: 8,
   font: "500 14px/1.2 inherit",
   color: NAVY,
-  background: "#FFFFFF",
+  background: "var(--surface-raised)",
   outline: "none",
   boxSizing: "border-box",
 };
@@ -318,7 +318,7 @@ const eyeBtn = {
   cursor: "pointer",
   padding: 6,
   borderRadius: 6,
-  color: "#6B7894",
+  color: "var(--text-tertiary)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",

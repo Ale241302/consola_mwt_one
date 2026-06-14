@@ -34,7 +34,7 @@ const MINT    = "#00B286";
 const VIOLET  = "#481EE3";
 const BLUE    = "#3083FE";
 const AMBER   = "#B45309";
-const RED     = "#DC2626";
+const RED     = "var(--critical)";
 const GREY    = "#6B7280";
 
 const SOURCE_LABELS = {
@@ -152,7 +152,7 @@ export default function StockLotDetailDrawer({ lang = "es", row, onClose }) {
         style={{
           position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 200,
           width: "min(720px, 100vw)",
-          background: "#fff",
+          background: "var(--surface-raised)",
           borderLeft: "1px solid var(--border-soft, rgba(11,30,58,0.10))",
           boxShadow: "0 24px 60px -20px rgba(11,30,58,0.30)",
           display: "flex", flexDirection: "column",
@@ -165,7 +165,7 @@ export default function StockLotDetailDrawer({ lang = "es", row, onClose }) {
         {/* ── Body con scroll ───────────────────────────────── */}
         <div style={{
           flex: 1, overflowY: "auto", padding: "20px 24px 28px",
-          background: "var(--bg-soft, #FAFBFC)",
+          background: "var(--bg-alt)",
         }}>
           {loading && (
             <div style={{
@@ -461,7 +461,7 @@ function KpiTileNavy({ label, value, accent }) {
 function Section({ title, code, accent, children }) {
   return (
     <div style={{
-      background: "#fff",
+      background: "var(--surface-raised)",
       border: "1px solid rgba(11,30,58,0.08)",
       borderRadius: 12,
       padding: "14px 16px",
@@ -512,7 +512,7 @@ function KpiStrip({ tiles }) {
     }}>
       {tiles.map((t, i) => (
         <div key={i} style={{
-          background: "#fff",
+          background: "var(--surface-raised)",
           border: "1px solid rgba(11,30,58,0.08)",
           borderRadius: 10,
           padding: "10px 12px",
@@ -626,7 +626,7 @@ function EmptyNoRecepcion({ lang, row }) {
   return (
     <div style={{
       padding: "32px 20px", textAlign: "center",
-      background: "#fff", border: "1px dashed rgba(11,30,58,0.18)",
+      background: "var(--surface-raised)", border: "1px dashed rgba(11,30,58,0.18)",
       borderRadius: 12,
     }}>
       <div style={{

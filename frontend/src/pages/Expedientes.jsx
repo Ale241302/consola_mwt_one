@@ -1554,7 +1554,7 @@ export default function ScreenExpedientes() {
                 transition={{ type: 'spring', stiffness: 280, damping: 28 }}
                 onClick={(ev) => ev.stopPropagation()}
                 style={{
-                  background: '#fff',
+                  background: 'var(--surface-raised)',
                   borderRadius: 12,
                   width: '100%', maxWidth: 460,
                   boxShadow: '0 12px 48px rgba(11,30,58,0.18)',

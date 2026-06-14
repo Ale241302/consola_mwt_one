@@ -53,6 +53,18 @@
   --text-on-navy:   #FFFFFF;
   --text-on-mint:   #013A57;
 
+  /* Aliases de compatibilidad · 2026-06-14
+   * Mucho código legacy usa var(--navy) / var(--mint), que NUNCA se
+   * definieron → caían al fallback hex fijo y NO se adaptaban al dark mode
+   * (texto navy oscuro invisible sobre fondo oscuro). Definirlos aquí
+   * arregla retroactivamente cientos de usos:
+   *   · --navy sigue a --text-primary → se invierte solo en dark.
+   *   · --mint queda verde de marca (se usa en botones/acentos con texto blanco).
+   * OJO: los pocos sitios que usaban var(--navy) como FONDO se migraron a
+   * --brand-primary (que sí queda oscuro en ambos temas). */
+  --navy: var(--text-primary);
+  --mint: #00B286;
+
   /* Semantic */
   --success:        #0E8A6D;
   --success-bg:     #F0FAF6;

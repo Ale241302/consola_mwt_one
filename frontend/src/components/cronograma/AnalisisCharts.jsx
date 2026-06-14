@@ -19,7 +19,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { STAGES, STAGE_LABELS, itemPhaseDur } from "../../lib/cronogramaData.js";
 import { fxApi } from "../../lib/api.js";
 
-const NAVY = "#013A57";
+const NAVY = "var(--brand-primary)";
 const MINT = "#13B98A";
 const fInt = (n) => Number(n || 0).toLocaleString("es-CR");
 const fmt1 = (n) => (Math.round(Number(n) * 10) / 10).toLocaleString("en-US");
@@ -94,8 +94,8 @@ export default function AnalisisCharts({ items = [], lang = "es", isClient = fal
           <button key={t.id} onClick={() => setSub(t.id)}
                   style={{
                     padding: "6px 16px", fontSize: 12.5, fontWeight: 700, border: "none", borderRadius: 8, cursor: "pointer",
-                    background: sub === t.id ? "#fff" : "transparent",
-                    color: sub === t.id ? NAVY : "var(--text-secondary, #475569)",
+                    background: sub === t.id ? "var(--surface-raised)" : "transparent",
+                    color: sub === t.id ? "var(--text-primary)" : "var(--text-secondary, #475569)",
                     boxShadow: sub === t.id ? "0 1px 4px rgba(1,58,87,0.12)" : "none", transition: "all .18s ease",
                   }}>
             {es ? t.es : t.en}
@@ -214,7 +214,7 @@ function SizeGauss({ dist, lang, title }) {
             background: "var(--surface-raised, #fff)", border: "1px solid var(--border-subtle, #E1E6ED)",
             borderRadius: 8, boxShadow: "0 10px 24px rgba(11,30,58,0.2)", padding: "7px 10px",
           }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: NAVY }}>{es ? "Talla" : "Size"} {hb.d.size}</div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text-primary)" }}>{es ? "Talla" : "Size"} {hb.d.size}</div>
             <div className="tabular-nums caption" style={{ color: "var(--text-secondary, #475569)" }}>
               {fInt(hb.d.pairs)} {es ? "pares" : "pairs"} · {hb.pct}%
             </div>
@@ -288,7 +288,7 @@ function SizesChart({ items, lang, isClient = false }) {
   return (
     <div className="card card-pad-md">
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-        <h4 style={{ margin: 0, color: NAVY, fontSize: 13, fontWeight: 800 }}>{es ? "PARES PEDIDOS POR TALLA" : "PAIRS ORDERED BY SIZE"}</h4>
+        <h4 style={{ margin: 0, color: "var(--text-primary)", fontSize: 13, fontWeight: 800 }}>{es ? "PARES PEDIDOS POR TALLA" : "PAIRS ORDERED BY SIZE"}</h4>
         <span className="caption tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>
           {fInt(totalGeneral)} {es ? "pares" : "pairs"} · {activeSkus.length} SKU{activeSkus.length === 1 ? "" : "s"}
         </span>
@@ -333,7 +333,7 @@ function SizesChart({ items, lang, isClient = false }) {
             key: k, total: totalsBySku.get(k) || 0,
             labelNode: (
               <div style={{ lineHeight: 1.15, overflow: "hidden" }}>
-                <div style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 700, fontSize: 11.5, color: NAVY }}>{k}</div>
+                <div style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 700, fontSize: 11.5, color: "var(--text-primary)" }}>{k}</div>
                 {nameOf(k) && <div title={nameOf(k)} style={{ fontSize: 9.5, color: "var(--text-tertiary, #94A3B8)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nameOf(k)}</div>}
               </div>
             ),
@@ -364,7 +364,7 @@ function SizesChart({ items, lang, isClient = false }) {
           background: "var(--surface-raised, #fff)", border: "1px solid var(--border-subtle, #E1E6ED)",
           borderRadius: 10, boxShadow: "0 12px 30px rgba(11,30,58,0.22)", padding: "10px 12px",
         }}>
-          <div style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 800, color: NAVY, fontSize: 12.5 }}>{hover.meta.sku}</div>
+          <div style={{ fontFamily: "JetBrains Mono, monospace", fontWeight: 800, color: "var(--text-primary)", fontSize: 12.5 }}>{hover.meta.sku}</div>
           {hover.meta.name && <div style={{ fontSize: 11, color: "var(--text-secondary, #475569)", marginBottom: 5 }}>{hover.meta.name}</div>}
           <div style={{ fontSize: 11.5, color: "var(--text-primary, #0B1E3A)", marginBottom: 7 }}>
             {es ? "Talla" : "Size"} <b>{hover.meta.size}</b>{" · "}<b className="tabular-nums">{fInt(hover.meta.value)}</b> {es ? "pares" : "pairs"}
@@ -376,7 +376,7 @@ function SizesChart({ items, lang, isClient = false }) {
             {hover.meta.byExp.map((x, i) => (
               <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11 }}>
                 <span style={{ fontFamily: "JetBrains Mono, monospace", color: "var(--text-secondary, #475569)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{x.label}</span>
-                <span className="tabular-nums" style={{ fontWeight: 800, color: NAVY, flexShrink: 0 }}>{fInt(x.pairs)}<span style={{ fontWeight: 500, color: "var(--text-tertiary, #94A3B8)" }}> prs</span></span>
+                <span className="tabular-nums" style={{ fontWeight: 800, color: "var(--text-primary)", flexShrink: 0 }}>{fInt(x.pairs)}<span style={{ fontWeight: 500, color: "var(--text-tertiary, #94A3B8)" }}> prs</span></span>
               </div>
             ))}
           </div>
@@ -417,7 +417,7 @@ function StackedBars({ rows, max, lang, showSegLabels = false, labelWidth = 64, 
               ))}
             </div>
           </div>
-          <div className="tabular-nums" style={{ width: 60, textAlign: "right", flexShrink: 0, fontSize: 12, fontWeight: 800, color: NAVY }}>{fInt(r.total)}</div>
+          <div className="tabular-nums" style={{ width: 60, textAlign: "right", flexShrink: 0, fontSize: 12, fontWeight: 800, color: "var(--text-primary)" }}>{fInt(r.total)}</div>
         </div>
       ))}
     </div>
@@ -480,7 +480,7 @@ function SkuMethodChart({ items, lang }) {
   return (
     <div className="card card-pad-md">
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-        <h4 style={{ margin: 0, color: NAVY, fontSize: 13, fontWeight: 800 }}>{es ? "COMPORTAMIENTO POR MÉTODO DE ENVÍO" : "BEHAVIOR BY SHIPPING MODE"}</h4>
+        <h4 style={{ margin: 0, color: "var(--text-primary)", fontSize: 13, fontWeight: 800 }}>{es ? "COMPORTAMIENTO POR MÉTODO DE ENVÍO" : "BEHAVIOR BY SHIPPING MODE"}</h4>
         <span className="caption" style={{ color: "var(--text-secondary, #475569)" }}>
           {selSkus.size === 0 ? (es ? `Todos los SKU (${skuList.length})` : `All SKUs (${skuList.length})`)
             : (onlyOne ? `${onlyOne}${nameOf(onlyOne) ? " · " + nameOf(onlyOne) : ""}` : `${selSkus.size} SKU`)}
@@ -558,7 +558,7 @@ function SkuMethodChart({ items, lang }) {
 function Metric({ label, value, accent }) {
   return (
     <div>
-      <div className="tabular-nums" style={{ fontSize: 17, fontWeight: 800, color: accent ? MINT : "#0B1E3A", lineHeight: 1.1 }}>{value}</div>
+      <div className="tabular-nums" style={{ fontSize: 17, fontWeight: 800, color: accent ? MINT : "var(--text-primary)", lineHeight: 1.1 }}>{value}</div>
       <div className="caption" style={{ color: "var(--text-tertiary, #94A3B8)" }}>{label}</div>
     </div>
   );
@@ -601,7 +601,7 @@ function FxChart({ items, lang, isClient }) {
   return (
     <div className="card card-pad-md">
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-        <h4 style={{ margin: 0, color: NAVY, fontSize: 13, fontWeight: 800 }}>{es ? "DÓLAR → REAL (USD/BRL)" : "USD → BRL"}</h4>
+        <h4 style={{ margin: 0, color: "var(--text-primary)", fontSize: 13, fontWeight: 800 }}>{es ? "DÓLAR → REAL (USD/BRL)" : "USD → BRL"}</h4>
         <span className="caption" style={{ color: "var(--text-tertiary, #94A3B8)" }}>{data && data.source ? data.source : "Frankfurter (ECB)"}</span>
         <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
           {ranges.map((r) => (<button key={r.days} onClick={() => setDays(r.days)} style={pillStyle(days === r.days)}>{r.label}</button>))}
@@ -637,7 +637,7 @@ function FxChart({ items, lang, isClient }) {
 function FxStat({ label, value, sub }) {
   return (
     <div style={{ border: "1px solid var(--border-subtle, #E1E6ED)", borderRadius: 10, padding: "9px 11px", background: "var(--surface-alt, #FBFCFE)" }}>
-      <div className="tabular-nums" style={{ fontSize: 15, fontWeight: 800, color: "#0B1E3A", whiteSpace: "nowrap" }}>{value}</div>
+      <div className="tabular-nums" style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", whiteSpace: "nowrap" }}>{value}</div>
       <div className="caption" style={{ color: "var(--text-tertiary, #94A3B8)" }}>{label}</div>
       {sub && <div className="caption tabular-nums" style={{ color: "var(--text-tertiary, #CBD5E1)", marginTop: 1 }}>{sub}</div>}
     </div>
@@ -666,7 +666,7 @@ function Gauge({ stats, lang }) {
         <line x1={cx} y1={cy} x2={px} y2={py} stroke={NAVY} strokeWidth={2.2} strokeLinecap="round" />
         <circle cx={cx} cy={cy} r={3} fill={NAVY} />
       </svg>
-      <div className="tabular-nums" style={{ fontSize: 16, fontWeight: 800, color: NAVY, textAlign: "center", lineHeight: 1 }}>R$ {fmt4(last)}</div>
+      <div className="tabular-nums" style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", textAlign: "center", lineHeight: 1 }}>R$ {fmt4(last)}</div>
       <div className="caption" style={{ color: "var(--text-tertiary, #94A3B8)", textAlign: "center" }}>{es ? "Hoy · por US$1" : "Today · per US$1"}</div>
     </div>
   );
@@ -733,7 +733,7 @@ function FxLine({ series, stats, lang }) {
           borderRadius: 8, boxShadow: "0 10px 24px rgba(11,30,58,0.2)", padding: "7px 10px",
         }}>
           <div className="tabular-nums" style={{ fontSize: 11, color: "var(--text-secondary, #475569)" }}>{series[hi.i].date}</div>
-          <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 800, color: NAVY }}>R$ {fmt4(series[hi.i].rate)}</div>
+          <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)" }}>R$ {fmt4(series[hi.i].rate)}</div>
           <div className="caption" style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "por US$1" : "per US$1"}</div>
         </div>
       )}
@@ -789,7 +789,7 @@ function FxGauss({ series, stats, lang }) {
           background: "var(--surface-raised, #fff)", border: "1px solid var(--border-subtle, #E1E6ED)",
           borderRadius: 8, boxShadow: "0 10px 24px rgba(11,30,58,0.2)", padding: "7px 10px",
         }}>
-          <div className="tabular-nums" style={{ fontSize: 12, fontWeight: 800, color: NAVY }}>R$ {fmt2(hb.binLo)} – {fmt2(hb.binHi)}</div>
+          <div className="tabular-nums" style={{ fontSize: 12, fontWeight: 800, color: "var(--text-primary)" }}>R$ {fmt2(hb.binLo)} – {fmt2(hb.binHi)}</div>
           <div className="tabular-nums caption" style={{ color: "var(--text-secondary, #475569)" }}>{fInt(hb.c)} {es ? "días" : "days"} · {Math.round((hb.c / total) * 100)}%</div>
         </div>
       )}
@@ -818,7 +818,7 @@ function chipStyle(active, color) {
 function arrowStyle() {
   return {
     flexShrink: 0, width: 26, height: 26, borderRadius: 999, border: "1.5px solid var(--border-subtle, #E1E6ED)",
-    background: "var(--surface, #fff)", color: NAVY, cursor: "pointer", fontSize: 16, lineHeight: 1,
+    background: "var(--surface, #fff)", color: "var(--text-primary)", cursor: "pointer", fontSize: 16, lineHeight: 1,
     display: "flex", alignItems: "center", justifyContent: "center",
   };
 }

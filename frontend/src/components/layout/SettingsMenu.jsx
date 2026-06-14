@@ -44,8 +44,8 @@ export default function SettingsMenu({ open, onClose, lang = "es" }) {
               top: 52, right: 60,
               width: 280,
               zIndex: 120,
-              background: "#FFFFFF",
-              border: "1px solid var(--border, #E1E6ED)",
+              background: "var(--surface-raised)",
+              border: "1px solid var(--border)",
               borderRadius: 12,
               boxShadow: "0 12px 40px rgba(11,30,58,0.18)",
               overflow: "hidden",
@@ -93,16 +93,16 @@ function MenuItem({ icon, label, hint, onClick }) {
         display: "flex", alignItems: "center", gap: 12,
         transition: "background 0.1s ease",
       }}
-      onMouseEnter={(e) => e.currentTarget.style.background = "#F7F9FC"}
+      onMouseEnter={(e) => e.currentTarget.style.background = "var(--surface)"}
       onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
     >
       <span style={{ fontSize: 18, flex: "0 0 24px" }}>{icon}</span>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--navy, #0B1E3A)" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
           {label}
         </div>
         {hint && (
-          <div style={{ fontSize: 11, color: "var(--text-tertiary, #64748B)", marginTop: 1 }}>
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 1 }}>
             {hint}
           </div>
         )}
@@ -112,7 +112,7 @@ function MenuItem({ icon, label, hint, onClick }) {
 }
 
 function Divider() {
-  return <div style={{ height: 1, background: "var(--border, #E1E6ED)", margin: "6px 12px" }}/>;
+  return <div style={{ height: 1, background: "var(--border)", margin: "6px 12px" }}/>;
 }
 
 
@@ -171,15 +171,15 @@ function ClientProfileForm({ onClose, lang }) {
     );
   }
   if (error && !profile) {
-    return <div style={{ padding: 20, color: "#D64545", fontSize: 13 }}>⚠️ {error}</div>;
+    return <div style={{ padding: 20, color: "var(--critical)", fontSize: 13 }}>⚠️ {error}</div>;
   }
 
   return (
     <div style={{ padding: 18 }}>
-      <div style={{ fontSize: 14, fontWeight: 600, color: "var(--navy, #0B1E3A)", marginBottom: 4 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>
         {lang === "es" ? "Mi perfil" : "My profile"}
       </div>
-      <div style={{ fontSize: 11, color: "var(--text-tertiary, #64748B)", marginBottom: 16 }}>
+      <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 16 }}>
         {profile.email_plain}
         {profile.full_name && <> · <strong>{profile.full_name}</strong></>}
       </div>
@@ -245,7 +245,7 @@ function ClientProfileForm({ onClose, lang }) {
         )}
       </div>
       {error && (
-        <div style={{ marginTop: 10, color: "#D64545", fontSize: 12 }}>⚠️ {error}</div>
+        <div style={{ marginTop: 10, color: "var(--critical)", fontSize: 12 }}>⚠️ {error}</div>
       )}
     </div>
   );
@@ -266,8 +266,8 @@ function AdminSystemTabs({ onClose, lang }) {
 
   return (
     <div>
-      <div style={{ padding: "12px 16px 0", borderBottom: "1px solid var(--border, #E1E6ED)" }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--navy, #0B1E3A)", marginBottom: 8 }}>
+      <div style={{ padding: "12px 16px 0", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>
           {lang === "es" ? "Configuración del sistema" : "System settings"}
         </div>
         <div style={{ display: "flex", gap: 4 }}>
@@ -300,7 +300,7 @@ function AdminSystemTabs({ onClose, lang }) {
 
 function TabLLMs({ lang }) {
   return (
-    <div style={{ fontSize: 12, color: "var(--text-secondary, #4A5A75)", lineHeight: 1.5 }}>
+    <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
       <div style={{ fontWeight: 600, color: "var(--navy)", marginBottom: 8, fontSize: 13 }}>
         Routing de modelos
       </div>
@@ -308,7 +308,7 @@ function TabLLMs({ lang }) {
       <Row label="INTERNAL"       value="claude-opus-4-6"/>
       <Row label="CLIENT (SVC-01)" value="claude-haiku-4-5-20251001"/>
       <Row label="Temperatura default" value="0.3"/>
-      <p style={{ marginTop: 12, fontSize: 11, color: "var(--text-tertiary, #64748B)" }}>
+      <p style={{ marginTop: 12, fontSize: 11, color: "var(--text-tertiary)" }}>
         Ver detalles completos en <code>ENT_PLAT_LLM_ROUTING.md</code> de la KB.
       </p>
     </div>
@@ -317,7 +317,7 @@ function TabLLMs({ lang }) {
 
 function TabApiKeys({ lang }) {
   return (
-    <div style={{ fontSize: 12, color: "var(--text-secondary, #4A5A75)", lineHeight: 1.5 }}>
+    <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
       <div style={{ fontWeight: 600, color: "var(--navy)", marginBottom: 8, fontSize: 13 }}>
         Claves activas
       </div>
@@ -325,7 +325,7 @@ function TabApiKeys({ lang }) {
       <Row label="Mailgun"        value="key-····87e0"/>
       <Row label="MinIO access"   value="mwt-console-····"/>
       <Row label="Paperless-ngx"  value="paper-····9a3c"/>
-      <p style={{ marginTop: 12, fontSize: 11, color: "var(--text-tertiary, #64748B)" }}>
+      <p style={{ marginTop: 12, fontSize: 11, color: "var(--text-tertiary)" }}>
         Rotación programada cada 90 días.
       </p>
     </div>
@@ -334,7 +334,7 @@ function TabApiKeys({ lang }) {
 
 function TabPolicies({ lang }) {
   return (
-    <div style={{ fontSize: 12, color: "var(--text-secondary, #4A5A75)", lineHeight: 1.5 }}>
+    <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
       <div style={{ fontWeight: 600, color: "var(--navy)", marginBottom: 8, fontSize: 13 }}>
         Políticas activas
       </div>
@@ -351,7 +351,7 @@ function Row({ label, value }) {
   return (
     <div style={{
       display: "flex", justifyContent: "space-between",
-      padding: "5px 0", borderBottom: "1px dashed #EEF2F7",
+      padding: "5px 0", borderBottom: "1px dashed var(--border)",
     }}>
       <span>{label}</span>
       <code style={{ fontSize: 11, color: "var(--navy, #0B1E3A)", fontWeight: 500 }}>{value}</code>
@@ -367,7 +367,7 @@ const labelStyle = {
   display: "block",
   fontSize: 10,
   fontWeight: 600,
-  color: "var(--text-tertiary, #64748B)",
+  color: "var(--text-tertiary)",
   letterSpacing: 0.5,
   textTransform: "uppercase",
   marginBottom: 4,
@@ -376,11 +376,11 @@ const labelStyle = {
 const inputStyle = {
   width: "100%",
   padding: "8px 10px",
-  border: "1px solid var(--border, #E1E6ED)",
+  border: "1px solid var(--border)",
   borderRadius: 8,
   fontSize: 13,
-  color: "var(--navy, #0B1E3A)",
-  background: "#fff",
+  color: "var(--text-primary)",
+  background: "var(--surface-raised)",
   outline: "none",
   boxSizing: "border-box",
 };

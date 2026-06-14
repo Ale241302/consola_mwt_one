@@ -74,15 +74,15 @@ function _adaptCliente(c) {
 }
 
 // ─── Design tokens ───────────────────────────────────────────
-const NAVY  = "#0B1E3A";
+const NAVY  = "var(--text-primary)";
 const NAVY2 = "#1A2F52";
 const MINT  = "#00B286";
 const LIGHT = "#1DE394";
 const AMBER = "#F59E0B";
-const RED   = "#DC2626";
-const INK   = "#334155";
-const MUTED = "#64748B";
-const SOFT  = "#F8FAFC";
+const RED   = "var(--critical)";
+const INK   = "var(--text-secondary)";
+const MUTED = "var(--text-tertiary)";
+const SOFT  = "var(--bg-alt)";
 const TECHO = "#FCE4D6";
 const TECHO_STRONG = "#F5B895";
 
@@ -1003,7 +1003,7 @@ export default function ScreenBrandClientPricingForm() {
 
       {/* Header · cliente + snapshot financiero */}
       <div style={{
-        background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY2} 100%)`,
+        background: `linear-gradient(135deg, var(--brand-primary) 0%, ${NAVY2} 100%)`,
         color: "#FFFFFF", padding: "18px 22px", borderRadius: 12,
         marginBottom: 16,
         display: "grid",
@@ -1131,7 +1131,7 @@ export default function ScreenBrandClientPricingForm() {
               if (file) handleFile(file, { showAll: true });
             }}
             style={{
-              padding: "5px 11px", background: "#FFFFFF",
+              padding: "5px 11px", background: "var(--surface-raised)",
               border: `1px solid ${RED}`, color: "#7F1D1D",
               font: "600 11px/1 var(--font-body)",
               borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
@@ -1159,7 +1159,7 @@ export default function ScreenBrandClientPricingForm() {
               if (file) handleFile(file, { showAll: true });
             }}
             style={{
-              padding: "5px 11px", background: "#FFFFFF",
+              padding: "5px 11px", background: "var(--surface-raised)",
               border: `1px solid ${MINT}`, color: "#065F46",
               font: "600 11px/1 var(--font-body)",
               borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
@@ -1171,7 +1171,7 @@ export default function ScreenBrandClientPricingForm() {
       {filterStats && !filterStats.applied && (
         <div style={{
           padding: "9px 14px", marginBottom: 14,
-          background: SOFT, border: "1px solid #E5E7EB", borderRadius: 8,
+          background: SOFT, border: "1px solid var(--border)", borderRadius: 8,
           display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
           font: "500 12px/1.4 var(--font-body)", color: MUTED,
         }}>
@@ -1187,8 +1187,8 @@ export default function ScreenBrandClientPricingForm() {
                 if (file) handleFile(file, { showAll: false });
               }}
               style={{
-                padding: "5px 11px", background: "#FFFFFF",
-                border: "1px solid #E5E7EB", color: INK,
+                padding: "5px 11px", background: "var(--surface-raised)",
+                border: "1px solid var(--border)", color: INK,
                 font: "600 11px/1 var(--font-body)",
                 borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
               }}>
@@ -1215,7 +1215,7 @@ export default function ScreenBrandClientPricingForm() {
               onDrop={onDrop}
               onClick={() => fileInputRef.current?.click()}
               style={{
-                border: `2px dashed ${dragOver ? MINT : file ? MINT : "#CBD5E1"}`,
+                border: `2px dashed ${dragOver ? MINT : file ? MINT : "var(--border)"}`,
                 background: dragOver ? `${MINT}0D` : file ? `${MINT}06` : SOFT,
                 borderRadius: 10,
                 padding: 22, textAlign: "center",
@@ -1240,7 +1240,7 @@ export default function ScreenBrandClientPricingForm() {
                     onClick={e => { e.stopPropagation(); setFile(null); }}
                     style={{
                       marginTop: 8, padding: "3px 9px",
-                      border: "1px solid #E5E7EB", background: "#FFFFFF",
+                      border: "1px solid var(--border)", background: "var(--surface-raised)",
                       color: MUTED, borderRadius: 6, cursor: "pointer",
                       font: "500 10.5px/1 var(--font-body)",
                       display: "inline-flex", alignItems: "center", gap: 4,
@@ -1291,8 +1291,8 @@ export default function ScreenBrandClientPricingForm() {
                   }}
                   style={{
                     padding: "0 12px",
-                    border: `1.5px solid ${fechaFinIndef ? MINT : "#E5E7EB"}`,
-                    background: fechaFinIndef ? `${MINT}10` : "#FFFFFF",
+                    border: `1.5px solid ${fechaFinIndef ? MINT : "var(--border)"}`,
+                    background: fechaFinIndef ? `${MINT}10` : "var(--surface-raised)",
                     color: fechaFinIndef ? MINT : INK,
                     font: "600 11px/1 var(--font-body)",
                     borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
@@ -1341,7 +1341,7 @@ export default function ScreenBrandClientPricingForm() {
             <div style={{
               display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
               marginBottom: 14, padding: "10px 14px",
-              background: SOFT, border: "1px solid #E5E7EB", borderRadius: 8,
+              background: SOFT, border: "1px solid var(--border)", borderRadius: 8,
             }}>
               <span style={{ font: "700 10px/1 var(--font-body)", color: MUTED,
                 textTransform: "uppercase", letterSpacing: 0.5 }}>
@@ -1352,7 +1352,7 @@ export default function ScreenBrandClientPricingForm() {
                 onChange={(e) => setAnchor({ ...anchor, bandaId: Number(e.target.value) })}
                 style={{
                   padding: "5px 8px", borderRadius: 5,
-                  border: "1px solid #CBD5E1", background: "#FFFFFF",
+                  border: "1px solid var(--border)", background: "var(--surface-raised)",
                   font: "600 11.5px/1 var(--font-body)", color: NAVY,
                   cursor: "pointer", outline: "none",
                   fontVariantNumeric: "tabular-nums",
@@ -1373,7 +1373,7 @@ export default function ScreenBrandClientPricingForm() {
                 onChange={(e) => setAnchor({ ...anchor, plazoDias: Number(e.target.value) })}
                 style={{
                   padding: "5px 8px", borderRadius: 5,
-                  border: "1px solid #CBD5E1", background: "#FFFFFF",
+                  border: "1px solid var(--border)", background: "var(--surface-raised)",
                   font: "600 11.5px/1 var(--font-body)", color: NAVY,
                   cursor: "pointer", outline: "none",
                   fontVariantNumeric: "tabular-nums",
@@ -1427,7 +1427,7 @@ export default function ScreenBrandClientPricingForm() {
                       }}
                       style={{
                         marginLeft: 4, padding: "0 5px", borderRadius: 3,
-                        border: "1px solid " + AMBER + "55", background: "#FFFFFF",
+                        border: "1px solid " + AMBER + "55", background: "var(--surface-raised)",
                         color: "#92400E", cursor: "pointer",
                         font: "700 10px/1 var(--font-body)",
                       }}
@@ -1445,7 +1445,7 @@ export default function ScreenBrandClientPricingForm() {
                 style={{
                   marginLeft: "auto",
                   padding: "5px 10px", borderRadius: 5,
-                  border: "1px solid #E5E7EB", background: "#FFFFFF", color: MUTED,
+                  border: "1px solid var(--border)", background: "var(--surface-raised)", color: MUTED,
                   font: "600 10.5px/1 var(--font-body)", cursor: "pointer",
                   opacity: (anchor.bandaId === 1 && anchor.plazoDias === 90) ? 0.4 : 1,
                 }}
@@ -1516,7 +1516,7 @@ export default function ScreenBrandClientPricingForm() {
                             onClick={() => toggleExpanded(s.sku)}
                             style={{
                               width: 22, height: 22, borderRadius: 4,
-                              border: "1px solid #E5E7EB", background: "#FFFFFF",
+                              border: "1px solid var(--border)", background: "var(--surface-raised)",
                               color: MUTED, cursor: "pointer", padding: 0,
                               display: "inline-flex", alignItems: "center", justifyContent: "center",
                               transition: "transform 140ms ease",
@@ -1533,8 +1533,8 @@ export default function ScreenBrandClientPricingForm() {
                           <button type="button" onClick={() => toggleSku(i)}
                             style={{
                               width: 20, height: 20, borderRadius: 5,
-                              border: `1.5px solid ${s.activo ? MINT : "#CBD5E1"}`,
-                              background: s.activo ? MINT : "#FFFFFF",
+                              border: `1.5px solid ${s.activo ? MINT : "var(--border)"}`,
+                              background: s.activo ? MINT : "var(--surface-raised)",
                               cursor: "pointer", display: "inline-flex",
                               alignItems: "center", justifyContent: "center",
                             }}>
@@ -1593,8 +1593,8 @@ export default function ScreenBrandClientPricingForm() {
                               onChange={(e) => patchSkuAnchor(i, { bandaId: Number(e.target.value) })}
                               style={{
                                 padding: "3px 4px", borderRadius: 4,
-                                border: `1px solid ${hasOverride ? sFg + "55" : "#E5E7EB"}`,
-                                background: hasOverride ? `${sBg}55` : "#FFFFFF",
+                                border: `1px solid ${hasOverride ? sFg + "55" : "var(--border)"}`,
+                                background: hasOverride ? `${sBg}55` : "var(--surface-raised)",
                                 color: hasOverride ? sFg : NAVY,
                                 font: "600 10px/1 var(--font-body)",
                                 cursor: "pointer", outline: "none",
@@ -1612,8 +1612,8 @@ export default function ScreenBrandClientPricingForm() {
                               onChange={(e) => patchSkuAnchor(i, { plazoDias: Number(e.target.value) })}
                               style={{
                                 padding: "3px 4px", borderRadius: 4,
-                                border: `1px solid ${hasOverride ? sFg + "55" : "#E5E7EB"}`,
-                                background: hasOverride ? `${sBg}55` : "#FFFFFF",
+                                border: `1px solid ${hasOverride ? sFg + "55" : "var(--border)"}`,
+                                background: hasOverride ? `${sBg}55` : "var(--surface-raised)",
                                 color: hasOverride ? sFg : NAVY,
                                 font: "600 10px/1 var(--font-body)",
                                 cursor: "pointer", outline: "none",
@@ -1630,7 +1630,7 @@ export default function ScreenBrandClientPricingForm() {
                                 onClick={() => clearSkuAnchor(i)}
                                 style={{
                                   width: 18, height: 18, borderRadius: 3,
-                                  border: "1px solid #E5E7EB", background: "#FFFFFF",
+                                  border: "1px solid var(--border)", background: "var(--surface-raised)",
                                   color: MUTED, cursor: "pointer", padding: 0,
                                   font: "700 11px/1 var(--font-body)",
                                   display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -1670,7 +1670,7 @@ export default function ScreenBrandClientPricingForm() {
                       {expandedSkus.has(s.sku) && (
                         <tr>
                           {/* colSpan = 11 (chevron + toggle + sku + ref + brl + com + ancla + base + ajuste + sobrepre + lista) */}
-                          <td colSpan={11} style={{ padding: 0, background: "#FAFBFC" }}>
+                          <td colSpan={11} style={{ padding: 0, background: "var(--bg-alt)" }}>
                             <SkuSizesPanel
                               sku={s}
                               skuIdx={i}
@@ -1704,7 +1704,7 @@ export default function ScreenBrandClientPricingForm() {
                   marginTop: 12, display: "grid",
                   gridTemplateColumns: "repeat(5, 1fr)", gap: 10,
                   padding: 12, background: SOFT, borderRadius: 8,
-                  border: "1px solid #E5E7EB",
+                  border: "1px solid var(--border)",
                 }}>
                   <KPI label={lang === "es" ? "Activos" : "Active"} value={`${resumen.n}/${skus.length}`}/>
                   <KPI label={lang === "es" ? "Sobreprecio promedio" : "Avg markup"}
@@ -1735,7 +1735,7 @@ export default function ScreenBrandClientPricingForm() {
             }}>
               <div style={{
                 display: "inline-flex", gap: 2, padding: 3,
-                background: SOFT, borderRadius: 8, border: "1px solid #E5E7EB",
+                background: SOFT, borderRadius: 8, border: "1px solid var(--border)",
               }}>
                 {[
                   { v: "essentials", l: lang === "es" ? "Esenciales" : "Essentials", t: lang === "es" ? "Techo · vigente · piso" : "Top · current · floor" },
@@ -1749,8 +1749,8 @@ export default function ScreenBrandClientPricingForm() {
                       title={opt.t}
                       style={{
                         padding: "6px 14px",
-                        background: on ? "#FFFFFF" : "transparent",
-                        border: on ? "1px solid #E5E7EB" : "1px solid transparent",
+                        background: on ? "var(--surface-raised)" : "transparent",
+                        border: on ? "1px solid var(--border)" : "1px solid transparent",
                         color: on ? NAVY : MUTED,
                         font: `${on ? 700 : 600} 11px/1 var(--font-body)`,
                         borderRadius: 6, cursor: "pointer",
@@ -1822,8 +1822,8 @@ export default function ScreenBrandClientPricingForm() {
                     title={lang === "es" ? "Resetear todos los plazos a defaults" : "Reset all terms to defaults"}
                     style={{
                       padding: "5px 9px", borderRadius: 6,
-                      background: "#FFFFFF", color: INK,
-                      border: "1px solid #E5E7EB",
+                      background: "var(--surface-raised)", color: INK,
+                      border: "1px solid var(--border)",
                       font: "600 10.5px/1 var(--font-body)",
                       cursor: "pointer",
                     }}>
@@ -1858,8 +1858,8 @@ export default function ScreenBrandClientPricingForm() {
             {/* Tabla */}
             <div style={{
               overflowX: "auto", maxHeight: "72vh",
-              border: "1px solid #E5E7EB", borderRadius: 8,
-              background: "#FFFFFF",
+              border: "1px solid var(--border)", borderRadius: 8,
+              background: "var(--surface-raised)",
             }}>
               <table style={tblMtx2}>
                 <thead>
@@ -2052,7 +2052,7 @@ export default function ScreenBrandClientPricingForm() {
         {skus.length === 0 && (
           <div style={{
             padding: "40px 20px", textAlign: "center",
-            background: SOFT, borderRadius: 10, border: "1px dashed #CBD5E1",
+            background: SOFT, borderRadius: 10, border: "1px dashed var(--border)",
             color: MUTED, font: "500 13px/1.5 var(--font-body)",
           }}>
             <IconDollar size={28} style={{ color: MUTED, marginBottom: 10 }}/>
@@ -2071,8 +2071,8 @@ export default function ScreenBrandClientPricingForm() {
       <div style={{
         position: "sticky", bottom: 0, zIndex: 5,
         marginTop: 18, padding: "12px 18px",
-        background: "#FFFFFFEE", backdropFilter: "blur(6px)",
-        borderTop: "1px solid #E5E7EB", borderRadius: 10,
+        background: "var(--surface-raised)", backdropFilter: "blur(6px)",
+        borderTop: "1px solid var(--border)", borderRadius: 10,
         display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
         boxShadow: "0 -4px 14px -8px rgba(11,30,58,0.10)",
       }}>
@@ -2086,7 +2086,7 @@ export default function ScreenBrandClientPricingForm() {
                   disabled={saving}
                   style={{
                     padding: "9px 18px", background: "transparent",
-                    border: "1px solid #E5E7EB", color: INK,
+                    border: "1px solid var(--border)", color: INK,
                     font: "600 12.5px/1 var(--font-body)",
                     borderRadius: 8, cursor: saving ? "not-allowed" : "pointer",
                   }}>
@@ -2147,7 +2147,7 @@ export default function ScreenBrandClientPricingForm() {
               transition={{ type: "spring", stiffness: 280, damping: 28 }}
               onClick={(e) => e.stopPropagation()}
               style={{
-                background: "#FFFFFF", borderRadius: 12,
+                background: "var(--surface-raised)", borderRadius: 12,
                 width: "100%", maxWidth: 440,
                 boxShadow: "0 12px 48px rgba(11,30,58,0.18)",
                 overflow: "hidden",
@@ -2196,7 +2196,7 @@ export default function ScreenBrandClientPricingForm() {
                   onClick={closeConfirm}
                   style={{
                     padding: "8px 16px", borderRadius: 8,
-                    border: "1px solid #E5E7EB", background: "#FFFFFF",
+                    border: "1px solid var(--border)", background: "var(--surface-raised)",
                     color: INK, font: "600 12.5px/1 var(--font-body)",
                     cursor: "pointer",
                   }}>
@@ -2236,7 +2236,7 @@ export default function ScreenBrandClientPricingForm() {
 function ExchangeRateBar({ tc, loading, error, ts, source, bandaVigente, vista, onVistaChange, onReload, lang }) {
   return (
     <div style={{
-      background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 10,
+      background: "var(--surface-raised)", border: "1px solid var(--border)", borderRadius: 10,
       padding: "10px 14px", marginBottom: 14,
       display: "flex", justifyContent: "space-between", alignItems: "center",
       gap: 14, flexWrap: "wrap",
@@ -2290,8 +2290,8 @@ function ExchangeRateBar({ tc, loading, error, ts, source, bandaVigente, vista, 
         <button type="button" onClick={onReload}
           disabled={loading}
           style={{
-            padding: "6px 10px", background: "#FFFFFF",
-            border: "1px solid #E5E7EB", color: INK,
+            padding: "6px 10px", background: "var(--surface-raised)",
+            border: "1px solid var(--border)", color: INK,
             font: "600 11px/1 var(--font-body)",
             borderRadius: 6, cursor: loading ? "not-allowed" : "pointer",
             display: "inline-flex", alignItems: "center", gap: 4,
@@ -2309,9 +2309,9 @@ function ExchangeRateBar({ tc, loading, error, ts, source, bandaVigente, vista, 
           <button key={opt.v} type="button" onClick={() => onVistaChange(opt.v)}
             style={{
               padding: "6px 12px",
-              background: vista === opt.v ? NAVY : "#FFFFFF",
+              background: vista === opt.v ? "var(--brand-primary)" : "var(--surface-raised)",
               color: vista === opt.v ? "#FFFFFF" : INK,
-              border: `1px solid ${vista === opt.v ? NAVY : "#E5E7EB"}`,
+              border: `1px solid ${vista === opt.v ? "var(--brand-primary)" : "var(--border)"}`,
               font: "600 11px/1 var(--font-body)",
               borderRadius: 6, cursor: "pointer",
             }}>
@@ -2431,7 +2431,7 @@ function Section({ title, subtitle, badge, children }) {
   };
   return (
     <section style={{
-      background: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 12,
+      background: "var(--surface-raised)", border: "1px solid var(--border)", borderRadius: 12,
       padding: "16px 18px 18px 18px", marginBottom: 14,
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
@@ -2476,9 +2476,9 @@ function Input({ value, onChange, type = "text", style, ...rest }) {
       {...rest}
       style={{
         width: "100%", padding: "8px 10px",
-        border: "1px solid #E5E7EB", borderRadius: 6,
+        border: "1px solid var(--border)", borderRadius: 6,
         font: "500 12.5px/1.2 var(--font-body)", color: NAVY,
-        background: "#FFFFFF", outline: "none",
+        background: "var(--surface-raised)", outline: "none",
         fontVariantNumeric: "tabular-nums",
         ...style,
       }}/>
@@ -2493,7 +2493,7 @@ const thSku = {
   font: "700 9px/1 var(--font-body)", color: MUTED,
   padding: "8px 6px", textAlign: "center",
   textTransform: "uppercase", letterSpacing: 0.5,
-  borderBottom: "1px solid #E5E7EB", background: SOFT,
+  borderBottom: "1px solid var(--border)", background: SOFT,
 };
 const tdSku = {
   padding: "7px 6px", fontSize: 11, textAlign: "center",
@@ -2511,7 +2511,7 @@ const tblMtx2 = {
 const BAND_BG_TECHO   = "#FEF3E7";
 const BAND_BG_PISO    = "#ECFDF5";
 const BAND_BG_CURRENT = "#FEF3C7";
-const BAND_BG_NEUTRAL = "#F8FAFC";
+const BAND_BG_NEUTRAL = "var(--surface-raised)";
 
 const BAND_FG_TECHO   = "#9A4A1D";
 const BAND_FG_PISO    = "#065F46";
@@ -2527,13 +2527,13 @@ function bandColors(b, isCurrent) {
 function stickyTh(left, minWidth) {
   return {
     position: "sticky", left, top: 0, zIndex: 5,
-    background: "#FFFFFF",
+    background: "var(--surface-raised)",
     textAlign: "left", padding: "10px 10px 10px 12px",
     font: "700 9.5px/1 var(--font-body)", color: MUTED,
     textTransform: "uppercase", letterSpacing: 0.5,
     minWidth, maxWidth: minWidth,
-    borderRight: left > 0 ? "1px solid #E5E7EB" : "none",
-    borderBottom: "1px solid #E5E7EB",
+    borderRight: left > 0 ? "1px solid var(--border)" : "none",
+    borderBottom: "1px solid var(--border)",
     boxShadow: left > 0 ? "4px 0 6px -3px rgba(11,30,58,0.07)" : "none",
   };
 }
@@ -2541,7 +2541,7 @@ function stickyTh(left, minWidth) {
 function stickyTd(left, minWidth, opts) {
   return {
     position: "sticky", left, zIndex: 2,
-    background: "#FFFFFF",
+    background: "var(--surface-raised)",
     textAlign: "left", padding: "9px 10px 9px 12px",
     color: opts.color || INK,
     fontSize: opts.fontSize || 11,
@@ -2550,7 +2550,7 @@ function stickyTd(left, minWidth, opts) {
     fontVariantNumeric: "tabular-nums",
     minWidth, maxWidth: minWidth,
     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-    borderRight: left > 0 ? "1px solid #E5E7EB" : (opts.borderRight === "none" ? "none" : undefined),
+    borderRight: left > 0 ? "1px solid var(--border)" : (opts.borderRight === "none" ? "none" : undefined),
     borderBottom: "1px solid #F1F5F9",
     boxShadow: left > 0 ? "4px 0 6px -3px rgba(11,30,58,0.07)" : "none",
   };
@@ -2563,8 +2563,8 @@ function bandHeaderStyle(b, isCurrent) {
     background: bg, color: fg,
     padding: "10px 8px 8px 8px",
     textAlign: "center",
-    borderLeft: `2px solid ${isCurrent ? AMBER : "#E5E7EB"}`,
-    borderBottom: "1px solid #E5E7EB",
+    borderLeft: `2px solid ${isCurrent ? AMBER : "var(--border)"}`,
+    borderBottom: "1px solid var(--border)",
   };
 }
 
@@ -2572,13 +2572,13 @@ function plazoHeaderStyle(b, isCurrent, isBase) {
   const { bg } = bandColors(b, isCurrent);
   return {
     position: "sticky", top: 60, zIndex: 4,
-    background: isBase ? bg : "#FFFFFF",
+    background: isBase ? bg : "var(--surface-raised)",
     color: NAVY,
     padding: "6px 4px 7px 4px",
     textAlign: "center",
     minWidth: 64,
-    borderLeft: isBase ? `2px solid ${isCurrent ? AMBER : "#E5E7EB"}` : "1px solid transparent",
-    borderBottom: "1px solid #E5E7EB",
+    borderLeft: isBase ? `2px solid ${isCurrent ? AMBER : "var(--border)"}` : "1px solid transparent",
+    borderBottom: "1px solid var(--border)",
   };
 }
 
@@ -2590,9 +2590,9 @@ function plazoCellStyle(b, isCurrent, isBase) {
     fontVariantNumeric: "tabular-nums",
     fontSize: 11,
     fontWeight: isBase ? 700 : 500,
-    color: isBase ? NAVY : "#475569",
-    background: isBase ? "#FFFFFF" : "#FAFBFC",
-    borderLeft: isBase ? `2px solid ${isCurrent ? AMBER : "#E5E7EB"}` : "1px solid transparent",
+    color: isBase ? NAVY : "var(--text-secondary)",
+    background: isBase ? "var(--surface-raised)" : "var(--bg-alt)",
+    borderLeft: isBase ? `2px solid ${isCurrent ? AMBER : "var(--border)"}` : "1px solid transparent",
     borderBottom: "1px solid #F1F5F9",
   };
 }
@@ -2608,7 +2608,7 @@ const bandHdrBtn = {
 const plazoHdrXBtn = {
   padding: 0, width: 14, height: 14, borderRadius: 7,
   background: "transparent", color: MUTED,
-  border: "1px solid #CBD5E1",
+  border: "1px solid var(--border)",
   font: "700 8.5px/1 var(--font-body)",
   cursor: "pointer", lineHeight: 1,
   display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -2664,8 +2664,8 @@ function MtxCellInput({ value, onCommit, isBase, title }) {
           width: "100%", padding: "3px 4px",
           border: `1.5px solid ${"#00B286"}`,
           borderRadius: 4, outline: "none",
-          background: "#FFFFFF",
-          color: "#0B1E3A",
+          background: "var(--surface-raised)",
+          color: "var(--text-primary)",
           fontFamily: "var(--font-mono, ui-monospace)",
           fontVariantNumeric: "tabular-nums",
           fontSize: 11, fontWeight: isBase ? 700 : 500,
@@ -2720,7 +2720,7 @@ function LegendDot({ color, label }) {
 
 const inpMono = (w) => ({
   width: w, padding: "4px 6px", borderRadius: 5,
-  border: "1px solid #E5E7EB", background: "#FFFFFF", color: NAVY,
+  border: "1px solid var(--border)", background: "var(--surface-raised)", color: NAVY,
   fontFamily: "var(--font-mono, ui-monospace)",
   fontSize: 11, fontWeight: 600, textAlign: "center",
   outline: "none", fontVariantNumeric: "tabular-nums",
@@ -2739,7 +2739,7 @@ function fmtMoney(n) {
 
 const btnGhost = {
   padding: "6px 10px", background: "transparent",
-  border: "1px solid #E5E7EB", color: INK,
+  border: "1px solid var(--border)", color: INK,
   font: "600 11px/1 var(--font-body)",
   borderRadius: 6, cursor: "pointer",
   display: "inline-flex", alignItems: "center", gap: 4,
@@ -2747,7 +2747,7 @@ const btnGhost = {
 
 const emptyCard = {
   padding: 40, textAlign: "center",
-  background: SOFT, borderRadius: 10, border: "1px dashed #E5E7EB",
+  background: SOFT, borderRadius: 10, border: "1px dashed var(--border)",
   color: MUTED, font: "500 13px/1.4 var(--font-body)",
   maxWidth: 420, margin: "60px auto",
 };

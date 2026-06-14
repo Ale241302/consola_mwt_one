@@ -128,8 +128,8 @@ export default function ActivityPanel({ open, onClose, lang = "es" }) {
               top: 52, right: 108,
               width: 380, maxHeight: 560,
               zIndex: 120,
-              background: "#FFFFFF",
-              border: "1px solid var(--border, #E1E6ED)",
+              background: "var(--surface-raised)",
+              border: "1px solid var(--border)",
               borderRadius: 12,
               boxShadow: "0 12px 40px rgba(11,30,58,0.18)",
               overflow: "hidden",
@@ -139,15 +139,15 @@ export default function ActivityPanel({ open, onClose, lang = "es" }) {
             {/* Header */}
             <div style={{
               padding: "12px 16px",
-              borderBottom: "1px solid var(--border, #E1E6ED)",
+              borderBottom: "1px solid var(--border)",
               display: "flex", alignItems: "center", gap: 10,
             }}>
-              <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "var(--navy, #0B1E3A)" }}>
+              <div style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
                 {lang === "es" ? "Notificaciones" : "Notifications"}
                 {unreadCount > 0 && (
                   <span style={{
                     marginLeft: 8, padding: "2px 8px", borderRadius: 999,
-                    background: "#D64545", color: "#fff",
+                    background: "var(--critical)", color: "#fff",
                     fontSize: 10, fontWeight: 700, letterSpacing: 0.4,
                   }}>{unreadCount}</span>
                 )}
@@ -196,14 +196,14 @@ export default function ActivityPanel({ open, onClose, lang = "es" }) {
                     onClick={() => handleClickItem(it)}
                     style={{
                       padding: "12px 16px",
-                      borderBottom: "1px solid #F3F5F8",
+                      borderBottom: "1px solid var(--border)",
                       cursor: "pointer",
                       display: "flex", gap: 12,
-                      background: unread ? "rgba(0,178,134,0.04)" : "#fff",
+                      background: unread ? "rgba(0,178,134,0.04)" : "var(--surface-raised)",
                       transition: "background 0.12s ease",
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "#F7F9FC"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = unread ? "rgba(0,178,134,0.04)" : "#fff"}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "var(--surface)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = unread ? "rgba(0,178,134,0.04)" : "var(--surface-raised)"}
                   >
                     <div style={{
                       flex: "0 0 6px", width: 6, borderRadius: 3,
@@ -213,13 +213,13 @@ export default function ActivityPanel({ open, onClose, lang = "es" }) {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{
                         fontSize: 13, fontWeight: unread ? 600 : 500,
-                        color: "var(--navy, #0B1E3A)",
+                        color: "var(--text-primary)",
                         lineHeight: 1.35, marginBottom: 2,
                       }}>
                         {it.title}
                       </div>
                       <div style={{
-                        fontSize: 12, color: "var(--text-secondary, #4A5A75)",
+                        fontSize: 12, color: "var(--text-secondary)",
                         lineHeight: 1.4,
                         display: "-webkit-box",
                         WebkitLineClamp: 2,
@@ -230,7 +230,7 @@ export default function ActivityPanel({ open, onClose, lang = "es" }) {
                       </div>
                       <div style={{
                         marginTop: 6, display: "flex", gap: 6, alignItems: "center",
-                        fontSize: 10, color: "var(--text-tertiary, #64748B)",
+                        fontSize: 10, color: "var(--text-tertiary)",
                       }}>
                         <span style={{
                           padding: "1px 6px", borderRadius: 4,

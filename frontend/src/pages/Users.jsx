@@ -118,10 +118,10 @@ export default function Users() {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div style={{ flex: 1 }}>
-          <h1 style={{ margin: 0, font: "700 22px/1.1 var(--font-display)", color: "var(--navy, #0B1E3A)" }}>
+          <h1 style={{ margin: 0, font: "700 22px/1.1 var(--font-display)", color: "var(--text-primary)" }}>
             {lang === "es" ? "Usuarios" : "Users"}
           </h1>
-          <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-tertiary, #64748B)" }}>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-tertiary)" }}>
             {lang === "es"
               ? "Gestión de usuarios del ERP: staff interno + clientes B2B del portal."
               : "ERP user management: internal staff + B2B portal clients."}
@@ -162,8 +162,8 @@ export default function Users() {
 
       {/* Tabla */}
       <div style={{
-        background: "#fff",
-        border: "1px solid var(--border, #E1E6ED)",
+        background: "var(--surface-raised)",
+        border: "1px solid var(--border)",
         borderRadius: 10,
         overflow: "hidden",
       }}>
@@ -230,7 +230,7 @@ export default function Users() {
             style={{
               position: "fixed", bottom: 24, right: 24, zIndex: 200,
               padding: "10px 16px",
-              background: toast.kind === "err" ? "#D64545" : "var(--navy, #0B1E3A)",
+              background: toast.kind === "err" ? "var(--critical)" : "var(--brand-primary)",
               color: "#fff", borderRadius: 8, fontSize: 13,
               boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
             }}
@@ -262,9 +262,9 @@ function TableHeader({ lang }) {
   return (
     <div style={{
       display: "grid", gridTemplateColumns: COL_TEMPLATE, gap: 8,
-      padding: "10px 14px", background: "#F7F9FC",
-      borderBottom: "1px solid var(--border, #E1E6ED)",
-      fontSize: 10, fontWeight: 700, color: "var(--text-tertiary, #64748B)",
+      padding: "10px 14px", background: "var(--bg-alt)",
+      borderBottom: "1px solid var(--border)",
+      fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
       letterSpacing: 0.5, textTransform: "uppercase",
     }}>
       {headers.map((h, i) => <span key={i}>{h}</span>)}
@@ -285,15 +285,15 @@ function UserRow({ user, onEdit, onToggleActive, onResetPassword, onDelete, lang
     <div style={{
       display: "grid", gridTemplateColumns: COL_TEMPLATE, gap: 8,
       padding: "10px 14px",
-      borderBottom: "1px solid var(--border, #E1E6ED)",
+      borderBottom: "1px solid var(--border)",
       fontSize: 13, alignItems: "center",
-      background: user.is_active ? "#fff" : "#FAFBFD",
+      background: user.is_active ? "var(--surface-raised)" : "var(--bg-alt)",
       opacity: user.is_active ? 1 : 0.65,
     }}>
-      <span style={{ fontWeight: 600, color: "var(--navy, #0B1E3A)" }} onClick={onEdit}>
+      <span style={{ fontWeight: 600, color: "var(--text-primary)" }} onClick={onEdit}>
         {user.full_name || "(sin nombre)"}
       </span>
-      <span style={{ color: "var(--text-secondary, #4A5A75)", fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>
+      <span style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>
         {user.email_plain}
       </span>
       <span>
@@ -320,7 +320,7 @@ function UserRow({ user, onEdit, onToggleActive, onResetPassword, onDelete, lang
         ) : (
           <span style={{
             display: "inline-block", padding: "2px 8px", borderRadius: 999,
-            background: "#D64545", color: "#fff",
+            background: "var(--critical)", color: "#fff",
             fontSize: 10, fontWeight: 700, letterSpacing: 0.4,
           }}>
             {lang === "es" ? "INACTIVO" : "INACTIVE"}
@@ -342,7 +342,7 @@ function UserRow({ user, onEdit, onToggleActive, onResetPassword, onDelete, lang
                 className="ai-btn ai-btn-xs"
                 style={{
                   background: user.is_active ? "rgba(214,69,69,0.10)" : "rgba(0,178,134,0.10)",
-                  color: user.is_active ? "#D64545" : "#00B286",
+                  color: user.is_active ? "var(--critical)" : "#00B286",
                   border: "none", padding: "3px 8px", borderRadius: 4,
                   fontSize: 11, fontWeight: 600, cursor: "pointer",
                 }}>
@@ -355,7 +355,7 @@ function UserRow({ user, onEdit, onToggleActive, onResetPassword, onDelete, lang
                 title={lang === "es" ? "Eliminar usuario (soft-delete)" : "Delete user (soft-delete)"}
                 style={{
                   background: "transparent",
-                  color: "#DC2626",
+                  color: "var(--critical)",
                   border: "1px solid rgba(220,38,38,0.25)",
                   padding: "3px 8px", borderRadius: 4,
                   fontSize: 11, fontWeight: 600, cursor: "pointer",
@@ -444,7 +444,7 @@ function UserDrawer({ open, user, onClose, onSaved, lang }) {
             style={{
               position: "fixed", top: 0, right: 0, bottom: 0,
               width: 460, maxWidth: "92vw",
-              background: "#fff", zIndex: 210,
+              background: "var(--surface-raised)", zIndex: 210,
               boxShadow: "-8px 0 32px rgba(0,0,0,0.20)",
               display: "flex", flexDirection: "column",
             }}
@@ -457,7 +457,7 @@ function UserDrawer({ open, user, onClose, onSaved, lang }) {
                 <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: 0.4, textTransform: "uppercase" }}>
                   {isEdit ? (lang === "es" ? "Editar usuario" : "Edit user") : (lang === "es" ? "Nuevo usuario" : "New user")}
                 </div>
-                <div style={{ fontSize: 17, fontWeight: 700, color: "var(--navy)", marginTop: 2 }}>
+                <div style={{ fontSize: 17, fontWeight: 700, color: "var(--text-primary)", marginTop: 2 }}>
                   {isEdit ? (form.full_name || form.email_plain) : (lang === "es" ? "Crear nuevo" : "Create new")}
                 </div>
               </div>
@@ -518,7 +518,7 @@ function UserDrawer({ open, user, onClose, onSaved, lang }) {
                          placeholder={lang === "es" ? "Dejar vacío para enviar invitación" : "Leave empty to send invitation"}/>
                 </Field>
               )}
-              {error && <div style={{ color: "#D64545", fontSize: 12 }}>⚠️ {error}</div>}
+              {error && <div style={{ color: "var(--critical)", fontSize: 12 }}>⚠️ {error}</div>}
             </div>
 
             <div style={{
@@ -555,10 +555,10 @@ function Field({ label, required, children }) {
     <label style={{ display: "block" }}>
       <span style={{
         display: "block", fontSize: 10, fontWeight: 700,
-        color: "var(--text-tertiary, #64748B)",
+        color: "var(--text-tertiary)",
         letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 4,
       }}>
-        {label} {required && <span style={{ color: "#D64545" }}>*</span>}
+        {label} {required && <span style={{ color: "var(--critical)" }}>*</span>}
       </span>
       {children}
     </label>

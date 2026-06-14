@@ -836,7 +836,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
 
     return (
       <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-        <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+        <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>$</span>
         <input className="input tabular-nums"
                type="number" step={step} min="0"
                style={{
@@ -896,7 +896,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
 
     return (
       <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-        <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+        <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>$</span>
         <input className="input tabular-nums"
                type="number" step={step} min="0"
                style={{
@@ -1178,7 +1178,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       {/* ── Header CEO-ONLY ────────────────────────── */}
       <div style={{
         display: "flex", alignItems: "center", gap: 10, marginBottom: 14,
-        padding: "12px 16px", background: "linear-gradient(135deg, #0B1E3A 0%, #1A2A5C 100%)",
+        padding: "12px 16px", background: "linear-gradient(135deg, var(--brand-primary) 0%, #1A2A5C 100%)",
         color: "#fff", borderRadius: 12,
       }}>
         <IconLock size={16} style={{ color: "#1DE394" }} />
@@ -1214,7 +1214,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         <div style={{
           padding: "10px 14px", marginBottom: 12, borderRadius: 8,
           background: "rgba(0,178,134,0.10)", border: "1px solid rgba(0,178,134,0.40)",
-          color: "#0B1E3A", fontSize: 13,
+          color: "var(--text-primary)", fontSize: 13,
         }}>{success}</div>
       )}
 
@@ -1434,8 +1434,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                 disabled={ocrBusy || saving}
                 className="btn"
                 style={{
-                  background: ocrBusy ? "#F3F5F8" : "#0B1E3A",
-                  color: ocrBusy ? "#64748B" : "#fff",
+                  background: ocrBusy ? "var(--bg-alt)" : "var(--brand-primary)",
+                  color: ocrBusy ? "var(--text-tertiary)" : "#fff",
                   fontSize: 12, padding: "6px 12px", borderRadius: 8,
                   fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6,
                 }}
@@ -1507,7 +1507,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
               </span>
             )}
             <button onClick={() => setOcrSummary(null)} className="btn btn-ghost btn-sm"
-                    style={{ color: "#64748B", fontSize: 14, padding: "0 6px" }}>×</button>
+                    style={{ color: "var(--text-tertiary)", fontSize: 14, padding: "0 6px" }}>×</button>
           </motion.div>
         )}
 
@@ -1587,7 +1587,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                onChange={(e) => updateCost(c.id, { fx_to_usd: e.target.value })}
                                onBlur={() => persistCost(c)}/>
                       </td>
-                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#0B1E3A" }}>
+                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--text-primary)" }}>
                         ${fmt(usd)}
                       </td>
                       <td>
@@ -1614,7 +1614,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         {!isLiquidated && (
                           <button className="btn btn-ghost btn-sm"
                                   onClick={() => askRemoveCost(c)}
-                                  style={{ color: "#D64545" }} disabled={saving}
+                                  style={{ color: "var(--critical)" }} disabled={saving}
                                   title={lang === "es" ? "Eliminar costo" : "Remove cost"}>
                             <IconTrash size={12}/>
                           </button>
@@ -1624,7 +1624,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   );
                 })}
                 <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
-                  <td colSpan={5} style={{ textAlign: "right", color: "#0B1E3A" }}>
+                  <td colSpan={5} style={{ textAlign: "right", color: "var(--text-primary)" }}>
                     {lang === "es" ? "Bolsa de costos en USD" : "Total cost pool in USD"}
                   </td>
                   <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 15 }}>
@@ -1647,7 +1647,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
 
         {/* Financial summary card */}
         <div style={{
-          background: "linear-gradient(135deg, #0B1E3A 0%, #1A2A5C 100%)",
+          background: "linear-gradient(135deg, var(--brand-primary) 0%, #1A2A5C 100%)",
           color: "#fff", padding: "20px 22px", borderRadius: 12, marginBottom: 14,
         }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
@@ -1676,9 +1676,9 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       onClick={() => setLiqTab(tb.id)}
                       style={{
                         padding: "4px 14px", fontSize: 11.5, fontWeight: 700, borderRadius: 999,
-                        border: liqTab === tb.id ? "1.5px solid #0B1E3A" : "1.5px solid var(--border-subtle, #E1E6ED)",
-                        background: liqTab === tb.id ? "#0B1E3A" : "transparent",
-                        color: liqTab === tb.id ? "#fff" : "#475569",
+                        border: liqTab === tb.id ? "1.5px solid var(--brand-primary)" : "1.5px solid var(--border)",
+                        background: liqTab === tb.id ? "var(--brand-primary)" : "transparent",
+                        color: liqTab === tb.id ? "#fff" : "var(--text-secondary)",
                         cursor: "pointer",
                       }}>
                 {lang === "es" ? tb.es : tb.en}
@@ -1704,7 +1704,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             {liqTab !== "GENERAL" && (
               <div className="card card-pad-0" style={{ overflow: "hidden" }}>
                 <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <h4 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
+                  <h4 style={{ margin: 0, color: "var(--text-primary)", fontSize: 13, fontWeight: 700 }}>
                     {liqTab === "NCM"
                       ? (lang === "es" ? "LIQUIDACIÓN POR NCM" : "LIQUIDATION BY NCM")
                       : (lang === "es" ? "LIQUIDACIÓN POR SKU" : "LIQUIDATION BY SKU")}
@@ -1782,13 +1782,13 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           </td>
                           <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.ley)}</td>
                           <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.customTax)}</td>
-                          <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>${fmt(g.iva)}</td>
+                          <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>${fmt(g.iva)}</td>
                           <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(g.dest + g.customCost)}</td>
                           <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#00B286" }}>${fmt(g.sinIva)}</td>
                           <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>${fmt(g.conIva)}</td>
                         </tr>
                       ))}
-                      <tr style={{ background: "#0B1E3A", color: "white", fontWeight: 700 }}>
+                      <tr style={{ background: "var(--brand-primary)", color: "white", fontWeight: 700 }}>
                         <td colSpan={2} style={{ color: "white" }}>
                           {lang === "es" ? "TOTALES (= vista General)" : "TOTALS (= General view)"}
                         </td>
@@ -1822,7 +1822,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       <div className="micro" style={{ color: "#00B286", letterSpacing: 1, marginBottom: 4 }}>
                         {lang === "es" ? "SKUS DEL NCM" : "SKUS IN NCM"}
                       </div>
-                      <div className="mono-sm" style={{ fontSize: 15, fontWeight: 800, color: "#0B1E3A" }}>{skuModal.code}</div>
+                      <div className="mono-sm" style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)" }}>{skuModal.code}</div>
                       {skuModal.desc && (
                         <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>{skuModal.desc}</div>
                       )}
@@ -1866,11 +1866,11 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             {liqTab === "GENERAL" && (
             <div className="card card-pad-0" style={{ overflow: "hidden" }}>
               <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h4 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
+                <h4 style={{ margin: 0, color: "var(--text-primary)", fontSize: 13, fontWeight: 700 }}>
                   {lang === "es" ? "LIQUIDACIÓN DETALLADA" : "DETAILED LIQUIDATION"}
                 </h4>
                 {crcRate > 0 && (
-                  <span className="tabular-nums" style={{ fontSize: 11, color: "#475569", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <span className="tabular-nums" style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}>
                     <span>TC ₡</span>
                     {isLiquidated ? (
                       <span>{crcRate.toLocaleString("es-CR", { maximumFractionDigits: 2 })}</span>
@@ -1878,8 +1878,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       <input className="input tabular-nums" type="number" step="0.01" min="0"
                              style={{
                                width: 65, padding: "2px 4px", fontSize: 11, textAlign: "right",
-                               height: "auto", border: "1px solid #CBD5E1", borderRadius: 4,
-                               background: "#fff", display: "inline-block"
+                               height: "auto", border: "1px solid var(--border)", borderRadius: 4,
+                               background: "var(--surface-raised)", display: "inline-block"
                              }}
                              value={customCrcRate !== null ? customCrcRate : crcRate.toFixed(2)}
                              onChange={(e) => {
@@ -1935,8 +1935,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td>{viewerIsMwt ? (lang === "es" ? "Factura Marluvas / pedido" : "Marluvas invoice / order") : (lang === "es" ? "Precio de la orden (precio cliente)" : "Order price (client price)")}</td>
                     <td style={{ textAlign: "right" }}>—</td>
                     <td className="tabular-nums" style={{ textAlign: "right" }}>${fmt(livePreview.fobTotal)}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.fobTotal) : "—"}</td>
-                    <td style={{ color: "#64748B", fontSize: 11 }}>{livePreview.unitsTotal} {lang === "es" ? "pares" : "pairs"}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>{crcRate > 0 ? fmtCrc(livePreview.fobTotal) : "—"}</td>
+                    <td style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{livePreview.unitsTotal} {lang === "es" ? "pares" : "pairs"}</td>
                   </tr>
                   <tr>
                     <td>
@@ -1945,7 +1945,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         {!isLiquidated && (() => {
                           const c = viewCostLines.find(x => KIND_FREIGHT.has(String(x.kind || "").toUpperCase()));
                           return c ? (
-                            <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar costo (sincroniza con sección 2)" : "Remove cost"} style={{ color: "#D64545", padding: "2px" }}
+                            <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar costo (sincroniza con sección 2)" : "Remove cost"} style={{ color: "var(--critical)", padding: "2px" }}
                                     onClick={() => askRemoveCost(c)}>
                               <IconTrash size={10}/>
                             </button>
@@ -1961,7 +1961,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         <span>${fmt(livePreview.freight)}</span>
                       ) : (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                          <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>$</span>
                           <input className="input tabular-nums" type="number" step="0.01" min="0"
                                  style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
                                  value={(() => {
@@ -1996,8 +1996,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         </span>
                       )}
                     </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.freight) : "—"}</td>
-                    <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>{crcRate > 0 ? fmtCrc(livePreview.freight) : "—"}</td>
+                    <td style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
                   </tr>
                   <tr>
                     <td>
@@ -2006,7 +2006,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         {!isLiquidated && (() => {
                           const c = viewCostLines.find(x => KIND_INSURANCE.has(String(x.kind || "").toUpperCase()));
                           return c ? (
-                            <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar costo (sincroniza con sección 2)" : "Remove cost"} style={{ color: "#D64545", padding: "2px" }}
+                            <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar costo (sincroniza con sección 2)" : "Remove cost"} style={{ color: "var(--critical)", padding: "2px" }}
                                     onClick={() => askRemoveCost(c)}>
                               <IconTrash size={10}/>
                             </button>
@@ -2022,7 +2022,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         <span>${fmt(livePreview.insurance)}</span>
                       ) : (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                          <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>$</span>
                           <input className="input tabular-nums" type="number" step="0.01" min="0"
                                  style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
                                  value={(() => {
@@ -2057,8 +2057,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         </span>
                       )}
                     </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.insurance) : "—"}</td>
-                    <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>{crcRate > 0 ? fmtCrc(livePreview.insurance) : "—"}</td>
+                    <td style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{lang === "es" ? "Costo real registrado" : "Registered cost"}</td>
                   </tr>
                   <tr style={{ background: "rgba(11,30,58,0.02)", fontWeight: 700 }}>
                     <td colSpan={4}>CIF (base imponible aduana)</td>
@@ -2080,7 +2080,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                         onClick={() => { setCustomDaiRate(null); persistCustomRates({ dai: null }); }}>
                                   <IconRefresh size={10}/>
                                 </button>
-                                <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
+                                <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "var(--critical)", padding: "2px" }}
                                         onClick={() => { const nx = { ...excludedTaxes, dai: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
                                   <IconTrash size={10}/>
                                 </button>
@@ -2121,7 +2121,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             <span>${fmt(livePreview.daiTotal)}</span>
                           ) : (
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                              <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                              <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>$</span>
                               <input className="input tabular-nums" type="number" step="0.01" min="0"
                                      style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
                                      value={livePreview.daiTotal.toFixed(2)}
@@ -2142,8 +2142,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             </span>
                           )}
                         </td>
-                        <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.daiTotal) : "—"}</td>
-                        <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Régimen general calzado" : "General footwear regime"}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>{crcRate > 0 ? fmtCrc(livePreview.daiTotal) : "—"}</td>
+                        <td style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{lang === "es" ? "Régimen general calzado" : "General footwear regime"}</td>
                       </tr>
                     ) : (
                       groupedDai.map((g, idx) => {
@@ -2154,7 +2154,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                               <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                 <span>{idx === 0 ? "4" : `4.${idx + 1}`}</span>
                                 {!isLiquidated && idx === 0 && (
-                                  <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
+                                  <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "var(--critical)", padding: "2px" }}
                                           onClick={() => { const nx = { ...excludedTaxes, dai: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
                                     <IconTrash size={10}/>
                                   </button>
@@ -2190,7 +2190,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                 <span>${fmt(g.dai)}</span>
                               ) : (
                                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                                  <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                                  <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>$</span>
                                   <input className="input tabular-nums" type="number" step="0.01" min="0"
                                          style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
                                          value={g.dai.toFixed(2)}
@@ -2211,8 +2211,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                                 </span>
                               )}
                             </td>
-                            <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(g.dai) : "—"}</td>
-                            <td style={{ color: "#64748B", fontSize: 11 }}>
+                            <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>{crcRate > 0 ? fmtCrc(g.dai) : "—"}</td>
+                            <td style={{ color: "var(--text-tertiary)", fontSize: 11 }}>
                               {ncmDesc || (lang === "es" ? "Régimen general calzado" : "General footwear regime")}
                             </td>
                           </tr>
@@ -2226,7 +2226,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <span>{4 + daiRowsCount}</span>
                         {!isLiquidated && (
-                          <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
+                          <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "var(--critical)", padding: "2px" }}
                                   onClick={() => { const nx = { ...excludedTaxes, ley: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
                             <IconTrash size={10}/>
                           </button>
@@ -2260,7 +2260,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         <span>${fmt(livePreview.leyTotal)}</span>
                       ) : (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                          <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>$</span>
                           <input className="input tabular-nums" type="number" step="0.01" min="0"
                                  style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
                                  value={livePreview.leyTotal.toFixed(2)}
@@ -2281,8 +2281,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         </span>
                       )}
                     </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.leyTotal) : "—"}</td>
-                    <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Tributo fijo" : "Fixed tax"}</td>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>{crcRate > 0 ? fmtCrc(livePreview.leyTotal) : "—"}</td>
+                    <td style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{lang === "es" ? "Tributo fijo" : "Fixed tax"}</td>
                   </tr>
                   )}
                   {!excludedTaxes.iva && (
@@ -2291,7 +2291,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <span>{4 + daiRowsCount + (excludedTaxes.ley ? 0 : 1)}</span>
                         {!isLiquidated && (
-                          <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "#D64545", padding: "2px" }}
+                          <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Excluir impuesto" : "Exclude tax"} style={{ color: "var(--critical)", padding: "2px" }}
                                   onClick={() => { const nx = { ...excludedTaxes, iva: true }; setExcludedTaxes(nx); persistExcluded(nx); }}>
                             <IconTrash size={10}/>
                           </button>
@@ -2325,7 +2325,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         <span>${fmt(livePreview.ivaTotal)}</span>
                       ) : (
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                          <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                          <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>$</span>
                           <input className="input tabular-nums" type="number" step="0.01" min="0"
                                  style={{ width: 110, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
                                  value={livePreview.ivaTotal.toFixed(2)}
@@ -2346,8 +2346,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         </span>
                       )}
                     </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(livePreview.ivaTotal) : "—"}</td>
-                    <td style={{ color: "#64748B", fontSize: 11, fontStyle: "italic" }}>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>{crcRate > 0 ? fmtCrc(livePreview.ivaTotal) : "—"}</td>
+                    <td style={{ color: "var(--text-tertiary)", fontSize: 11, fontStyle: "italic" }}>
                       {lang === "es" ? "Acreditable — crédito fiscal (no suma)" : "Creditable — VAT credit (excluded)"}
                     </td>
                   </tr>
@@ -2355,7 +2355,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                   {(excludedTaxes.dai || excludedTaxes.ley || excludedTaxes.iva) && !isLiquidated && (
                     <tr>
                       <td></td>
-                      <td colSpan={6} style={{ fontSize: 11, color: "#64748B" }}>
+                      <td colSpan={6} style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
                         {lang === "es" ? "Impuestos excluidos:" : "Excluded taxes:"}{" "}
                         {["dai", "ley", "iva"].filter(k => excludedTaxes[k]).map(k => k.toUpperCase()).join(", ")}
                         {" · "}
@@ -2376,7 +2376,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                             <span>{rowNum}</span>
                             {!isLiquidated && (
-                              <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar fila" : "Remove row"} style={{ color: "#D64545", padding: "2px" }}
+                              <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar fila" : "Remove row"} style={{ color: "var(--critical)", padding: "2px" }}
                                       onClick={() => {
                                         const next = customTaxes.filter(item => item !== x);
                                         setCustomTaxes(next);
@@ -2424,7 +2424,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             <span>${fmt(hasAmt ? Number(x.amount) : computed)}</span>
                           ) : (
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                              <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                              <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>$</span>
                               <input className="input tabular-nums" type="number" step="0.01" min="0"
                                      style={{ width: 100, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
                                      value={hasAmt ? x.amount : ""} placeholder={fmt(computed)}
@@ -2437,10 +2437,10 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             </span>
                           )}
                         </td>
-                        <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(hasAmt ? Number(x.amount) : computed) : "—"}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>{crcRate > 0 ? fmtCrc(hasAmt ? Number(x.amount) : computed) : "—"}</td>
                         <td>
                           {isLiquidated ? (
-                            <span style={{ color: "#64748B", fontSize: 11 }}>{x.notes || ""}</span>
+                            <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{x.notes || ""}</span>
                           ) : (
                             <input className="input" style={{ width: 150, padding: "2px 6px", fontSize: 12 }}
                                    value={x.notes || ""} placeholder={lang === "es" ? "Notas" : "Notes"}
@@ -2469,7 +2469,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           <span>{4 + daiRowsCount + (excludedTaxes.ley ? 0 : 1) + (excludedTaxes.iva ? 0 : 1) + customTaxes.filter(t => t.type === "TAX").length + idx}</span>
                           {!isLiquidated && (
-                            <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar costo (sincroniza con sección 2)" : "Remove cost"} style={{ color: "#D64545", padding: "2px" }}
+                            <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar costo (sincroniza con sección 2)" : "Remove cost"} style={{ color: "var(--critical)", padding: "2px" }}
                                     onClick={() => askRemoveCost(c)}>
                               <IconTrash size={10}/>
                             </button>
@@ -2484,7 +2484,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           <span>${fmt(Number(c.amount) * Number(c.fx_to_usd || 1))}</span>
                         ) : (
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                            <span style={{ color: "#64748B", fontSize: 11 }}>
+                            <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>
                               {c.currency === "USD" ? "$" : `${c.currency} `}
                             </span>
                             <input className="input tabular-nums" type="number" step="0.01" min="0"
@@ -2495,8 +2495,8 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           </span>
                         )}
                       </td>
-                      <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(Number(c.amount || 0) * Number(c.fx_to_usd || 1)) : "—"}</td>
-                      <td style={{ color: "#64748B", fontSize: 11 }}>{lang === "es" ? "Costo en destino" : "Destination cost"}</td>
+                      <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>{crcRate > 0 ? fmtCrc(Number(c.amount || 0) * Number(c.fx_to_usd || 1)) : "—"}</td>
+                      <td style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{lang === "es" ? "Costo en destino" : "Destination cost"}</td>
                     </tr>
                   ))}
                   {customTaxes.filter(x => x.type === "COST").map((x, idx) => {
@@ -2512,7 +2512,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                             <span>{rowNum}</span>
                             {!isLiquidated && (
-                              <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar fila" : "Remove row"} style={{ color: "#D64545", padding: "2px" }}
+                              <button className="btn btn-ghost btn-xs" title={lang === "es" ? "Quitar fila" : "Remove row"} style={{ color: "var(--critical)", padding: "2px" }}
                                       onClick={() => {
                                         const next = customTaxes.filter(item => item !== x);
                                         setCustomTaxes(next);
@@ -2543,7 +2543,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             <span>${fmt(x.amount)}</span>
                           ) : (
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                              <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                              <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>$</span>
                               <input className="input tabular-nums" type="number" step="0.01" min="0"
                                      style={{ width: 100, textAlign: "right", padding: "4px 8px", fontSize: 12 }}
                                      value={x.amount}
@@ -2555,10 +2555,10 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             </span>
                           )}
                         </td>
-                        <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>{crcRate > 0 ? fmtCrc(Number(x.amount || 0)) : "—"}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>{crcRate > 0 ? fmtCrc(Number(x.amount || 0)) : "—"}</td>
                         <td>
                           {isLiquidated ? (
-                            <span style={{ color: "#64748B", fontSize: 11 }}>{x.notes || (lang === "es" ? "Costo en destino" : "Destination cost")}</span>
+                            <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{x.notes || (lang === "es" ? "Costo en destino" : "Destination cost")}</span>
                           ) : (
                             <input className="input" style={{ width: 150, padding: "2px 6px", fontSize: 12 }}
                                    value={x.notes || ""} placeholder={lang === "es" ? "Costo en destino" : "Destination cost"}
@@ -2586,7 +2586,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                     <td className="tabular-nums" style={{ textAlign: "right", color: "white" }}>{crcRate > 0 ? fmtCrc(livePreview.landedTotal + livePreview.ivaTotal) : "—"}</td>
                     <td style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>{lang === "es" ? "embarque completo" : "complete shipment"}</td>
                   </tr>
-                  <tr style={{ background: "#0B1E3A", color: "white", fontWeight: 700 }}>
+                  <tr style={{ background: "var(--brand-primary)", color: "white", fontWeight: 700 }}>
                     <td colSpan={4} style={{ color: "white" }}>
                       {viewerIsMwt
                         ? (lang === "es" ? "TOTAL SIN IVA — costo real de MWT" : "TOTAL EXCL. VAT — real MWT cost")
@@ -2606,7 +2606,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             {/* Tabla 2: Costo nacionalizado por línea */}
             <div className="card card-pad-0" style={{ overflow: "hidden" }}>
               <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)" }}>
-                <h4 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
+                <h4 style={{ margin: 0, color: "var(--text-primary)", fontSize: 13, fontWeight: 700 }}>
                   {viewerIsMwt
                     ? (lang === "es" ? "COSTO NACIONALIZADO POR LÍNEA (BASE UF, SIN IVA)" : "NATIONALIZED COST BY LINE (UF BASE, EXCL. VAT)")
                     : (lang === "es" ? "COSTO NACIONALIZADO POR LÍNEA (BASE PRECIO ORDEN SN, SIN IVA)" : "NATIONALIZED COST BY LINE (SN BASE, EXCL. VAT)")}
@@ -2652,7 +2652,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
                             <span>${fmt4(l.unit_fob_usd)}</span>
                           ) : (
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                              <span style={{ color: "#64748B", fontSize: 11 }}>$</span>
+                              <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>$</span>
                               <input className="input tabular-nums"
                                      type="number" step="0.0001" min="0"
                                      style={{
@@ -2718,7 +2718,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             {/* Tabla 3: Líneas a facturar */}
             <div className="card card-pad-0" style={{ overflow: "hidden" }}>
               <div style={{ padding: "12px 16px", background: "var(--raised)", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)" }}>
-                <h4 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
+                <h4 style={{ margin: 0, color: "var(--text-primary)", fontSize: 13, fontWeight: 700 }}>
                   {lang === "es" ? "LÍNEAS A FACTURAR — PRECIO NACIONALIZADO + IVA 13% (TALLAS ENTREGADAS)" : "LINES TO INVOICE — LANDED COST + 13% VAT (DELIVERED SIZES)"}
                 </h4>
               </div>
@@ -2801,7 +2801,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         {isLiquidated && report?.liquidated_at && (
           <div className="caption" style={{
             marginTop: 14, padding: "10px 14px", borderRadius: 8,
-            background: "rgba(0,178,134,0.06)", color: "#0B1E3A",
+            background: "rgba(0,178,134,0.06)", color: "var(--text-primary)",
           }}>
             ✓ {lang === "es" ? "Liquidada el " : "Liquidated on "}
             <strong>{new Date(report.liquidated_at).toLocaleString()}</strong>
@@ -2814,7 +2814,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
         {livePreview.lines.length > 0 && (
           <div className="card card-pad-0" style={{ marginTop: 24, overflow: "hidden", borderTop: "4px solid #00B286" }}>
             <div style={{ padding: "14px 18px", borderBottom: "1.5px solid var(--border-subtle, #E1E6ED)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h3 style={{ margin: 0, color: "#0B1E3A", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
+              <h3 style={{ margin: 0, color: "var(--text-primary)", fontSize: 13, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
                 {viewerIsMwt
                   ? (lang === "es" ? "Costo nacionalizado por línea (base UF, sin IVA)" : "Nationalized cost by line (UF base, excl. VAT)")
                   : (lang === "es" ? "Costo nacionalizado por línea (base precio orden SN, sin IVA)" : "Nationalized cost by line (SN base, excl. VAT)")}
@@ -2940,12 +2940,12 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
               <div style={{
                 marginTop: 10, padding: "10px 12px", borderRadius: 6,
                 background: "rgba(11,30,58,0.04)",
-                fontSize: 12.5, color: "#0B1E3A",
+                fontSize: 12.5, color: "var(--text-primary)",
               }}>
                 <div style={{ fontWeight: 700 }}>
                   {pendingDeleteCost.label || pendingDeleteCost.kind}
                 </div>
-                <div style={{ color: "#64748B", marginTop: 2,
+                <div style={{ color: "var(--text-tertiary)", marginTop: 2,
                               fontFamily: "var(--font-mono)" }}>
                   {Number(pendingDeleteCost.amount || 0).toLocaleString()}{" "}
                   {pendingDeleteCost.currency || "USD"}
@@ -2961,7 +2961,7 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
             </>
           }
           actionLabel={lang === "es" ? "Sí, eliminar" : "Yes, delete"}
-          actionColor="#DC2626"
+          actionColor="var(--critical)"
           cancelLabel={lang === "es" ? "Cancelar" : "Cancel"}
           busy={deleteCostBusy}
           error={deleteCostError}
@@ -3065,7 +3065,7 @@ function Field({ label, value }) {
       <div className="caption" style={{ color: "var(--text-tertiary)", marginBottom: 3 }}>
         {label}
       </div>
-      <div style={{ color: "#0B1E3A", fontSize: 14 }}>{value}</div>
+      <div style={{ color: "var(--text-primary)", fontSize: 14 }}>{value}</div>
     </div>
   );
 }
@@ -3104,7 +3104,7 @@ function DocChip({ doc, fallbackLabel, kind }) {
        style={{
          display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px",
          borderRadius: 999, background: "rgba(0,178,134,0.10)",
-         color: "#0B1E3A", fontSize: 12, fontWeight: 600, textDecoration: "none",
+         color: "var(--text-primary)", fontSize: 12, fontWeight: 600, textDecoration: "none",
          border: "1px solid rgba(0,178,134,0.25)",
        }}>
       <IconFileText size={11} style={{ color: "#00B286" }}/>
@@ -3123,13 +3123,13 @@ function ConfirmModal({ lang, summary, onCancel, onConfirm, busy }) {
     }} onClick={busy ? undefined : onCancel}>
       <div onClick={(e) => e.stopPropagation()}
            style={{
-             background: "#fff", borderRadius: 14, width: "min(520px, 96vw)",
+             background: "var(--surface-raised)", borderRadius: 14, width: "min(520px, 96vw)",
              padding: 26, boxShadow: "0 30px 60px -20px rgba(15,27,61,0.55)",
            }}>
         <div className="micro" style={{ color: "#00B286", letterSpacing: 1, marginBottom: 6 }}>
           {lang === "es" ? "CONFIRMAR LIQUIDACIÓN" : "CONFIRM LIQUIDATION"}
         </div>
-        <div style={{ font: "700 18px/1.3 inherit", color: "#0B1E3A", marginBottom: 10 }}>
+        <div style={{ font: "700 18px/1.3 inherit", color: "var(--text-primary)", marginBottom: 10 }}>
           {lang === "es" ? "¿Liquidar y transferir inventario?" : "Liquidate and transfer inventory?"}
         </div>
         <div className="caption" style={{ color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 14 }}>
@@ -3147,7 +3147,7 @@ function ConfirmModal({ lang, summary, onCancel, onConfirm, busy }) {
             <span className="tabular-nums" style={{ fontWeight: 600, color: "#F59E0B" }}>+${fmt(summary.extraUsd)}</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, borderTop: "1px solid rgba(0,178,134,0.20)" }}>
-            <span style={{ fontWeight: 700, color: "#0B1E3A" }}>Landed</span>
+            <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>Landed</span>
             <span className="tabular-nums" style={{ fontWeight: 700, color: "#00B286", fontSize: 16 }}>
               ${fmt(summary.landedTotal)}
             </span>

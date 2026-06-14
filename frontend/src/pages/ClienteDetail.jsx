@@ -487,7 +487,7 @@ export default function ScreenClienteDetail() {
                   border:'1px solid rgba(0,178,134,0.25)',
                   borderRadius: 999,
                   font:'600 11px/1 inherit',
-                  color:'#0F1B3D',
+                  color:'var(--text-primary)',
                   cursor:'pointer',
                   transition:'background 0.18s ease',
                 }}
@@ -501,7 +501,7 @@ export default function ScreenClienteDetail() {
                 }}>
                   {lang==='es'?'Cliente padre:':'Parent client:'}
                 </span>
-                <strong style={{color:'#0F1B3D'}}>
+                <strong style={{color:'var(--text-primary)'}}>
                   {client.parent.razon_social || client.parent.nombre_comercial}
                 </strong>
               </button>
@@ -551,7 +551,7 @@ export default function ScreenClienteDetail() {
                 si el cliente vino del backend; los mock-only no se borran. */}
             {client._raw && (
               <button className="btn btn-ghost"
-                      style={{ color: '#DC2626' }}
+                      style={{ color: 'var(--critical)' }}
                       onClick={() => setConfirmDelete(true)}>
                 {lang==='es' ? 'Eliminar' : 'Delete'}
               </button>
@@ -797,7 +797,7 @@ function ConsolidatedBanner({ lang, isParent, consolidate }) {
       background:'rgba(0,178,134,0.06)',
       border:'1px dashed rgba(0,178,134,0.30)',
       borderRadius:8,
-      font:'500 12px/1.4 inherit', color:'#0F1B3D',
+      font:'500 12px/1.4 inherit', color:'var(--text-primary)',
     }}>
       <span style={{
         width:6, height:6, borderRadius:99, background:'#00B286', flexShrink:0,
@@ -1257,15 +1257,15 @@ function StatusPopover({ anchorRef, current, busy, lang, onClose, onPick }) {
       style={{
         position:'fixed', top: pos.top, left: pos.left,
         zIndex:1000, width: POP_W,
-        background:'#FFFFFF', borderRadius:12,
+        background:'var(--surface-raised)', borderRadius:12,
         boxShadow:'0 18px 40px -12px rgba(15,27,61,0.28)',
-        border:'1px solid #EAEEF5', overflow:'hidden',
+        border:'1px solid var(--border)', overflow:'hidden',
         fontFamily:'inherit',
       }}
     >
       <div style={{
-        padding:'10px 14px', borderBottom:'1px solid #F1F4F9',
-        font:'600 11px/1 inherit', color:'#6B7894',
+        padding:'10px 14px', borderBottom:'1px solid var(--border)',
+        font:'600 11px/1 inherit', color:'var(--text-tertiary)',
         textTransform:'uppercase', letterSpacing:'0.1em',
       }}>
         {lang==='es' ? 'Cambiar estado' : 'Change status'}
@@ -1279,13 +1279,13 @@ function StatusPopover({ anchorRef, current, busy, lang, onClose, onPick }) {
                   style={{
                     display:'flex', alignItems:'center', gap:10,
                     width:'100%', padding:'10px 14px',
-                    background: isCurrent ? '#F7F9FC' : '#FFFFFF',
-                    border:'none', borderTop:'1px solid #F1F4F9',
+                    background: isCurrent ? 'var(--bg-alt)' : 'var(--surface-raised)',
+                    border:'none', borderTop:'1px solid var(--border)',
                     cursor: busy ? 'not-allowed' : 'pointer',
                     textAlign:'left',
                   }}
-                  onMouseOver={e => !busy && !isCurrent && (e.currentTarget.style.background='#F7F9FC')}
-                  onMouseOut ={e => !busy && !isCurrent && (e.currentTarget.style.background='#FFFFFF')}>
+                  onMouseOver={e => !busy && !isCurrent && (e.currentTarget.style.background='var(--bg-alt)')}
+                  onMouseOut ={e => !busy && !isCurrent && (e.currentTarget.style.background='var(--surface-raised)')}>
             <span style={{
               width:10, height:10, borderRadius:99, background:s.color, flexShrink:0,
               boxShadow:`0 0 0 3px ${s.color}22`,
@@ -1293,11 +1293,11 @@ function StatusPopover({ anchorRef, current, busy, lang, onClose, onPick }) {
             <div style={{flex:1, minWidth:0}}>
               <div style={{
                 font:'600 13px/1.2 inherit',
-                color: isCurrent ? '#0F1B3D' : '#3D4A6B',
+                color: isCurrent ? 'var(--text-primary)' : 'var(--text-secondary)',
               }}>
                 {s.l}
               </div>
-              <div style={{ font:'500 11.5px/1.3 inherit', color:'#8893AC' }}>
+              <div style={{ font:'500 11.5px/1.3 inherit', color:'var(--text-tertiary)' }}>
                 {s.hint}
               </div>
             </div>
@@ -1337,22 +1337,22 @@ function ConfirmDeleteModal({ clientName, busy, error, lang, onCancel, onConfirm
           // (el usuario lo prefiere alto, no en el centro vertical).
           position:'fixed', top:'12vh', left:'50%',
           width:'min(420px, 92vw)', zIndex:91,
-          background:'#FFFFFF', borderRadius:14,
+          background:'var(--surface-raised)', borderRadius:14,
           boxShadow:'0 30px 60px -20px rgba(15,27,61,0.45)',
           fontFamily:'inherit',
         }}
       >
         <div style={{ padding:'22px 22px 12px' }}>
           <div style={{
-            font:'600 11px/1 inherit', color:'#DC2626',
+            font:'600 11px/1 inherit', color:'var(--critical)',
             letterSpacing:'0.12em', textTransform:'uppercase', marginBottom:8,
           }}>
             {lang==='es' ? 'Acción destructiva' : 'Destructive action'}
           </div>
-          <div style={{ font:'700 17px/1.3 inherit', color:'#0F1B3D', marginBottom:8 }}>
+          <div style={{ font:'700 17px/1.3 inherit', color:'var(--text-primary)', marginBottom:8 }}>
             {lang==='es' ? '¿Eliminar este cliente?' : 'Delete this client?'}
           </div>
-          <div style={{ font:'500 13.5px/1.5 inherit', color:'#3D4A6B' }}>
+          <div style={{ font:'500 13.5px/1.5 inherit', color:'var(--text-secondary)' }}>
             {lang==='es'
               ? <>Vas a eliminar <strong>{clientName}</strong>. Es soft-delete: el cliente queda inactivo en BD pero se conserva el historial. Cualquier expediente o pago asociado no se borra.</>
               : <>You're about to delete <strong>{clientName}</strong>. This is a soft-delete: the client becomes inactive in DB but history is preserved. Linked files/payments are not removed.</>
@@ -1378,7 +1378,7 @@ function ConfirmDeleteModal({ clientName, busy, error, lang, onCancel, onConfirm
           <button type="button" onClick={onConfirm} disabled={busy}
                   style={{
                     padding:'10px 16px', borderRadius:9,
-                    background: busy ? '#FCA5A5' : '#DC2626',
+                    background: busy ? '#FCA5A5' : 'var(--critical)',
                     color:'#FFFFFF', border:'none',
                     cursor: busy ? 'not-allowed' : 'pointer',
                     font:'700 13.5px/1 inherit',

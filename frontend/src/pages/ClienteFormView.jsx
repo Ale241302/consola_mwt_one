@@ -33,14 +33,14 @@ import { CLIENTS } from "../data/mockData.js";
 import { clientesApi } from "../lib/api.js";
 
 // ─── Design tokens ───────────────────────────────────────────
-const NAVY  = "#0B1E3A";
+const NAVY  = "var(--text-primary)";
 const MINT  = "#00B286";
 const LIGHT = "#1DE394";
 const AMBER = "#F59E0B";
-const RED   = "#DC2626";
-const INK   = "#334155";
-const MUTED = "#64748B";
-const SOFT  = "#F8FAFC";
+const RED   = "var(--critical)";
+const INK   = "var(--text-secondary)";
+const MUTED = "var(--text-tertiary)";
+const SOFT  = "var(--surface)";
 
 // ─── Catálogos ──────────────────────────────────────────────
 
@@ -271,7 +271,7 @@ export default function ScreenClienteFormView() {
 
       {/* ─── Header card ─── */}
       <div style={{
-        background: `linear-gradient(135deg, ${NAVY} 0%, #1A2F52 100%)`,
+        background: `linear-gradient(135deg, var(--brand-primary) 0%, #1A2F52 100%)`,
         color: "#FFFFFF", padding: "20px 24px", borderRadius: 12,
         display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap",
         marginBottom: 22,
@@ -494,8 +494,8 @@ export default function ScreenClienteFormView() {
                     onClick={() => update("canal", c.k)}
                     style={{
                       padding: "12px 14px", textAlign: "left",
-                      border: `1.5px solid ${active ? MINT : "#E5E7EB"}`,
-                      background: active ? `${MINT}10` : "#FFFFFF",
+                      border: `1.5px solid ${active ? MINT : "var(--border)"}`,
+                      background: active ? `${MINT}10` : "var(--surface-raised)",
                       borderRadius: 10, cursor: "pointer",
                       transition: "all 120ms ease",
                     }}
@@ -603,7 +603,7 @@ export default function ScreenClienteFormView() {
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               style={{
                 padding: "14px 16px", background: SOFT,
-                border: `1px dashed #E5E7EB`, borderRadius: 10,
+                border: `1px dashed var(--border)`, borderRadius: 10,
                 display: "flex", alignItems: "center", gap: 10,
                 color: MUTED, font: "500 12px/1.4 var(--font-body)",
               }}
@@ -623,9 +623,9 @@ export default function ScreenClienteFormView() {
       <div style={{
         position: "sticky", bottom: 0, zIndex: 4,
         marginTop: 24, padding: "14px 20px",
-        background: "#FFFFFFEE",
+        background: "var(--surface-raised)",
         backdropFilter: "blur(6px)",
-        borderTop: "1px solid #E5E7EB",
+        borderTop: "1px solid var(--border)",
         borderRadius: 10,
         display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
         boxShadow: "0 -4px 14px -8px rgba(11,30,58,0.10)",
@@ -652,7 +652,7 @@ export default function ScreenClienteFormView() {
             disabled={saving}
             style={{
               padding: "9px 18px", background: "transparent",
-              border: "1px solid #E5E7EB", color: INK,
+              border: "1px solid var(--border)", color: INK,
               font: "600 12.5px/1 var(--font-body)",
               borderRadius: 8, cursor: saving ? "not-allowed" : "pointer",
             }}
@@ -811,9 +811,9 @@ function Section({ icon, title, subtitle, badge, highlight, children }) {
   return (
     <section style={{
       padding: "18px 20px",
-      background: "#FFFFFF",
-      border: `1px solid ${highlight ? `${highlight}33` : "#E5E7EB"}`,
-      borderLeft: highlight ? `3px solid ${highlight}` : `1px solid #E5E7EB`,
+      background: "var(--surface-raised)",
+      border: `1px solid ${highlight ? `${highlight}33` : "var(--border)"}`,
+      borderLeft: highlight ? `3px solid ${highlight}` : `1px solid var(--border)`,
       borderRadius: 10,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
@@ -880,7 +880,7 @@ function Label({ children, required, tooltip }) {
       {tooltip && (
         <span title={tooltip} style={{
           display: "inline-flex", width: 13, height: 13, borderRadius: "50%",
-          background: "#E5E7EB", color: MUTED, alignItems: "center",
+          background: "var(--bg-alt)", color: MUTED, alignItems: "center",
           justifyContent: "center", cursor: "help",
           font: "700 9px/1 var(--font-body)",
         }}>
@@ -923,14 +923,14 @@ function Input({ value, onChange, onBlur, type = "text", mono, tabular, ...rest 
       {...rest}
       style={{
         width: "100%", padding: "9px 11px",
-        border: "1px solid #E5E7EB", borderRadius: 6,
+        border: "1px solid var(--border)", borderRadius: 6,
         font: `500 13px/1.2 ${mono ? "var(--font-mono, ui-monospace)" : "var(--font-body)"}`,
-        color: NAVY, background: "#FFFFFF", outline: "none",
+        color: NAVY, background: "var(--surface-raised)", outline: "none",
         fontVariantNumeric: tabular ? "tabular-nums" : undefined,
         transition: "border 120ms ease",
       }}
       onFocus={e => (e.target.style.borderColor = MINT)}
-      onBlurCapture={e => (e.target.style.borderColor = "#E5E7EB")}
+      onBlurCapture={e => (e.target.style.borderColor = "var(--border)")}
     />
   );
 }
@@ -939,14 +939,14 @@ function InputAffixed({ affixLeft, affixRight, value, onChange, onBlur, type = "
   return (
     <div style={{
       display: "flex", alignItems: "stretch",
-      border: "1px solid #E5E7EB", borderRadius: 6,
-      overflow: "hidden", background: "#FFFFFF",
+      border: "1px solid var(--border)", borderRadius: 6,
+      overflow: "hidden", background: "var(--surface-raised)",
     }}>
       {affixLeft && (
         <span style={{
           padding: "8px 11px", background: SOFT,
           color: MUTED, font: "600 12px/1 var(--font-body)",
-          borderRight: "1px solid #E5E7EB",
+          borderRight: "1px solid var(--border)",
           display: "grid", placeItems: "center",
         }}>
           {affixLeft}
@@ -970,7 +970,7 @@ function InputAffixed({ affixLeft, affixRight, value, onChange, onBlur, type = "
         <span style={{
           padding: "8px 11px", background: SOFT,
           color: MUTED, font: "500 10.5px/1 var(--font-body)",
-          borderLeft: "1px solid #E5E7EB",
+          borderLeft: "1px solid var(--border)",
           display: "grid", placeItems: "center",
           textTransform: "uppercase", letterSpacing: 0.4,
         }}>
@@ -989,9 +989,9 @@ function Select({ value, onChange, options, ...rest }) {
       {...rest}
       style={{
         width: "100%", padding: "9px 11px",
-        border: "1px solid #E5E7EB", borderRadius: 6,
+        border: "1px solid var(--border)", borderRadius: 6,
         font: "500 13px/1.2 var(--font-body)", color: NAVY,
-        background: "#FFFFFF", outline: "none",
+        background: "var(--surface-raised)", outline: "none",
         cursor: "pointer",
       }}
     >
@@ -1009,9 +1009,9 @@ function Textarea({ value, onChange, rows = 3, ...rest }) {
       {...rest}
       style={{
         width: "100%", padding: "10px 11px",
-        border: "1px solid #E5E7EB", borderRadius: 6,
+        border: "1px solid var(--border)", borderRadius: 6,
         font: "500 13px/1.5 var(--font-body)", color: NAVY,
-        background: "#FFFFFF", outline: "none",
+        background: "var(--surface-raised)", outline: "none",
         resize: "vertical",
       }}
     />

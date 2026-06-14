@@ -1279,7 +1279,7 @@ export default function ScreenProductFormView() {
   const renderSectionD = () => (
     <div className="card card-pad-lg form-card">
       <div className="form-card-head">
-        <IconLock size={16} style={{color:'#DC2626'}}/>
+        <IconLock size={16} style={{color:'var(--critical)'}}/>
         <div>
           <div className="heading-md">{lang==='es'?'D · Gobernanza y precios':'D · Governance & pricing'}</div>
           <div className="caption" style={{color:'var(--text-tertiary)'}}>
@@ -1852,7 +1852,7 @@ export default function ScreenProductFormView() {
             {matricesLoading && (
               <div style={{
                 padding: 24, textAlign: 'center', color: 'var(--text-tertiary)',
-                fontSize: 12, background: '#F8FAFC', border: '1px dashed #CBD5E1',
+                fontSize: 12, background: 'var(--surface-raised)', border: '1px dashed var(--border)',
                 borderRadius: 8,
               }}>
                 {lang === 'es' ? 'Cargando matrices…' : 'Loading matrices…'}
@@ -1862,7 +1862,7 @@ export default function ScreenProductFormView() {
             {!matricesLoading && clientMatrices.length === 0 && (
               <div style={{
                 padding: 20, color: 'var(--text-tertiary)', fontSize: 12,
-                background: '#F8FAFC', border: '1px dashed #CBD5E1', borderRadius: 8,
+                background: 'var(--surface-raised)', border: '1px dashed var(--border)', borderRadius: 8,
                 lineHeight: 1.5,
               }}>
                 {lang === 'es'
@@ -1885,8 +1885,8 @@ export default function ScreenProductFormView() {
                 // del padre flex/grid.
                 <div key={c.cliente_id} style={{
                   marginBottom: 18, padding: 14,
-                  background: '#FFFFFF',
-                  border: '1px solid #E2E8F0', borderRadius: 10,
+                  background: 'var(--surface-raised)',
+                  border: '1px solid var(--border)', borderRadius: 10,
                   display: 'grid',
                   gridTemplateColumns: 'minmax(0, 1fr)',
                   gap: 10,
@@ -1906,8 +1906,8 @@ export default function ScreenProductFormView() {
                         onClick={() => toggleClientExpanded(c.cliente_id)}
                         style={{
                           width: 24, height: 24, borderRadius: 4,
-                          border: '1px solid #E5E7EB', background: '#FFFFFF',
-                          color: '#64748B', cursor: 'pointer', padding: 0,
+                          border: '1px solid var(--border)', background: 'var(--surface-raised)',
+                          color: 'var(--text-tertiary)', cursor: 'pointer', padding: 0,
                           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                           transition: 'transform 140ms ease',
                           transform: expandedClients.has(c.cliente_id) ? 'rotate(90deg)' : 'rotate(0deg)',
@@ -1921,7 +1921,7 @@ export default function ScreenProductFormView() {
                       </button>
                       <div>
                       <div style={{
-                        font: '700 13px/1.2 var(--font-body)', color: '#0B1E3A',
+                        font: '700 13px/1.2 var(--font-body)', color: 'var(--text-primary)',
                         display: 'inline-flex', alignItems: 'center', gap: 6,
                       }}>
                         {c.razon_social}
@@ -1945,20 +1945,20 @@ export default function ScreenProductFormView() {
                         })()}
                       </div>
                       <div style={{
-                        font: '500 10.5px/1.3 var(--font-body)', color: '#64748B',
+                        font: '500 10.5px/1.3 var(--font-body)', color: 'var(--text-tertiary)',
                         marginTop: 2,
                       }}>
                         {c.pais_iso2 && <>{c.pais_iso2} · </>}
                         {lang === 'es' ? 'BRL base:' : 'BRL base:'}
-                        <strong style={{ color: '#0B1E3A', marginLeft: 4 }}>
+                        <strong style={{ color: 'var(--text-primary)', marginLeft: 4 }}>
                           {c.brl_override != null ? Number(c.brl_override).toFixed(2) : '—'}
                         </strong>
                         {' · Com '}
-                        <strong style={{ color: '#0B1E3A' }}>
+                        <strong style={{ color: 'var(--text-primary)' }}>
                           {Number(c.com_pct).toFixed(2)}%
                         </strong>
-                        {Number(c.ajuste_usd) > 0 && <>{' · Ajuste $'}<strong style={{ color: '#0B1E3A' }}>{Number(c.ajuste_usd).toFixed(2)}</strong></>}
-                        {Number(c.sobreprecio_pct) > 0 && <>{' · Sobreprec '}<strong style={{ color: '#0B1E3A' }}>{(Number(c.sobreprecio_pct) * 100).toFixed(2)}%</strong></>}
+                        {Number(c.ajuste_usd) > 0 && <>{' · Ajuste $'}<strong style={{ color: 'var(--text-primary)' }}>{Number(c.ajuste_usd).toFixed(2)}</strong></>}
+                        {Number(c.sobreprecio_pct) > 0 && <>{' · Sobreprec '}<strong style={{ color: 'var(--text-primary)' }}>{(Number(c.sobreprecio_pct) * 100).toFixed(2)}%</strong></>}
                         {c.updated_at && <>{' · '}<span title={c.updated_at}>{new Date(c.updated_at).toLocaleDateString(lang === 'es' ? 'es-CR' : 'en-US')}</span></>}
                       </div>
                       </div>{/* cierre del nuevo wrapper razon+info */}

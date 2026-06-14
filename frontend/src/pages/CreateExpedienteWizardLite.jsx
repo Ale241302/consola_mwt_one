@@ -1425,7 +1425,7 @@ function SelectedClientCard({ client, onClear, lang, existingUsage = 0, locked =
     }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#0B1E3A",
+          <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary)",
                         display: "flex", alignItems: "center", gap: 8 }}>
             {client.parent_id && (
               <span style={{ color: "#00B286", fontWeight: 800 }} title="Subsidiaria">↳</span>
@@ -1450,17 +1450,17 @@ function SelectedClientCard({ client, onClear, lang, existingUsage = 0, locked =
                       "pendiente de facturar" como hint separado, va con
                       otro estilo y no debe afectar el cálculo del bar. */}
                 </span>
-                <span className="tabular-nums" style={{ fontWeight: 700, color: "#0B1E3A" }}>
+                <span className="tabular-nums" style={{ fontWeight: 700, color: "var(--text-primary)" }}>
                   ${disponible.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                   {" / "}
                   ${limit.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                 </span>
               </div>
-              <div style={{ height: 6, background: "#E1E6ED", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
                 <div style={{
                   height: "100%",
                   width: `${Math.min(100, utilPct)}%`,
-                  background: utilPct >= 85 ? "#DC2626" : utilPct >= 70 ? "#F59E0B" : "#00B286",
+                  background: utilPct >= 85 ? "var(--critical)" : utilPct >= 70 ? "#F59E0B" : "#00B286",
                   transition: "width 0.18s ease",
                 }}/>
               </div>
@@ -1584,23 +1584,23 @@ function Step2Productos({
              if (f) handleFile(f);
            }}
            style={{
-             border: `2px dashed ${dragOver ? "#00B286" : "#CBD5E1"}`,
+             border: `2px dashed ${dragOver ? "#00B286" : "var(--border)"}`,
              borderRadius: 12,
              padding: 22, textAlign: "center",
-             background: dragOver ? "rgba(0,178,134,0.04)" : "#FAFBFD",
+             background: dragOver ? "rgba(0,178,134,0.04)" : "var(--surface-raised)",
              marginBottom: 18,
            }}>
         {parsing ? (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
             <IconRefresh size={18} style={{ color: "#00B286", animation: "spin 1.2s linear infinite" }}/>
-            <strong style={{ color: "#0B1E3A" }}>
+            <strong style={{ color: "var(--text-primary)" }}>
               {lang === "es" ? "Validando contra catálogo del cliente…" : "Validating against client catalog…"}
             </strong>
           </div>
         ) : (
           <div>
             <IconUpload size={26} style={{ color: "#3083FE", margin: "0 auto 8px", display: "block" }}/>
-            <div style={{ fontWeight: 700, color: "#0B1E3A" }}>
+            <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>
               {lang === "es"
                 ? "Arrastra el CSV / Excel con tu pedido o:"
                 : "Drag the CSV / Excel here or:"}
@@ -1631,7 +1631,7 @@ function Step2Productos({
         padding: "10px 14px", borderRadius: 8,
         background: "rgba(0,178,134,0.06)",
       }}>
-        <div className="caption" style={{ color: "#0B1E3A", fontWeight: 600 }}>
+        <div className="caption" style={{ color: "var(--text-primary)", fontWeight: 600 }}>
           {orderLines.length} {lang === "es" ? "líneas" : "lines"} · <strong className="tabular-nums">{totalUnits}</strong> {lang === "es" ? "unidades" : "units"}
           {unassignedCount > 0 && (
             <span style={{ color: "#B45309", marginLeft: 12, fontWeight: 700 }}>
@@ -1641,7 +1641,7 @@ function Step2Productos({
         </div>
         {clientLabel && (
           <div className="caption" style={{ color: "var(--text-tertiary)" }}>
-            {lang === "es" ? "Cliente:" : "Client:"} <strong style={{ color: "#0B1E3A" }}>{clientLabel}</strong>
+            {lang === "es" ? "Cliente:" : "Client:"} <strong style={{ color: "var(--text-primary)" }}>{clientLabel}</strong>
           </div>
         )}
       </div>
@@ -1712,7 +1712,7 @@ function Step2Productos({
                                    updateLine(l.tmpId, { splitQty: v });
                                  }}
                                  style={{ width: 64, textAlign: "right", display: "inline-block" }}/>
-                          <span style={{ color: "#64748B" }}>/ {l.cantidad}</span>
+                          <span style={{ color: "var(--text-tertiary)" }}>/ {l.cantidad}</span>
                         </div>
                       )}
                     </td>
@@ -1747,7 +1747,7 @@ function Step2Productos({
                               onClick={() => removeLine(l.tmpId)}
                               title={lang === "es" ? "Eliminar línea" : "Remove line"}
                               style={{
-                                color: "#D64545",
+                                color: "var(--critical)",
                                 padding: "6px 8px",
                                 borderRadius: 6,
                               }}>
@@ -1764,7 +1764,7 @@ function Step2Productos({
 
       {splitEnabled && selectedCount > 0 && (
         <div className="card card-pad-md" style={{ marginTop: 12, background: "#ECFDF5", border: "1px solid #00B286" }}>
-          <div className="caption" style={{ color: "#0B1E3A" }}>
+          <div className="caption" style={{ color: "var(--text-primary)" }}>
             {lang === "es"
               ? `${selectedCount} línea${selectedCount === 1 ? "" : "s"} seleccionada${selectedCount === 1 ? "" : "s"}: al guardar se separan a un expediente NUEVO con la misma OC. Si "Separar" es menor al total, el resto queda en este expediente (split por cantidad).`
               : `${selectedCount} line(s) selected: on save, they move to a NEW expediente with the same PO. Unselected stay in this one.`}
@@ -2158,18 +2158,18 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                     {g.tallas.map((t, i) => (
                       <span key={i} style={{
                         display: "inline-block", padding: "2px 8px", borderRadius: 999,
-                        background: "rgba(0,178,134,0.08)", color: "#0B1E3A",
+                        background: "rgba(0,178,134,0.08)", color: "var(--text-primary)",
                         fontSize: 11, fontWeight: 600, marginRight: 4, marginBottom: 4,
                       }}>
                         {t.talla || "—"}: <strong className="tabular-nums">{t.cantidad}</strong>
                       </span>
                     ))}
                   </td>
-                  <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#0B1E3A" }}>
+                  <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--text-primary)" }}>
                     {totalSku}
                   </td>
                   {isAdmin && (
-                    <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#0B1E3A" }}>
+                    <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--text-primary)" }}>
                       {g.subtotalValue > 0
                         ? `$${g.subtotalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                         : <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}>—</span>}
@@ -2217,11 +2217,11 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
           marginTop: 14,
           padding: "14px 16px",
           borderRadius: 10,
-          background: "#F7F9FC",
-          border: "1px solid #E1E6ED",
+          background: "var(--bg-alt)",
+          border: "1px solid var(--border)",
         }}>
           <div className="micro" style={{
-            color: "#0B1E3A", letterSpacing: 1, fontWeight: 700, marginBottom: 12,
+            color: "var(--text-primary)", letterSpacing: 1, fontWeight: 700, marginBottom: 12,
           }}>
             {lang === "es" ? "TÉRMINOS DE PAGO" : "PAYMENT TERMS"}
           </div>
@@ -2252,7 +2252,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                   operador, mostrar solo el plazo unico. */}
               {operatedByMwt ? (
                 <div style={{ padding: "8px 0", display: "flex", flexDirection: "column", gap: 4 }}>
-                  <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700, color: "#0B1E3A" }}>
+                  <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>
                     <span style={{
                       display: "inline-block", minWidth: 60,
                       fontSize: 10, color: "var(--text-tertiary)", fontWeight: 600,
@@ -2262,7 +2262,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                     </span>{" "}
                     {Number(paymentDaysCliente || paymentDays || 0)} {lang === "es" ? "días" : "days"}
                   </div>
-                  <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700, color: "#0B1E3A" }}>
+                  <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>
                     <span style={{
                       display: "inline-block", minWidth: 60,
                       fontSize: 10, color: "var(--text-tertiary)", fontWeight: 600,
@@ -2278,7 +2278,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 </div>
               ) : (
                 <div className="tabular-nums" style={{
-                  fontSize: 16, fontWeight: 700, color: "#0B1E3A", padding: "8px 0",
+                  fontSize: 16, fontWeight: 700, color: "var(--text-primary)", padding: "8px 0",
                 }}>
                   {Number(paymentDays || 0)} {lang === "es" ? "días" : "days"}
                   {Number(client?.dias_credito || 0) > 0
@@ -2368,7 +2368,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       {client && totalValue > 0 && operatedByMwt && isAdmin && (
         <div style={{ marginTop: 14 }}>
           <div className="micro" style={{
-            color: "#0B1E3A", letterSpacing: 1, fontWeight: 700,
+            color: "var(--text-primary)", letterSpacing: 1, fontWeight: 700,
             marginBottom: 10, padding: "0 4px",
           }}>
             {lang === "es"
@@ -2403,24 +2403,24 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                   style={{
                     textAlign: "left", padding: "14px 14px", borderRadius: 10,
                     cursor: "pointer",
-                    background: isSelected ? "rgba(0,178,134,0.08)" : "#fff",
-                    border: isSelected ? "2px solid #00B286" : "1px solid #E1E6ED",
+                    background: isSelected ? "rgba(0,178,134,0.08)" : "var(--surface-raised)",
+                    border: isSelected ? "2px solid #00B286" : "1px solid var(--border)",
                     transition: "all 0.15s ease",
                   }}
                 >
-                  <div style={{ fontSize: 11, color: "#64748B", letterSpacing: 0.5, fontWeight: 600 }}>
+                  <div style={{ fontSize: 11, color: "var(--text-tertiary)", letterSpacing: 0.5, fontWeight: 600 }}>
                     {lang === "es" ? (tier.label_es || `${tier.days} días`) : (tier.label_en || `${tier.days} days`)}
                   </div>
-                  <div className="tabular-nums" style={{ fontSize: 22, fontWeight: 800, color: tier.isBase ? "#64748B" : "#00B286", marginTop: 4 }}>
+                  <div className="tabular-nums" style={{ fontSize: 22, fontWeight: 800, color: tier.isBase ? "var(--text-tertiary)" : "#00B286", marginTop: 4 }}>
                     {tier.isBase ? (lang === "es" ? "base" : "base") : `${tier.pct < 0 ? "+" : "-"}${Math.abs(tier.pct).toFixed(2)}%`}
                   </div>
-                  <div className="tabular-nums" style={{ fontSize: 16, fontWeight: 700, color: "#0B1E3A", marginTop: 8 }}>
-                    {fmt(tierUnit)} <span style={{ fontSize: 11, color: "#64748B", fontWeight: 500 }}>{lang === "es" ? "por par" : "per pair"}</span>
+                  <div className="tabular-nums" style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary)", marginTop: 8 }}>
+                    {fmt(tierUnit)} <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 500 }}>{lang === "es" ? "por par" : "per pair"}</span>
                   </div>
-                  <div className="tabular-nums" style={{ fontSize: 14, color: "#0B1E3A", marginTop: 8, paddingTop: 8, borderTop: "1px solid #E1E6ED" }}>
+                  <div className="tabular-nums" style={{ fontSize: 14, color: "var(--text-primary)", marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
                     {fmt(tierTotal)}
                   </div>
-                  <div className="tabular-nums" style={{ fontSize: 11, color: ahorro > 0 ? "#00B286" : "#64748B", marginTop: 2 }}>
+                  <div className="tabular-nums" style={{ fontSize: 11, color: ahorro > 0 ? "#00B286" : "var(--text-tertiary)", marginTop: 2 }}>
                     {ahorro > 0 ? `${lang === "es" ? "Ahorro" : "Save"} ${fmt(ahorro)}` : (tier.isBase ? (lang === "es" ? "Plazo actual MWT" : "Current MWT term") : "")}
                   </div>
                 </button>
@@ -2435,7 +2435,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       {client && totalValue > 0 && (
         <div style={{ marginTop: 14 }}>
           <div className="micro" style={{
-            color: "#0B1E3A", letterSpacing: 1, fontWeight: 700,
+            color: "var(--text-primary)", letterSpacing: 1, fontWeight: 700,
             marginBottom: 10, padding: "0 4px",
           }}>
             {operatedByMwt && isAdmin
@@ -2485,10 +2485,10 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                     padding: "14px 14px",
                     borderRadius: 10,
                     cursor: "pointer",
-                    background: isSelected ? "rgba(0,178,134,0.08)" : "#fff",
+                    background: isSelected ? "rgba(0,178,134,0.08)" : "var(--surface-raised)",
                     border: isSelected
                       ? "2px solid #00B286"
-                      : "1px solid #E1E6ED",
+                      : "1px solid var(--border)",
                     transition: "all 0.15s ease",
                   }}
                 >
@@ -2512,7 +2512,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                           : `+${Math.abs(tier.pct).toFixed(2)}%`)}
                   </div>
                   <div className="tabular-nums" style={{
-                    fontSize: 16, fontWeight: 700, color: "#0B1E3A",
+                    fontSize: 16, fontWeight: 700, color: "var(--text-primary)",
                   }}>
                     {fmt(tierUnit)}
                   </div>
@@ -2522,10 +2522,10 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                     {lang === "es" ? "por par" : "per pair"}
                   </div>
                   <div style={{
-                    height: 1, background: "#E1E6ED", margin: "6px 0",
+                    height: 1, background: "var(--border)", margin: "6px 0",
                   }}/>
                   <div className="tabular-nums" style={{
-                    fontSize: 13, fontWeight: 700, color: "#0B1E3A",
+                    fontSize: 13, fontWeight: 700, color: "var(--text-primary)",
                   }}>
                     {fmt(tierTotal)}
                   </div>
@@ -2551,7 +2551,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
             marginTop: 10, padding: "8px 12px", borderRadius: 6,
             background: "rgba(0,178,134,0.06)",
             border: "1px solid rgba(0,178,134,0.18)",
-            fontSize: 11, color: "#0B1E3A", lineHeight: 1.45,
+            fontSize: 11, color: "var(--text-primary)", lineHeight: 1.45,
           }}>
             <strong>{lang === "es" ? "Pronto pago:" : "Early payment:"}</strong>{" "}
             {lang === "es"
@@ -2573,7 +2573,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       <div style={{
         marginTop: 18, padding: "12px 14px", borderRadius: 8,
         background: "rgba(48,131,254,0.06)", border: "1px solid rgba(48,131,254,0.20)",
-        fontSize: 13, color: "#0B1E3A",
+        fontSize: 13, color: "var(--text-primary)",
       }}>
         <IconLock size={11} style={{ verticalAlign: -1, marginRight: 6, color: "#3083FE" }}/>
         {lang === "es"
@@ -2681,9 +2681,9 @@ function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
              : cp.utilPctAfter >= 85 ? "red"
              : cp.utilPctAfter >= 70 ? "amber" : "green";
   const colorMap = {
-    green: { bar: "#00B286", text: "#0B1E3A", bg: "rgba(0,178,134,0.06)", border: "rgba(0,178,134,0.30)" },
+    green: { bar: "#00B286", text: "var(--text-primary)", bg: "rgba(0,178,134,0.06)", border: "rgba(0,178,134,0.30)" },
     amber: { bar: "#F59E0B", text: "#92400E", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.40)" },
-    red:   { bar: "#DC2626", text: "#991B1B", bg: "rgba(220,38,38,0.08)", border: "rgba(220,38,38,0.40)" },
+    red:   { bar: "var(--critical)", text: "#991B1B", bg: "rgba(220,38,38,0.08)", border: "rgba(220,38,38,0.40)" },
   };
   const c = colorMap[tone];
   const fmt = (v) => `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -2704,7 +2704,7 @@ function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
         {cp.exceedsLimit && (
           <span style={{
             padding: "3px 10px", borderRadius: 999,
-            background: "#DC2626", color: "#fff",
+            background: "var(--critical)", color: "#fff",
             fontSize: 10, fontWeight: 800, letterSpacing: 0.6,
           }}>
             {lang === "es" ? "EXCEDE LÍMITE" : "EXCEEDS LIMIT"}
@@ -2727,7 +2727,7 @@ function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
         <Stat
           label={lang === "es" ? "Disponible después" : "After order"}
           value={fmt(cp.afterAvailable)}
-          accent={cp.afterAvailable < 0 ? "#DC2626" : c.text}
+          accent={cp.afterAvailable < 0 ? "var(--critical)" : c.text}
         />
       </div>
 
@@ -2741,7 +2741,7 @@ function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
             {cp.utilPctAfter}% {cp.exceedsLimit && "(>100%)"}
           </span>
         </div>
-        <div style={{ height: 8, background: "#E1E6ED", borderRadius: 4, overflow: "hidden", position: "relative" }}>
+        <div style={{ height: 8, background: "var(--border)", borderRadius: 4, overflow: "hidden", position: "relative" }}>
           <div style={{
             height: "100%",
             width: `${Math.min(100, cp.utilPctAfter)}%`,
@@ -2778,7 +2778,7 @@ function Stat({ label, value, accent }) {
       }}>{label}</div>
       <div className="tabular-nums" style={{
         fontSize: 15, fontWeight: 700,
-        color: accent || "#0B1E3A",
+        color: accent || "var(--text-primary)",
       }}>{value}</div>
     </div>
   );

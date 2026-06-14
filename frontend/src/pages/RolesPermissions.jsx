@@ -215,7 +215,7 @@ export default function RolesPermissions() {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div style={{ flex: 1 }}>
-          <h1 style={{ margin: 0, font: "700 22px/1.1 var(--font-display)", color: "var(--navy)" }}>
+          <h1 style={{ margin: 0, font: "700 22px/1.1 var(--font-display)", color: "var(--text-primary)" }}>
             {lang === "es" ? "Roles y Permisos" : "Roles & Permissions"}
           </h1>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-tertiary)" }}>
@@ -233,7 +233,7 @@ export default function RolesPermissions() {
       <div style={{
         display: "flex", gap: 16, alignItems: "center",
         padding: "14px 18px",
-        background: "#fff", border: "1px solid var(--border)", borderRadius: 10,
+        background: "var(--surface-raised)", border: "1px solid var(--border)", borderRadius: 10,
       }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: 0.5, textTransform: "uppercase" }}>
           {lang === "es" ? "Rol" : "Role"}
@@ -312,9 +312,9 @@ export default function RolesPermissions() {
               : (lang === "es" ? "Eliminar este rol (soft delete)" : "Delete this role (soft delete)")
           }
           style={{
-            background: roleMeta?.is_system ? "#F8FAFC" : "transparent",
-            color: roleMeta?.is_system ? "#CBD5E1" : "#DC2626",
-            border: `1.5px solid ${roleMeta?.is_system ? "#E5E7EB" : "#DC262633"}`,
+            background: roleMeta?.is_system ? "var(--bg-alt)" : "transparent",
+            color: roleMeta?.is_system ? "var(--border)" : "var(--critical)",
+            border: `1.5px solid ${roleMeta?.is_system ? "var(--border)" : "#DC262633"}`,
             padding: 8, borderRadius: 8,
             cursor: roleMeta?.is_system ? "not-allowed" : "pointer",
             display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -337,7 +337,7 @@ export default function RolesPermissions() {
                 : (lang === "es" ? "Guardar matriz" : "Save matrix")
           }
           style={{
-            background: dirty ? "var(--mint, #00B286)" : "#E1E6ED",
+            background: dirty ? "var(--mint, #00B286)" : "var(--border)",
             color: dirty ? "#fff" : "var(--text-tertiary)",
             border: "none",
             padding: 8, borderRadius: 8,
@@ -358,7 +358,7 @@ export default function RolesPermissions() {
         </div>
       ) : (
         <div style={{
-          background: "#fff", border: "1px solid var(--border)", borderRadius: 10,
+          background: "var(--surface-raised)", border: "1px solid var(--border)", borderRadius: 10,
           overflow: "hidden",
         }}>
           <MatrixHeader onColToggle={toggleColAll} lang={lang}/>
@@ -366,7 +366,7 @@ export default function RolesPermissions() {
             <React.Fragment key={cat}>
               <div style={{
                 padding: "8px 14px",
-                background: "#F7F9FC",
+                background: "var(--bg-alt)",
                 fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
                 letterSpacing: 0.8, textTransform: "uppercase",
                 borderBottom: "1px solid var(--border)",
@@ -422,7 +422,7 @@ export default function RolesPermissions() {
             style={{
               position: "fixed", bottom: 24, right: 24, zIndex: 200,
               padding: "10px 16px",
-              background: "var(--navy, #0B1E3A)",
+              background: "var(--brand-primary)",
               color: "#fff", borderRadius: 8, fontSize: 13,
               boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
             }}
@@ -473,7 +473,7 @@ function CreateRoleModal({ lang, existingSlugs, busy, onClose, onCreate }) {
           top: "50%", left: "50%",
           transform: "translate(-50%, -50%)",
           width: "min(480px, 92vw)",
-          background: "#fff", borderRadius: 12,
+          background: "var(--surface-raised)", borderRadius: 12,
           boxShadow: "0 20px 60px -12px rgba(11,30,58,0.35)",
           zIndex: 101,
           overflow: "hidden",
@@ -513,7 +513,7 @@ function CreateRoleModal({ lang, existingSlugs, busy, onClose, onCreate }) {
               style={modalInput}
             />
             <div style={{ font: "500 10.5px/1.4 var(--font-body)",
-              color: !form.slug ? "#94A3B8" : (slugOk && !slugDup) ? "#00B286" : "#DC2626",
+              color: !form.slug ? "#94A3B8" : (slugOk && !slugDup) ? "#00B286" : "var(--critical)",
               marginTop: 4 }}>
               {!form.slug
                 ? "Sólo minúsculas, números, _ y -. No se puede cambiar después."
@@ -558,8 +558,8 @@ function CreateRoleModal({ lang, existingSlugs, busy, onClose, onCreate }) {
                   value={form.color}
                   onChange={e => upd("color", e.target.value)}
                   style={{
-                    width: 40, height: 38, padding: 2, border: "1px solid #E5E7EB",
-                    borderRadius: 6, cursor: "pointer", background: "#fff",
+                    width: 40, height: 38, padding: 2, border: "1px solid var(--border)",
+                    borderRadius: 6, cursor: "pointer", background: "var(--surface-raised)",
                   }}
                 />
                 <input
@@ -586,14 +586,14 @@ function CreateRoleModal({ lang, existingSlugs, busy, onClose, onCreate }) {
 
         <footer style={{
           padding: "14px 22px",
-          background: "#F8FAFC",
-          borderTop: "1px solid #E5E7EB",
+          background: "var(--bg-alt)",
+          borderTop: "1px solid var(--border)",
           display: "flex", justifyContent: "flex-end", gap: 8,
         }}>
           <button type="button" onClick={onClose} disabled={busy}
             style={{
               padding: "8px 16px", background: "transparent",
-              border: "1px solid #E5E7EB", color: "#334155",
+              border: "1px solid var(--border)", color: "var(--text-secondary)",
               font: "600 12.5px/1 var(--font-body)",
               borderRadius: 8, cursor: busy ? "not-allowed" : "pointer",
             }}>
@@ -646,7 +646,7 @@ function ConfirmDeleteModal({ lang, role, busy, onClose, onConfirm }) {
           top: "50%", left: "50%",
           transform: "translate(-50%, -50%)",
           width: "min(420px, 92vw)",
-          background: "#fff", borderRadius: 12,
+          background: "var(--surface-raised)", borderRadius: 12,
           boxShadow: "0 20px 60px -12px rgba(11,30,58,0.35)",
           zIndex: 101, overflow: "hidden",
         }}
@@ -658,23 +658,23 @@ function ConfirmDeleteModal({ lang, role, busy, onClose, onConfirm }) {
             <div style={{
               width: 40, height: 40, borderRadius: "50%",
               background: "rgba(220,38,38,0.10)",
-              color: "#DC2626",
+              color: "var(--critical)",
               display: "grid", placeItems: "center",
             }}>
               <IconAlert size={20}/>
             </div>
             <div>
-              <div style={{ font: "700 15px/1.2 var(--font-body)", color: "#0B1E3A" }}>
+              <div style={{ font: "700 15px/1.2 var(--font-body)", color: "var(--text-primary)" }}>
                 {lang === "es" ? "Eliminar rol" : "Delete role"}
               </div>
-              <div style={{ font: "500 12px/1.4 var(--font-body)", color: "#64748B", marginTop: 2 }}>
+              <div style={{ font: "500 12px/1.4 var(--font-body)", color: "var(--text-tertiary)", marginTop: 2 }}>
                 {lang === "es" ? "Esta acción es soft-delete (is_active=false)." : "Soft delete (is_active=false)."}
               </div>
             </div>
           </div>
           <div style={{
-            padding: 12, background: "#F8FAFC", borderRadius: 8, marginBottom: 12,
-            font: "500 13px/1.5 var(--font-body)", color: "#334155",
+            padding: 12, background: "var(--bg-alt)", borderRadius: 8, marginBottom: 12,
+            font: "500 13px/1.5 var(--font-body)", color: "var(--text-secondary)",
           }}>
             <span style={{
               display: "inline-block", width: 8, height: 8, borderRadius: 4,
@@ -685,7 +685,7 @@ function ConfirmDeleteModal({ lang, role, busy, onClose, onConfirm }) {
               ({role.slug})
             </span>
           </div>
-          <div style={{ font: "500 12.5px/1.5 var(--font-body)", color: "#475569" }}>
+          <div style={{ font: "500 12.5px/1.5 var(--font-body)", color: "var(--text-secondary)" }}>
             {lang === "es"
               ? "Los usuarios con este rol mantendrán el acceso hasta que les asignes otro. Puedes reactivarlo más tarde con toggle-active."
               : "Users with this role keep access until you reassign them. You can reactivate later via toggle-active."}
@@ -693,14 +693,14 @@ function ConfirmDeleteModal({ lang, role, busy, onClose, onConfirm }) {
         </div>
         <footer style={{
           padding: "14px 22px",
-          background: "#F8FAFC",
-          borderTop: "1px solid #E5E7EB",
+          background: "var(--bg-alt)",
+          borderTop: "1px solid var(--border)",
           display: "flex", justifyContent: "flex-end", gap: 8,
         }}>
           <button type="button" onClick={onClose} disabled={busy}
             style={{
               padding: "8px 16px", background: "transparent",
-              border: "1px solid #E5E7EB", color: "#334155",
+              border: "1px solid var(--border)", color: "var(--text-secondary)",
               font: "600 12.5px/1 var(--font-body)",
               borderRadius: 8, cursor: busy ? "not-allowed" : "pointer",
             }}>
@@ -709,7 +709,7 @@ function ConfirmDeleteModal({ lang, role, busy, onClose, onConfirm }) {
           <button type="button" onClick={onConfirm} disabled={busy}
             style={{
               padding: "8px 18px",
-              background: busy ? "#94A3B8" : "#DC2626",
+              background: busy ? "#94A3B8" : "var(--critical)",
               color: "#fff", border: "none",
               font: "700 12.5px/1 var(--font-body)",
               borderRadius: 8,
@@ -733,7 +733,7 @@ function ModalLabel({ children }) {
   return (
     <label style={{
       display: "block",
-      font: "600 11px/1 var(--font-body)", color: "#0B1E3A",
+      font: "600 11px/1 var(--font-body)", color: "var(--text-primary)",
       marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4,
     }}>
       {children}
@@ -743,9 +743,9 @@ function ModalLabel({ children }) {
 
 const modalInput = {
   width: "100%", padding: "9px 11px",
-  border: "1px solid #E5E7EB", borderRadius: 6,
-  font: "500 13px/1.2 var(--font-body)", color: "#0B1E3A",
-  background: "#fff", outline: "none",
+  border: "1px solid var(--border)", borderRadius: 6,
+  font: "500 13px/1.2 var(--font-body)", color: "var(--text-primary)",
+  background: "var(--surface-raised)", outline: "none",
   boxSizing: "border-box",
 };
 
@@ -761,7 +761,7 @@ function MatrixHeader({ onColToggle, lang }) {
   return (
     <div style={{
       display: "grid", gridTemplateColumns: COLS, gap: 4,
-      padding: "10px 14px", background: "#EEF2F7",
+      padding: "10px 14px", background: "var(--bg-alt)",
       borderBottom: "1px solid var(--border)",
       fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
       letterSpacing: 0.5, textTransform: "uppercase", alignItems: "center",
@@ -800,7 +800,7 @@ function MatrixRow({ cell, onToggle, lang }) {
       borderBottom: "1px solid var(--border)",
       fontSize: 13, alignItems: "center",
     }}>
-      <span style={{ fontWeight: 500, color: "var(--navy)" }}>
+      <span style={{ fontWeight: 500, color: "var(--text-primary)" }}>
         {cell.module_label}
         <code style={{
           marginLeft: 6,
@@ -834,7 +834,7 @@ function Cell({ checked, onChange, danger = false }) {
         onChange={onChange}
         style={{
           width: 16, height: 16,
-          accentColor: danger ? "#D64545" : "var(--mint, #00B286)",
+          accentColor: danger ? "var(--critical)" : "var(--mint, #00B286)",
           cursor: "pointer",
         }}
       />

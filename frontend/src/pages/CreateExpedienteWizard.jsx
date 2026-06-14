@@ -36,14 +36,14 @@ import { RequestAssignmentDialog } from "../components/expedientes/ManualLineMod
 // Admin cambie colores de tema sin re-escribir todos los selectores).
 // ---------------------------------------------------------------------
 const COLORS = {
-  navy:      "#0B1E3A",
+  navy:      "var(--text-primary)",
   mint:      "#00B286",
   mintDark:  "#008B69",
-  ink:       "#1B2A45",
-  inkSoft:   "#4A5A75",
-  paper:     "#F7F9FC",
-  border:    "#E1E6ED",
-  danger:    "#D64545",
+  ink:       "var(--text-primary)",
+  inkSoft:   "var(--text-secondary)",
+  paper:     "var(--surface)",
+  border:    "var(--border)",
+  danger:    "var(--critical)",
   warning:   "#E09F3E",
 };
 
@@ -578,7 +578,7 @@ function StepUpload({ state, patch, isClient }) {
         style={{
           ...styles.dropzone,
           borderColor: dragOver ? COLORS.mint : (state.ocrPayload ? COLORS.mint : COLORS.border),
-          background:  dragOver ? "#E6F7F1" : (state.ocrPayload ? "#F4FBF8" : "#FAFBFD"),
+          background:  dragOver ? "#E6F7F1" : (state.ocrPayload ? "#F4FBF8" : "var(--surface-raised)"),
           position:    "relative",
           overflow:    "hidden",
           cursor:      state.loadingOcr ? "wait" : "pointer",
@@ -849,7 +849,7 @@ function chipStyle(accent = false) {
     display: "inline-block",
     fontSize: 11,
     fontWeight: 500,
-    background: accent ? COLORS.mint : "#FFFFFF",
+    background: accent ? COLORS.mint : "var(--surface-raised)",
     color:      accent ? "#fff"      : COLORS.ink,
     border:     accent ? "none"      : `1px solid ${COLORS.border}`,
     padding:    "3px 8px",
@@ -1074,7 +1074,7 @@ function StepProducts({ state, patch, isClient }) {
             const assigned = isAssigned(l);
             const sent = !!(l.unassigned_request_sent || reqDone[l.sku]);
             return (
-            <tr key={i} style={i % 2 ? { background: "#FAFBFD" } : null}>
+            <tr key={i} style={i % 2 ? { background: "var(--bg-alt)" } : null}>
               <td style={styles.td}>
                 {isClient ? <code>{l.sku}</code> : (
                   <input
@@ -1326,9 +1326,9 @@ function Kpi({ label, value, accent }) {
   return (
     <div style={{
       ...styles.kpi,
-      background: accent ? COLORS.navy : "#FFFFFF",
+      background: accent ? "var(--brand-primary)" : "var(--surface-raised)",
       color:      accent ? "#fff"       : COLORS.ink,
-      borderColor: accent ? COLORS.navy : COLORS.border,
+      borderColor: accent ? "var(--brand-primary)" : COLORS.border,
     }}>
       <div style={{ fontSize: 12, opacity: 0.75 }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>{value}</div>
@@ -1442,7 +1442,7 @@ const styles = {
 
   // Card
   card: {
-    background: "#FFFFFF",
+    background: "var(--surface-raised)",
     border: `1px solid ${COLORS.border}`,
     borderRadius: 12,
     padding: "28px 32px",
@@ -1539,7 +1539,7 @@ const styles = {
     borderRadius: 8,
     border: `1px solid ${COLORS.border}`,
     fontSize: 14,
-    background: "#fff",
+    background: "var(--surface-raised)",
     color: COLORS.ink,
     boxSizing: "border-box",
   },
@@ -1549,7 +1549,7 @@ const styles = {
     borderRadius: 6,
     border: `1px solid ${COLORS.border}`,
     fontSize: 13,
-    background: "#FFFFFF",
+    background: "var(--surface-raised)",
     boxSizing: "border-box",
   },
   grid2: {
@@ -1650,7 +1650,7 @@ const styles = {
     transition: "background 0.15s ease",
   },
   btnSecondary: {
-    background: "#FFFFFF",
+    background: "var(--surface-raised)",
     color: COLORS.ink,
     border: `1px solid ${COLORS.border}`,
     padding: "10px 20px",

@@ -529,16 +529,16 @@ export default function CreateTransferWizard() {
                   style={{
                     display: "flex", alignItems: "center", gap: 10,
                     padding: "8px 14px", borderRadius: 999,
-                    border: active ? "1.5px solid #00B286" : "1px solid var(--border, #E1E6ED)",
-                    background: active ? "rgba(0,178,134,0.06)" : (done ? "rgba(0,178,134,0.10)" : "#fff"),
-                    color: active ? "#0B1E3A" : (done ? "#00B286" : "var(--text-secondary)"),
+                    border: active ? "1.5px solid #00B286" : "1px solid var(--border)",
+                    background: active ? "rgba(0,178,134,0.06)" : (done ? "rgba(0,178,134,0.10)" : "var(--surface-raised)"),
+                    color: active ? "var(--text-primary)" : (done ? "#00B286" : "var(--text-secondary)"),
                     fontWeight: 600, fontSize: 13,
                     cursor: s.id < step ? "pointer" : "default",
                   }}>
                   <span style={{
                     width: 22, height: 22, borderRadius: 99,
-                    background: active ? "#00B286" : (done ? "#00B286" : "#E1E6ED"),
-                    color: (active || done) ? "#fff" : "#64748B",
+                    background: active ? "#00B286" : (done ? "#00B286" : "var(--border)"),
+                    color: (active || done) ? "#fff" : "var(--text-tertiary)",
                     display: "inline-flex", alignItems: "center", justifyContent: "center",
                     fontSize: 12, fontWeight: 700,
                   }}>
@@ -547,7 +547,7 @@ export default function CreateTransferWizard() {
                   <span>{s.label}</span>
                 </button>
                 {idx < STEPS.length - 1 && (
-                  <span style={{ flex: 1, height: 1, background: "#E1E6ED", maxWidth: 60 }}/>
+                  <span style={{ flex: 1, height: 1, background: "var(--border)", maxWidth: 60 }}/>
                 )}
               </React.Fragment>
             );
@@ -755,12 +755,12 @@ function Step1Context({
                       style={{
                         textAlign: "left", padding: "12px 14px",
                         border: legalContext === c.codigo
-                          ? `2px solid ${c.color}` : "1px solid var(--border, #E1E6ED)",
+                          ? `2px solid ${c.color}` : "1px solid var(--border)",
                         background: legalContext === c.codigo
-                          ? `${c.color}10` : "#fff",
+                          ? `${c.color}10` : "var(--surface-raised)",
                         borderRadius: 10, cursor: "pointer",
                       }}>
-                <div style={{ fontWeight: 700, color: "#0B1E3A", marginBottom: 3 }}>
+                <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: 3 }}>
                   {c.label}
                 </div>
                 <div className="caption" style={{ color: "var(--text-tertiary)" }}>
@@ -804,17 +804,17 @@ function Step1Context({
                    if (f) onDocFile(f);
                  }}
                  style={{
-                   border: `2px dashed ${dragOver ? "#00B286" : "#CBD5E1"}`,
+                   border: `2px dashed ${dragOver ? "#00B286" : "var(--border)"}`,
                    borderRadius: 12,
                    padding: 28, textAlign: "center",
-                   background: dragOver ? "rgba(0,178,134,0.04)" : "#FAFBFD",
+                   background: dragOver ? "rgba(0,178,134,0.04)" : "var(--surface-raised)",
                    transition: "background 0.15s, border 0.15s",
                  }}>
               {ocrLoading ? (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
                   <IconRefresh size={20} style={{ color: "#00B286", animation: "spin 1.2s linear infinite" }}/>
                   <div>
-                    <div style={{ fontWeight: 700, color: "#0B1E3A" }}>
+                    <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>
                       {lang === "es" ? "Analizando con IA…" : "Analyzing with AI…"}
                     </div>
                     <div className="caption" style={{ color: "var(--text-tertiary)" }}>
@@ -825,7 +825,7 @@ function Step1Context({
               ) : docFile ? (
                 <div>
                   <IconCheck size={26} style={{ color: "#00B286", margin: "0 auto 8px", display: "block" }}/>
-                  <div style={{ fontWeight: 700, color: "#0B1E3A" }}>
+                  <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>
                     <IconFileText size={12} style={{ verticalAlign: -1, marginRight: 4 }}/>
                     {docFile.name}
                   </div>
@@ -847,7 +847,7 @@ function Step1Context({
               ) : (
                 <div>
                   <IconUpload size={26} style={{ color: "#3083FE", margin: "0 auto 8px", display: "block" }}/>
-                  <div style={{ fontWeight: 700, color: "#0B1E3A" }}>
+                  <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>
                     {lang === "es" ? "Arrastra el DUA / liquidación aquí" : "Drag the DUA / customs receipt here"}
                   </div>
                   <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
@@ -962,12 +962,12 @@ function LegalDocSlot({ slot, file, onFile, onClear, lang }) {
     <div style={{
       border: file
         ? "1.5px solid #00B286"
-        : `1.5px dashed ${drag ? "#00B286" : "var(--border, #E1E6ED)"}`,
+        : `1.5px dashed ${drag ? "#00B286" : "var(--border)"}`,
       borderRadius: 12,
       padding: "14px 16px",
       background: file
         ? "rgba(0,178,134,0.04)"
-        : (drag ? "rgba(0,178,134,0.04)" : "white"),
+        : (drag ? "rgba(0,178,134,0.04)" : "var(--surface-raised)"),
       transition: "all 0.15s",
     }}
       onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
@@ -982,17 +982,17 @@ function LegalDocSlot({ slot, file, onFile, onClear, lang }) {
         <div style={{
           width: 32, height: 32, borderRadius: 8,
           background: file ? "rgba(0,178,134,0.12)" : "rgba(11,30,58,0.05)",
-          color: file ? "#00B286" : "#0B1E3A",
+          color: file ? "#00B286" : "var(--text-primary)",
           display: "flex", alignItems: "center", justifyContent: "center",
           flexShrink: 0,
         }}>
           {file ? <IconCheck size={14}/> : <IconFileText size={14}/>}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 13, color: "#0B1E3A" }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: "var(--text-primary)" }}>
             {lang === "es" ? slot.label_es : slot.label_en}
             {slot.required && (
-              <span style={{ color: "#DC2626", marginLeft: 4 }}>*</span>
+              <span style={{ color: "var(--critical)", marginLeft: 4 }}>*</span>
             )}
           </div>
           <div className="caption" style={{
@@ -1018,7 +1018,7 @@ function LegalDocSlot({ slot, file, onFile, onClear, lang }) {
             </button>
             <button type="button" className="btn btn-ghost btn-sm"
                     onClick={onClear}
-                    style={{ fontSize: 11, color: "#DC2626" }}>
+                    style={{ fontSize: 11, color: "var(--critical)" }}>
               {lang === "es" ? "Quitar" : "Remove"}
             </button>
           </>
@@ -1027,8 +1027,8 @@ function LegalDocSlot({ slot, file, onFile, onClear, lang }) {
                   onClick={() => fileRef.current?.click()}
                   style={{
                     fontSize: 11, fontWeight: 700,
-                    background: "#0B1E3A", color: "white",
-                    borderColor: "#0B1E3A",
+                    background: "var(--brand-primary)", color: "white",
+                    borderColor: "var(--brand-primary)",
                   }}>
             <IconUpload size={11}/>{" "}
             {lang === "es" ? "Subir archivo" : "Upload file"}
@@ -1072,8 +1072,8 @@ function OcrSkillSidebar({ lang, skillKey }) {
     <>
       <aside style={{
         position: "sticky", top: 88,
-        background: "white",
-        border: "1px solid var(--border, #E1E6ED)",
+        background: "var(--surface-raised)",
+        border: "1px solid var(--border)",
         borderRadius: 14,
         overflow: "hidden",
         boxShadow: "0 1px 3px rgba(15,27,61,0.04)",
@@ -1081,7 +1081,7 @@ function OcrSkillSidebar({ lang, skillKey }) {
         {/* Header */}
         <div style={{
           padding: "14px 18px",
-          background: "linear-gradient(135deg, #0B1E3A 0%, #1F3A66 100%)",
+          background: "linear-gradient(135deg, var(--brand-primary) 0%, #1F3A66 100%)",
           color: "white",
         }}>
           <div className="micro" style={{
@@ -1176,7 +1176,7 @@ function SkillRow({ k, v, mono }) {
         marginBottom: 2,
       }}>{k}</div>
       <div style={{
-        fontSize: 13, color: "#0B1E3A", fontWeight: 600,
+        fontSize: 13, color: "var(--text-primary)", fontWeight: 600,
         fontFamily: mono ? "var(--font-mono, ui-monospace)" : undefined,
         wordBreak: "break-word",
       }}>{v}</div>
@@ -1230,13 +1230,13 @@ function EditSkillDrawer({ lang, skill, onClose, onSaved }) {
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "min(640px, 96vw)", height: "100vh",
-          background: "white", display: "flex", flexDirection: "column",
+          background: "var(--surface-raised)", display: "flex", flexDirection: "column",
           boxShadow: "-30px 0 60px -20px rgba(15,27,61,0.55)",
         }}>
         {/* Header */}
         <div style={{
           padding: "16px 22px",
-          background: "linear-gradient(135deg, #0B1E3A 0%, #1F3A66 100%)",
+          background: "linear-gradient(135deg, var(--brand-primary) 0%, #1F3A66 100%)",
           color: "white",
           display: "flex", alignItems: "center", gap: 12,
         }}>
@@ -1272,7 +1272,7 @@ function EditSkillDrawer({ lang, skill, onClose, onSaved }) {
           display: "flex", gap: 10, alignItems: "flex-start",
           color: "#991B1B",
         }}>
-          <IconAlert size={14} style={{ color: "#DC2626", flexShrink: 0, marginTop: 1 }}/>
+          <IconAlert size={14} style={{ color: "var(--critical)", flexShrink: 0, marginTop: 1 }}/>
           <div style={{ fontSize: 12, lineHeight: 1.5 }}>
             <strong>
               {lang === "es" ? "Cambios críticos a nivel compañía. " : "Company-wide critical changes. "}
@@ -1637,7 +1637,7 @@ function Step2Costs({
                              value={c.fx_to_usd}
                              onChange={(e) => updateCostLine(c.tmpId, { fx_to_usd: e.target.value })}/>
                     </td>
-                    <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 18, fontWeight: 700, color: "#0B1E3A" }}>
+                    <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 18, fontWeight: 700, color: "var(--text-primary)" }}>
                       ${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
                     </td>
                     <td style={{ textAlign: "center" }}>
@@ -1653,7 +1653,7 @@ function Step2Costs({
                       ) : (
                         <span style={{
                           padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600,
-                          background: "#F3F5F8", color: "#64748B",
+                          background: "var(--bg-alt)", color: "var(--text-tertiary)",
                         }}>MANUAL</span>
                       )}
                     </td>
@@ -1666,7 +1666,7 @@ function Step2Costs({
                       <button className="btn btn-ghost btn-sm"
                               onClick={() => removeCostLine(c.tmpId)}
                               title={lang === "es" ? "Quitar costo" : "Remove cost"}
-                              style={{ color: "#D64545", padding: "4px 6px" }}>
+                              style={{ color: "var(--critical)", padding: "4px 6px" }}>
                         <IconTrash size={13}/>
                       </button>
                     </td>
@@ -1674,7 +1674,7 @@ function Step2Costs({
                 );
               })}
               <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
-                <td colSpan={5} style={{ textAlign: "right", color: "#0B1E3A" }}>
+                <td colSpan={5} style={{ textAlign: "right", color: "var(--text-primary)" }}>
                   {lang === "es" ? "Total costos USD" : "Total costs USD"}
                 </td>
                 <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 15 }}>
@@ -1791,13 +1791,13 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
 
       <div className="caption" style={{ color: "var(--text-tertiary)", marginBottom: 10 }}>
         {lang === "es" ? "SKUs con stock disponible en " : "SKUs with stock available in "}
-        <strong style={{ color: "#0B1E3A" }}>{origenLabel || "—"}</strong>
+        <strong style={{ color: "var(--text-primary)" }}>{origenLabel || "—"}</strong>
       </div>
 
       {/* ── Acordeón: cabecera clickable + cuerpo colapsable ─────────────── */}
       <div style={{
-        border: "1px solid var(--border, #E1E6ED)", borderRadius: 10,
-        marginBottom: 18, overflow: "hidden", background: "#fff",
+        border: "1px solid var(--border)", borderRadius: 10,
+        marginBottom: 18, overflow: "hidden", background: "var(--surface-raised)",
       }}>
         <button
           type="button"
@@ -1806,15 +1806,15 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
             width: "100%", display: "flex", alignItems: "center",
             justifyContent: "space-between", gap: 12,
             padding: "12px 16px", border: "none", cursor: "pointer",
-            background: open ? "rgba(0,178,134,0.04)" : "#fff",
+            background: open ? "rgba(0,178,134,0.04)" : "var(--surface-raised)",
             transition: "background 120ms ease",
           }}
-          onMouseEnter={(e) => { if (!open) e.currentTarget.style.background = "#F7F9FC"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = open ? "rgba(0,178,134,0.04)" : "#fff"; }}
+          onMouseEnter={(e) => { if (!open) e.currentTarget.style.background = "var(--bg-alt)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = open ? "rgba(0,178,134,0.04)" : "var(--surface-raised)"; }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <IconPackage size={14} style={{ color: "#3083FE" }}/>
-            <span style={{ fontWeight: 700, color: "#0B1E3A", fontSize: 13 }}>
+            <span style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: 13 }}>
               {lang === "es" ? "Productos disponibles" : "Available products"}
             </span>
             <span style={{
@@ -1826,7 +1826,7 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
             </span>
           </div>
           <span style={{
-            display: "inline-block", color: "#64748B",
+            display: "inline-block", color: "var(--text-tertiary)",
             transition: "transform 180ms ease",
             transform: open ? "rotate(180deg)" : "rotate(0deg)",
           }} aria-hidden="true">
@@ -1839,7 +1839,7 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
 
         {/* Cuerpo del acordeón */}
         {open && (
-          <div style={{ borderTop: "1px solid #EEF1F5" }}>
+          <div style={{ borderTop: "1px solid var(--border)" }}>
             <div style={{ padding: "10px 12px 0" }}>
               <input className="input"
                      placeholder={lang === "es" ? "Buscar SKU, producto, lote, talla…" : "Search SKU, product, lot, size…"}
@@ -1860,14 +1860,14 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
                           onClick={() => addProductLine(s)}
                           style={{
                             width: "100%", textAlign: "left", padding: "10px 14px",
-                            border: "none", borderBottom: "1px solid #F3F5F8", background: "#fff",
+                            border: "none", borderBottom: "1px solid var(--border)", background: "var(--surface-raised)",
                             cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
                           }}
-                          onMouseEnter={(e) => e.currentTarget.style.background = "#F7F9FC"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}>
+                          onMouseEnter={(e) => e.currentTarget.style.background = "var(--bg-alt)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "var(--surface-raised)"}>
               <IconPackage size={14} style={{ color: "#3083FE", flexShrink: 0 }}/>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, color: "#0B1E3A", fontSize: 13 }}>
+                <div style={{ fontWeight: 600, color: "var(--text-primary)", fontSize: 13 }}>
                   <span className="mono-sm">{s.sku || "—"}</span>
                   {s.size && <span style={{ marginLeft: 8 }}>· {s.size}</span>}
                   {s.lote && <span className="caption" style={{ marginLeft: 8 }}>L: {s.lote}</span>}
@@ -1988,7 +1988,7 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
                     {/* Subtotal FOB = qty * unit_value, read-only display */}
                     <td className="tabular-nums" style={{
                       textAlign: "right", paddingRight: 12,
-                      fontWeight: 700, color: "#0B1E3A",
+                      fontWeight: 700, color: "var(--text-primary)",
                     }}>
                       ${subtotal.toLocaleString("en-US", { maximumFractionDigits: 2 })}
                     </td>
@@ -1996,7 +1996,7 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
                       <button className="btn btn-ghost btn-sm"
                               onClick={() => removeProductLine(l.tmpId)}
                               title={lang === "es" ? "Quitar línea" : "Remove line"}
-                              style={{ color: "#D64545", padding: "4px 6px" }}>
+                              style={{ color: "var(--critical)", padding: "4px 6px" }}>
                         <IconTrash size={13}/>
                       </button>
                     </td>
@@ -2005,7 +2005,7 @@ function Step3Products({ lang, origenLabel, stockOrigen, productLines, addProduc
               })}
               {/* Totals row — total FOB sumando subtotales de cada línea */}
               <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
-                <td colSpan={4} style={{ textAlign: "right", color: "#0B1E3A", paddingRight: 12 }}>
+                <td colSpan={4} style={{ textAlign: "right", color: "var(--text-primary)", paddingRight: 12 }}>
                   {lang === "es" ? "Totales" : "Totals"}
                 </td>
                 <td className="tabular-nums" style={{ textAlign: "right", paddingRight: 12 }}>
@@ -2128,7 +2128,7 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
 
       {/* ─── Hero: total costo + costo por unidad ──────────── */}
       <div style={{
-        background: "linear-gradient(135deg, #0B1E3A 0%, #1A2A5C 100%)",
+        background: "linear-gradient(135deg, var(--brand-primary) 0%, #1A2A5C 100%)",
         color: "#fff", padding: "20px 22px", borderRadius: 14, marginBottom: 18,
         display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 24,
       }}>
@@ -2201,14 +2201,14 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                       <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>
                         ${g.total_usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
                       </td>
-                      <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>
+                      <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>
                         {pct.toFixed(1)}%
                       </td>
                     </tr>
                   );
                 })}
                 <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
-                  <td style={{ color: "#0B1E3A" }}>{lang === "es" ? "Total" : "Total"}</td>
+                  <td style={{ color: "var(--text-primary)" }}>{lang === "es" ? "Total" : "Total"}</td>
                   <td className="tabular-nums" style={{ textAlign: "center" }}>{costLines.length}</td>
                   <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 14 }}>
                     ${totals.totalCostUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
@@ -2259,7 +2259,7 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                       <td className="mono-sm" style={{ textAlign: "center", fontWeight: 600 }}>
                         {c.currency || "USD"}
                       </td>
-                      <td className="tabular-nums" style={{ textAlign: "right", color: "#64748B" }}>
+                      <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>
                         {Number(c.fx_to_usd || 1).toFixed(4)}
                       </td>
                       <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "#00B286" }}>
@@ -2268,8 +2268,8 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                       <td style={{ textAlign: "center" }}>
                         <span style={{
                           padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700,
-                          background: c.source === "OCR_DUA" ? "rgba(0,178,134,0.12)" : "#F3F5F8",
-                          color:      c.source === "OCR_DUA" ? "#00B286" : "#64748B",
+                          background: c.source === "OCR_DUA" ? "rgba(0,178,134,0.12)" : "var(--bg-alt)",
+                          color:      c.source === "OCR_DUA" ? "#00B286" : "var(--text-tertiary)",
                         }}>{c.source === "OCR_DUA" ? "IA" : "MANUAL"}</span>
                       </td>
                     </tr>
@@ -2294,18 +2294,18 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
           }}>
             {costsByCurrency.map((c) => (
               <div key={c.code} style={{
-                background: "#fff", padding: "12px 14px", borderRadius: 10,
+                background: "var(--surface-raised)", padding: "12px 14px", borderRadius: 10,
                 border: "1px solid rgba(11,30,58,0.08)",
               }}>
                 <div className="mono-sm" style={{
-                  fontSize: 11, color: "#64748B", fontWeight: 700, letterSpacing: 0.5,
+                  fontSize: 11, color: "var(--text-tertiary)", fontWeight: 700, letterSpacing: 0.5,
                 }}>{c.code}</div>
                 <div className="tabular-nums" style={{
-                  fontSize: 17, fontWeight: 700, color: "#0B1E3A", marginTop: 2,
+                  fontSize: 17, fontWeight: 700, color: "var(--text-primary)", marginTop: 2,
                 }}>
                   {c.total_native.toLocaleString("en-US", { maximumFractionDigits: 2 })}
                 </div>
-                <div className="caption" style={{ color: "#64748B", marginTop: 2 }}>
+                <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
                   ≈ ${c.total_usd.toLocaleString("en-US", { maximumFractionDigits: 2 })} USD
                   · {c.count} {lang === "es" ? (c.count === 1 ? "línea" : "líneas") : (c.count === 1 ? "line" : "lines")}
                 </div>
@@ -2364,13 +2364,13 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
                             fontSize: 11, fontWeight: 700,
                             fontFamily: "var(--font-mono)",
                           }}>{l.size}</span>
-                        : <span style={{ color: "#64748B" }}>—</span>}
+                        : <span style={{ color: "var(--text-tertiary)" }}>—</span>}
                     </td>
-                    <td className="mono-sm" style={{ textAlign: "center", color: "#64748B", fontSize: 11.5 }}>
+                    <td className="mono-sm" style={{ textAlign: "center", color: "var(--text-tertiary)", fontSize: 11.5 }}>
                       {l.lote || "—"}
                     </td>
                     <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600 }}>{l.qty_transfer}</td>
-                    <td className="tabular-nums" style={{ textAlign: "right", color: "#0B1E3A", fontWeight: 600 }}>
+                    <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-primary)", fontWeight: 600 }}>
                       ${unitVal.toLocaleString("en-US", { maximumFractionDigits: 4 })}
                     </td>
                     <td className="tabular-nums" style={{ textAlign: "right", color: "#B45309", fontWeight: 600 }}>
@@ -2384,9 +2384,9 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
               })}
               <tr style={{ background: "rgba(0,178,134,0.06)", fontWeight: 700 }}>
                 {/* +1 columna por Expediente (sprint fase 10). */}
-                <td colSpan={5} style={{ color: "#0B1E3A" }}>{lang === "es" ? "Total" : "Total"}</td>
+                <td colSpan={5} style={{ color: "var(--text-primary)" }}>{lang === "es" ? "Total" : "Total"}</td>
                 <td className="tabular-nums" style={{ textAlign: "right" }}>{totals.totalUnits}</td>
-                <td className="tabular-nums" style={{ textAlign: "right", color: "#0B1E3A", fontSize: 13, fontWeight: 700 }}>
+                <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-primary)", fontSize: 13, fontWeight: 700 }}>
                   ${totals.totalValueUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}
                 </td>
                 <td className="tabular-nums" style={{ textAlign: "right", color: "#00B286", fontSize: 14 }}>
@@ -2405,7 +2405,7 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
       <div style={{
         background: "rgba(0,178,134,0.06)", border: "1px solid rgba(0,178,134,0.20)",
         borderRadius: 10, padding: "12px 16px",
-        fontSize: 13, color: "#0B1E3A", lineHeight: 1.55,
+        fontSize: 13, color: "var(--text-primary)", lineHeight: 1.55,
       }}>
         <strong style={{ color: "#00B286" }}>✓ {lang === "es" ? "Resumen ejecutivo:" : "Executive summary:"}</strong>{" "}
         {lang === "es" ? (
@@ -2449,16 +2449,16 @@ function Step4Summary({ lang, origen, destino, legalContext, refTracking, produc
 function KpiTile({ label, value, accent }) {
   return (
     <div style={{
-      background: "#fff", padding: "10px 12px", borderRadius: 10,
+      background: "var(--surface-raised)", padding: "10px 12px", borderRadius: 10,
       border: "1px solid rgba(11,30,58,0.08)",
     }}>
       <div style={{
         fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase",
-        color: "#64748B", fontWeight: 600, marginBottom: 4,
+        color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4,
       }}>{label}</div>
       <div className="tabular-nums" style={{
         fontSize: 18, fontWeight: 700,
-        color: accent || "#0B1E3A",
+        color: accent || "var(--text-primary)",
       }}>{value}</div>
     </div>
   );
@@ -2473,8 +2473,8 @@ function ContextDataSection({ lang, legalContext, contextData, setCtx }) {
 
   if (legalContext === "INTERNAL") {
     return (
-      <div style={{ marginTop: 22, padding: 18, border: "1px solid var(--border, #E1E6ED)", borderRadius: 12, background: "rgba(100,116,139,0.04)" }}>
-        <div className="micro" style={{ color: "#64748B", letterSpacing: 1, marginBottom: 12 }}>
+      <div style={{ marginTop: 22, padding: 18, border: "1px solid var(--border)", borderRadius: 12, background: "rgba(100,116,139,0.04)" }}>
+        <div className="micro" style={{ color: "var(--text-tertiary)", letterSpacing: 1, marginBottom: 12 }}>
           {lbl("LOGÍSTICA LOCAL", "LOCAL LOGISTICS")}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -2564,7 +2564,7 @@ function ContextDataSection({ lang, legalContext, contextData, setCtx }) {
         <div className="micro" style={{ color: "#00B286", letterSpacing: 1, marginBottom: 8 }}>
           {lbl("TRANSFER PRICING ★", "TRANSFER PRICING ★")}
         </div>
-        <div className="caption" style={{ color: "#0B1E3A", marginBottom: 14, lineHeight: 1.5 }}>
+        <div className="caption" style={{ color: "var(--text-primary)", marginBottom: 14, lineHeight: 1.5 }}>
           ⚠ {lbl(
             "Este movimiento implica cambio de dueño. Requiere precio de movimiento y aprobación CEO/Compliance.",
             "This movement transfers ownership. Requires transfer pricing and CEO/Compliance approval."
@@ -2601,7 +2601,7 @@ function ContextDataSection({ lang, legalContext, contextData, setCtx }) {
           <label style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 24 }}>
             <input type="checkbox" checked={!!cd.crosses_border}
                    onChange={(e) => setCtx({ crosses_border: e.target.checked })} />
-            <span className="caption" style={{ color: "#0B1E3A", fontWeight: 600 }}>
+            <span className="caption" style={{ color: "var(--text-primary)", fontWeight: 600 }}>
               {lbl("Cruza frontera (requiere DUA)", "Crosses border (DUA required)")}
             </span>
           </label>
@@ -2722,7 +2722,7 @@ function Field({ label, children }) {
 
 function SummaryBox({ title, children }) {
   return (
-    <div style={{ border: "1px solid var(--border, #E1E6ED)", borderRadius: 12, padding: 16 }}>
+    <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 16 }}>
       <div className="micro" style={{ color: "#00B286", fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>
         {title}
       </div>
@@ -2733,9 +2733,9 @@ function SummaryBox({ title, children }) {
 
 function Row({ k, v }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px dashed #F1F4F9" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px dashed var(--border)" }}>
       <span className="caption" style={{ color: "var(--text-tertiary)" }}>{k}</span>
-      <span style={{ color: "#0B1E3A" }}>{v}</span>
+      <span style={{ color: "var(--text-primary)" }}>{v}</span>
     </div>
   );
 }

@@ -485,7 +485,7 @@ export default function ScreenProductos() {
                              '--brand-color': brand?.color,
                              // Fondo blanco para que la imagen no se vea con tinte;
                              // override del estilo de iniciales cuando hay imagen.
-                             ...(p.imagen_url ? { background: '#FFFFFF', overflow: 'hidden' } : {}),
+                             ...(p.imagen_url ? { background: 'var(--surface-raised)', overflow: 'hidden' } : {}),
                            }}>
                         {p.imagen_url ? (
                           <img
@@ -648,7 +648,7 @@ export default function ScreenProductos() {
               transition={{ type:'spring', stiffness: 280, damping: 28 }}
               onClick={e => e.stopPropagation()}
               style={{
-                background:'#fff',
+                background:'var(--surface-raised)',
                 borderRadius:12,
                 width:'100%', maxWidth:420,
                 boxShadow:'0 12px 48px rgba(11,30,58,0.18)',

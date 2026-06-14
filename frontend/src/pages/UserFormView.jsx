@@ -366,7 +366,7 @@ export default function UserFormView() {
     return <div style={{ padding: 48, textAlign: "center", color: "var(--text-tertiary)" }}>Cargando usuario…</div>;
   }
   if (error && !user.email_plain) {
-    return <div style={{ padding: 48, color: "#D64545" }}>⚠️ {error}</div>;
+    return <div style={{ padding: 48, color: "var(--critical)" }}>⚠️ {error}</div>;
   }
 
   return (
@@ -383,7 +383,7 @@ export default function UserFormView() {
           }}>
             {isEdit ? "Editar usuario" : "Nuevo usuario"}
           </div>
-          <h1 style={{ margin: 0, font: "700 22px/1.1 var(--font-display)", color: "var(--navy)" }}>
+          <h1 style={{ margin: 0, font: "700 22px/1.1 var(--font-display)", color: "var(--text-primary)" }}>
             {isEdit ? (user.full_name || user.email_plain || "—") : "Crear usuario"}
           </h1>
           {isEdit && user.role_default && (
@@ -392,7 +392,7 @@ export default function UserFormView() {
               <span style={{
                 marginLeft: 10,
                 padding: "2px 8px", borderRadius: 999,
-                background: "rgba(11,30,58,0.08)", color: "var(--navy)",
+                background: "var(--surface-active)", color: "var(--text-secondary)",
                 fontSize: 10, fontWeight: 700, letterSpacing: 0.4,
               }}>
                 {user.role_default.toUpperCase()}
@@ -401,7 +401,7 @@ export default function UserFormView() {
                 <span style={{
                   marginLeft: 6,
                   padding: "2px 8px", borderRadius: 999,
-                  background: "#D64545", color: "#fff",
+                  background: "var(--critical)", color: "#fff",
                   fontSize: 10, fontWeight: 700, letterSpacing: 0.4,
                 }}>
                   INACTIVO
@@ -420,7 +420,7 @@ export default function UserFormView() {
               className="btn"
               style={{
                 background: user.is_active ? "rgba(214,69,69,0.10)" : "rgba(0,178,134,0.10)",
-                color: user.is_active ? "#D64545" : "#00B286",
+                color: user.is_active ? "var(--critical)" : "#00B286",
                 border: "none", padding: "8px 14px", borderRadius: 6,
                 fontSize: 12, fontWeight: 600,
               }}
@@ -432,7 +432,7 @@ export default function UserFormView() {
               className="btn"
               style={{
                 background: "transparent",
-                color: "#DC2626",
+                color: "var(--critical)",
                 border: "1px solid rgba(220,38,38,0.30)",
                 padding: "8px 14px", borderRadius: 6,
                 fontSize: 12, fontWeight: 600, cursor: "pointer",
@@ -567,7 +567,7 @@ export default function UserFormView() {
                     <span style={{ color: "#00B286", fontWeight: 700 }}
                           title="Subsidiaria">↳</span>
                   )}
-                  <span style={{ fontWeight: 600, color: "var(--navy)" }}>
+                  <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
                     {c.razon_social}
                   </span>
                   {isSub && parent && (
@@ -580,7 +580,7 @@ export default function UserFormView() {
                           aria-label="Quitar empresa"
                           style={{
                             padding: "2px 6px", border: "none", background: "transparent",
-                            color: "#64748B", cursor: "pointer",
+                            color: "var(--text-tertiary)", cursor: "pointer",
                             borderRadius: 999, lineHeight: 1,
                           }}
                           onMouseOver={(e) => e.currentTarget.style.background = "rgba(214,69,69,0.10)"}
@@ -607,7 +607,7 @@ export default function UserFormView() {
           {companyOpen && filteredCompanies.length > 0 && (
             <div style={{
               position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20,
-              background: "#fff", border: "1px solid var(--border)",
+              background: "var(--surface-raised)", border: "1px solid var(--border)",
               borderRadius: 8, marginTop: 4, maxHeight: 320, overflowY: "auto",
               boxShadow: "0 8px 24px rgba(11,30,58,0.15)",
             }}>
@@ -626,21 +626,21 @@ export default function UserFormView() {
                       width: "100%", textAlign: "left",
                       padding: "10px 14px", paddingLeft: isSubsidiary ? 32 : 14,
                       border: "none",
-                      borderBottom: "1px solid #F3F5F8",
-                      background: isSelected ? "rgba(0,178,134,0.06)" : "#fff",
+                      borderBottom: "1px solid var(--border)",
+                      background: isSelected ? "rgba(0,178,134,0.06)" : "var(--surface-raised)",
                       cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
                     }}
                     onMouseEnter={(e) => e.currentTarget.style.background =
-                      isSelected ? "rgba(0,178,134,0.12)" : "#F7F9FC"}
+                      isSelected ? "rgba(0,178,134,0.12)" : "var(--bg-alt)"}
                     onMouseLeave={(e) => e.currentTarget.style.background =
-                      isSelected ? "rgba(0,178,134,0.06)" : "#fff"}
+                      isSelected ? "rgba(0,178,134,0.06)" : "var(--surface-raised)"}
                   >
                     {isSubsidiary && (
                       <span style={{ color: "#00B286", fontWeight: 700, marginRight: -4 }}
                             title="Subsidiaria">↳</span>
                     )}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
                         {c.razon_social}
                       </div>
                       <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
@@ -663,7 +663,7 @@ export default function UserFormView() {
           {companyOpen && filteredCompanies.length === 0 && (
             <div style={{
               position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20,
-              background: "#fff", border: "1px solid var(--border)",
+              background: "var(--surface-raised)", border: "1px solid var(--border)",
               borderRadius: 8, marginTop: 4, padding: 14,
               fontSize: 12, color: "var(--text-tertiary)",
               boxShadow: "0 8px 24px rgba(11,30,58,0.15)",
@@ -744,7 +744,7 @@ export default function UserFormView() {
             style={{
               position: "fixed", bottom: 24, right: 24, zIndex: 200,
               padding: "10px 16px",
-              background: toast.kind === "err" ? "#D64545" : "var(--navy)",
+              background: toast.kind === "err" ? "var(--critical)" : "var(--brand-primary)",
               color: "#fff", borderRadius: 8, fontSize: 13,
               boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
             }}
@@ -778,12 +778,12 @@ export default function UserFormView() {
 function Section({ title, hint, action, children }) {
   return (
     <section style={{
-      background: "#fff", border: "1px solid var(--border)", borderRadius: 10,
+      background: "var(--surface-raised)", border: "1px solid var(--border)", borderRadius: 10,
       padding: "18px 22px", marginBottom: 14,
     }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--navy)" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>
             {title}
           </div>
           {hint && (
@@ -818,7 +818,7 @@ function AddressRow({ address, onUpdate, onSetDefault, onRemove }) {
   return (
     <div style={{
       border: `1.5px solid ${address.is_default ? "var(--mint, #00B286)" : "var(--border)"}`,
-      background: address.is_default ? "rgba(0,178,134,0.04)" : "#fff",
+      background: address.is_default ? "rgba(0,178,134,0.04)" : "var(--surface-raised)",
       borderRadius: 10, padding: "12px 14px",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
@@ -843,7 +843,7 @@ function AddressRow({ address, onUpdate, onSetDefault, onRemove }) {
           </button>
         )}
         <button type="button" onClick={onRemove}
-                className="btn btn-ghost btn-sm" style={{ color: "#D64545" }}>
+                className="btn btn-ghost btn-sm" style={{ color: "var(--critical)" }}>
           <IconX size={12}/>
         </button>
       </div>
@@ -900,11 +900,11 @@ const styles = {
   input: {
     width: "100%",
     padding: "9px 12px",
-    border: "1px solid var(--border, #E1E6ED)",
+    border: "1px solid var(--border)",
     borderRadius: 8,
     fontSize: 13,
-    color: "var(--navy, #0B1E3A)",
-    background: "#fff",
+    color: "var(--text-primary)",
+    background: "var(--surface-raised)",
     outline: "none",
     boxSizing: "border-box",
   },

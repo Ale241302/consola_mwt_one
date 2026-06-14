@@ -48,14 +48,14 @@ const IconInfo = ({ size = 12 }) => (
 import { useRole } from "../../context/RoleContext.jsx";
 
 // ─── Design tokens ───────────────────────────────────────────
-const NAVY  = "#0B1E3A";
+const NAVY  = "var(--text-primary)";
 const MINT  = "#00B286";
 const LIGHT = "#1DE394";
 const AMBER = "#F59E0B";
-const RED   = "#DC2626";
-const INK   = "#334155";
-const MUTED = "#64748B";
-const SOFT  = "#F8FAFC";
+const RED   = "var(--critical)";
+const INK   = "var(--text-secondary)";
+const MUTED = "var(--text-tertiary)";
+const SOFT  = "var(--surface)";
 
 // ─── Catálogos (deberían venir del backend en prod) ──────────
 
@@ -197,7 +197,7 @@ export default function ClientFormDrawer({ lang = "es", initial = null, onClose,
         transition={{ type: "spring", stiffness: 320, damping: 34 }}
         style={{
           position: "fixed", top: 0, right: 0, bottom: 0,
-          width: "min(820px, 100vw)", background: "#FFFFFF",
+          width: "min(820px, 100vw)", background: "var(--surface-raised)",
           boxShadow: "-24px 0 60px -20px rgba(11,30,58,0.28)",
           display: "flex", flexDirection: "column",
           zIndex: 99, overflow: "hidden",
@@ -206,7 +206,7 @@ export default function ClientFormDrawer({ lang = "es", initial = null, onClose,
         {/* ════ HEADER ════ */}
         <header style={{
           padding: "18px 24px",
-          background: `linear-gradient(135deg, ${NAVY} 0%, #1A2F52 100%)`,
+          background: `linear-gradient(135deg, var(--brand-primary) 0%, #1A2F52 100%)`,
           color: "#FFFFFF",
           display: "flex", alignItems: "flex-start", gap: 14,
         }}>
@@ -408,8 +408,8 @@ export default function ClientFormDrawer({ lang = "es", initial = null, onClose,
                       onClick={() => update("canal", c.k)}
                       style={{
                         padding: "12px 14px", textAlign: "left",
-                        border: `1.5px solid ${active ? MINT : "#E5E7EB"}`,
-                        background: active ? `${MINT}10` : "#FFFFFF",
+                        border: `1.5px solid ${active ? MINT : "var(--border)"}`,
+                        background: active ? `${MINT}10` : "var(--surface-raised)",
                         borderRadius: 10, cursor: "pointer",
                         transition: "all 120ms ease",
                       }}
@@ -520,7 +520,7 @@ export default function ClientFormDrawer({ lang = "es", initial = null, onClose,
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 style={{
                   padding: "14px 16px", background: SOFT,
-                  border: `1px dashed #E5E7EB`, borderRadius: 10,
+                  border: `1px dashed var(--border)`, borderRadius: 10,
                   display: "flex", alignItems: "center", gap: 10,
                   color: MUTED, font: "500 12px/1.4 var(--font-body)",
                 }}
@@ -539,8 +539,8 @@ export default function ClientFormDrawer({ lang = "es", initial = null, onClose,
         {/* ════ FOOTER ════ */}
         <footer style={{
           padding: "14px 24px",
-          borderTop: "1px solid #E5E7EB",
-          background: "#FFFFFF",
+          borderTop: "1px solid var(--border)",
+          background: "var(--surface-raised)",
           display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
         }}>
           <div style={{ display: "flex", gap: 6, alignItems: "center",
@@ -564,7 +564,7 @@ export default function ClientFormDrawer({ lang = "es", initial = null, onClose,
               className="btn btn-ghost"
               style={{
                 padding: "8px 16px", background: "transparent",
-                border: "1px solid #E5E7EB", color: INK,
+                border: "1px solid var(--border)", color: INK,
                 font: "600 12.5px/1 var(--font-body)",
                 borderRadius: 8, cursor: "pointer",
               }}
@@ -636,9 +636,9 @@ function Section({ icon, title, subtitle, children, badge, highlight }) {
   return (
     <section style={{
       padding: 16,
-      background: "#FFFFFF",
-      border: `1px solid ${highlight ? `${highlight}33` : "#E5E7EB"}`,
-      borderLeft: highlight ? `3px solid ${highlight}` : `1px solid #E5E7EB`,
+      background: "var(--surface-raised)",
+      border: `1px solid ${highlight ? `${highlight}33` : "var(--border)"}`,
+      borderLeft: highlight ? `3px solid ${highlight}` : `1px solid var(--border)`,
       borderRadius: 10,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
@@ -705,7 +705,7 @@ function Label({ children, required, tooltip }) {
       {tooltip && (
         <span title={tooltip} style={{
           display: "inline-flex", width: 13, height: 13, borderRadius: "50%",
-          background: "#E5E7EB", color: MUTED, alignItems: "center",
+          background: "var(--bg-alt)", color: MUTED, alignItems: "center",
           justifyContent: "center", cursor: "help",
           font: "700 9px/1 var(--font-body)",
         }}>
@@ -748,14 +748,14 @@ function Input({ value, onChange, onBlur, type = "text", mono, tabular, ...rest 
       {...rest}
       style={{
         width: "100%", padding: "8px 10px",
-        border: "1px solid #E5E7EB", borderRadius: 6,
+        border: "1px solid var(--border)", borderRadius: 6,
         font: `${mono ? "500" : "500"} 13px/1.2 ${mono ? "var(--font-mono, ui-monospace)" : "var(--font-body)"}`,
-        color: NAVY, background: "#FFFFFF", outline: "none",
+        color: NAVY, background: "var(--surface-raised)", outline: "none",
         transition: "border 120ms ease",
         fontVariantNumeric: tabular ? "tabular-nums" : undefined,
       }}
       onFocus={e => (e.target.style.borderColor = MINT)}
-      onBlurCapture={e => (e.target.style.borderColor = "#E5E7EB")}
+      onBlurCapture={e => (e.target.style.borderColor = "var(--border)")}
     />
   );
 }
@@ -764,14 +764,14 @@ function InputAffixed({ affixLeft, affixRight, value, onChange, onBlur, type = "
   return (
     <div style={{
       display: "flex", alignItems: "stretch",
-      border: "1px solid #E5E7EB", borderRadius: 6,
-      overflow: "hidden", background: "#FFFFFF",
+      border: "1px solid var(--border)", borderRadius: 6,
+      overflow: "hidden", background: "var(--surface-raised)",
     }}>
       {affixLeft && (
         <span style={{
           padding: "8px 10px", background: SOFT,
           color: MUTED, font: "600 12px/1 var(--font-body)",
-          borderRight: "1px solid #E5E7EB",
+          borderRight: "1px solid var(--border)",
           display: "grid", placeItems: "center",
         }}>
           {affixLeft}
@@ -795,7 +795,7 @@ function InputAffixed({ affixLeft, affixRight, value, onChange, onBlur, type = "
         <span style={{
           padding: "8px 10px", background: SOFT,
           color: MUTED, font: "500 10.5px/1 var(--font-body)",
-          borderLeft: "1px solid #E5E7EB",
+          borderLeft: "1px solid var(--border)",
           display: "grid", placeItems: "center",
           textTransform: "uppercase", letterSpacing: 0.4,
         }}>
@@ -814,9 +814,9 @@ function Select({ value, onChange, options, ...rest }) {
       {...rest}
       style={{
         width: "100%", padding: "8px 10px",
-        border: "1px solid #E5E7EB", borderRadius: 6,
+        border: "1px solid var(--border)", borderRadius: 6,
         font: "500 13px/1.2 var(--font-body)", color: NAVY,
-        background: "#FFFFFF", outline: "none",
+        background: "var(--surface-raised)", outline: "none",
         transition: "border 120ms ease",
         cursor: "pointer",
       }}
@@ -835,9 +835,9 @@ function Textarea({ value, onChange, rows = 3, ...rest }) {
       {...rest}
       style={{
         width: "100%", padding: "8px 10px",
-        border: "1px solid #E5E7EB", borderRadius: 6,
+        border: "1px solid var(--border)", borderRadius: 6,
         font: "500 13px/1.4 var(--font-body)", color: NAVY,
-        background: "#FFFFFF", outline: "none",
+        background: "var(--surface-raised)", outline: "none",
         transition: "border 120ms ease", resize: "vertical",
       }}
     />
