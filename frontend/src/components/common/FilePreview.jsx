@@ -117,14 +117,47 @@ export default function FilePreview({
       )}
 
       {isPdf && (
-        <iframe
-          src={signedUrl}
-          title={fname}
-          style={{
-            width: "100%", height,
-            border: "1px solid #E5EAF2", borderRadius: 8, background: "#F8FAFC",
+        <div
+          onClick={(e) => {
+            e.preventDefault();
+            if (signedUrl) {
+              window.open(signedUrl, "_blank", "width=850,height=850,resizable=yes,scrollbars=yes");
+            }
           }}
-        />
+          style={{
+            padding: "16px 18px",
+            border: "1px solid #E5EAF2",
+            borderRadius: 8,
+            background: "#F8FAFC",
+            font: "500 13px/1.4 inherit",
+            color: "#3D4A6B",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            cursor: "pointer",
+            transition: "all 0.2s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = "#CBD5E1";
+            e.currentTarget.style.background = "#F1F5F9";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = "#E5EAF2";
+            e.currentTarget.style.background = "#F8FAFC";
+          }}
+        >
+          <span style={{ fontSize: 24 }}>📄</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontWeight: 600, color: "#0F1B3D",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>{fname}</div>
+            <div style={{ font: "500 11.5px/1.3 inherit", color: "#64748B" }}>
+              Documento PDF · Clic para abrir en ventana nueva
+            </div>
+          </div>
+          <span style={{ fontSize: 16, color: "#64748B" }}>↗</span>
+        </div>
       )}
 
       {isVideo && (
