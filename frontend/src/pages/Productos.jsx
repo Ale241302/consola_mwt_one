@@ -510,15 +510,9 @@ export default function ScreenProductos() {
                     </td>
                     <td>
                       <div className="mono-sm product-row-sku">{p.sku}</div>
-                      <div className="caption" style={{color:'var(--text-tertiary)'}}>
-                        {p.tipo_calzado} · {p.color}
-                      </div>
                     </td>
                     <td>
                       <div className="product-row-name">{p.nombre}</div>
-                      <div className="caption" style={{color:'var(--text-tertiary)'}}>
-                        NCM {p.ncm}
-                      </div>
                     </td>
                     <td>
                       <span className="brand-badge-row" style={{'--brand-color': brand?.color}}>
