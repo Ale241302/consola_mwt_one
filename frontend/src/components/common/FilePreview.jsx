@@ -104,7 +104,7 @@ export default function FilePreview({
   const isAudio = finalMime.startsWith("audio/");
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
       {isImage && (
         <a href={signedUrl} target="_blank" rel="noreferrer">
           <img src={signedUrl} alt={fname}
@@ -136,6 +136,7 @@ export default function FilePreview({
             gap: 12,
             cursor: "pointer",
             transition: "all 0.2s ease",
+            minWidth: 0,
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.borderColor = "#CBD5E1";
@@ -175,6 +176,7 @@ export default function FilePreview({
           background: "#F8FAFC",
           font: "500 13px/1.4 inherit", color: "#3D4A6B",
           display: "flex", alignItems: "center", gap: 12,
+          minWidth: 0,
         }}>
           <span style={{ fontSize: 22 }}>📄</span>
           <div style={{ flex: 1, minWidth: 0 }}>
