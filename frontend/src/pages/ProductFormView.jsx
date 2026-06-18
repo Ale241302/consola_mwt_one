@@ -977,9 +977,11 @@ export default function ScreenProductFormView() {
                   height={160}
                   onDelete={async () => {
                     try {
-                      await apiFetch(`/storage/delete/?key=${encodeURIComponent(k)}`, {
-                        method: "DELETE", token: getToken(),
-                      });
+                      if (k && !k.startsWith("http://") && !k.startsWith("https://")) {
+                        await apiFetch(`/storage/delete/?key=${encodeURIComponent(k)}`, {
+                          method: "DELETE", token: getToken(),
+                        });
+                      }
                     } catch (_) { /* idempotente — seguimos */ }
                     setGalleryKeys(prev => prev.filter(x => x !== k));
                   }}
@@ -1014,9 +1016,11 @@ export default function ScreenProductFormView() {
                   height={240}
                   onDelete={async () => {
                     try {
-                      await apiFetch(`/storage/delete/?key=${encodeURIComponent(k)}`, {
-                        method: "DELETE", token: getToken(),
-                      });
+                      if (k && !k.startsWith("http://") && !k.startsWith("https://")) {
+                        await apiFetch(`/storage/delete/?key=${encodeURIComponent(k)}`, {
+                          method: "DELETE", token: getToken(),
+                        });
+                      }
                     } catch (_) { /* idempotente */ }
                     setFichaKeys(prev => prev.filter(x => x !== k));
                   }}

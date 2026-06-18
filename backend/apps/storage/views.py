@@ -199,6 +199,8 @@ class StorageViewSet(viewsets.ViewSet):
         bkt = src.get("bucket") or None
         if not key:
             return Response({"detail": "Falta 'key'"}, status=400)
+        if isinstance(key, str) and (key.startswith("http://") or key.startswith("https://")):
+            return Response({"ok": True, "deleted": False, "available": True, "error": None, "key": key}, status=200)
         result = delete_object(key, bucket=bkt)
         result["key"] = key
         return Response(result, status=200 if result.get("ok") else 502)
