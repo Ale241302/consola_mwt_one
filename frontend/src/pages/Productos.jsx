@@ -30,6 +30,7 @@ import {
 } from "../data/mockData.js";
 import { productosApi } from "../lib/api.js";
 import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
+import useBrandsLight from "../hooks/useBrandsLight.js";
 
 // ─────────────────────────────────────────────────────────────
 // Adaptador backend productos.producto → shape UI.
@@ -62,6 +63,8 @@ function mapProductoFromApi(r) {
 export default function ScreenProductos() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
+
+  const { brands: dbBrands } = useBrandsLight();
 
   const [q, setQ] = useState('');
   const [brandFilter, setBrandFilter] = useState('ALL');
@@ -101,9 +104,9 @@ export default function ScreenProductos() {
   // ── Maps de referencia ────────
   const brandMap = useMemo(() => {
     const m = {};
-    BRANDS.forEach(b => { m[b.id] = b; });
+    dbBrands.forEach(b => { m[b.id] = b; });
     return m;
-  }, []);
+  }, [dbBrands]);
   const sizeMap = useMemo(() => {
     const m = {};
     SIZES.forEach(s => { m[s.id] = s; });
@@ -363,58 +366,8 @@ export default function ScreenProductos() {
         </div>
       </div>
 
-      {/* ─── KPIs ─── */}
-      <div className="nodes-kpis">
-        <div className="kpi-tile">
-          <div className="k-label">{lang==='es'?'Unidades vendidas (hist.)':'Units sold (hist.)'}</div>
-          <div className="k-value tabular-nums">{kpis.totalUnits.toLocaleString()}</div>
-          <div className="k-sub">
-            <IconPackage size={10} style={{marginRight:4, verticalAlign:'-1px'}}/>
-            {lang==='es'?'Consolidado todas las marcas':'All brands aggregated'}
-          </div>
-        </div>
-        <div className="kpi-tile">
-          <div className="k-label">{lang==='es'?'Precio promedio de venta':'Avg. selling price'}</div>
-          <div className="k-value tabular-nums">{fmtMoney(kpis.avgPrice)}</div>
-          <div className="k-sub">
-            <IconDollar size={10} style={{marginRight:4, verticalAlign:'-1px'}}/>
-            {lang==='es'?'Cobrado al cliente · histórico':'Collected from client · historical'}
-          </div>
-        </div>
-        <div className="kpi-tile kpi-wide">
-          <div className="k-label">{lang==='es'?'Top 3 tallas más vendidas':'Top 3 sold sizes'}</div>
-          <div className="top3-row">
-            {kpis.topSizes.map((t, i) => {
-              const sz = sizeMap[t.size_id];
-              return (
-                <div key={t.size_id} className="top3-item">
-                  <span className="top3-rank">{i+1}</span>
-                  <span className="top3-val tabular-nums">{sz?.valor_talla || '?'}</span>
-                  <span className="top3-sub caption">{sz?.system} · {t.qty.toLocaleString()}u</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <div className="kpi-tile kpi-wide accent">
-          <div className="k-label">{lang==='es'?'Nodos con mayor rotación':'Top rotation nodes'}</div>
-          <div className="top3-row">
-            {kpis.topNodes.map((t, i) => {
-              const n = nodeMap[t.node_id];
-              return (
-                <div key={t.node_id} className="top3-item">
-                  <span className="top3-rank">{i+1}</span>
-                  <span className="top3-val" style={{fontSize:14}}>{n?.flag} {n?.node_id || '?'}</span>
-                  <span className="top3-sub caption">{Math.round(t.qty).toLocaleString()}u</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
       {/* ─── Filtros ─── */}
-      <div className="nodes-filters">
+      <div className="nodes-filters" style={{marginTop: 16}}>
         <div className="search-box" style={{flex:'1 1 260px', maxWidth: 420}}>
           <IconSearch size={14} className="search-icon"/>
           <input className="input" value={q} onChange={e=>setQ(e.target.value)}
@@ -424,7 +377,7 @@ export default function ScreenProductos() {
           <button data-active={brandFilter==='ALL'} onClick={()=>setBrandFilter('ALL')}>
             {lang==='es'?'Todas':'All'}
           </button>
-          {BRANDS.filter(b => b.active).map(b => (
+          {dbBrands.filter(b => b.active).map(b => (
             <button key={b.id} data-active={brandFilter===b.id} onClick={()=>setBrandFilter(b.id)}>
               {b.name}
             </button>
