@@ -1,0 +1,19 @@
+[project]
+name = "mwt-mcp"
+version = "1.0.0"
+description = "Servidor MCP para la Consola MWT.ONE — expone la operación completa (clientes, productos, expedientes, SAP, inventario, transferencias, pagos) como herramientas MCP."
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.2.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+mwt-mcp = "mwt_mcp.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["mwt_mcp"]
