@@ -10,6 +10,7 @@ Autenticación: Bearer token de servicio (MWT_MCP_TOKEN). Sin estado local.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -44,6 +45,21 @@ def _wguard():
 
 def _params(**kwargs) -> dict:
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+def _norm_num(s: str | None) -> str:
+    """Normaliza un número de OC/proforma/SAP para comparar: minúsculas, quita
+    prefijos 'po'/'oc' y todo lo no alfanumérico. '504960' == 'PO 504960' == 'PO-504960'."""
+    s = re.sub(r"[^0-9a-z]", "", (s or "").strip().lower())
+    return re.sub(r"^(po|oc)(?=\d)", "", s)
+
+
+def _as_rows(data: Any) -> list:
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("results") or []
+    return []
 
 
 # --------------------------------------------------------------------------- #
@@ -226,6 +242,46 @@ def expediente_obtener(expediente_id: str) -> Any:
 
 
 @mcp.tool()
+def expediente_buscar(
+    oc_number: str | None = None,
+    proforma: str | None = None,
+    sap: str | None = None,
+    client_id: str | None = None,
+) -> Any:
+    """⚠️ ANTI-DUPLICADOS — ÚSALA SIEMPRE ANTES DE `expediente_crear`.
+
+    Busca expedientes que YA existen por **número de OC del cliente** (ej. "504960"
+    o "PO 504960"), **número de proforma** (ej. "2468-2026") y/o **número de SAP**.
+    El `q` normal NO sirve: solo matchea el código autogenerado (EXP-…). Esta tool
+    compara contra `oc_codigos` / `proforma_codigos` / `sap_codigos` de cada expediente,
+    normalizando prefijos 'PO'/'OC' y separadores.
+
+    Recomendado pasar `client_id` para acotar la búsqueda. Devuelve
+    `{existe, total, matches:[{expediente_id, codigo, oc_id, oc_codigos, proforma_codigos,
+    sap_codigos, estado, client_id}]}`. Si `existe=true` → **NO crees**, edita el existente."""
+    params = _params(client=client_id, oc_number=oc_number, proforma=proforma)  # oc_number/proforma los usa el backend si está parcheado
+    data = _safe(lambda: api.get("expedientes/", params))
+    if isinstance(data, dict) and data.get("error"):
+        return data
+    rows = _as_rows(data)
+    tn_oc = _norm_num(oc_number) if oc_number else None
+    tn_pf = (proforma or "").strip().lower() if proforma else None
+    tn_sap = _norm_num(sap) if sap else None
+    matches = []
+    for e in rows:
+        oc_cs = [_norm_num(x) for x in (e.get("oc_codigos") or [])]
+        pf_cs = [(x or "").strip().lower() for x in (e.get("proforma_codigos") or [])]
+        sap_cs = [_norm_num(x) for x in (e.get("sap_codigos") or [])]
+        if (tn_oc and tn_oc in oc_cs) or (tn_pf and tn_pf in pf_cs) or (tn_sap and tn_sap in sap_cs):
+            matches.append({
+                "expediente_id": e.get("id"), "codigo": e.get("codigo"), "oc_id": e.get("oc_id"),
+                "oc_codigos": e.get("oc_codigos"), "proforma_codigos": e.get("proforma_codigos"),
+                "sap_codigos": e.get("sap_codigos"), "estado": e.get("estado"), "client_id": e.get("client_id"),
+            })
+    return {"existe": len(matches) > 0, "total": len(matches), "matches": matches}
+
+
+@mcp.tool()
 def expediente_lineas(expediente_id: str) -> Any:
     """Líneas (SKU/talla/cantidad/precios) de un expediente."""
     return _safe(lambda: api.get(f"expedientes/{expediente_id}/lineas/"))
@@ -344,9 +400,15 @@ def documento_subir(
     oc_id: str | None = None,
     audience: str = "CLIENT",
 ) -> Any:
-    """Sube un documento (PDF, etc.) a un expediente u OC. `kind`: tipo (OC, PROFORMA,
-    BL, OTRO...). `codigo`: nombre/código (default = nombre del archivo).
-    `audience`: CLIENT, MWT_INTERNAL o ADMIN_ONLY."""
+    """Sube un documento (PDF, etc.) a un expediente u OC; lo almacena en MinIO. `kind`:
+    tipo (OC, PROFORMA, BL, FACTURA, DUA, OTRO...). `codigo`: nombre/código (default =
+    nombre del archivo). `audience`: CLIENT, MWT_INTERNAL o ADMIN_ONLY.
+
+    NOTA DE ALMACENAMIENTO: para la **OC** y la **Proforma** del cliente conviene usar
+    `match_subir(document_type="ART-01_OC"|"ART-02_PROFORMA")` y para el **SAP**
+    `sap_confirmar`/`sap_upsert` con `file_path`, porque esos flujos dejan el binario
+    bien almacenado y, además, mapean/asignan líneas. Usa `documento_subir` para el resto
+    (BL/AWB, DUA, factura, otros). Verifica luego con `documento_listar`."""
     g = _wguard()
     if g:
         return g

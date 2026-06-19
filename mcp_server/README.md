@@ -10,13 +10,13 @@ el backend. No guarda estado local: cada herramienta es una llamada autenticada 
 
 ---
 
-## 1. Qué puede hacer (86 herramientas)
+## 1. Qué puede hacer (88 herramientas)
 
 | Dominio | Herramientas |
 |---|---|
 | **Clientes** | `cliente_listar`, `cliente_obtener`, `cliente_crear`, `cliente_editar`, `cliente_subsidiarias`, `cliente_kpis_pool` |
 | **Productos** | `producto_listar`, `producto_obtener`, `producto_crear`, `producto_editar`, `ncm_listar` |
-| **OC / Expedientes** | `oc_listar`, `oc_obtener`, `expediente_listar`, `expediente_obtener`, `expediente_lineas`, `expediente_resolve_oc_preview`, `expediente_crear`, `expediente_apply_pronto_pago`, `expediente_edit_full_get/patch` |
+| **OC / Expedientes** | `oc_listar`, `oc_obtener`, `expediente_listar`, `expediente_obtener`, `expediente_buscar` (anti-duplicados), `expediente_lineas`, `expediente_resolve_oc_preview`, `expediente_crear`, `lineas_actualizar_precios`, `expediente_apply_pronto_pago`, `expediente_edit_full_get/patch` |
 | **Documentos** | `documento_subir`, `documento_listar` |
 | **SAP** | `sap_analizar`, `sap_confirmar`, `sap_upsert`, `sap_obtener`, `sap_editar`, `sap_sincronizar_discrepancias` |
 | **Balanceo IA** | `match_subir`, `match_resolver` |

@@ -55,14 +55,14 @@ Llama a **`mwt_whoami`** → debe devolver `alejandro@muitowork.com`, rol `admin
 
 ---
 
-# PARTE 1 — QUÉ PUEDE HACER EL MCP `mwt-one` (87 herramientas)
+# PARTE 1 — QUÉ PUEDE HACER EL MCP `mwt-one` (88 herramientas)
 
 | Dominio | Herramientas |
 |---|---|
 | **Salud** | `mwt_whoami` |
 | **Clientes** | `cliente_listar`, `cliente_obtener`, `cliente_crear`, `cliente_editar`, `cliente_subsidiarias`, `cliente_kpis_pool` |
 | **Productos** | `producto_listar`, `producto_obtener`, `producto_crear`, `producto_editar`, `ncm_listar` |
-| **OC / Expedientes** | `oc_listar`, `oc_obtener`, `expediente_listar`, `expediente_obtener`, `expediente_lineas`, `expediente_resolve_oc_preview`, `expediente_crear`, `lineas_actualizar_precios`, `expediente_apply_pronto_pago`, `expediente_edit_full_get`, `expediente_edit_full_patch` |
+| **OC / Expedientes** | `oc_listar`, `oc_obtener`, `expediente_listar`, `expediente_obtener`, **`expediente_buscar`** (anti-duplicados por nº OC/proforma/SAP), `expediente_lineas`, `expediente_resolve_oc_preview`, `expediente_crear`, `lineas_actualizar_precios`, `expediente_apply_pronto_pago`, `expediente_edit_full_get`, `expediente_edit_full_patch` |
 | **Documentos** | `documento_subir`, `documento_listar` |
 | **SAP** | `sap_analizar`, `sap_confirmar`, `sap_upsert`, `sap_obtener`, `sap_editar`, `sap_sincronizar_discrepancias` |
 | **Balanceo IA** | `match_subir`, `match_resolver` |
@@ -350,26 +350,39 @@ Ejecuta en orden. Guarda los IDs en `consola{}`.
   - **No existe** → `producto_crear({sku, nombre:nombre_producto, marca_id?, categoria?, costo_estandar:precio_mwt, precio_lista:precio_cliente, especificaciones:{ncm, tallas:[...], color}})`.
   - (Los precios del documento se aplican por LÍNEA en 7.5, no se pisan los del catálogo aquí.)
 
-### 7.4 ¿Existe el expediente / OC?
-- `expediente_listar(q="<numero_proforma>")` y `oc_listar(q="<numero_oc>")`.
-  - **Existe** → NO crear. `expediente_obtener` + `expediente_lineas` para ver su estado; en 7.5 **edita** (no recrees) lo que falte con `expediente_edit_full_patch` (líneas/operador/forma de pago) y sigue con SAP/estados/documentos que aún no tenga.
-  - **No existe** → créalo (7.5).
+### 7.4 ¿Existe el expediente / OC? — ANTI-DUPLICADOS (crítico)
+⚠️ **No uses `q` para esto.** El parámetro `q` de `expediente_listar`/`oc_listar` SOLO busca el código autogenerado (EXP-…, PO-2026-…), **no** el número de OC del cliente ("504960") ni la proforma ("2468-2026"). Si buscas con `q` no encontrarás el existente y **crearás un duplicado** (fue el bug real: se crearon EXP-504960-6, etc., cuando ya existían como PF 2468/2427/2428-2026).
+
+**Usa SIEMPRE `expediente_buscar`** (compara contra `oc_codigos`/`proforma_codigos`/`sap_codigos`, normalizando "PO"/"OC" y separadores):
+
+```
+expediente_buscar(oc_number="504960", proforma="2468-2026", client_id="<id Sondel>")
+```
+- Si `existe == true` → **NO crees nada.** Toma `matches[].expediente_id`/`oc_id`, ve su estado con `expediente_obtener` + `expediente_lineas`, y en 7.5 **EDITA** (no recrees) lo que falte con `expediente_edit_full_patch`; sigue con SAP/estados/documentos que aún no tenga.
+- Si `existe == false` → créalo (7.5).
+- Verifica **por OC y por proforma** (y por SAP si lo tienes). Una proforma puede tener varias OC: busca cada `numero_oc`. **Nunca** te fíes solo de `q`.
 
 ### 7.5 Crear (o editar si ya existe) el expediente + precios exactos
 - **Si ya existía (7.4):** NO uses `expediente_crear`. Usa `expediente_edit_full_patch(expediente_id, {operating_company_id, forma_pago, lines_added/lines_updated})` para completar/corregir, y salta al paso 3 (precios) y siguientes (SAP/estados/documentos faltantes).
 - **Si no existía:**
   1. (Opcional) `expediente_resolve_oc_preview(client_id, lines=[{sku, size:talla, qty:cantidad}])`.
   2. `expediente_crear(client_id, operating_company_id, forma_pago, credit_days_mwt, credit_days_cliente, po_number=<numero_oc>, ocr_payload={lines:[{sku, size:talla, qty:cantidad, unit_price:precio_cliente}]})`. Guarda `expediente_id` y `oc_id`.
-3. **Fija precios del documento (siempre):** `expediente_lineas(expediente_id)` → `linea_id`; luego `lineas_actualizar_precios(updates=[{linea_id, unit_price_mwt:precio_mwt, unit_price_client:precio_cliente}])`. **Estos mandan, no los de la BD.**
+3. **Fija precios del documento (siempre) — y que el TOTAL cuadre:** `expediente_lineas(expediente_id)` → `linea_id`; luego `lineas_actualizar_precios(updates=[{linea_id, unit_price_mwt, unit_price_client}])`.
+   - ⚠️ **El "Total" de cada línea se calcula como `qty × unit_price_mwt`** (lado operador), mientras "Precio Cliente" muestra `unit_price_client`. Si pones un `unit_price_mwt` distinto (más bajo) que `unit_price_client`, el Total **no cuadrará** con qty×Precio Cliente (fue el bug: 300×19.96 mostró $5.073 en vez de $5.988 porque el mwt quedó en ~16.91).
+   - **Regla:** salvo que exista un margen MW↔cliente REAL leído del documento, pon **`unit_price_mwt` = `unit_price_client` = el precio unitario de la OC**. Ej.: `{linea_id, unit_price_mwt:19.96, unit_price_client:19.96}` → Total = 300×19.96 = 5.988 ✔.
+   - **Verifica** tras actualizar: relee `expediente_lineas` y comprueba `total_price == qty × unit_price_client` en cada línea. Estos precios mandan, no los de la BD.
 
 ### 7.6 Documentos — SUBIR TODOS los archivos reales a la nube (MinIO) ⚠️ obligatorio
 **Los archivos NO se quedan en local.** Todo `.pdf`, `.docx/.doc` y `.xlsx/.xls` que encuentres en **OneDrive** y en los **adjuntos de correo** relacionados con el expediente (proforma, OC/PO, SAP, factura comercial Marluvas, BL/AWB, DUA, packing, cotizaciones, pago de impuestos) **debe subirse a la plataforma con `documento_subir`**. El backend lo almacena en **MinIO/S3** y devuelve un `storage_url`/`signed_url`; ahí queda el archivo, no en tu disco.
 
 1. **Descarga primero** cada archivo a una ruta local temporal: los de OneDrive desde su carpeta; los de correo, **extrayendo el adjunto** del mensaje (.eml/IMAP) a un archivo. Esa ruta es el `file_path`.
-2. **Sube cada archivo** (uno por archivo, no solo el zip):
-   `documento_subir(file_path="<ruta local del archivo descargado>", kind=<tipo>, codigo="<nombre legible>", expediente_id, audience="MWT_INTERNAL")`
-   donde `kind` ∈ `PROFORMA | OC | SAP | FACTURA | AWB | BL | DUA | PACKING_LIST | GUIA | PAGO_IMPUESTOS | COTIZACION_FLETE | OTRO`.
-   - **Audiencia:** la **OC del cliente** y la **proforma del cliente** pueden ir `audience="CLIENT"`; costos, factura Marluvas, SAP y documentos internos `audience="MWT_INTERNAL"` (o `ADMIN_ONLY` para lo sensible). Los `CLIENT_*` no deben ver documentos internos.
+2. **Sube cada archivo con el flujo correcto según su tipo** (uno por archivo, no solo el zip). Importante: usa el flujo que deja el binario REALMENTE almacenado y, donde aplica, mapea líneas:
+   - **OC / PO del cliente** → `match_subir(expediente_id, document_type="ART-01_OC", file_path="<oc.pdf>")`. Sube el archivo a MinIO **y** la IA lo cruza con las líneas (devuelve `log_id` + discrepancias). Si hay discrepancias, resuélvelas con `match_resolver(expediente_id, log_id, actions=[...])`.
+   - **Proforma del cliente** → `match_subir(expediente_id, document_type="ART-02_PROFORMA", file_path="<proforma.pdf/xlsx>")`.
+   - **SAP (Excel/PDF Marluvas)** → va dentro de `sap_confirmar`/`sap_upsert` con `file_path` (paso 7.7): así queda el ART-04 almacenado y asigna las líneas al SAP en una sola llamada. **No subas el SAP por separado.**
+   - **Resto (BL/AWB, DUA, factura comercial Marluvas, packing, pago de impuestos, cotización, otros)** → `documento_subir(file_path="<archivo>", kind=<BL|DUA|FACTURA|PACKING_LIST|PAGO_IMPUESTOS|COTIZACION_FLETE|OTRO>, codigo="<nombre legible>", expediente_id, audience="MWT_INTERNAL")`.
+   - **Audiencia:** OC y proforma del cliente → `CLIENT`; factura Marluvas, SAP, costos e internos → `MWT_INTERNAL`/`ADMIN_ONLY`. Los `CLIENT_*` no deben ver documentos internos.
+   - **Subir un archivo = pasar su RUTA LOCAL** en `file_path` (el archivo descargado de OneDrive o extraído del adjunto de correo). El MCP lee ese archivo y el backend lo guarda en MinIO; **no** mandes solo el nombre ni texto.
 3. **Verifica** que subió: guarda el `storage_url`/`documento_id` devuelto en `consola.documentos_subidos[]` y refleja `documentos[].storage_url` + `documentos[].subido_a_minio:true` en el JSON. Cruza con `documento_listar(expediente=expediente_id)` para confirmar que **todos** quedaron en la nube; lo que falte va a `pendientes` con su motivo.
 4. **No dupliques:** si `documento_listar` ya muestra ese `kind`+`codigo`, no lo vuelvas a subir.
 5. Proforma del **sistema** (generada por la consola, además de la del OneDrive): `proforma_generar(expediente_id, audience="CLIENT")` y `proforma_generar(expediente_id, audience="ADMIN_ONLY")`.
@@ -377,9 +390,18 @@ Ejecuta en orden. Guarda los IDs en `consola{}`.
 
 > Regla: **ningún archivo relacionado al expediente puede quedarse solo en local**. Si tiene que ver con la proforma/OC/PO/SAP, se sube a MinIO vía el MCP.
 
-### 7.7 SAP
-- Con `numero_sap`: `sap_analizar(expediente_id, file_path="<excel SAP>")`; luego `sap_confirmar(expediente_id, sap_id=<numero_sap>, fecha_fabricacion=<fecha_sap>, lineas_confirmadas=[{linea_id, qty_confirmada, unit_price:precio_mwt}], file_path="<excel SAP>")` (transiciona REGISTRO→PRODUCCION). Si ya no está en REGISTRO, usa `sap_upsert(...)`.
-- **Varias OC/SAP por proforma:** crea un expediente por SAP y luego `expediente_fusionar([ids], label=numero_proforma)`.
+### 7.7 SAP — dar el número, subir el archivo y asignar las líneas (en UNA llamada)
+El SAP no es solo un número: **se sube el Excel/PDF de Marluvas Y se eligen qué líneas (SKU/talla/cantidad) cubre ese SAP**, todo en la misma llamada (genera el artefacto ART-04 en MinIO y setea `linea.sap`).
+
+1. (Opcional) `sap_analizar(expediente_id, file_path="<excel/pdf SAP>")` → pre-extrae nº SAP, fecha y detecta discrepancias (no persiste).
+2. **Confirmar** (primer SAP, expediente en REGISTRO → transiciona a PRODUCCION):
+   `sap_confirmar(expediente_id, sap_id="<numero_sap>", fecha_fabricacion="<fecha_sap YYYY-MM-DD>", lineas_confirmadas=[{linea_id, qty_confirmada, unit_price:<precio>}], file_path="<excel/pdf SAP>")`
+   - `sap_id` es **obligatorio** (el nº de Marluvas). **Siempre** pasa `file_path` → si no, NO queda el archivo SAP almacenado.
+   - `lineas_confirmadas`: **solo** las líneas que la fábrica confirmó (usa los `linea_id` de `expediente_lineas`). Cada `{linea_id, qty_confirmada, unit_price}`. Las líneas que NO incluyas quedan **libres para otro SAP**.
+   - `fecha_fabricacion` = la fecha de registro/confirmación del SAP (clave real es `fecha_fabricacion`, aunque la UI diga "Fecha de Registro").
+3. **Editar / SAP adicional** (expediente ya NO está en REGISTRO, o agregas un 2º SAP) → `sap_upsert(...)` (mismos campos; **no** transiciona el estado).
+4. **Varias OC/SAP por proforma:** crea un expediente por SAP (cada uno con su confirm/upsert) y luego `expediente_fusionar([ids], label=numero_proforma)`.
+5. Verifica: `sap_obtener(expediente_id, sap_id)` y que las líneas tengan `sap` asignado y `estado=SAP_CONFIRMADO`.
 
 ### 7.8 Estados + fechas inicio/fin
 1. Avanza con `expediente_avanzar_estado(expediente_id, fase_to=...)` en orden hasta `estado_inferido`, saltando estados con `aplica:false`.
@@ -418,7 +440,7 @@ Ejecuta en orden. Guarda los IDs en `consola{}`.
 
 # PARTE 8 — REGLAS DE ORO
 
-1. **Upsert (idempotencia):** consulta SIEMPRE antes de crear. Si la entidad (cliente, producto/SKU, nodo, expediente, OC, SAP) **ya existe → revísala y edítala** (`*_editar`/`expediente_edit_full_patch`/`sap_upsert`), **no la dupliques**. Solo crea lo que de verdad falta. (Excepción: la consola **sí permite OC/PO duplicadas** entre proformas distintas; no deduplicar por PO entre proformas.)
+1. **Upsert (idempotencia):** consulta SIEMPRE antes de crear. Para expedientes usa **`expediente_buscar(oc_number, proforma, sap, client_id)`** (NO `q`, que no encuentra por nº de OC/proforma → causa duplicados). Si la entidad (cliente, producto/SKU, nodo, expediente, OC, SAP) **ya existe → revísala y edítala** (`*_editar`/`expediente_edit_full_patch`/`sap_upsert`), **no la dupliques**. Solo crea lo que de verdad falta. (Excepción: la consola permite OC/PO duplicadas entre proformas DISTINTAS; no deduplicar por PO entre proformas distintas, pero sí evitar recrear el MISMO expediente.)
 2. **Operador:** `Muito Work Limitada` = operador, no cliente final → `operating_company_id` vs `client_id`.
 3. **Precios del documento**, no de la BD (`lineas_actualizar_precios`).
 4. **Fechas reales** por estado (correos/documentos); `inferida:true` si las estimas; `null`+`pendientes` si faltan; **continuidad** `fin(n)=inicio(n+1)`.
@@ -437,7 +459,8 @@ Ejecuta en orden. Guarda los IDs en `consola{}`.
 - [ ] `fechas_estados` con inicio/fin por estado, continuos y citados/inferidos.
 - [ ] `operador`/`cliente_final` correctos; `operado_por_mwt` definido.
 - [ ] `lineas_producto` con `precio_mwt`/`precio_cliente` **del documento**; `total_pares == sum(cantidad)`.
-- [ ] En consola: cliente(s), SKU(s), expediente con OC y líneas, **precios corregidos** con `lineas_actualizar_precios`.
+- [ ] **Anti-duplicados:** antes de crear, `expediente_buscar(oc_number, proforma, client_id)` → si existe, se editó (no se duplicó).
+- [ ] En consola: cliente(s), SKU(s), expediente con OC y líneas, **precios corregidos** con `lineas_actualizar_precios`, y **`total_price == qty × precio_cliente`** verificado (mwt = cliente salvo margen real).
 - [ ] SAP cargado; fusión si varias OC/SAP.
 - [ ] **TODOS** los archivos (.pdf/.docx/.xlsx de OneDrive y adjuntos de correo) **subidos a MinIO** vía `documento_subir`, ninguno solo en local; verificado con `documento_listar`. Proforma generada; AWB/BL y factura Marluvas como artefactos.
 - [ ] Estados avanzados + **fechas inicio/fin** (`phase_durations_set`) verificadas.
@@ -540,9 +563,10 @@ Al terminar **toda** la lectura (correos + OneDrive) y **toda** la carga vía MC
 
 # APÉNDICE A — Referencia rápida de herramientas (parámetros clave)
 
+- **expediente_buscar(oc_number?, proforma?, sap?, client_id?)** — ANTI-DUPLICADOS. Devuelve `{existe, matches[]}`. Úsala antes de crear; busca por nº de OC del cliente / proforma / SAP (no por el código autogenerado).
 - **cliente_crear(datos)** — `razon_social, nombre_comercial, tax_id, pais_iso2, tipo (B2B|CONSUMIDOR|DISTRIBUIDOR), dias_credito, estado`.
 - **producto_crear(datos)** — `sku, nombre, marca_id, categoria, costo_estandar, precio_lista, especificaciones{ncm,tallas,color}`.
-- **lineas_actualizar_precios(updates)** — `[{linea_id, unit_price_mwt, unit_price_client}]`. Fija los precios EXACTOS del documento.
+- **lineas_actualizar_precios(updates)** — `[{linea_id, unit_price_mwt, unit_price_client}]`. Fija los precios EXACTOS del documento. El "Total" usa `unit_price_mwt` → pon `unit_price_mwt = unit_price_client` (salvo margen real) para que cuadre con qty×precio cliente.
 - **expediente_crear(...)** — `client_id, operating_company_id, forma_pago (CREDITO|CONTADO), credit_days_mwt, credit_days_cliente, po_number, ocr_payload{lines:[{sku,size,qty,unit_price}]}, file_path?`.
 - **sap_confirmar(...)** — `expediente_id, sap_id, fecha_fabricacion, lineas_confirmadas:[{linea_id,qty_confirmada,unit_price}], file_path?`. (REGISTRO→PRODUCCION.)
 - **expediente_avanzar_estado(expediente_id, fase_to)** — `REGISTRO|PRODUCCION|PREPARACION|DESPACHO|TRANSITO|EN_DESTINO|CERRADO`.
