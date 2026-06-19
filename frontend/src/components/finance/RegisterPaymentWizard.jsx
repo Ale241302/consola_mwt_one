@@ -122,7 +122,7 @@ export default function RegisterPaymentWizard({
   const stepErrors = useMemo(() => _validateAllSteps(formData, lang), [formData, lang]);
   let canAdvance;
   if (step === 2) {
-    canAdvance = !!formData.evidencia && !aiAnalyzing;
+    canAdvance = !aiAnalyzing;
   } else if (step <= 1) {
     canAdvance = !stepErrors[`step${step + 1}`]?.length;
   } else {
@@ -275,7 +275,7 @@ export default function RegisterPaymentWizard({
               <div>
                 <div className="micro" style={{ color: "var(--text-tertiary)", marginBottom: 2 }}>
                   {lang === "es" ? "FINANCIERO" : "FINANCE"}
-                  {preselectedScope && (
+                  {preselectedScope && preselectedScope.type !== "OC" && preselectedScope.type !== "EXPEDIENTE" && (
                     <span style={{
                       marginLeft: 8,
                       display: "inline-flex", alignItems: "center", gap: 6,
@@ -1198,8 +1198,6 @@ function _validateAllSteps(formData, lang) {
     out.step3.push(lang === "es" ? "El monto debe ser mayor a 0" : "Amount must be > 0");
   if (!formData.fecha)
     out.step3.push(lang === "es" ? "Fecha requerida" : "Date required");
-  if (!formData.evidencia)
-    out.step3.push(lang === "es" ? "Comprobante obligatorio" : "Proof required");
   if (formData.moneda && formData.moneda !== "USD"
       && (!formData.tasa_cambio_a_usd || formData.tasa_cambio_a_usd <= 0)) {
     out.step3.push(lang === "es"

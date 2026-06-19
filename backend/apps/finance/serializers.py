@@ -181,7 +181,7 @@ class PaymentRegisterSerializer(serializers.Serializer):
     referencia    = serializers.CharField(min_length=3, max_length=64)
     notas         = serializers.CharField(required=False, allow_blank=True, max_length=500)
     aplicaciones  = serializers.CharField()  # JSON string, validado en validate()
-    evidencia     = serializers.FileField()
+    evidencia     = serializers.FileField(required=False, allow_null=True)
     event_id      = serializers.UUIDField(required=False)
     pre_verdict   = serializers.CharField(required=False, allow_blank=True,
                                           help_text=(
@@ -205,6 +205,8 @@ class PaymentRegisterSerializer(serializers.Serializer):
         return v
 
     def validate_evidencia(self, file):
+        if not file:
+            return file
         size = getattr(file, "size", None) or 0
         if size > EVIDENCE_MAX_BYTES:
             raise serializers.ValidationError(

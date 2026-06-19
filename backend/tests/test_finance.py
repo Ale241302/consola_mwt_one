@@ -214,9 +214,8 @@ class TestPaymentBatches:
 # Wizard create (validación — el happy-path exige MinIO)
 # ═════════════════════════════════════════════════════════════════════
 class TestPaymentWizardCreate:
-    def test_create_sin_evidencia_400(self, authenticated_client):
-        """PaymentRegisterSerializer exige evidencia (FileField) y
-        aplicaciones — el wizard sin comprobante debe fallar limpio."""
+    def test_create_sin_aplicaciones_400(self, authenticated_client):
+        """PaymentRegisterSerializer exige aplicaciones — el wizard sin aplicaciones debe fallar limpio."""
         r = authenticated_client.post(URL, {
             "expediente_id": new_uuid(),
             "monto":         "100.00",
@@ -228,8 +227,32 @@ class TestPaymentWizardCreate:
         }, format="multipart")
         assert r.status_code == 400, r.content
         body = r.json()
-        assert "evidencia" in body
         assert "aplicaciones" in body
+        assert "evidencia" not in body
+
+    def test_create_feliz_sin_evidencia(self, authenticated_client):
+        """Verifica que un pago sin evidencia se registra correctamente en estado NEEDS_REVIEW."""
+        import json
+        exp_id = new_uuid()
+        aplicaciones = json.dumps([{
+            "applicable_type": "COSTO",
+            "applicable_id": str(new_uuid()),
+            "monto_aplicado": "100.00"
+        }])
+        r = authenticated_client.post(URL, {
+            "expediente_id": str(exp_id),
+            "monto":         "100.00",
+            "moneda":        "USD",
+            "fecha":         "2026-06-01",
+            "metodo":        "TRANSFERENCIA_BANCARIA",
+            "tipo_pago":     "PARCIAL",
+            "referencia":    "REF-QA-OK-1",
+            "aplicaciones":  aplicaciones,
+        }, format="multipart")
+        assert r.status_code in (200, 201), r.content
+        body = r.json()
+        assert body["estado"] == "NEEDS_REVIEW"
+        assert body["evidencia"] is None
 
     def test_create_payload_vacio_400(self, authenticated_client):
         r = authenticated_client.post(URL, {}, format="multipart")

@@ -47,7 +47,7 @@ log = logging.getLogger(__name__)
 class RegisterResult:
     payment: Payment
     applications: List[PaymentApplication]
-    evidence: PaymentEvidence
+    evidence: Optional[PaymentEvidence]
 
 
 # ════════════════════════════════════════════════════════════
@@ -124,7 +124,7 @@ class PaymentService:
                 payment      = existing,
                 applications = list(PaymentApplication.objects.filter(
                     payment_id=existing.id)),
-                evidence     = PaymentEvidence.objects.get(payment_id=existing.id),
+                evidence     = PaymentEvidence.objects.filter(payment_id=existing.id).first(),
             )
 
         # ── 2. Sembrar identidad del nuevo Payment ──────────────
@@ -135,34 +135,41 @@ class PaymentService:
         now_utc       = datetime.now(tz=_tz.utc)
 
         # ── 3. Subir comprobante a MinIO ────────────────────────
-        evidence_file = validated["evidencia"]
-        sha256        = _hash_file(evidence_file)
-        original_name = getattr(evidence_file, "name", "evidence")
-        # Derivamos extensión segura desde el name (no del MIME) para
-        # que el archivo descargado conserve algo legible.
-        ext = ""
-        if "." in original_name:
-            ext = "." + original_name.rsplit(".", 1)[-1].lower()
-        object_key = f"finance/payments/{payment_id}/{uuid.uuid4().hex[:8]}{ext}"
+        evidence_file = validated.get("evidencia")
+        if evidence_file:
+            sha256        = _hash_file(evidence_file)
+            original_name = getattr(evidence_file, "name", "evidence")
+            # Derivamos extensión segura desde el name (no del MIME) para
+            # que el archivo descargado conserve algo legible.
+            ext = ""
+            if "." in original_name:
+                ext = "." + original_name.rsplit(".", 1)[-1].lower()
+            object_key = f"finance/payments/{payment_id}/{uuid.uuid4().hex[:8]}{ext}"
 
-        upload = put_object_stream(
-            object_key,
-            evidence_file,
-            content_type = (getattr(evidence_file, "content_type", None)
-                            or "application/octet-stream"),
-            length = getattr(evidence_file, "size", -1) or -1,
-        )
-        if not upload.get("ok"):
-            # Si no podemos persistir el comprobante, abortamos toda la
-            # transacción — un Payment sin evidencia es inválido por R8.
-            raise RuntimeError(
-                f"No se pudo guardar el comprobante en storage: "
-                f"{upload.get('error') or 'unknown'}"
+            upload = put_object_stream(
+                object_key,
+                evidence_file,
+                content_type = (getattr(evidence_file, "content_type", None)
+                                or "application/octet-stream"),
+                length = getattr(evidence_file, "size", -1) or -1,
             )
+            if not upload.get("ok"):
+                # Si no podemos persistir el comprobante, abortamos toda la
+                # transacción — un Payment sin evidencia es inválido por R8.
+                raise RuntimeError(
+                    f"No se pudo guardar el comprobante en storage: "
+                    f"{upload.get('error') or 'unknown'}"
+                )
+        else:
+            sha256        = None
+            original_name = None
+            object_key    = None
+            upload        = {}
 
         # ── 4. Crear Payment usando SQL crudo (managed=False) ──
         # Usamos cursor para tener control fino sobre los GENERATED
         # columns y los DEFAULTs de la DB (event_id, codigo, etc.).
+        default_estado = PaymentStatus.PENDIENTE_AI if evidence_file else PaymentStatus.NEEDS_REVIEW
         with connection.cursor() as cur:
             cur.execute(
                 """
@@ -195,7 +202,7 @@ class PaymentService:
                     validated["metodo"],
                     validated["tipo_pago"],
                     validated["referencia"],
-                    PaymentStatus.PENDIENTE_AI,
+                    default_estado,
                     validated.get("notas") or None,
                     str(actor_id) if actor_id else None,
                     str(event_id),
@@ -235,33 +242,35 @@ class PaymentService:
             applications.append(PaymentApplication.objects.get(id=app_id))
 
         # ── 6. Crear PaymentEvidence ────────────────────────────
-        evidence_id = uuid.uuid4()
-        with connection.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO finance.payment_evidence (
-                    id, payment_id, bucket, object_key,
-                    mime_type, size_bytes, sha256, original_name,
-                    uploaded_by, uploaded_at
-                ) VALUES (
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s
+        evidence = None
+        if evidence_file:
+            evidence_id = uuid.uuid4()
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO finance.payment_evidence (
+                        id, payment_id, bucket, object_key,
+                        mime_type, size_bytes, sha256, original_name,
+                        uploaded_by, uploaded_at
+                    ) VALUES (
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s
+                    )
+                    """,
+                    [
+                        str(evidence_id), str(payment_id),
+                        upload.get("bucket") or "mwt-one",
+                        object_key,
+                        getattr(evidence_file, "content_type", "application/octet-stream"),
+                        int(getattr(evidence_file, "size", 0) or 0),
+                        sha256,
+                        original_name[:255] if original_name else None,
+                        str(actor_id) if actor_id else None,
+                        now_utc,
+                    ],
                 )
-                """,
-                [
-                    str(evidence_id), str(payment_id),
-                    upload.get("bucket") or "mwt-one",
-                    object_key,
-                    getattr(evidence_file, "content_type", "application/octet-stream"),
-                    int(getattr(evidence_file, "size", 0) or 0),
-                    sha256,
-                    original_name[:255] if original_name else None,
-                    str(actor_id) if actor_id else None,
-                    now_utc,
-                ],
-            )
-        evidence = PaymentEvidence.objects.get(id=evidence_id)
+            evidence = PaymentEvidence.objects.get(id=evidence_id)
 
         # ── 7. ActivityLog · payment.registered ─────────────────
         ActivityLogger.log(
@@ -276,15 +285,15 @@ class PaymentService:
                 "metodo": validated["metodo"],
                 "tipo_pago": validated["tipo_pago"],
                 "referencia": validated["referencia"],
-                "estado": PaymentStatus.PENDIENTE_AI,
+                "estado": default_estado,
                 "applications_count": len(applications),
-                "evidence_size_bytes": int(getattr(evidence_file, "size", 0) or 0),
+                "evidence_size_bytes": int(getattr(evidence_file, "size", 0) or 0) if evidence_file else 0,
                 "evidence_sha256": sha256,
             },
             metadata = {
                 "codigo": codigo,
                 "expediente_id": str(expediente_id),
-                "phase": "fase-3 · ai-pending",
+                "phase": "fase-3 · ai-pending" if evidence_file else "fase-3 · manual-pending",
             },
         )
 
@@ -293,7 +302,7 @@ class PaymentService:
         #   · MATCH + confianza >= 90  → CONFIRMADO_AI + insertar verdict + NO encolar task
         #   · MATCH + confianza < 90 o cualquier otro status → NEEDS_REVIEW + insertar verdict + NO encolar task
         #   · None                     → PENDIENTE_AI + encolar task (comportamiento original)
-        _should_enqueue_ai = True
+        _should_enqueue_ai = True if evidence_file else False
         # Sprint 2026-05-26 (CEO) - si alguna aplicacion es FACTURA, el
         # pago NO se puede auto-confirmar por IA: siempre queda como
         # borrador (NEEDS_REVIEW si vino pre_verdict, PENDIENTE_AI si no)
