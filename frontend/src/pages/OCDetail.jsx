@@ -829,9 +829,26 @@ export default function ScreenOCDetail() {
     setDocError(null);
     try {
       const resp = await storageApi.documentSignedUrl(doc.id, 900);
-      const url = resp?.url;
+      // Sprint 2026-06-19 · doc sin archivo real en MinIO (registro legacy
+      // del wizard que no subía el binario): avisamos claro y sugerimos
+      // re-subirlo con "Agregar documento" en vez de abrir un 404.
+      if (resp && resp.available === false) {
+        setDocError(
+          lang === 'es'
+            ? 'Este documento no tiene archivo almacenado (registro antiguo). Vuelve a subirlo con "Agregar documento".'
+            : 'This document has no stored file (legacy record). Please re-upload it via "Add document".'
+        );
+        return;
+      }
+      let url = resp?.url;
       if (!url) {
         throw new Error(resp?.error || 'URL no disponible');
+      }
+      // El backend ahora sirve por el proxy HTTPS same-origin
+      // (/api/storage/download/?key=...). Lo absolutizamos para
+      // window.open / <a download>.
+      if (resp?.proxy === true && url.startsWith('/')) {
+        url = `${window.location.origin}${url}`;
       }
       // Sprint 2026-05-08 · documentos DINÁMICOS (Proforma HTML).
       // Backend devuelve { url:"/api/expedientes/.../proforma-html/...", dynamic:true }.

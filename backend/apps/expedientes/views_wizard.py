@@ -211,13 +211,38 @@ def _store_file_bytes(file_bytes: bytes, filename: str,
     except Exception as e:
         log.debug("paperless_ingest (ART-01) no disponible: %s", e)
 
-    # 2) Signed URL MinIO (putObject fire-and-forget)
+    # 2) Subida REAL del binario a MinIO.
+    #    BUG FIX 2026-06-19 (AG-03): antes esto SOLO firmaba un PUT y guardaba
+    #    la URL firmada en storage_url, pero NUNCA subía los bytes → el objeto
+    #    jamás llegaba al bucket y el visor devolvía `NoSuchKey`. Ahora subimos
+    #    de verdad con put_object_stream y persistimos la KEY (no una URL); el
+    #    visor la resuelve por el proxy HTTPS /api/storage/download/?key=.
     try:
-        from apps.storage.services import generate_signed_url
-        signed = generate_signed_url(key=key, kind="put", ttl=3600)
-        out["storage_url"] = signed.get("url")
+        import io as _io
+        from apps.storage.services import put_object_stream
+        content_type = {
+            "pdf":  "application/pdf",
+            "png":  "image/png",
+            "jpg":  "image/jpeg",
+            "jpeg": "image/jpeg",
+            "webp": "image/webp",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xls":  "application/vnd.ms-excel",
+            "csv":  "text/csv",
+        }.get(ext, "application/octet-stream")
+        up = put_object_stream(
+            key=key,
+            file_stream=_io.BytesIO(file_bytes),
+            content_type=content_type,
+            length=len(file_bytes),
+        )
+        if up.get("ok"):
+            out["storage_url"] = key
+        else:
+            log.warning("_store_file_bytes (ART-01) subida MinIO falló: %s",
+                        up.get("error"))
     except Exception as e:
-        log.debug("generate_signed_url (ART-01) no disponible: %s", e)
+        log.warning("_store_file_bytes (ART-01) subida MinIO falló: %s", e)
 
     return out
 

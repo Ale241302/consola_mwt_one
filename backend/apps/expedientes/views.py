@@ -23,6 +23,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import Q
 from rest_framework import viewsets
@@ -65,6 +66,38 @@ log = logging.getLogger(__name__)
 # (pasa a la acción original) si es staff interno.
 # ══════════════════════════════════════════════════════════════════════
 _CLIENT_ROLES = {"client_b2b", "cliente", "client"}
+
+
+def _normalize_storage_key(raw, *, bucket: str = "mwt-one"):
+    """Convierte un `storage_url` persistido en la *object key* limpia del bucket.
+
+    Tolera los 3 formatos históricos que hay en `expedientes.documento`:
+      · KEY directa     → 'documento/<uuid>/file.pdf'            (se devuelve igual)
+      · URL firmada GET → 'http://host:9000/mwt-one/<key>?X-Amz-...'  (matchmaker)
+      · URL firmada PUT → 'http://host:9000/mwt-one/<key>?X-Amz-...'  (wizard legacy)
+
+    En los dos últimos casos extrae la key del path quitando el host, el
+    nombre del bucket y el query-string de la firma SigV4.
+
+    Devuelve `None` si no hay key utilizable (vacío o marcador `dynamic://`),
+    para que el caller responda `available:false` en vez de inventar un
+    fallback que termina en `NoSuchKey`.
+    """
+    if not raw:
+        return None
+    raw = str(raw).strip()
+    if not raw or raw.startswith("dynamic://"):
+        return None
+    if raw.startswith("http://") or raw.startswith("https://"):
+        from urllib.parse import urlparse, unquote  # noqa: PLC0415
+        path = unquote(urlparse(raw).path or "").lstrip("/")
+        if bucket and path.startswith(bucket + "/"):
+            path = path[len(bucket) + 1:]
+        else:
+            parts = path.split("/", 1)
+            path = parts[1] if len(parts) == 2 else path
+        return path or None
+    return raw
 
 
 def _viewer_role_upper(request) -> str:
@@ -4882,25 +4915,45 @@ class DocumentoViewSet(viewsets.ViewSet):
                 "expediente_id": str(d.expediente_id) if d.expediente_id else None,
             })
 
-        # Prioridad: storage_url persistido en el upload (forma canónica
-        # vigente), luego bucket_key (compat futura), luego fallback legacy.
-        key = (
-            storage_url_raw
-            or getattr(d, "bucket_key", None)
-            or f"expedientes/{d.expediente_id}/{d.id}"
+        # Sprint 2026-06-19 (AG-03) · FIX NoSuchKey en visor de documentos.
+        # Causa: el wizard guardaba una URL PUT firmada (o NULL) en storage_url
+        # y NUNCA subía el binario; el viejo fallback `expedientes/{exp}/{id}`
+        # apuntaba a un objeto inexistente → MinIO devolvía NoSuchKey.
+        #
+        # Ahora:
+        #   1) Normalizamos storage_url → object key real (soporta key directa
+        #      y URLs firmadas legacy del matchmaker/wizard).
+        #   2) Servimos SIEMPRE por el proxy HTTPS same-origin
+        #      `/api/storage/download/?key=` — sin mixed-content (la consola es
+        #      HTTPS y MinIO escucha en HTTP), sin exponer IP ni credenciales.
+        #      El endpoint download es AllowAny: la key (UUID) actúa de secreto.
+        #   3) Si no hay key utilizable (doc legacy sin archivo efectivo)
+        #      devolvemos `available:false` con motivo claro en vez de un
+        #      fallback que 404ea de forma confusa.
+        bucket = getattr(settings, "MINIO_BUCKET", "mwt-one")
+        key = _normalize_storage_key(
+            storage_url_raw or getattr(d, "bucket_key", None),
+            bucket=bucket,
         )
-        ttl = int(request.query_params.get("ttl") or 900)
+        if not key:
+            return Response({
+                "url":           None,
+                "available":     False,
+                "error":         "documento_sin_archivo",
+                "documento_id":  str(d.id),
+                "expediente_id": str(d.expediente_id) if d.expediente_id else None,
+            }, status=200)
 
-        try:
-            from apps.storage.services import generate_signed_url  # noqa: PLC0415
-            data = generate_signed_url(key=key, kind="get", ttl=ttl)
-        except Exception as e:
-            data = {"url": None, "available": False, "error": str(e), "key": key}
-
-        data["documento_id"]  = str(d.id)
-        data["expediente_id"] = str(d.expediente_id) if d.expediente_id else None
-        data["key"]           = key  # útil para debugging
-        return Response(data)
+        from urllib.parse import quote  # noqa: PLC0415
+        proxy_url = f"/api/storage/download/?key={quote(key, safe='')}"
+        return Response({
+            "url":           proxy_url,
+            "available":     True,
+            "proxy":         True,
+            "key":           key,  # útil para debugging
+            "documento_id":  str(d.id),
+            "expediente_id": str(d.expediente_id) if d.expediente_id else None,
+        })
 
 
 # ════════════════════════════════════════════════════════════

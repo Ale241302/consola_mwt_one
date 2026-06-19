@@ -433,8 +433,21 @@ export default function ScreenFusionDetail() {
     setDocError(null);
     try {
       const resp = await storageApi.documentSignedUrl(doc.id, 900);
-      const url = resp?.url;
+      // Sprint 2026-06-19 · doc sin archivo real en MinIO (registro legacy).
+      if (resp && resp.available === false) {
+        setDocError(
+          es
+            ? 'Este documento no tiene archivo almacenado (registro antiguo). Vuelve a subirlo con "Agregar documento".'
+            : 'This document has no stored file (legacy record). Please re-upload it via "Add document".'
+        );
+        return;
+      }
+      let url = resp?.url;
       if (!url) throw new Error(resp?.error || (es ? "URL no disponible" : "URL unavailable"));
+      // Proxy HTTPS same-origin → absolutizar para window.open / <a download>.
+      if (resp?.proxy === true && url.startsWith("/")) {
+        url = `${window.location.origin}${url}`;
+      }
       if (resp?.dynamic === true) {
         const apiBase = (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || "/api";
         const fullUrl = url.startsWith("/") ? url : `${apiBase}${url}`;

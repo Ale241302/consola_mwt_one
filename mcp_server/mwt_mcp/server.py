@@ -295,6 +295,17 @@ def expediente_crear(
 
 
 @mcp.tool()
+def lineas_actualizar_precios(updates: list) -> Any:
+    """Fija los precios EXACTOS de las líneas (los leídos de la OC/proforma, no los
+    de la BD). `updates`: [{linea_id, unit_price_mwt, unit_price_client}].
+    Usa expediente_lineas para obtener los linea_id."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe(lambda: api.post("lineas/bulk-update-prices/", {"updates": updates}))
+
+
+@mcp.tool()
 def expediente_apply_pronto_pago(expediente_id: str, plazo_days: int, covered_pairs: list | None = None) -> Any:
     """Aplica el descuento de pronto pago al precio CLIENTE de un expediente.
     `plazo_days` ∈ {8,30,60,90,120}. `covered_pairs`: opcional, [{sku, size}] para acotar.
