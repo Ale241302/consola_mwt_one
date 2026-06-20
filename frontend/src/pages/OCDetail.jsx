@@ -2465,21 +2465,29 @@ export default function ScreenOCDetail() {
                   }}
                   title={lang === 'es' ? 'Click para abrir el documento' : 'Click to open document'}
                 >
-                  <div className={'doc-icon ext-' + ext}>
+                  <div className={'doc-icon ext-' + ext} style={{flexShrink: 0}}>
                     {ext.toUpperCase()}
                   </div>
                   <div style={{flex: 1, minWidth: 0}}>
                     <div className="body-sm" style={{fontWeight: 500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
                       {d.kind || '—'}
                     </div>
-                    <div className="caption" style={{marginTop: 2, fontFamily:'var(--font-mono)'}}>
+                    <div
+                      className="caption"
+                      style={{marginTop: 2, fontFamily:'var(--font-mono)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}
+                      title={d.code || ''}
+                    >
                       {d.code || '—'}
                     </div>
-                    <div className="caption" style={{color:'var(--text-tertiary)', marginTop: 3}}>
+                    <div
+                      className="caption"
+                      style={{color:'var(--text-tertiary)', marginTop: 3, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}
+                      title={`${d.date || '—'} · ${d.size || '—'} · ${d.author || '—'}`}
+                    >
                       {d.date || '—'} · {d.size || '—'} · {d.author || '—'}
                     </div>
                   </div>
-                  <div style={{display:'flex', gap: 4, alignItems:'center'}}>
+                  <div style={{display:'flex', gap: 4, alignItems:'center', flexShrink: 0}}>
                     <button
                       type="button"
                       className="icon-btn"

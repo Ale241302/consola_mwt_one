@@ -53,13 +53,13 @@ Llama a **`mwt_whoami`** → debe devolver `alejandro@muitowork.com`, rol `admin
 
 ---
 
-# PARTE 1 — QUÉ PUEDE HACER EL MCP `mwt-one` (89 herramientas)
+# PARTE 1 — QUÉ PUEDE HACER EL MCP `mwt-one` (91 herramientas)
 
 | Dominio | Herramientas |
 |---|---|
 | **Salud** | `mwt_whoami` |
 | **Clientes** | `cliente_listar`, `cliente_obtener`, `cliente_crear`, `cliente_editar`, `cliente_subsidiarias`, `cliente_kpis_pool` |
-| **Productos** | `producto_listar`, `producto_obtener`, `producto_crear`, `producto_editar`, `ncm_listar` |
+| **Productos** | `producto_listar`, `producto_obtener`, `producto_crear`, `producto_editar`, `ncm_listar`, **`tallas_listar`** (catálogo de tallas → UUIDs), **`producto_alias_crear`** (part-number cliente→producto) |
 | **OC / Expedientes** | `oc_listar`, `oc_obtener`, `expediente_listar`, `expediente_obtener`, **`expediente_buscar`** (anti-duplicados por nº OC/proforma/SAP), `expediente_lineas`, `expediente_resolve_oc_preview`, `expediente_crear`, `lineas_actualizar_precios`, `expediente_apply_pronto_pago`, `expediente_edit_full_get`, `expediente_edit_full_patch` |
 | **Documentos** | `documento_subir`, `documento_listar` |
 | **SAP** | `sap_analizar`, `sap_confirmar`, `sap_upsert`, `sap_obtener`, `sap_editar`, `sap_sincronizar_discrepancias` |
@@ -324,8 +324,22 @@ Ejecuta en orden. Guarda los IDs en `consola{}`.
 1. `cliente_listar(q="<cliente_final>")`. Existe → `cliente_obtener` + `cliente_editar` lo faltante. No existe → `cliente_crear({razon_social, nombre_comercial, tax_id?, pais_iso2, tipo:"DISTRIBUIDOR", estado:"ACTIVO"})`. Guarda `client_id`.
 2. Operador: `operado_por_mwt == true` → `cliente_listar(q="Muito Work Limitada")` → `operating_company_id` (normalmente ya existe). Directo → `operating_company_id = client_id`.
 
-### 7.3 Productos (SKUs) (upsert)
-- Por cada `sku` único: `producto_listar(q="<sku>")`. Existe → `producto_editar` solo si hay datos nuevos (NCM, tallas, nombre). No existe → `producto_crear({sku, nombre:nombre_producto, marca_id?, costo_estandar:precio_mwt, precio_lista:precio_cliente, especificaciones:{ncm, tallas:[...], color}})`. (El precio por LÍNEA se fija en 7.5.)
+### 7.3 Productos (SKUs) (upsert) — con TALLAS reales
+⚠️ **Las tallas en el catálogo de producto son UUIDs, NO labels ni "UNICA".** El calzado tiene tallas 34-49 (ver la matriz de la proforma); "UNICA" no existe.
+1. Carga el catálogo de tallas UNA vez: `tallas_listar(tipo_producto="calzado")` → `results[]` con `{id (UUID), nombre:"39"}`. Construye un mapa `label → UUID`.
+2. Por cada `sku` único: `producto_listar(q="<sku>")`.
+   - **Existe** → `producto_editar` solo si faltan datos (tallas, NCM, nombre). No dupliques.
+   - **No existe** → `producto_crear`. Saca las **tallas reales** de la matriz de la proforma/OC (ej. 35-44), mapea cada label a su UUID y pásalas en **`tallas`** Y en **`especificaciones.sizes`** (mismo array de UUIDs):
+     ```
+     producto_crear({sku, nombre:nombre_producto, marca_id:<Marluvas>, unidad:"PAR",
+       costo_estandar:precio_mwt, precio_lista:precio_cliente, precio_mwt:precio_mwt,
+       hs_code:"6403.99.90", pais_origen_iso2:"BR", estado:"ACTIVO", colores:["Negro"],
+       tallas:[<uuid35>,...,<uuid44>],
+       especificaciones:{ ncm:"6403.99.90", color:"Negro", sizes:[<uuid35>,...,<uuid44>] }})
+     ```
+     (El NCM sale de `ncm_listar`; para calzado de cuero suele ser `6403.99.90`.)
+3. Tras crear, registra el alias del cliente: `producto_alias_crear(producto_id, cliente_id, alias="<part-number base del cliente sin talla>")` → así el matching no vuelve a fallar.
+   > El precio definitivo por LÍNEA se fija en 7.5. **Las tallas de la LÍNEA del expediente van como label "39" (ver 7.5), las del catálogo como UUID.**
 
 ### 7.4 ¿Existe el expediente? — ANTI-DUPLICADOS (crítico)
 ⚠️ **No uses `q` para esto.** El `q` de `expediente_listar`/`oc_listar` SOLO busca el código autogenerado (EXP-…, PO-2026-…), **no** el nº de OC del cliente ("504960") ni la proforma ("2468-2026"). Con `q` no encontrarás el existente y **crearás un duplicado** (fue el bug real: EXP-504960-6 cuando ya existía como PF 2468-2026).
@@ -342,7 +356,11 @@ expediente_buscar(oc_number="504960", proforma="2468-2026", client_id="<id Sonde
 - **Si ya existía (7.4):** NO uses `expediente_crear`. Usa `expediente_edit_full_patch(expediente_id, {operating_company_id, forma_pago, lines_added/lines_updated})` y salta al paso 3.
 - **Si no existía:**
   1. (Opcional) `expediente_resolve_oc_preview(client_id, lines=[{sku, size:talla, qty:cantidad}])`.
-  2. `expediente_crear(client_id, operating_company_id, forma_pago, credit_days_mwt, credit_days_cliente, po_number=<numero_oc>, ocr_payload={lines:[{sku, size:talla, qty:cantidad, unit_price:precio_cliente}]})`. Guarda `expediente_id` y `oc_id`.
+  2. `expediente_crear(client_id, operating_company_id, forma_pago, credit_days_mwt, credit_days_cliente, po_number=<numero_oc_limpio>, ocr_payload={lines:[{sku, size:"<talla real>", qty:cantidad, unit_price:precio_cliente}]}, file_path="<ruta local de la OC.pdf>")`. Guarda `expediente_id` y `oc_id`.
+     - ⚠️ **TALLAS REALES, NUNCA "UNICA".** Lee la **matriz de tallas de la proforma/OC** y emite **una línea por (SKU × talla)** con la talla real como **label string** (ej. `size:"39"`), no UUID, no "UNICA". Si un SKU tiene 4 tallas con cantidad, son 4 líneas.
+     - ⚠️ **`po_number` = SOLO el número de OC limpio** (ej. `"503295"`), sin prefijos ("PO"/"OC"), sin nombre de archivo, sin SAP. **NUNCA mandes `"SIN-PO"`.** Si de verdad no hay número de OC en ningún documento, **omite `po_number`** (el sistema genera `OC-AUTO-…`); pero antes búscalo bien en la OC, la proforma y el correo.
+     - ⚠️ **PASA SIEMPRE `file_path` con el PDF real de la OC.** `create-from-oc` SIEMPRE crea el documento OC; si NO le pasas el archivo, el documento queda con `storage_url:null` / `file_size_bytes:0` → el visor muestra "Este documento no tiene archivo almacenado". Con `file_path`, el wizard sube el binario a MinIO y lo deja visible. **No necesitas subir la OC aparte** (este paso ya la almacena y la cruza con la IA).
+     - Para tener `file_path` debes **descargar primero** el PDF a disco (de OneDrive o del adjunto de correo). No se puede subir lo que no está en una ruta local.
 3. **Fija precios del documento — y que el TOTAL cuadre:** `expediente_lineas(expediente_id)` → `linea_id`; luego `lineas_actualizar_precios(updates=[{linea_id, unit_price_mwt, unit_price_client}])`.
    - ⚠️ **El "Total" de cada línea = `qty × unit_price_mwt`** (lado operador), mientras "Precio Cliente" muestra `unit_price_client`. Si pones `unit_price_mwt` distinto (más bajo), el Total **no cuadra** (bug real: 300×19.96 mostró $5.073 porque mwt quedó ~16.91).
    - **Regla:** salvo margen MWT↔cliente REAL del documento, pon **`unit_price_mwt = unit_price_client` = el precio unitario de la OC**. Ej.: `{linea_id, unit_price_mwt:19.96, unit_price_client:19.96}` → Total 300×19.96 = 5.988 ✔.
@@ -351,25 +369,26 @@ expediente_buscar(oc_number="504960", proforma="2468-2026", client_id="<id Sonde
 ### 7.6 Documentos — subir a MinIO con el flujo correcto ⚠️
 **Ningún archivo se queda en local.** Cada `.pdf/.docx/.xlsx` de OneDrive y de adjuntos de correo se sube a MinIO. **Subir = pasar la RUTA LOCAL** del archivo descargado en `file_path` (no el nombre ni texto). Usa el flujo que deja el binario REALMENTE almacenado:
 
-1. **Descarga primero** cada archivo a una ruta local (OneDrive desde su carpeta; correo, extrayendo el adjunto a un archivo).
+1. **Descarga primero** cada archivo a una ruta local (OneDrive desde su carpeta; correo, extrayendo el adjunto a un archivo). **Regla de oro: si no tienes el archivo en una ruta local, NO crees el registro** — un registro sin binario sale como "sin archivo almacenado".
 2. **Sube según el tipo:**
-   - **OC / PO del cliente** → `match_subir(expediente_id, document_type="ART-01_OC", file_path="<oc.pdf>")` — sube a MinIO **y** la IA cruza con las líneas (devuelve `log_id` + discrepancias; resuélvelas con `match_resolver(expediente_id, log_id, actions=[...])`).
-   - **Proforma del cliente** → `match_subir(expediente_id, document_type="ART-02_PROFORMA", file_path="<proforma.pdf/xlsx>")`.
+   - **OC / PO del cliente** → ya se subió en **7.5** al pasar `file_path` a `expediente_crear` (la almacena y la cruza con la IA). **NO la vuelvas a subir** (crearías un OC duplicado). Solo si el expediente ya existía sin OC almacenada, usa `match_subir(expediente_id, document_type="ART-01_OC", file_path="<oc.pdf>")`.
+   - **Proforma del cliente** → `match_subir(expediente_id, document_type="ART-02_PROFORMA", file_path="<proforma.pdf/xlsx>")`. (Si usas `documento_subir` para una proforma, pasa `codigo="2228-2024"`.)
    - **SAP** → va DENTRO de `sap_confirmar`/`sap_upsert` con `file_path` (paso 7.7); así queda el ART-04 en MinIO y asigna líneas. **No lo subas por separado.**
-   - **Resto (BL/AWB, DUA, factura comercial Marluvas, packing, pago de impuestos, cotización, otros)** → `documento_subir(file_path="<archivo>", kind=<BL|DUA|FACTURA|PACKING_LIST|PAGO_IMPUESTOS|COTIZACION_FLETE|OTRO>, codigo="<nombre legible>", expediente_id, audience="MWT_INTERNAL")`.
+   - **Resto (BL/AWB, DUA, factura comercial Marluvas, packing, pago de impuestos, cotización, otros)** → `documento_subir(file_path="<archivo>", kind=<BL|DUA|FACTURA|PACKING_LIST|PAGO_IMPUESTOS|COTIZACION_FLETE|OTRO>, codigo="<código LIMPIO>", expediente_id, audience="MWT_INTERNAL")`. Para AWB/BL y factura, además súbelos como **artefacto con archivo** (Apéndice C).
+   - ⚠️ **`codigo` SIEMPRE LIMPIO, nunca el nombre del archivo.** Proforma = `"2228-2024"`, OC = `"503295"`, sin prefijos ("PF"/"PO"/"OC"/"Proforma"/"SAP") ni extensión ni varios números juntos. **El sistema antepone "PF"/"PO" solo.** Si pasas el filename completo, el listado muestra basura tipo "PF Proforma 2228-2024 SAP 179113.xlsx".
 3. **Audiencia:** OC y proforma del cliente → `CLIENT`; factura Marluvas, SAP, costos e internos → `MWT_INTERNAL`/`ADMIN_ONLY`.
-4. **Verifica** con `documento_listar(expediente=expediente_id)` que cada doc quedó con `storage_url`; guarda `storage_url`/`documento_id` en `documentos[]` + `subido_a_minio:true`. Lo que falte → `pendientes`. **No dupliques** (si ya está ese `kind`+`codigo`, no lo subas de nuevo).
+4. **VERIFICA SIEMPRE** con `documento_listar(expediente=expediente_id)` que cada doc tenga **`storage_url` ≠ null** y **`file_size_bytes` > 0**. Si ves `storage_url:null`/`file_size_bytes:0` = el binario NO se subió: vuelve a subir el archivo (con su `file_path` real). Guarda `storage_url`/`documento_id` en `documentos[]` + `subido_a_minio:true`; lo que siga sin archivo → `pendientes`. **No dupliques** (si ya está ese `kind`+`codigo` con archivo, no lo repitas).
 5. Proforma del **sistema**: `proforma_generar(expediente_id, audience="CLIENT")` y `proforma_generar(expediente_id, audience="ADMIN_ONLY")`.
 
-### 7.7 SAP — número + archivo + líneas en UNA llamada
-El SAP no es solo un número: **se sube el Excel/PDF de Marluvas Y se eligen qué líneas (SKU/talla/cantidad) cubre**, todo en la misma llamada (genera ART-04 en MinIO y setea `linea.sap`).
-1. (Opcional) `sap_analizar(expediente_id, file_path="<excel/pdf SAP>")` → pre-extrae nº/fecha y discrepancias.
-2. **Confirmar** (primer SAP, expediente en REGISTRO → pasa a PRODUCCION):
-   `sap_confirmar(expediente_id, sap_id="<numero_sap>", fecha_fabricacion="<fecha_sap>", lineas_confirmadas=[{linea_id, qty_confirmada, unit_price:<precio>}], file_path="<excel/pdf SAP>")`
-   - `sap_id` **obligatorio**. **Siempre** `file_path` (si no, no queda el archivo).
-   - `lineas_confirmadas`: **solo** las líneas que la fábrica confirmó (con sus `linea_id`). Las no incluidas quedan **libres para otro SAP**.
-   - `fecha_fabricacion` = la fecha de registro/confirmación del SAP.
-3. **Editar / SAP adicional** (ya no en REGISTRO, o 2º SAP) → `sap_upsert(...)` (no transiciona).
+### 7.7 SAP — OBLIGATORIO si el documento/correo trae un nº SAP ⚠️
+**Si la proforma, el correo o el nombre del archivo mencionan un SAP (ej. `SAP 179113`), TIENES que cargarlo** — subir el Excel/PDF de Marluvas, poner el `sap_id` y **seleccionar las líneas**. No basta con el número en el nombre; hay que llamar `confirm-sap`. (El SAP no se autoextrae al subir un documento.)
+1. **Autoextrae** con `sap_analizar(expediente_id, file_path="<excel/pdf SAP>")` → devuelve `sap_id`, `fecha_fabricacion` y `lineas[]` con su `match.line_id`. Úsalo para armar `lineas_confirmadas`.
+2. Obtén los `linea_id` reales con `expediente_lineas(expediente_id)`.
+3. **Confirmar** (expediente en **REGISTRO** → pasa a PRODUCCION):
+   `sap_confirmar(expediente_id, sap_id="179113", fecha_fabricacion="<fecha>", lineas_confirmadas=[{linea_id, qty_confirmada, unit_price}], file_path="<excel/pdf SAP>")`
+   - `sap_id` **obligatorio** = solo el número (`"179113"`). **Siempre** `file_path` (si no, no queda el ART-04).
+   - **`lineas_confirmadas` NO puede ir vacío** si quieres que las líneas queden con el SAP: incluye **TODAS las líneas que cubre el SAP** con su `linea_id` real y `qty_confirmada` = qty solicitada (las no incluidas quedan libres para otro SAP; `qty_confirmada=0` cancela la línea).
+   - `confirm-sap` exige estado REGISTRO. Si el expediente ya está en otro estado, usa `sap_upsert(...)` (mismos campos, no transiciona).
 4. **Varias OC/SAP por proforma:** un expediente por SAP, luego `expediente_fusionar([ids], label=numero_proforma)`.
 5. Verifica con `sap_obtener(expediente_id, sap_id)` (líneas con `sap` y `estado=SAP_CONFIRMADO`).
 
@@ -420,7 +439,9 @@ El SAP no es solo un número: **se sube el Excel/PDF de Marluvas Y se eligen qu�
 2. **Operador:** `Muito Work Limitada` = operador, no cliente final → `operating_company_id` vs `client_id`.
 3. **Precios del documento** (no de la BD) con `lineas_actualizar_precios`; **`unit_price_mwt = unit_price_client`** salvo margen real → que `total_price == qty × precio_cliente`.
 4. **Fechas reales** por estado (correos/documentos); `inferida:true` si estimas; `null`+`pendientes` si faltan; continuidad `fin(n)=inicio(n+1)`.
-5. **Una línea por (SKU × talla)**; `total_pares == sum(cantidad)`.
+5. **Una línea por (SKU × talla REAL)** con la talla como label ("39"), **NUNCA "UNICA"** (léela de la matriz de la proforma); `total_pares == sum(cantidad)`. SKU nuevo → `producto_crear` con tallas UUID (`tallas_listar`) en `tallas` + `especificaciones.sizes`.
+5b. **Códigos LIMPIOS**: `po_number`/`codigo` = solo el número (`"503295"`, `"2228-2024"`), sin prefijos ni filename; **nunca `"SIN-PO"`**. El sistema antepone PF/PO.
+5c. **SAP**: si el documento trae un nº SAP, es OBLIGATORIO `confirm-sap` (con archivo + TODAS las líneas), no solo dejarlo en el nombre.
 6. **Nunca inventes** OC/PF/SAP/AWB/BL ni montos/fechas.
 7. **Cita la fuente** de cada dato.
 8. **Sube TODOS los archivos a MinIO** (OC/proforma por `match_subir`, SAP por `sap_confirmar`, resto por `documento_subir`); AWB/BL y factura Marluvas como **artefactos con archivo** (`storage_subir_archivo` → `key` en `data` → `*_artefacto_crear`). Verifica con `documento_listar`. Ningún archivo se queda en local.
@@ -434,7 +455,9 @@ El SAP no es solo un número: **se sube el Excel/PDF de Marluvas Y se eligen qu�
 - [ ] Cada proforma: correos leídos con **fechas** + `eventos` + `historia_resumen`.
 - [ ] `fechas_estados` con inicio/fin por estado, continuos y citados/inferidos.
 - [ ] `operador`/`cliente_final` correctos; `operado_por_mwt` definido.
-- [ ] `lineas_producto` con `precio_mwt`/`precio_cliente` **del documento**; `total_pares == sum(cantidad)`.
+- [ ] `lineas_producto` con `precio_mwt`/`precio_cliente` **del documento** y **talla real** (nunca "UNICA"); `total_pares == sum(cantidad)`.
+- [ ] SKU(s) nuevo(s) creados con **tallas UUID** (`tallas` + `especificaciones.sizes`) y alias del cliente; NCM puesto.
+- [ ] **Códigos limpios**: `po_number`="503295", proforma="2228-2024"; ningún expediente "SIN-PO"; ningún documento con el filename como código.
 - [ ] **Anti-duplicados:** antes de crear, `expediente_buscar(oc_number, proforma, client_id)` → si existe, editar (no duplicar).
 - [ ] En consola: cliente(s), SKU(s), expediente con OC y líneas, **precios corregidos** y **`total_price == qty × precio_cliente`** verificado.
 - [ ] SAP cargado (`sap_confirmar`/`sap_upsert`) con archivo y líneas asignadas; fusión si varias OC/SAP.
@@ -606,7 +629,9 @@ Y para el **AWB/BL** (template 9): sube el PDF a `field-1778637230655`, pon el *
 
 - **expediente_buscar(oc_number?, proforma?, sap?, client_id?)** — ANTI-DUPLICADOS. `{existe, matches[]}`. Úsala antes de crear (no por código autogenerado).
 - **cliente_crear(datos)** — `razon_social, nombre_comercial, tax_id, pais_iso2, tipo (B2B|CONSUMIDOR|DISTRIBUIDOR), dias_credito, estado`.
-- **producto_crear(datos)** — `sku, nombre, marca_id, categoria, costo_estandar, precio_lista, especificaciones{ncm,tallas,color}`.
+- **tallas_listar(tipo_producto="calzado")** — catálogo de tallas → `{results:[{id (UUID), nombre:"39"}]}`. El `id` va en el producto; el `nombre` en la línea.
+- **producto_crear(datos)** — `sku, nombre, marca_id, unidad:"PAR", precio_lista, precio_mwt, hs_code, colores, tallas:[UUIDs], especificaciones:{ncm, color, sizes:[UUIDs]}`. **Tallas = UUIDs en `tallas` y `especificaciones.sizes`; nunca "UNICA".**
+- **producto_alias_crear(producto_id, cliente_id, alias, cliente_sku?)** — part-number del cliente → producto (para que el matching no falle).
 - **expediente_crear(...)** — `client_id, operating_company_id, forma_pago (CREDITO|CONTADO), credit_days_mwt, credit_days_cliente, po_number, ocr_payload{lines:[{sku,size,qty,unit_price}]}, file_path?`.
 - **lineas_actualizar_precios(updates)** — `[{linea_id, unit_price_mwt, unit_price_client}]`. El "Total" usa `unit_price_mwt` → ponlo = `unit_price_client` salvo margen real.
 - **match_subir(expediente_id, document_type, file_path)** — `document_type`: ART-01_OC | ART-02_PROFORMA | ART-04_SAP. Sube a MinIO + mapea líneas (→ `log_id`). **match_resolver(expediente_id, log_id, actions)**.
@@ -626,7 +651,7 @@ Y para el **AWB/BL** (template 9): sube el PDF a `field-1778637230655`, pon el *
 
 Servidor MCP que expone la operación completa de la Consola MWT.ONE como herramientas para un agente de IA externo (Antigravity, Kimi CLI, Claude Desktop, Cursor). Autentica con un **token de servicio de larga vida (≈100 años)**. No guarda estado local: cada herramienta es una llamada autenticada a `https://consola.mwt.one/api`.
 
-## B.1 Qué puede hacer (89 herramientas)
+## B.1 Qué puede hacer (91 herramientas)
 Ver tabla completa en la **Parte 1**.
 
 ## B.2 Generar el token (sin vencimiento)

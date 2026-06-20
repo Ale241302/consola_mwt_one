@@ -170,9 +170,15 @@ def producto_obtener(producto_id: str) -> Any:
 
 @mcp.tool()
 def producto_crear(datos: dict) -> Any:
-    """Crea un producto. `datos`: sku, nombre, marca_id, categoria, subcategoria,
-    unidad, moneda, costo_estandar, precio_lista, precio_distribuidor, hs_code,
-    pais_origen_iso2, estado, especificaciones (dict; aquí van tallas/client_prices/ncm)."""
+    """Crea un producto. `datos`: sku, nombre, marca_id, categoria, unidad ("PAR" para
+    calzado), costo_estandar, precio_lista, precio_mwt, hs_code, pais_origen_iso2 ("BR"),
+    estado ("ACTIVO"), colores (["Negro"]).
+    TALLAS: pon en **`tallas`** Y en **`especificaciones.sizes`** el MISMO array de **UUIDs**
+    de talla (de `tallas_listar`) — NUNCA labels ni "UNICA". NCM: `hs_code` + `especificaciones.ncm`
+    con el mismo código (ej. "6403.99.90"). Ej.:
+    {sku, nombre, marca_id, unidad:"PAR", precio_lista, precio_mwt, hs_code:"6403.99.90",
+     tallas:[<uuid39>,<uuid40>...], especificaciones:{ncm:"6403.99.90", color:"Negro",
+     sizes:[<uuid39>,<uuid40>...]}}. Tras crear, usa `producto_alias_crear` para el part-number del cliente."""
     g = _wguard()
     if g:
         return g
@@ -191,8 +197,29 @@ def producto_editar(producto_id: str, cambios: dict) -> Any:
 
 @mcp.tool()
 def ncm_listar() -> Any:
-    """Lista los códigos NCM/arancelarios disponibles."""
+    """Lista los códigos NCM/arancelarios disponibles (code, descripcion, tarifas)."""
     return _safe(lambda: api.get("ncm/"))
+
+
+@mcp.tool()
+def tallas_listar(tipo_producto: str = "calzado") -> Any:
+    """Lista el catálogo de tallas (para crear productos con sus tallas). Devuelve
+    `{results:[{id, nombre, talla_base, br, eu, ...}]}`. **El `id` (UUID) es lo que se
+    pone en `producto_crear` (`tallas` y `especificaciones.sizes`)**; el `nombre`/`talla_base`
+    (ej. "39") es el label que se usa en la LÍNEA del expediente (`size`)."""
+    return _safe(lambda: api.get("sizing/tallas/", _params(tipo_producto=tipo_producto)))
+
+
+@mcp.tool()
+def producto_alias_crear(producto_id: str, cliente_id: str, alias: str, cliente_sku: str | None = None, notas: str | None = None) -> Any:
+    """Registra el part-number del cliente → producto MWT (upsert) para que el matching
+    no falle la próxima vez. `alias`: el código base del cliente sin la talla
+    (ej. "70B22-CPAP"). CEO/ADMIN."""
+    g = _wguard()
+    if g:
+        return g
+    body = _params(cliente_id=cliente_id, alias=alias, cliente_sku=cliente_sku, notas=notas)
+    return _safe(lambda: api.post(f"productos/{producto_id}/aliases/", body))
 
 
 # =========================================================================== #
@@ -325,7 +352,9 @@ def expediente_crear(
       Los precios se re-derivan server-side del motor de pricing.
     - `forma_pago`: CREDITO o CONTADO. `credit_days_mwt`/`credit_days_cliente`: plazos duales.
     - `mode` (COMISION/FULL), `freight_mode` (SEA/AIR), `dispatch_mode` (FCL/LCL/CONSOLIDADO): solo admin.
-    - `file_path`: opcional, PDF/XLSX de la OC para adjuntar.
+    - `file_path`: RUTA LOCAL del PDF/XLSX de la OC. **Pásalo SIEMPRE**: create-from-oc
+      siempre crea el documento OC, pero solo guarda el binario en MinIO si recibe el archivo;
+      sin `file_path` el documento queda con storage_url=null ("sin archivo almacenado").
     """
     g = _wguard()
     if g:
