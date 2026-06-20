@@ -1,0 +1,16 @@
+{
+  "_comment": "Manifiesto canónico de tools MCP del harness. Fuente neutra: cada adapter escribe la entrada de config MCP de su CLI apuntando a este mismo servidor (mcp_server/). Las tools NO se transpilan, se referencian (ARCHITECTURE.md §5.3). Editable a mano.",
+  "mcpServers": {
+    "mwt": {
+      "command": "python",
+      "args": ["-m", "mwt_mcp"],
+      "cwd": "mcp_server/",
+      "transport": "stdio",
+      "env": {
+        "MWT_API_BASE": "${MWT_API_BASE:-https://consola.mwt.one/api}",
+        "MWT_MCP_TOKEN": "${MWT_MCP_TOKEN}",
+        "MWT_MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}

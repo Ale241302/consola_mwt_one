@@ -1,0 +1,15 @@
+{
+  "_comment": "Fixture de tools MCP para tests golden. Apunta al mcp_server/ compartido.",
+  "mcpServers": {
+    "mwt": {
+      "command": "python",
+      "args": ["-m", "mwt_mcp"],
+      "cwd": "mcp_server/",
+      "transport": "stdio",
+      "env": {
+        "MWT_API_BASE": "https://consola.mwt.one/api",
+        "MWT_MCP_TOKEN": "${MWT_MCP_TOKEN}"
+      }
+    }
+  }
+}
