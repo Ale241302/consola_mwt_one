@@ -83,6 +83,9 @@ Por **cada** expediente, ejecuta y marca cada actividad `hecho / corregido / omi
 [ ] 3.  EXPEDIENTE sin duplicar→ expediente_buscar(oc_number, proforma, client_id). Si hay >1 del MISMO, conserva el
                                  más completo; si son SAP/operadores distintos legítimos → expediente_fusionar.
 [ ] 4.  CÓDIGO limpio         → revisa oc_codigos/proforma_codigos: nada de "SIN-PO", filename ni prefijos.
+[ ] 4b. CABECERA              → expediente_obtener: si falta brand/modo/operador, corrígelos (ver §4-BIS):
+                                 brand_id (Marluvas), modo_operacion (COMISION/FULL), operating_company_id.
+[ ] 4c. PROFORMA-CODIGO       → si sale "SIN-PROFORMA": crea/sube documento kind=PROFORMA con codigo limpio (§4-BIS).
 [ ] 5.  LÍNEAS correctas      → expediente_lineas: una por SKU×TALLA real ("39", nunca UNICA), cantidades = proforma.
 [ ] 6.  PRECIOS               → lineas_actualizar_precios: = OC/proforma; total = qty × precio_cliente.
 [ ] 7.  DOCUMENTOS (OC/Proforma) subidos y SANOS en MinIO (ver §4).
@@ -115,11 +118,30 @@ Para cada expediente:
 
 ---
 
+# 4-BIS · CAMPOS DE CABECERA (brand, modo, operador, proforma) — usa las tools de edición
+
+⚠️ `expediente_edit_full_patch` solo toca operador/forma_pago/**líneas**. Para `brand_id`, `modo_operacion`, etc. usa **`expediente_editar`** (PATCH genérico). Si un campo no se actualizó con edit-full, es porque va por aquí.
+
+1. **Marca (Marluvas):** `marca_listar(q="Marluvas")` → toma el `id` (UUID). El brand vive en el expediente **y** en la OC; setéalo en **ambos**:
+   - `expediente_editar(expediente_id, {"brand_id": "<uuid Marluvas>"})`
+   - `oc_editar(oc_id, {"brand_id": "<uuid Marluvas>"})`
+2. **Operador + modo:** `expediente_editar(expediente_id, {"operating_company_id": "<Muito Work Limitada>", "modo_operacion": "COMISION"})`. (`COMISION` cuando opera MWT y cobra comisión; `FULL` si compra/revende. Confírmalo con la proforma/correo.)
+3. **forma_pago / freight / dispatch / incoterm:** también por `expediente_editar` (`forma_pago`:"CREDITO"|"CONTADO"; `freight_mode`:"SEA"|"AIR"; `dispatch_mode`:"FCL"|"LCL"|"CONSOLIDADO"; `incoterm`).
+4. **SIN-PROFORMA:** el `proforma_codigo` SOLO se llena con un **documento kind=PROFORMA** cuyo `codigo` sea el número (no basta `oc.proforma`). Arréglalo así:
+   - Si tienes el archivo de la proforma en OneDrive/correo → `documento_subir(file_path="<proforma.pdf>", kind="PROFORMA", codigo="2228-2026", expediente_id, oc_id, audience="CLIENT")` (sube binario + fija el código).
+   - Si NO hay archivo → `documento_subir(kind="PROFORMA", codigo="2228-2026", expediente_id, oc_id, audience="CLIENT")` (sin `file_path`: crea solo el registro con el código limpio para que deje de salir SIN-PROFORMA).
+   - Además, por consistencia: `oc_editar(oc_id, {"proforma": "2228-2026"})`.
+5. **Verifica** releyendo `expediente_obtener` / `oc_obtener` y `expediente_listar` (que `brand_id`, `modo_operacion`, `operating_company_id` y `proforma_codigos` quedaron correctos).
+
+---
+
 # 5 · GATE DE AUDITORÍA A–J (el Operativo re-verifica con el MCP)
 
 | # | Verifica | Con | RECHAZA si… | Corrige con |
 |---|---|---|---|---|
-| A | Cliente/operador | `cliente_obtener` | operador = cliente final cuando opera MWT | `expediente_edit_full_patch(operating_company_id, client_id)` |
+| A | Cliente/operador | `cliente_obtener`, `expediente_obtener` | operador = cliente final cuando opera MWT | `expediente_editar({operating_company_id})` |
+| A2 | Marca + modo | `expediente_obtener` | `brand_id`=null o `modo_operacion` vacío | `marca_listar`→`expediente_editar`+`oc_editar`({brand_id}); `expediente_editar({modo_operacion})` |
+| A3 | Proforma-código | `expediente_listar` | sale "SIN-PROFORMA" | `documento_subir(kind="PROFORMA", codigo limpio, file_path?)` (§4-BIS) |
 | B | SKUs con tallas | `producto_obtener` | SKU sin `tallas`/`sizes` o inexistente | `producto_crear/editar` (UUID) + `producto_alias_crear` |
 | C | Sin duplicado | `expediente_buscar` | >1 del mismo OC+proforma | conservar el completo / `expediente_fusionar` |
 | D | Líneas | `expediente_lineas` | `size`="UNICA", faltan tallas, cantidades ≠ proforma | `expediente_edit_full_patch(lines_removed, lines_added por SKU×talla)` |

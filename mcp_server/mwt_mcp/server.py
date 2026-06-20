@@ -245,6 +245,24 @@ def oc_obtener(oc_id: str) -> Any:
 
 
 @mcp.tool()
+def oc_editar(oc_id: str, cambios: dict) -> Any:
+    """Edita campos de cabecera de una OC (PATCH parcial). `cambios` admite:
+    brand_id, proforma (código limpio "2228-2026"), sap, display_label, proveedor_id,
+    estado, moneda, client_id, codigo. (Para fijar la marca, usa el UUID de `marca_listar`.)"""
+    g = _wguard()
+    if g:
+        return g
+    return _safe(lambda: api.patch(f"ocs/{oc_id}/", cambios))
+
+
+@mcp.tool()
+def marca_listar(q: str | None = None) -> Any:
+    """Lista marcas (brands). `q` filtra por nombre (ej. "Marluvas"). Devuelve `id`(UUID)+`nombre`;
+    el `id` es lo que se pone en `brand_id` de expediente/OC."""
+    return _safe(lambda: api.get("marcas/", _params(q=q)))
+
+
+@mcp.tool()
 def expediente_listar(
     oc: str | None = None,
     client: str | None = None,
@@ -403,6 +421,21 @@ def expediente_apply_pronto_pago(expediente_id: str, plazo_days: int, covered_pa
 
 
 @mcp.tool()
+def expediente_editar(expediente_id: str, cambios: dict) -> Any:
+    """Edita campos de CABECERA del expediente (PATCH parcial /expedientes/{id}/). Usa esto
+    para lo que `expediente_edit_full_patch` NO cubre: `brand_id` (UUID de `marca_listar`),
+    `modo_operacion` ("COMISION"|"FULL"), `freight_mode` ("SEA"|"AIR"), `dispatch_mode`
+    ("FCL"|"LCL"|"CONSOLIDADO"), `incoterm`, `forma_pago` ("CREDITO"|"CONTADO"),
+    `operating_company_id`, `credit_days`/`credit_days_mwt`/`credit_days_cliente`, `moneda`.
+    (Para corregir la MARCA pon `brand_id` aquí Y en la OC con `oc_editar`. `transport_mode`
+    es a nivel de línea, no de expediente.)"""
+    g = _wguard()
+    if g:
+        return g
+    return _safe(lambda: api.patch(f"expedientes/{expediente_id}/", cambios))
+
+
+@mcp.tool()
 def expediente_edit_full_get(expediente_id: str) -> Any:
     """Lee la edición GENERAL del expediente (todas las líneas y términos)."""
     return _safe(lambda: api.get(f"expedientes/{expediente_id}/edit-full/"))
@@ -422,7 +455,7 @@ def expediente_edit_full_patch(expediente_id: str, cambios: dict) -> Any:
 # --- Documentos -------------------------------------------------------------
 @mcp.tool()
 def documento_subir(
-    file_path: str,
+    file_path: str | None = None,
     kind: str = "OTRO",
     codigo: str | None = None,
     expediente_id: str | None = None,
