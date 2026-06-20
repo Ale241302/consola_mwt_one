@@ -449,8 +449,20 @@ def documento_subir(
 def documento_listar(
     expediente: str | None = None, oc: str | None = None, kind: str | None = None
 ) -> Any:
-    """Lista documentos por expediente, oc o kind (respeta visibilidad por audience)."""
+    """Lista documentos por expediente, oc o kind (respeta visibilidad por audience).
+    Revisa `storage_url` y `file_size_bytes`: si `storage_url=null` o `file_size_bytes=0`
+    el documento NO tiene archivo (registro roto) → bórralo con `documento_eliminar` y re-súbelo."""
     return _safe(lambda: api.get("documentos/", _params(expediente=expediente, oc=oc, kind=kind)))
+
+
+@mcp.tool()
+def documento_eliminar(documento_id: str) -> Any:
+    """Elimina un documento por su id (DELETE /documentos/{id}/). Úsalo para borrar
+    registros ROTOS/VACÍOS (storage_url=null o file_size_bytes=0) antes de re-subir el archivo bueno."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe(lambda: api.delete(f"documentos/{documento_id}/"))
 
 
 # --- SAP --------------------------------------------------------------------

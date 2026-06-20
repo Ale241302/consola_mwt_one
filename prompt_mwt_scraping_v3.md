@@ -204,10 +204,14 @@ Se carga con `expediente_phase_durations_set` (7.8). Nota: puedes fijar fechas d
 7. **Fechas-de-Estado** — calcula `fechas_estados` (Parte 4).
 8. **Correlacionador/Redactor** — fusiona, valida (`total_pares == sum(cantidad)`), marca `pendientes`, escribe **`proformas_consolidado.json`** (Parte 6).
 
-## Ola B — Ejecución (Agente Ejecutor-MCP)
-Toma el JSON y **carga cada expediente** con el MCP (Parte 7), **en serie por expediente**, con **upsert** (consultar antes de crear). Puedes correr varios Ejecutores (uno por país/cliente), pero cada expediente se procesa atómicamente.
+## Ola B — Ejecución por TAREAS (3 roles de agente)
+La carga NO es un loop suelto: es un **checklist por expediente** orquestado. Tres roles:
 
-**Reglas comunes:** índice compartido; deduplicar por ruta y `message-id`; **citar fuente**; **nunca inventar** (ausente = `null` + `pendientes`); IDs (OC/PF/SAP/AWB/BL) **exactos**.
+1. **🧭 Orquestador** — recorre el JSON consolidado y, **por cada OC/PO/proforma**, crea una **tarea de expediente** con TODO el material recopilado (cliente, operador, SKUs+tallas+cantidades+precios del documento, nº OC limpio, nº SAP, fechas de estado, rutas locales de los archivos). Encola las tareas y las delega a los Operativos **una a la vez** (o varios en paralelo, pero **un expediente = una tarea atómica**). Lleva el tablero: `pendiente → en_proceso → auditando → hecho/fallido`. No pasa al siguiente hasta que el Auditor apruebe (o lo marque fallido con motivo).
+2. **⚙️ Operativos (N)** — cada uno toma UNA tarea de expediente y ejecuta el **CHECKLIST DE 13 PASOS (Parte 7)** en orden, marcando cada paso `hecho/omitido(motivo)/error` en el objeto `checklist` del expediente. No improvisa: sigue el checklist.
+3. **🔎 Auditor** — tras cada expediente, **verifica con el MCP** que todo quedó bien (no confía en lo que dijo el Operativo, lo re-consulta): cliente existe, SKUs existen con tallas, expediente sin duplicar, líneas con talla real (no UNICA) y cantidades, precios = los de OC/proforma/correo (`total_price == qty × precio_cliente`), SAP cargado con archivo y líneas, documentos en MinIO (`storage_url≠null`), estados y fechas seteadas. Si algo falla → devuelve la tarea al Operativo con la lista de correcciones; si pasa → la marca `hecho`. Ver **Parte 7-BIS**.
+
+**Reglas comunes:** índice compartido; deduplicar por ruta y `message-id`; **citar fuente**; **nunca inventar** (ausente = `null` + `pendientes`); IDs (OC/PF/SAP/AWB/BL) **exactos**; **un expediente no se cierra hasta que el Auditor lo aprueba.**
 
 ---
 
@@ -290,13 +294,21 @@ Toma el JSON y **carga cada expediente** con el MCP (Parte 7), **en serie por ex
 
       "origen_onedrive": "01 Ventas/01 Marluvas/01 M Costa Rica/01 M SONDEL/2026/2453-2026 PO 505107",
       "pendientes": [],
-      "consola": { "expediente_id": null, "oc_id": null,
+      "consola": { "estado_tarea": "pendiente",      // pendiente | en_proceso | auditando | hecho | fallido
+                   "expediente_id": null, "oc_id": null,
                    "expediente_accion": null,        // "creado" | "editado" | "ya_existia_completo"
                    "cliente_accion": null, "operador_id": null,
                    "productos_acciones": [],         // [{sku, accion}]
                    "nodo_id": null, "nodo_accion": null,
                    "sap_cargado": false, "estados_seteados": false,
-                   "documentos_subidos": [], "errores": [] }
+                   "documentos_subidos": [], "errores": [],
+                   "checklist": {                     // 14 pasos (Parte 7) — hecho|omitido|error
+                     "1_sesion": null, "2_cliente": null, "3_skus_tallas": null,
+                     "4_antidup": null, "5_expediente": null, "6_lineas_talla": null,
+                     "7_precios": null, "8_docs_minio": null, "9_proforma_sistema": null,
+                     "10_sap": null, "11_fusion": null, "12_estados_fechas": null,
+                     "13_lote_movimiento": null, "14_auditoria": null },
+                   "auditoria": { "veredicto": null, "fallos": [] } }  // APROBADO|RECHAZADO + [A..J]
     }
   ],
   "indice_correos": [
@@ -317,6 +329,27 @@ Ejecuta en orden. Guarda los IDs en `consola{}`.
 
 > ## ♻️ PRINCIPIO UPSERT (clientes, productos, nodos, expedientes, OC, SAP)
 > **NUNCA crees algo que ya existe.** Primero **consulta**; si existe, **revísalo y edítalo** (`*_editar`/`expediente_edit_full_patch`/`sap_upsert`), completando solo lo que falte (no pises un dato bueno con `null`); si no existe, créalo. Registra en `consola{}` si fue `creado` o `editado`.
+
+## ✅ CHECKLIST OBLIGATORIO POR EXPEDIENTE (no saltarse ningún paso)
+El Operativo crea este checklist por cada OC/PO/proforma y lo marca paso a paso. **No avanza al siguiente expediente hasta completarlo y que el Auditor lo apruebe.** Cada paso enlaza a su "cómo" (7.x):
+
+```
+[ ] 1. Sesión MCP activa (mwt_whoami = admin)                                  → 7.1
+[ ] 2. Cliente final verificado/creado; operador resuelto                       → 7.2
+[ ] 3. SKUs verificados/creados CON TALLAS reales (UUID) + alias                 → 7.3
+[ ] 4. Anti-duplicado: expediente_buscar por OC y proforma (no `q`)             → 7.4
+[ ] 5. Expediente creado/editado (po_number LIMPIO, NUNCA "SIN-PO") + OC.pdf    → 7.5
+[ ] 6. Líneas: una por SKU×TALLA real ("39", nunca UNICA), cantidades correctas → 7.5
+[ ] 7. Precios fijados = los de OC/proforma (total = qty × precio_cliente)       → 7.5
+[ ] 8. Documentos subidos a MinIO con código LIMPIO; storage_url≠null verificado → 7.6
+[ ] 9. Proforma del sistema generada (si aplica)                                 → 7.6
+[ ] 10. SAP cargado: analyze→confirm-sap con .xlsx + TODAS las líneas (si hay)   → 7.7
+[ ] 11. Fusión si varias OC/SAP de la misma proforma                            → 7.7
+[ ] 12. Estados avanzados hasta `estado_inferido` + fechas inicio/fin por estado → 7.8
+[ ] 13. (Si llegó) nodo + recepción + artefactos + movimiento + costos + pagos  → 7.9–7.12
+[ ] 14. AUDITORÍA aprobada (Parte 7-BIS) → marcar expediente `hecho`
+```
+Guarda el avance en `consola.checklist` (ver Parte 6) con `hecho/omitido(motivo)/error` por paso.
 
 ### 7.1 Sesión — `mwt_whoami` (rol `admin`).
 
@@ -429,7 +462,28 @@ expediente_buscar(oc_number="504960", proforma="2468-2026", client_id="<id Sonde
 4. Nace en **borrador**; aplica con `pago_conciliar(pago_id)` (recién ahí impacta saldo/crédito).
 
 ### 7.13 Resultado
-- Actualiza `consola{}` (`expediente_id`, `oc_id`, acciones creado/editado, `sap_cargado`, `estados_seteados`, `documentos_subidos[]`, `errores[]`). Si algo falla, **registra y continúa** con el siguiente expediente.
+- Actualiza `consola{}` (`expediente_id`, `oc_id`, acciones creado/editado, `sap_cargado`, `estados_seteados`, `documentos_subidos[]`, `errores[]`). **NO marques el expediente `hecho` aún** — pasa a la auditoría (7-BIS).
+
+---
+
+# PARTE 7-BIS — AUDITORÍA POR EXPEDIENTE (gate obligatorio) 🔎
+
+El **Auditor** re-consulta el MCP (no confía en lo reportado) y verifica cada punto. Si alguno falla, devuelve la tarea al Operativo con la corrección concreta y **NO se cierra el expediente**.
+
+| # | Verificación | Cómo lo comprueba el Auditor | Falla si… |
+|---|---|---|---|
+| A | Cliente y operador | `cliente_obtener(client_id)`; operador correcto | cliente no existe / operador = cliente final cuando opera MWT |
+| B | SKUs con tallas | `producto_obtener(sku)` de cada línea | SKU no existe, o `tallas`/`especificaciones.sizes` vacío |
+| C | No duplicado | `expediente_buscar(oc_number, proforma, client_id)` | hay >1 expediente para la misma OC+proforma |
+| D | Líneas correctas | `expediente_lineas(expediente_id)` | alguna línea con `size`="UNICA" o talla que no existe; faltan tallas de la matriz; cantidades ≠ proforma |
+| E | Precios | revisar `unit_price_mwt`/`unit_price_client` y `total_price` | `total_price ≠ qty × unit_price_client`; precio ≠ el de la OC/proforma |
+| F | SAP | `sap_obtener(expediente_id, sap_id)` | el doc traía SAP y no está cargado; líneas sin `sap`; archivo ART-04 ausente |
+| G | Documentos en MinIO | `documento_listar(expediente=...)` | algún doc con `storage_url=null` / `file_size_bytes=0`; código con filename/prefijos; OC/proforma faltante |
+| H | Códigos limpios | mirar `oc_codigos`/`proforma_codigos` | aparece "SIN-PO", filename, o varios números juntos |
+| I | Estados + fechas | `expediente_phase_durations_get` + `expediente_eventos` | no llegó al `estado_inferido`; faltan fechas inicio/fin por estado |
+| J | Lote/movimiento (si llegó) | `inventario_artefactos_expediente`, `transferencia_obtener` | recepción/artefactos/movimiento/costos/pagos faltantes |
+
+**Resultado de la auditoría** por expediente: `APROBADO` → el Orquestador lo marca `hecho`; `RECHAZADO` → vuelve al Operativo con la lista de fallos (A-J) para corregir, y se re-audita. Registra el veredicto en `consola.auditoria` (Parte 6). Solo entonces se pasa al siguiente expediente.
 
 ---
 
@@ -473,7 +527,7 @@ expediente_buscar(oc_number="504960", proforma="2468-2026", client_id="<id Sonde
 
 1. **Conéctate al MCP** (Parte 0) y corre `mwt_whoami`.
 2. **Ola A:** indexa correos (con **fechas**) + OneDrive; lee conversaciones, PDF, Word y Excel; parsea proforma y SAP; deriva `fechas_estados`; escribe `proformas_consolidado.json`.
-3. **Ola B:** por expediente, ejecuta el Playbook (Parte 7) respetando upsert/anti-duplicados, operador, precios del documento, subida a MinIO y fechas de estado.
+3. **Ola B (por tareas):** el **Orquestador** crea una tarea por OC/PO/proforma con su material; los **Operativos** ejecutan el **CHECKLIST de 14 pasos (Parte 7)** marcando cada paso; el **Auditor** verifica cada expediente (Parte 7-BIS) y solo entonces se marca `hecho` y se pasa al siguiente. Un expediente no se cierra sin auditoría aprobada.
 4. Entrega `proformas_consolidado.json` (con `consola{}`) + **el REPORTE FINAL DE CIERRE (Parte 11)**.
 
 ---
@@ -545,6 +599,42 @@ Total proformas; **expedientes creados vs editados vs ya existentes**; **documen
 ```
 
 > Imprime SIEMPRE el reporte de cierre al final, aunque haya errores.
+
+---
+
+# PARTE 12 — RE-AUDITORÍA (arreglar expedientes YA creados, sin recrearlos) 🔁
+
+Úsala cuando los expedientes ya existen en la plataforma pero quedaron mal (talla "UNICA", "SIN-PO", SAP sin cargar, documentos sin archivo, códigos con filename, precios o cantidades incorrectas). **No se recrea nada: se corrige en sitio.**
+
+## 12.0 Regla base
+**PROHIBIDO `expediente_crear` en este modo.** Todo se arregla con tools de edición: `expediente_edit_full_patch`, `lineas_actualizar_precios`, `producto_crear`/`producto_editar`, `sap_confirmar`/`sap_upsert`, `documento_subir`/`match_subir`, `expediente_avanzar_estado`, `expediente_phase_durations_set`. Si encuentras **duplicados** del mismo expediente, conserva el más completo y borra/marca el otro (no crees más).
+
+## 12.1 Inventario de lo existente
+1. `mwt_whoami` (admin).
+2. Por cada cliente (Sondel, Muito Work Limitada, etc.): `expediente_listar(client=<id>)` → lista de expedientes con `oc_codigos`/`proforma_codigos`/`sap_codigos`/`estado`.
+3. Cruza con tu `proformas_consolidado.json` (la verdad de OneDrive/correo). Para cada expediente arma su ficha objetivo (cliente, operador, SKUs+tallas+cantidades+precios, OC limpia, SAP, fechas de estado, archivos locales).
+
+## 12.2 Por cada expediente — corre el GATE A–J (Parte 7-BIS) y CORRIGE
+Para cada expediente existente, ejecuta las verificaciones A–J y aplica el fix solo de lo que falle:
+
+| Falla | Cómo se detecta | Corrección (sin recrear) |
+|---|---|---|
+| **D · talla "UNICA" / faltan tallas** | `expediente_lineas` muestra `size`="UNICA" o faltan tallas de la matriz | `producto_*` con tallas UUID (`tallas_listar`); `expediente_edit_full_patch(lines_removed=[lineas UNICA], lines_added=[{producto_id,sku,talla:"39",qty}])` reconstruyendo una línea por SKU×talla real |
+| **E · precios/total** | `total_price ≠ qty × unit_price_client` o ≠ OC/proforma | `lineas_actualizar_precios([{linea_id, unit_price_mwt, unit_price_client}])` (mwt=cliente salvo margen real) |
+| **B · SKU sin tallas / inexistente** | `producto_obtener(sku)` sin `tallas`/`sizes` | `producto_editar`/`producto_crear` con tallas UUID + `producto_alias_crear` |
+| **F · SAP sin cargar** | `sap_obtener` vacío aunque el doc trae SAP; expediente en REGISTRO | `sap_analizar`→`sap_confirmar(sap_id, file_path, lineas_confirmadas=TODAS)`. Si ya NO está en REGISTRO → `sap_upsert(...)` |
+| **G · documento sin archivo** | `documento_listar` con `storage_url=null`/`file_size_bytes=0` | re-subir con su `file_path` real (`match_subir` para OC/proforma, `documento_subir` resto); borra el registro vacío si quedó duplicado |
+| **H · código sucio / SIN-PO** | `oc_codigos`/`proforma_codigos` con filename, prefijos o "SIN-PO" | corrige el `codigo` del documento (limpio: "503295"/"2228-2024") re-subiéndolo bien; si el `po_number` quedó "SIN-PO", edítalo (o re-asocia la OC limpia) |
+| **C · duplicados** | `expediente_buscar(oc_number, proforma)` devuelve >1 | conserva el más completo; los sobrantes se borran/marcan; si eran SAP/operadores distintos legítimos → `expediente_fusionar` |
+| **I · estados/fechas** | no llegó al `estado_inferido`; faltan fechas | `expediente_avanzar_estado` hasta el estado real + `expediente_phase_durations_set({start,end})` por fase (fechas de correos o aproximadas) |
+| **J · lote/movimiento** | falta recepción/artefactos/movimiento si ya llegó | completar 7.9–7.12 |
+
+## 12.3 Cierre de la re-auditoría
+- Marca cada expediente `consola.auditoria.veredicto = APROBADO` solo cuando A–J pasan al re-verificar con el MCP.
+- Entrega un **reporte de re-auditoría**: por expediente, qué estaba mal y qué se corrigió (talla, precio, SAP, documento, código, fechas), y la lista de los que aún quedan en `RECHAZADO` con su motivo. Reusa el formato del **Reporte Final (Parte 11)** añadiendo una columna "corregido".
+
+## 12.4 Arranque de la re-auditoría
+1. `mwt_whoami`. 2. Inventaria (`expediente_listar` por cliente). 3. Por expediente: GATE A–J → corrige lo que falle (12.2) → re-verifica → `APROBADO`/`RECHAZADO`. 4. Entrega el reporte de re-auditoría. **Nunca uses `expediente_crear` aquí.**
 
 ---
 ---
