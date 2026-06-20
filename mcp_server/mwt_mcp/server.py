@@ -652,9 +652,20 @@ def nodo_artefactos_listar(nodo_id: str, template_id: int | None = None) -> Any:
 
 @mcp.tool()
 def nodo_artefacto_crear(nodo_id: str, template_id: int, template_title: str, data: dict, structure_snapshot: dict | None = None, lines: list | None = None) -> Any:
-    """Agrega un artefacto del Builder a un nodo. `template_id`: id del template del
-    Builder; `data`: valores de los campos; `structure_snapshot`: estructura del form;
-    `lines`: alcance [{expediente_id, producto_id, talla, qty}]."""
+    """Agrega un artefacto del Builder a un nodo (AWB/BL, factura comercial, packing, etc.).
+
+    Primero lee la estructura con `builder_template_obtener(template_id)` (devuelve
+    `structure_json` con los campos: id, type, label). `data` se indexa por **field.id**
+    (ej. "field-0072") con estos valores según `type`:
+      - text/textarea/code/date → string  (date = "YYYY-MM-DD")
+      - number → número
+      - select/radio → el **label** de la opción (ej. "awb", "aéreo", "USD"), NO el id
+      - checkbox → booleano
+      - file → objeto {"key": <key de storage_subir_archivo>, "url": "/api/storage/download/?key=<urlenc>",
+                       "name": <archivo>, "mime": <content_type>, "size": <size>}
+    `structure_snapshot` = el `structure_json` del template tal cual.
+    `lines` = alcance [{expediente_id, producto_id, talla, qty}] (de
+    `/api/nodos/{id}/builder-artifacts/available-lines/`)."""
     g = _wguard()
     if g:
         return g
@@ -901,8 +912,9 @@ def transfer_costo_eliminar(transferencia_id: str, cost_id: str) -> Any:
 
 @mcp.tool()
 def transfer_artefacto_crear(transferencia_id: str, template_id: int, template_title: str, data: dict, structure_snapshot: dict | None = None, lines: list | None = None) -> Any:
-    """Agrega un artefacto del Builder (AWB/BL, etc.) a un movimiento.
-    `lines`: alcance [{expediente_id, producto_id, talla, qty}]."""
+    """Agrega un artefacto del Builder (AWB/BL, factura, etc.) a un movimiento.
+    Mismo formato de `data` (indexado por field.id; ver `nodo_artefacto_crear`),
+    `structure_snapshot` = structure_json, y `lines` [{expediente_id, producto_id, talla, qty}]."""
     g = _wguard()
     if g:
         return g
@@ -1055,6 +1067,31 @@ def pago_rechazar(pago_id: str, rejection_reason: str, rejection_comment: str | 
         return g
     body = _params(rejection_reason=rejection_reason, rejection_comment=rejection_comment, confirm_reversal=True)
     return _safe(lambda: api.patch(f"finance/payments/{pago_id}/reject/", body))
+
+
+# =========================================================================== #
+# STORAGE — subir el binario de un campo de archivo de artefacto (AWB/BL, factura)
+# =========================================================================== #
+@mcp.tool()
+def storage_subir_archivo(file_path: str, scope: str = "artifact-field/misc", filename: str | None = None) -> Any:
+    """Sube un ARCHIVO a MinIO y devuelve {ok, key, bucket, content_type, size}.
+
+    Necesario para los CAMPOS DE ARCHIVO de un artefacto del Builder (AWB/BL pdf,
+    factura comercial Marluvas, etc.), porque nodo_artefacto_crear/transfer_artefacto_crear
+    solo mandan JSON. Flujo de 4 pasos:
+      1) `storage_subir_archivo(file_path, scope="artifact-field/<field_id>", filename)`  → obtienes `key`.
+      2) construye el valor del campo file dentro de `data[<field_id>]` como objeto:
+         {"key": <key>, "url": "https://consola.mwt.one/api/storage/download/?key=<key>",
+          "name": <filename>, "mime": <content_type>, "size": <size>}  (mínimo imprescindible: key)
+      3) crea el artefacto con nodo_artefacto_crear / transfer_artefacto_crear pasando ese `data`.
+      4) (verás el archivo luego en el detalle, servido por /api/storage/download/?key=...)"""
+    g = _wguard()
+    if g:
+        return g
+    data = {"scope": scope}
+    if filename:
+        data["filename"] = filename
+    return _safe(lambda: api.post_multipart("storage/upload-proxy/", data, file_path, file_field="file"))
 
 
 # =========================================================================== #
