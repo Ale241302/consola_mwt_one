@@ -5,7 +5,7 @@ import logging
 import uuid
 from decimal import Decimal, InvalidOperation
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -281,22 +281,56 @@ class ProductoViewSet(viewsets.ViewSet):
                         status=200,
                     )
 
-                # Insert nuevo
-                row = ProductClientAlias.objects.create(
-                    id            = uuid.uuid4(),
-                    producto_id   = producto.id,
-                    cliente_id    = str(cliente_uuid),
-                    alias         = payload["alias"],
-                    cliente_sku   = payload.get("cliente_sku"),
-                    notas         = payload.get("notas"),
-                    is_active     = True,
-                    created_by_id = user_id,
-                    updated_by_id = user_id,
-                )
-                return Response(
-                    ProductClientAliasSerializer(row).data,
-                    status=201,
-                )
+                # Insert nuevo — en savepoint propio para tolerar la carrera
+                # contra el unique parcial activo `pca_one_active_per_pair`.
+                # FIX 2026-06-22: antes un IntegrityError (POST concurrente del
+                # mismo par, o reintento) escapaba sin captura -> HTTP 500.
+                try:
+                    with transaction.atomic():
+                        row = ProductClientAlias.objects.create(
+                            id            = uuid.uuid4(),
+                            producto_id   = producto.id,
+                            cliente_id    = str(cliente_uuid),
+                            alias         = payload["alias"],
+                            cliente_sku   = payload.get("cliente_sku"),
+                            notas         = payload.get("notas"),
+                            is_active     = True,
+                            created_by_id = user_id,
+                            updated_by_id = user_id,
+                        )
+                    return Response(
+                        ProductClientAliasSerializer(row).data,
+                        status=201,
+                    )
+                except IntegrityError:
+                    # Otra request creó la fila activa entre el SELECT y el INSERT
+                    # (o colisión del unique parcial). Caer a UPDATE idempotente.
+                    existing = (
+                        ProductClientAlias.objects
+                        .filter(
+                            producto_id=producto.id,
+                            cliente_id=str(cliente_uuid),
+                            is_active=True,
+                        )
+                        .first()
+                    )
+                    if existing is None:
+                        return Response(
+                            {"detail": "Conflicto de alias, reintenta."},
+                            status=409,
+                        )
+                    existing.alias       = payload["alias"]
+                    existing.cliente_sku = payload.get("cliente_sku")
+                    existing.notas       = payload.get("notas")
+                    existing.updated_by_id = user_id
+                    existing.save(update_fields=[
+                        "alias", "cliente_sku", "notas",
+                        "updated_by_id", "updated_at",
+                    ])
+                    return Response(
+                        ProductClientAliasSerializer(existing).data,
+                        status=200,
+                    )
 
         # DELETE: soft-delete por cliente_id (idempotente).
         cliente_id = (

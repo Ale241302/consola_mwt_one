@@ -12,9 +12,30 @@
 
 # 0 · CONEXIÓN AL MCP `mwt-one`
 
+## PASO 0 (OBLIGATORIO PRIMERO) — Re-bajar el MCP del GitHub con lo último (force-reinstall)
+> ⚠️ pip **cachea** el paquete: si ya tienes `mwt-mcp` instalado, `pip install git+...` **NO** baja los cambios nuevos y verás "tools que no existen" (`producto_alias_crear`, `expediente_eliminar`, `oc_editar`, `expediente_buscar`…). **Siempre reinstala forzado antes de empezar:**
+
 ```bash
-pip install "git+https://github.com/Ale241302/consola_mwt_one.git#subdirectory=mcp_server"
+pip uninstall -y mwt-mcp
+pip install --no-cache-dir --force-reinstall "git+https://github.com/Ale241302/consola_mwt_one.git#subdirectory=mcp_server"
 ```
+
+**Verifica la versión** (que estén las tools nuevas) antes de arrancar:
+```bash
+MWT_MCP_TOKEN=dummy python - <<'PY'
+import asyncio; from mwt_mcp.server import mcp
+req = {"expediente_buscar","expediente_editar","oc_editar","marca_listar",
+       "producto_alias_crear","expediente_eliminar","documento_eliminar",
+       "tallas_listar","expedientes_crear_lote"}
+names = {t.name for t in asyncio.run(mcp.list_tools())}
+falt = req - names
+print("TOTAL TOOLS:", len(names))
+print("FALTANTES:", falt or "ninguna ✅")
+assert not falt, "MCP DESACTUALIZADO: vuelve a hacer el force-reinstall del PASO 0"
+PY
+```
+Si `FALTANTES` no es vacío → repite el force-reinstall (no sigas con una versión vieja).
+
 JSON (`mcp.json` / `claude_desktop_config.json`) o Kimi CLI:
 ```json
 { "mcpServers": { "mwt-one": {
@@ -45,7 +66,7 @@ for lote in lotes(worklist, n=10):
                 ctx   = READ(proforma)        # 1) lee SOLO esta proforma: OneDrive + su hilo de correo
                 plan  = EVAL(ctx, mcp_state)  # 2) decide el checklist §5 (qué falta)
                 out   = EJECUTA(plan)         # 3) llamadas MCP (idempotentes)
-                PRINT(out)                    # 4) registra qué cambió/agregó en el checklist
+                PRINT(out)                    # 4) NARRA EN EL CHAT en vivo qué hizo/encontró + registra checklist
                 auditar(proforma)             #    Auditor re-verifica con el MCP (§ gate)
                 marcar(proforma, "hecho")
                 break
@@ -259,13 +280,150 @@ Formato sugerido (tabla + totales del lote). Incluye al final del lote: cuántos
 8. **DUA/costos CR** completos sobre el movimiento (§6) + `transfer_liquidar`.
 9. **Email a `alejandro@muitowork.com` cada 10 expedientes** con el resumen ejecutivo (§8).
 10. **Cita la fuente** (correo: asunto·fecha·remitente / archivo OneDrive). Nunca inventes.
+11. **NARRA EN VIVO (feedback continuo):** mientras trabajas, **ve diciendo en el chat qué estás haciendo y cómo**, expediente por expediente y paso por paso — no trabajes en silencio. En cada expediente di al menos: «🔍 Analizando PF 2453-2026 / OC 504990…», qué encontraste en OneDrive/correo, qué decides (ej. «matcheé `50B22CPAP-37`→SKU 700844 por alias», «creo SKU 700728 con tallas 38-43», «borro OC fantasma sin archivo»), cada acción del MCP antes de hacerla y su resultado («✅ líneas cargadas: 10 / total 425 pares», «✅ SAP 269474 confirmado», «⚠️ sin Excel SAP en OneDrive»), y el veredicto del Auditor al cerrar. El **PRINT del REPL (§1)** es ese feedback. El email por lote (§8) NO sustituye la narración en vivo: el correo es el resumen cada 10; el chat es el play-by-play en tiempo real.
 
 ---
 
-# 11 · ARRANQUE
+# 11 · ARRANQUE — 3 fases (escribir harness → piloto → lote)
 
-1. Conéctate al MCP (`mwt_whoami`).
-2. **Orquestador:** lista las proformas de `01 M Costa Rica/02 M Muito Work/<año>/`; arma la worklist y los lotes de 10.
-3. Corre el **REPL (§1)**: por cada proforma → READ (OneDrive+correo) → EVAL (checklist §5) → EJECUTA (MCP) → PRINT → Auditor (§9). Reconecta solo si se cae.
-4. **Cada 10 expedientes:** email de resumen a `alejandro@muitowork.com`.
-5. Al final: reporte consolidado (hechos / rechazados / fallidos + motivos). **Nunca `expediente_crear`.**
+**FASE A · Escribe el harness** (§12): el script Python orquestador que lee OneDrive+correo, completa cada expediente vía MCP, audita y manda email cada 10.
+**FASE B · PILOTO con UN expediente** antes de tocar los 50: corre el harness en modo piloto sobre **proforma 2453-2026 / OC 504983** (`python harness.py --piloto 2453-2026`). Valida con el MCP que quedó perfecto (gate A–J) y **muestra la narración en vivo (§10 regla 11)**. No sigas si el piloto no pasa.
+**FASE C · LOTE COMPLETO:** una vez validado el piloto, corre `python harness.py --todos` sobre las ~50 proformas de CR·MuitoWork, en lotes de 10, con email por lote y reanudación si se cae.
+
+Antes de todo: **PASO 0** (force-reinstall del MCP) + `mwt_whoami` (rol admin).
+
+---
+
+# 12 · HARNESS PYTHON ORQUESTADOR (escríbelo y córrelo)
+
+El harness usa las **funciones del propio MCP como SDK** (las importa de `mwt_mcp.server`): así el script Python llama directo `M.expediente_buscar(...)`, `M.documento_subir(...)`, etc., con el mismo token. Lee OneDrive (filesystem) y correo (imaplib) en Python, parsea proforma/OC, completa el checklist §5, audita (§9) y envía email cada 10 (smtplib). Es **resiliente** (REPL §1: reconecta y reintenta el mismo expediente) y **reanudable** (estado en JSON).
+
+```python
+#!/usr/bin/env python3
+# harness.py — remediación CR · Muito Work (operador). Uso:
+#   python harness.py --piloto 2453-2026      # 1 expediente de prueba
+#   python harness.py --todos                 # lote completo (~50), de a 10
+import os, sys, json, time, argparse, traceback, smtplib, imaplib
+from email.message import EmailMessage
+
+os.environ.setdefault("MWT_MCP_TOKEN", "<TOKEN del PASO 0>")
+os.environ.setdefault("MWT_API_BASE", "https://consola.mwt.one/api")
+import mwt_mcp.server as M          # ← las tools del MCP como SDK (requiere PASO 0 hecho)
+
+ONEDRIVE = "<ruta local>/01 Ventas/01 Marluvas/01 M Costa Rica/02 M Muito Work"
+ESTADO   = "estado_cr_muitowork.json"        # checklist persistente / reanudable
+IMAP = {"host":"az1-ts3.a2hosting.com","port":993,"user":"alvaro@muitowork.com","pass":"<...>"}
+SMTP = {"host":"...","port":587,"user":"...","pass":"...","to":"alejandro@muitowork.com"}
+
+# ---------- utilidades de estado (reanudable) ----------
+def cargar_estado():
+    try: return json.load(open(ESTADO))
+    except Exception: return {}
+def guardar_estado(s): json.dump(s, open(ESTADO,"w"), ensure_ascii=False, indent=1)
+
+# ---------- conexiones (reconexión automática) ----------
+def chequear_mcp():
+    who = M.mwt_whoami()
+    assert isinstance(who,dict) and who.get("role")=="admin", f"MCP/token mal: {who}"
+def imap_conectar():
+    c = imaplib.IMAP4_SSL(IMAP["host"], IMAP["port"]); c.login(IMAP["user"], IMAP["pass"]); return c
+
+# ---------- READ: material real de UNA proforma ----------
+def leer_onedrive(proforma):
+    # localiza la carpeta de la proforma (directa o dentro de '01 MW SONDEL …'),
+    # devuelve rutas locales de: oc_pdf, proforma_xlsx/pdf, sap_xlsx, bl_awb, dua, factura, packing.
+    ...
+def leer_correo(proforma, imap):
+    # busca el hilo de esa proforma; baja adjuntos a /tmp; saca fechas de hitos. Si se cae, relanza excepción.
+    ...
+def parsear_oc(oc_pdf):
+    # devuelve {cliente_final, po_number_real, lineas:[{part_number, base, talla, qty, precio_cliente}]}
+    ...
+def parsear_proforma(xlsx):
+    # matriz de tallas -> [{sku?|base, talla, qty, precio_mwt, precio_cliente}]
+    ...
+
+# ---------- EVAL+EJECUTA: completa el expediente con el MCP (checklist §5) ----------
+def completar_expediente(proforma, ctx, log):
+    cli  = ctx["cliente_final"]; po = ctx["po_number_real"]
+    found = M.expediente_buscar(proforma=proforma, oc_number=po)        # 1 localizar
+    if not found.get("existe"):
+        log("⚠️ no existe expediente para", proforma); return "sin_expediente"
+    exp = found["matches"][0]; eid = exp["expediente_id"]; oid = exp["oc_id"]
+    # 1b RESPALDO: si no hay OC/proforma real ni en OneDrive ni en correo -> FANTASMA -> borrar
+    if not ctx["tiene_respaldo"]:
+        M.expediente_eliminar(eid); log("🗑️ fantasma sin respaldo -> borrado", proforma); return "borrado"
+    # 2 cabecera: operador Muito Work, cliente final, marca, modo
+    marca = M.marca_listar(q="Marluvas"); brand = marca[0]["id"] if isinstance(marca,list) and marca else None
+    M.expediente_editar(eid, {"operating_company_id": ctx["operador_mwt_id"], "brand_id": brand, "modo_operacion":"COMISION"})
+    M.oc_editar(oid, {"brand_id": brand, "codigo": po})                  # 3 código OC limpio (PO real)
+    # 4 match Part Nº -> producto (alias o nombre) ; 5 líneas reales ; 6 precios
+    lines_added = resolver_lineas(cli, ctx["lineas"], log)               # usa expediente_resolve_oc_preview / producto_listar / producto_alias_crear
+    dummy = [l["id"] for l in M.expediente_lineas(eid) if (l.get("sku") in (None,"PENDING"))]
+    M.expediente_edit_full_patch(eid, {"lines_removed": dummy, "lines_added": lines_added})
+    M.lineas_actualizar_precios(precios_desde(M.expediente_lineas(eid), ctx))
+    # 7 documentos (borra OC roto, sube OC real con PO, proforma real, otros) ; verifica storage_url
+    subir_documentos(eid, oid, po, proforma, ctx, log)
+    # 7d proforma del SISTEMA *después* de cargar líneas
+    M.proforma_generar(eid, audience="CLIENT"); M.proforma_generar(eid, audience="ADMIN_ONLY")
+    # 8 SAP (analyze->confirm con todas las líneas) si hay xlsx ; 9 estados+fechas
+    cargar_sap(eid, ctx, log); avanzar_estados_y_fechas(eid, ctx, log)
+    # 10-13 nodos (aéreo/marítimo) + recepción + movimiento al CLIENTE FINAL + costos/DUA (§6,§7)
+    nodo_recepcion_movimiento_costos(eid, ctx, log)
+    return "hecho"
+
+def auditar(proforma, eid, log):
+    # gate §9 A–J re-consultando el MCP. Devuelve ("APROBADO"|"RECHAZADO", fallos[])
+    ...
+
+def email_resumen(lote_idx, items):
+    msg = EmailMessage(); msg["Subject"]=f"Remediación CR·MuitoWork — lote {lote_idx}"
+    msg["From"]=SMTP["user"]; msg["To"]=SMTP["to"]
+    msg.set_content(render_resumen(items))     # tabla por expediente: qué cambió/agregó, totales, veredicto, borrados
+    with smtplib.SMTP(SMTP["host"], SMTP["port"]) as s:
+        s.starttls(); s.login(SMTP["user"], SMTP["pass"]); s.send_message(msg)
+
+# ---------- BUCLE PRINCIPAL (REPL resiliente, reanudable) ----------
+def procesar(proformas):
+    st = cargar_estado(); imap = None
+    for lote_idx, lote in enumerate(chunks(proformas, 10), start=1):
+        items=[]
+        for pf in lote:
+            if st.get(pf,{}).get("estado")=="hecho":  # reanudación
+                continue
+            intentos=0
+            while True:
+                logbuf=[]; log=lambda *a: (print(*a), logbuf.append(" ".join(map(str,a))))  # NARRA EN VIVO (§10.11)
+                try:
+                    chequear_mcp()
+                    if imap is None: imap = imap_conectar()
+                    log(f"🔍 Analizando PF {pf} …")
+                    ctx = construir_contexto(pf, imap, log)     # leer_onedrive + leer_correo + parsear_*
+                    eid = ctx.get("expediente_id")
+                    estado = completar_expediente(pf, ctx, log)
+                    veredicto, fallos = auditar(pf, eid, log) if estado=="hecho" else (estado, [])
+                    st[pf]={"estado":"hecho" if veredicto=="APROBADO" else veredicto,"fallos":fallos,"log":logbuf}
+                    guardar_estado(st); items.append((pf, st[pf])); break
+                except (imaplib.IMAP4.error, ConnectionError, OSError, M.MwtApiError) as e:
+                    intentos+=1; log(f"🔌 conexión perdida ({e}); reconectando… intento {intentos}")
+                    try: imap and imap.logout()
+                    except Exception: pass
+                    imap=None; time.sleep(3)
+                    if intentos>=5:
+                        st[pf]={"estado":"fallido","motivo":str(e),"log":logbuf}; guardar_estado(st); items.append((pf, st[pf])); break
+                    continue                                  # reintenta el MISMO expediente (idempotente)
+                except Exception as e:
+                    st[pf]={"estado":"fallido","motivo":str(e),"trace":traceback.format_exc()}; guardar_estado(st); items.append((pf, st[pf])); break
+        email_resumen(lote_idx, items)                        # § 8 · cada 10
+    reporte_final(st)
+
+def main():
+    ap=argparse.ArgumentParser(); ap.add_argument("--piloto"); ap.add_argument("--todos",action="store_true")
+    a=ap.parse_args(); chequear_mcp()
+    if a.piloto: procesar([a.piloto])                          # FASE B
+    elif a.todos: procesar(listar_proformas_cr_muitowork())    # FASE C (~50, de a 10)
+    else: print("usa --piloto <proforma> o --todos")
+if __name__=="__main__": main()
+```
+
+> Las funciones con `...` (leer_onedrive, leer_correo, parsear_oc/proforma, resolver_lineas, subir_documentos, cargar_sap, avanzar_estados_y_fechas, nodo_recepcion_movimiento_costos, auditar, render_resumen, construir_contexto, listar_proformas_cr_muitowork) las **completas siguiendo §4–§9** (parseo de proforma/OC con openpyxl/pdfplumber; matching por alias/nombre §5-TER; costos/DUA §6; nodos/movimiento §7; gate §9). Mantén la **idempotencia** (consultar antes de escribir) para que el reintento no duplique. **Narra en vivo** en cada paso (§10.11).
