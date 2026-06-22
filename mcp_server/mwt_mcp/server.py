@@ -563,6 +563,16 @@ def documento_eliminar(documento_id: str) -> Any:
     return _safe(lambda: api.delete(f"documentos/{documento_id}/"))
 
 
+@mcp.tool()
+def documento_editar(documento_id: str, cambios: dict) -> Any:
+    """Edita campos de un documento (PATCH parcial /documentos/{id}/).
+    `cambios` admite: codigo (ej. "504990"), kind, audience, etc."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe(lambda: api.patch(f"documentos/{documento_id}/", cambios))
+
+
 # --- SAP --------------------------------------------------------------------
 @mcp.tool()
 def sap_analizar(expediente_id: str, file_path: str) -> Any:

@@ -123,7 +123,8 @@ De ahí saca: **operador y cliente final**, **SKU·talla·cantidad·precio (matr
                          ni en correo → es FANTASMA: expediente_eliminar(expediente_id) y pasa al siguiente.
 [ ] 2.  CABECERA      → expediente_obtener: operador=Muito Work (operating_company_id), cliente final correcto,
                          brand_id=Marluvas (marca_listar → expediente_editar + oc_editar), modo_operacion="COMISION".
-[ ] 3.  CÓDIGOS       → po_number/oc_codigos limpios (nº OC real de la OC; NUNCA "SIN-PO"); proforma "2453-2026".
+[ ] 3.  CÓDIGOS       → Actualizar `codigo` de la OC a `po` (ej. "504990") vía `oc_editar` y `codigo` del expediente
+                         a `f"EXP-{po}"` vía `expediente_editar`. (No enviar "po_number" porque la API lo ignora).
 [ ] 4.  MATCH Part Nº → la OC trae "Part Nº" del CLIENTE (no el SKU MWT) con la talla al final.
                          Resuélvelo a producto MWT por ALIAS o por NOMBRE (§5-TER). SKU sin tallas/inexistente →
                          tallas_listar + producto_crear(...tallas UUID...) + producto_alias_crear.
@@ -132,11 +133,11 @@ De ahí saca: **operador y cliente final**, **SKU·talla·cantidad·precio (matr
                          (size="39", NUNCA "UNICA"); cantidades = OC/proforma.
 [ ] 6.  PRECIOS       → lineas_actualizar_precios([{linea_id, unit_price_mwt, unit_price_client}]) = precios de la OC/proforma;
                          total_price == qty × unit_price_cliente.
-[ ] 7a. LIMPIAR DOCS  → documento_listar(oc=oc_id): borra los OC rotos/fantasma ("PO SIN-PO", storage_url=null,
-                         file_size_bytes=0) con documento_eliminar para no dejar duplicados.
-[ ] 7b. SUBIR OC      → documento_subir(kind="OC", codigo="504990" (nº PO REAL, NO inventado), expediente_id, oc_id,
-                         file_path="<PO 504990.pdf>", audience="CLIENT"). Verifica storage_url≠null y file_size_bytes>0.
-[ ] 7c. PROFORMA real → si está en OneDrive: documento_subir(kind="PROFORMA", codigo="2453-2026", file_path=...).
+[ ] 7a. LIMPIAR DOCS  → documento_listar(expediente=eid): si hay un documento OC con código "SIN-PO" u "OC-AUTO-...",
+                         y tiene archivo (storage_url != null), edita su código al PO correcto usando `documento_editar(doc_id, {"codigo": po})`.
+                         Si no tiene archivo (storage_url = null o file_size_bytes = 0), bórralo con `documento_eliminar`.
+[ ] 7b. SUBIR OC      → Si falta el documento de la OC, haz `documento_subir(kind="OC", codigo=po, expediente_id, oc_id, file_path, audience="CLIENT")`.
+[ ] 7c. PROFORMA real → si está en OneDrive y falta: documento_subir(kind="PROFORMA", codigo="2453-2026", file_path=...).
 [ ] 7d. PROFORMA sist.→ proforma_generar(expediente_id, audience="CLIENT"/"ADMIN_ONLY") **SOLO DESPUÉS** de cargar
                          líneas+precios (pasos 5-6); si la generas antes, sale en 0 pares / $0.
 [ ] 7e. OTROS DOCS    → BL/AWB, DUA, Factura Marluvas, Packing, Pago de Impuestos (documento_subir kind=...).
@@ -355,14 +356,19 @@ def completar_expediente(proforma, ctx, log):
         M.expediente_eliminar(eid); log("🗑️ fantasma sin respaldo -> borrado", proforma); return "borrado"
     # 2 cabecera: operador Muito Work, cliente final, marca, modo
     marca = M.marca_listar(q="Marluvas"); brand = marca[0]["id"] if isinstance(marca,list) and marca else None
-    M.expediente_editar(eid, {"operating_company_id": ctx["operador_mwt_id"], "brand_id": brand, "modo_operacion":"COMISION"})
+    M.expediente_editar(eid, {
+        "operating_company_id": ctx["operador_mwt_id"], 
+        "brand_id": brand, 
+        "modo_operacion": "COMISION",
+        "codigo": f"EXP-{po}"  # 3 código expediente limpio
+    })
     M.oc_editar(oid, {"brand_id": brand, "codigo": po})                  # 3 código OC limpio (PO real)
     # 4 match Part Nº -> producto (alias o nombre) ; 5 líneas reales ; 6 precios
     lines_added = resolver_lineas(cli, ctx["lineas"], log)               # usa expediente_resolve_oc_preview / producto_listar / producto_alias_crear
     dummy = [l["id"] for l in M.expediente_lineas(eid) if (l.get("sku") in (None,"PENDING"))]
     M.expediente_edit_full_patch(eid, {"lines_removed": dummy, "lines_added": lines_added})
     M.lineas_actualizar_precios(precios_desde(M.expediente_lineas(eid), ctx))
-    # 7 documentos (borra OC roto, sube OC real con PO, proforma real, otros) ; verifica storage_url
+    # 7 documentos (limpia/edita OC con "SIN-PO" usando documento_editar, sube OC real con PO, proforma real, otros) ; verifica storage_url
     subir_documentos(eid, oid, po, proforma, ctx, log)
     # 7d proforma del SISTEMA *después* de cargar líneas
     M.proforma_generar(eid, audience="CLIENT"); M.proforma_generar(eid, audience="ADMIN_ONLY")

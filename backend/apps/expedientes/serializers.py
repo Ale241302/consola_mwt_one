@@ -384,7 +384,7 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             "brand_id", "sap",
             "estado", "modo_operacion", "incoterm", "freight_mode", "dispatch_mode",
             "origin", "destination", "origin_country", "destination_country",
-            "shipment_date", "eta",
+            "shipment_date", "eta", "product_count",
             "moneda", "total_cost", "total_invoiced", "total_paid", "balance",
             "projected_margin", "real_margin", "margin_drift",
             # Sprint 2026-05-10 · `forma_pago` necesario para que el
