@@ -345,7 +345,8 @@ def expediente_resolve_oc_preview(client_id: str, lines: list) -> Any:
 @mcp.tool()
 def expediente_crear(
     client_id: str,
-    ocr_payload: dict,
+    ocr_payload: dict | None = None,
+    lines: list | None = None,
     operating_company_id: str | None = None,
     brand_id: str | None = None,
     forma_pago: str | None = None,
@@ -367,6 +368,8 @@ def expediente_crear(
     - `operating_company_id`: operador. Si lo opera Muito Work Limitada, pasa el
       UUID del cliente operador MWT; si lo opera el cliente, su propio UUID (o se omite).
     - `ocr_payload`: dict con `lines`: [{sku, size, qty, unit_price?, producto_id?}].
+      **También puedes pasar `lines=[...]` directo** (el MCP lo envuelve en ocr_payload.lines;
+      el backend exige las líneas DENTRO de ocr_payload).
       Los precios se re-derivan server-side del motor de pricing.
     - `forma_pago`: CREDITO o CONTADO. `credit_days_mwt`/`credit_days_cliente`: plazos duales.
     - `mode` (COMISION/FULL), `freight_mode` (SEA/AIR), `dispatch_mode` (FCL/LCL/CONSOLIDADO): solo admin.
@@ -377,6 +380,10 @@ def expediente_crear(
     g = _wguard()
     if g:
         return g
+    # 5.1 · acepta `lines` directo además de ocr_payload.lines
+    ocr_payload = dict(ocr_payload or {})
+    if lines and not ocr_payload.get("lines"):
+        ocr_payload["lines"] = lines
     # Red de seguridad: NUNCA escribir "SIN-PO" (mejor omitir → el backend genera OC-AUTO).
     if po_number and re.sub(r"[^a-z0-9]", "", str(po_number).lower()) in ("sinpo", "sin", "none", "null", "na", "sn"):
         po_number = None
@@ -403,6 +410,31 @@ def expediente_crear(
         ocr_payload=ocr_payload,
     )
     return _safe(lambda: api.post_multipart("expedientes/create-from-oc/", data, file_path))
+
+
+@mcp.tool()
+def expedientes_crear_lote(items: list) -> Any:
+    """Crea VARIOS expedientes en UNA sola llamada (el MCP itera `expediente_crear`),
+    para cargas masivas sin un tool-call por expediente. `items`: lista de dicts con los
+    mismos parámetros que `expediente_crear` (client_id, ocr_payload|lines, operating_company_id,
+    po_number, brand_id, forma_pago, file_path, ...). Aplica las MISMAS validaciones (rechaza
+    "SIN-PO" y líneas dummy PENDING). Recomendado: lotes de 20-50. Devuelve
+    `{total, creados, fallidos:[{idx, error}], resultados:[...]}`."""
+    g = _wguard()
+    if g:
+        return g
+    resultados, fallidos, creados = [], [], 0
+    for i, it in enumerate(items or []):
+        if not isinstance(it, dict):
+            fallidos.append({"idx": i, "error": "item no es objeto"})
+            continue
+        r = expediente_crear(**it)
+        resultados.append({"idx": i, "result": r})
+        if isinstance(r, dict) and r.get("error"):
+            fallidos.append({"idx": i, "error": r.get("detail")})
+        else:
+            creados += 1
+    return {"total": len(items or []), "creados": creados, "fallidos": fallidos, "resultados": resultados}
 
 
 @mcp.tool()
@@ -451,9 +483,11 @@ def expediente_edit_full_get(expediente_id: str) -> Any:
 
 @mcp.tool()
 def expediente_edit_full_patch(expediente_id: str, cambios: dict) -> Any:
-    """Edita en bloque un expediente (CEO-only). `cambios` admite: operating_company_id,
-    forma_pago, payment_days, client_id, lines_added [{producto_id,sku,talla,qty}],
-    lines_removed [linea_id], lines_updated [{id,qty}], split_line_ids, split_quantities."""
+    """Edita OPERADOR/FORMA DE PAGO/LÍNEAS de un expediente (CEO-only). `cambios` admite:
+    operating_company_id, forma_pago, payment_days, client_id, lines_added [{producto_id,sku,talla,qty}],
+    lines_removed [linea_id], lines_updated [{id,qty}], split_line_ids, split_quantities.
+    ⚠️ NO toca campos de cabecera como `brand_id`, `modo_operacion`, `incoterm`, `freight_mode`,
+    `dispatch_mode` → para esos usa **`expediente_editar`**."""
     g = _wguard()
     if g:
         return g
@@ -478,10 +512,20 @@ def documento_subir(
     `match_subir(document_type="ART-01_OC"|"ART-02_PROFORMA")` y para el **SAP**
     `sap_confirmar`/`sap_upsert` con `file_path`, porque esos flujos dejan el binario
     bien almacenado y, además, mapean/asignan líneas. Usa `documento_subir` para el resto
-    (BL/AWB, DUA, factura, otros). Verifica luego con `documento_listar`."""
+    (BL/AWB, DUA, factura, otros). Verifica luego con `documento_listar`.
+
+    Requiere `expediente_id` u `oc_id` (sin ellos el documento queda huérfano y no aparece
+    en el expediente). Para `kind="PROFORMA"`, `codigo` debe ser el número limpio (formato
+    "####-####", ej. "2228-2026")."""
     g = _wguard()
     if g:
         return g
+    # 5.3 · evitar documentos huérfanos
+    if not expediente_id and not oc_id:
+        return {"error": True, "detail": "Pasa expediente_id (u oc_id); sin ellos el documento queda huérfano y no aparece en el expediente."}
+    # 5.6 · proforma con código limpio
+    if str(kind).upper() == "PROFORMA" and codigo and not re.fullmatch(r"\d{4}-\d{4}", str(codigo).strip()):
+        return {"error": True, "detail": f"codigo de PROFORMA inválido: '{codigo}'. Debe ser el número limpio ####-#### (ej. '2228-2026'), sin filename ni prefijos."}
     data = _params(kind=kind, codigo=codigo, expediente_id=expediente_id, oc_id=oc_id, audience=audience)
     return _safe(lambda: api.post_multipart("documentos/", data, file_path))
 
