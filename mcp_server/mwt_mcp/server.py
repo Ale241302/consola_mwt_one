@@ -377,6 +377,14 @@ def expediente_crear(
     g = _wguard()
     if g:
         return g
+    # Red de seguridad: NUNCA escribir "SIN-PO" (mejor omitir → el backend genera OC-AUTO).
+    if po_number and re.sub(r"[^a-z0-9]", "", str(po_number).lower()) in ("sinpo", "sin", "none", "null", "na", "sn"):
+        po_number = None
+    # Exigir líneas REALES (no el dummy PENDING). Si todas son dummy/vacías, no crear.
+    _lines = (ocr_payload or {}).get("lines") or []
+    _real = [l for l in _lines if str(l.get("sku") or l.get("sku_text") or "").strip().upper() not in ("", "PENDING", "PENDIENTE", "TBD", "NONE")]
+    if not _real:
+        return {"error": True, "detail": "ocr_payload.lines vacío o dummy (PENDING/sin SKU). Parsea la matriz de tallas de la proforma/OC y envía una línea por SKU×talla REAL (ej. size='39', NUNCA 'UNICA' ni 'PENDING') antes de crear el expediente."}
     data = _params(
         client_id=client_id,
         operating_company_id=operating_company_id,

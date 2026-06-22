@@ -144,7 +144,7 @@ Para cada expediente:
 | A3 | Proforma-código | `expediente_listar` | sale "SIN-PROFORMA" | `documento_subir(kind="PROFORMA", codigo limpio, file_path?)` (§4-BIS) |
 | B | SKUs con tallas | `producto_obtener` | SKU sin `tallas`/`sizes` o inexistente | `producto_crear/editar` (UUID) + `producto_alias_crear` |
 | C | Sin duplicado | `expediente_buscar` | >1 del mismo OC+proforma | conservar el completo / `expediente_fusionar` |
-| D | Líneas | `expediente_lineas` | `size`="UNICA", faltan tallas, cantidades ≠ proforma | `expediente_edit_full_patch(lines_removed, lines_added por SKU×talla)` |
+| D | Líneas | `expediente_lineas` | línea dummy (`sku`/`sku_text`="PENDING"), `size`="UNICA", faltan tallas, cantidades ≠ proforma | `expediente_edit_full_patch(lines_removed=[dummy], lines_added por SKU×talla real desde la matriz de la proforma)` |
 | E | Precios | `expediente_lineas` | `total_price ≠ qty × precio_cliente` o ≠ OC | `lineas_actualizar_precios` |
 | F | SAP | `sap_obtener` | doc trae SAP y no está / líneas sin `sap` / sin ART-04 | `sap_analizar`→`sap_confirmar`/`sap_upsert` |
 | G | Documentos | `documento_listar` | `storage_url=null`/`file_size_bytes=0` / falta OC o proforma | `documento_eliminar` + re-subir (§4) |
