@@ -103,17 +103,22 @@ De ahí saca: **operador y cliente final**, **SKU·talla·cantidad·precio (matr
 [ ] 2.  CABECERA      → expediente_obtener: operador=Muito Work (operating_company_id), cliente final correcto,
                          brand_id=Marluvas (marca_listar → expediente_editar + oc_editar), modo_operacion="COMISION".
 [ ] 3.  CÓDIGOS       → po_number/oc_codigos limpios (nº OC real de la OC; NUNCA "SIN-PO"); proforma "2453-2026".
-[ ] 4.  SKUs          → por cada SKU de la proforma: producto_listar(q=sku); si falta o sin tallas →
-                         tallas_listar (label→UUID) + producto_crear({...tallas:[UUIDs], especificaciones:{ncm,sizes:[UUIDs],color}})
-                         + producto_alias_crear.
-[ ] 5.  LÍNEAS        → parsea la MATRIZ de tallas de la proforma; quita la línea dummy "PENDING"
-                         (expediente_edit_full_patch lines_removed) y agrega una línea por SKU×TALLA real
-                         (size="39", NUNCA "UNICA"), cantidades = proforma.
+[ ] 4.  MATCH Part Nº → la OC trae "Part Nº" del CLIENTE (no el SKU MWT) con la talla al final.
+                         Resuélvelo a producto MWT por ALIAS o por NOMBRE (§5-TER). SKU sin tallas/inexistente →
+                         tallas_listar + producto_crear(...tallas UUID...) + producto_alias_crear.
+[ ] 5.  LÍNEAS        → quita la línea dummy "PENDING" (expediente_edit_full_patch lines_removed) y agrega una
+                         línea por (producto×TALLA real) — talla del sufijo del Part Nº o de la matriz de la proforma
+                         (size="39", NUNCA "UNICA"); cantidades = OC/proforma.
 [ ] 6.  PRECIOS       → lineas_actualizar_precios([{linea_id, unit_price_mwt, unit_price_client}]) = precios de la OC/proforma;
                          total_price == qty × unit_price_cliente.
-[ ] 7.  DOCS          → sube OC (documento_subir kind="OC" codigo="<PO real>" file_path), Proforma
-                         (match_subir ART-02_PROFORMA / o proforma_generar CLIENT y ADMIN_ONLY), y los demás de la carpeta
-                         (BL/AWB, DUA, Factura Marluvas, Packing, Pago de Impuestos). Verifica storage_url≠null (§9).
+[ ] 7a. LIMPIAR DOCS  → documento_listar(oc=oc_id): borra los OC rotos/fantasma ("PO SIN-PO", storage_url=null,
+                         file_size_bytes=0) con documento_eliminar para no dejar duplicados.
+[ ] 7b. SUBIR OC      → documento_subir(kind="OC", codigo="504990" (nº PO REAL, NO inventado), expediente_id, oc_id,
+                         file_path="<PO 504990.pdf>", audience="CLIENT"). Verifica storage_url≠null y file_size_bytes>0.
+[ ] 7c. PROFORMA real → si está en OneDrive: documento_subir(kind="PROFORMA", codigo="2453-2026", file_path=...).
+[ ] 7d. PROFORMA sist.→ proforma_generar(expediente_id, audience="CLIENT"/"ADMIN_ONLY") **SOLO DESPUÉS** de cargar
+                         líneas+precios (pasos 5-6); si la generas antes, sale en 0 pares / $0.
+[ ] 7e. OTROS DOCS    → BL/AWB, DUA, Factura Marluvas, Packing, Pago de Impuestos (documento_subir kind=...).
 [ ] 8.  SAP           → sap_analizar(file SAP) → sap_confirmar(sap_id, fecha, lineas_confirmadas=TODAS, file_path);
                          asigna el SAP a los productos. (si no está en REGISTRO → sap_upsert).
 [ ] 9.  ESTADOS+FECHAS→ expediente_avanzar_estado hasta el estado actual + expediente_phase_durations_set
@@ -144,6 +149,29 @@ Antes de tocar nada (paso 1b), comprueba que el expediente tenga **material real
 5. **No borres** si SÍ hay proforma/OC real pero faltan pasos (eso se completa con el checklist). Borrar es solo para los que **no deberían existir**.
 
 > En el reporte por lote (§8) lista aparte los **borrados** (proforma/PO + motivo), separados de los corregidos.
+
+---
+
+# 5-TER · MATCHING del "Part Nº" de la OC → producto MWT (por alias o por nombre)
+
+En la OC de Sondel el **"Part Nº" es el código del CLIENTE con la talla al final**, NO el SKU de MWT, y a veces el nombre no coincide exacto. Ej. real (OC 504990 → proforma 2453-2026):
+
+| Part Nº (OC) | base (sin talla) | talla | Unit Price (precio CLIENTE) |
+|---|---|---|---|
+| `50B22CPAP-37` | `50B22CPAP` | 37 | 18.23 |
+| `50B22CPAP-40` | `50B22CPAP` | 40 | 18.23 |
+| `75BPR29-MSMC-CPAP-38` | `75BPR29-MSMC-CPAP` | 38 | 36.73 |
+| `70C32-PET-CPAP-PAD-39` | `70C32-PET-CPAP-PAD` | 39 | 28.39 |
+
+**Cómo resolver cada línea (en este orden, hasta lograr ≥1 coincidencia):**
+1. **Extrae la talla** del sufijo (dígitos tras el último guión: `-37`, `-38`, …) y el **base** = el resto.
+2. **Alias (server-side):** `expediente_resolve_oc_preview(client_id=<cliente final>, lines=[{client_part_number:"50B22CPAP-37", qty:40}])`. El matcher de la consola cruza el base contra `product_client_alias`, extrae la talla y devuelve `producto_id`, `sku`, `size`, `unit_price` y `needs_review`. Usa esos `producto_id`/`sku` para las líneas. (Es lo más fiable: usa el alias ya registrado.)
+3. **Si `needs_review=true` (sin alias):** busca por **nombre/descripción**: `producto_listar(q="<base o texto de la Description>")` (busca en nombre+sku+descripción). Toma la **mejor coincidencia** (la más parecida al nombre/descripción de la OC). Ej.: Description "Lace-up Boot-Composite-midsole…" / base `50B22CPAP` → producto `50B22M-CPAP-PAD` (SKU 700844). Quédate con **al menos una coincidencia** razonable.
+4. **Registra el alias** para que no vuelva a fallar: `producto_alias_crear(producto_id, cliente_id=<cliente final>, alias="50B22CPAP")` (el base, sin la talla).
+5. **Si de plano no hay ninguna coincidencia** ni por alias ni por nombre → crea el producto (`producto_crear` con tallas UUID) y luego el alias. Solo crea si realmente no existe.
+6. **Precio:** el "Unit Price" de la OC es el **precio CLIENTE** (`unit_price_client`); el `unit_price_mwt` sale del SAP/proforma (si no hay margen real, iguala mwt=cliente). Cantidad = "Qty" de la OC.
+
+> Regla: **nunca dejes una línea sin producto por no coincidir el nombre exacto.** Primero alias, luego nombre/descripción (mejor coincidencia), luego crear. Y registra el alias para la próxima.
 
 ---
 
@@ -208,7 +236,7 @@ Formato sugerido (tabla + totales del lote). Incluye al final del lote: cuántos
 | D | Precios | `expediente_lineas` | `total_price ≠ qty × precio_cliente` o ≠ OC |
 | E | Códigos | `oc_codigos`/`proforma_codigos` | "SIN-PO", filename o prefijos |
 | F | SAP | `sap_obtener` | doc trae SAP y no está / líneas sin `sap` / sin ART-04 |
-| G | Documentos | `documento_listar` | `storage_url=null`/`file_size_bytes=0`; falta OC/proforma/SAP/DUA |
+| G | Documentos | `documento_listar` | `storage_url=null`/`file_size_bytes=0`; **OC duplicado o "PO SIN-PO" sin borrar**; OC con `codigo` inventado (≠ PO real); proforma del sistema con 0 pares (se generó antes de cargar líneas); falta OC/proforma/SAP/DUA |
 | H | Estados+fechas | `expediente_phase_durations_get`, `expediente_eventos` | no llegó al estado actual / faltan fechas |
 | I | Nodos+recepción | `inventario_artefactos_expediente`, `stock_listar` | sin recepción en hub del método de envío |
 | J | Movimiento+costos | `transferencia_obtener`, `transfer_costos_listar` | destino ≠ cliente final / faltan costos/DUA / sin liquidar |
@@ -224,6 +252,7 @@ Formato sugerido (tabla + totales del lote). Incluye al final del lote: cuántos
 2b. **FANTASMA → BORRAR:** si el expediente no tiene proforma/OC real en OneDrive **ni** en correo (PO inventado, sin productos, OC sin archivo) → `expediente_eliminar`. No debe existir; no lo edites ni le inventes datos (§5-BIS).
 3. **No recrear** (prohibido `expediente_crear`): buscar por proforma/OC/SAP y **editar** (o borrar si es fantasma).
 4. **Tallas reales** (label "39", nunca "UNICA"); SKU nuevo con **tallas UUID**. **Precios de la OC/proforma**; total = qty × precio_cliente.
+4b. **Match del Part Nº de la OC** (código del cliente, no SKU): resuélvelo por **alias** (`expediente_resolve_oc_preview`) y, si no, por **nombre/descripción** (`producto_listar`, mejor coincidencia); registra el alias (`producto_alias_crear`). **Nunca dejes una línea sin producto por no coincidir el nombre exacto** (§5-TER).
 5. **Códigos limpios** (OC "503295", proforma "2453-2026"); **nunca "SIN-PO"**.
 6. **SAP obligatorio** si el doc/correo lo trae (analyze→confirm con todas las líneas + archivo).
 7. **Todos los archivos a MinIO** (verifica `storage_url≠null`); borra rotos con `documento_eliminar` y re-sube.

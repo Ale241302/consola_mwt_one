@@ -526,8 +526,10 @@ def documento_subir(
     (BL/AWB, DUA, factura, otros). Verifica luego con `documento_listar`.
 
     Requiere `expediente_id` u `oc_id` (sin ellos el documento queda huérfano y no aparece
-    en el expediente). Para `kind="PROFORMA"`, `codigo` debe ser el número limpio (formato
-    "####-####", ej. "2228-2026")."""
+    en el expediente). Para `kind="OC"`, `codigo` = el **nº de PO real** de la OC (ej. "504990"),
+    NUNCA un número inventado ni el nombre del archivo. Para `kind="PROFORMA"`, `codigo` = número
+    limpio "####-####" (ej. "2453-2026"). Antes de subir un OC, borra el OC roto/fantasma previo
+    ("PO SIN-PO", storage_url=null) con `documento_eliminar` para no dejar duplicados."""
     g = _wguard()
     if g:
         return g
@@ -691,8 +693,11 @@ def expediente_desfusionar(fusion_id: str | None = None, expediente_ids: list | 
 # --- Proforma / Factura -----------------------------------------------------
 @mcp.tool()
 def proforma_generar(expediente_id: str, audience: str = "CLIENT", codigo: str | None = None, payment_days: int | None = None) -> Any:
-    """Genera y persiste una proforma. `audience`: CLIENT (vista cliente),
-    MWT_INTERNAL o ADMIN_ONLY (vista interna). Devuelve el documento + signed_url."""
+    """Genera y persiste la proforma del SISTEMA (HTML, código PF-AAAA-NNNN auto). `audience`:
+    CLIENT / MWT_INTERNAL / ADMIN_ONLY. ⚠️ Usa las LÍNEAS ACTUALES del expediente: si lo llamas
+    ANTES de cargar líneas y precios sale en 0 pares / $0 — **carga las líneas primero**.
+    (Para que el listado muestre el número de proforma del cliente, sube además el archivo real
+    de la proforma con `documento_subir(kind="PROFORMA", codigo="2453-2026", file_path=...)`.)"""
     g = _wguard()
     if g:
         return g
