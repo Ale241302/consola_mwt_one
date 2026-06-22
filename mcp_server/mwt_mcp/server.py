@@ -476,6 +476,17 @@ def expediente_editar(expediente_id: str, cambios: dict) -> Any:
 
 
 @mcp.tool()
+def expediente_eliminar(expediente_id: str) -> Any:
+    """Borra (soft-delete) un expediente: DELETE /expedientes/{id}/. Si era el único
+    expediente activo de su OC, la OC también se borra. Úsalo para expedientes FANTASMA
+    sin respaldo real (sin OC/proforma en OneDrive ni correo, PO inventado, sin productos)."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe(lambda: api.delete(f"expedientes/{expediente_id}/"))
+
+
+@mcp.tool()
 def expediente_edit_full_get(expediente_id: str) -> Any:
     """Lee la edición GENERAL del expediente (todas las líneas y términos)."""
     return _safe(lambda: api.get(f"expedientes/{expediente_id}/edit-full/"))
