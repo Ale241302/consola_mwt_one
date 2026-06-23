@@ -37,11 +37,31 @@ from django.http import JsonResponse
 
 log = logging.getLogger(__name__)
 
-# Activar inclusion del traceback en la response cuando esta env var
-# este seteada en "1" (typically en dev / debugging de produccion).
-# En prod normal queda en "0" → el cliente recibe solo el tipo de
-# excepcion y el mensaje, no el traceback completo.
-_INCLUDE_TRACEBACK = os.environ.get("MWT_DEBUG_500", "1") == "1"
+# Activar inclusion del traceback en la response SOLO cuando MWT_DEBUG_500=1
+# Y settings.DEBUG sea True. Default seguro: "0" (fail-closed) para que en
+# produccion NUNCA se filtre el traceback aunque la env var no este seteada.
+def _traceback_enabled() -> bool:
+    if os.environ.get("MWT_DEBUG_500", "0") != "1":
+        return False
+    try:
+        from django.conf import settings
+        return bool(getattr(settings, "DEBUG", False))
+    except Exception:  # noqa: BLE001 - settings no disponible -> fail-closed
+        return False
+
+
+# Claves de query params que jamas deben devolverse en una respuesta de error.
+_SENSITIVE_QUERY_KEYS = {
+    "token", "access", "refresh", "password", "secret",
+    "key", "api_key", "apikey", "signature", "authorization",
+}
+
+
+def _redact_query_params(qp: dict) -> dict:
+    return {
+        k: ("***REDACTED***" if k.lower() in _SENSITIVE_QUERY_KEYS else v)
+        for k, v in qp.items()
+    }
 
 
 class JsonErrorMiddleware:
@@ -79,19 +99,24 @@ class JsonErrorMiddleware:
 
         body = {
             "detail":   "Internal server error",
-            "error":    f"{type(exception).__name__}: {exception}",
+            "error_type": type(exception).__name__,
             "path":     path,
             "method":   request.method,
         }
-        if _INCLUDE_TRACEBACK:
+        include_traceback = _traceback_enabled()
+        if include_traceback:
+            # str(exception) puede contener SQL/credenciales -> solo en modo debug.
+            body["error"] = f"{type(exception).__name__}: {exception}"
             body["traceback"] = traceback.format_exc().splitlines()[-30:]
 
-        # Algunos query params pueden ser utiles para diagnostico
-        try:
-            qp = dict(request.GET.items())
-            if qp:
-                body["query_params"] = qp
-        except Exception:  # noqa: BLE001
-            pass
+        # Algunos query params pueden ser utiles para diagnostico, pero solo
+        # se exponen (redactados) en modo debug.
+        if include_traceback:
+            try:
+                qp = dict(request.GET.items())
+                if qp:
+                    body["query_params"] = _redact_query_params(qp)
+            except Exception:  # noqa: BLE001
+                pass
 
         return JsonResponse(body, status=500)

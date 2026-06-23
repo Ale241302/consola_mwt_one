@@ -47,7 +47,10 @@ from django.db import connection, transaction
 from django.utils import timezone
 from rest_framework import viewsets, status, mixins
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
+
+from apps.core.permissions import IsCeoOrAdmin, is_client_role
 
 from .models import (
     AiAgent, AiSkill, AiInstruction,
@@ -77,37 +80,26 @@ log = logging.getLogger(__name__)
 #   3. Chat (ChatSendView) — CLIENT no puede mencionar agentes/skills
 #                             → el backend fuerza el asistente SVC-01
 # ══════════════════════════════════════════════════════════════════════
-_CLIENT_ROLES = {"client_b2b", "cliente", "client"}
-
-
 def _is_client_role(role) -> bool:
-    return (role or "").lower() in _CLIENT_ROLES
+    return is_client_role(role)
 
 
-def _deny_ai_governance_for_client(request, resource_label: str = ""):
-    """Si el caller es CLIENT B2B → Response 403. En caso contrario → None.
-
-    Usado en AiAgentViewSet / AiSkillViewSet / AiInstructionViewSet para
-    bloquear CUALQUIER método (GET, POST, PUT, PATCH, DELETE) — el
-    cliente B2B no debe ni siquiera leer el catálogo de agentes/skills/
-    instrucciones, porque esa info es gobernanza interna MWT.
-    """
+def _ensure_ai_governance_allowed(request, resource_label: str = ""):
+    """Permiso positivo para gobernanza AI: solo CEO/Admin."""
+    perm = IsCeoOrAdmin()
+    if perm.has_permission(request, None):
+        return
     role = (getattr(request.user, "role", "") or "").lower()
-    if role in _CLIENT_ROLES:
-        log.warning(
-            "AI Hub governance access denied: role=%s user=%s resource=%s path=%s",
-            role, getattr(request.user, "email", "?"),
-            resource_label, getattr(request, "path", "?"),
-        )
-        return Response(
-            {
-                "detail":   "La gobernanza del AI Hub es CEO-ONLY. El rol CLIENT no tiene acceso.",
-                "resource": resource_label,
-                "role":     role,
-            },
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    return None
+    log.warning(
+        "AI Hub governance access denied: role=%s user=%s resource=%s path=%s",
+        role, getattr(request.user, "email", "?"),
+        resource_label, getattr(request, "path", "?"),
+    )
+    raise PermissionDenied({
+        "detail": "La gobernanza del AI Hub es CEO/Admin-only.",
+        "resource": resource_label,
+        "role": role,
+    })
 
 
 # UUID canónico del Asistente MWT (SVC-01). Si no existe en la DB, el
@@ -155,15 +147,11 @@ class AiAgentViewSet(viewsets.ModelViewSet):
     """
     queryset = AiAgent.objects.filter(is_active=True)
     serializer_class = AiAgentSerializer
+    permission_classes = [IsCeoOrAdmin]
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        denied = _deny_ai_governance_for_client(request, resource_label="ai.agent")
-        if denied is not None:
-            # DRF `initial` no soporta returnar Response directo — usamos
-            # una excepción PermissionDenied para que se serialize correcto.
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(denied.data)
+        _ensure_ai_governance_allowed(request, resource_label="ai.agent")
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -213,13 +201,11 @@ class AiSkillViewSet(viewsets.ModelViewSet):
     """CRUD sobre `ai.skill`. SEGURIDAD: CEO-ONLY. CLIENT B2B → 403."""
     queryset = AiSkill.objects.filter(is_active=True)
     serializer_class = AiSkillSerializer
+    permission_classes = [IsCeoOrAdmin]
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        denied = _deny_ai_governance_for_client(request, resource_label="ai.skill")
-        if denied is not None:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(denied.data)
+        _ensure_ai_governance_allowed(request, resource_label="ai.skill")
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -266,13 +252,11 @@ class AiInstructionViewSet(viewsets.ModelViewSet):
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        denied = _deny_ai_governance_for_client(request, resource_label="ai.instruction")
-        if denied is not None:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied(denied.data)
+        _ensure_ai_governance_allowed(request, resource_label="ai.instruction")
 
     queryset = AiInstruction.objects.filter(is_active=True)
     serializer_class = AiInstructionSerializer
+    permission_classes = [IsCeoOrAdmin]
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -677,6 +661,7 @@ class AiUsageLogViewSet(viewsets.ReadOnlyModelViewSet):
     """Append-only telemetría. Solo GET."""
     queryset = AiUsageLog.objects.all()
     serializer_class = AiUsageLogSerializer
+    permission_classes = [IsCeoOrAdmin]
 
     def get_queryset(self):
         qs = AiUsageLog.objects.all()

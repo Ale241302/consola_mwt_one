@@ -69,6 +69,20 @@ function AdminOnlyRoute({ children }) {
   return children;
 }
 
+// Rutas internas MWT: excluyen roles CLIENT_* aunque conozcan la URL.
+function InternalOnlyRoute({ children }) {
+  const { isClient } = useRole();
+  if (isClient) return <Navigate to="/dashboard" replace />;
+  return children;
+}
+
+// Rutas altamente sensibles: gobernanza IA, RBAC, finanzas y diagnóstico.
+function CeoAdminOnlyRoute({ children }) {
+  const { isCeoAdmin } = useRole();
+  if (!isCeoAdmin) return <Navigate to="/dashboard" replace />;
+  return children;
+}
+
 // Fable5-QA 2026-06-12 · ver comentario en las rutas /portal/nueva-oc.
 function NuevaOcRoleSwitch() {
   const { isClient } = useRole();
@@ -95,15 +109,15 @@ export default function App() {
         <Route path="/expedientes/:ocId/exp/:expedienteId" element={<ScreenExpedienteDetail />} />
         <Route path="/pipeline" element={<ScreenPipeline />} />
         <Route path="/portal" element={<ScreenPortal />} />
-        <Route path="/portal/diag" element={<PortalDiag />} />
+        <Route path="/portal/diag" element={<CeoAdminOnlyRoute><PortalDiag /></CeoAdminOnlyRoute>} />
         <Route path="/financiero" element={<ScreenPagos />} />
         {/* Sprint 2026-05-24 · /finanzas es CEO-ONLY (admin/superadmin).
             AdminOnlyRoute bloquea CLIENT_* redirigiendolos a /ai.
             El backend ademas hace 403 si el rol no es admin (defense in depth). */}
-        <Route path="/finanzas" element={<AdminOnlyRoute><ScreenFinanzas /></AdminOnlyRoute>} />
-        <Route path="/inventario" element={<ScreenInventario />} />
+        <Route path="/finanzas" element={<CeoAdminOnlyRoute><ScreenFinanzas /></CeoAdminOnlyRoute>} />
+        <Route path="/inventario" element={<InternalOnlyRoute><ScreenInventario /></InternalOnlyRoute>} />
         {/* Sprint Inbound Engine v1 (2026-04-29) — wizard full-page */}
-        <Route path="/inventario/recepcion" element={<InboundReceptionWizard />} />
+        <Route path="/inventario/recepcion" element={<InternalOnlyRoute><InboundReceptionWizard /></InternalOnlyRoute>} />
         {/* /wizard es alias del wizard simplificado (mismo flujo
             para ADMIN y CLIENT). Antes apuntaba al ScreenWizard
             legacy con OCR pesado; el nuevo wizard de 3 pasos vive
@@ -122,49 +136,49 @@ export default function App() {
         <Route path="/portal/nueva-oc"  element={<NuevaOcRoleSwitch />} />
         {/* Wizard pesado legacy (con OCR/marca/moneda) — accesible solo para fallback */}
         <Route path="/expedientes/nuevo-completo" element={<CreateExpedienteWizard />} />
-        <Route path="/transferencias" element={<ScreenTransfers />} />
+        <Route path="/transferencias" element={<InternalOnlyRoute><ScreenTransfers /></InternalOnlyRoute>} />
         {/* Wizard full-page · debe ir ANTES de :transferId para no matchear "nueva" como id */}
-        <Route path="/transferencias/nueva" element={<ScreenCreateTransferWizard />} />
-        <Route path="/transferencias/:transferId" element={<ScreenTransferDetail />} />
-        <Route path="/nodos" element={<ScreenNodos />} />
-        <Route path="/nodos/:nodeId" element={<ScreenNodoDetail />} />
-        <Route path="/clientes" element={<ScreenClientes />} />
+        <Route path="/transferencias/nueva" element={<InternalOnlyRoute><ScreenCreateTransferWizard /></InternalOnlyRoute>} />
+        <Route path="/transferencias/:transferId" element={<InternalOnlyRoute><ScreenTransferDetail /></InternalOnlyRoute>} />
+        <Route path="/nodos" element={<InternalOnlyRoute><ScreenNodos /></InternalOnlyRoute>} />
+        <Route path="/nodos/:nodeId" element={<InternalOnlyRoute><ScreenNodoDetail /></InternalOnlyRoute>} />
+        <Route path="/clientes" element={<InternalOnlyRoute><ScreenClientes /></InternalOnlyRoute>} />
         {/* Form full-page · debe ir ANTES del detail para no matchear /nuevo como :clienteId */}
-        <Route path="/clientes/nuevo"                element={<ScreenClienteFormView />} />
-        <Route path="/clientes/:clienteId/editar"    element={<ScreenClienteFormView />} />
-        <Route path="/clientes/:clienteId"           element={<ScreenClienteDetail />} />
-        <Route path="/marcas" element={<ScreenBrands />} />
+        <Route path="/clientes/nuevo"                element={<InternalOnlyRoute><ScreenClienteFormView /></InternalOnlyRoute>} />
+        <Route path="/clientes/:clienteId/editar"    element={<InternalOnlyRoute><ScreenClienteFormView /></InternalOnlyRoute>} />
+        <Route path="/clientes/:clienteId"           element={<InternalOnlyRoute><ScreenClienteDetail /></InternalOnlyRoute>} />
+        <Route path="/marcas" element={<InternalOnlyRoute><ScreenBrands /></InternalOnlyRoute>} />
         {/* Precios cliente-marca · vista full-page con drag&drop */}
         <Route path="/marcas/:brandId/clientes/:clienteId/precios"
-               element={<ScreenBrandClientPricingForm />} />
-        <Route path="/marcas/:brandId" element={<ScreenBrandDetail />} />
-        <Route path="/productos" element={<ScreenProductos />} />
-        <Route path="/productos/nuevo" element={<ScreenProductFormView />} />
-        <Route path="/productos/:productId" element={<ScreenProductFormView />} />
+               element={<CeoAdminOnlyRoute><ScreenBrandClientPricingForm /></CeoAdminOnlyRoute>} />
+        <Route path="/marcas/:brandId" element={<InternalOnlyRoute><ScreenBrandDetail /></InternalOnlyRoute>} />
+        <Route path="/productos" element={<InternalOnlyRoute><ScreenProductos /></InternalOnlyRoute>} />
+        <Route path="/productos/nuevo" element={<InternalOnlyRoute><ScreenProductFormView /></InternalOnlyRoute>} />
+        <Route path="/productos/:productId" element={<InternalOnlyRoute><ScreenProductFormView /></InternalOnlyRoute>} />
         {/* Ruta del Portal B2B: mismo componente, pero useRole() detecta
             CLIENT y aplica el strip-down (fieldset disabled + tabs filtradas). */}
         <Route path="/portal/productos/:productId" element={<ScreenProductFormView />} />
-        <Route path="/tallas" element={<ScreenSizingEngine />} />
-        <Route path="/ncm" element={<ScreenNcmEngine />} />
-        <Route path="/proveedores" element={<ScreenProveedores />} />
-        <Route path="/proveedores/nuevo" element={<ScreenSupplierFormView />} />
-        <Route path="/proveedores/:supplierId/editar" element={<ScreenSupplierFormView />} />
-        <Route path="/proveedores/:supplierId" element={<ScreenSupplierDetail />} />
-        <Route path="/templates" element={<ScreenEmailTemplates />} />
-        <Route path="/notificaciones" element={<ScreenNotificaciones />} />
-        <Route path="/cobros" element={<ScreenCobros />} />
+        <Route path="/tallas" element={<InternalOnlyRoute><ScreenSizingEngine /></InternalOnlyRoute>} />
+        <Route path="/ncm" element={<InternalOnlyRoute><ScreenNcmEngine /></InternalOnlyRoute>} />
+        <Route path="/proveedores" element={<InternalOnlyRoute><ScreenProveedores /></InternalOnlyRoute>} />
+        <Route path="/proveedores/nuevo" element={<InternalOnlyRoute><ScreenSupplierFormView /></InternalOnlyRoute>} />
+        <Route path="/proveedores/:supplierId/editar" element={<InternalOnlyRoute><ScreenSupplierFormView /></InternalOnlyRoute>} />
+        <Route path="/proveedores/:supplierId" element={<InternalOnlyRoute><ScreenSupplierDetail /></InternalOnlyRoute>} />
+        <Route path="/templates" element={<InternalOnlyRoute><ScreenEmailTemplates /></InternalOnlyRoute>} />
+        <Route path="/notificaciones" element={<InternalOnlyRoute><ScreenNotificaciones /></InternalOnlyRoute>} />
+        <Route path="/cobros" element={<InternalOnlyRoute><ScreenCobros /></InternalOnlyRoute>} />
         <Route path="/ai" element={<ScreenAIHub />} />
-        <Route path="/ai/governance" element={<AdminOnlyRoute><ScreenAIGovernance /></AdminOnlyRoute>} />
+        <Route path="/ai/governance" element={<CeoAdminOnlyRoute><ScreenAIGovernance /></CeoAdminOnlyRoute>} />
         {/* M3 CORE — Usuarios y Roles (ADMIN-only, guard vía AdminOnlyRoute) */}
         <Route path="/tickets" element={<ScreenTickets />} />
         <Route path="/tickets/:ticketId" element={<ScreenTicketDetail />} />
-        <Route path="/usuarios"          element={<AdminOnlyRoute><ScreenUsers /></AdminOnlyRoute>} />
-        <Route path="/usuarios/nuevo"    element={<AdminOnlyRoute><ScreenUserFormView /></AdminOnlyRoute>} />
-        <Route path="/usuarios/:userId"  element={<AdminOnlyRoute><ScreenUserFormView /></AdminOnlyRoute>} />
-        <Route path="/roles"             element={<AdminOnlyRoute><ScreenRolesPermissions /></AdminOnlyRoute>} />
+        <Route path="/usuarios"          element={<CeoAdminOnlyRoute><ScreenUsers /></CeoAdminOnlyRoute>} />
+        <Route path="/usuarios/nuevo"    element={<CeoAdminOnlyRoute><ScreenUserFormView /></CeoAdminOnlyRoute>} />
+        <Route path="/usuarios/:userId"  element={<CeoAdminOnlyRoute><ScreenUserFormView /></CeoAdminOnlyRoute>} />
+        <Route path="/roles"             element={<CeoAdminOnlyRoute><ScreenRolesPermissions /></CeoAdminOnlyRoute>} />
         {/* F6 · Historial de precios — bitácora CEO-ONLY de cambios del motor de precios. */}
         {/* F6 · Historial de precios — bitácora CEO-ONLY de cambios del motor de precios. */}
-        <Route path="/historial-precios" element={<AdminOnlyRoute><ScreenPriceHistory /></AdminOnlyRoute>} />
+        <Route path="/historial-precios" element={<CeoAdminOnlyRoute><ScreenPriceHistory /></CeoAdminOnlyRoute>} />
         {/* Perfil propio — accesible para TODOS los usuarios autenticados
             (ADMIN + CLIENT). La vista aplica read-only por rol internamente. */}
         <Route path="/perfil"            element={<ScreenProfilePage />} />

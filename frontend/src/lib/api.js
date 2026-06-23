@@ -185,6 +185,13 @@ const _isIdempotent = (m) => {
   const u = String(m || "GET").toUpperCase();
   return u === "GET" || u === "HEAD";
 };
+const _abortError = (cause) => {
+  if (cause && cause.name === "AbortError") return cause;
+  const err = new Error("Request aborted");
+  err.name = "AbortError";
+  if (cause) err.cause = cause;
+  return err;
+};
 
 // ── Cancelación global por navegación (GET idempotentes) ────────────
 // Los GET sin signal explícito se atan a este controlador; el AppLayout
@@ -258,16 +265,11 @@ export async function apiFetch(path, { method = "GET", body, token, headers = {}
   try {
     resp = await fetch(`${API_BASE}${path}`, opts);
   } catch (e) {
-    // Abort explícito del caller (navegación) → propagar tal cual; el
-    // caller filtra err.name === 'AbortError' y no setea estado.
+    // Abort expl?cito del caller o del controlador global de navegaci?n:
+    // propagar siempre un AbortError controlado. Antes, para abortos globales,
+    // devolv?amos una promesa que nunca resolv?a y pod?a congelar loaders.
     if (e && e.name === "AbortError") {
-      // Abort explícito del caller (su propio signal) → propagar; el caller lo
-      // filtra (err.name === "AbortError"). Abort del controlador GLOBAL de
-      // navegación (GET idempotente sin signal): el componente se está
-      // desmontando → devolvemos una promesa que NUNCA resuelve, evitando el
-      // "Uncaught (in promise) AbortError" y que un .then corra a medias.
-      if (signal) throw e;
-      return new Promise(() => {});
+      throw _abortError(e);
     }
     // Falla de red (upstream caído durante deploy, DNS, etc.). Reintento 1x.
     if (!_transientRetried && _isIdempotent(method)) {
@@ -422,6 +424,13 @@ export function resource(name) {
     const s = usp.toString();
     return s ? `?${s}` : "";
   };
+  const withQs = (path, params) => `${path}${qs(params)}`;
+  const isParamsObject = (value) => (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    !(value instanceof Date)
+  );
 
   return {
     // `opts` opcional (p.ej. { signal }) para cancelar la request on-unmount.
@@ -432,18 +441,34 @@ export function resource(name) {
     replace:(id, body)    => apiFetch(`${base}${id}/`,                       { method: "PUT",    body, ...tokenOpt() }),
     remove: (id)          => apiFetch(`${base}${id}/`,                       { method: "DELETE", ...tokenOpt() }),
     // acciones custom del ViewSet: select_tipos, select_paises, kpis, etc.
-    // action(name)               → GET   /resource/<name>/
-    // action(name, id)           → GET   /resource/<id>/<name>/
-    // action(name, id, body)     → POST  /resource/<id>/<name>/  (para state transitions)
-    // action(name, null, body)   → POST  /resource/<name>/
-    action: (name, id, body) => {
-      const path = id ? `${base}${id}/${name}/` : `${base}${name}/`;
-      if (body !== undefined) {
-        return apiFetch(path, { method: "POST", body, ...tokenOpt() });
+    // action(name)                         ? GET   /resource/<name>/
+    // action(name, params)                 ? GET   /resource/<name>/?k=v
+    // action(name, id)                     ? GET   /resource/<id>/<name>/
+    // action(name, id, body)               ? POST  /resource/<id>/<name>/
+    // action(name, id, undefined, {params})? GET   /resource/<id>/<name>/?k=v
+    // action(name, null, body)             ? POST  /resource/<name>/
+    action: (name, id, body, opts = {}) => {
+      let actionId = id;
+      let params = opts?.params;
+      let fetchOpts = opts && typeof opts === "object" ? { ...opts } : {};
+      delete fetchOpts.params;
+
+      // Sobrecarga para collection actions con query params. Evita construir
+      // nombres tipo "select_x/?q=...", que agregaban el slash al valor.
+      if (isParamsObject(id) && body === undefined) {
+        actionId = null;
+        params = id;
+        fetchOpts = {};
       }
-      return apiFetch(path, { ...tokenOpt() });
+
+      const actionPath = actionId ? `${base}${actionId}/${name}/` : `${base}${name}/`;
+      if (body !== undefined) {
+        return apiFetch(actionPath, { method: "POST", body, ...tokenOpt(), ...fetchOpts });
+      }
+      return apiFetch(withQs(actionPath, params), { ...tokenOpt(), ...fetchOpts });
     },
-    select: (selectName)  => apiFetch(`${base}select_${selectName}/`,        { ...tokenOpt() }),
+    select: (selectName, params, opts = {}) =>
+      apiFetch(withQs(`${base}select_${selectName}/`, params), { ...tokenOpt(), ...opts }),
   };
 }
 
@@ -1193,23 +1218,22 @@ export const storageApi = {
 // ---------------------------------------------------------------------
 const analyticsBase = "/analytics";
 export const analyticsApi = {
-  dashboardKpis:            () => apiFetch(`${analyticsBase}/dashboard_kpis/`,            { token: getToken() }),
-  cashflow:                 () => apiFetch(`${analyticsBase}/cashflow/`,                  { token: getToken() }),
-  aging:                    () => apiFetch(`${analyticsBase}/aging/`,                     { token: getToken() }),
-  exposicionClientes:       () => apiFetch(`${analyticsBase}/exposicion_clientes/`,       { token: getToken() }),
-  margenMarcas:             () => apiFetch(`${analyticsBase}/margen_marcas/`,             { token: getToken() }),
-  byStatus:                 () => apiFetch(`${analyticsBase}/by_status/`,                 { token: getToken() }),
-  urgent:                   () => apiFetch(`${analyticsBase}/urgent/`,                    { token: getToken() }),
-  creditClockAvg:           () => apiFetch(`${analyticsBase}/credit_clock_avg/`,          { token: getToken() }),
-  r1CorrectionRatio:        () => apiFetch(`${analyticsBase}/r1_correction_ratio/`,       { token: getToken() }),
-  byStatusByBrand:          () => apiFetch(`${analyticsBase}/by_status_by_brand/`,        { token: getToken() }),
-  inventoryCoverageByNode:  () => apiFetch(`${analyticsBase}/inventory_coverage_by_node/`,{ token: getToken() }),
-  topSkusMargen:            () => apiFetch(`${analyticsBase}/top_skus_margen/`,           { token: getToken() }),
-  expedienteMarginScatter:  () => apiFetch(`${analyticsBase}/expediente_margin_scatter/`, { token: getToken() }),
-  sizeMarketDistribution:   () => apiFetch(`${analyticsBase}/size_market_distribution/`,  { token: getToken() }),
-  tacosFbaUs:               () => apiFetch(`${analyticsBase}/tacos_fba_us/`,              { token: getToken() }),
+  dashboardKpis:            (opts = {}) => apiFetch(`${analyticsBase}/dashboard_kpis/`,             { token: getToken(), ...opts }),
+  cashflow:                 (opts = {}) => apiFetch(`${analyticsBase}/cashflow/`,                   { token: getToken(), ...opts }),
+  aging:                    (opts = {}) => apiFetch(`${analyticsBase}/aging/`,                      { token: getToken(), ...opts }),
+  exposicionClientes:       (opts = {}) => apiFetch(`${analyticsBase}/exposicion_clientes/`,        { token: getToken(), ...opts }),
+  margenMarcas:             (opts = {}) => apiFetch(`${analyticsBase}/margen_marcas/`,              { token: getToken(), ...opts }),
+  byStatus:                 (opts = {}) => apiFetch(`${analyticsBase}/by_status/`,                  { token: getToken(), ...opts }),
+  urgent:                   (opts = {}) => apiFetch(`${analyticsBase}/urgent/`,                     { token: getToken(), ...opts }),
+  creditClockAvg:           (opts = {}) => apiFetch(`${analyticsBase}/credit_clock_avg/`,           { token: getToken(), ...opts }),
+  r1CorrectionRatio:        (opts = {}) => apiFetch(`${analyticsBase}/r1_correction_ratio/`,        { token: getToken(), ...opts }),
+  byStatusByBrand:          (opts = {}) => apiFetch(`${analyticsBase}/by_status_by_brand/`,         { token: getToken(), ...opts }),
+  inventoryCoverageByNode:  (opts = {}) => apiFetch(`${analyticsBase}/inventory_coverage_by_node/`, { token: getToken(), ...opts }),
+  topSkusMargen:            (opts = {}) => apiFetch(`${analyticsBase}/top_skus_margen/`,            { token: getToken(), ...opts }),
+  expedienteMarginScatter:  (opts = {}) => apiFetch(`${analyticsBase}/expediente_margin_scatter/`,  { token: getToken(), ...opts }),
+  sizeMarketDistribution:   (opts = {}) => apiFetch(`${analyticsBase}/size_market_distribution/`,   { token: getToken(), ...opts }),
+  tacosFbaUs:               (opts = {}) => apiFetch(`${analyticsBase}/tacos_fba_us/`,               { token: getToken(), ...opts }),
 };
-
 // ---------------------------------------------------------------------
 // FX (USD ↔ BRL) — endpoint compartido con BrandClientPricingForm.
 // Backend: backend/apps/commercial/views.py · MarluvasExchangeRateView.
@@ -1278,9 +1302,9 @@ export const aiUsageLogsApi    = resource("ai/usage-logs");
 const aiBase = "/ai";
 export const aiChatApi = {
   // Mentions / Skills autocomplete
-  selectAgents:       (params)        => aiAgentsApi.action("select"),
-  selectSkills:       (params)        => aiSkillsApi.action("select"),
-  selectInstructions: (params)        => aiInstructionsApi.action("select"),
+  selectAgents:       (params)        => aiAgentsApi.action("select", params),
+  selectSkills:       (params)        => aiSkillsApi.action("select", params),
+  selectInstructions: (params)        => aiInstructionsApi.action("select", params),
 
   // Acciones de hilo (alias semánticos sobre el ViewSet)
   threadMessages:     (threadId, qs)  => apiFetch(

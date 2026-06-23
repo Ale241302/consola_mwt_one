@@ -1128,16 +1128,15 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     setDeleteCostBusy(true);
     setDeleteCostError(null);
     try {
-      await fetch(`/api/transferencias/${transferId}/cost-lines/${pendingDeleteCost.id}/`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${getToken()}` },
-      });
+      await transferDetailApi.removeCost(transferId, pendingDeleteCost.id);
       setCostLines((prev) => prev.filter((c) => c.id !== pendingDeleteCost.id));
       setPendingDeleteCost(null);
+      onLiquidated?.();
     } catch (e) {
+      if (e?.name === "AbortError") return;
       setDeleteCostError(
         (lang === "es" ? "No se pudo eliminar: " : "Could not delete: ") +
-        (e?.message || "error")
+        (e?.body?.detail || e?.message || "error")
       );
     } finally {
       setDeleteCostBusy(false);

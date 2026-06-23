@@ -35,6 +35,8 @@ from django.db import connection
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import AuthenticationFailed, InvalidToken
 
+from .permissions import is_ceo_or_admin_role, is_client_role, normalize_role
+
 log = logging.getLogger(__name__)
 
 
@@ -77,7 +79,7 @@ class MwtUser:
         self.email       = email or ""
         self.username    = email or str(user_id)
         self.full_name   = full_name or ""
-        self.role        = role or ""
+        self.role        = normalize_role(role)
         self._permissions = permissions or {}
         self._is_active  = bool(is_active)
         # Sprint 2026-05-21 · Portal multi-empresa.
@@ -89,6 +91,9 @@ class MwtUser:
         # Compat: `role_default` se usa en algunos endpoints
         # (apps.expedientes._viewer_role_upper) — espejo de `role`.
         self.role_default = self.role
+        # Flags expl?citos para no reimplementar heur?sticas en vistas.
+        self.is_client = is_client_role(self.role)
+        self.is_ceo_admin = is_ceo_or_admin_role(self.role)
 
     # ---- flags estándar de DRF/Django ------------------------------
     @property
@@ -273,12 +278,7 @@ class MwtJWTAuthentication(JWTAuthentication):
         # por drift entre los emails de las dos tablas. Logueamos un warning
         # estructurado para que el CEO pueda greparlo en docker logs django.
         try:
-            role_low = (role or "").lower()
-            is_client_like = (
-                role_low.startswith("client_")
-                or role_low in {"client", "cliente", "client_b2b"}
-            )
-            if is_client_like and not legal_entity_ids:
+            if is_client_role(role) and not legal_entity_ids:
                 log.warning(
                     "MwtJWTAuthentication: CLIENT sin legal_entity_ids — "
                     "probable drift core.users (uid=%s, email=%s) vs "

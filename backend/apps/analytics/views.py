@@ -46,8 +46,22 @@ from apps.core.scoped_querysets import (
     filter_by_user_clients_sql,
     is_bypass,
 )
+from apps.core.permissions import user_is_ceo_or_admin
 
 log = logging.getLogger(__name__)
+
+
+def _deny_unless_ceo_admin(request):
+    """Devuelve Response 403 si el caller no es CEO/Admin; None si autorizado.
+
+    Usado en endpoints que exponen margenes/costos/diagnostico (CEO-ONLY).
+    """
+    if user_is_ceo_or_admin(getattr(request, "user", None)):
+        return None
+    return Response(
+        {"detail": "CEO/Admin only"},
+        status=status.HTTP_403_FORBIDDEN,
+    )
 
 
 def _scope_hash(payload) -> str:
@@ -469,6 +483,9 @@ class AnalyticsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def margen_marcas(self, request):
         """Margen proyectado vs real agrupado por brand_id."""
+        denied = _deny_unless_ceo_admin(request)
+        if denied is not None:
+            return denied
         rows = _fetchall("""
             SELECT
               brand_id,
@@ -1040,6 +1057,9 @@ class AnalyticsViewSet(viewsets.ViewSet):
         · Sin filtro temporal: muestra TODOS los SKUs activos con precio > 0.
         · margin_usd = SUM((precio_efectivo - costo_efectivo) × qty).
         """
+        denied = _deny_unless_ceo_admin(request)
+        if denied is not None:
+            return denied
         # PASO 1: query simple sin JOIN externo (idéntica a la del diag CLI
         # que confirmamos funciona en producción).
         sql_main = """
@@ -1143,6 +1163,9 @@ class AnalyticsViewSet(viewsets.ViewSet):
         precio MWT). Los puntos fuera de la banda ±15% son los que
         merecen revisión.
         """
+        denied = _deny_unless_ceo_admin(request)
+        if denied is not None:
+            return denied
         rows = _fetchall("""
             WITH per_exp AS (
               SELECT
@@ -1310,6 +1333,9 @@ class AnalyticsViewSet(viewsets.ViewSet):
         Marcado con prefijo `_` para indicar uso interno. Cuando se
         estabilice la situación, este endpoint puede borrarse.
         """
+        denied = _deny_unless_ceo_admin(request)
+        if denied is not None:
+            return denied
         from django.db import transaction as _txn
 
         queries = {

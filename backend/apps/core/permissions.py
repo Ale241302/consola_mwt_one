@@ -23,6 +23,41 @@ from django.db import connection
 
 log = logging.getLogger(__name__)
 
+CLIENT_ROLE_ALIASES = {"client", "cliente", "client_b2b"}
+CEO_ADMIN_ROLES = {"superadmin", "admin", "ceo"}
+
+
+def normalize_role(role) -> str:
+    return str(role or "").strip().lower()
+
+
+def is_client_role(role) -> bool:
+    r = normalize_role(role)
+    return r.startswith("client_") or r in CLIENT_ROLE_ALIASES
+
+
+def is_ceo_or_admin_role(role) -> bool:
+    return normalize_role(role) in CEO_ADMIN_ROLES
+
+
+def user_is_ceo_or_admin(user) -> bool:
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    if getattr(user, "is_superuser", False):
+        return True
+    return is_ceo_or_admin_role(
+        getattr(user, "role_default", None) or getattr(user, "role", None)
+    )
+
+
+class IsCeoOrAdmin(BasePermission):
+    """Permiso positivo para superficies CEO/Admin-only."""
+
+    message = "Solo CEO/admin puede acceder a este recurso."
+
+    def has_permission(self, request, view):
+        return user_is_ceo_or_admin(getattr(request, "user", None))
+
 
 def _normalize_perms(value) -> dict:
     """Convierte el valor de core.roles.permissions a dict canonico.

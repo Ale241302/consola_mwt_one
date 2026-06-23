@@ -28,13 +28,24 @@
 //   tumba el dashboard. El consumidor decide cómo renderizar el estado
 //   vacío con <EmptyState/>.
 // =====================================================================
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { analyticsApi } from "../lib/api.js";
+import { useRole } from "../context/RoleContext.jsx";
 
-const emptyArray = () => [];
-const emptyObj   = () => null;
+const emptyArrayUnlessAbort = (err) => {
+  if (err?.name === "AbortError") throw err;
+  return [];
+};
+const emptyObjUnlessAbort = (err) => {
+  if (err?.name === "AbortError") throw err;
+  return null;
+};
 
 export function useDashboardKpis() {
+  const { isAdmin } = useRole();
+  const controllerRef = useRef(null);
+  const requestIdRef = useRef(0);
+
   const [state, setState] = useState({
     kpis: null,
     cashflow: [],
@@ -51,15 +62,29 @@ export function useDashboardKpis() {
     marginScatter: [],
     sizeMarket: null,
     tacosFba: null,
-    loading: true,
+    loading: isAdmin,
     error: null,
   });
 
-  // Fable5 · cancelación: los wrappers analyticsApi.* no aceptan opciones
-  // (no hay forma de pasar AbortSignal), así que usamos el patrón `isAlive`:
-  // el efecto de montaje pasa su flag y load() no toca el estado si el
-  // componente ya se desmontó. `reload` (uso manual) usa el default.
-  const load = useCallback(async (isAlive = () => true) => {
+  // Carga admin-only: clientes no disparan endpoints de analytics CEO.
+  // Cada carga tiene AbortController propio y requestId para evitar carreras.
+  const load = useCallback(async () => {
+    if (!isAdmin) {
+      controllerRef.current?.abort();
+      setState((s) => ({ ...s, loading: false, error: null }));
+      return;
+    }
+
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    const opts = { signal: controller.signal };
+    const isCurrent = () => (
+      !controller.signal.aborted && requestIdRef.current === requestId
+    );
+
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
       const [
@@ -69,23 +94,23 @@ export function useDashboardKpis() {
         inventoryByNode, topSkus, marginScatter,
         sizeMarket, tacosFba,
       ] = await Promise.all([
-        analyticsApi.dashboardKpis().catch(emptyObj),
-        analyticsApi.cashflow().catch(emptyArray),
-        analyticsApi.aging().catch(emptyObj),
-        analyticsApi.exposicionClientes().catch(emptyArray),
-        analyticsApi.margenMarcas().catch(emptyArray),
-        analyticsApi.byStatus().catch(emptyArray),
-        analyticsApi.urgent().catch(emptyArray),
-        analyticsApi.creditClockAvg().catch(emptyObj),
-        analyticsApi.r1CorrectionRatio().catch(emptyObj),
-        analyticsApi.byStatusByBrand().catch(emptyArray),
-        analyticsApi.inventoryCoverageByNode().catch(emptyArray),
-        analyticsApi.topSkusMargen().catch(emptyArray),
-        analyticsApi.expedienteMarginScatter().catch(emptyArray),
-        analyticsApi.sizeMarketDistribution().catch(emptyObj),
-        analyticsApi.tacosFbaUs().catch(emptyObj),
+        analyticsApi.dashboardKpis(opts).catch(emptyObjUnlessAbort),
+        analyticsApi.cashflow(opts).catch(emptyArrayUnlessAbort),
+        analyticsApi.aging(opts).catch(emptyObjUnlessAbort),
+        analyticsApi.exposicionClientes(opts).catch(emptyArrayUnlessAbort),
+        analyticsApi.margenMarcas(opts).catch(emptyArrayUnlessAbort),
+        analyticsApi.byStatus(opts).catch(emptyArrayUnlessAbort),
+        analyticsApi.urgent(opts).catch(emptyArrayUnlessAbort),
+        analyticsApi.creditClockAvg(opts).catch(emptyObjUnlessAbort),
+        analyticsApi.r1CorrectionRatio(opts).catch(emptyObjUnlessAbort),
+        analyticsApi.byStatusByBrand(opts).catch(emptyArrayUnlessAbort),
+        analyticsApi.inventoryCoverageByNode(opts).catch(emptyArrayUnlessAbort),
+        analyticsApi.topSkusMargen(opts).catch(emptyArrayUnlessAbort),
+        analyticsApi.expedienteMarginScatter(opts).catch(emptyArrayUnlessAbort),
+        analyticsApi.sizeMarketDistribution(opts).catch(emptyObjUnlessAbort),
+        analyticsApi.tacosFbaUs(opts).catch(emptyObjUnlessAbort),
       ]);
-      if (!isAlive()) return;   // Fable5 · desmontado mientras cargaba
+      if (!isCurrent()) return;
       setState({
         kpis:            kpis || null,
         cashflow:        Array.isArray(cashflow)        ? cashflow        : [],
@@ -106,21 +131,25 @@ export function useDashboardKpis() {
         error:           null,
       });
     } catch (err) {
-      // Fable5 · un abort no es un error de dashboard — no setear error.
       if (err?.name === "AbortError") return;
-      if (!isAlive()) return;
+      if (!isCurrent()) return;
       setState((s) => ({ ...s, loading: false, error: err }));
     }
-  }, []);
+  }, [isAdmin]);
 
-  // Fable5 · cleanup en desmontaje (cancela los setState pendientes).
+  // Cleanup en desmontaje: cancela HTTP real y evita setState tard?o.
   useEffect(() => {
-    let alive = true;
-    load(() => alive);
-    return () => { alive = false; };
+    load();
+    return () => {
+      requestIdRef.current += 1;
+      controllerRef.current?.abort();
+    };
   }, [load]);
 
-  return { ...state, reload: load };
+  // No exponer load directamente como onClick: React pasar?a el evento.
+  const reload = useCallback(() => load(), [load]);
+
+  return { ...state, reload };
 }
 
 export default useDashboardKpis;

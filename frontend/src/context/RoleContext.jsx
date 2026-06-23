@@ -31,11 +31,23 @@ import { useAuth } from "./AuthContext.jsx";
 const OVERRIDE_KEY = "mwt-role-override";
 
 // Mapeo del rol del JWT al viewport UI.
+function normalizeBackendRole(backendRole) {
+  return String(backendRole || "").trim().toLowerCase();
+}
+
+function isClientBackendRole(backendRole) {
+  const r = normalizeBackendRole(backendRole);
+  return r.startsWith("client_") || r === "client" || r === "cliente" || r === "client_b2b";
+}
+
+function isCeoAdminBackendRole(backendRole) {
+  const r = normalizeBackendRole(backendRole);
+  return r === "superadmin" || r === "admin" || r === "ceo";
+}
+
 function deriveBaseViewport(backendRole) {
-  if (!backendRole) return "ADMIN"; // DEV fallback — el ProtectedRoute ya filtró no-auth
-  const r = String(backendRole).toLowerCase();
-  if (r === "client_b2b" || r === "client" || r === "cliente") return "CLIENT";
-  return "ADMIN";
+  if (!backendRole) return "ADMIN"; // DEV fallback ? el ProtectedRoute ya filtr? no-auth
+  return isClientBackendRole(backendRole) ? "CLIENT" : "ADMIN";
 }
 
 // Whitelist de módulos visibles en CLIENT.
@@ -61,6 +73,7 @@ export const CLIENT_ALLOWED_MODULES = new Set([
   "pipeline",
   "portal",
   "pagos",
+  "ai",
   "tickets",  // Modulo de soporte interno (LOTE_SM_TICKETS) — visible para todos
 ]);
 
@@ -101,6 +114,7 @@ export function RoleProvider({ children }) {
 
   // Viewport REAL derivado del JWT (fuente de verdad). Nunca mutable por UI.
   const baseViewport = useMemo(() => deriveBaseViewport(backendRole), [backendRole]);
+  const isCeoAdmin = useMemo(() => isCeoAdminBackendRole(backendRole), [backendRole]);
 
   // ¿Este usuario puede usar el Tweak de rol? Solo staff interno.
   const canTweak = baseViewport === "ADMIN";
@@ -154,6 +168,7 @@ export function RoleProvider({ children }) {
     role,               // "ADMIN" | "CLIENT"
     isAdmin,
     isClient,
+    isCeoAdmin,
     baseViewport,       // el rol real derivado del JWT (no override)
     canTweak,           // ¿puede este usuario cambiar el viewport?
     override,           // "ADMIN" | "CLIENT" | null
@@ -166,7 +181,7 @@ export function RoleProvider({ children }) {
     // metadata útil
     backendRole,
     user,
-  }), [role, isAdmin, isClient, baseViewport, canTweak, override, setOverride, can, canSeeModule, backendRole, user]);
+  }), [role, isAdmin, isClient, isCeoAdmin, baseViewport, canTweak, override, setOverride, can, canSeeModule, backendRole, user]);
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;
 }

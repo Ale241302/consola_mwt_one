@@ -1,5 +1,5 @@
 // App layout — sidebar + topbar + routed outlet
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useLayoutEffect } from "react";
 import { Outlet, useLocation, useNavigate, useParams, matchPath } from "react-router-dom";
 import { Sidebar, screenFromPath } from "./Sidebar.jsx";
 import { TopBar } from "./TopBar.jsx";
@@ -26,15 +26,16 @@ export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Sprint 2026-06-13 · Cancelar los GET en vuelo al cambiar de ruta para
-  // liberar el pool de conexiones (antes la vista siguiente quedaba en
-  // blanco hasta que terminaba la anterior). Se ejecuta en render —antes de
-  // montar la nueva página— para no abortar los fetches de la página nueva.
+  // Sprint 2026-06-13 ? Cancelar los GET en vuelo al cambiar de ruta para
+  // liberar el pool de conexiones. Se ejecuta en useLayoutEffect dependiente
+  // solo del pathname para evitar efectos secundarios durante render.
   const _prevPath = useRef(location.pathname);
-  if (_prevPath.current !== location.pathname) {
-    abortInflightGets();
-    _prevPath.current = location.pathname;
-  }
+  useLayoutEffect(() => {
+    if (_prevPath.current !== location.pathname) {
+      abortInflightGets();
+      _prevPath.current = location.pathname;
+    }
+  }, [location.pathname]);
 
   // Fable5 · WAVE C: listeners globales de error → reporter best-effort.
   useEffect(() => {

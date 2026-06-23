@@ -32,19 +32,20 @@ export function useProductoSelects() {
     error: null,
   });
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts = {}) => {
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
       const [categorias, subcategorias, unidades, estados, marcas, proveedores, paises] =
         await Promise.all([
-          productosApi.select("categorias"),
-          productosApi.select("subcategorias"),
-          productosApi.select("unidades"),
-          productosApi.select("estados"),
-          productosApi.select("marcas"),
-          productosApi.select("proveedores"),
-          productosApi.select("paises"),
+          productosApi.select("categorias", null, opts),
+          productosApi.select("subcategorias", null, opts),
+          productosApi.select("unidades", null, opts),
+          productosApi.select("estados", null, opts),
+          productosApi.select("marcas", null, opts),
+          productosApi.select("proveedores", null, opts),
+          productosApi.select("paises", null, opts),
         ]);
+      if (opts.signal?.aborted) return;
       setState({
         categorias:    Array.isArray(categorias)    ? categorias    : [],
         subcategorias: Array.isArray(subcategorias) ? subcategorias : [],
@@ -57,25 +58,34 @@ export function useProductoSelects() {
         error: null,
       });
     } catch (err) {
+      if (err?.name === "AbortError") return;
       setState((s) => ({ ...s, loading: false, error: err }));
     }
   }, []);
 
   // Sub-select: cuando cambia la categoría seleccionada en el FE.
-  const loadSubcategorias = useCallback(async (categoriaCode) => {
+  const loadSubcategorias = useCallback(async (categoriaCode, opts = {}) => {
     try {
-      const subs = await productosApi.action(
-        `select_subcategorias/?categoria=${encodeURIComponent(categoriaCode)}`
+      const subs = await productosApi.select(
+        "subcategorias",
+        { categoria: categoriaCode },
+        opts,
       );
+      if (opts.signal?.aborted) return [];
       const arr = Array.isArray(subs) ? subs : [];
       setState((s) => ({ ...s, subcategorias: arr }));
       return arr;
-    } catch {
+    } catch (err) {
+      if (err?.name === "AbortError") return [];
       return [];
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const ac = new AbortController();
+    load({ signal: ac.signal });
+    return () => ac.abort();
+  }, [load]);
 
   return { ...state, reload: load, loadSubcategorias };
 }

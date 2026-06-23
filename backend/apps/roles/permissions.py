@@ -19,7 +19,8 @@ _ADMIN_ROLES  = {"superadmin", "admin"}
 
 
 def is_client(user) -> bool:
-    return (getattr(user, "role", "") or "").lower() in _CLIENT_ROLES
+    role = (getattr(user, "role", "") or "").lower().strip()
+    return role.startswith("client_") or role in _CLIENT_ROLES
 
 
 def is_superuser_or_admin(user) -> bool:

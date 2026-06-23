@@ -89,16 +89,26 @@ export function CommandPalette({ lang, onClose }) {
     };
   }), [exps, cliMap, isClient, lang]);
 
-  const qq = q.trim().toLowerCase();
-  const navFiltered = navActions.filter((a) => !qq || a.search.includes(qq));
-  const expFiltered = expActions.filter((a) => a.search.includes(qq)).slice(0, qq ? 12 : 8);
-  const filtered = [...navFiltered.filter((a) => a.kind === "nav"), ...navFiltered.filter((a) => a.kind === "action"), ...expFiltered];
+  const filtered = useMemo(() => {
+    const qq = q.trim().toLowerCase();
+    const navFiltered = navActions.filter((a) => !qq || a.search.includes(qq));
+    const expFiltered = expActions.filter((a) => a.search.includes(qq)).slice(0, qq ? 12 : 8);
+    return [
+      ...navFiltered.filter((a) => a.kind === "nav"),
+      ...navFiltered.filter((a) => a.kind === "action"),
+      ...expFiltered,
+    ];
+  }, [q, navActions, expActions]);
 
-  const grouped = {
-    [lang === "es" ? "Navegación" : "Navigation"]: filtered.filter((a) => a.kind === "nav"),
+  const grouped = useMemo(() => ({
+    [lang === "es" ? "Navegaci?n" : "Navigation"]: filtered.filter((a) => a.kind === "nav"),
     [lang === "es" ? "Acciones" : "Actions"]: filtered.filter((a) => a.kind === "action"),
     [lang === "es" ? "Expedientes" : "Files"]: filtered.filter((a) => a.kind === "exp"),
-  };
+  }), [filtered, lang]);
+
+  useEffect(() => {
+    setActive((a) => Math.min(a, Math.max(0, filtered.length - 1)));
+  }, [filtered.length]);
 
   useEffect(() => {
     const h = (e) => {

@@ -32,6 +32,8 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.permissions import is_client_role
+
 from .models import AiThread, AiMessage, AiAttachment
 from .serializers import (
     AiMessageSerializer, AiAttachmentSerializer,
@@ -129,7 +131,7 @@ class ChatSendView(APIView):
         # modelo/temperatura — el cliente no puede forzar un modelo caro
         # (opus) ni subir la temperatura.
         role = (getattr(request.user, "role", "") or "").lower()
-        _is_client = role in {"client_b2b", "cliente", "client"}
+        _is_client = is_client_role(role)
 
         if _is_client:
             extra_agent_ids = []     # ignorado (no orquesta)
