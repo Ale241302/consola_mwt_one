@@ -29,15 +29,15 @@ import {
   StatusBadge, CreditDot, CountryFlag,
 } from "../components/ui/primitives.jsx";
 import {
-  IconDownload, IconPlus, IconSearch, IconLock, IconAlert, IconChevDown, IconChevRight,
+  IconDownload, IconPlus, IconSearch, IconChevDown, IconChevRight,
   IconCreditCard, IconDollar, IconFolder, IconCheck, IconTrash, IconX,
 } from "../lib/icons.jsx";
 import {
   EXPEDIENTES as MOCK_EXPEDIENTES,
-  BRANDS, CLIENTS, STATES, PHASE_BASELINE,
+  STATES, PHASE_BASELINE,
   OCS as MOCK_OCS,
 } from "../data/mockData.js";
-import { expedientesApi, ocsApi, clientesApi, lineasApi, productosApi } from "../lib/api.js";
+import { expedientesApi, ocsApi, clientesApi, marcasApi, lineasApi, productosApi } from "../lib/api.js";
 import { readCache, writeCache } from "../lib/swrCache.js";
 import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
 // Sprint 2026-05-20 · Fusión Pipeline → Expedientes.
@@ -356,8 +356,13 @@ export default function ScreenExpedientes() {
   const [exporting, setExporting]     = useState(false);
   const [exportErr, setExportErr]     = useState(null);
   const [clientOpts, setClientOpts]   = useState([]); // [{id, name}]
+  // Sprint 2026-06-22 · catálogo de marcas para el filtro del toolbar
+  // (antes venía de mockData.BRANDS). Visible para todos los roles.
+  const [brandOpts, setBrandOpts]     = useState([]); // [{id, name}]
 
-  // Catálogo de clientes para el selector del modal (nombre legible).
+  // Catálogo de clientes para el selector del modal y el filtro del toolbar
+  // (nombre legible). El filtro de clientes del toolbar es CEO-ONLY (R3),
+  // pero el modal de export sí lo usa en ambos roles.
   useEffect(() => {
     let alive = true;
     clientesApi.list()
@@ -370,6 +375,23 @@ export default function ScreenExpedientes() {
         })));
       })
       .catch(() => { /* degradación: selector cliente queda en "Todos" */ });
+    return () => { alive = false; };
+  }, []);
+
+  // Catálogo de marcas (/api/marcas) para el filtro del toolbar.
+  // brands.marca expone `nombre`; degradamos a "Todas las marcas" si falla.
+  useEffect(() => {
+    let alive = true;
+    marcasApi.list()
+      .then((rows) => {
+        if (!alive) return;
+        const arr = Array.isArray(rows) ? rows : (rows?.results || []);
+        setBrandOpts(arr.map((b) => ({
+          id: b.id,
+          name: b.nombre || b.name || b.codigo || b.id,
+        })));
+      })
+      .catch(() => { /* degradación: filtro marca queda en "Todas" */ });
     return () => { alive = false; };
   }, []);
 
@@ -893,38 +915,24 @@ export default function ScreenExpedientes() {
           {STATES.slice(0,6).map(s => <option key={s} value={s}>{tr(lang,s)}</option>)}
         </select>
 
-        {/* Filtros cross-client / brand / señales de fase / bloqueos: CEO-ONLY.
-            Un cliente B2B solo ve sus propios pedidos (backend lo fuerza vía
-            ClientScopedManager) — no tiene sentido mostrarle el dropdown de
-            "Todos los clientes" o los semáforos de fase internos. */}
-        {isAdmin && <>
-          <select className="select" style={{ width: 140 }} value={brandFilter} onChange={e=>setBrandFilter(e.target.value)}>
-            <option value="ALL">{tr(lang,'all_brands')}</option>
-            {BRANDS.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
+        {/* Sprint 2026-06-22 · Filtro de MARCAS (desde /api/marcas) visible
+            para TODOS los roles — un cliente B2B también acota sus pedidos
+            por marca. El catálogo se hidrata en brandOpts (no mock data). */}
+        <select className="select" style={{ width: 140 }} value={brandFilter} onChange={e=>setBrandFilter(e.target.value)}>
+          <option value="ALL">{tr(lang,'all_brands')}</option>
+          {brandOpts.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
 
+        {/* Filtro de CLIENTES (desde /api/clientes): CEO-ONLY (R3 ·
+            POL_VISIBILIDAD). Un cliente B2B solo ve sus propios pedidos
+            (backend lo fuerza vía ClientScopedManager) — no tiene sentido
+            mostrarle el dropdown de "Todos los clientes". */}
+        {isAdmin && (
           <select className="select" style={{ width: 170 }} value={clientFilter} onChange={e=>setClientFilter(e.target.value)}>
             <option value="ALL">{tr(lang,'all_clients')}</option>
-            {CLIENTS.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {clientOpts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-
-          <div className="ceo-chip-group">
-            <button data-active={signalFilter==='ALL'}   onClick={()=>setSignalFilter('ALL')}>{lang==='es'?'Todos':'All'}</button>
-            <button data-active={signalFilter==='green'} onClick={()=>setSignalFilter('green')}
-                    style={{color: signalFilter==='green' ? 'var(--success)':undefined}}>● {tr(lang,'signal_green')}</button>
-            <button data-active={signalFilter==='amber'} onClick={()=>setSignalFilter('amber')}
-                    style={{color: signalFilter==='amber' ? 'var(--warning)':undefined}}>● {tr(lang,'signal_amber')}</button>
-            <button data-active={signalFilter==='red'}   onClick={()=>setSignalFilter('red')}
-                    style={{color: signalFilter==='red' ? 'var(--critical)':undefined}}>● {tr(lang,'signal_red')}</button>
-          </div>
-
-          <button className="filter-chip" data-active={alertFilter==='blocked'} onClick={() => setAlertFilter(alertFilter==='blocked'?'ALL':'blocked')}>
-            <IconLock size={12}/> {tr(lang,'show_blocked')}
-          </button>
-          <button className="filter-chip" data-active={alertFilter==='alerts'} onClick={() => setAlertFilter(alertFilter==='alerts'?'ALL':'alerts')}>
-            <IconAlert size={12}/> {tr(lang,'show_alerts')}
-          </button>
-        </>}
+        )}
 
         <div style={{ marginLeft:'auto' }}/>
 

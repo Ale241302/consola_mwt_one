@@ -1057,12 +1057,13 @@ export function GlobalFilters({
         borderRadius: "var(--radius-lg)",
         marginBottom: 16,
         flexWrap: "wrap",
-        // Sprint 2026-05-22 · Sticky robusta. `calc(var(--header-h) + 4px)`
-        // fallaba intermitentemente en el grid .app-shell — usamos top literal
-        // (56px = altura del .topbar) + z-index 15 (bajo topbar=20, sobre
-        // cards). boxShadow agrega feedback visual al hacer pin.
+        // Sprint 2026-06-22 · El TopBar usa position:relative (ancla su
+        // dropdown de notificaciones), por lo que NO queda fijo al scrollear.
+        // Con top:56 la barra se anclaba 56px abajo dejando un hueco por el
+        // que el contenido (heatmap) se veía por encima → parecía "no fija".
+        // Fijamos a top:0 del viewport; z-index 15 la mantiene sobre las cards.
         position: "sticky",
-        top: 56,
+        top: 0,
         zIndex: 15,
         boxShadow: "0 2px 8px rgba(15, 23, 42, 0.04)",
       }}
