@@ -1258,7 +1258,6 @@ export default function ScreenExpedientes() {
                   </tr>
                 );
               }
-              const brand = BRANDS.find(b => b.id === e.brand_id);
               const isOpen = expandedId === e.id;
               const driftE = e.real_margin - e.projected_margin;
               const stIdx = STATES.indexOf(e.status);
@@ -1698,8 +1697,14 @@ function AlertStack({ e, lang }) {
 
 // ── Expanded detail row with payments breakdown + internal costs + deferred pricing ─────
 function CeoDetailRow({ e, lang, deferredVal, showDeferred, onUpdate, onOpen }) {
-  const client = CLIENTS.find(c => c.id === e.client_id);
-  const creditAvail = client ? client.credit_limit - client.credit_used : 0;
+  // Sprint 2026-06-22 · sin mock CLIENTS. El nombre del cliente ya viene
+  // hidratado en e.client; el crédito límite/usado real NO viaja en el
+  // expediente, así que mostramos "—" en vez de un número fabricado.
+  const clientName = e.client || '';
+  const hasCredit = !!e._raw && (e._raw.credit_limit != null || e._raw.credit_used != null);
+  const creditAvail = hasCredit
+    ? Number(e._raw.credit_limit || 0) - Number(e._raw.credit_used || 0)
+    : null;
   const exposure    = e.balance;
   return (
     <div className="expand-inner">
@@ -1715,8 +1720,8 @@ function CeoDetailRow({ e, lang, deferredVal, showDeferred, onUpdate, onOpen }) 
         </div>
         <div style={{marginTop:16, paddingTop:14, borderTop:'1px dashed var(--divider)'}}>
           <div className="metric-row">
-            <span className="ml">{tr(lang,'credit_available')} · {client?.name}</span>
-            <span className="mv" style={{color: creditAvail < 20000 ? 'var(--critical)' : 'var(--text-primary)'}}>{fmtMoney(creditAvail)}</span>
+            <span className="ml">{tr(lang,'credit_available')}{clientName ? ` · ${clientName}` : ''}</span>
+            <span className="mv" style={{color: creditAvail != null && creditAvail < 20000 ? 'var(--critical)' : 'var(--text-primary)'}}>{creditAvail != null ? fmtMoney(creditAvail) : '—'}</span>
           </div>
           <div className="metric-row">
             <span className="ml">{tr(lang,'exposure')}</span>
