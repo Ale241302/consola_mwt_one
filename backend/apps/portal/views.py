@@ -192,6 +192,12 @@ def _resolve_client_ids(request):
     # campo no se hidrataba (auth backend distinto, etc).
     user_ids: list[str] = []
     u = getattr(request, "user", None)
+    role = (getattr(u, "role", "") or "").lower() if u is not None else ""
+    is_staff = (role in {
+        "superadmin", "admin", "ceo", "manager", "operator",
+        "finance", "viewer", "compras",
+    }) or getattr(u, "is_staff", False) or getattr(u, "is_superuser", False)
+
     if u is not None and getattr(u, "is_authenticated", False):
         injected = list(getattr(u, "legal_entity_ids", None) or [])
         if injected:
@@ -244,7 +250,7 @@ def _resolve_client_ids(request):
 
     # 2. Override: query param ?empresa_id (cliente activo del usuario)
     empresa_q = request.query_params.get("empresa_id")
-    if empresa_q and (not user_ids or empresa_q in user_ids):
+    if empresa_q and (is_staff or not user_ids or empresa_q in user_ids):
         return [empresa_q]
 
     # 3. Override: header X-Portal-Client (legacy, una sola empresa)
@@ -252,12 +258,12 @@ def _resolve_client_ids(request):
     if hdr:
         # Si user_ids está poblado y el header NO está, ignorarlo
         # (no podemos confiar en headers para autorización).
-        if not user_ids or hdr in user_ids:
+        if is_staff or not user_ids or hdr in user_ids:
             return [hdr]
 
     # 4. Legacy ?client_id=
     cid_q = request.query_params.get("client_id")
-    if cid_q and (not user_ids or cid_q in user_ids):
+    if cid_q and (is_staff or not user_ids or cid_q in user_ids):
         return [cid_q]
 
     # 5. Por defecto: TODAS las empresas del usuario
