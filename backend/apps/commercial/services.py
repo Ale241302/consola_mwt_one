@@ -82,6 +82,40 @@ def banda_for_tc(tc: Optional[float]) -> Optional[int]:
     return idx + 1
 
 
+def _find_active_pricing_row(brand_id, cliente_id, sku):
+    """Resuelve la fila Marluvas ACTIVA para (brand, cliente, sku).
+
+    Tolerante a deriva de `brand_id`. El detalle de producto
+    (`MarluvasProductClientsMatrixView`) resuelve la matriz del cliente
+    filtrando por `(sku, is_active)` — sin exigir brand. El portal y la
+    nueva-OC, en cambio, exigían además `brand_id == productos.producto.marca_id`.
+    Si la marca del producto cambió DESPUÉS de congelar la matriz, la fila
+    queda bajo un `brand_id` viejo y el match exacto falla → el portal
+    devolvía `no_active_pricing_row` y caía a la calculadora costo-plus,
+    mostrando un precio distinto (15.39) al del detalle (14.50).
+
+    Estrategia:
+      1. Match EXACTO por (brand, cliente, sku, is_active) — preferido.
+      2. Fallback brand-agnóstico por (cliente, sku, is_active), la más
+         reciente. Así el portal ve SIEMPRE la misma fila que el detalle.
+
+    Devuelve la tupla (row | None, brand_drift: bool). `brand_drift=True`
+    indica que se usó el fallback (la fila vive bajo otro brand_id).
+    """
+    base_qs = (MarluvasClientSkuPricing.objects
+               .filter(cliente_id=cliente_id, sku=sku, is_active=True))
+
+    row = (base_qs.filter(brand_id=brand_id)
+           .order_by("-updated_at")
+           .first())
+    if row is not None:
+        return row, False
+
+    # Fallback: misma (cliente, sku) bajo cualquier brand (deriva de marca).
+    row = base_qs.order_by("-updated_at").first()
+    return row, (row is not None)
+
+
 def resolve_client_price(
     client_id:   Union[str, "UUID"],
     brand_id:    Union[str, "UUID"],
@@ -128,10 +162,7 @@ def resolve_client_price(
         return out
 
     try:
-        row = (MarluvasClientSkuPricing.objects
-               .filter(brand_id=bid, cliente_id=cid, sku=sku, is_active=True)
-               .order_by("-updated_at")
-               .first())
+        row, brand_drift = _find_active_pricing_row(bid, cid, sku)
     except Exception as e:
         log.warning("resolve_client_price · DB lookup falló · %s", e)
         out["reason"] = f"db_error: {e}"
@@ -140,6 +171,13 @@ def resolve_client_price(
     if not row:
         out["reason"] = "no_active_pricing_row"
         return out
+
+    if brand_drift:
+        log.info(
+            "resolve_client_price · brand drift · sku=%s cliente=%s "
+            "requested_brand=%s row_brand=%s (usando fila por cliente+sku)",
+            sku, cid, bid, row.brand_id,
+        )
 
     matrix = row.prices_matrix or {}
     if not isinstance(matrix, dict) or not matrix:
@@ -262,10 +300,7 @@ def get_client_price_matrix(
         return out
 
     try:
-        row = (MarluvasClientSkuPricing.objects
-               .filter(brand_id=bid, cliente_id=cid, sku=sku, is_active=True)
-               .order_by("-updated_at")
-               .first())
+        row, brand_drift = _find_active_pricing_row(bid, cid, sku)
     except Exception as e:
         log.warning("get_client_price_matrix · DB lookup falló · %s", e)
         out["reason"] = f"db_error: {e}"
@@ -274,6 +309,13 @@ def get_client_price_matrix(
     if not row:
         out["reason"] = "no_active_pricing_row"
         return out
+
+    if brand_drift:
+        log.info(
+            "get_client_price_matrix · brand drift · sku=%s cliente=%s "
+            "requested_brand=%s row_brand=%s (usando fila por cliente+sku)",
+            sku, cid, bid, row.brand_id,
+        )
 
     matrix = row.prices_matrix or {}
     if not isinstance(matrix, dict) or not matrix:
