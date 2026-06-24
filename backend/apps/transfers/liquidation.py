@@ -135,7 +135,7 @@ def calcular_liquidacion(transferencia, *, persist=False, actor_id=None, actor_n
         fx     = D(c.fx_to_usd or 1)
         usd    = (amount * fx).quantize(D("0.01"), rounding=ROUND_HALF_UP)
         capitalizable = (c.kind or "").upper() not in NON_CAPITALIZABLE_KINDS
-        extras_breakdown.append({
+        entry = {
             "cost_line_id":   str(c.id),
             "kind":           c.kind,
             "label":          c.label or "",
@@ -145,13 +145,20 @@ def calcular_liquidacion(transferencia, *, persist=False, actor_id=None, actor_n
             "amount_usd":     float(usd),
             "capitalizable":  capitalizable,
             "scope_json":     c.scope_json,
+            "scope_fallback": False,   # True si el scope era restrictivo pero NO matcheó ninguna línea
             "source":         c.source,
             "ocr_confidence": float(c.ocr_confidence) if c.ocr_confidence is not None else None,
-        })
+        }
+        extras_breakdown.append(entry)
         if not capitalizable:
             extra_costs_iva += usd
             continue
         extra_costs += usd
+        # ¿el scope es restrictivo (no es "todo el batch")?
+        _sc = c.scope_json or {}
+        was_restrictive = bool(_sc) and (
+            _sc.get("applies_to_all") is False or _sc.get("lines") or _sc.get("expediente_ids")
+        )
         # Líneas dentro del scope de ESTE costo (fallback: todo el batch si el scope no resuelve).
         in_scope = [
             t for t in line_values
@@ -161,6 +168,8 @@ def calcular_liquidacion(transferencia, *, persist=False, actor_id=None, actor_n
         if not in_scope or scope_total <= 0:
             in_scope = line_values
             scope_total = fob_total
+            if was_restrictive:
+                entry["scope_fallback"] = True   # ⚠️ costo scoped que cayó a TODO el batch
         if scope_total > 0:
             for (l, _q, _uv, lt) in in_scope:
                 if lt > 0:
@@ -237,6 +246,7 @@ def calcular_liquidacion(transferencia, *, persist=False, actor_id=None, actor_n
             "fob_total_usd":        float(fob_total.quantize(D("0.01"))),
             "extra_costs_total_usd": float(extra_costs.quantize(D("0.01"))),       # solo capitalizables
             "extra_costs_iva_usd":   float(extra_costs_iva.quantize(D("0.01"))),   # IVA acreditable (NO suma)
+            "scope_fallbacks":       sum(1 for e in extras_breakdown if e.get("scope_fallback")),  # costos scoped sin match (revisar)
             "landed_total_usd":     float(landed_total),
             "avg_landed_per_unit_usd": (
                 float((landed_total / D(sum(int(t[1]) for t in line_values))).quantize(D("0.0001")))

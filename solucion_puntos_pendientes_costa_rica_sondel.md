@@ -16,20 +16,28 @@
 pip uninstall -y mwt-mcp
 pip install --no-cache-dir --force-reinstall "git+https://github.com/Ale241302/consola_mwt_one.git#subdirectory=mcp_server"
 ```
-## 0.2 Configura la conexión (JSON `mcp.json` o Kimi CLI)
-> 🔐 **NO hardcodees el token.** Expórtalo como variable de entorno y referencia `$MWT_MCP_TOKEN`. El token se genera en el VPS con `docker exec -i consola-mwt-one-django python manage.py mint_mcp_token --email alejandro@muitowork.com`. (Si hubo un token antiguo en claro en este archivo, **rótalo**: genera uno nuevo y el viejo deja de servir al rotar `DJANGO_SECRET_KEY` o desactivando el usuario.)
-```bash
-export MWT_MCP_TOKEN="<pega aquí el token de mint_mcp_token>"
-export MWT_API_BASE="https://consola.mwt.one/api"
-```
+## 0.2 Configura la conexión (JSON `mcp.json` / Claude Desktop / Cursor / Kimi CLI)
 ```json
-{ "mcpServers": { "mwt-one": {
-  "command": "python", "args": ["-m", "mwt_mcp"],
-  "env": {
-    "MWT_MCP_TOKEN": "$MWT_MCP_TOKEN",
-    "MWT_API_BASE": "https://consola.mwt.one/api"
-  } } } }
+{
+  "mcpServers": {
+    "mwt-one": {
+      "command": "python",
+      "args": ["-m", "mwt_mcp"],
+      "env": {
+        "MWT_MCP_TOKEN": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjo0OTM1NDM1NjQ2LCJpYXQiOjE3ODE4MzU2NDYsImp0aSI6ImY4OTllMTEyODFjODRmZDI5ZGNjNGVhZDVlOWFhNDFlIiwidXNlcl91dWlkIjoiNTA3MmZjZTItZTY2ZS00YmY3LThmZDItNjIzY2ZkM2FmYWY2IiwiZW1haWwiOiJhbGVqYW5kcm9AbXVpdG93b3JrLmNvbSIsInJvbGUiOiJhZG1pbiIsIm1jcCI6dHJ1ZX0.yeS-5L0LNapR7E6FJuH8g0d2hPobeMwWoke-TqKTetk",
+        "MWT_API_BASE": "https://consola.mwt.one/api"
+      }
+    }
+  }
+}
 ```
+Kimi CLI:
+```bash
+kimi mcp add mwt-one --command python --args "-m,mwt_mcp" \
+  --env MWT_MCP_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjo0OTM1NDM1NjQ2LCJpYXQiOjE3ODE4MzU2NDYsImp0aSI6ImY4OTllMTEyODFjODRmZDI5ZGNjNGVhZDVlOWFhNDFlIiwidXNlcl91dWlkIjoiNTA3MmZjZTItZTY2ZS00YmY3LThmZDItNjIzY2ZkM2FmYWY2IiwiZW1haWwiOiJhbGVqYW5kcm9AbXVpdG93b3JrLmNvbSIsInJvbGUiOiJhZG1pbiIsIm1jcCI6dHJ1ZX0.yeS-5L0LNapR7E6FJuH8g0d2hPobeMwWoke-TqKTetk \
+  --env MWT_API_BASE=https://consola.mwt.one/api
+```
+> 🔐 Token admin embebido (decisión del CEO para conectar el agente). Trátalo como secreto; para revocarlo, rota con `mint_mcp_token`.
 ## 0.3 Verifica versión + sesión (no sigas si falla)
 ```bash
 MWT_MCP_TOKEN=dummy python - <<'PY'
@@ -194,7 +202,13 @@ Toma los montos reales de la **FACTURA comercial** y la **DUA**:
 
 ⚠️ **IVA (13%) — crédito fiscal acreditable, NO capitaliza.** Con el backend parcheado (liquidación 2026-06-24), `transfer_liquidar` **excluye el IVA del landed** automáticamente (`kind="IVA"` → va a `summary.extra_costs_iva_usd`, no suma al costo). Puedes registrarlo con `kind="IVA"` como referencia o **omitirlo**; en ningún caso infla el landed. (⚠️ Si la plataforma aún NO tiene el patch desplegado, NO lo cargues como costo.)
 
-**DAI por NCM:** con el patch, la liquidación **aplica `scope_json`**: el DAI 14% (calzado) y el DAI 10% (plantillas) se prorratean SOLO entre sus líneas si los mandas con `scope_json` por líneas/NCM (no `applies_to_all`). El backend resuelve el NCM por `producto_id`.
+**DAI por NCM:** con el patch, la liquidación **aplica `scope_json`**: el DAI 14% (calzado) y el DAI 10% (plantillas) se prorratean SOLO entre sus líneas. ⚠️ **El backend NO deriva el NCM**: solo compara los `producto_id` (y `talla`) que TÚ pongas en `scope_json.lines`. Por eso **tú agrupas las líneas por NCM** (leyendo `hs_code`/`especificaciones.ncm` de cada producto con `producto_obtener`/`ncm_listar`) y armas el scope de cada DAI con los `producto_id` de ESE NCM. Ej.:
+```
+transfer_costo_agregar(transferencia_id, kind="DAI", amount=753.88, currency="USD", fx_to_usd=1.0,
+   label="DAI 14% 6403.99.90",
+   scope_json={"applies_to_all": false, "lines":[{"producto_id":"<sku calzado 1>"},{"producto_id":"<sku calzado 2>"}]})
+```
+⚠️ **Verifica el scope con el reporte:** tras `transfer_liquidar`, revisa `summary.scope_fallbacks` y `extras[].scope_fallback`. Si alguno es `true`, significa que un costo con scope NO matcheó ninguna línea (ej. `producto_id` mal) y el backend lo repartió sobre TODO el batch → el landed quedó mal: **corrige los `producto_id` del scope y vuelve a liquidar.**
 
 **Tipo de cambio:** **prioridad = el TC OFICIAL de la DUA** (úsalo para convertir colones↔USD). Si la DUA no lo trae: `tipo_cambio("usd-crc")` → `{rate, source, timestamp}` (consulta live; el fallback del backend ronda ~505 ₡/USD — **no asumas un número fijo**). Para FOB Marluvas en R$: `tipo_cambio("usd-brl")`.
 - En `transfer_costo_agregar`: si el `amount` ya está en USD → `fx_to_usd=1`; si está en colones → `fx_to_usd = 1/rate`.
@@ -241,7 +255,7 @@ Cada nodo se crea una sola vez y se reutiliza para los siguientes expedientes de
 | F | SAP | `sap_obtener` | Excel SAP no subido; nº SAP no asignado a los productos |
 | G | Estados+fechas | `expediente_phase_durations_get`, `expediente_eventos` | no avanzó al estado real; faltan fecha inicio/fin (deben salir del CORREO) |
 | H | Recepción | `stock_listar`, `inventario_artefactos_expediente` | sin recepción en nodo barco/avión |
-| I | Movimiento+costos | `transferencia_listar`(descubrir) → `transferencia_obtener`, `transfer_costos_listar` | no hay movimiento; destino ≠ nodo Sondel; faltan flete/seguro/**DAI**/Ley6946/PROCOMER/timbres/gastos; **IVA cargado como costo** (no debe); sin liquidar |
+| I | Movimiento+costos | `transferencia_listar`(descubrir) → `transferencia_obtener`, `transfer_costos_listar`, `transfer_liquidacion_preview` | no hay movimiento; destino ≠ nodo Sondel; faltan flete/seguro/**DAI**/Ley6946/PROCOMER/timbres/gastos; sin liquidar. ✅ **IVA**: cargarlo está OK (el backend lo excluye); verifica que el IVA aparezca en `summary.extra_costs_iva_usd` y **NO** en el landed. ⚠️ **RECHAZA si `summary.scope_fallbacks > 0`** (un DAI scoped no matcheó → landed mal). |
 | J | Fusión | `expediente_buscar(oc_number)` | la OC está en Sondel y Muito Work y NO quedó fusionada (con ambas proformas) |
 
 `APROBADO` → resumen del expediente → siguiente. `RECHAZADO` → el Orquestador devuelve los fallos al Operativo, que corrige, y se re-audita. **No se avanza al siguiente expediente hasta `APROBADO`.**
