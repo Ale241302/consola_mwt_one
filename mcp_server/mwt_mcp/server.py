@@ -1275,3 +1275,4 @@ def builder_templates_listar(only_published: bool = True) -> Any:
 def builder_template_obtener(template_id: int) -> Any:
     """Obtiene la definición/estructura de un template del Builder por su id (entero)."""
     return _safe(lambda: api.get(f"builder/templates/{template_id}/"))
+

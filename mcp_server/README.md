@@ -10,7 +10,7 @@ el backend. No guarda estado local: cada herramienta es una llamada autenticada 
 
 ---
 
-## 1. Qué puede hacer (88 herramientas)
+## 1. Qué puede hacer (99 herramientas)
 
 | Dominio | Herramientas |
 |---|---|

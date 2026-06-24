@@ -1,40 +1,25 @@
 <claude-mem-context>
 # Memory Context
 
-# [consola_mwt_one] recent context, 2026-06-24 4:03pm GMT-5
+# [consola_mwt_one] recent context, 2026-06-24 4:31pm GMT-5
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (21,421t read) | 1,152,242t work | 98% savings
+Stats: 50 obs (22,356t read) | 1,314,967t work | 98% savings
 
 ### Jun 14, 2026
 S171 Full codebase read-only analysis of consola_mwt_one + CLAUDE.md update to fix documented inaccuracies + stale file cleanup (Jun 14, 10:31 AM)
 S173 Capa 2 – Backend latency optimization: cache KPI calculations and fix silent OC/expediente truncation; now exploring Fase 3 SQL indexes deployment mechanism (Jun 14, 10:36 AM)
-388 10:46a 🔵 Expedientes.jsx Has Waterfall + N+1 Client Fetch Pattern Causing Load Delays
-389 " 🟣 SWR Cache Layer Created for Frontend API Reads
-390 " 🟣 Unified Skeleton Component Library Created for Loading States
-391 " 🔵 usePortalData Hook Fires 7 Parallel API Calls With No Caching on Every Mount
-392 10:48a 🟣 Global .mwt-skel CSS Class Added to app.css for Skeleton Component System
-393 10:49a 🟣 usePortalData Hook Integrated with SWR Cache — Portal B2B Now Loads Instantly on Return Navigation
-394 " 🟣 Skeleton Loading Added to All Frontend Views
-395 " ⚖️ SWR Cache Architecture: Two-Layer In-Memory + SessionStorage
-396 " 🔵 Pagos.jsx PaymentHistoryTable Sub-Component Cannot Access Parent `loading` State
-397 " 🔵 Expedientes.jsx Has N+1 HTTP Request Anti-Pattern for Client Names
-398 11:04a 🟣 Phase 2 Redis Caching Layer for Portal API Endpoints
-399 " 🔴 Hard-coded LIMIT 100 Replaced with Configurable Pagination in mis_ocs and mis_expedientes
-400 " ⚖️ 60-Second TTL Chosen for All Portal Cache Keys
 S174 Full-stack portal performance optimization (Fase 1+2+3) complete and deployed: skeleton loading states, Redis caching, SQL indexes — all live at https://consola.mwt.one; project memory docs written for future sessions (Jun 14, 11:14 AM)
 S172 Capa 2 – Backend latency optimization: cache KPI calculations and fix silent OC/expediente truncation in /api/portal/me/ and related endpoints (Jun 14, 11:14 AM)
 S175 Fix React sub-component skeleton scope bugs (Portal.jsx / Pagos.jsx), deploy hotfix to production VPS at https://consola.mwt.one (Jun 14, 11:18 AM)
 S176 Fix collapsed sidebar: swap wide CDN logo for compact icon + stack header vertically to prevent chevron overflow (Jun 14, 11:21 AM)
 S178 Profile page (/perfil) improvements: editable fields for normal/B2B users, hide Mi empresa tab, add password reset, fix legal-entities 404 (Jun 14, 11:33 AM)
-401 11:35a 🟣 Profile page improvements for normal/B2B users
 S177 Fix collapsed sidebar logo + chevron overflow; then new /perfil page improvements for normal/B2B users (Jun 14, 11:36 AM)
 S179 Profile page /perfil improvements: allow phone editing for normal/B2B users, hide Mi empresa tab, add password reset button, fix legal-entities 404 (Jun 14, 11:44 AM)
 402 11:46a 🔵 Backend /me/profile/ already whitelists phone for self-service PATCH
-403 " 🔵 Address field name mismatch between frontend and backend
 404 11:47a 🔵 reset-password endpoint sends email to contact_email, uses PasswordResetToken model
 405 " 🔵 ProfileMeView PATCH confirmed accessible to all authenticated users including CLIENT B2B
 406 " 🔵 ProfileMeView PATCH omitting "addresses" key is safe — existing addresses untouched
@@ -71,6 +56,21 @@ S180 Improve /perfil page for usuario normal / cliente B2B: editable fields (all
 689 " 🔵 Sondel Costa Rica End-to-End Flow — 17-Step Platform Requirements Mapped
 690 " 🔵 All Four Suspected MCP Gaps Resolved — Tools Confirmed Present in server.py
 691 " 🟣 MCP Server Audit Report Generated — mcp_server_audit_report.md
+692 4:04p 🔵 MCP Server Tool Inventory — consola.mwt.one Full Capability Map
+693 " 🔵 MCP client.py — HTTP Transport Layer Architecture
+694 4:05p 🔵 MCP Server Contains Exactly 98 Tools — Complete API Endpoint Map Extracted
+695 " 🔵 Coverage Analysis Confirms 100% MCP Tool Coverage — Zero Gaps for Sondel Flow
+697 4:21p 🔵 MCP Server Count Discrepancy: 98 vs 99 Tools (nuevo `tipo_cambio`)
+698 " 🚨 Production JWT Token Hardcoded in Sondel Workflow Documentation
+699 " 🔵 Sondel Costa Rica End-to-End Workflow: 18-Step Checklist with 3-Agent Architecture
+700 4:22p 🔴 `tipo_cambio` Defined Twice in server.py — Duplicate MCP Tool Registration Bug
+701 " 🔵 Actual MCP Tool Count is 99 Unique / 100 Decorators (not 98 as Previously Reported)
+702 4:23p 🔵 Backend Exchange Rate Endpoints: Multi-Source Fallback Chain with Redis Cache
+703 4:24p 🔵 Automated Cross-Reference: Zero Missing Tools Between Sondel Workflow Appendix and MCP Server
+704 " 🚨 Exposed Production JWT: Confirmed Admin Token Valid Until 2126, Issued 2026-06-19
+705 " 🔵 MCP README.md Stale: Documents 88 Tools, Actual Count is 99 Unique
+706 " 🔐 Two Write-Method Tools Bypass `_wguard()` Read-Only Protection in server.py
+707 " 🔵 Key Tool Signatures Validated: `nodo_crear`, `expediente_editar`, `sap_analizar` Match Sondel Workflow Requirements
 
-Access 1152k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 1315k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>
