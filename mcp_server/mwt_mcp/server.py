@@ -1050,6 +1050,8 @@ def transfer_costo_agregar(
     `price_view`: MWT (liquidación interna, CEO) o CLIENT (vista cliente).
     `scope_json`: a qué aplica — null/{"applies_to_all":true} = todo el batch, o
       {"applies_to_all":false, "expediente_ids":[...], "lines":[{expediente_id,producto_id,talla}]}.
+      `transfer_liquidar` ya HONRA el scope (prorratea solo a esas líneas — DAI por NCM).
+    `kind="IVA"`: la liquidación lo EXCLUYE del landed (crédito fiscal acreditable); no infla el costo.
     """
     g = _wguard()
     if g:
@@ -1099,7 +1101,10 @@ def transfer_liquidacion_preview(transferencia_id: str) -> Any:
 
 @mcp.tool()
 def transfer_liquidar(transferencia_id: str, method: str = "BY_VALUE") -> Any:
-    """Liquida y persiste el landed cost. `method`: BY_VALUE (default), BY_QUANTITY o BY_VOLUME."""
+    """Liquida y persiste el landed cost. `method`: BY_VALUE (default), BY_QUANTITY o BY_VOLUME.
+    El motor **excluye el IVA** del landed (crédito fiscal acreditable; va aparte en
+    `summary.extra_costs_iva_usd`) y **aplica `scope_json`**: cada costo se prorratea SOLO entre
+    sus líneas (DAI por NCM, etc.). Los costos `applies_to_all` se reparten globalmente como siempre."""
     g = _wguard()
     if g:
         return g

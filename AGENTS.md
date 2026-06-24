@@ -1,48 +1,23 @@
 <claude-mem-context>
 # Memory Context
 
-# [consola_mwt_one] recent context, 2026-06-24 4:50pm GMT-5
+# [consola_mwt_one] recent context, 2026-06-24 5:06pm GMT-5
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (22,390t read) | 1,281,239t work | 98% savings
+Stats: 50 obs (21,276t read) | 1,173,651t work | 98% savings
 
 ### Jun 14, 2026
-S173 Capa 2 – Backend latency optimization: cache KPI calculations and fix silent OC/expediente truncation; now exploring Fase 3 SQL indexes deployment mechanism (Jun 14, 10:36 AM)
-S174 Full-stack portal performance optimization (Fase 1+2+3) complete and deployed: skeleton loading states, Redis caching, SQL indexes — all live at https://consola.mwt.one; project memory docs written for future sessions (Jun 14, 11:14 AM)
-S172 Capa 2 – Backend latency optimization: cache KPI calculations and fix silent OC/expediente truncation in /api/portal/me/ and related endpoints (Jun 14, 11:14 AM)
-S175 Fix React sub-component skeleton scope bugs (Portal.jsx / Pagos.jsx), deploy hotfix to production VPS at https://consola.mwt.one (Jun 14, 11:18 AM)
-S176 Fix collapsed sidebar: swap wide CDN logo for compact icon + stack header vertically to prevent chevron overflow (Jun 14, 11:21 AM)
 S178 Profile page (/perfil) improvements: editable fields for normal/B2B users, hide Mi empresa tab, add password reset, fix legal-entities 404 (Jun 14, 11:33 AM)
 S177 Fix collapsed sidebar logo + chevron overflow; then new /perfil page improvements for normal/B2B users (Jun 14, 11:36 AM)
 S179 Profile page /perfil improvements: allow phone editing for normal/B2B users, hide Mi empresa tab, add password reset button, fix legal-entities 404 (Jun 14, 11:44 AM)
 S180 Improve /perfil page for usuario normal / cliente B2B: editable fields (all except Rol principal), remove "Mi empresa" tab, add self-service password reset button, fix 404 on /api/legal-entities/ fetch, always-enabled "Guardar cambios" button (Jun 14, 11:44 AM)
-422 2:56p 🔵 Dark Mode Root Cause: Hardcoded Colors & Undefined --navy Token Used Across 50+ Files
-423 " 🔵 Exact Files Using Undefined var(--navy) Token in JSX/JS
-424 2:57p 🔵 Complete Inventory: 80 Files Contain Hardcoded Light-Theme Colors Incompatible With Dark Mode
-425 " 🔵 OCDetail.jsx is Fully Dark-Mode Compliant; transferInvoiceHtml.js is Worst Offender with 27 --navy Uses
-427 " 🔵 Complete Dark Mode Audit: Token Mapping Table and 3-Phase Fix Plan Established
-428 " 🟣 Frontend Dark Mode & Responsive Design Fix Request
-426 2:58p 🔵 Ranked Dark Mode Violation List: Top 20 Files by Hardcoded Color Count
-429 3:02p 🔴 Dark Mode Token Migration — Replaced Hardcoded Border Hex Colors in app.css
-430 3:18p 🟣 Dark Mode UI Fixes — Multi-Agent React Frontend Task Initiated
-431 3:23p ⚖️ Dark Mode Multi-Agent Fix Initiated for React Frontend
-432 3:25p ⚖️ Dark Mode UI Inconsistencies — Multi-Agent React Fix Strategy
+S266 Fix tipo_cambio MCP tool and audit solucion_puntos_pendientes_costa_rica_sondel.md — dispatched to Codex agent (fugu profile) (Jun 14, 12:03 PM)
 ### Jun 24, 2026
-687 3:57p 🔵 MWT MCP Server Tool Inventory — Full Catalog Identified
-688 " 🔵 MWT MCP Client — Zero-Dependency HTTP Layer Using Python stdlib
-689 " 🔵 Sondel Costa Rica End-to-End Flow — 17-Step Platform Requirements Mapped
-690 " 🔵 All Four Suspected MCP Gaps Resolved — Tools Confirmed Present in server.py
-691 " 🟣 MCP Server Audit Report Generated — mcp_server_audit_report.md
-692 4:04p 🔵 MCP Server Tool Inventory — consola.mwt.one Full Capability Map
-693 " 🔵 MCP client.py — HTTP Transport Layer Architecture
-694 4:05p 🔵 MCP Server Contains Exactly 98 Tools — Complete API Endpoint Map Extracted
-695 " 🔵 Coverage Analysis Confirms 100% MCP Tool Coverage — Zero Gaps for Sondel Flow
 697 4:21p 🔵 MCP Server Count Discrepancy: 98 vs 99 Tools (nuevo `tipo_cambio`)
 698 " 🚨 Production JWT Token Hardcoded in Sondel Workflow Documentation
-699 " 🔵 Sondel Costa Rica End-to-End Workflow: 18-Step Checklist with 3-Agent Architecture
 700 4:22p 🔴 `tipo_cambio` Defined Twice in server.py — Duplicate MCP Tool Registration Bug
 701 " 🔵 Actual MCP Tool Count is 99 Unique / 100 Decorators (not 98 as Previously Reported)
 702 4:23p 🔵 Backend Exchange Rate Endpoints: Multi-Source Fallback Chain with Redis Cache
@@ -58,7 +33,7 @@ S180 Improve /perfil page for usuario normal / cliente B2B: editable fields (all
 711 " 🔵 Codex Agent Dispatched via fugu Profile to Fix tipo_cambio and Audit Sondel Prompt
 712 " 🔵 Codex fugu Profile Blocks PowerShell Commands — Read-Only Sandbox Active
 714 4:32p 🔵 BUG CONFIRMADO: tipo_cambio definida dos veces en server.py (líneas 266 y 1284)
-S266 Fix tipo_cambio MCP tool and audit solucion_puntos_pendientes_costa_rica_sondel.md — dispatched to Codex agent (fugu profile) (Jun 24, 4:32 PM)
+S268 Awaiting second Codex deep audit (b5yhdz7nb) of solucion_puntos_pendientes_costa_rica_sondel.md — same state as previous checkpoint (Jun 24, 4:32 PM)
 715 " 🔵 Análisis completo: 100 decoradores @mcp.tool() con 99 tools únicas — tipo_cambio duplicada confirmada
 716 4:33p 🚨 🚨 JWT de producción hardcodeado en solucion_puntos_pendientes_costa_rica_sondel.md §0.2
 717 " 🔵 Auditoría completa del prompt Sondel — §6 correcto, MAPA FLUJO completo, README desactualizado
@@ -71,6 +46,31 @@ S266 Fix tipo_cambio MCP tool and audit solucion_puntos_pendientes_costa_rica_so
 724 4:50p 🔴 Duplicate tipo_cambio Decorator Removed from MCP server.py
 725 " ✅ MCP README Tool Count Updated from 88 to 99
 726 " ⚖️ Single-Editor Policy Adopted for server.py to Prevent Concurrent Mutation
+729 " 🔵 Auditoría del prompt operativo SONDEL Costa Rica 2026 en consola_mwt_one
+730 " 🚨 JWT de producción con rol admin embebido en prompt operativo SONDEL
+731 " 🔵 Bug de duplicado de tool tipo_cambio en MCP server resuelto previamente
+727 4:51p 🔵 Codex Read-Only Audit Completed — Sondel Prompt Has 5 Specific Fixable Issues
+728 " 🔵 Second Codex Audit Dispatched for Deep Parameter-Signature Validation of Sondel Prompt
+S267 Fix tipo_cambio duplicate in MCP server.py and audit solucion_puntos_pendientes_costa_rica_sondel.md via Codex fugu profile (Jun 24, 4:51 PM)
+732 " 🔵 Lista completa de 99 tools @mcp.tool() extraída de server.py para cross-reference
+733 " 🔵 Desajuste de parámetro crítico: sap_confirmar usa fecha_fabricacion, el .md dice fecha
+734 " 🔵 Semántica de tipo_cambio confirmada: rate = unidades de moneda local por 1 USD
+735 " 🔵 Firma de recepcion_crear confirma: items incluye nodo_id dentro de cada elemento, no como arg separado
+736 " 🔵 proforma_generar audience: el .md dice CLIENT y ADMIN_ONLY, pero el servidor acepta MWT_INTERNAL también
+S269 Monitoring Codex deep audit task b5yhdz7nb — still running, reading server.py sections for tool cross-reference (Jun 24, 4:51 PM)
+S270 Monitoring Codex deep audit task b5yhdz7nb — process confirmed alive, reading server.py for tool signature cross-reference (Jun 24, 4:52 PM)
+737 4:53p 🔵 transfer_costo_agregar firma completa confirmada: label es parámetro nombrado, no está en el .md
+738 " 🔵 Backend USD/CRC: fallback hardcodeado es 505.0 ₡/USD, el .md asume ≈459.50
+739 " 🔵 nodo_artefacto_crear en §7-art del .md omite nodo_id como primer argumento y tiene orden de parámetros incorrecto
+740 " 🔵 documento_subir requiere expediente_id u oc_id; el .md §8 no lo menciona explícitamente
+746 " 🔵 Codex Deep Audit Complete — 6 Critical and 12 Important Issues Found in Sondel Prompt
+741 4:54p 🔵 Template IDs 23 y 24 del .md (Packing/Impuestos) no tienen referencias en el backend — solo 9 y 13 están hardcodeados
+742 " 🔵 Backend tiene upload-cost-ocr para importar costos DUA con OCR — no documentado en prompt SONDEL
+743 " 🔵 Estados del expediente y la transferencia confirmados contra el backend
+744 4:55p 🔵 Motor de liquidación BY_VALUE usa unit_value (precio cliente) para ponderar, no unit_cost (precio MWT)
+745 " 🔵 storage_subir_archivo: flujo de 4 pasos para artefactos confirma formato exacto del objeto file en data
+S271 Codex deep audit of solucion_puntos_pendientes_costa_rica_sondel.md complete — full prioritized fix list delivered, awaiting user decision to apply corrections (Jun 24, 4:59 PM)
+747 5:05p ⚖️ Full-Stack Audit of consola_mwt_one Commissioned — Output to auditoria_consola.md
 
-Access 1281k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 1174k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>

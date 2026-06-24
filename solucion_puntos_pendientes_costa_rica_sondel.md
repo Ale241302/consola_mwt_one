@@ -107,10 +107,11 @@ El servidor de correo (A2Hosting) desconecta cada ~2 min. El Operativo debe atra
 [ ] 7.  PRECIOS (duales) → lineas_actualizar_precios(updates=[{linea_id, unit_price_mwt, unit_price_client}]).
                             unit_price_mwt = precio de la PROFORMA; unit_price_client = precio de la OC. (Directo Sondel: mwt = cliente.)
                             Los linea_id salen de expediente_lineas(expediente_id).
-[ ] 8.  DOCS             → borra OC roto previo (documento_eliminar); sube cada archivo con
-                            documento_subir(file_path="<...>", kind="OC", codigo="505107", expediente_id, oc_id, audience="CLIENT");
-                            Proforma real (kind="PROFORMA", codigo="2472-2026"), Factura, Packing, Guía(AWB/BL), DUA,
-                            Pago de Impuestos. **Siempre expediente_id u oc_id**. Verifica storage_url≠null.
+[ ] 8.  DOCS             → borra OC roto previo (documento_eliminar). Para OC/Proforma, si quieres que la IA mapee
+                            productos y haga cross-check, usa match_subir(expediente_id, document_type="ART-01_OC"|"ART-02_PROFORMA", file_path);
+                            si ya resolviste las líneas, documento_subir(file_path, kind="OC", codigo="505107", expediente_id, oc_id, audience="CLIENT").
+                            Resto (Factura, Packing, Guía AWB/BL, DUA, Pago de Impuestos) por documento_subir.
+                            **Siempre expediente_id u oc_id**. Verifica storage_url≠null y file_size_bytes>0.
 [ ] 9.  PROFORMA SISTEMA → proforma_generar(CLIENT y ADMIN_ONLY) SOLO DESPUÉS de cargar líneas (si no, sale en $0).
 [ ] 10. SAP              → sap_analizar(expediente_id, file_path="<excel SAP>") → arma lineas_confirmadas con los
                             linea_id reales (de expediente_lineas) de TODAS las líneas que cubre el SAP, luego
@@ -119,8 +120,9 @@ El servidor de correo (A2Hosting) desconecta cada ~2 min. El Operativo debe atra
                                           fecha_fabricacion="2026-03-31", file_path="<excel SAP>")
                             (firma: expediente_id primero; "fecha_fabricacion" no "fecha"; lineas_confirmadas es LISTA, no "TODAS").
                             Sube el Excel y ASIGNA el nº SAP a esos productos. (si NO está en REGISTRO → sap_upsert con misma firma).
-[ ] 11. ESTADOS+FECHAS   → en el detalle del SAP: expediente_avanzar_estado hasta el estado real +
-                            expediente_phase_durations_set({FASE:{start,end}}) con las fechas del CORREO (inicio/fin).
+[ ] 11. ESTADOS+FECHAS   → expediente_avanzar_estado hasta el estado real (esto sí registra eventos en event_log) +
+                            expediente_phase_durations_set({FASE:{start,end}}) con fechas del CORREO. (phase_durations es
+                            un OVERRIDE MANUAL para el cronograma/reporte; el historial real de eventos vive en event_log.)
 [ ] 12. NODOS            → verifica con nodo_listar; si NO existe, créalo (nodo_crear). BARCO (marítimo) y AVIÓN
                             (aéreo) son DOS nodos distintos; + nodo destino = SONDEL S.A. (otro nodo). §7.
 [ ] 13. RECEPCIÓN        → recepcion_crear en el nodo que corresponda (BL→marítimo / AWB→aéreo) con SKU·talla·cantidad.
@@ -154,6 +156,9 @@ Cuando la **misma OC** aparece en `01 M Sondel` y en `02 M Muito Work`:
 ---
 
 # 5 · FUSIÓN (detalle)
+
+> ℹ️ **`expediente_fusionar` agrupa VISUALMENTE** (comparte `fusion_id`/`fusion_label`): NO consolida líneas, SAP, documentos ni movimientos — cada expediente conserva los suyos. Por eso debes completar cada expediente del par por separado y luego agruparlos.
+
 1. Detecta el par por **OC compartida** (`expediente_buscar(oc_number="505107")` → ≥2 matches con proformas distintas).
 2. Completa cada expediente del par (líneas, precios duales, SAP, etc.) ANTES de fusionar.
 3. `expediente_fusionar([id1, id2], label="<proforma Sondel> + <proforma Muito Work>")`.
@@ -187,9 +192,11 @@ Toma los montos reales de la **FACTURA comercial** y la **DUA**:
 | Servicios aduanales (agente Barquero Fonseca) | `OTRO` + `label="Servicios aduanales (Barquero Fonseca)"` | `{"applies_to_all":true}` | costo en destino |
 | Transporte terrestre | `OTRO` + `label="Transporte terrestre"` | `{"applies_to_all":true}` | costo en destino |
 
-⚠️ **IVA — NO lo cargues como costo.** El IVA (13%) es **crédito fiscal acreditable**: NO suma al costo real de MWT y la liquidación lo excluye. Si lo agregas como CostLine activa **infla el landed cost**. Déjalo solo como referencia informativa (en notas), no como `transfer_costo_agregar`.
+⚠️ **IVA (13%) — crédito fiscal acreditable, NO capitaliza.** Con el backend parcheado (liquidación 2026-06-24), `transfer_liquidar` **excluye el IVA del landed** automáticamente (`kind="IVA"` → va a `summary.extra_costs_iva_usd`, no suma al costo). Puedes registrarlo con `kind="IVA"` como referencia o **omitirlo**; en ningún caso infla el landed. (⚠️ Si la plataforma aún NO tiene el patch desplegado, NO lo cargues como costo.)
 
-**Tipo de cambio:** **prioridad = el TC OFICIAL que trae la DUA** (úsalo para convertir colones↔USD en costos/impuestos). Solo si la DUA no lo trae, usa el MCP: `tipo_cambio("usd-crc")` → `{rate, source, timestamp}` (≈459.50 ₡/USD). Para FOB Marluvas en R$: `tipo_cambio("usd-brl")`.
+**DAI por NCM:** con el patch, la liquidación **aplica `scope_json`**: el DAI 14% (calzado) y el DAI 10% (plantillas) se prorratean SOLO entre sus líneas si los mandas con `scope_json` por líneas/NCM (no `applies_to_all`). El backend resuelve el NCM por `producto_id`.
+
+**Tipo de cambio:** **prioridad = el TC OFICIAL de la DUA** (úsalo para convertir colones↔USD). Si la DUA no lo trae: `tipo_cambio("usd-crc")` → `{rate, source, timestamp}` (consulta live; el fallback del backend ronda ~505 ₡/USD — **no asumas un número fijo**). Para FOB Marluvas en R$: `tipo_cambio("usd-brl")`.
 - En `transfer_costo_agregar`: si el `amount` ya está en USD → `fx_to_usd=1`; si está en colones → `fx_to_usd = 1/rate`.
 
 **Normaliza a USD** los `unit_cost`/`unit_value` de las líneas de transferencia y los montos de costo: si la fuente está en BRL/CRC, conviértelos a USD antes de enviarlos.
@@ -203,16 +210,17 @@ Luego `transfer_liquidar(transferencia_id, method="BY_VALUE")` → CIF, Landed t
 **Nodos — SIEMPRE verifica si existe; si NO existe, CRÉALO con `nodo_crear`.** Primero `nodo_listar(q="<codigo>")`; solo si no aparece, lo creas. No dupliques nodos.
 
 ⚠️ **BARCO y AVIÓN son DOS NODOS DISTINTOS** (no es un solo nodo "método de envío"):
-- **Nodo MARÍTIMO (barco):** `nodo_crear({codigo:"HUB-CR-MARITIMO", nombre:"Hub Marítimo CR", tipo:"ALMACEN", pais_iso2:"CR"})`.
-- **Nodo AÉREO (avión):** `nodo_crear({codigo:"HUB-CR-AEREO", nombre:"Hub Aéreo CR", tipo:"ALMACEN", pais_iso2:"CR"})`.
+⚠️ **Incluye SIEMPRE `capabilities`** (el wizard de transferencia filtra nodos por `DISPATCH`/`RECEIVE`; sin ellas el nodo no aparece como origen/destino válido).
+- **Nodo MARÍTIMO (barco):** `nodo_crear({codigo:"HUB-CR-MARITIMO", nombre:"Hub Marítimo CR", tipo:"ALMACEN", pais_iso2:"CR", capabilities:["store","dispatch","receive"]})`.
+- **Nodo AÉREO (avión):** `nodo_crear({codigo:"HUB-CR-AEREO", nombre:"Hub Aéreo CR", tipo:"ALMACEN", pais_iso2:"CR", capabilities:["store","dispatch","receive"]})`.
 - Elige el correcto según el envío del expediente: **BL → nodo marítimo (barco)**, **AWB → nodo aéreo (avión)**. La recepción (§13) entra al nodo del método que corresponda a ESE expediente.
-- **Nodo destino = SONDEL S.A.** (otro nodo distinto): `nodo_crear({codigo:"BODEGA-SONDEL-CR", nombre:"Sondel S.A.", tipo:"ALMACEN", pais_iso2:"CR", operating_company_id:<Sondel>})`.
+- **Nodo destino = SONDEL S.A.** (otro nodo distinto): `nodo_crear({codigo:"BODEGA-SONDEL-CR", nombre:"Sondel S.A.", tipo:"ALMACEN", pais_iso2:"CR", operating_company_id:<Sondel>, capabilities:["store","dispatch","receive"]})`.
 
 Cada nodo se crea una sola vez y se reutiliza para los siguientes expedientes del mismo método/cliente.
 
 **Recepción** en el nodo barco/avión: `recepcion_crear(items=[{expediente_id, producto_id, talla, qty_asignada, nodo_id:<hub>}])`.
 
-**Movimiento** hub → nodo Sondel: `transferencia_crear(origen_id=<hub>, destino_id=<nodo Sondel>, legal_context="NATIONALIZATION", lineas=[{producto_id, sku, size, qty_transfer, unit_cost:<USD>, unit_value:<USD>}], context_data={"bl_awb_number":"<AWB/BL>","dua_number":"<DUA>"})` — `unit_cost`/`unit_value` **normalizados a USD**. Luego (NOMBRES COMPLETOS): `transferencia_aprobar(transferencia_id)` → `transferencia_despachar(transferencia_id)` → `transferencia_recibir(transferencia_id, lineas=[{id,qty_received}])` → `transferencia_conciliar(transferencia_id)` + costos (§6) + `transfer_liquidar(transferencia_id)`.
+**Movimiento** hub → nodo Sondel: `transferencia_crear(origen_id=<hub>, destino_id=<nodo Sondel>, legal_context="NATIONALIZATION", lineas=[{producto_id, sku, size, qty_transfer, unit_cost:<USD>, unit_value:<USD>}], context_data={"bl_awb_number":"<AWB/BL>","dua_number":"<DUA>"})` — `unit_cost`/`unit_value` **normalizados a USD**. Luego (NOMBRES COMPLETOS): `transferencia_aprobar(transferencia_id)` → `transferencia_despachar(transferencia_id)` → `transferencia_recibir(transferencia_id, lineas=[{id,qty_received}])` **con TODAS las líneas y su `qty_received`** (el backend tolera omisiones y puede pasar a RECEIVED con líneas en PENDING_REVIEW — no es seguro; manda siempre el payload completo) → `transferencia_conciliar(transferencia_id)` + costos (§6) + `transfer_liquidar(transferencia_id)`.
 
 **§7-art · Artefactos con archivo** (factura, AWB/BL, Packing, impuestos):
 1. `builder_templates_listar()` y **resuelve el `template_id` DINÁMICAMENTE por su título** (busca "AWB/BL", "Factura Comercial", "Packing", "Impuestos") — **no hardcodees IDs** (cambian entre entornos). Lee sus campos con `builder_template_obtener(template_id)`.
