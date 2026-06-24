@@ -263,6 +263,21 @@ def marca_listar(q: str | None = None) -> Any:
 
 
 @mcp.tool()
+def tipo_cambio(par: str = "usd-crc") -> Any:
+    """Tipo de cambio EN VIVO (con caché + fallback del backend). `par`:
+      - "usd-crc" → ₡/USD (colón costarricense) — para la DUA / landed cost de Costa Rica.
+      - "usd-brl" → R$/USD — FOB Marluvas (Brasil).
+    Devuelve `{rate, bid, ask, source, timestamp, cached}`. El `rate` es **cuántas unidades
+    de la 2ª moneda por 1 USD** (ej. usd-crc ≈ 459.50 ₡/USD; usd-brl ≈ 5.20 R$/USD).
+    En `transfer_costo_agregar`: si el monto ya está en USD usa `fx_to_usd=1`; si está en
+    colones, conviértelo a USD con `fx_to_usd = 1/rate` (el backend hace amount × fx_to_usd)."""
+    p = (par or "usd-crc").strip().lower().replace("/", "-").replace("_", "-")
+    if p not in ("usd-crc", "usd-brl"):
+        return {"error": True, "detail": "par inválido: usa 'usd-crc' o 'usd-brl'."}
+    return _safe(lambda: api.get(f"commercial/exchange-rate/{p}/"))
+
+
+@mcp.tool()
 def expediente_listar(
     oc: str | None = None,
     client: str | None = None,
