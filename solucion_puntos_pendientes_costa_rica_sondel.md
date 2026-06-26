@@ -105,13 +105,17 @@ El servidor de correo (A2Hosting) desconecta cada ~2 min. El Operativo debe atra
 ```
 [ ] 1.  LOCALIZAR/CREAR  → expediente_buscar(proforma="2472-2026", oc_number="505107") [args NOMBRADOS].
                             Si existe (esqueleto), se COMPLETA; si no, se CREA con líneas REALES (nunca dummy). NUNCA "SIN-PO".
-[ ] 2.  CLIENTE/OPERADOR → cliente final = SONDEL S.A. (cliente_listar/crear). Operador: Sondel (directo) o
-                            Muito Work (si la carpeta es 02 M Muito Work / misma OC). expediente_editar/oc_editar.
+[ ] 2.  CLIENTE/OPERADOR → cliente final = SONDEL S.A. (cliente_listar/crear). Operador: **DIRECTO** = Sondel
+                            (`operating_company_id`=client_id) o **TRIANGULAR** = Muito Work (UUID 5525986c-...) si la carpeta es
+                            02 M Muito Work / misma OC. ⚠️ El `operating_company_id` se setea en el MISMO edit-full que las
+                            líneas (paso 6, ver §4 "Setear el OPERADOR") — así sale "OPERADO POR MUITO WORK LIMITADA" + precios duales.
 [ ] 3.  MARCA/MODO       → brand_id = Marluvas (marca_listar) en expediente Y OC; modo_operacion.
 [ ] 4.  CÓDIGOS          → OC = nº PO real (ej. 505107); proforma "2472-2026". Limpios; nunca filename/prefijos.
 [ ] 5.  PRODUCTOS/SKUs   → match del "Part Nº" de la OC → producto (alias o nombre, §3-BIS); SKU faltante →
                             tallas_listar + producto_crear(tallas UUID) + producto_alias_crear.
-[ ] 6.  LÍNEAS           → una por SKU×TALLA real (de la OC), cantidad por talla = la de la OC. Sin "UNICA"/"PENDING".
+[ ] 6.  LÍNEAS+OPERADOR  → UN solo expediente_edit_full_patch(eid, {operating_company_id (TRIANGULAR=Muito Work / DIRECTO=Sondel),
+                            forma_pago:"CREDITO", payment_days:90, lines_removed:[dummy "PENDING" ids],
+                            lines_added:[{producto_id, sku, talla, qty} por SKU×TALLA real de la OC]}). Sin "UNICA"/"PENDING". (§4)
 [ ] 7.  PRECIOS (duales) → lineas_actualizar_precios(updates=[{linea_id, unit_price_mwt, unit_price_client}]).
                             unit_price_mwt = precio de la PROFORMA; unit_price_client = precio de la OC. (Directo Sondel: mwt = cliente.)
                             Los linea_id salen de expediente_lineas(expediente_id).
@@ -121,8 +125,11 @@ El servidor de correo (A2Hosting) desconecta cada ~2 min. El Operativo debe atra
                             Resto (Factura, Packing, Guía AWB/BL, DUA, Pago de Impuestos) por documento_subir.
                             **Siempre expediente_id u oc_id**. Verifica storage_url≠null y file_size_bytes>0.
 [ ] 9.  PROFORMA SISTEMA → proforma_generar(CLIENT y ADMIN_ONLY) SOLO DESPUÉS de cargar líneas (si no, sale en $0).
-[ ] 10. SAP              → sap_analizar(expediente_id, file_path="<excel SAP>") → arma lineas_confirmadas con los
-                            linea_id reales (de expediente_lineas) de TODAS las líneas que cubre el SAP, luego
+[ ] 10. SAP              → busca el Excel SAP en OneDrive (subcarpeta SAP/) o en el CORREO: hilo de Marluvas
+                            "[Marluvas] Re: [Ticket #NNNNN] - RE: Registro da Proforma nº <proforma> - ... / Costa Rica"
+                            (remitente backoffice@marluvas.com.br); el XLSX (ej. 269482.xlsx) va ADJUNTO en el cuerpo → descárgalo.
+                            sap_analizar(expediente_id, file_path="<excel SAP>") → arma lineas_confirmadas con los
+                            linea_id reales (de expediente_lineas / del match.line_id) de TODAS las líneas que cubre el SAP, luego
                             sap_confirmar(expediente_id, sap_id="178589",
                                           lineas_confirmadas=[{linea_id, qty_confirmada, unit_price}],
                                           fecha_fabricacion="2026-03-31", file_path="<excel SAP>")
@@ -160,6 +167,28 @@ Cuando la **misma OC** aparece en `01 M Sondel` y en `02 M Muito Work`:
 - **Precios duales en las líneas:** `unit_price_mwt` = el de la **proforma** (precio MWT) · `unit_price_client` = el de la **OC** (precio cliente).
 - El **nodo destino del movimiento = nodo de SONDEL S.A.** (no Muito Work).
 - **Fusión:** `expediente_fusionar([<exp Sondel>, <exp Muito Work>], label="2472-2026 + <proforma MWT>")`. El Auditor verifica que quedó fusionado mostrando ambos números de proforma.
+
+## ⚠️ Setear el OPERADOR (TRIANGULAR vs DIRECTO) — vía `edit-full`
+Para que el detalle muestre **"OPERADO POR MUITO WORK LIMITADA"** y los **precios duales**, el `operating_company_id` se setea en el **MISMO `edit-full` que carga las líneas** (no en un PATCH suelto):
+
+1. UUID de Muito Work: `cliente_listar(q="Muito Work Limitada")` → `5525986c-3b09-4d13-bf8f-43ccaa2deae3`. El `client_id` (cliente final) sigue siendo **Sondel**.
+2. `expediente_edit_full_patch(expediente_id, cambios)` (payload real verificado):
+```json
+{
+  "operating_company_id": "5525986c-3b09-4d13-bf8f-43ccaa2deae3",
+  "forma_pago": "CREDITO",
+  "payment_days": 90,
+  "lines_added": [
+    {"producto_id":"e7d6f2f7-...","sku":"701809","talla":"37","qty":40}
+    /* ...una por SKU×talla real... */
+  ],
+  "lines_removed": ["<linea_id dummy 1>", "..."],
+  "lines_updated": []
+}
+```
+   (En `lines_added` NO van precios — se fijan después con `lineas_actualizar_precios`: `unit_price_mwt`=proforma, `unit_price_client`=OC → snapshot dual.)
+3. **DIRECTO** (Sondel opera directo, sin par en Muito Work): `operating_company_id = client_id` (Sondel). Sin snapshot dual (mwt=cliente).
+4. Verifica con `expediente_obtener`: `operating_company_id` correcto y, en triangular, el detalle dice "OPERADO POR MUITO WORK LIMITADA".
 
 ---
 
