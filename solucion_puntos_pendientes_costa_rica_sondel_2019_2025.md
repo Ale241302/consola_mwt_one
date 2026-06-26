@@ -3,6 +3,16 @@
 > 🗓️ **ALCANCE: SOLO las carpetas `2019`, `2020`, `2021`, `2022`, `2023`, `2024`, `2025`.** NO proceses 2026 (eso lo cubre el prompt `..._sondel.md`).
 > 📜 **Son expedientes HISTÓRICOS** — la mayoría ya estaban cerrados/entregados. Igual se crean/completan al 100% (líneas, precios, docs, SAP, recepción, movimiento, costos) y se llevan a su **estado real final con fechas reales** sacadas del correo archivado. La fecha de hoy NO importa: respeta las fechas del año que corresponda.
 
+> ## 🛠️ MODO REMEDIACIÓN (si el expediente YA existe)
+> Antes de crear, **busca** si el expediente ya está registrado (`expediente_buscar` por proforma+OC, §ruta abajo). Si **ya existe**, NO lo recrees ni rehagas líneas/precios/documentos ya cargados — haz SOLO lo que le falte: **SAP faltante** (búscalo en el correo del año, súbelo y asígnalo), **avanzar estado** salto-a-salto al real (casi siempre CERRADO) y **fechas por fase** del correo del año. Si **no existe**, créalo con el checklist completo (§3). En ambos casos, SAP/estado/fechas se operan sobre el **ID DE EXPEDIENTE** (`…/exp/<id>`), no el de la OC.
+>
+> ### 🔎 Cómo obtener el ID de expediente (OC → expediente · para SAP/estado/fechas)
+> El SAP, el estado y las fechas viven a nivel **EXPEDIENTE**, no de la OC. Una OC (`oc_obtener(oc_id)` = `GET /api/ocs/{oc_id}/`) trae `proforma`, `codigo` (OC) y un resumen (`sap` suele venir `null` a nivel OC); **el `…/exp/<id>` no sale de ahí**. Para obtener el/los `expediente_id`:
+> - `expediente_buscar(oc_number="<OC>", proforma="<NNNN-AAAA>", client_id=<Sondel>)` → `matches:[{expediente_id, oc_id, sap_codigos, estado, …}]`, **o**
+> - `expediente_listar(oc="<oc_id>")` → expedientes de esa OC (cada uno con su `id`, `sap`, `estado`).
+>
+> El `expediente_id` es el que usas en `expediente_avanzar_estado`, `expediente_phase_durations_set`, `sap_analizar`/`sap_confirmar` y `expediente_obtener`. **Una OC puede tener varios expedientes** (uno por SAP/split) → procesa cada uno por separado.
+
 > **Para:** un agente de codificación capaz (Sakana Fugu / Kimi CLI / Claude / Antigravity).
 > **Objetivo:** procesar **un expediente completo a la vez** — desde la creación/completado con cliente **SONDEL S.A.** — leyendo la verdad de **OneDrive + correo**, hasta dejarlo con productos, documentos, SAP, estados con fechas, recepción de inventario, movimiento al nodo de Sondel y costos/impuestos/DUA de Costa Rica. **No avanza al siguiente hasta terminar y auditar el actual.**
 > **Equipo:** **Orquestador** (arma el plan/checklist) → **Operativo** (lee OneDrive/correo y crea/completa vía MCP) → **Auditor** (revisa lo creado). Todos **narran en vivo** al usuario.
@@ -136,9 +146,18 @@ El servidor de correo (A2Hosting) desconecta cada ~2 min. El Operativo debe atra
                                           fecha_fabricacion="<AAAA-MM-DD real del año>", file_path="<excel SAP>")
                             (firma: expediente_id primero; "fecha_fabricacion" no "fecha"; lineas_confirmadas es LISTA, no "TODAS").
                             Sube el Excel y ASIGNA el nº SAP a esos productos. (si NO está en REGISTRO → sap_upsert con misma firma).
-[ ] 11. ESTADOS+FECHAS   → expediente_avanzar_estado hasta el estado real (histórico: casi siempre CERRADO) +
-                            expediente_phase_durations_set({FASE:{start,end}}) con fechas del CORREO del año correspondiente.
-                            (phase_durations es un OVERRIDE MANUAL para el cronograma/reporte; el historial real vive en event_log.)
+[ ] 11. ESTADOS+FECHAS   → ⚠️ usa el ID DE EXPEDIENTE (el de /exp/<id>), NO el de la OC.
+                            (a) AVANZAR ESTADO salto-a-salto con expediente_avanzar_estado(expediente_id, fase_to="<FASE>")
+                                [= POST /expedientes/{id}/transition/ {fase_to, idempotence_token, note}] una llamada por cada
+                                transición hasta el estado REAL (histórico: casi siempre CERRADO). Orden de fases:
+                                REGISTRO → PRODUCCION → PREPARACION → DESPACHO → TRANSITO → EN_DESTINO → CERRADO.
+                                Esto registra eventos REALES en event_log.
+                            (b) FECHAS POR FASE con expediente_phase_durations_set(expediente_id, {"<FASE>":{"start":"AAAA-MM-DD",
+                                "end":"AAAA-MM-DD"}}) [= POST /phase-durations/]. El backend MERGEA (no reemplaza) y calcula `days`.
+                                REGISTRO ya suele venir sembrado; agrega las fases siguientes. El `start` de cada fase = `end`
+                                de la anterior. ⚠️ HISTÓRICO: fechas del CORREO del AÑO correspondiente (o aproximado del año), NUNCA de hoy.
+                                Verifica con expediente_phase_durations_get(expediente_id).
+                                Ej.: phase_durations_set(eid, {"PRODUCCION":{"start":"2023-03-10","end":"2023-04-28"}}).
 [ ] 12. NODOS            → verifica con nodo_listar; si NO existe, créalo (nodo_crear). BARCO (marítimo) y AVIÓN
                             (aéreo) son DOS nodos distintos; + nodo destino = SONDEL S.A. (otro nodo). §7.
 [ ] 13. RECEPCIÓN        → recepcion_crear en el nodo que corresponda (BL→marítimo / AWB→aéreo) con SKU·talla·cantidad.

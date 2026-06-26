@@ -8,6 +8,13 @@
 > **Resiliencia:** IMAP se cae cada ~2 min → **se procesa de a UNO** con checklist; si se pierde conexión, **reconecta solo y reintenta** el mismo expediente.
 > **Lotes de 10:** al cerrar cada lote, **envía un resumen ejecutivo por correo a `alejandro@muitowork.com`** con lo que cambió/agregó por expediente.
 
+> ### 🔎 Cómo obtener el ID de expediente (OC → expediente · para SAP/estado/fechas)
+> El SAP, el estado y las fechas viven a nivel **EXPEDIENTE**, no de la OC. Una OC (`oc_obtener(oc_id)` = `GET /api/ocs/{oc_id}/`) trae `proforma`, `codigo` (OC) y un resumen (`sap` suele venir `null` a nivel OC); **el `…/exp/<id>` no sale de ahí**. Para obtener el/los `expediente_id`:
+> - `expediente_buscar(oc_number="<OC>", proforma="<NNNN-AAAA>", client_id=<Sondel u otro>)` → `matches:[{expediente_id, oc_id, sap_codigos, estado, …}]`, **o**
+> - `expediente_listar(oc="<oc_id>")` → expedientes de esa OC (cada uno con su `id`, `sap`, `estado`).
+>
+> El `expediente_id` (ej. `00b1baa2-…`) es el que usas en `expediente_avanzar_estado`, `expediente_phase_durations_set`, `sap_analizar`/`sap_confirmar` y `expediente_obtener`. **Una OC puede tener varios expedientes** (uno por SAP/split) → procesa cada uno por separado. En el frontend, clic en el nº de SAP de la OC navega justo a ese `…/exp/<expediente_id>`.
+
 ---
 
 # 0 · CONEXIÓN AL MCP `mwt-one`
@@ -152,8 +159,15 @@ De ahí saca: **operador y cliente final**, **SKU·talla·cantidad·precio (matr
                          sap_confirmar(expediente_id, sap_id="269482", lineas_confirmadas=[{linea_id, qty_confirmada, unit_price}],
                                        fecha_fabricacion="2026-04-01", file_path=<xlsx>)  (firma: expediente_id PRIMERO; "fecha_fabricacion").
                          Asigna el SAP a esos productos y pasa REGISTRO→PRODUCCION. (si NO está en REGISTRO → sap_upsert, misma firma).
-[ ] 9.  ESTADOS+FECHAS→ expediente_avanzar_estado hasta el estado actual + expediente_phase_durations_set
-                         ({FASE:{start,end}}) con fechas de los correos (o aproximado).
+[ ] 9.  ESTADOS+FECHAS→ ⚠️ usa el ID DE EXPEDIENTE (el de /exp/<id>), NO el de la OC.
+                         (a) AVANZAR ESTADO salto-a-salto: expediente_avanzar_estado(expediente_id, fase_to="<FASE>")
+                             [= POST /expedientes/{id}/transition/ {fase_to, idempotence_token, note}] una llamada por
+                             transición hasta el estado REAL (del correo). Orden:
+                             REGISTRO → PRODUCCION → PREPARACION → DESPACHO → TRANSITO → EN_DESTINO → CERRADO. Registra eventos en event_log.
+                         (b) FECHAS POR FASE: expediente_phase_durations_set(expediente_id, {"<FASE>":{"start":"AAAA-MM-DD","end":"AAAA-MM-DD"}})
+                             [= POST /phase-durations/]. El backend MERGEA y calcula `days`. REGISTRO suele venir sembrado; agrega las demás.
+                             El `start` de cada fase = `end` de la anterior. Fechas del correo (o aproximado). Verifica con expediente_phase_durations_get.
+                             Ej.: phase_durations_set(eid, {"PRODUCCION":{"start":"2026-01-15","end":"2026-02-28"}}).
 [ ] 10. NODOS         → nodo del MÉTODO DE ENVÍO (aéreo/marítimo) y nodo DESTINO = cliente final (§7).
 [ ] 11. RECEPCIÓN     → recepcion_crear en el nodo del método de envío (SKU·talla·cantidad del expediente).
 [ ] 12. MOVIMIENTO    → transferencia del nodo método-de-envío → nodo del CLIENTE FINAL (§7).
