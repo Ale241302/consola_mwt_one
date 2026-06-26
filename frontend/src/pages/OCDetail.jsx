@@ -572,6 +572,42 @@ export default function ScreenOCDetail() {
   const updateLine = (lineId, patch) => {
     setLineEdits(prev => ({ ...prev, [lineId]: { ...(prev[lineId]||{}), ...patch } }));
   };
+
+  // Sprint 2026-06-26 (AG-03) · FIX "el precio cliente se revertía al recargar".
+  // Causa raíz: el precio editado solo vivía en `lineEdits` (state local) y el
+  // onBlur persistía con el error TRAGADO (console.warn). Si el PATCH fallaba,
+  // la tabla seguía mostrando el valor tipeado (vía lineEdits) → parecía
+  // guardado, pero el reload lo revertía al valor de BD (mismo anti-patrón que
+  // arregló 4eadcb3 para qty). Ahora, en ÉXITO: hacemos COMMIT del valor que
+  // devuelve el server (unit_price/unit_price_client/total recalculados) a
+  // `apiOcLines` (fuente canónica del mapper) y limpiamos el edit local; en
+  // ERROR: banner visible y se conserva el edit para que el usuario reintente.
+  const persistLinePrice = async (lineId, field, value) => {
+    if (String(lineId).startsWith('L-NEW-')) return; // línea aún no creada en BD
+    try {
+      const saved = await lineasApi.update(lineId, { [field]: value });
+      if (saved && saved.id) {
+        // El backend devuelve la línea cruda con total_price/unit_price
+        // recalculados → la fundimos en apiOcLines; el mapper (l.380) la
+        // re-transforma y el reload leerá la verdad del backend, no el state.
+        setApiOcLines(prev => prev.map(r => (r.id === lineId ? { ...r, ...saved } : r)));
+      }
+      setLineEdits(prev => {
+        const cur = prev[lineId];
+        if (!cur || !(field in cur)) return prev;
+        const { [field]: _drop, ...rest } = cur;
+        const next = { ...prev };
+        if (Object.keys(rest).length) next[lineId] = rest; else delete next[lineId];
+        return next;
+      });
+      setLineError(null);
+    } catch (err) {
+      setLineError(
+        `No se pudo guardar el precio (${field}) de la línea ${String(lineId).slice(0, 8)}…: ` +
+        `el cambio NO quedó persistido, reintenta. (${err?.message || 'error de red'})`
+      );
+    }
+  };
   const readLine = (line) => {
     const edits = lineEdits[line.id] || {};
     const merged = { ...line, ...edits };
@@ -2178,15 +2214,7 @@ export default function ScreenOCDetail() {
                               const v = +e.target.value;
                               updateLine(l.id, { unit_price_mwt: v, unit_price: v });
                             }}
-                            onBlur={async (e) => {
-                              const v = +e.target.value;
-                              try {
-                                await lineasApi.update(l.id, { unit_price_mwt: v });
-                              } catch (err) {
-                                // eslint-disable-next-line no-console
-                                console.warn('[OCDetail] persistir unit_price_mwt fallo', err);
-                              }
-                            }}
+                            onBlur={(e) => persistLinePrice(l.id, 'unit_price_mwt', +e.target.value)}
                             style={{
                               width: '100%', minWidth: 80, maxWidth: 110,
                               textAlign: 'right',
@@ -2218,15 +2246,7 @@ export default function ScreenOCDetail() {
                             if (!isMwtOp) patch.unit_price = v;
                             updateLine(l.id, patch);
                           }}
-                          onBlur={async (e) => {
-                            const v = +e.target.value;
-                            try {
-                              await lineasApi.update(l.id, { unit_price_client: v });
-                            } catch (err) {
-                              // eslint-disable-next-line no-console
-                              console.warn('[OCDetail] persistir unit_price_client fallo', err);
-                            }
-                          }}
+                          onBlur={(e) => persistLinePrice(l.id, 'unit_price_client', +e.target.value)}
                           style={{
                             width: '100%', minWidth: 80, maxWidth: 110,
                             textAlign: 'right',
