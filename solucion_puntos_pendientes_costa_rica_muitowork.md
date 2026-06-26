@@ -121,16 +121,19 @@ De ahí saca: **operador y cliente final**, **SKU·talla·cantidad·precio (matr
 [ ] 1.  LOCALIZAR     → expediente_buscar(proforma) → expediente_id, oc_id. (NO crear.)
 [ ] 1b. RESPALDO REAL → ¿hay material real para este expediente? (ver §5-BIS). Si NO existe ni en OneDrive
                          ni en correo → es FANTASMA: expediente_eliminar(expediente_id) y pasa al siguiente.
-[ ] 2.  CABECERA      → expediente_obtener: operador=Muito Work (operating_company_id), cliente final correcto,
-                         brand_id=Marluvas (marca_listar → expediente_editar + oc_editar), modo_operacion="COMISION".
+[ ] 2.  CABECERA      → expediente_obtener. **TRIANGULAR**: setea operating_company_id = UUID Muito Work
+                         (5525986c-...) en el MISMO edit-full que las líneas (paso 5, ver §5-BIS "TRIANGULAR") —
+                         este era el bug: quedaban como DIRECTO. brand_id=Marluvas (marca_listar → expediente_editar +
+                         oc_editar), modo_operacion="COMISION". cliente final correcto (Sondel u otro de la OC).
 [ ] 3.  CÓDIGOS       → Actualizar `codigo` de la OC a `po` (ej. "504990") vía `oc_editar` y `codigo` del expediente
                          a `f"EXP-{po}"` vía `expediente_editar`. (No enviar "po_number" porque la API lo ignora).
 [ ] 4.  MATCH Part Nº → la OC trae "Part Nº" del CLIENTE (no el SKU MWT) con la talla al final.
                          Resuélvelo a producto MWT por ALIAS o por NOMBRE (§5-TER). SKU sin tallas/inexistente →
                          tallas_listar + producto_crear(...tallas UUID...) + producto_alias_crear.
-[ ] 5.  LÍNEAS        → quita la línea dummy "PENDING" (expediente_edit_full_patch lines_removed) y agrega una
-                         línea por (producto×TALLA real) — talla del sufijo del Part Nº o de la matriz de la proforma
-                         (size="39", NUNCA "UNICA"); cantidades = OC/proforma.
+[ ] 5.  LÍNEAS+OPERADOR→ UN solo expediente_edit_full_patch(eid, {operating_company_id (TRIANGULAR=Muito Work),
+                         forma_pago:"CREDITO", payment_days:90, lines_removed:[dummy "PENDING" ids],
+                         lines_added:[{producto_id, sku, talla, qty} por SKU×TALLA real]}). Talla del sufijo del
+                         Part Nº o de la matriz de la proforma (NUNCA "UNICA"); cantidades = OC/proforma. (Ver §5-BIS.)
 [ ] 6.  PRECIOS       → lineas_actualizar_precios([{linea_id, unit_price_mwt, unit_price_client}]) = precios de la OC/proforma;
                          total_price == qty × unit_price_cliente.
 [ ] 7a. LIMPIAR DOCS  → documento_listar(expediente=eid): si hay un documento OC con código "SIN-PO" u "OC-AUTO-...",
@@ -141,8 +144,14 @@ De ahí saca: **operador y cliente final**, **SKU·talla·cantidad·precio (matr
 [ ] 7d. PROFORMA sist.→ proforma_generar(expediente_id, audience="CLIENT"/"ADMIN_ONLY") **SOLO DESPUÉS** de cargar
                          líneas+precios (pasos 5-6); si la generas antes, sale en 0 pares / $0.
 [ ] 7e. OTROS DOCS    → BL/AWB, DUA, Factura Marluvas, Packing, Pago de Impuestos (documento_subir kind=...).
-[ ] 8.  SAP           → sap_analizar(file SAP) → sap_confirmar(sap_id, fecha, lineas_confirmadas=TODAS, file_path);
-                         asigna el SAP a los productos. (si no está en REGISTRO → sap_upsert).
+[ ] 8.  SAP           → busca el Excel SAP en OneDrive (subcarpeta SAP/) o en el CORREO: hilo de Marluvas
+                         "[Marluvas] Re: [Ticket #NNNNN] - RE: Registro da Proforma nº <proforma> - Muito Work Limitada / Costa Rica"
+                         (remitente backoffice@marluvas.com.br); el XLSX (ej. 269482.xlsx) va ADJUNTO en el cuerpo → descárgalo.
+                         Luego: sap_analizar(expediente_id, file_path) → devuelve sap_id, fecha_fabricacion y lineas[] con match.line_id.
+                         Arma lineas_confirmadas con esos line_id y qty, y:
+                         sap_confirmar(expediente_id, sap_id="269482", lineas_confirmadas=[{linea_id, qty_confirmada, unit_price}],
+                                       fecha_fabricacion="2026-04-01", file_path=<xlsx>)  (firma: expediente_id PRIMERO; "fecha_fabricacion").
+                         Asigna el SAP a esos productos y pasa REGISTRO→PRODUCCION. (si NO está en REGISTRO → sap_upsert, misma firma).
 [ ] 9.  ESTADOS+FECHAS→ expediente_avanzar_estado hasta el estado actual + expediente_phase_durations_set
                          ({FASE:{start,end}}) con fechas de los correos (o aproximado).
 [ ] 10. NODOS         → nodo del MÉTODO DE ENVÍO (aéreo/marítimo) y nodo DESTINO = cliente final (§7).
@@ -160,6 +169,29 @@ De ahí saca: **operador y cliente final**, **SKU·talla·cantidad·precio (matr
 ## Muito Work Limitada = OPERADOR logístico, NUNCA cliente final
 - En estos expedientes el **operador** es Muito Work Limitada (`operating_company_id`), pero el **cliente final SIEMPRE es OTRO** (Sondel S.A. u el que diga la OC). Nunca pongas Muito Work como `client_id`/cliente final ni como nodo destino.
 - El **cliente final y el nº de OC** se leen de la **OC del cliente** (PDF en `OC del Cliente/` o en el correo). El nodo destino del movimiento (§7) es la bodega de ese cliente final.
+
+## ⚠️ TRIANGULAR (operado por Muito Work) — cómo setear el OPERADOR (esto fallaba)
+Un expediente bajo `02 M Muito Work` cuyo cliente final es Sondel (u otro) es **TRIANGULAR**: el bug fue dejarlo como DIRECTO (sin `operating_company_id`). Para que el detalle muestre **"OPERADO POR MUITO WORK LIMITADA"** y los **precios duales** (Precio MWT + Precio Cliente), setea el operador **en el MISMO `edit-full` que carga las líneas**:
+
+1. Obtén el UUID de Muito Work: `cliente_listar(q="Muito Work Limitada")` → `5525986c-3b09-4d13-bf8f-43ccaa2deae3` (CR, crédito $60k). El `client_id` (cliente final) sigue siendo Sondel.
+2. `expediente_edit_full_patch(expediente_id, cambios)` con **`operating_company_id` = UUID Muito Work** + las líneas reales, en una sola llamada (payload real verificado):
+```json
+{
+  "operating_company_id": "5525986c-3b09-4d13-bf8f-43ccaa2deae3",
+  "forma_pago": "CREDITO",
+  "payment_days": 90,
+  "lines_added": [
+    {"producto_id":"e7d6f2f7-3e0d-480a-95f4-1596e0273ec2","sku":"701809","talla":"37","qty":40},
+    {"producto_id":"97f018d5-2a43-4d0e-a88f-54b807fc24c0","sku":"700728","talla":"38","qty":50}
+    /* ...una por SKU×talla real... */
+  ],
+  "lines_removed": ["<linea_id dummy 1>","<linea_id dummy 2>", "..."],
+  "lines_updated": []
+}
+```
+   (Nota: `talla`/`qty`; en `lines_added` NO van precios — se fijan en el paso 6 con `lineas_actualizar_precios`: `unit_price_mwt` = precio de la PROFORMA, `unit_price_client` = precio de la OC. Eso genera el snapshot dual.)
+3. **DIRECTO** (cuando NO es triangular, el cliente opera directo): `operating_company_id = client_id` (el mismo cliente). Sin snapshot dual.
+4. Verifica con `expediente_obtener`: debe mostrar `operating_company_id` = Muito Work y el cliente final correcto; el detalle dirá "OPERADO POR MUITO WORK LIMITADA".
 
 ## Regla del FANTASMA: si no hay respaldo real → BORRAR (no debe existir)
 Antes de tocar nada (paso 1b), comprueba que el expediente tenga **material real**:
@@ -356,18 +388,17 @@ def completar_expediente(proforma, ctx, log):
         M.expediente_eliminar(eid); log("🗑️ fantasma sin respaldo -> borrado", proforma); return "borrado"
     # 2 cabecera: operador Muito Work, cliente final, marca, modo
     marca = M.marca_listar(q="Marluvas"); brand = marca[0]["id"] if isinstance(marca,list) and marca else None
-    M.expediente_editar(eid, {
-        "operating_company_id": ctx["operador_mwt_id"], 
-        "brand_id": brand, 
-        "modo_operacion": "COMISION",
-        "codigo": f"EXP-{po}"  # 3 código expediente limpio
-    })
+    M.expediente_editar(eid, {"brand_id": brand, "modo_operacion": "COMISION", "codigo": f"EXP-{po}"})  # cabecera
     M.oc_editar(oid, {"brand_id": brand, "codigo": po})                  # 3 código OC limpio (PO real)
-    # 4 match Part Nº -> producto (alias o nombre) ; 5 líneas reales ; 6 precios
+    # 4 match Part Nº -> producto ; 5 OPERADOR + líneas reales en UN edit-full (TRIANGULAR=Muito Work) ; 6 precios
     lines_added = resolver_lineas(cli, ctx["lineas"], log)               # usa expediente_resolve_oc_preview / producto_listar / producto_alias_crear
     dummy = [l["id"] for l in M.expediente_lineas(eid) if (l.get("sku") in (None,"PENDING"))]
-    M.expediente_edit_full_patch(eid, {"lines_removed": dummy, "lines_added": lines_added})
-    M.lineas_actualizar_precios(precios_desde(M.expediente_lineas(eid), ctx))
+    M.expediente_edit_full_patch(eid, {
+        "operating_company_id": ctx["operador_mwt_id"],   # TRIANGULAR: UUID Muito Work (5525986c-...). DIRECTO: = client_id
+        "forma_pago": "CREDITO", "payment_days": 90,
+        "lines_removed": dummy, "lines_added": lines_added,
+    })
+    M.lineas_actualizar_precios(precios_desde(M.expediente_lineas(eid), ctx))  # unit_price_mwt(proforma) + unit_price_client(OC)
     # 7 documentos (limpia/edita OC con "SIN-PO" usando documento_editar, sube OC real con PO, proforma real, otros) ; verifica storage_url
     subir_documentos(eid, oid, po, proforma, ctx, log)
     # 7d proforma del SISTEMA *después* de cargar líneas
