@@ -2,6 +2,21 @@
 
 > 🗓️ **ALCANCE: SOLO la carpeta `2026`.** No proceses 2019–2025.
 
+> ## 🛠️ MODO REMEDIACIÓN (estado actual — léelo primero)
+> Los expedientes 2026 **YA ESTÁN REGISTRADOS** con su **nº de proforma** y **nº de OC** (existen en la consola). En este pase **NO recrees** expedientes ni rehagas líneas/precios/documentos ya cargados. Por cada expediente que **ya existe**, haz SOLO lo que le falte:
+> 1. **SAP faltante** → si el badge no muestra `SAP <nº>` (o el detalle no lo tiene), **búscalo en el CORREO** (hilo Marluvas, §checklist 10), **descarga el XLSX** y **súbelo + asígnalo** (`sap_analizar`→`sap_confirmar`/`sap_upsert`).
+> 2. **Estado** → averigua en qué fase está realmente (por el CORREO) y **avánzalo salto-a-salto** hasta ahí (`expediente_avanzar_estado`, paso 11a).
+> 3. **Fechas por fase** → setea `start`/`end` de cada fase recorrida con fechas del correo o un aproximado (`expediente_phase_durations_set`, paso 11b).
+>
+> ⚠️ Todo esto se hace sobre el **ID DE EXPEDIENTE** (el de `…/exp/<id>`), no el de la OC. Si un expediente ya tiene SAP, estado y fechas correctos → **se salta** (solo audita). El resto del checklist (nodos, recepción, movimiento, costos) aplica solo si el expediente ya llegó a esas fases.
+>
+> ### 🔎 Cómo obtener el ID de expediente (OC → expediente · para SAP/estado/fechas)
+> El SAP, el estado y las fechas viven a nivel **EXPEDIENTE**, no de la OC. Una OC (`oc_obtener(oc_id)` = `GET /api/ocs/{oc_id}/`) trae `proforma`, `codigo` (OC), y un resumen (`sap` suele venir `null` y `lines_with_sap` a nivel OC); **el `…/exp/<id>` no sale de ahí**. Para obtener el/los `expediente_id`:
+> - `expediente_buscar(oc_number="504652", proforma="2404-2026", client_id=<Sondel>)` → `matches:[{expediente_id, oc_id, sap_codigos, estado, …}]`, **o**
+> - `expediente_listar(oc="<oc_id>")` → expedientes de esa OC (cada uno con su `id`, `sap`, `estado`).
+>
+> El `expediente_id` (ej. `00b1baa2-…`) es el que usas en `expediente_avanzar_estado`, `expediente_phase_durations_set`, `sap_analizar`/`sap_confirmar` y `expediente_obtener`. **Una OC puede tener varios expedientes** (uno por agrupación de SAP / split) → procesa cada uno por separado. En el frontend, dar clic en el nº de SAP de la OC navega justo a `…/exp/<expediente_id>` (ese mismo id).
+
 > **Para:** un agente de codificación capaz (Sakana Fugu / Kimi CLI / Claude / Antigravity).
 > **Objetivo:** procesar **un expediente completo a la vez** — desde la creación/completado con cliente **SONDEL S.A.** — leyendo la verdad de **OneDrive + correo**, hasta dejarlo con productos, documentos, SAP, estados con fechas, recepción de inventario, movimiento al nodo de Sondel y costos/impuestos/DUA de Costa Rica. **No avanza al siguiente hasta terminar y auditar el actual.**
 > **Equipo:** **Orquestador** (arma el plan/checklist) → **Operativo** (lee OneDrive/correo y crea/completa vía MCP) → **Auditor** (revisa lo creado). Todos **narran en vivo** al usuario.
@@ -135,9 +150,19 @@ El servidor de correo (A2Hosting) desconecta cada ~2 min. El Operativo debe atra
                                           fecha_fabricacion="2026-03-31", file_path="<excel SAP>")
                             (firma: expediente_id primero; "fecha_fabricacion" no "fecha"; lineas_confirmadas es LISTA, no "TODAS").
                             Sube el Excel y ASIGNA el nº SAP a esos productos. (si NO está en REGISTRO → sap_upsert con misma firma).
-[ ] 11. ESTADOS+FECHAS   → expediente_avanzar_estado hasta el estado real (esto sí registra eventos en event_log) +
-                            expediente_phase_durations_set({FASE:{start,end}}) con fechas del CORREO. (phase_durations es
-                            un OVERRIDE MANUAL para el cronograma/reporte; el historial real de eventos vive en event_log.)
+[ ] 11. ESTADOS+FECHAS   → ⚠️ usa el ID DE EXPEDIENTE (el de /exp/<id>, ej. 00b1baa2-…), NO el de la OC.
+                            (a) AVANZAR ESTADO salto-a-salto con expediente_avanzar_estado(expediente_id, fase_to="<FASE>")
+                                [= POST /expedientes/{id}/transition/ {fase_to, idempotence_token, note}] una llamada por cada
+                                transición hasta el estado REAL del correo. Orden de fases:
+                                REGISTRO → PRODUCCION → PREPARACION → DESPACHO → TRANSITO → EN_DESTINO → CERRADO.
+                                (ej. de PRODUCCION a PREPARACION: expediente_avanzar_estado(eid, fase_to="PREPARACION").)
+                                Esto registra eventos REALES en event_log.
+                            (b) FECHAS POR FASE con expediente_phase_durations_set(expediente_id, {"<FASE>":{"start":"AAAA-MM-DD",
+                                "end":"AAAA-MM-DD"}}) [= POST /phase-durations/]. El backend MERGEA (no reemplaza) y calcula `days`.
+                                REGISTRO ya suele venir sembrado; agrega las fases siguientes. El `start` de cada fase = `end`
+                                de la anterior. Fechas del CORREO (o un APROXIMADO razonable si el hilo no las trae).
+                                Verifica con expediente_phase_durations_get(expediente_id).
+                                Ej.: phase_durations_set(eid, {"PRODUCCION":{"start":"2026-01-15","end":"2026-02-28"}}).
 [ ] 12. NODOS            → verifica con nodo_listar; si NO existe, créalo (nodo_crear). BARCO (marítimo) y AVIÓN
                             (aéreo) son DOS nodos distintos; + nodo destino = SONDEL S.A. (otro nodo). §7.
 [ ] 13. RECEPCIÓN        → recepcion_crear en el nodo que corresponda (BL→marítimo / AWB→aéreo) con SKU·talla·cantidad.
@@ -294,11 +319,16 @@ Cada nodo se crea una sola vez y se reutiliza para los siguientes expedientes de
 # 9 · ORDEN DE TRABAJO
 
 1. **PASO 1 (§0):** force-reinstall del MCP + verificar versión + `mwt_whoami`.
-2. **Inventario (Orquestador):** lista las proformas de **`01 M Sondel/2026/`** (y las de **`02 M Muito Work/2026/`** con OC compartida para la fusión). **SOLO 2026** — no toques otros años.
-3. **PILOTO:** procesa **la PRIMERA proforma/OC** de punta a punta (checklist §3) → audita (§8) → resumen. Valida que el flujo entero quedó perfecto **antes de seguir**.
-4. **Uno por uno:** continúa con el resto; cada expediente: Orquestador→Operativo→Auditor, ciclo hasta `APROBADO`, con **feedback en vivo** y **resumen por expediente**, reconectando el IMAP cuando se caiga.
-5. **Nunca** dejes "SIN-PO", líneas dummy, documentos rotos, SAP sin asignar ni movimiento sin costos.
-6. **🛑 BORRADOS CON GUARDA HUMANA:** `expediente_eliminar` y `documento_eliminar` son destructivos en producción (token admin). **Solo bórralos con confirmación explícita del usuario** y tras evidenciar el motivo (ej. `documento_listar` mostrando `storage_url=null`, o `expediente_buscar` sin respaldo en OneDrive/correo). El agente **propone** el borrado con la evidencia y **espera el OK**; nunca borra en automático.
+2. **Inventario (Orquestador):** lista los expedientes 2026 YA REGISTRADOS de **Sondel** (`expediente_listar` / `expediente_buscar` por proforma+OC). **SOLO 2026.** Para cada uno toma su **ID de expediente** (`…/exp/<id>`) y su estado/SAP actuales.
+3. **TRIAGE (modo remediación):** por cada expediente decide qué le falta:
+   - ¿Tiene **SAP**? Si no → búscalo en el correo, súbelo y asígnalo (checklist 10).
+   - ¿Está en el **estado** correcto? Si no → avánzalo salto-a-salto (checklist 11a).
+   - ¿Tiene **fechas por fase**? Si no → setéalas (checklist 11b).
+   Si ya tiene SAP + estado + fechas correctos → **se salta** (solo audita). No recrees nada.
+4. **PILOTO:** aplica el triage al **PRIMER** expediente de punta a punta → audita (§8) → resumen. Valida antes de seguir.
+5. **Uno por uno:** continúa con el resto; cada expediente: Orquestador→Operativo→Auditor, ciclo hasta `APROBADO`, con **feedback en vivo** y **resumen por expediente**, reconectando el IMAP cuando se caiga.
+6. **Nunca** dejes "SIN-PO", líneas dummy, documentos rotos, ni un SAP que existe en el correo sin asignar.
+7. **🛑 BORRADOS CON GUARDA HUMANA:** `expediente_eliminar` y `documento_eliminar` son destructivos en producción (token admin). **Solo bórralos con confirmación explícita del usuario** y tras evidenciar el motivo (ej. `documento_listar` mostrando `storage_url=null`, o `expediente_buscar` sin respaldo en OneDrive/correo). El agente **propone** el borrado con la evidencia y **espera el OK**; nunca borra en automático.
 
 > Regla de oro: **un expediente no se cierra hasta estar 100% completo y auditado**; recién entonces empieza el siguiente.
 
