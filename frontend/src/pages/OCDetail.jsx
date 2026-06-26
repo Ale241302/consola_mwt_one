@@ -997,8 +997,19 @@ export default function ScreenOCDetail() {
     });
     setSapDrawerOpen(true);
   };
-  // Totals computed from edited lines
-  const computedTotal = allLines.reduce((a, l) => a + (l.qty * l.unit_price), 0);
+  // Totals computed from edited lines.
+  // Sprint 2026-06-26 (AG-03) · FIX "columna Total no coincidía con Precio
+  // Cliente": el Total usaba `l.unit_price` (que el mapper iguala al precio
+  // MWT para admin en expedientes triangulares), por eso 18.21×10 mostraba
+  // 154 (precio MWT) en vez de 182.10. El Total visible debe ser el valor
+  // cliente de la línea = qty × unit_price_client (fallback a unit_price si
+  // no hay snapshot cliente). Así el footer cuadra con el "Estado Financiero".
+  const lineClientTotal = (l) => {
+    const upc = Number(l.unit_price_client || 0);
+    const unit = upc > 0 ? upc : Number(l.unit_price || 0);
+    return Number(l.qty || 0) * unit;
+  };
+  const computedTotal = allLines.reduce((a, l) => a + lineClientTotal(l), 0);
   const computedDeferred = allLines.reduce((a, l) => a + ((l.deferred_qty||0) * (l.deferred_unit_price||0)), 0);
   // Sprint 2026-05-17 · ¿La OC tiene al menos un expediente operado por
   // Muito Work Limitada? Si sí, mostramos columnas duales (Precio MWT +
@@ -2261,7 +2272,7 @@ export default function ScreenOCDetail() {
                       ${Number(l.unit_price_client || 0).toFixed(2)}
                     </td>
                   )}
-                  <td className="td-money">{fmtMoney(l.qty * l.unit_price)}</td>
+                  <td className="td-money">{fmtMoney(lineClientTotal(l))}</td>
                   <td>
                     {l.sap ? (
                       <a className="sap-link sap-link-inline" onClick={()=>l.exp_id && onOpenExpediente(l.exp_id)} title={tr(lang,'open_expediente')}>

@@ -1023,24 +1023,25 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, pr
               // JWT admin) haya devuelto unit_price_mwt en
               // unit_price_for_viewer. Por eso preferimos los campos
               // crudos snapshot dual cuando estan disponibles.
+              // Sprint 2026-06-26 (AG-03) · FIX "Subtotal no coincidía con el
+              // precio cliente": antes la columna principal usaba unit_price_mwt
+              // para admin y el Subtotal salía de total_price (qty×precio MWT),
+              // así 18.21×10 mostraba 154 (precio MWT). El precio principal y el
+              // Subtotal ahora reflejan el PRECIO CLIENTE (el precio MWT sigue en
+              // su columna dedicada). Subtotal = qty × precio mostrado, siempre.
               let unit;
-              if (isClient && l.unit_price_client != null && Number(l.unit_price_client) > 0) {
+              if (l.unit_price_client != null && Number(l.unit_price_client) > 0) {
                 unit = Number(l.unit_price_client);
-              } else if (!isClient && l.unit_price_mwt != null && Number(l.unit_price_mwt) > 0) {
-                unit = Number(l.unit_price_mwt);
               } else {
                 unit = Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
               }
-              // Fallback: cuando la linea trae unit_price=0 leemos el
-              // precio del catalogo de productos (cpaPriceMap),
-              // indexado por producto_id. Mismo enfoque que OCDetail.
+              // Fallback: cuando la linea trae 0 leemos el precio del catalogo
+              // de productos (cpaPriceMap), indexado por producto_id.
               if (unit === 0 && cpaPriceMap && l.producto_id) {
                 const fb = Number(cpaPriceMap[l.producto_id] || 0);
                 if (fb > 0) unit = fb;
               }
-              const sub   = Number(l.total_price && Number(l.total_price) > 0
-                                    ? l.total_price
-                                    : qty * unit);
+              const sub   = qty * unit;
               const margin = Number(l.margin ?? 0);
               const nodoKey = `${l.producto_id || ''}::${l.size || l.talla || ''}`;
               const nodosForLine = nodoByLineKey[nodoKey] || [];
@@ -1331,12 +1332,14 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
   const isMwtOp = !isClient && isMwtOperated(exp?.operating_company_id);
   // Sprint 2026-05-01: total con fallback al catalogo de productos
   // Sprint 2026-05-06 · prefer snapshot dual segun isClient (Tweaks-aware).
+  // Sprint 2026-06-26 (AG-03) · El precio principal ("Precio unit.") y el
+  // Subtotal reflejan el PRECIO CLIENTE (valor real de la OC para el cliente).
+  // El precio MWT del operador sigue mostrándose en su columna dedicada. Antes
+  // esto devolvía unit_price_mwt para admin y el Subtotal (total_price) salía
+  // del precio MWT → no cuadraba con la columna "Precio cliente".
   const _resolvePrice = (l) => {
-    if (isClient && l.unit_price_client != null && Number(l.unit_price_client) > 0) {
+    if (l.unit_price_client != null && Number(l.unit_price_client) > 0) {
       return Number(l.unit_price_client);
-    }
-    if (!isClient && l.unit_price_mwt != null && Number(l.unit_price_mwt) > 0) {
-      return Number(l.unit_price_mwt);
     }
     return Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
   };
@@ -1443,13 +1446,14 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
             // Fallback al catalogo de productos si la linea trae 0
             // Sprint 2026-05-06 · usa snapshot dual (Tweaks-aware via _resolvePrice).
             let _unit = _resolvePrice(l);
-            let _total = Number(l.total_price || 0);
             if (_unit === 0 && cpaPriceMap && l.producto_id) {
               const fb = Number(cpaPriceMap[l.producto_id] || 0);
               if (fb > 0) _unit = fb;
             }
             const _qty = Number(l.qty || 0);
-            if (_total === 0) _total = _qty * _unit;
+            // Subtotal = qty × precio cliente mostrado (NO total_price, que el
+            // backend calcula con el precio MWT/legacy del operador).
+            const _total = _qty * _unit;
             return (
             <tr key={l.id}>
               <td><span className="mono-sm" style={{ fontWeight: 600, color:'var(--interactive)' }}>{l.sku}</span></td>

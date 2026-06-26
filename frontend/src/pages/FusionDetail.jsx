@@ -342,6 +342,7 @@ export default function ScreenFusionDetail() {
   const [addTargetIdx, setAddTargetIdx] = useState(0);
   const [productOpen, setProductOpen] = useState(false);     // paso 2: catálogo
   const [addErr, setAddErr] = useState(null);                // error visible del alta
+  const [lineErr, setLineErr] = useState(null);              // error visible al persistir edición de línea
 
   // ORIGEN del miembro (R3): proforma para staff, PO para cliente.
   // OJO: NO usar m.oc.codigo — es el código interno del sistema
@@ -514,6 +515,8 @@ export default function ScreenFusionDetail() {
           members.every((m) => (m.exp.oc_codigos || []).includes(c)))
     || (es ? "Fusión" : "Merged"));
 
+  // priceOf: precio "del viewer" (MWT para staff, cliente para CLIENT). Se
+  // sigue usando para el payload de líneas (unit_price). NO se elimina.
   const priceOf = (l) => {
     if (isClient) {
       const pc = Number(l.unit_price_client ?? 0);
@@ -522,9 +525,14 @@ export default function ScreenFusionDetail() {
     const pm = Number(l.unit_price_mwt ?? 0);
     return pm > 0 ? pm : Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
   };
+  // Sprint 2026-06-26 (AG-03) · El Total de línea refleja el PRECIO CLIENTE
+  // (valor real de la OC), no total_price (que el backend calcula con el precio
+  // MWT/legacy del operador) ni priceOf (MWT para staff). El precio MWT sigue
+  // en su columna dedicada. Antes 18.21×10 mostraba 154 (precio MWT) en vez de 182.10.
   const lineTotal = (l) => {
-    const tp = Number(l.total_price || 0);
-    return tp > 0 ? tp : priceOf(l) * Number(l.qty || 0);
+    const upc = Number(l.unit_price_client || 0);
+    const unit = upc > 0 ? upc : Number(l.unit_price_for_viewer ?? l.unit_price ?? 0);
+    return unit * Number(l.qty || 0);
   };
   const nameOf = (l) =>
     (l.producto_id && nameMap[l.producto_id]) || l.product_label || l.sku || "—";
@@ -618,12 +626,26 @@ export default function ScreenFusionDetail() {
       lineas: m.lineas.map((l) => (l.id === lineId ? { ...l, ...patch } : l)),
     })));
   };
+  // Sprint 2026-06-26 (AG-03) · FIX "el precio/cant editado se revertía al
+  // recargar". Antes el error se TRAGABA (console.warn): el valor optimista
+  // quedaba en `members` (parecía guardado) pero el reload lo revertía a BD.
+  // Ahora: en ÉXITO hacemos COMMIT del valor recalculado por el backend a
+  // `members` (fuente canónica); en ERROR hacemos ROLLBACK a la verdad del
+  // backend (re-GET de la línea) y mostramos un banner visible.
   const persistLine = async (l, patch) => {
     try {
-      await lineasApi.update(l.id, patch);
+      const saved = await lineasApi.update(l.id, patch);
+      if (saved && saved.id) patchLineLocal(l.id, saved);   // total_price/unit_price recalculados
+      setLineErr(null);
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn("[FusionDetail] persistir línea falló", err);
+      try {
+        const fresh = await lineasApi.get(l.id);            // rollback al estado real de BD
+        if (fresh && fresh.id) patchLineLocal(l.id, fresh);
+      } catch { /* si el re-GET falla, dejamos el banner igual */ }
+      setLineErr(
+        `No se pudo guardar la línea ${String(l.id).slice(0, 8)}…: el cambio NO quedó ` +
+        `persistido (se revirtió al valor guardado). Reintenta. (${err?.message || "error de red"})`
+      );
     }
   };
   const confirmDeleteLine = async () => {
@@ -1005,6 +1027,24 @@ export default function ScreenFusionDetail() {
                 <div style={{ flex: 1 }}>{addErr}</div>
                 <button type="button"
                         onClick={() => setAddErr(null)}
+                        style={{ background: "transparent", border: 0, cursor: "pointer", color: "inherit" }}>
+                  ✕
+                </button>
+              </div>
+            )}
+            {/* Error visible al persistir una edición inline (precio/cantidad). */}
+            {lineErr && (
+              <div style={{
+                margin: "10px 22px 0", padding: "8px 12px", borderRadius: 8,
+                background: "color-mix(in oklab, var(--danger, #DC2626) 12%, transparent)",
+                color: "var(--danger, #991B1B)",
+                border: "1px solid color-mix(in oklab, var(--danger, #DC2626) 30%, transparent)",
+                fontSize: 12, display: "flex", alignItems: "flex-start", gap: 6,
+              }}>
+                <IconAlert size={11} style={{ flexShrink: 0, marginTop: 2 }}/>
+                <div style={{ flex: 1 }}>{lineErr}</div>
+                <button type="button"
+                        onClick={() => setLineErr(null)}
                         style={{ background: "transparent", border: 0, cursor: "pointer", color: "inherit" }}>
                   ✕
                 </button>
