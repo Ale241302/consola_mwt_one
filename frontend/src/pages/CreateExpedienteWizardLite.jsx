@@ -2066,6 +2066,14 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   const groups = Object.values(bySku).sort((a, b) =>
     String(a.sku || "").localeCompare(String(b.sku || ""), undefined, { numeric: true }));
   const totalValue = groups.reduce((a, g) => a + g.subtotalValue, 0);
+  // Sprint 2026-07-15 · totales por perspectiva (override-aware) para mostrar
+  // "Valor total del pedido" de MWT y de Cliente por separado.
+  let clientTotalValue = 0, mwtTotalValue = 0;
+  orderLines.forEach((l) => {
+    const q = Number(l.cantidad || 0);
+    const cp = clientPriceOf(l.sku); if (cp != null) clientTotalValue += cp * q;
+    const mp = mwtPriceOf(l.sku);    if (mp != null) mwtTotalValue += mp * q;
+  });
 
   // Sprint 2026-05-22 · Precios reales del snapshot por plazo.
   // tierTotals[dias] = suma sobre TODOS los SKUs de la OC:
@@ -2076,13 +2084,15 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   // null y el render cae al cálculo legacy.
   const tierTotals = useMemo(() => {
     if (!dynamicTiers || !viewerResults) return null;
-    // Unidades totales por SKU en la orden
     const unitsBySku = {};
     orderLines.forEach(l => {
       if (!l || !l.sku) return;
       const sku = String(l.sku).trim();
       unitsBySku[sku] = (unitsBySku[sku] || 0) + Number(l.cantidad || 0);
     });
+    // Sprint 2026-07-15 · si el admin overrideó el precio base del SKU, la
+    // escalera de pronto pago se re-escala proporcional (override / base).
+    const ofield = operatedByMwt ? 'mwt' : 'client';
     const totals = {};
     dynamicTiers.forEach(tier => {
       let total = 0;
@@ -2091,12 +2101,19 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
         if (!matrix || !matrix.ok || !Array.isArray(matrix.plazos)) return;
         const plazo = matrix.plazos.find(p => Number(p.dias) === Number(tier.days));
         if (!plazo) return;
-        total += Number(plazo.price) * Number(units);
+        let price = Number(plazo.price);
+        const ov = _numPos((priceOverrides[_ovKey(sku)] || {})[ofield]);
+        if (ov != null) {
+          const bp = matrix.plazos.find(p => p.is_base);
+          const bv = bp ? Number(bp.price) : null;
+          price = (bv && bv > 0) ? price * (ov / bv) : ov;
+        }
+        total += price * Number(units);
       });
       totals[tier.days] = total;
     });
     return totals;
-  }, [dynamicTiers, viewerResults, orderLines]);
+  }, [dynamicTiers, viewerResults, orderLines, priceOverrides, operatedByMwt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sprint 2026-05-24 · CADA BLOQUE DE PROPUESTA usa SU PROPIA MATRIZ
   // (fix: antes los dos bloques mostraban los mismos precios porque ambos
@@ -2108,7 +2125,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   const clientResults = pricingMatrix && pricingMatrix.results ? pricingMatrix.results : null;
 
   // Helper: dado una matriz (cualquiera), calcular { dias: total } para cada tier.
-  const _buildTierTotals = (matrixSrc) => {
+  const _buildTierTotals = (matrixSrc, overrideField) => {
     if (!dynamicTiers || !matrixSrc) return null;
     const unitsBySku = {};
     orderLines.forEach(l => {
@@ -2124,14 +2141,22 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
         if (!matrix || !matrix.ok || !Array.isArray(matrix.plazos)) return;
         const plazo = matrix.plazos.find(p => Number(p.dias) === Number(tier.days));
         if (!plazo) return;
-        total += Number(plazo.price) * Number(units);
+        let price = Number(plazo.price);
+        // Sprint 2026-07-15 · re-escalar por override del precio base del SKU.
+        const ov = overrideField ? _numPos((priceOverrides[_ovKey(sku)] || {})[overrideField]) : null;
+        if (ov != null) {
+          const bp = matrix.plazos.find(p => p.is_base);
+          const bv = bp ? Number(bp.price) : null;
+          price = (bv && bv > 0) ? price * (ov / bv) : ov;
+        }
+        total += price * Number(units);
       });
       totals[tier.days] = total;
     });
     return totals;
   };
-  const tierTotalsMwt     = useMemo(() => _buildTierTotals(mwtResults),    [dynamicTiers, mwtResults, orderLines]); // eslint-disable-line react-hooks/exhaustive-deps
-  const tierTotalsCliente = useMemo(() => _buildTierTotals(clientResults), [dynamicTiers, clientResults, orderLines]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tierTotalsMwt     = useMemo(() => _buildTierTotals(mwtResults, 'mwt'),       [dynamicTiers, mwtResults, orderLines, priceOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tierTotalsCliente = useMemo(() => _buildTierTotals(clientResults, 'client'), [dynamicTiers, clientResults, orderLines, priceOverrides]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // baseTier del effectiveTiers (plazo base, ej. 90d).
   const _baseTierGlobal = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
@@ -2308,11 +2333,28 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
           }}>
             {lang === "es" ? "Valor total del pedido" : "Order total value"}
           </span>
-          <span className="tabular-nums" style={{
-            fontWeight: 800, color: "#00B286", fontSize: 18,
-          }}>
-            ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
+          {operatedByMwt && isAdmin ? (
+            <span style={{ display: "flex", gap: 22, alignItems: "baseline" }}>
+              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 700, letterSpacing: 0.5 }}>MWT</span>
+                <span className="tabular-nums" style={{ fontWeight: 800, color: "var(--brand-accent-2, #481EE3)", fontSize: 18 }}>
+                  ${mwtTotalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </span>
+              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 700, letterSpacing: 0.5 }}>{lang === "es" ? "CLIENTE" : "CLIENT"}</span>
+                <span className="tabular-nums" style={{ fontWeight: 800, color: "#00B286", fontSize: 18 }}>
+                  ${clientTotalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </span>
+            </span>
+          ) : (
+            <span className="tabular-nums" style={{
+              fontWeight: 800, color: "#00B286", fontSize: 18,
+            }}>
+              ${(clientTotalValue || totalValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          )}
         </div>
       )}
 
