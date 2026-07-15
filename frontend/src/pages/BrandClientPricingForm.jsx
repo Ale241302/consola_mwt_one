@@ -350,7 +350,7 @@ export default function ScreenBrandClientPricingForm() {
         ? loaded.skus.filter((s) => enabled.skus.has(String(s.sku)))
         : loaded.skus;
       setSkus(filtered);
-      if (loaded.fechaInicio) setFechaInicio(loaded.fechaInicio);
+      setFechaInicio(today());
       if (loaded.fechaFin) {
         setFechaFin(loaded.fechaFin);
         setFechaFinIndef(false);
@@ -364,7 +364,7 @@ export default function ScreenBrandClientPricingForm() {
     const saved = loadLocal(brandId, clienteId);
     if (saved) {
       if (Array.isArray(saved.skus)) setSkus(saved.skus);
-      if (saved.fechaInicio) setFechaInicio(saved.fechaInicio);
+      setFechaInicio(today());
       if (saved.fechaFin) setFechaFin(saved.fechaFin);
       if (typeof saved.fechaFinIndef === "boolean") setFechaFinIndef(saved.fechaFinIndef);
       if (saved.anchor && typeof saved.anchor === "object"
