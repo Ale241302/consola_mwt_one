@@ -1121,29 +1121,30 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, pr
               );
             })}
           </tbody>
-          {/* Sprint 2026-07-15 · totales: Cant · Subtotal · Precio MWT · Precio Cliente. */}
+          {/* Sprint 2026-07-15 · totales: Cant · Subtotal · Precio MWT · Precio Cliente.
+              Mismo padding/altura que la tabla de la tab Productos. */}
           <tfoot>
             <tr>
-              <td colSpan={2} style={{textAlign:'right', fontWeight:700}}>{lang==='es'?'Totales':'Totals'}</td>
-              <td className="td-num tabular" style={{textAlign:'right', fontWeight:700}}>
+              <td colSpan={2} style={{padding:14, textAlign:'right', fontWeight:700}}>{lang==='es'?'Totales':'Totals'}</td>
+              <td className="td-num tabular" style={{padding:14, textAlign:'right', fontWeight:700}}>
                 {lines.reduce((a,l)=>a+Number(l.qty||0),0).toLocaleString('en-US')}
               </td>
-              <td/>
-              <td className="td-money" style={{fontWeight:700}}>
+              <td style={{padding:14}}/>
+              <td className="td-money" style={{padding:14, fontSize:15, fontFamily:'var(--font-mono)', fontWeight:700}}>
                 {fmtMoney(lines.reduce((a,l)=>a+Number(l.qty||0)*Number(l.unit_price_client??l.unit_price??0),0))}
               </td>
               {isMwtOp && (
-                <td className="td-money" style={{fontWeight:700, background:'color-mix(in oklab, var(--brand-primary) 4%, transparent)'}}>
+                <td className="td-money" style={{padding:14, fontWeight:700, background:'color-mix(in oklab, var(--brand-primary) 4%, transparent)'}}>
                   {fmtMoney(lines.reduce((a,l)=>a+Number(l.qty||0)*Number(l.unit_price_mwt??l.unit_price??0),0))}
                 </td>
               )}
               {!isClient && (
-                <td className="td-money" style={{fontWeight:700, background:'color-mix(in oklab, var(--brand-accent, #00B286) 4%, transparent)'}}>
+                <td className="td-money" style={{padding:14, fontWeight:700, background:'color-mix(in oklab, var(--brand-accent, #00B286) 4%, transparent)'}}>
                   {fmtMoney(lines.reduce((a,l)=>a+Number(l.qty||0)*Number(l.unit_price_client??l.unit_price??0),0))}
                 </td>
               )}
-              <td/>
-              <td/>
+              <td style={{padding:14}}/>
+              <td style={{padding:14}}/>
             </tr>
           </tfoot>
         </table>
