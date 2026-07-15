@@ -610,8 +610,14 @@ _EMAIL_RE           = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 def _notify_admins_expediente_created(*, expediente_id, expediente_codigo,
                                       po_number, client_id, total_value,
-                                      moneda, lines_count, submitted_by_email):
-    """Notifica a los admins que un cliente B2B creó un expediente."""
+                                      moneda, lines_count, submitted_by_email,
+                                      oc_id=None, lines=None):
+    """Notifica a los admins que un cliente B2B creó un expediente.
+
+    Sprint 2026-07-15 · el enlace (email + campana) apunta al DETALLE DE LA
+    OC (/expedientes/{oc_id}), no al id del expediente. Incluye un resumen
+    por SKU (talla × cantidad) igual que el Paso 3 del wizard.
+    """
     # 1) Nombre legible del cliente (best-effort).
     client_label = ""
     try:
@@ -645,12 +651,37 @@ def _notify_admins_expediente_created(*, expediente_id, expediente_codigo,
     except (TypeError, ValueError):
         _total_txt = str(total_value)
 
-    deep_link = f"/expedientes/{expediente_id}"
+    # Resumen por SKU (SKU · talla × cantidad) — como el Paso 3 del wizard.
+    by_sku = {}
+    for ln in (lines or []):
+        if not isinstance(ln, dict):
+            continue
+        sku_k = str(ln.get("sku") or "").strip()
+        if not sku_k:
+            continue
+        g = by_sku.setdefault(sku_k, {"label": "", "sizes": [], "units": 0})
+        if not g["label"]:
+            g["label"] = ln.get("product_label") or ln.get("descripcion") or ""
+        try:
+            _q = int(float(ln.get("qty") if ln.get("qty") is not None
+                           else ln.get("cantidad") or 0))
+        except (TypeError, ValueError):
+            _q = 0
+        _sz = ln.get("size") or ln.get("talla") or "—"
+        g["sizes"].append((str(_sz), _q))
+        g["units"] += _q
+    sku_count = len(by_sku)
+
+    # El enlace SIEMPRE va al detalle de la OC (/expedientes/{oc_id}); si por
+    # algún motivo no hay oc_id, caemos al id del expediente (mejor que nada).
+    _link_id = str(oc_id or expediente_id)
+    deep_link = f"/expedientes/{_link_id}"
     title = f"Nueva OC del portal · {client_label or 'Cliente B2B'}"
     body = (
         f"{client_label or 'Un cliente B2B'} creó el expediente "
-        f"{expediente_codigo} (PO {po_number}) con {lines_count} línea(s) "
-        f"por {moneda} {_total_txt}. Pendiente de revisión CEO."
+        f"{expediente_codigo} (PO {po_number}) · {sku_count} SKU(s) · "
+        f"{lines_count} línea(s) por {moneda} {_total_txt}. "
+        f"Pendiente de revisión CEO."
     )
 
     # 3) Alerta in-app · una fila de users.activity_feed por admin.
@@ -669,7 +700,7 @@ def _notify_admins_expediente_created(*, expediente_id, expediente_codigo,
                     )
                 """, [
                     str(uuid.uuid4()), str(uid), title[:160], body,
-                    deep_link, str(expediente_id),
+                    deep_link, _link_id,
                 ])
         except Exception:  # noqa: BLE001
             log.exception("[wizard.notify] activity_feed falló user=%s", uid)
@@ -678,9 +709,14 @@ def _notify_admins_expediente_created(*, expediente_id, expediente_codigo,
     recipients = [r[1] for r in admins if r[1] and _EMAIL_RE.match(str(r[1]))]
     if not recipients:
         recipients = [_NOTIFY_FALLBACK_TO]
-    link = f"{_NOTIFY_BASE_URL}/expedientes/{expediente_id}"
+    link = f"{_NOTIFY_BASE_URL}/expedientes/{_link_id}"
     subject = (f"[MWT.ONE] Nueva OC del portal — {client_label or 'Cliente B2B'}"
                f" · PO {po_number}")
+    _sku_text = ""
+    for _sku_k, _g in by_sku.items():
+        _tallas_txt = ", ".join(f"{_sz}×{_q}" for _sz, _q in _g["sizes"])
+        _lbl = f" {_g['label']}" if _g["label"] else ""
+        _sku_text += f"  · {_sku_k}{_lbl}: {_tallas_txt}  ({_g['units']} u)\n"
     text_body = (
         f"Hola Equipo MWT,\n\n"
         f"El cliente {client_label or '—'}"
@@ -688,12 +724,40 @@ def _notify_admins_expediente_created(*, expediente_id, expediente_codigo,
         + " creó un expediente desde el Portal B2B:\n\n"
         f"  · Expediente: {expediente_codigo}\n"
         f"  · PO:         {po_number}\n"
+        f"  · SKUs:       {sku_count}\n"
         f"  · Líneas:     {lines_count}\n"
         f"  · Total:      {moneda} {_total_txt}\n\n"
+        f"Resumen por SKU (talla × cantidad):\n"
+        f"{_sku_text}\n"
         f"El expediente quedó en estado REGISTRO, pendiente de revisión CEO:\n"
         f"  {link}\n\n"
         f"— MWT.ONE · Portal B2B"
     )
+    # Bloque HTML del resumen por SKU (una tarjeta por SKU con chips talla×cant).
+    sku_rows_html = ""
+    for _sku_k, _g in by_sku.items():
+        _chips = "".join(
+            (
+                '<span style="display:inline-block;padding:2px 8px;border-radius:999px;'
+                'background:rgba(0,178,134,0.10);color:#0B7E8F;font-size:11px;'
+                'font-weight:600;margin:2px 4px 2px 0">Talla '
+                + str(_sz) + ": " + str(_q) + "</span>"
+            )
+            for _sz, _q in _g["sizes"]
+        )
+        _lbl_html = (f'<span style="font-weight:500;color:#334155;margin-left:6px">'
+                     f'{_g["label"]}</span>') if _g["label"] else ""
+        sku_rows_html += (
+            '<div style="border:1px solid #E5E9F0;border-radius:8px;'
+            'padding:10px 12px;margin-bottom:8px">'
+            '<div style="display:flex;justify-content:space-between;align-items:baseline">'
+            f'<div><code style="font-weight:700;color:#0B1E3A">{_sku_k}</code>{_lbl_html}</div>'
+            f'<div style="color:#64748B;font-size:12px;white-space:nowrap">{_g["units"]} u</div>'
+            '</div>'
+            f'<div style="margin-top:6px">{_chips}</div>'
+            '</div>'
+        )
+
     html_body = f"""
     <div style="font-family:Inter,Arial,sans-serif;font-size:14px;color:#0B1E3A;
                 max-width:600px;margin:0 auto;padding:24px;
@@ -719,12 +783,21 @@ def _notify_admins_expediente_created(*, expediente_id, expediente_codigo,
                        text-transform:uppercase;letter-spacing:0.5px">PO</td>
             <td style="padding:8px;font-family:monospace">{po_number}</td></tr>
         <tr><td style="padding:8px;color:#64748B;font-size:11px;
+                       text-transform:uppercase;letter-spacing:0.5px">SKUs</td>
+            <td style="padding:8px">{sku_count}</td></tr>
+        <tr><td style="padding:8px;color:#64748B;font-size:11px;
                        text-transform:uppercase;letter-spacing:0.5px">Líneas</td>
             <td style="padding:8px">{lines_count}</td></tr>
         <tr><td style="padding:8px;color:#64748B;font-size:11px;
                        text-transform:uppercase;letter-spacing:0.5px">Total</td>
             <td style="padding:8px;font-weight:600">{moneda} {_total_txt}</td></tr>
       </table>
+
+      <div style="font-size:11px;color:#64748B;letter-spacing:0.5px;
+                  text-transform:uppercase;font-weight:700;margin:6px 0 8px">
+        Resumen por SKU
+      </div>
+      {sku_rows_html}
 
       <a href="{link}"
          style="display:inline-block;background:#00B286;color:#fff;text-decoration:none;
@@ -1376,6 +1449,8 @@ def create_from_oc(request):
                 moneda=moneda,
                 lines_count=len(ocr_lines),
                 submitted_by_email=submitted_by_email,
+                oc_id=oc_id,
+                lines=ocr_lines,
             )
         except Exception:  # noqa: BLE001
             log.exception("create_from_oc: notificación a admins falló (no fatal)")
