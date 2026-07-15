@@ -69,6 +69,13 @@ function _labelRedundante(label, value) {
   return v.startsWith(lbl + " ") || v.startsWith(lbl + "-");
 }
 
+/** Sprint 2026-07-15 (CEO) · normaliza códigos de OC mal registrados:
+ * "POC 504978" → "PO 504978". El prefijo canónico del PO del cliente es
+ * "PO"; algunos registros históricos entraron con "POC" (typo/OCR). */
+function _normalizeOcCode(value) {
+  return String(value ?? "").replace(/^\s*POC(?=[\s\-_.]|\d)/i, "PO");
+}
+
 /** Chip individual — usa tokens MWT, cero hex literales. */
 function RefChip({ kind, label, value, onClick, title }) {
   const klass = "ref-chip ref-chip--" + kind + (onClick ? " ref-chip--link" : "");
@@ -96,7 +103,8 @@ export function RefCell({ expediente, isAdmin, onClickOc, lang = "es" }) {
   if (!expediente) return null;
   const e         = expediente;
   const proformas = Array.isArray(e.proforma_codigos) ? e.proforma_codigos : [];
-  const ocs       = Array.isArray(e.oc_codigos)       ? e.oc_codigos       : [];
+  const ocs       = (Array.isArray(e.oc_codigos)      ? e.oc_codigos       : [])
+    .map(_normalizeOcCode);
   const saps      = Array.isArray(e.sap_codigos)      ? e.sap_codigos      : [];
 
   const labels = {

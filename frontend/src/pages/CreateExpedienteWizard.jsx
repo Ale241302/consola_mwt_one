@@ -29,7 +29,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useRole } from "../context/RoleContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { getToken, ApiError, postMultipart } from "../lib/api.js";
-import { RequestAssignmentDialog } from "../components/expedientes/ManualLineModal.jsx";
+import { ManualLinePanel, RequestAssignmentDialog } from "../components/expedientes/ManualLineModal.jsx";
 
 // ---------------------------------------------------------------------
 // Paleta MWT (hardcoded en constantes, no en clases — permite que el
@@ -98,6 +98,17 @@ export default function CreateExpedienteWizard() {
   const location = useLocation();
 
   const steps   = isClient ? STEPS_CLIENT : STEPS_ADMIN;
+
+  // Sprint 2026-07-15 · scope del cliente B2B: client_id del JWT
+  // (legal_entity). Se usa en el Paso 2 para el buscador de productos
+  // (visibilidad + precios pre-negociados). R3: el backend igualmente
+  // fuerza el client_id del JWT en todos los endpoints.
+  const clientScopeId = isClient
+    ? (auth?.user?.legal_entity_id
+        || (Array.isArray(auth?.user?.legal_entity_ids)
+              ? auth.user.legal_entity_ids[0] : null)
+        || null)
+    : null;
 
   // ── Pre-seed desde el carrito del catálogo ────────────────────
   // Si el cliente llegó acá con location.state.cartItems (desde
@@ -201,8 +212,32 @@ export default function CreateExpedienteWizard() {
     patch({ submitting: true, submitError: null });
     try {
       const token = getToken();
+      // Sprint 2026-07-15 · payload efectivo: SIEMPRE las líneas del estado
+      // (incluye ediciones de qty del Paso 2 y líneas agregadas manualmente).
+      // Si el cliente no subió archivo, armamos un payload sintético
+      // (flujo "sin OC" — la subida del archivo es OPCIONAL para CLIENT).
+      const effectiveLines = (state.lines || []).map((l) => ({
+        client_part_number: l.client_part_number || l.sku || "",
+        sku:          l.sku,
+        descripcion:  l.descripcion || l.product_label || null,
+        size:         l.size || null,
+        qty:          Number(l.qty) || 0,
+        unit_price:   Number(l.unit_price) || 0,
+        producto_id:  l.producto_id || null,
+      }));
+      const ocrPayloadOut = {
+        ...(state.ocrPayload || {
+          ocr_engine: "portal-manual",
+          confidence: 1,
+          po:     { number: null, date: null, currency: "USD", total: null },
+          client: { name: null, tax_id: null, _candidates: [] },
+          brand:  { name: null, brand_code: null, _candidates: [] },
+          raw_text_preview: null,
+        }),
+        lines: effectiveLines,
+      };
       const body = {
-        ocr_payload:       state.ocrPayload,
+        ocr_payload:       ocrPayloadOut,
         idempotence_token: idempotenceToken,
       };
       if (isAdmin) {
@@ -223,7 +258,7 @@ export default function CreateExpedienteWizard() {
       if (state.file) {
         const fd = new FormData();
         fd.append("file", state.file);
-        fd.append("ocr_payload",       JSON.stringify(state.ocrPayload || {}));
+        fd.append("ocr_payload",       JSON.stringify(ocrPayloadOut));
         fd.append("idempotence_token", idempotenceToken);
         if (isAdmin) {
           Object.entries(body).forEach(([k, v]) => {
@@ -283,9 +318,10 @@ export default function CreateExpedienteWizard() {
           </h1>
           {isClient && (
             <p style={styles.lede}>
-              Sube tu orden de compra y nuestro equipo comercial la procesará en
-              breve. No necesitas configurar logística — ya la tenemos acordada
-              en tu contrato.
+              Sube tu orden de compra (opcional) o agrega tus productos
+              manualmente en el siguiente paso. Nuestro equipo comercial
+              procesará tu pedido en breve. No necesitas configurar logística —
+              ya la tenemos acordada en tu contrato.
             </p>
           )}
           {isAdmin && (
@@ -314,7 +350,8 @@ export default function CreateExpedienteWizard() {
               <StepLogistics state={state} patch={patch} />
             )}
             {currentStep.key === "products"  && (
-              <StepProducts  state={state} patch={patch} isClient={isClient} />
+              <StepProducts  state={state} patch={patch} isClient={isClient}
+                             clientId={isClient ? clientScopeId : state.clientId} />
             )}
             {currentStep.key === "review"    && (
               <StepReview    state={state} patch={patch} isClient={isClient} />
@@ -385,6 +422,10 @@ export default function CreateExpedienteWizard() {
 function stepIsComplete(stepKey, s, isClient) {
   switch (stepKey) {
     case "upload":
+      // Sprint 2026-07-15 · para CLIENT subir la OC es OPCIONAL: puede
+      // continuar sin archivo y agregar sus productos manualmente en el
+      // Paso 2. Solo bloqueamos mientras el OCR está leyendo.
+      if (isClient) return !s.loadingOcr;
       return Boolean(s.ocrPayload && (s.ocrPayload.lines || []).length > 0);
     case "logistics":
       // ADMIN only. Mode es obligatorio para continuar.
@@ -661,6 +702,15 @@ function StepUpload({ state, patch, isClient }) {
             Puedes completar los datos manualmente más abajo.
           </div>
         </div>
+      )}
+
+      {/* ── CLIENT: la OC es OPCIONAL ── */}
+      {isClient && !state.ocrPayload && !state.loadingOcr && (
+        <p style={{ margin: "14px 0 0", fontSize: 13, color: COLORS.inkSoft, textAlign: "center" }}>
+          ¿No tienes el archivo de tu orden de compra? No hay problema — subirlo
+          es opcional. Presiona <strong>Continuar</strong> y agrega tus
+          productos manualmente en el siguiente paso.
+        </p>
       )}
 
       {/* ── CONTEXTO DETECTADO (ADMIN) ── auto-fill card con chips ── */}
@@ -1021,20 +1071,22 @@ function StepLogistics({ state, patch }) {
 //   · ADMIN  → tabla editable con SKU, size, qty, unit_price, verdict
 //   · CLIENT → tabla read-only excepto qty. Precios pre-negociados.
 // =====================================================================
-function StepProducts({ state, patch, isClient }) {
+function StepProducts({ state, patch, isClient, clientId }) {
   const setLine = (i, patchLine) => {
     const next = state.lines.slice();
     next[i] = { ...next[i], ...patchLine };
     patch({ lines: next });
   };
   const delLine = (i) => {
-    if (isClient) return; // CLIENT no puede eliminar líneas
+    // CLIENT solo puede eliminar líneas que agregó manualmente.
+    if (isClient && !state.lines[i]?.manual) return;
     patch({ lines: state.lines.filter((_, j) => j !== i) });
   };
 
   const cur = state.ocrPayload?.po?.currency || "USD";
   const [reqLine, setReqLine] = useState(null);
   const [reqDone, setReqDone] = useState({});   // sku -> true (solicitud enviada)
+  const [manualOpen, setManualOpen] = useState(false);
   // Una línea está "asignada" si el preview lo marcó así; si no vino del
   // preview (flujo admin / OCR crudo) asumimos asignada (precio editable).
   const isAssigned = (l) => (l.assigned === undefined ? true : !!l.assigned);
@@ -1042,6 +1094,46 @@ function StepProducts({ state, patch, isClient }) {
     (acc, l) => acc + (isAssigned(l) ? (Number(l.qty) || 0) * (Number(l.unit_price) || 0) : 0),
     0,
   );
+
+  // ── Alta manual de productos (CLIENT) — Sprint 2026-07-15 ──────
+  // Mismo componente que la vista admin (ManualLinePanel): buscar por
+  // nombre/SKU → matriz de tallas → cantidades. Tras agregar, resolvemos
+  // los precios pre-negociados vía resolve-oc-preview (best-effort; el
+  // backend re-deriva los precios del motor canónico al crear).
+  const addManualRows = async (rows) => {
+    const mapped = rows.map((r) => ({
+      sku:                r.sku,
+      client_part_number: r.sku,
+      descripcion:        r.product_label || r.sku,
+      product_label:      r.product_label || r.sku,
+      size:               r.talla || null,
+      qty:                Number(r.cantidad) || 0,
+      unit_price:         0,
+      producto_id:        r.producto_id || null,
+      assigned:           !!r.is_assigned,
+      manual:             true,
+    }));
+    const merged = [...(state.lines || []), ...mapped];
+    patch({ lines: merged });
+    try {
+      const token = getToken();
+      const rr = await postJSON(
+        "/expedientes/resolve-oc-preview/",
+        { lines: merged.map((l) => ({ ...l })), client_id: clientId || undefined },
+        { token },
+      );
+      if (rr?.ok && Array.isArray(rr.lines) && rr.lines.length === merged.length) {
+        patch({
+          lines: rr.lines.map((l, i) => ({
+            ...merged[i],
+            ...l,
+            descripcion: l.product_label || merged[i].descripcion || "",
+            unit_price:  l.unit_price != null ? l.unit_price : 0,
+          })),
+        });
+      }
+    } catch { /* best-effort: quedan qty/talla; el backend re-deriva precios */ }
+  };
 
   return (
     <section style={styles.card}>
@@ -1066,7 +1158,7 @@ function StepProducts({ state, patch, isClient }) {
             <th style={styles.thRight}>Precio Unit.</th>
             <th style={styles.thRight}>Subtotal</th>
             {!isClient && <th style={styles.th}>Veredicto</th>}
-            {!isClient && <th />}
+            <th />
           </tr>
         </thead>
         <tbody>
@@ -1139,8 +1231,8 @@ function StepProducts({ state, patch, isClient }) {
                   <VerdictChip verdict={l.price_verdict} moqViolated={l.moq_violated} />
                 </td>
               )}
-              {!isClient && (
-                <td style={styles.td}>
+              <td style={styles.td}>
+                {(!isClient || l.manual) && (
                   <button
                     type="button"
                     onClick={() => delLine(i)}
@@ -1149,18 +1241,20 @@ function StepProducts({ state, patch, isClient }) {
                   >
                     ✕
                   </button>
-                </td>
-              )}
+                )}
+              </td>
             </tr>
             );
           })}
           {state.lines.length === 0 && (
             <tr>
               <td
-                colSpan={isClient ? 6 : 8}
+                colSpan={isClient ? 7 : 8}
                 style={{ ...styles.td, textAlign: "center", padding: 24, color: COLORS.inkSoft }}
               >
-                No hay líneas. Vuelve al paso anterior y vuelve a subir el archivo.
+                {isClient
+                  ? "No hay líneas todavía. Usa “＋ Agregar producto” para armar tu pedido, o vuelve al paso anterior y sube tu OC."
+                  : "No hay líneas. Vuelve al paso anterior y vuelve a subir el archivo."}
               </td>
             </tr>
           )}
@@ -1173,10 +1267,40 @@ function StepProducts({ state, patch, isClient }) {
             <td style={{ ...styles.tdRight, fontWeight: 700, color: COLORS.navy }}>
               {fmtMoney(subtotal, cur)}
             </td>
-            {!isClient && <td colSpan={2} />}
+            {!isClient ? <td colSpan={2} /> : <td />}
           </tr>
         </tfoot>
       </table>
+
+      {/* ── Alta manual (CLIENT) · igual que la vista admin ── */}
+      {isClient && (
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            type="button"
+            onClick={() => setManualOpen(true)}
+            style={{
+              ...styles.btnSecondary,
+              borderStyle: "dashed",
+              color: COLORS.mintDark,
+              fontWeight: 600,
+            }}
+          >
+            ＋ Agregar producto
+          </button>
+          <span style={{ fontSize: 12, color: COLORS.inkSoft }}>
+            Busca por nombre o SKU, elige tallas y cantidades.
+          </span>
+        </div>
+      )}
+
+      {manualOpen && (
+        <ManualLinePanel
+          lang="es"
+          clientId={clientId}
+          onClose={() => setManualOpen(false)}
+          onAdd={(rows) => { addManualRows(rows); setManualOpen(false); }}
+        />
+      )}
 
       {reqLine && (
         <RequestAssignmentDialog
@@ -1225,7 +1349,6 @@ function VerdictChip({ verdict, moqViolated }) {
 // PASO 4 (ADMIN) / PASO 3 (CLIENT) · Review & Submit
 // =====================================================================
 function StepReview({ state, isClient }) {
-  const linesCount = (state.lines || []).length;
   const totalUnits = (state.lines || []).reduce(
     (a, l) => a + (Number(l.qty) || 0), 0,
   );
@@ -1235,6 +1358,37 @@ function StepReview({ state, isClient }) {
   );
   const currency = state.ocrPayload?.po?.currency || "USD";
 
+  // Sprint 2026-07-15 (CEO) · las "líneas" del wizard son filas por talla;
+  // en el Review se agrupan por SKU: cada grupo muestra SKU + descripción
+  // y debajo cada talla con su cantidad. El KPI cuenta SKUs, no filas.
+  const skuGroups = [];
+  {
+    const bySku = new Map();
+    for (const l of state.lines || []) {
+      const key = String(l.sku || "—").toUpperCase();
+      if (!bySku.has(key)) {
+        const g = {
+          sku:         l.sku || "—",
+          descripcion: l.product_label || l.descripcion || "",
+          sizes:       new Map(),   // talla -> qty (merge de filas repetidas)
+          units:       0,
+          subtotal:    0,
+        };
+        bySku.set(key, g);
+        skuGroups.push(g);
+      }
+      const g   = bySku.get(key);
+      const qty = Number(l.qty) || 0;
+      const sz  = l.size || "ÚNICA";
+      g.sizes.set(sz, (g.sizes.get(sz) || 0) + qty);
+      g.units    += qty;
+      g.subtotal += qty * (Number(l.unit_price) || 0);
+      if (!g.descripcion && (l.product_label || l.descripcion)) {
+        g.descripcion = l.product_label || l.descripcion;
+      }
+    }
+  }
+
   return (
     <section style={styles.card}>
       <h2 style={styles.h2}>
@@ -1243,7 +1397,7 @@ function StepReview({ state, isClient }) {
 
       {/* KPIs arriba */}
       <div style={styles.kpiRow}>
-        <Kpi label="Líneas"         value={linesCount} />
+        <Kpi label="SKUs"           value={skuGroups.length} />
         <Kpi label="Unidades"       value={totalUnits.toLocaleString()} />
         <Kpi label={`Total ${currency}`} value={fmtMoney(subtotal, currency)} accent />
       </div>
@@ -1266,10 +1420,70 @@ function StepReview({ state, isClient }) {
           label="OC (PO Number)"
           value={state.ocrPayload?.po?.number || "(auto-generado)"}
         />
-        <ReviewField
-          label="Confianza OCR"
-          value={`${Math.round((state.ocrPayload?.confidence || 0) * 100)}%`}
-        />
+      </div>
+
+      {/* ── Desglose por SKU · descripción + talla/cantidad ── */}
+      <div style={{ marginTop: 28 }}>
+        <h3 style={{
+          fontSize: 14, fontWeight: 600, color: COLORS.navy,
+          margin: "0 0 12px", textTransform: "uppercase", letterSpacing: 0.5,
+        }}>
+          Productos por SKU
+        </h3>
+        {skuGroups.map((g) => (
+          <div
+            key={g.sku}
+            style={{
+              border: `1px solid ${COLORS.border}`,
+              borderRadius: 10,
+              padding: "12px 16px",
+              marginBottom: 10,
+              background: "var(--surface-raised)",
+            }}
+          >
+            <div style={{
+              display: "flex", justifyContent: "space-between",
+              alignItems: "baseline", gap: 12, flexWrap: "wrap",
+            }}>
+              <div style={{ minWidth: 0 }}>
+                <code style={{ fontWeight: 700, color: COLORS.navy }}>{g.sku}</code>
+                <span style={{ marginLeft: 10, color: COLORS.ink, fontSize: 14 }}>
+                  {g.descripcion || "—"}
+                </span>
+              </div>
+              <div style={{
+                fontSize: 13, color: COLORS.inkSoft,
+                fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+              }}>
+                {g.units.toLocaleString()} unidades ·{" "}
+                <strong style={{ color: COLORS.navy }}>{fmtMoney(g.subtotal, currency)}</strong>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+              {Array.from(g.sizes.entries()).map(([sz, qty]) => (
+                <span
+                  key={sz}
+                  style={{
+                    border: `1px solid ${COLORS.border}`,
+                    borderRadius: 8,
+                    padding: "4px 10px",
+                    fontSize: 12,
+                    background: COLORS.paper,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  <span style={{ color: COLORS.inkSoft }}>Talla {sz}</span>{" "}
+                  <strong style={{ color: COLORS.navy }}>× {qty.toLocaleString()}</strong>
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+        {skuGroups.length === 0 && (
+          <p style={{ fontSize: 13, color: COLORS.inkSoft }}>
+            No hay productos. Vuelve al paso anterior.
+          </p>
+        )}
       </div>
 
     </section>

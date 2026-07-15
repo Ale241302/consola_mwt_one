@@ -68,7 +68,9 @@ DEFAULT_BANDS: list[tuple[int, float, float]] = [
 
 _NON_ALNUM_RE = re.compile(r"[^A-Z0-9]+")
 _DIGIT_GROUP_RE = re.compile(r"\d+")
-_PO_PREFIX_RE = re.compile(r"^(?:P\.?O\.?|PURCHASE\s+ORDER|ORDEN(?:\s+DE\s+COMPRA)?)[\s#:·\-]*", re.I)
+# Sprint 2026-07-15 · "POC" primero en la alternación: algunos PO llegan
+# tipeados como "POC 504978" y deben normalizar a "PO 504978".
+_PO_PREFIX_RE = re.compile(r"^(?:P\.?O\.?C\.?|P\.?O\.?|PURCHASE\s+ORDER|ORDEN(?:\s+DE\s+COMPRA)?)[\s#:·\-]*", re.I)
 
 # Rango plausible de tallas calzado (BR/EU). La PO trae 35-46
 # típicamente (A2f contempla 33..48); margen 30-60 para tallas raras

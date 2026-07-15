@@ -50,11 +50,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import re
 import uuid
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
+from django.core.mail import EmailMultiAlternatives
 from django.db import connection, transaction
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -589,6 +592,163 @@ def resolve_oc_preview(request):
         })
 
     return Response({"ok": True, "tc": tc, "banda_id": banda, "lines": out})
+
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Notificación a ADMIN cuando un CLIENTE crea un expediente
+# Sprint 2026-07-15 · alerta in-app (users.activity_feed → campana 🔔)
+# + email a los admins activos. Best-effort SIEMPRE: un fallo acá NUNCA
+# debe romper la creación del expediente (se loggea y se sigue).
+# ─────────────────────────────────────────────────────────────────────
+_ADMIN_NOTIFY_ROLES = ["admin", "superadmin", "ceo"]
+_NOTIFY_FALLBACK_TO = os.environ.get("CATALOG_REQUEST_FALLBACK_TO", "info@mwt.one")
+_NOTIFY_FROM        = os.environ.get("DEFAULT_FROM_EMAIL", "info@mwt.one")
+_NOTIFY_BASE_URL    = os.environ.get("MWT_ADMIN_BASE_URL", "https://consola.mwt.one")
+_EMAIL_RE           = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _notify_admins_expediente_created(*, expediente_id, expediente_codigo,
+                                      po_number, client_id, total_value,
+                                      moneda, lines_count, submitted_by_email):
+    """Notifica a los admins que un cliente B2B creó un expediente."""
+    # 1) Nombre legible del cliente (best-effort).
+    client_label = ""
+    try:
+        with connection.cursor() as c:
+            c.execute(
+                "SELECT razon_social FROM clientes.cliente WHERE id = %s",
+                [str(client_id)],
+            )
+            row = c.fetchone()
+            client_label = (row[0] or "") if row else ""
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 2) Admins activos (staff interno; excluye API users).
+    admins = []
+    try:
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT id, email_plain, full_name
+                  FROM users.mwtuser
+                 WHERE is_active = TRUE
+                   AND COALESCE(is_api_user, FALSE) = FALSE
+                   AND (lower(role_default) = ANY(%s) OR is_superuser = TRUE)
+            """, [_ADMIN_NOTIFY_ROLES])
+            admins = c.fetchall() or []
+    except Exception:  # noqa: BLE001
+        log.exception("[wizard.notify] lookup de admins falló")
+
+    try:
+        _total_txt = f"{float(total_value):,.2f}"
+    except (TypeError, ValueError):
+        _total_txt = str(total_value)
+
+    deep_link = f"/expedientes/{expediente_id}"
+    title = f"Nueva OC del portal · {client_label or 'Cliente B2B'}"
+    body = (
+        f"{client_label or 'Un cliente B2B'} creó el expediente "
+        f"{expediente_codigo} (PO {po_number}) con {lines_count} línea(s) "
+        f"por {moneda} {_total_txt}. Pendiente de revisión CEO."
+    )
+
+    # 3) Alerta in-app · una fila de users.activity_feed por admin.
+    #    created_at tiene DEFAULT now() en la tabla (A4_users_roles.sql).
+    for row in admins:
+        uid = row[0]
+        try:
+            with connection.cursor() as c:
+                c.execute("""
+                    INSERT INTO users.activity_feed (
+                        id, user_id, kind, title, body, icon, severity,
+                        deep_link, related_type, related_id, is_active
+                    ) VALUES (
+                        %s, %s, 'expediente.created_portal', %s, %s,
+                        'inbox', 'INFO', %s, 'expediente', %s, TRUE
+                    )
+                """, [
+                    str(uuid.uuid4()), str(uid), title[:160], body,
+                    deep_link, str(expediente_id),
+                ])
+        except Exception:  # noqa: BLE001
+            log.exception("[wizard.notify] activity_feed falló user=%s", uid)
+
+    # 4) Email a los admins (un solo envío; fallback info@mwt.one).
+    recipients = [r[1] for r in admins if r[1] and _EMAIL_RE.match(str(r[1]))]
+    if not recipients:
+        recipients = [_NOTIFY_FALLBACK_TO]
+    link = f"{_NOTIFY_BASE_URL}/expedientes/{expediente_id}"
+    subject = (f"[MWT.ONE] Nueva OC del portal — {client_label or 'Cliente B2B'}"
+               f" · PO {po_number}")
+    text_body = (
+        f"Hola Equipo MWT,\n\n"
+        f"El cliente {client_label or '—'}"
+        + (f" ({submitted_by_email})" if submitted_by_email else "")
+        + " creó un expediente desde el Portal B2B:\n\n"
+        f"  · Expediente: {expediente_codigo}\n"
+        f"  · PO:         {po_number}\n"
+        f"  · Líneas:     {lines_count}\n"
+        f"  · Total:      {moneda} {_total_txt}\n\n"
+        f"El expediente quedó en estado REGISTRO, pendiente de revisión CEO:\n"
+        f"  {link}\n\n"
+        f"— MWT.ONE · Portal B2B"
+    )
+    html_body = f"""
+    <div style="font-family:Inter,Arial,sans-serif;font-size:14px;color:#0B1E3A;
+                max-width:600px;margin:0 auto;padding:24px;
+                background:#F8FAFC;border-radius:12px">
+      <div style="background:#0B1E3A;color:#fff;padding:16px 20px;border-radius:10px;
+                  margin-bottom:18px">
+        <div style="font-size:11px;color:#1DE394;letter-spacing:1.5px;font-weight:700">
+          NUEVA OC DESDE EL PORTAL B2B
+        </div>
+        <div style="font-size:18px;font-weight:700;margin-top:4px">{client_label or "Cliente B2B"}</div>
+      </div>
+
+      <p>Hola <strong>Equipo MWT</strong>,</p>
+      <p>El cliente <strong>{client_label or "—"}</strong>
+         {f"(<a href='mailto:{submitted_by_email}'>{submitted_by_email}</a>)" if submitted_by_email else ""}
+         creó un expediente desde el Portal B2B:</p>
+
+      <table style="width:100%;border-collapse:collapse;margin:16px 0">
+        <tr><td style="padding:8px;color:#64748B;font-size:11px;
+                       text-transform:uppercase;letter-spacing:0.5px">Expediente</td>
+            <td style="padding:8px;font-weight:700;font-family:monospace">{expediente_codigo}</td></tr>
+        <tr><td style="padding:8px;color:#64748B;font-size:11px;
+                       text-transform:uppercase;letter-spacing:0.5px">PO</td>
+            <td style="padding:8px;font-family:monospace">{po_number}</td></tr>
+        <tr><td style="padding:8px;color:#64748B;font-size:11px;
+                       text-transform:uppercase;letter-spacing:0.5px">Líneas</td>
+            <td style="padding:8px">{lines_count}</td></tr>
+        <tr><td style="padding:8px;color:#64748B;font-size:11px;
+                       text-transform:uppercase;letter-spacing:0.5px">Total</td>
+            <td style="padding:8px;font-weight:600">{moneda} {_total_txt}</td></tr>
+      </table>
+
+      <a href="{link}"
+         style="display:inline-block;background:#00B286;color:#fff;text-decoration:none;
+                padding:12px 22px;border-radius:8px;font-weight:700;letter-spacing:0.3px">
+        Revisar Expediente →
+      </a>
+
+      <p style="margin-top:24px;color:#64748B;font-size:12px">
+        Este mensaje fue generado automáticamente por MWT.ONE.
+      </p>
+    </div>
+    """
+    try:
+        msg = EmailMultiAlternatives(
+            subject=subject,
+            body=text_body,
+            from_email=_NOTIFY_FROM,
+            to=recipients,
+            reply_to=[submitted_by_email] if submitted_by_email else None,
+        )
+        msg.attach_alternative(html_body, "text/html")
+        msg.send(fail_silently=True)
+    except Exception:  # noqa: BLE001
+        log.exception("[wizard.notify] envío de email a admins falló")
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -1200,6 +1360,25 @@ def create_from_oc(request):
             "error": "transaction_failed",
             "detail": str(e),
         }, status=500)
+
+    # ── 7.9 · Notificación a admins (portal B2B) — best-effort ─────
+    # Sprint 2026-07-15 · cuando un cliente/usuario del portal crea un
+    # expediente, los admins se enteran por email y por la campana del
+    # sitio (users.activity_feed). Nunca rompe la creación.
+    if is_client:
+        try:
+            _notify_admins_expediente_created(
+                expediente_id=expediente_id,
+                expediente_codigo=expediente_codigo,
+                po_number=po_number,
+                client_id=client_id,
+                total_value=total_value,
+                moneda=moneda,
+                lines_count=len(ocr_lines),
+                submitted_by_email=submitted_by_email,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("create_from_oc: notificación a admins falló (no fatal)")
 
     # ── 8. Respuesta ────────────────────────────────────────────────
     return Response({

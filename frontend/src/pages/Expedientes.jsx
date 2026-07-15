@@ -584,6 +584,14 @@ export default function ScreenExpedientes() {
         if (!tokens.every((t) => s.includes(t))) return false;
       }
       return true;
+    })
+    // Sprint 2026-07-15 (CEO) · orden por fecha de REGISTRO: el último
+    // expediente ingresado se ve PRIMERO. sort() es estable: filas sin
+    // created_at (o empatadas) conservan el orden del backend.
+    .sort((a, b) => {
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return tb - ta;
     });
   }, [q, statusFilter, brandFilter, clientFilter, signalFilter, alertFilter, EXPEDIENTES]);
 

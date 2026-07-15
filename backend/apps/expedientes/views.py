@@ -304,7 +304,11 @@ class OcViewSet(viewsets.ViewSet):
 # ════════════════════════════════════════════════════════════
 class ExpedienteViewSet(viewsets.ViewSet):
     def list(self, request):
-        qs = Expediente.objects.filter(is_active=True).order_by("-last_event_at", "-created_at")
+        # Sprint 2026-07-15 (CEO) · el listado se ordena por fecha de
+        # REGISTRO (created_at DESC): el último expediente ingresado se ve
+        # de primero (antes -last_event_at movía filas viejas al tope al
+        # recibir cualquier evento).
+        qs = Expediente.objects.filter(is_active=True).order_by("-created_at")
         mapping = {
             "oc":             "oc_id",
             "client":         "client_id",
