@@ -1042,6 +1042,12 @@ export default function ScreenOCDetail() {
   };
   const computedTotal = allLines.reduce((a, l) => a + lineClientTotal(l), 0);
   const computedDeferred = allLines.reduce((a, l) => a + ((l.deferred_qty||0) * (l.deferred_unit_price||0)), 0);
+  // Sprint 2026-07-15 (CEO) · totales por columna + ocultar columnas de
+  // diferido (Cant. dif / Precio dif) del listado de Productos OC.
+  const showDeferredCols = false;
+  const computedQty        = allLines.reduce((a, l) => a + Number(l.qty || 0), 0);
+  const computedMwtTotal   = allLines.reduce((a, l) => a + Number(l.qty || 0) * Number(l.unit_price_mwt || 0), 0);
+  const computedClientTotal = allLines.reduce((a, l) => a + Number(l.qty || 0) * Number(l.unit_price_client || l.unit_price || 0), 0);
   // Sprint 2026-05-17 · ¿La OC tiene al menos un expediente operado por
   // Muito Work Limitada? Si sí, mostramos columnas duales (Precio MWT +
   // Precio Cliente). Si no (cliente opera directamente), mostramos solo
@@ -2181,12 +2187,12 @@ export default function ScreenOCDetail() {
                 {/* Sprint 2026-05-11 fase 6 · columna Nodo (read-only). */}
                 <th style={{width:160}}>{lang==='es'?'Nodo':'Node'}</th>
                 {/* Columnas deferred qty/price: CEO-ONLY. */}
-                {isAdmin && (
+                {showDeferredCols && (
                   <th style={{width:90, textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
                     🔒 {lang==='es'?'Cant. dif.':'Def. qty'}
                   </th>
                 )}
-                {isAdmin && (
+                {showDeferredCols && (
                   <th style={{width:120, textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
                     🔒 {lang==='es'?'Precio dif.':'Def. price'}
                   </th>
@@ -2368,7 +2374,7 @@ export default function ScreenOCDetail() {
                     })()}
                   </td>
                   {/* Inputs deferred qty / deferred price: CEO-ONLY. */}
-                  {isAdmin && (
+                  {showDeferredCols && (
                     <td className="td-edit" style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 4%, transparent)'}}>
                       <input className="edit-input tabular" type="number" min={0} max={l.qty}
                         value={l.deferred_qty || 0}
@@ -2376,7 +2382,7 @@ export default function ScreenOCDetail() {
                         style={{ width: '100%', minWidth: 60, textAlign: 'right' }}/>
                     </td>
                   )}
-                  {isAdmin && (
+                  {showDeferredCols && (
                     <td className="td-edit" style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent) 4%, transparent)'}}>
                       <div className="edit-input-money" style={{
                         display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -2406,7 +2412,7 @@ export default function ScreenOCDetail() {
                 </tr>
               ))}
               {allLines.length === 0 && (
-                <tr><td colSpan={(isAdmin ? 10 : 7) + (isMwtOp && canSeeMwtPrice ? 1 : 0)} style={{textAlign:'center', padding:'32px', color:'var(--text-tertiary)'}}>
+                <tr><td colSpan={8 + (isMwtOp && canSeeMwtPrice ? 1 : 0) + (can('delete_oc_line') ? 1 : 0)} style={{textAlign:'center', padding:'32px', color:'var(--text-tertiary)'}}>
                   {lang==='es'
                     ? (isClient ? 'Sin productos en esta orden.' : 'Sin productos. Agrega el primero.')
                     : (isClient ? 'No products in this order.' : 'No products yet. Add your first.')}
@@ -2414,30 +2420,23 @@ export default function ScreenOCDetail() {
               )}
             </tbody>
             <tfoot>
+              {/* Sprint 2026-07-15 · fila de TOTALES por columna:
+                  Cant. · Precio MWT (Σ mwt·qty) · Precio Cliente (Σ cliente·qty) · Total. */}
               <tr>
-                {/* Sprint 2026-05-17 · colSpan condicional segun haya 1 o 2
-                    columnas de precio (depende de isMwtOp). */}
-                <td colSpan={isMwtOp && canSeeMwtPrice ? 6 : 5} style={{textAlign:'right', fontWeight:600, padding:'14px 12px'}}>
-                  {lang==='es'?'Total orden':'Order total'}
+                <td colSpan={3} style={{textAlign:'right', fontWeight:700, padding:'14px 12px'}}>
+                  {lang==='es'?'Totales':'Totals'}
                 </td>
+                <td className="tabular-nums" style={{textAlign:'right', fontWeight:700}}>
+                  {computedQty.toLocaleString('en-US')}
+                </td>
+                {isMwtOp && canSeeMwtPrice && (
+                  <td className="td-money" style={{fontWeight:700}}>{fmtMoney(computedMwtTotal)}</td>
+                )}
+                <td className="td-money" style={{fontWeight:700}}>{fmtMoney(computedClientTotal)}</td>
                 <td className="td-money" style={{fontSize:15, fontWeight:700}}>{fmtMoney(computedTotal)}</td>
-                {/* Totales de "diferido" en el tfoot: CEO-ONLY. */}
-                {isAdmin && (
-                  <td colSpan={2} style={{textAlign:'right', fontWeight:600, color:'var(--brand-accent-dark,#0E8A6D)', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
-                    🔒 {lang==='es'?'Total diferido':'Deferred total'}
-                  </td>
-                )}
-                {isAdmin && (
-                  <td className="td-money" style={{fontWeight:700, color:'var(--brand-accent-dark,#0E8A6D)', background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}>
-                    {fmtMoney(computedDeferred)}
-                  </td>
-                )}
-                {/* Celda vacía para alinear con la columna de acciones (solo ADMIN). */}
-                {can('delete_oc_line') && (
-                  <td style={{background:'color-mix(in oklab, var(--brand-accent) 8%, transparent)'}}/>
-                )}
-                {/* CLIENT: no tiene columnas deferred ni acciones → el colspan ya cuadra. */}
-                {isClient && <td/>}
+                <td/>{/* SAP */}
+                <td/>{/* Nodo */}
+                {can('delete_oc_line') && <td/>}
               </tr>
             </tfoot>
           </table>

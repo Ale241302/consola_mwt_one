@@ -993,18 +993,18 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, pr
             <th>SKU</th>
             <th>{lang==='es' ? 'Descripción' : 'Description'}</th>
             <th style={{textAlign:'right'}}>{lang==='es' ? 'Cant.' : 'Qty'}</th>
-            <th style={{textAlign:'right'}}>{lang==='es' ? 'P. unitario' : 'Unit price'}</th>
-            <th style={{textAlign:'right'}}>{lang==='es' ? 'Subtotal' : 'Subtotal'}</th>
+            <th style={{textAlign:'right', whiteSpace:'nowrap'}}>{lang==='es' ? 'P. unitario' : 'Unit price'}</th>
+            <th style={{textAlign:'right', whiteSpace:'nowrap'}}>{lang==='es' ? 'Subtotal' : 'Subtotal'}</th>
             {/* Sprint 2026-05-17 · Columnas duales editables (MWT + Cliente).
                 Mismo criterio que tab Productos: si MWT opera → ambas;
                 si el cliente opera → solo Precio Cliente. */}
             {isMwtOp && (
-              <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-primary) 6%, transparent)'}}>
+              <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-primary) 6%, transparent)', whiteSpace:'nowrap'}}>
                 {lang==='es' ? 'Precio MWT' : 'MWT price'}
               </th>
             )}
             {!isClient && (
-              <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent, #00B286) 6%, transparent)'}}>
+              <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent, #00B286) 6%, transparent)', whiteSpace:'nowrap'}}>
                 {lang==='es' ? 'Precio cliente' : 'Client price'}
               </th>
             )}
@@ -1121,6 +1121,31 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, pr
               );
             })}
           </tbody>
+          {/* Sprint 2026-07-15 · totales: Cant · Subtotal · Precio MWT · Precio Cliente. */}
+          <tfoot>
+            <tr>
+              <td colSpan={2} style={{textAlign:'right', fontWeight:700}}>{lang==='es'?'Totales':'Totals'}</td>
+              <td className="td-num tabular" style={{textAlign:'right', fontWeight:700}}>
+                {lines.reduce((a,l)=>a+Number(l.qty||0),0).toLocaleString('en-US')}
+              </td>
+              <td/>
+              <td className="td-money" style={{fontWeight:700}}>
+                {fmtMoney(lines.reduce((a,l)=>a+Number(l.qty||0)*Number(l.unit_price_client??l.unit_price??0),0))}
+              </td>
+              {isMwtOp && (
+                <td className="td-money" style={{fontWeight:700, background:'color-mix(in oklab, var(--brand-primary) 4%, transparent)'}}>
+                  {fmtMoney(lines.reduce((a,l)=>a+Number(l.qty||0)*Number(l.unit_price_mwt??l.unit_price??0),0))}
+                </td>
+              )}
+              {!isClient && (
+                <td className="td-money" style={{fontWeight:700, background:'color-mix(in oklab, var(--brand-accent, #00B286) 4%, transparent)'}}>
+                  {fmtMoney(lines.reduce((a,l)=>a+Number(l.qty||0)*Number(l.unit_price_client??l.unit_price??0),0))}
+                </td>
+              )}
+              <td/>
+              <td/>
+            </tr>
+          </tfoot>
         </table>
       </div>
 
@@ -1234,34 +1259,13 @@ function EditableClientPriceInput({ lineId, value, onSaved }) {
       setSaving(false);
     }
   };
+  // Sprint 2026-07-15 · precio SOLO LECTURA en ExpedienteDetail (la edición
+  // de precios se hace en el detalle de la OC / wizard).
   return (
-    <input
-      type="number"
-      min="0"
-      step="0.01"
-      className="tabular-nums"
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
-        if (e.key === 'Escape') { setV(String(value ?? 0)); e.target.blur(); }
-      }}
-      disabled={saving}
-      style={{
-        width: 96,
-        textAlign: 'right',
-        padding: '4px 8px',
-        background: saving ? 'var(--bg-alt)' : 'var(--surface)',
-        border: `1px solid ${err ? 'var(--critical)' : 'var(--border-subtle)'}`,
-        borderRadius: 6,
-        color: 'var(--text-primary)',
-        fontFamily: 'var(--font-mono)',
-        fontSize: 13,
-        outline: 'none',
-      }}
-      title="Precio cliente (snapshot)"
-    />
+    <span className="tabular-nums" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-primary)' }}
+          title="Precio cliente (snapshot)">
+      ${Number(value ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+    </span>
   );
 }
 
@@ -1291,34 +1295,12 @@ function EditableMwtPriceInput({ lineId, value, onSaved }) {
       setSaving(false);
     }
   };
+  // Sprint 2026-07-15 · precio SOLO LECTURA en ExpedienteDetail.
   return (
-    <input
-      type="number"
-      min="0"
-      step="0.01"
-      className="tabular-nums"
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
-        if (e.key === 'Escape') { setV(String(value ?? 0)); e.target.blur(); }
-      }}
-      disabled={saving}
-      style={{
-        width: 96,
-        textAlign: 'right',
-        padding: '4px 8px',
-        background: saving ? 'var(--bg-alt)' : 'var(--surface)',
-        border: `1px solid ${err ? 'var(--critical)' : 'var(--border-subtle)'}`,
-        borderRadius: 6,
-        color: 'var(--text-primary)',
-        fontFamily: 'var(--font-mono)',
-        fontSize: 13,
-        outline: 'none',
-      }}
-      title="Precio MWT (snapshot)"
-    />
+    <span className="tabular-nums" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-primary)' }}
+          title="Precio MWT (snapshot)">
+      ${Number(value ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+    </span>
   );
 }
 
@@ -1398,13 +1380,8 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
     <div className="card">
       <div className="card-head">
         <div className="card-title">{lang==='es' ? 'Productos del expediente' : 'File products'}</div>
-        <button
-          className="btn btn-ghost btn-sm"
-          onClick={() => setManualOpen(true)}
-          disabled={manualBusy}
-        >
-          <IconPlus size={13}/>{lang==='es' ? 'Agregar línea' : 'Add line'}
-        </button>
+        {/* Sprint 2026-07-15 · "Agregar línea" oculto en el detalle del
+            expediente (las líneas se gestionan desde la OC / wizard). */}
       </div>
       {manualErr && (
         <div className="caption" style={{
@@ -1420,20 +1397,20 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
           <th>SKU</th>
           <th>{lang==='es' ? 'Descripción' : 'Description'}</th>
           <th style={{textAlign:'right'}}>{lang==='es' ? 'Cant.' : 'Qty'}</th>
-          <th style={{textAlign:'right'}}>{lang==='es' ? 'Precio unit.' : 'Unit price'}</th>
-          <th style={{textAlign:'right'}}>{lang==='es' ? 'Subtotal' : 'Subtotal'}</th>
+          <th style={{textAlign:'right', whiteSpace:'nowrap'}}>{lang==='es' ? 'Precio unit.' : 'Unit price'}</th>
+          <th style={{textAlign:'right', whiteSpace:'nowrap'}}>{lang==='es' ? 'Subtotal' : 'Subtotal'}</th>
           {/* Sprint 2026-05-17 · Columna Precio MWT (snapshot operador).
               Solo se renderea si el expediente lo opera Muito Work
               Limitada. Si lo opera el cliente, la columna no aparece. */}
           {isMwtOp && (
-            <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-primary) 6%, transparent)'}}>
+            <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-primary) 6%, transparent)', whiteSpace:'nowrap'}}>
               {lang==='es' ? 'Precio MWT' : 'MWT price'}
             </th>
           )}
           {/* Sprint 2026-05-08 · Columna admin-only para editar precio
               cliente (unit_price_client). Tras Subtotal/Precio MWT. */}
           {!isClient && (
-            <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent, #00B286) 6%, transparent)'}}>
+            <th style={{textAlign:'right', background:'color-mix(in oklab, var(--brand-accent, #00B286) 6%, transparent)', whiteSpace:'nowrap'}}>
               {lang==='es' ? 'Precio cliente' : 'Client price'}
             </th>
           )}
@@ -1526,12 +1503,26 @@ function LinesTab({ lines, lang, cpaPriceMap, productoNombreMap, exp, isClient =
           );})}
         </tbody>
         <tfoot>
+          {/* Sprint 2026-07-15 · totales: Cant · Subtotal · Precio MWT · Precio Cliente. */}
           <tr>
-            <td colSpan={4} style={{ padding: 14, textAlign:'right', fontWeight: 600, color:'var(--text-tertiary)', textTransform:'uppercase', fontSize: 11, letterSpacing: '0.08em' }}>
-              {lang==='es' ? 'Total' : 'Total'}
+            <td colSpan={2} style={{ padding: 14, textAlign:'right', fontWeight: 700 }}>
+              {lang==='es' ? 'Totales' : 'Totals'}
             </td>
-            <td className="td-money" style={{ padding: 14, fontSize: 15, fontFamily: 'var(--font-mono)' }}>{fmtMoney(total)}</td>
-            {!isClient && <td/>}
+            <td className="td-num tabular" style={{ padding: 14, textAlign:'right', fontWeight: 700 }}>
+              {lines.reduce((a,l)=>a+Number(l.qty||0),0).toLocaleString('en-US')}
+            </td>
+            <td/>
+            <td className="td-money" style={{ padding: 14, fontSize: 15, fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtMoney(total)}</td>
+            {isMwtOp && (
+              <td className="td-money" style={{ padding: 14, fontWeight: 700, background:'color-mix(in oklab, var(--brand-primary) 4%, transparent)' }}>
+                {fmtMoney(lines.reduce((a,l)=>a+Number(l.qty||0)*Number(l.unit_price_mwt??l.unit_price??0),0))}
+              </td>
+            )}
+            {!isClient && (
+              <td className="td-money" style={{ padding: 14, fontWeight: 700, background:'color-mix(in oklab, var(--brand-accent, #00B286) 4%, transparent)' }}>
+                {fmtMoney(lines.reduce((a,l)=>a+Number(l.qty||0)*Number(l.unit_price_client??l.unit_price??0),0))}
+              </td>
+            )}
             <td/>
             <td/>
           </tr>
