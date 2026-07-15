@@ -761,6 +761,26 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                     paymentDaysMwt_val, e,
                                 )
 
+                    # Sprint 2026-07-15 · OVERRIDE MANUAL del admin (Paso 3 del
+                    # wizard). Si la línea trae price_override=true con
+                    # unit_price_client / unit_price_mwt explícitos (>0), esos
+                    # valores MANDAN sobre cualquier derivación del motor —
+                    # regla "el precio manual manda". Aplica por SKU (el front
+                    # replica el override a todas las líneas del mismo SKU).
+                    if ln.get("price_override"):
+                        def _dec_pos(v):
+                            try:
+                                d = Decimal(str(v))
+                                return d if d > 0 else None
+                            except (TypeError, ValueError, InvalidOperation):
+                                return None
+                        _ov_c = _dec_pos(ln.get("unit_price_client"))
+                        _ov_m = _dec_pos(ln.get("unit_price_mwt"))
+                        if _ov_c is not None:
+                            unit_price_client = _ov_c
+                        if _ov_m is not None:
+                            unit_price_mwt = _ov_m
+
                     # Legacy unit_price = el precio que le toca al OPERADOR.
                     unit_price = (unit_price_mwt
                                   if str(operating_company_id) == MWT_OPERATING_CLIENT_ID
@@ -3295,6 +3315,59 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         lines_removed=lines_removed,
                         lines_updated=lines_updated,
                     )
+
+                    # 3.5) OVERRIDE MANUAL de precios por SKU (Paso 3 edición
+                    #      general). El admin fijó Precio MWT / Precio Cliente
+                    #      por SKU; se aplica a TODAS las líneas activas de ese
+                    #      SKU en el expediente. "El precio manual manda".
+                    _line_prices = payload.get("line_prices")
+                    if isinstance(_line_prices, str):
+                        try:
+                            _line_prices = json.loads(_line_prices)
+                        except (TypeError, ValueError):
+                            _line_prices = None
+                    if _line_prices:
+                        def _dec_pos_ef(v):
+                            try:
+                                d = Decimal(str(v))
+                                return d if d > 0 else None
+                            except (TypeError, ValueError, InvalidOperation):
+                                return None
+                        _is_mwt_op_ef = (
+                            bool(eff_op)
+                            and str(eff_op).lower() == str(MWT_OPERATING_CLIENT_ID).lower()
+                        )
+                        for _lp in _line_prices:
+                            if not isinstance(_lp, dict):
+                                continue
+                            _sku_lp = (_lp.get("sku") or "").strip().upper()
+                            if not _sku_lp:
+                                continue
+                            _upc = _dec_pos_ef(_lp.get("unit_price_client"))
+                            _upm = _dec_pos_ef(_lp.get("unit_price_mwt"))
+                            _parts, _pargs = [], []
+                            if _upc is not None:
+                                _parts.append("unit_price_client = %s")
+                                _pargs.append(str(_upc))
+                            if _upm is not None:
+                                _parts.append("unit_price_mwt = %s")
+                                _pargs.append(str(_upm))
+                            if not _parts:
+                                continue
+                            _legacy = (_upm if (_is_mwt_op_ef and _upm is not None)
+                                       else (_upc if _upc is not None else _upm))
+                            if _legacy is not None:
+                                _parts.append("unit_price = %s")
+                                _pargs.append(str(_legacy))
+                                _parts.append("total_price = ROUND(%s * qty, 2)")
+                                _pargs.append(str(_legacy))
+                            _parts.append("updated_at = NOW()")
+                            c.execute(
+                                f"UPDATE expedientes.linea SET {', '.join(_parts)} "
+                                f"WHERE expediente_id = %s::uuid "
+                                f"AND upper(sku) = %s AND is_active = TRUE",
+                                _pargs + [str(exp.id), _sku_lp],
+                            )
 
                     # 4) Recalcular total_cost del expediente.
                     c.execute(

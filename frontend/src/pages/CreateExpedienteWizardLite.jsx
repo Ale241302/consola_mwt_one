@@ -118,6 +118,10 @@ export default function CreateExpedienteWizardLite() {
   const [selClient, setSelClient]       = useState(null);   // {id, label, parent_id, …}
 
   const [orderLines, setOrderLines]     = useState([]);     // [{tmpId, sku, talla, cantidad, producto_id, product_label, is_assigned, unassigned_request_sent}]
+  // Sprint 2026-07-15 · overrides manuales de precio por SKU (Paso 3).
+  //   { [SKU_UPPER]: { client?: number|string, mwt?: number|string } }
+  // El admin fija el precio por SKU y se aplica a TODAS las líneas de ese SKU.
+  const [priceOverrides, setPriceOverrides] = useState({});
   const [parsing, setParsing]           = useState(false);
   const [manualOpen, setManualOpen]     = useState(false);
   const [reqDialog, setReqDialog]       = useState(null);   // {sku} cuando solicita asignación
@@ -536,6 +540,19 @@ export default function CreateExpedienteWizardLite() {
           })
           .map((l) => ({ id: l.tmpId, qty: Number(l.cantidad) || 0 }));
 
+        // Sprint 2026-07-15 · overrides manuales de precio por SKU (Paso 3).
+        const line_prices = Object.entries(priceOverrides)
+          .map(([sku, o]) => {
+            const out = { sku };
+            if (o && o.client != null && o.client !== "" && Number(o.client) > 0) {
+              out.unit_price_client = Number(o.client);
+            }
+            if (o && o.mwt != null && o.mwt !== "" && Number(o.mwt) > 0) {
+              out.unit_price_mwt = Number(o.mwt);
+            }
+            return out;
+          })
+          .filter((o) => o.unit_price_client != null || o.unit_price_mwt != null);
         const body = {
           operating_company_id: operatingCompanyId,
           // Sprint Commit 9 · forma_pago obligatorio. Si llegó aqui es
@@ -545,6 +562,7 @@ export default function CreateExpedienteWizardLite() {
           lines_added,
           lines_removed,
           lines_updated,
+          ...(line_prices.length ? { line_prices } : {}),
         };
         // Si el usuario cambió de cliente, abrir modal de confirmación
         // (split). Diferimos el PATCH hasta que el usuario apruebe.
@@ -721,8 +739,19 @@ export default function CreateExpedienteWizardLite() {
           // (que es el plazo del bloque cliente). Default base 90d.
           const _clientDays = Number(paymentDaysCliente) > 0 ? Number(paymentDaysCliente) : (Number(paymentDays) || 90);
           const _mwtDays    = Number(paymentDaysMwt)     > 0 ? Number(paymentDaysMwt)     : 90;
-          const unitPriceClient = _pickFromMatrix(matrixClient, _clientDays);
-          const unitPriceMwt    = _pickFromMatrix(matrixMwt,    _mwtDays);
+          let unitPriceClient = _pickFromMatrix(matrixClient, _clientDays);
+          let unitPriceMwt    = _pickFromMatrix(matrixMwt,    _mwtDays);
+          // Sprint 2026-07-15 · override manual del admin por SKU (Paso 3).
+          // Si existe, MANDA sobre el precio del motor y se marca la línea
+          // con price_override para que el backend lo respete.
+          const _ovSku = priceOverrides[String(l.sku || "").trim().toUpperCase()] || {};
+          const _ovC = (_ovSku.client != null && _ovSku.client !== "" && Number(_ovSku.client) > 0)
+            ? Number(_ovSku.client) : null;
+          const _ovM = (_ovSku.mwt != null && _ovSku.mwt !== "" && Number(_ovSku.mwt) > 0)
+            ? Number(_ovSku.mwt) : null;
+          const _hasOverride = _ovC != null || _ovM != null;
+          if (_ovC != null) unitPriceClient = _ovC;
+          if (_ovM != null) unitPriceMwt = _ovM;
           // unit_price legacy: usamos el cliente como espejo (semantica anterior).
           const unitPriceLegacy = unitPriceClient != null ? unitPriceClient : unitPriceMwt;
           return {
@@ -731,6 +760,7 @@ export default function CreateExpedienteWizardLite() {
             cantidad:      Number(l.cantidad) || 0,
             producto_id:   l.producto_id || null,
             product_label: l.product_label || null,
+            ...(_hasOverride ? { price_override: true } : {}),
             ...(unitPriceLegacy != null ? { unit_price: unitPriceLegacy } : {}),
             ...(unitPriceClient != null ? { unit_price_client: unitPriceClient } : {}),
             ...(unitPriceMwt    != null ? { unit_price_mwt:    unitPriceMwt    } : {}),
@@ -868,6 +898,8 @@ export default function CreateExpedienteWizardLite() {
               setPaymentDaysCliente={setPaymentDaysCliente}
               paymentMethod={paymentMethod}
               setPaymentMethod={setPaymentMethod}
+              priceOverrides={priceOverrides}
+              setPriceOverrides={setPriceOverrides}
               pricingMatrixRef={pricingMatrixRef}
               tcUsdBrlRef={tcUsdBrlRef}
             />
@@ -1687,7 +1719,12 @@ function Step2Productos({
               </tr>
             </thead>
             <tbody>
-              {orderLines.map((l) => {
+              {/* Sprint 2026-07-15 · agrupar/ordenar por SKU y talla (display). */}
+              {[...orderLines].sort((a, b) => {
+                const sa = String(a.sku || ""), sb = String(b.sku || "");
+                if (sa !== sb) return sa.localeCompare(sb, undefined, { numeric: true });
+                return String(a.talla ?? "").localeCompare(String(b.talla ?? ""), undefined, { numeric: true });
+              }).map((l) => {
                 const unassigned = l.is_assigned === false;
                 return (
                   <tr key={l.tmpId}
@@ -1835,7 +1872,7 @@ function Step2Productos({
  * @property {(m:string)=>void} setPaymentMethod
  */
 /** @param {Step3Props} props */
-function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentDaysMwt, setPaymentDaysMwt, paymentDaysCliente, setPaymentDaysCliente, paymentMethod, setPaymentMethod, pricingMatrixRef, tcUsdBrlRef }) {
+function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentDaysMwt, setPaymentDaysMwt, paymentDaysCliente, setPaymentDaysCliente, paymentMethod, setPaymentMethod, pricingMatrixRef, tcUsdBrlRef, priceOverrides = {}, setPriceOverrides = () => {} }) {
   // Sprint 2026-05-24 · sincronizar plazos duales con paymentDays cuando NO hay operador intermedio.
   // Cuando hay operador (MWT distinto del cliente), cada selector es independiente.
   const _operatedByMwtSync = operatingMode === 'mwt';
@@ -1990,6 +2027,28 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     const v = Number(baseEntry.price);
     return Number.isFinite(v) && v > 0 ? v : null;
   };
+
+  // Sprint 2026-07-15 · precio editable por SKU (override manual del admin).
+  const _ovKey = (sku) => String(sku || "").trim().toUpperCase();
+  const _numPos = (v) => (v != null && v !== "" && Number(v) > 0 ? Number(v) : null);
+  const _priceFromResults = (resultsObj, sku) => {
+    const m = resultsObj && resultsObj[sku];
+    if (!m || !m.ok || !Array.isArray(m.plazos)) return null;
+    const b = m.plazos.find(p => p && p.is_base);
+    const v = b ? Number(b.price) : null;
+    return Number.isFinite(v) && v > 0 ? v : null;
+  };
+  const clientSnap = (sku) => _priceFromResults(pricingMatrix?.results, sku);
+  const mwtSnap    = (sku) => _priceFromResults(pricingMatrix?.operator_results || pricingMatrix?.results, sku);
+  const ovOf = (sku) => priceOverrides[_ovKey(sku)] || {};
+  const clientPriceOf = (sku) => { const o = _numPos(ovOf(sku).client); return o != null ? o : clientSnap(sku); };
+  const mwtPriceOf    = (sku) => { const o = _numPos(ovOf(sku).mwt);    return o != null ? o : mwtSnap(sku); };
+  const viewerPriceOf = (sku) => (operatedByMwt ? mwtPriceOf(sku) : clientPriceOf(sku));
+  const setOverride = (sku, field, value) => {
+    const key = _ovKey(sku);
+    setPriceOverrides((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: value } }));
+  };
+
   // Agrupar por SKU para el resumen + acumular subtotales por SKU
   const bySku = {};
   orderLines.forEach((l) => {
@@ -2000,11 +2059,12 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       };
     }
     bySku[l.sku].tallas.push({ talla: l.talla, cantidad: l.cantidad });
-    const uSnap = snapshotUnitPrice(l.sku);
-    const u = uSnap != null ? uSnap : Number(priceMap[l.producto_id] || 0);
+    const vp = viewerPriceOf(l.sku);
+    const u = vp != null ? vp : Number(priceMap[l.producto_id] || 0);
     bySku[l.sku].subtotalValue += u * Number(l.cantidad || 0);
   });
-  const groups = Object.values(bySku);
+  const groups = Object.values(bySku).sort((a, b) =>
+    String(a.sku || "").localeCompare(String(b.sku || ""), undefined, { numeric: true }));
   const totalValue = groups.reduce((a, g) => a + g.subtotalValue, 0);
 
   // Sprint 2026-05-22 · Precios reales del snapshot por plazo.
@@ -2154,6 +2214,12 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
               <th>SKU</th>
               <th>{lang === "es" ? "Producto" : "Product"}</th>
               <th>{lang === "es" ? "Tallas y cantidades" : "Sizes & quantities"}</th>
+              {isAdmin && operatedByMwt && (
+                <th style={{ textAlign: "right" }}>{lang === "es" ? "Precio MWT" : "MWT Price"}</th>
+              )}
+              {isAdmin && (
+                <th style={{ textAlign: "right" }}>{lang === "es" ? "Precio Cliente" : "Client Price"}</th>
+              )}
               <th style={{ textAlign: "right" }}>{lang === "es" ? "Total uds." : "Total qty"}</th>
               {isAdmin && <th style={{ textAlign: "right" }}>{lang === "es" ? "Valor" : "Value"}</th>}
             </tr>
@@ -2176,6 +2242,34 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                       </span>
                     ))}
                   </td>
+                  {isAdmin && operatedByMwt && (
+                    <td style={{ textAlign: "right" }}>
+                      <span style={{ color: "var(--text-tertiary)", marginRight: 2 }}>$</span>
+                      <input className="input tabular-nums" type="number" min="0" step="0.01"
+                        value={ovOf(g.sku).mwt != null && ovOf(g.sku).mwt !== ""
+                          ? ovOf(g.sku).mwt
+                          : (mwtSnap(g.sku) != null ? mwtSnap(g.sku) : "")}
+                        onChange={(e) => setOverride(g.sku, "mwt", e.target.value)}
+                        style={{ width: 90, textAlign: "right", display: "inline-block" }}
+                        title={lang === "es"
+                          ? "Precio MWT por par — se aplica a todas las tallas de este SKU"
+                          : "MWT price per pair — applies to all sizes of this SKU"} />
+                    </td>
+                  )}
+                  {isAdmin && (
+                    <td style={{ textAlign: "right" }}>
+                      <span style={{ color: "var(--text-tertiary)", marginRight: 2 }}>$</span>
+                      <input className="input tabular-nums" type="number" min="0" step="0.01"
+                        value={ovOf(g.sku).client != null && ovOf(g.sku).client !== ""
+                          ? ovOf(g.sku).client
+                          : (clientSnap(g.sku) != null ? clientSnap(g.sku) : "")}
+                        onChange={(e) => setOverride(g.sku, "client", e.target.value)}
+                        style={{ width: 90, textAlign: "right", display: "inline-block" }}
+                        title={lang === "es"
+                          ? "Precio Cliente por par — se aplica a todas las tallas de este SKU"
+                          : "Client price per pair — applies to all sizes of this SKU"} />
+                    </td>
+                  )}
                   <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--text-primary)" }}>
                     {totalSku}
                   </td>
