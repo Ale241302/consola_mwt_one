@@ -3337,6 +3337,13 @@ class ExpedienteViewSet(viewsets.ViewSet):
                             bool(eff_op)
                             and str(eff_op).lower() == str(MWT_OPERATING_CLIENT_ID).lower()
                         )
+                        # Sprint 2026-07-15 · si hubo split, las líneas se
+                        # MOVIERON a un expediente nuevo; el override de precio
+                        # debe aplicarse allí también (si no, quedan con el
+                        # precio re-derivado del motor por el split).
+                        _lp_exp_ids = [str(exp.id)]
+                        if split_res and split_res.get("new_expediente_id"):
+                            _lp_exp_ids.append(str(split_res["new_expediente_id"]))
                         for _lp in _line_prices:
                             if not isinstance(_lp, dict):
                                 continue
@@ -3362,11 +3369,25 @@ class ExpedienteViewSet(viewsets.ViewSet):
                                 _parts.append("total_price = ROUND(%s * qty, 2)")
                                 _pargs.append(str(_legacy))
                             _parts.append("updated_at = NOW()")
+                            for _eid in _lp_exp_ids:
+                                c.execute(
+                                    f"UPDATE expedientes.linea SET {', '.join(_parts)} "
+                                    f"WHERE expediente_id = %s::uuid "
+                                    f"AND upper(sku) = %s AND is_active = TRUE",
+                                    _pargs + [_eid, _sku_lp],
+                                )
+                        # Recalcular total del expediente NUEVO (split) tras override.
+                        if split_res and split_res.get("new_expediente_id"):
                             c.execute(
-                                f"UPDATE expedientes.linea SET {', '.join(_parts)} "
-                                f"WHERE expediente_id = %s::uuid "
-                                f"AND upper(sku) = %s AND is_active = TRUE",
-                                _pargs + [str(exp.id), _sku_lp],
+                                """
+                                UPDATE expedientes.expediente e
+                                   SET total_cost = COALESCE((
+                                         SELECT SUM(l.total_price) FROM expedientes.linea l
+                                          WHERE l.expediente_id = e.id AND l.is_active = TRUE
+                                       ), 0), updated_at = NOW()
+                                 WHERE e.id = %s::uuid
+                                """,
+                                [str(split_res["new_expediente_id"])],
                             )
 
                     # 4) Recalcular total_cost del expediente.

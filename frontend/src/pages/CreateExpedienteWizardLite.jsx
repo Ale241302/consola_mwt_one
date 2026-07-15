@@ -149,6 +149,10 @@ export default function CreateExpedienteWizardLite() {
   // para resolver el snapshot MWT (unit_price_mwt) cuando el operador
   // del expediente es Muito Work Limitada.
   const tcUsdBrlRef = useRef(null);
+  // Sprint 2026-07-15 · precios finales por SKU (base override × descuento del
+  // plazo elegido). Step3Resumen lo llena; handleCreate/edit-full lo persiste.
+  //   [{ sku, unit_price_mwt?, unit_price_client? }]
+  const linePricesRef = useRef([]);
 
   // ── Sprint 2026-05-01: precios y proyeccion de credito ─────────
   // Mapa { producto_id -> unit_price } resuelto desde el catalogo de
@@ -540,19 +544,11 @@ export default function CreateExpedienteWizardLite() {
           })
           .map((l) => ({ id: l.tmpId, qty: Number(l.cantidad) || 0 }));
 
-        // Sprint 2026-07-15 · overrides manuales de precio por SKU (Paso 3).
-        const line_prices = Object.entries(priceOverrides)
-          .map(([sku, o]) => {
-            const out = { sku };
-            if (o && o.client != null && o.client !== "" && Number(o.client) > 0) {
-              out.unit_price_client = Number(o.client);
-            }
-            if (o && o.mwt != null && o.mwt !== "" && Number(o.mwt) > 0) {
-              out.unit_price_mwt = Number(o.mwt);
-            }
-            return out;
-          })
-          .filter((o) => o.unit_price_client != null || o.unit_price_mwt != null);
+        // Sprint 2026-07-15 · precios finales por SKU = base override × el
+        // descuento del plazo elegido (MWT y Cliente). Los calcula Step3Resumen
+        // (tiene el snapshot y los plazos) y los deja en linePricesRef.
+        const line_prices = Array.isArray(linePricesRef.current)
+          ? linePricesRef.current : [];
         const body = {
           operating_company_id: operatingCompanyId,
           // Sprint Commit 9 · forma_pago obligatorio. Si llegó aqui es
@@ -744,11 +740,13 @@ export default function CreateExpedienteWizardLite() {
           // Sprint 2026-07-15 · override manual del admin por SKU (Paso 3).
           // Si existe, MANDA sobre el precio del motor y se marca la línea
           // con price_override para que el backend lo respete.
-          const _ovSku = priceOverrides[String(l.sku || "").trim().toUpperCase()] || {};
-          const _ovC = (_ovSku.client != null && _ovSku.client !== "" && Number(_ovSku.client) > 0)
-            ? Number(_ovSku.client) : null;
-          const _ovM = (_ovSku.mwt != null && _ovSku.mwt !== "" && Number(_ovSku.mwt) > 0)
-            ? Number(_ovSku.mwt) : null;
+          const _skuKey = String(l.sku || "").trim().toUpperCase();
+          const _finalLp = (linePricesRef.current || []).find(
+            (x) => String(x.sku || "").trim().toUpperCase() === _skuKey) || {};
+          const _ovC = (_finalLp.unit_price_client != null && Number(_finalLp.unit_price_client) > 0)
+            ? Number(_finalLp.unit_price_client) : null;
+          const _ovM = (_finalLp.unit_price_mwt != null && Number(_finalLp.unit_price_mwt) > 0)
+            ? Number(_finalLp.unit_price_mwt) : null;
           const _hasOverride = _ovC != null || _ovM != null;
           if (_ovC != null) unitPriceClient = _ovC;
           if (_ovM != null) unitPriceMwt = _ovM;
@@ -900,6 +898,7 @@ export default function CreateExpedienteWizardLite() {
               setPaymentMethod={setPaymentMethod}
               priceOverrides={priceOverrides}
               setPriceOverrides={setPriceOverrides}
+              linePricesRef={linePricesRef}
               pricingMatrixRef={pricingMatrixRef}
               tcUsdBrlRef={tcUsdBrlRef}
             />
@@ -1872,7 +1871,7 @@ function Step2Productos({
  * @property {(m:string)=>void} setPaymentMethod
  */
 /** @param {Step3Props} props */
-function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentDaysMwt, setPaymentDaysMwt, paymentDaysCliente, setPaymentDaysCliente, paymentMethod, setPaymentMethod, pricingMatrixRef, tcUsdBrlRef, priceOverrides = {}, setPriceOverrides = () => {} }) {
+function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentDaysMwt, setPaymentDaysMwt, paymentDaysCliente, setPaymentDaysCliente, paymentMethod, setPaymentMethod, pricingMatrixRef, tcUsdBrlRef, priceOverrides = {}, setPriceOverrides = () => {}, linePricesRef }) {
   // Sprint 2026-05-24 · sincronizar plazos duales con paymentDays cuando NO hay operador intermedio.
   // Cuando hay operador (MWT distinto del cliente), cada selector es independiente.
   const _operatedByMwtSync = operatingMode === 'mwt';
@@ -2074,6 +2073,34 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     const cp = clientPriceOf(l.sku); if (cp != null) clientTotalValue += cp * q;
     const mp = mwtPriceOf(l.sku);    if (mp != null) mwtTotalValue += mp * q;
   });
+
+  // Sprint 2026-07-15 · precios FINALES por SKU = base override × el descuento
+  // del plazo elegido. MWT usa su plazo (paymentDaysMwt), Cliente el suyo
+  // (paymentDaysCliente). En el plazo base el factor es 1 (sin descuento).
+  // Se deja en linePricesRef para que handleCreate/edit-full los persista.
+  const _factorForDays = (days) => {
+    const t = (effectiveTiers || []).find((x) => Number(x.days) === Number(days));
+    return t ? (1 - (Number(t.pct) || 0) / 100) : 1;
+  };
+  useEffect(() => {
+    if (!linePricesRef) return;
+    const mwtDays = operatedByMwt
+      ? (Number(paymentDaysMwt) || Number(paymentDays) || 90)
+      : (Number(paymentDays) || 90);
+    const cliDays = Number(paymentDaysCliente) || Number(paymentDays) || 90;
+    const mwtFactor = _factorForDays(mwtDays);
+    const cliFactor = _factorForDays(cliDays);
+    const out = [];
+    Object.entries(priceOverrides || {}).forEach(([sku, o]) => {
+      const ovm = _numPos(o && o.mwt);
+      const ovc = _numPos(o && o.client);
+      const entry = { sku };
+      if (ovm != null) entry.unit_price_mwt    = Math.round(ovm * mwtFactor * 10000) / 10000;
+      if (ovc != null) entry.unit_price_client = Math.round(ovc * cliFactor * 10000) / 10000;
+      if (entry.unit_price_mwt != null || entry.unit_price_client != null) out.push(entry);
+    });
+    linePricesRef.current = out;
+  }, [priceOverrides, effectiveTiers, paymentDays, paymentDaysMwt, paymentDaysCliente, operatedByMwt, linePricesRef]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sprint 2026-05-22 · Precios reales del snapshot por plazo.
   // tierTotals[dias] = suma sobre TODOS los SKUs de la OC:
