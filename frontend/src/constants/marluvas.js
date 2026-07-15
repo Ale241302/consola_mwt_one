@@ -35,6 +35,7 @@ export const PLAZOS_MARLUVAS = [
   { dias: 90, factor: 1.0000, label: "90 días", sub: "base" },
   { dias: 60, factor: 0.9900, label: "60 días", sub: "−1.00%" },
   { dias: 30, factor: 0.9825, label: "30 días", sub: "−1.75%" },
+  { dias: 15, factor: 0.9757, label: "15 días", sub: "−2.43%" },
   { dias:  8, factor: 0.9725, label:  "8 días", sub: "−2.75%" },
 ];
 
