@@ -1180,7 +1180,7 @@ function StepProducts({ state, patch, isClient, clientId }) {
             <th style={styles.thRight}>Precio Unit.</th>
             <th style={styles.thRight}>Subtotal</th>
             {!isClient && <th style={styles.th}>Veredicto</th>}
-            <th />
+            <th style={styles.th} aria-label="Acciones" />
           </tr>
         </thead>
         <tbody>
@@ -1281,7 +1281,7 @@ function StepProducts({ state, patch, isClient, clientId }) {
         </tbody>
         <tfoot>
           <tr>
-            <td colSpan={isClient ? 4 : 5} style={{ ...styles.td, textAlign: "right", fontWeight: 600 }}>
+            <td colSpan={5} style={{ ...styles.td, textAlign: "right", fontWeight: 600 }}>
               Subtotal
             </td>
             <td style={{ ...styles.tdRight, fontWeight: 700, color: COLORS.navy }}>
