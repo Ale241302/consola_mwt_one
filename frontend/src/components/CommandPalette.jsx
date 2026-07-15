@@ -50,7 +50,10 @@ export function CommandPalette({ lang, onClose }) {
 
   const goScreen = (key) => { const path = KEY_TO_PATH[key]; if (path) navigate(path); };
   const openExpediente = (e) => {
-    if (e.oc_id) navigate(`/expedientes/${e.oc_id}/exp/${e.id}`);
+    // Sprint 2026-07-15 · el buscador abre el DETALLE DE LA OC
+    // (/expedientes/:ocId), no el detalle del expediente/SAP interno.
+    if (e.oc_id) navigate(`/expedientes/${e.oc_id}`);
+    else if (e.id) navigate(`/expedientes/${e.id}`);
     else navigate(`/expedientes`);
   };
 

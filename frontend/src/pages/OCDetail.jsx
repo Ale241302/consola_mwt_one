@@ -24,7 +24,7 @@
 // Fuente de autoridad: RoleContext (can, isAdmin, isClient). La protección
 // real vive en el backend (apps.portal.ClientScopedManager + POL_VISIBILIDAD).
 // =====================================================================
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney } from "../lib/i18n.js";
 import { StatusBadge, CreditDot, CountryFlag } from "../components/ui/primitives.jsx";
@@ -623,6 +623,37 @@ export default function ScreenOCDetail() {
     const base = (oc?.lines || []).filter(l => !removedLineIds.has(l.id));
     return [...base, ...extraLines].map(readLine);
   }, [oc?.lines, extraLines, removedLineIds, lineEdits]);
+
+  // Sprint 2026-07-15 (CEO) · precio compartido por SKU. Al editar el precio
+  // de una línea, TODAS las líneas del MISMO expediente con el MISMO SKU
+  // reciben ese precio (mismo SKU = mismo precio unitario negociado). Si la
+  // línea no trae expediente, se propaga por SKU dentro de la OC.
+  const sameSkuLineIds = useCallback((srcLine) => {
+    const sku = String(srcLine?.sku || "").trim().toUpperCase();
+    if (!sku) return srcLine?.id ? [srcLine.id] : [];
+    const exp = srcLine?.exp_id || srcLine?.expediente_id || null;
+    return allLines
+      .filter((ln) => {
+        if (String(ln.sku || "").trim().toUpperCase() !== sku) return false;
+        if (exp) {
+          const lexp = ln.exp_id || ln.expediente_id || null;
+          if (lexp && lexp !== exp) return false;
+        }
+        return true;
+      })
+      .map((ln) => ln.id);
+  }, [allLines]);
+
+  // Aplica un patch de precio a todas las líneas hermanas (mismo SKU) en el
+  // state local (feedback inmediato) y persiste cada una en el backend.
+  const setPriceForSku = (srcLine, patch, field) => {
+    const ids = sameSkuLineIds(srcLine);
+    ids.forEach((id) => updateLine(id, patch));
+    return ids;
+  };
+  const persistPriceForSku = (srcLine, field, value) => {
+    sameSkuLineIds(srcLine).forEach((id) => persistLinePrice(id, field, value));
+  };
 
   // Sprint 2026-05-11 fase 6 · mapa (exp_id::prod_id::talla) → [nodos].
   // Alimenta la columna "Nodo" de la tabla "Productos OC". Hace fetch
@@ -2223,9 +2254,9 @@ export default function ScreenOCDetail() {
                             value={l.unit_price_mwt ?? 0}
                             onChange={e=>{
                               const v = +e.target.value;
-                              updateLine(l.id, { unit_price_mwt: v, unit_price: v });
+                              setPriceForSku(l, { unit_price_mwt: v, unit_price: v }, 'unit_price_mwt');
                             }}
-                            onBlur={(e) => persistLinePrice(l.id, 'unit_price_mwt', +e.target.value)}
+                            onBlur={(e) => persistPriceForSku(l, 'unit_price_mwt', +e.target.value)}
                             style={{
                               width: '100%', minWidth: 80, maxWidth: 110,
                               textAlign: 'right',
@@ -2255,9 +2286,9 @@ export default function ScreenOCDetail() {
                             const v = +e.target.value;
                             const patch = { unit_price_client: v };
                             if (!isMwtOp) patch.unit_price = v;
-                            updateLine(l.id, patch);
+                            setPriceForSku(l, patch, 'unit_price_client');
                           }}
-                          onBlur={(e) => persistLinePrice(l.id, 'unit_price_client', +e.target.value)}
+                          onBlur={(e) => persistPriceForSku(l, 'unit_price_client', +e.target.value)}
                           style={{
                             width: '100%', minWidth: 80, maxWidth: 110,
                             textAlign: 'right',
