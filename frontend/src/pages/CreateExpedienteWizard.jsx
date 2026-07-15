@@ -1078,8 +1078,8 @@ function StepProducts({ state, patch, isClient, clientId }) {
     patch({ lines: next });
   };
   const delLine = (i) => {
-    // CLIENT solo puede eliminar líneas que agregó manualmente.
-    if (isClient && !state.lines[i]?.manual) return;
+    // Sprint 2026-07-15 · el CLIENT puede quitar CUALQUIER línea del pedido
+    // (detectada por OCR o agregada manualmente), igual que la vista admin.
     patch({ lines: state.lines.filter((_, j) => j !== i) });
   };
 
@@ -1137,14 +1137,36 @@ function StepProducts({ state, patch, isClient, clientId }) {
 
   return (
     <section style={styles.card}>
-      <h2 style={styles.h2}>
-        {isClient ? "Confirmar Productos" : "Productos extraídos"}
-      </h2>
+      <div style={{
+        display: "flex", alignItems: "center",
+        justifyContent: "space-between", gap: 16, flexWrap: "wrap",
+      }}>
+        <h2 style={{ ...styles.h2, margin: 0 }}>
+          {isClient ? "Confirmar Productos" : "Productos extraídos"}
+        </h2>
+        {isClient && (
+          <button
+            type="button"
+            onClick={() => setManualOpen(true)}
+            style={{
+              ...styles.btnSecondary,
+              borderStyle: "dashed",
+              color: COLORS.mintDark,
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+            }}
+            title="Busca por nombre o SKU, elige tallas y cantidades."
+          >
+            ＋ Agregar producto
+          </button>
+        )}
+      </div>
       {isClient && (
         <p style={styles.lede}>
           Estos son los productos que leímos de tu archivo, resueltos contra el
           catálogo con tus precios pre-negociados. Los que aún no tienes
-          asignados aparecen sin precio: pedí su asignación con un clic.
+          asignados aparecen sin precio: pedí su asignación con un clic. Puedes
+          ajustar cantidades, quitar líneas con la ✕ o agregar más productos.
         </p>
       )}
 
@@ -1232,16 +1254,14 @@ function StepProducts({ state, patch, isClient, clientId }) {
                 </td>
               )}
               <td style={styles.td}>
-                {(!isClient || l.manual) && (
-                  <button
-                    type="button"
-                    onClick={() => delLine(i)}
-                    style={{ ...styles.btnGhost, color: COLORS.danger }}
-                    title="Eliminar línea"
-                  >
-                    ✕
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => delLine(i)}
+                  style={{ ...styles.btnGhost, color: COLORS.danger }}
+                  title="Quitar línea"
+                >
+                  ✕
+                </button>
               </td>
             </tr>
             );
@@ -1271,27 +1291,6 @@ function StepProducts({ state, patch, isClient, clientId }) {
           </tr>
         </tfoot>
       </table>
-
-      {/* ── Alta manual (CLIENT) · igual que la vista admin ── */}
-      {isClient && (
-        <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
-          <button
-            type="button"
-            onClick={() => setManualOpen(true)}
-            style={{
-              ...styles.btnSecondary,
-              borderStyle: "dashed",
-              color: COLORS.mintDark,
-              fontWeight: 600,
-            }}
-          >
-            ＋ Agregar producto
-          </button>
-          <span style={{ fontSize: 12, color: COLORS.inkSoft }}>
-            Busca por nombre o SKU, elige tallas y cantidades.
-          </span>
-        </div>
-      )}
 
       {manualOpen && (
         <ManualLinePanel
