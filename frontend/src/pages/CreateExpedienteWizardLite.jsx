@@ -1554,6 +1554,21 @@ function Step2Productos({
   const updateLine = (tmpId, patch) =>
     setOrderLines((prev) => prev.map((l) => l.tmpId === tmpId ? { ...l, ...patch } : l));
 
+  // Sprint 2026-07-15 (CEO) · selección por SKU: al marcar/desmarcar el check
+  // de una línea, TODAS las líneas con el MISMO SKU se marcan/desmarcan igual.
+  // Al marcar, se inicializa splitQty = cantidad si aún no tiene valor.
+  const toggleSelectBySku = (line, checked) => {
+    const sku = String(line.sku || "").trim().toUpperCase();
+    setOrderLines((prev) => prev.map((l) => {
+      if (String(l.sku || "").trim().toUpperCase() !== sku) return l;
+      return {
+        ...l,
+        isSelected: checked,
+        ...(checked && l.splitQty == null ? { splitQty: Number(l.cantidad) || 0 } : {}),
+      };
+    }));
+  };
+
   const totalUnits = orderLines.reduce((a, l) => a + Number(l.cantidad || 0), 0);
   const unassignedCount = orderLines.filter((l) => l.is_assigned === false).length;
   const selectedCount = orderLines.filter((l) => l.isSelected).length;
@@ -1680,11 +1695,7 @@ function Step2Productos({
                     {splitEnabled && (
                       <td style={{ textAlign: "center", width: 36 }}>
                         <input type="checkbox" checked={!!l.isSelected}
-                               onChange={(e) => updateLine(l.tmpId, {
-                                 isSelected: e.target.checked,
-                                 ...(e.target.checked && l.splitQty == null
-                                     ? { splitQty: Number(l.cantidad) || 0 } : {}),
-                               })}
+                               onChange={(e) => toggleSelectBySku(l, e.target.checked)}
                                style={{ accentColor: "#00B286", cursor: "pointer" }} />
                       </td>
                     )}
