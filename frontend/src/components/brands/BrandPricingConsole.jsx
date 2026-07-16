@@ -46,7 +46,7 @@ import { CLIENTS } from "../../data/mockData.js";
 import { apiFetch, getToken } from "../../lib/api.js";
 import * as XLSX from "xlsx";
 import {
-  parseExcelMarluvas, defaultSkuState, buildSimSkusPayload,
+  parseExcelMarluvas, defaultSkuState, buildSimSkusPayload, anchorPrice,
 } from "../../lib/marluvasPricing.js";
 import { BANDAS_MARLUVAS, PLAZOS_MARLUVAS } from "../../constants/marluvas.js";
 
@@ -139,14 +139,35 @@ const _bulkInp = {
   borderRadius: 7, font: "500 12.5px/1 var(--font-body)", color: NAVY,
   background: "#FFFFFF", outline: "none", boxSizing: "border-box",
 };
+const _fmtUsd = (n) => "$" + Number(n || 0).toLocaleString("en-US", {
+  minimumFractionDigits: 2, maximumFractionDigits: 2,
+});
+
+// Casilla tri-estado (todos / algunos / ninguno) para el "seleccionar todo".
+function TriBox({ state, size = 16 }) {
+  // state: "all" | "some" | "none"
+  const on = state === "all";
+  const some = state === "some";
+  return (
+    <span style={{
+      width: size, height: size, borderRadius: 4, flexShrink: 0,
+      border: `1.5px solid ${on || some ? MINT : "#CBD5E1"}`,
+      background: on ? MINT : some ? `${MINT}22` : "#FFFFFF",
+      display: "inline-grid", placeItems: "center",
+      color: "#FFFFFF", font: "700 11px/1 var(--font-body)",
+    }}>
+      {on ? "✓" : some ? <span style={{ width: 8, height: 2, background: MINT, borderRadius: 2 }}/> : null}
+    </span>
+  );
+}
 
 // -------------------------------------------------------------
 // BulkPriceUploadPanel - Sprint 2026-07-16
-// Sube el Excel COMEX UNA vez a nivel de marca. Parsea client-side y
-// genera+guarda la matriz de precios para TODOS los clientes activos,
-// aplicando la comision pactada de cada uno. Usa el endpoint bulk
-// (save-simulation-bulk) que persiste el snapshot por cliente y upserta
-// su asignacion (BCPA) con la metadata del archivo + vigencia.
+// Sube el Excel COMEX UNA vez a nivel de marca. Parsea client-side y, por
+// cada cliente activo, muestra un acordeon con sus SKUs (SKU / Referencia /
+// Base USD con SU comision). El operador elige que productos afectar (o
+// deselecciona un cliente entero). Al generar, se hace MERGE (upsert): solo
+// se tocan los SKUs marcados; los demas precios del cliente quedan intactos.
 // -------------------------------------------------------------
 function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
   const [file, setFile]             = useState(null);
@@ -161,6 +182,9 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
   const [anchorPlazoDias, setAnchorPlazoDias] = useState(90);
   const [running, setRunning] = useState(false);
   const [result, setResult]   = useState(null);
+  // selection: { [cliente_id]: Set(sku) } · openClients: Set(cliente_id)
+  const [selection, setSelection]   = useState({});
+  const [openClients, setOpenClients] = useState(() => new Set());
   const fileInputRef = useRef(null);
 
   const activeClients = useMemo(
@@ -168,6 +192,20 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
       (c) => String(c.estado || "ACTIVO").toUpperCase() === "ACTIVO"),
     [clients],
   );
+
+  const anchor = useMemo(
+    () => ({ bandaId: Number(anchorBandaId), plazoDias: Number(anchorPlazoDias) }),
+    [anchorBandaId, anchorPlazoDias],
+  );
+
+  // Al (re)parsear o cambiar clientes: por defecto TODO seleccionado.
+  useEffect(() => {
+    if (!parsedSkus.length) { setSelection({}); return; }
+    const allSkus = parsedSkus.map((p) => p.sku);
+    const next = {};
+    activeClients.forEach((c) => { next[c.cliente_id] = new Set(allSkus); });
+    setSelection(next);
+  }, [parsedSkus, activeClients]);
 
   const handleFile = async (f) => {
     if (!f) return;
@@ -199,29 +237,54 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
     }
   };
 
+  const selCount = (cid) => (selection[cid] ? selection[cid].size : 0);
+  const clientsWithSel = useMemo(
+    () => activeClients.filter((c) => selCount(c.cliente_id) > 0),
+    [activeClients, selection],
+  );
+
+  const toggleSku = (cid, sku) => setSelection((prev) => {
+    const cur = new Set(prev[cid] || []);
+    if (cur.has(sku)) cur.delete(sku); else cur.add(sku);
+    return { ...prev, [cid]: cur };
+  });
+  const toggleAll = (cid) => setSelection((prev) => {
+    const cur = prev[cid] || new Set();
+    const allSkus = parsedSkus.map((p) => p.sku);
+    const next = (cur.size >= allSkus.length) ? new Set() : new Set(allSkus);
+    return { ...prev, [cid]: next };
+  });
+  const toggleOpen = (cid) => setOpenClients((prev) => {
+    const n = new Set(prev);
+    if (n.has(cid)) n.delete(cid); else n.add(cid);
+    return n;
+  });
+
   const generate = async () => {
-    if (!parsedSkus.length || !activeClients.length || running) return;
+    if (!parsedSkus.length || !clientsWithSel.length || running) return;
     setRunning(true); setError(null); setResult(null);
     try {
-      const anchor = { bandaId: Number(anchorBandaId), plazoDias: Number(anchorPlazoDias) };
-      const clientsPayload = activeClients.map((c) => {
+      const clientsPayload = clientsWithSel.map((c) => {
         const com = c.comision_pct != null ? Number(c.comision_pct) * 100 : 0;
-        const skusState = parsedSkus.map((p) => defaultSkuState(p, { com }));
+        const sel = selection[c.cliente_id] || new Set();
+        const chosen = parsedSkus.filter((p) => sel.has(p.sku));
+        const skusState = chosen.map((p) => defaultSkuState(p, { com }));
         const skus = buildSimSkusPayload(skusState, anchor, null);
         return {
           cliente_id: c.cliente_id,
-          notas: `[Marluvas v7 bulk - ${parsedSkus.length} SKUs - com ${com}%]`,
+          notas: `[Marluvas v7 bulk - ${chosen.length} SKUs - com ${com}%]`,
           skus,
         };
       });
       const body = {
-        brand_id:        brandId,
-        fecha_inicio:    fechaInicio || null,
-        fecha_fin:       fechaFinIndef ? null : (fechaFin || null),
+        brand_id:         brandId,
+        mode:             "merge",
+        fecha_inicio:     fechaInicio || null,
+        fecha_fin:        fechaFinIndef ? null : (fechaFin || null),
         banda_vigente_id: Number(anchorBandaId),
-        file_name:       file?.name || null,
-        file_size_bytes: file?.size || null,
-        clients:         clientsPayload,
+        file_name:        file?.name || null,
+        file_size_bytes:  file?.size || null,
+        clients:          clientsPayload,
       };
       const resp = await apiFetch("/commercial/marluvas/save-simulation-bulk/", {
         method: "POST", body, token: getToken(),
@@ -239,7 +302,7 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
     }
   };
 
-  const btnDisabled = !parsedSkus.length || !activeClients.length || running;
+  const btnDisabled = !parsedSkus.length || !clientsWithSel.length || running;
 
   return (
     <div style={{
@@ -259,8 +322,8 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
           </div>
           <div style={{ font: "500 12px/1.4 var(--font-body)", color: MUTED, marginTop: 2 }}>
             {lang === "es"
-              ? "Sube el Excel COMEX una sola vez. Se generan y guardan los precios para cada cliente activo usando su comision pactada."
-              : "Upload the COMEX Excel once. Prices are generated and saved for every active client using its agreed commission."}
+              ? "Sube el Excel COMEX una sola vez. Elegi por cliente que productos afectar (Base USD ya con su comision). Solo se tocan los SKUs marcados; el resto de sus precios queda intacto."
+              : "Upload the COMEX Excel once. Pick per client which products to affect (Base USD already with its commission). Only checked SKUs are touched; the rest of its prices stay intact."}
           </div>
         </div>
       </div>
@@ -357,6 +420,97 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
         </div>
       </div>
 
+      {/* Acordeon de seleccion por cliente */}
+      {parsedSkus.length > 0 && (
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ font: "700 12px/1 var(--font-body)", color: NAVY, textTransform: "uppercase", letterSpacing: 0.4 }}>
+            {lang === "es" ? "Productos a afectar por cliente" : "Products to affect per client"}
+          </div>
+          {activeClients.map((c) => {
+            const com = c.comision_pct != null ? Number(c.comision_pct) * 100 : 0;
+            const sel = selection[c.cliente_id] || new Set();
+            const n = sel.size;
+            const total = parsedSkus.length;
+            const triState = n === 0 ? "none" : (n >= total ? "all" : "some");
+            const isOpen = openClients.has(c.cliente_id);
+            return (
+              <div key={c.cliente_id} style={{
+                border: `1px solid ${n === 0 ? "#E5E7EB" : `${MINT}55`}`,
+                borderRadius: 10, overflow: "hidden",
+                background: n === 0 ? "#FBFCFD" : "#FFFFFF",
+              }}>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "10px 12px", cursor: "pointer",
+                }} onClick={() => toggleOpen(c.cliente_id)}>
+                  <span onClick={(e) => { e.stopPropagation(); toggleAll(c.cliente_id); }}
+                        title={lang === "es" ? "Seleccionar / quitar todos" : "Select / clear all"}
+                        style={{ display: "inline-flex", cursor: "pointer" }}>
+                    <TriBox state={triState}/>
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      font: "700 13px/1.2 var(--font-body)", color: NAVY,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>
+                      {c.razon_social}
+                    </div>
+                    <div style={{ font: "500 10.5px/1.3 var(--font-body)", color: MUTED, marginTop: 1 }}>
+                      {c.pais_iso2} · {lang === "es" ? "comision" : "commission"} {com.toFixed(2)}%
+                    </div>
+                  </div>
+                  <div style={{
+                    font: "700 11px/1 var(--font-body)",
+                    color: n === 0 ? MUTED : MINT,
+                    padding: "3px 8px", borderRadius: 999,
+                    background: n === 0 ? "#F1F5F9" : `${MINT}14`, whiteSpace: "nowrap",
+                  }}>
+                    {n} / {total} SKUs
+                  </div>
+                  <span style={{ color: MUTED, font: "700 12px/1 var(--font-body)", transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 120ms" }}>&#8250;</span>
+                </div>
+
+                {isOpen && (
+                  <div style={{ maxHeight: 320, overflowY: "auto", borderTop: "1px solid #EEF1F5" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", font: "500 12px/1.3 var(--font-body)" }}>
+                      <thead>
+                        <tr style={{ position: "sticky", top: 0, background: SOFT, zIndex: 1 }}>
+                          <th style={{ width: 34, padding: "7px 8px", textAlign: "center" }}>
+                            <span onClick={() => toggleAll(c.cliente_id)} style={{ display: "inline-flex", cursor: "pointer" }}>
+                              <TriBox state={triState} size={15}/>
+                            </span>
+                          </th>
+                          <th style={{ padding: "7px 8px", textAlign: "left", color: MUTED, font: "700 10px/1 var(--font-body)", textTransform: "uppercase", letterSpacing: 0.4 }}>SKU</th>
+                          <th style={{ padding: "7px 8px", textAlign: "left", color: MUTED, font: "700 10px/1 var(--font-body)", textTransform: "uppercase", letterSpacing: 0.4 }}>{lang === "es" ? "Referencia" : "Reference"}</th>
+                          <th style={{ padding: "7px 8px", textAlign: "right", color: MUTED, font: "700 10px/1 var(--font-body)", textTransform: "uppercase", letterSpacing: 0.4 }}>Base USD</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parsedSkus.map((p) => {
+                          const checked = sel.has(p.sku);
+                          const baseUsd = anchorPrice({ brl: p.brl, com }, anchor).base;
+                          return (
+                            <tr key={p.sku} style={{ borderTop: "1px solid #F1F5F9", background: checked ? "#FFFFFF" : "#FCFCFD" }}>
+                              <td style={{ padding: "6px 8px", textAlign: "center" }}>
+                                <input type="checkbox" checked={checked} onChange={() => toggleSku(c.cliente_id, p.sku)}
+                                       style={{ width: 15, height: 15, accentColor: MINT, cursor: "pointer" }}/>
+                              </td>
+                              <td style={{ padding: "6px 8px", color: NAVY, fontWeight: 600 }}>{p.sku}</td>
+                              <td style={{ padding: "6px 8px", color: INK, overflow: "hidden", textOverflow: "ellipsis", maxWidth: 320, whiteSpace: "nowrap" }}>{p.ref || "-"}</td>
+                              <td style={{ padding: "6px 8px", textAlign: "right", color: NAVY, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{_fmtUsd(baseUsd)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {error && (
         <div style={{
           marginTop: 12, padding: "9px 12px", borderRadius: 8,
@@ -375,8 +529,8 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
         }}>
           <IconCheck size={13}/>
           {lang === "es"
-            ? `Precios generados para ${result.saved_clients ?? 0} de ${result.total_clients ?? activeClients.length} clientes activos.`
-            : `Prices generated for ${result.saved_clients ?? 0} of ${result.total_clients ?? activeClients.length} active clients.`}
+            ? `Precios generados para ${result.saved_clients ?? 0} cliente(s).`
+            : `Prices generated for ${result.saved_clients ?? 0} client(s).`}
           {Array.isArray(result.results) && result.results.some((r) => r && r.ok === false) && (
             <span style={{ color: AMBER }}>
               {lang === "es" ? "- algunos fallaron (ver consola)" : "- some failed (see console)"}
@@ -389,8 +543,8 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
         <div style={{ font: "500 12px/1.4 var(--font-body)", color: MUTED }}>
           {parsedSkus.length > 0
             ? (lang === "es"
-                ? `${parsedSkus.length} SKUs x ${activeClients.length} clientes activos - cada uno con su comision`
-                : `${parsedSkus.length} SKUs x ${activeClients.length} active clients - each with its commission`)
+                ? `${clientsWithSel.length} de ${activeClients.length} clientes con productos seleccionados`
+                : `${clientsWithSel.length} of ${activeClients.length} clients with selected products`)
             : (lang === "es" ? "Sube un Excel para empezar." : "Upload an Excel to start.")}
         </div>
         <button type="button" onClick={generate} disabled={btnDisabled}
@@ -403,7 +557,7 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
           }}>
           {running
             ? (lang === "es" ? "Generando..." : "Generating...")
-            : (lang === "es" ? `Generar para ${activeClients.length} clientes activos` : `Generate for ${activeClients.length} active clients`)}
+            : (lang === "es" ? `Generar para ${clientsWithSel.length} cliente(s)` : `Generate for ${clientsWithSel.length} client(s)`)}
         </button>
       </div>
     </div>

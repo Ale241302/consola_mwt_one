@@ -2208,17 +2208,14 @@ class MarluvasSaveSimulationView(APIView):
         return out
 
     @classmethod
-    def persist_snapshot(cls, *, brand_id, cliente_id, skus_payload,
-                         custom_plazos, banda_vigente_id,
-                         fecha_ini, fecha_fin, notas, user_id):
-        # Sprint 2026-07-16 · core reutilizable de persistencia de la
-        # simulacion Marluvas. Lo usan el guardado por-cliente (.post) y la
-        # carga masiva por marca (MarluvasSaveSimulationBulkView). Devuelve
-        # {saved, cells, size_overrides_saved}; lanza ValueError ante shape
-        # invalido y propaga excepciones de BD al caller.
+    def _build_price_rows(cls, skus_payload, *, brand_id, cliente_id,
+                          custom_plazos, fecha_ini, fecha_fin):
+        # Construye (sin persistir) las filas MarluvasClientSkuPricing a partir
+        # del payload. Cada fila lleva ._anchor_for_history para la bitacora.
+        # Lanza ValueError ante shape invalido. Compartido por snapshot/upsert.
         from .models import MarluvasClientSkuPricing
 
-        rows_to_insert = []
+        rows = []
         for idx, item in enumerate(skus_payload):
             if not isinstance(item, dict):
                 raise ValueError(f"skus[{idx}] debe ser objeto.")
@@ -2274,29 +2271,25 @@ class MarluvasSaveSimulationView(APIView):
                 fecha_fin       = fecha_fin,
             )
             row._anchor_for_history = anchor_clean
-            rows_to_insert.append(row)
+            rows.append(row)
+        return rows
 
-        with transaction.atomic():
-            (MarluvasClientSkuPricing.objects
-                .filter(brand_id=brand_id,
-                        cliente_id=cliente_id,
-                        is_active=True)
-                .update(is_active=False))
-            if rows_to_insert:
-                MarluvasClientSkuPricing.objects.bulk_create(rows_to_insert)
-
+    @staticmethod
+    def _count_cells(rows):
         total_cells = 0
-        for row in rows_to_insert:
+        for row in rows:
             m = row.prices_matrix or {}
             if isinstance(m, dict):
                 for plazos in m.values():
                     if isinstance(plazos, dict):
                         total_cells += len(plazos)
+        return total_cells
 
-        size_overrides_saved = sum(
-            len(getattr(row, "sizes_pricing", None) or {}) for row in rows_to_insert
-        )
-
+    @classmethod
+    def _write_price_history(cls, *, brand_id, cliente_id, rows, custom_plazos,
+                             banda_vigente_id, fecha_ini, fecha_fin, notas,
+                             user_id, total_cells):
+        # Bitacora best-effort: nunca debe tumbar el guardado.
         try:
             from .models import (
                 MarluvasPriceHistoryEvent, MarluvasPriceHistorySku,
@@ -2308,13 +2301,13 @@ class MarluvasSaveSimulationView(APIView):
                 fecha_inicio       = fecha_ini,
                 fecha_fin          = fecha_fin,
                 custom_plazos      = custom_plazos or {},
-                sku_count          = len(rows_to_insert),
+                sku_count          = len(rows),
                 cells_count        = total_cells,
                 banda_vigente_id   = banda_vigente_id,
                 notas              = notas or None,
             )
             history_skus = []
-            for row in rows_to_insert:
+            for row in rows:
                 history_skus.append(MarluvasPriceHistorySku(
                     event_id        = history_event.id,
                     sku             = row.sku,
@@ -2331,12 +2324,81 @@ class MarluvasSaveSimulationView(APIView):
                 MarluvasPriceHistorySku.objects.bulk_create(history_skus, batch_size=200)
         except Exception as hist_exc:  # noqa: BLE001
             log.warning(
-                "persist_snapshot history insert failed (brand=%s cliente=%s): %s",
+                "price history insert failed (brand=%s cliente=%s): %s",
                 brand_id, cliente_id, hist_exc,
             )
 
+    @classmethod
+    def persist_snapshot(cls, *, brand_id, cliente_id, skus_payload,
+                         custom_plazos, banda_vigente_id,
+                         fecha_ini, fecha_fin, notas, user_id):
+        # Snapshot por REEMPLAZO: desactiva TODOS los SKUs activos del par
+        # (marca, cliente) y reinserta los enviados. Devuelve
+        # {saved, cells, size_overrides_saved}.
+        from .models import MarluvasClientSkuPricing
+
+        rows = cls._build_price_rows(
+            skus_payload, brand_id=brand_id, cliente_id=cliente_id,
+            custom_plazos=custom_plazos, fecha_ini=fecha_ini, fecha_fin=fecha_fin,
+        )
+        with transaction.atomic():
+            (MarluvasClientSkuPricing.objects
+                .filter(brand_id=brand_id, cliente_id=cliente_id, is_active=True)
+                .update(is_active=False))
+            if rows:
+                MarluvasClientSkuPricing.objects.bulk_create(rows)
+
+        total_cells = cls._count_cells(rows)
+        size_overrides_saved = sum(
+            len(getattr(row, "sizes_pricing", None) or {}) for row in rows
+        )
+        cls._write_price_history(
+            brand_id=brand_id, cliente_id=cliente_id, rows=rows,
+            custom_plazos=custom_plazos, banda_vigente_id=banda_vigente_id,
+            fecha_ini=fecha_ini, fecha_fin=fecha_fin, notas=notas,
+            user_id=user_id, total_cells=total_cells,
+        )
         return {
-            "saved":                len(rows_to_insert),
+            "saved":                len(rows),
+            "cells":                total_cells,
+            "size_overrides_saved": size_overrides_saved,
+        }
+
+    @classmethod
+    def persist_upsert_many(cls, *, brand_id, cliente_id, skus_payload,
+                            custom_plazos, banda_vigente_id,
+                            fecha_ini, fecha_fin, notas, user_id):
+        # MERGE: upsert de SOLO los SKUs enviados, preservando el resto de la
+        # lista del cliente. Por cada SKU desactiva su fila activa previa y
+        # reinserta la nueva; los SKUs NO enviados quedan intactos.
+        from .models import MarluvasClientSkuPricing
+
+        rows = cls._build_price_rows(
+            skus_payload, brand_id=brand_id, cliente_id=cliente_id,
+            custom_plazos=custom_plazos, fecha_ini=fecha_ini, fecha_fin=fecha_fin,
+        )
+        skus_seen = [r.sku for r in rows]
+        with transaction.atomic():
+            if skus_seen:
+                (MarluvasClientSkuPricing.objects
+                    .filter(brand_id=brand_id, cliente_id=cliente_id,
+                            sku__in=skus_seen, is_active=True)
+                    .update(is_active=False))
+            if rows:
+                MarluvasClientSkuPricing.objects.bulk_create(rows)
+
+        total_cells = cls._count_cells(rows)
+        size_overrides_saved = sum(
+            len(getattr(row, "sizes_pricing", None) or {}) for row in rows
+        )
+        cls._write_price_history(
+            brand_id=brand_id, cliente_id=cliente_id, rows=rows,
+            custom_plazos=custom_plazos, banda_vigente_id=banda_vigente_id,
+            fecha_ini=fecha_ini, fecha_fin=fecha_fin, notas=notas,
+            user_id=user_id, total_cells=total_cells,
+        )
+        return {
+            "saved":                len(rows),
             "cells":                total_cells,
             "size_overrides_saved": size_overrides_saved,
         }
@@ -2533,6 +2595,7 @@ class MarluvasSaveSimulationBulkView(APIView):
 
         file_name = data.get("file_name")
         file_size_bytes = data.get("file_size_bytes")
+        mode = str(data.get("mode") or "merge").lower()
 
         user_obj = getattr(request, "user", None)
         user_id = None
@@ -2561,9 +2624,20 @@ class MarluvasSaveSimulationBulkView(APIView):
                                 "error": "skus debe ser un array"})
                 continue
 
+            # Cliente sin SKUs seleccionados: NO se toca (ni precios ni BCPA).
+            if not skus_payload:
+                results.append({"cliente_id": str(cliente_id), "ok": True,
+                                "saved": 0, "skipped": True})
+                continue
+
             notas = entry.get("notas") or f"[Marluvas v7 bulk - {len(skus_payload)} SKUs]"
+            # mode: "merge" (default) upsert solo los SKUs enviados sin borrar el
+            # resto; "replace" hace snapshot completo por reemplazo.
+            persist_fn = (MarluvasSaveSimulationView.persist_snapshot
+                          if mode == "replace"
+                          else MarluvasSaveSimulationView.persist_upsert_many)
             try:
-                res = MarluvasSaveSimulationView.persist_snapshot(
+                res = persist_fn(
                     brand_id         = brand_id,
                     cliente_id       = cliente_id,
                     skus_payload     = skus_payload,
