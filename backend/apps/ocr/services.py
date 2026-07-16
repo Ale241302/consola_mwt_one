@@ -129,7 +129,10 @@ _RE_LINE_QTYFIRST = re.compile(
     r"^\s*(?P<qty>\d{1,6})\s+"
     r"\d{1,2}/\d{1,2}/\d{2,4}\s+"
     r"(?P<price>\d+[.,]\d{2})\s+"
-    r"\d+[.,]\d{2}"
+    # Sprint 2026-07-16 · el TOTAL puede traer separador de miles (espacio):
+    # "10 180,20" (5 cifras). Antes \d+[.,]\d{2} no lo capturaba y la línea
+    # se perdía (ej. 50B22-EV-CPAP-CP-41 · 470 uds del PO 505244).
+    r"\d[\d\s]*[.,]\d{2}"
     r"(?P<part>[A-Z0-9][^\s]*?)-(?P<size>\d{2,3})(?=[^\d]|$)"
     r"(?P<desc>.*?)$",
     re.I | re.M,
