@@ -24,6 +24,7 @@
 import React, { useState, useMemo, useEffect, useCallback, Fragment } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useOutletContext } from "react-router-dom";
+import OcChoiceModal from "../components/portal/OcChoiceModal.jsx";
 import { tr, fmtMoney } from "../lib/i18n.js";
 import {
   StatusBadge, CreditDot, CountryFlag,
@@ -151,6 +152,7 @@ function mapExpedienteFromApi(r) {
 export default function ScreenExpedientes() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
+  const [ocChoiceOpen, setOcChoiceOpen] = useState(false);
   // Viewport efectivo (ADMIN | CLIENT). Re-renderiza cuando el CEO usa
   // el toggle "Tweaks → Viewport" para simular al cliente.
   const { isAdmin, isClient, can, user } = useRole();
@@ -732,10 +734,17 @@ export default function ScreenExpedientes() {
                puede iniciar una orden: va al wizard role-aware de
                /portal/nueva-oc (CLIENT -> 3 pasos via create-from-oc;
                nunca decimos "Crear expediente", jerga interna MWT). */
-            <button className="btn btn-primary" onClick={() => navigate('/portal/nueva-oc')}>
+            <button className="btn btn-primary" onClick={() => setOcChoiceOpen(true)}>
               <IconPlus size={14}/>{lang==='es' ? 'Subir Orden de Compra' : 'Upload Purchase Order'}
             </button>
           )}
+          <OcChoiceModal
+            open={ocChoiceOpen}
+            lang={lang}
+            onClose={() => setOcChoiceOpen(false)}
+            onYes={() => { setOcChoiceOpen(false); navigate('/portal/nueva-oc'); }}
+            onNo={() => { setOcChoiceOpen(false); navigate('/portal/nueva-oc', { state: { jumpToStep: 'products' } }); }}
+          />
         </div>
       </div>
 

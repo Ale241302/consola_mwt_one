@@ -61,7 +61,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   const [requestSent,    setRequestSent]    = useState(new Set());
   const [requestErr,     setRequestErr]     = useState({});
   const [sizingMap, setSizingMap] = useState({});
-  const [displaySystem, setDisplaySystem] = useState("BASE");
+  const [displaySystem, setDisplaySystem] = useState("BR");
 
   // Cargar CPA del cliente (legacy /commercial/client-assignments).
   // Sprint 2026-05-03 v3: opcional. Fuente principal de "asignado" es

@@ -12,6 +12,7 @@
 import React, { useState, useEffect } from "react";
 import { clientesApi } from "../lib/api.js";
 import { useNavigate, useOutletContext } from "react-router-dom";
+import OcChoiceModal from "../components/portal/OcChoiceModal.jsx";
 import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
 import { Badge, StatusBadge } from "../components/ui/primitives.jsx";
 import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
@@ -720,6 +721,7 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
   const navigate = useNavigate();
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting]   = useState(false);
+  const [ocChoiceOpen, setOcChoiceOpen] = useState(false);
   const [exportErr, setExportErr]   = useState(null);
   // Export del portal: SIEMPRE vista CLIENT (precio de venta). El modal oculta
   // la pregunta de audiencia porque isAdmin=false.
@@ -778,7 +780,7 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
             <motion.button
               type="button"
               className="btn btn-primary"
-              onClick={() => navigate('/portal/nueva-oc')}
+              onClick={() => setOcChoiceOpen(true)}
               whileHover={{ y: -1 }}
               whileTap={{ scale: 0.97 }}
               style={{
@@ -800,6 +802,13 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
               {lang==='es' ? 'Subir Orden de Compra' : 'Upload Purchase Order'}
             </motion.button>
           )}
+          <OcChoiceModal
+            open={ocChoiceOpen}
+            lang={lang}
+            onClose={() => setOcChoiceOpen(false)}
+            onYes={() => { setOcChoiceOpen(false); navigate('/portal/nueva-oc'); }}
+            onNo={() => { setOcChoiceOpen(false); navigate('/portal/nueva-oc', { state: { jumpToStep: 'products' } }); }}
+          />
         </div>
       </div>
       <table className="table">

@@ -147,11 +147,15 @@ export default function CreateExpedienteWizard() {
   // (location.state.jumpToStep === 'products'), entramos directo al
   // Paso 2 (índice del step key='products' en el array de pasos).
   const initialIdx = useMemo(() => {
-    if (!cartSeed) return 0;
+    // Sprint 2026-07-16 · el salto a un paso puede venir con carrito pre-seed
+    // o sin él (cliente que eligió "No tengo OC" arma el pedido a mano en el
+    // Paso 2). Por eso ya no exigimos cartSeed para honrar jumpToStep.
     const jumpTo = location.state?.jumpToStep;
-    if (!jumpTo) return 0;
-    const i = steps.findIndex((s) => s.key === jumpTo);
-    return i >= 0 ? i : 0;
+    if (jumpTo) {
+      const i = steps.findIndex((s) => s.key === jumpTo);
+      if (i >= 0) return i;
+    }
+    return 0;
   }, [cartSeed, location.state, steps]);
 
   const [idx, setIdx] = useState(initialIdx);
@@ -1152,11 +1156,30 @@ function StepProducts({ state, patch, isClient, clientId }) {
             type="button"
             onClick={() => setManualOpen(true)}
             style={{
-              ...styles.btnSecondary,
-              borderStyle: "dashed",
-              color: COLORS.mintDark,
-              fontWeight: 600,
+              background: COLORS.mint,
+              color: "#FFFFFF",
+              border: "none",
+              padding: "9px 18px",
+              borderRadius: 10,
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: "pointer",
               whiteSpace: "nowrap",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              boxShadow: "0 2px 6px rgba(0,178,134,0.25)",
+              transition: "background 140ms ease, transform 140ms ease, box-shadow 140ms ease",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = COLORS.mintDark;
+              e.currentTarget.style.transform = "translateY(-1px)";
+              e.currentTarget.style.boxShadow = "0 6px 16px rgba(0,178,134,0.35)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = COLORS.mint;
+              e.currentTarget.style.transform = "none";
+              e.currentTarget.style.boxShadow = "0 2px 6px rgba(0,178,134,0.25)";
             }}
             title="Busca por nombre o SKU, elige tallas y cantidades."
           >
