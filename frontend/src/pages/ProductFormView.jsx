@@ -849,6 +849,29 @@ export default function ScreenProductFormView() {
       ? prev
       : { ...prev, [key]: [...prev[key], t] });
   };
+  // Renombra la opción seleccionada en TODOS los productos (backend
+  // attr-rename) y actualiza catálogo + valor local sin recargar.
+  const editAttrOption = (key) => async (oldVal, newVal) => {
+    const o = String(oldVal || "").trim();
+    const n = String(newVal || "").trim();
+    if (!o || !n || o === n) return;
+    try {
+      await apiFetch("/productos/attr-rename/", {
+        method: "POST",
+        body: { key, old: o, new: n },
+        token: getToken(),
+      });
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo renombrar la opción: " : "Rename failed: ")
+        + (e?.body?.detail || e?.message || ""));
+      return;
+    }
+    setAttrOptions(prev => ({
+      ...prev,
+      [key]: prev[key].map(x => x === o ? n : x),
+    }));
+    setAttrs(prev => (prev[key] === o ? { ...prev, [key]: n } : prev));
+  };
 
   // En modo CREATE, si no hay brandId seleccionado y ya cargaron las
   // marcas reales, autoselecciona la primera (mejor UX que dropdown vacío).
@@ -1162,27 +1185,27 @@ export default function ScreenProductFormView() {
       </div>
 
       <div className="form-grid-3">
-        <AttrSelect label={lang==='es'?'Tipo de calzado':'Footwear type'} opts={attrOptions.tipo_calzado} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_calzado') : undefined}
+        <AttrSelect label={lang==='es'?'Tipo de calzado':'Footwear type'} opts={attrOptions.tipo_calzado} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_calzado') : undefined} onEditOption={!isClient ? editAttrOption('tipo_calzado') : undefined}
                     value={attrs.tipo_calzado} onChange={v=>setAttrs({...attrs, tipo_calzado: v})}/>
-        <AttrSelect label={lang==='es'?'Cubre puntera':'Toe cap cover'} opts={attrOptions.cubrepuntera} lang={lang} onAddOption={!isClient ? addAttrOption('cubrepuntera') : undefined}
+        <AttrSelect label={lang==='es'?'Cubre puntera':'Toe cap cover'} opts={attrOptions.cubrepuntera} lang={lang} onAddOption={!isClient ? addAttrOption('cubrepuntera') : undefined} onEditOption={!isClient ? editAttrOption('cubrepuntera') : undefined}
                     value={attrs.cubrepuntera} onChange={v=>setAttrs({...attrs, cubrepuntera: v})}/>
-        <AttrSelect label={lang==='es'?'Tipo de puntera':'Toe cap type'} opts={attrOptions.tipo_puntera} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_puntera') : undefined}
+        <AttrSelect label={lang==='es'?'Tipo de puntera':'Toe cap type'} opts={attrOptions.tipo_puntera} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_puntera') : undefined} onEditOption={!isClient ? editAttrOption('tipo_puntera') : undefined}
                     value={attrs.tipo_puntera} onChange={v=>setAttrs({...attrs, tipo_puntera: v})}/>
-        <AttrSelect label={lang==='es'?'Antiperforante':'Anti-perforation'} opts={attrOptions.antiperforante} lang={lang} onAddOption={!isClient ? addAttrOption('antiperforante') : undefined}
+        <AttrSelect label={lang==='es'?'Antiperforante':'Anti-perforation'} opts={attrOptions.antiperforante} lang={lang} onAddOption={!isClient ? addAttrOption('antiperforante') : undefined} onEditOption={!isClient ? editAttrOption('antiperforante') : undefined}
                     value={attrs.antiperforante} onChange={v=>setAttrs({...attrs, antiperforante: v})}/>
-        <AttrSelect label={lang==='es'?'Protector metatarsal':'Metatarsal protector'} opts={attrOptions.protector_metatarsal} lang={lang} onAddOption={!isClient ? addAttrOption('protector_metatarsal') : undefined}
+        <AttrSelect label={lang==='es'?'Protector metatarsal':'Metatarsal protector'} opts={attrOptions.protector_metatarsal} lang={lang} onAddOption={!isClient ? addAttrOption('protector_metatarsal') : undefined} onEditOption={!isClient ? editAttrOption('protector_metatarsal') : undefined}
                     value={attrs.protector_metatarsal} onChange={v=>setAttrs({...attrs, protector_metatarsal: v})}/>
-        <AttrSelect label={lang==='es'?'Capellada':'Upper'} opts={attrOptions.capellada} lang={lang} onAddOption={!isClient ? addAttrOption('capellada') : undefined}
+        <AttrSelect label={lang==='es'?'Capellada':'Upper'} opts={attrOptions.capellada} lang={lang} onAddOption={!isClient ? addAttrOption('capellada') : undefined} onEditOption={!isClient ? editAttrOption('capellada') : undefined}
                     value={attrs.capellada} onChange={v=>setAttrs({...attrs, capellada: v})}/>
-        <AttrSelect label="Suela" opts={attrOptions.suela} lang={lang} onAddOption={!isClient ? addAttrOption('suela') : undefined}
+        <AttrSelect label="Suela" opts={attrOptions.suela} lang={lang} onAddOption={!isClient ? addAttrOption('suela') : undefined} onEditOption={!isClient ? editAttrOption('suela') : undefined}
                     value={attrs.suela} onChange={v=>setAttrs({...attrs, suela: v})}/>
-        <AttrSelect label={lang==='es'?'Cierre':'Closure'} opts={attrOptions.cierre} lang={lang} onAddOption={!isClient ? addAttrOption('cierre') : undefined}
+        <AttrSelect label={lang==='es'?'Cierre':'Closure'} opts={attrOptions.cierre} lang={lang} onAddOption={!isClient ? addAttrOption('cierre') : undefined} onEditOption={!isClient ? editAttrOption('cierre') : undefined}
                     value={attrs.cierre} onChange={v=>setAttrs({...attrs, cierre: v})}/>
-        <AttrSelect label="Color" opts={attrOptions.color} lang={lang} onAddOption={!isClient ? addAttrOption('color') : undefined}
+        <AttrSelect label="Color" opts={attrOptions.color} lang={lang} onAddOption={!isClient ? addAttrOption('color') : undefined} onEditOption={!isClient ? editAttrOption('color') : undefined}
                     value={attrs.color} onChange={v=>setAttrs({...attrs, color: v})}/>
-        <AttrSelect label={lang==='es'?'Materiales circulares':'Circular materials'} opts={attrOptions.materiales_circulares} lang={lang} onAddOption={!isClient ? addAttrOption('materiales_circulares') : undefined}
+        <AttrSelect label={lang==='es'?'Materiales circulares':'Circular materials'} opts={attrOptions.materiales_circulares} lang={lang} onAddOption={!isClient ? addAttrOption('materiales_circulares') : undefined} onEditOption={!isClient ? editAttrOption('materiales_circulares') : undefined}
                     value={attrs.materiales_circulares} onChange={v=>setAttrs({...attrs, materiales_circulares: v})}/>
-        <AttrSelect label={lang==='es'?'Plantilla interna':'Insole'} opts={attrOptions.plantilla_interna} lang={lang} onAddOption={!isClient ? addAttrOption('plantilla_interna') : undefined}
+        <AttrSelect label={lang==='es'?'Plantilla interna':'Insole'} opts={attrOptions.plantilla_interna} lang={lang} onAddOption={!isClient ? addAttrOption('plantilla_interna') : undefined} onEditOption={!isClient ? editAttrOption('plantilla_interna') : undefined}
                     value={attrs.plantilla_interna} onChange={v=>setAttrs({...attrs, plantilla_interna: v})}/>
         <label className="form-field">
           <span style={{display:'flex', alignItems:'center', gap:8}}>
@@ -2392,44 +2415,78 @@ export default function ScreenProductFormView() {
 // Sprint 2026-07-16 · AttrSelect con alta inline de opciones ("＋") y merge
 // del valor actual (si el producto trae un valor fuera del catálogo, se
 // muestra igual en el select en vez de perderse).
-function AttrSelect({ label, opts, value, onChange, onAddOption, lang='es' }) {
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft]   = useState("");
+function AttrSelect({ label, opts, value, onChange, onAddOption, onEditOption, lang='es' }) {
+  // mode: null | 'add' | 'edit'  — 'edit' renombra la opción seleccionada en
+  // TODOS los productos (backend attr-rename), como el ✎ de NCM.
+  const [mode, setMode]   = useState(null);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy]   = useState(false);
   const merged = (value && !opts.includes(value)) ? [...opts, value] : opts;
-  const confirmAdd = () => {
+  const confirmIt = async () => {
     const v = draft.trim();
-    if (!v) { setAdding(false); return; }
-    onAddOption?.(v);
-    onChange(v);
-    setDraft(""); setAdding(false);
+    if (!v) { setMode(null); return; }
+    if (mode === 'add') {
+      onAddOption?.(v);
+      onChange(v);
+      setDraft(""); setMode(null);
+    } else if (mode === 'edit') {
+      setBusy(true);
+      try { await onEditOption?.(value, v); }
+      finally { setBusy(false); setDraft(""); setMode(null); }
+    }
   };
+  const iconBtn = (active) => ({
+    width:20, height:20, borderRadius:5, cursor:'pointer',
+    border:`1px solid ${active ? '#00B286' : 'var(--border-subtle)'}`,
+    background: active ? 'rgba(0,178,134,0.10)' : 'var(--surface)',
+    fontWeight:800, fontSize:12, lineHeight:1,
+  });
   return (
     <label className="form-field">
       <span style={{display:'flex', alignItems:'center', gap:6}}>
         {label}
-        {onAddOption && (
-          <button type="button"
-                  onClick={()=>{ setAdding(a=>!a); setDraft(""); }}
-                  title={lang==='es'?'Agregar opción nueva':'Add new option'}
-                  style={{ marginLeft:'auto', width:20, height:20, borderRadius:5, cursor:'pointer',
-                           border:'1px solid var(--border-subtle)', background:'var(--surface)',
-                           color:'#00B286', fontWeight:800, fontSize:12, lineHeight:1 }}>
-            {adding ? '×' : '＋'}
-          </button>
+        {(onAddOption || onEditOption) && (
+          <span style={{marginLeft:'auto', display:'inline-flex', gap:4}}>
+            {onAddOption && (
+              <button type="button"
+                      onClick={()=>{ setMode(m => m==='add' ? null : 'add'); setDraft(""); }}
+                      title={lang==='es'?'Agregar opción nueva':'Add new option'}
+                      style={{ ...iconBtn(mode==='add'), color:'#00B286' }}>
+                {mode==='add' ? '×' : '＋'}
+              </button>
+            )}
+            {onEditOption && (
+              <button type="button"
+                      disabled={!value}
+                      onClick={()=>{ setMode(m => m==='edit' ? null : 'edit'); setDraft(value || ""); }}
+                      title={lang==='es'
+                        ? 'Editar la opción seleccionada (se renombra en todos los productos)'
+                        : 'Edit selected option (renamed across all products)'}
+                      style={{ ...iconBtn(mode==='edit'),
+                               cursor: value ? 'pointer' : 'not-allowed',
+                               color: value ? 'var(--text-secondary)' : 'var(--border-subtle)' }}>
+                {mode==='edit' ? '×' : '✎'}
+              </button>
+            )}
+          </span>
         )}
       </span>
-      {adding ? (
+      {mode ? (
         <div style={{display:'flex', gap:6}}>
-          <input className="input" autoFocus value={draft}
+          <input className="input" autoFocus value={draft} disabled={busy}
                  onChange={e=>setDraft(e.target.value)}
                  onKeyDown={e=>{
-                   if (e.key==='Enter'){ e.preventDefault(); confirmAdd(); }
-                   if (e.key==='Escape'){ setDraft(''); setAdding(false); }
+                   if (e.key==='Enter'){ e.preventDefault(); confirmIt(); }
+                   if (e.key==='Escape'){ setDraft(''); setMode(null); }
                  }}
-                 placeholder={lang==='es'?'Nueva opción…':'New option…'}/>
-          <button type="button" onClick={confirmAdd}
+                 placeholder={mode==='add'
+                   ? (lang==='es'?'Nueva opción…':'New option…')
+                   : (lang==='es'?'Nuevo nombre…':'New name…')}/>
+          <button type="button" onClick={confirmIt} disabled={busy}
                   style={{border:'none', background:'#00B286', color:'#fff', borderRadius:6,
-                          width:34, cursor:'pointer', fontWeight:800}}>✓</button>
+                          width:34, cursor: busy ? 'wait' : 'pointer', fontWeight:800}}>
+            {busy ? '…' : '✓'}
+          </button>
         </div>
       ) : (
         <select className="input" value={value} onChange={e=>onChange(e.target.value)}>

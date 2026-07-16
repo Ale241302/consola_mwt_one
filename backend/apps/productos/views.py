@@ -197,6 +197,76 @@ class ProductoViewSet(viewsets.ViewSet):
             except Exception:
                 return Response([])
 
+    # ── Sprint 2026-07-16 · renombrar opción de atributo técnico ──
+    # Renombra un valor de especificaciones (color, capellada, suela, …) en
+    # TODOS los productos que lo usan, para que "editar la opción" desde el
+    # form de producto sea un cambio real de catálogo (como en NCM) y no
+    # solo cosmético. Staff-only. Soporta claves simples (string) y
+    # multi-selección (arrays JSONB).
+    #
+    # POST /api/productos/attr-rename/  body: { key, old, new }
+    # → { updated: <n productos actualizados> }
+    _ATTR_SINGLE_KEYS = {
+        "tipo_calzado", "cubrepuntera", "tipo_puntera", "antiperforante",
+        "protector_metatarsal", "capellada", "suela", "cierre", "color",
+        "materiales_circulares", "plantilla_interna",
+    }
+    _ATTR_MULTI_KEYS = {"disipativo_energia", "normativa", "segmento", "riesgo"}
+
+    @action(detail=False, methods=["post"], url_path="attr-rename")
+    def attr_rename(self, request):
+        if not _is_staff_role(request):
+            return Response({"detail": "Solo staff puede renombrar opciones."}, status=403)
+        data = request.data or {}
+        key = str(data.get("key") or "").strip()
+        old = str(data.get("old") or "").strip()
+        new = str(data.get("new") or "").strip()
+        if key not in (self._ATTR_SINGLE_KEYS | self._ATTR_MULTI_KEYS):
+            return Response({"detail": f"key no permitida: {key}"}, status=400)
+        if not old or not new:
+            return Response({"detail": "old y new son obligatorios."}, status=400)
+        if old == new:
+            return Response({"updated": 0}, status=200)
+
+        try:
+            with connection.cursor() as cur:
+                if key in self._ATTR_SINGLE_KEYS:
+                    cur.execute(
+                        """
+                        UPDATE productos.producto
+                           SET especificaciones =
+                               jsonb_set(especificaciones, %s, to_jsonb(%s::text)),
+                               updated_at = NOW()
+                         WHERE especificaciones ->> %s = %s
+                        """,
+                        ["{%s}" % key, new, key, old],
+                    )
+                else:
+                    # Arrays: reemplaza el elemento manteniendo el orden.
+                    cur.execute(
+                        """
+                        UPDATE productos.producto
+                           SET especificaciones = jsonb_set(
+                                 especificaciones, %s,
+                                 (SELECT COALESCE(jsonb_agg(
+                                          CASE WHEN e.val = %s THEN to_jsonb(%s::text)
+                                               ELSE to_jsonb(e.val) END
+                                          ORDER BY e.ord), '[]'::jsonb)
+                                    FROM jsonb_array_elements_text(especificaciones -> %s)
+                                         WITH ORDINALITY AS e(val, ord))
+                               ),
+                               updated_at = NOW()
+                         WHERE especificaciones -> %s ? %s
+                        """,
+                        ["{%s}" % key, old, new, key, key, old],
+                    )
+                updated = cur.rowcount
+        except Exception as exc:  # noqa: BLE001
+            log.exception("attr_rename failed")
+            return Response({"detail": f"No se pudo renombrar: {exc}"}, status=500)
+
+        return Response({"updated": updated, "key": key, "old": old, "new": new}, status=200)
+
     @action(detail=False, methods=["get"])
     def select_paises(self, request):
         with connection.cursor() as c:
