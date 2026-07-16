@@ -308,6 +308,29 @@ export default function ScreenBrandClientPricingForm() {
 
   // Simulación persistida en backend (precedencia sobre localStorage).
   const loaded = useLoadSimulation(clienteId, brandId, accessToken);
+
+  // Referencia (nombre comercial) por SKU — el snapshot de precios no guarda
+  // la referencia, la traemos de /productos/ para mostrarla en las tablas.
+  const [refBySku, setRefBySku] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/productos/", { token: accessToken })
+      .then((rows) => {
+        if (cancelled) return;
+        const list = Array.isArray(rows)
+          ? rows
+          : (Array.isArray(rows?.results) ? rows.results : []);
+        const map = {};
+        list.forEach((p) => {
+          if (!p || !p.sku) return;
+          if (brandId && p.marca_id && String(p.marca_id) !== String(brandId)) return;
+          map[String(p.sku)] = p.nombre || p.referencia || "";
+        });
+        setRefBySku(map);
+      })
+      .catch(() => { if (!cancelled) setRefBySku({}); });
+    return () => { cancelled = true; };
+  }, [brandId, accessToken]);
   const hydratedRef = useRef(false);
 
   // Bandas filtradas para la matriz · reduce densidad visual sin perder info.
@@ -1399,8 +1422,8 @@ export default function ScreenBrandClientPricingForm() {
                           </button>
                         </td>
                         <td style={{ ...tdSku, textAlign: "left", paddingLeft: 12, color: MUTED, fontSize: 10 }}>{s.sku}</td>
-                        <td style={{ ...tdSku, textAlign: "left", fontFamily: "var(--font-body)", fontWeight: 600, color: NAVY, fontSize: 11, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.ref}>
-                          {s.ref}
+                        <td style={{ ...tdSku, textAlign: "left", fontFamily: "var(--font-body)", fontWeight: 600, color: NAVY, fontSize: 11, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.ref || refBySku[s.sku] || ""}>
+                          {s.ref || refBySku[s.sku] || ""}
                           {(() => {
                             const ovc = Object.keys(s.sizes_pricing || {}).length;
                             if (ovc === 0) return null;
@@ -1847,8 +1870,8 @@ export default function ScreenBrandClientPricingForm() {
                     return (
                       <tr key={s.sku} className="mtx-row">
                         <td style={stickyTd(0, 56, { color: MUTED, fontSize: 9.5, borderRight: "none" })}>{s.sku}</td>
-                        <td style={stickyTd(56, 180, { color: NAVY, fontSize: 10.5, fontWeight: 600, body: true })} title={s.ref}>
-                          {s.ref}
+                        <td style={stickyTd(56, 180, { color: NAVY, fontSize: 10.5, fontWeight: 600, body: true })} title={s.ref || refBySku[s.sku] || ""}>
+                          {s.ref || refBySku[s.sku] || ""}
                         </td>
                         {filteredBands.flatMap((b) => {
                           const isCurrent = bandaVigente?.id === b.id;
