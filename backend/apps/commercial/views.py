@@ -2207,6 +2207,140 @@ class MarluvasSaveSimulationView(APIView):
                 out[str(banda_id)] = clean_list
         return out
 
+    @classmethod
+    def persist_snapshot(cls, *, brand_id, cliente_id, skus_payload,
+                         custom_plazos, banda_vigente_id,
+                         fecha_ini, fecha_fin, notas, user_id):
+        # Sprint 2026-07-16 · core reutilizable de persistencia de la
+        # simulacion Marluvas. Lo usan el guardado por-cliente (.post) y la
+        # carga masiva por marca (MarluvasSaveSimulationBulkView). Devuelve
+        # {saved, cells, size_overrides_saved}; lanza ValueError ante shape
+        # invalido y propaga excepciones de BD al caller.
+        from .models import MarluvasClientSkuPricing
+
+        rows_to_insert = []
+        for idx, item in enumerate(skus_payload):
+            if not isinstance(item, dict):
+                raise ValueError(f"skus[{idx}] debe ser objeto.")
+            if not item.get("activo"):
+                continue
+            sku = (item.get("sku") or "").strip()
+            if not sku:
+                raise ValueError(f"skus[{idx}].sku es requerido.")
+
+            matrix_raw = item.get("prices_matrix")
+            if isinstance(matrix_raw, dict):
+                prices_matrix = {}
+                for banda_key, plazos in matrix_raw.items():
+                    if not isinstance(plazos, dict):
+                        continue
+                    plazos_clean = {}
+                    for plazo_key, price in plazos.items():
+                        try:
+                            plazos_clean[str(plazo_key)] = round(float(price), 4)
+                        except (TypeError, ValueError):
+                            continue
+                    if plazos_clean:
+                        prices_matrix[str(banda_key)] = plazos_clean
+            else:
+                prices_matrix = {}
+
+            sizes_pricing = cls._parse_sizes_pricing(item.get("sizes_pricing"))
+
+            anchor_raw = item.get("anchor")
+            anchor_clean = None
+            if isinstance(anchor_raw, dict):
+                try:
+                    b = int(anchor_raw.get("bandaId"))
+                    p = int(anchor_raw.get("plazoDias"))
+                    if 1 <= b <= 12 and 1 <= p <= 3650:
+                        anchor_clean = {"bandaId": b, "plazoDias": p}
+                except (TypeError, ValueError):
+                    pass
+
+            row = MarluvasClientSkuPricing(
+                brand_id        = brand_id,
+                cliente_id      = cliente_id,
+                sku             = sku,
+                brl_override    = cls._to_decimal(item.get("brl_override"), allow_null=True),
+                com_pct         = cls._to_decimal(item.get("com_pct")),
+                ajuste_usd      = cls._to_decimal(item.get("ajuste_usd")),
+                sobreprecio_pct = cls._to_decimal(item.get("sobreprecio_pct")),
+                prices_matrix   = prices_matrix,
+                sizes_pricing   = sizes_pricing,
+                custom_plazos   = custom_plazos,
+                is_active       = True,
+                fecha_inicio    = fecha_ini,
+                fecha_fin       = fecha_fin,
+            )
+            row._anchor_for_history = anchor_clean
+            rows_to_insert.append(row)
+
+        with transaction.atomic():
+            (MarluvasClientSkuPricing.objects
+                .filter(brand_id=brand_id,
+                        cliente_id=cliente_id,
+                        is_active=True)
+                .update(is_active=False))
+            if rows_to_insert:
+                MarluvasClientSkuPricing.objects.bulk_create(rows_to_insert)
+
+        total_cells = 0
+        for row in rows_to_insert:
+            m = row.prices_matrix or {}
+            if isinstance(m, dict):
+                for plazos in m.values():
+                    if isinstance(plazos, dict):
+                        total_cells += len(plazos)
+
+        size_overrides_saved = sum(
+            len(getattr(row, "sizes_pricing", None) or {}) for row in rows_to_insert
+        )
+
+        try:
+            from .models import (
+                MarluvasPriceHistoryEvent, MarluvasPriceHistorySku,
+            )
+            history_event = MarluvasPriceHistoryEvent.objects.create(
+                brand_id           = brand_id,
+                cliente_id         = cliente_id,
+                created_by_user_id = user_id,
+                fecha_inicio       = fecha_ini,
+                fecha_fin          = fecha_fin,
+                custom_plazos      = custom_plazos or {},
+                sku_count          = len(rows_to_insert),
+                cells_count        = total_cells,
+                banda_vigente_id   = banda_vigente_id,
+                notas              = notas or None,
+            )
+            history_skus = []
+            for row in rows_to_insert:
+                history_skus.append(MarluvasPriceHistorySku(
+                    event_id        = history_event.id,
+                    sku             = row.sku,
+                    brl_override    = row.brl_override,
+                    com_pct         = row.com_pct,
+                    ajuste_usd      = row.ajuste_usd,
+                    sobreprecio_pct = row.sobreprecio_pct,
+                    anchor          = getattr(row, "_anchor_for_history", None) or None,
+                    prices_matrix   = row.prices_matrix or {},
+                    sizes_pricing   = getattr(row, "sizes_pricing", None) or {},
+                    activo          = row.is_active,
+                ))
+            if history_skus:
+                MarluvasPriceHistorySku.objects.bulk_create(history_skus, batch_size=200)
+        except Exception as hist_exc:  # noqa: BLE001
+            log.warning(
+                "persist_snapshot history insert failed (brand=%s cliente=%s): %s",
+                brand_id, cliente_id, hist_exc,
+            )
+
+        return {
+            "saved":                len(rows_to_insert),
+            "cells":                total_cells,
+            "size_overrides_saved": size_overrides_saved,
+        }
+
     def post(self, request):
         # Import diferido para no romper boot si el modelo aún no se cargó.
         from .models import MarluvasClientSkuPricing
@@ -2246,188 +2380,233 @@ class MarluvasSaveSimulationView(APIView):
             except (TypeError, ValueError):
                 banda_vigente_id = None
 
-        # --- Normalización y filtro activos==True ------------------------
-        rows_to_insert = []
+        # --- Persistencia (core reutilizable) ----------------------------
+        # Sprint 2026-07-16 · el armado de filas + snapshot atomico +
+        # bitacora vive ahora en persist_snapshot() para compartirlo con la
+        # carga masiva por marca. El comportamiento por-cliente es identico.
+        user_obj = getattr(request, "user", None)
+        user_id = None
+        if user_obj is not None and getattr(user_obj, "is_authenticated", False):
+            raw = getattr(user_obj, "id", None) or getattr(user_obj, "pk", None)
+            try:
+                user_id = uuid.UUID(str(raw)) if raw else None
+            except (ValueError, AttributeError, TypeError):
+                user_id = None
+
         try:
-            for idx, item in enumerate(skus_payload):
-                if not isinstance(item, dict):
-                    return Response(
-                        {"detail": f"skus[{idx}] debe ser objeto."},
-                        status=400,
-                    )
-                if not item.get("activo"):
-                    # Inactivo: no se reinserta. La desactivación bulk
-                    # de abajo se encarga del soft-delete.
-                    continue
-
-                sku = (item.get("sku") or "").strip()
-                if not sku:
-                    return Response(
-                        {"detail": f"skus[{idx}].sku es requerido."},
-                        status=400,
-                    )
-
-                # Matriz 12×4 — debe llegar pre-calculada desde el frontend
-                # (precios congelados). Si falta o tiene shape inválido,
-                # persistimos {} y el frontend recalcula al hidratar.
-                matrix_raw = item.get("prices_matrix")
-                if isinstance(matrix_raw, dict):
-                    # Validación liviana: claves banda → dict de plazos.
-                    # No imponemos las 12 bandas obligatorias por flexibilidad,
-                    # pero las que vengan se persisten tal cual (JSONB nativo).
-                    prices_matrix = {}
-                    for banda_key, plazos in matrix_raw.items():
-                        if not isinstance(plazos, dict):
-                            continue
-                        plazos_clean = {}
-                        for plazo_key, price in plazos.items():
-                            try:
-                                # Guardamos float (JSON-friendly). 4 dec de precisión.
-                                plazos_clean[str(plazo_key)] = round(float(price), 4)
-                            except (TypeError, ValueError):
-                                continue
-                        if plazos_clean:
-                            prices_matrix[str(banda_key)] = plazos_clean
-                else:
-                    prices_matrix = {}
-
-                sizes_pricing = self._parse_sizes_pricing(item.get("sizes_pricing"))
-
-                # F6 · Ancla por SKU para el snapshot histórico.
-                # Shape: { "bandaId": <int 1..12>, "plazoDias": <int positivo> }
-                # La tabla viva (MarluvasClientSkuPricing) NO almacena anchor;
-                # sólo lo necesita el snapshot inmutable. Se adjunta al row
-                # como atributo no-modelo y se levanta abajo al construir
-                # MarluvasPriceHistorySku.
-                anchor_raw = item.get("anchor")
-                anchor_clean = None
-                if isinstance(anchor_raw, dict):
-                    try:
-                        b = int(anchor_raw.get("bandaId"))
-                        p = int(anchor_raw.get("plazoDias"))
-                        if 1 <= b <= 12 and 1 <= p <= 3650:
-                            anchor_clean = {"bandaId": b, "plazoDias": p}
-                    except (TypeError, ValueError):
-                        pass
-
-                row = MarluvasClientSkuPricing(
-                    brand_id        = brand_id,
-                    cliente_id      = cliente_id,
-                    sku             = sku,
-                    brl_override    = self._to_decimal(item.get("brl_override"), allow_null=True),
-                    com_pct         = self._to_decimal(item.get("com_pct")),
-                    ajuste_usd      = self._to_decimal(item.get("ajuste_usd")),
-                    sobreprecio_pct = self._to_decimal(item.get("sobreprecio_pct")),
-                    prices_matrix   = prices_matrix,
-                    sizes_pricing   = sizes_pricing,
-                    custom_plazos   = custom_plazos,  # Fase 4 — duplicado por SKU
-                    is_active       = True,
-                    fecha_inicio    = fecha_ini,
-                    fecha_fin       = fecha_fin,
-                )
-                # Atributo no-modelo, solo para el snapshot histórico (F6).
-                row._anchor_for_history = anchor_clean
-                rows_to_insert.append(row)
+            res = self.persist_snapshot(
+                brand_id         = brand_id,
+                cliente_id       = cliente_id,
+                skus_payload     = skus_payload,
+                custom_plazos    = custom_plazos,
+                banda_vigente_id = banda_vigente_id,
+                fecha_ini        = fecha_ini,
+                fecha_fin        = fecha_fin,
+                notas            = (data.get("notas") if isinstance(data, dict) else None),
+                user_id          = user_id,
+            )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
-
-        # --- Snapshot por reemplazo (atómico) ----------------------------
-        try:
-            with transaction.atomic():
-                (MarluvasClientSkuPricing.objects
-                    .filter(brand_id=brand_id,
-                            cliente_id=cliente_id,
-                            is_active=True)
-                    .update(is_active=False))
-
-                if rows_to_insert:
-                    MarluvasClientSkuPricing.objects.bulk_create(rows_to_insert)
         except Exception as exc:  # noqa: BLE001
             log.warning(
                 "MarluvasSaveSimulationView failed (brand=%s cliente=%s): %s",
                 brand_id, cliente_id, exc,
             )
             return Response(
-                {"detail": f"No se pudo guardar la simulación: {exc}"},
+                {"detail": f"No se pudo guardar la simulacion: {exc}"},
                 status=500,
             )
 
-        # Contador de celdas guardadas (12 bandas × 4 plazos = 48 esperadas/SKU).
-        total_cells = 0
-        for row in rows_to_insert:
-            m = row.prices_matrix or {}
-            if isinstance(m, dict):
-                for plazos in m.values():
-                    if isinstance(plazos, dict):
-                        total_cells += len(plazos)
-
-        size_overrides_saved = sum(
-            len(getattr(row, "sizes_pricing", None) or {}) for row in rows_to_insert
-        )
-
-        # F6 · 2026-05-20 · Bitácora de cambios.
-        # Persistimos un snapshot inmutable en marluvas_price_history_event +
-        # marluvas_price_history_sku para que el CEO pueda revisar
-        # "qué guardó el operador y cuándo". NO bloquea el save si falla —
-        # un error en el log no debe perder la simulación del cliente.
-        try:
-            from .models import (
-                MarluvasPriceHistoryEvent, MarluvasPriceHistorySku,
-            )
-            user_obj = getattr(request, "user", None)
-            user_id = None
-            if user_obj is not None and getattr(user_obj, "is_authenticated", False):
-                raw = getattr(user_obj, "id", None) or getattr(user_obj, "pk", None)
-                try:
-                    user_id = uuid.UUID(str(raw)) if raw else None
-                except (ValueError, AttributeError, TypeError):
-                    user_id = None
-
-            history_event = MarluvasPriceHistoryEvent.objects.create(
-                brand_id           = brand_id,
-                cliente_id         = cliente_id,
-                created_by_user_id = user_id,
-                fecha_inicio       = fecha_ini,
-                fecha_fin          = fecha_fin,
-                custom_plazos      = custom_plazos or {},
-                sku_count          = len(rows_to_insert),
-                cells_count        = total_cells,
-                banda_vigente_id   = banda_vigente_id,
-                notas              = (data.get("notas") or None) if isinstance(data, dict) else None,
-            )
-
-            history_skus = []
-            for row in rows_to_insert:
-                history_skus.append(MarluvasPriceHistorySku(
-                    event_id        = history_event.id,
-                    sku             = row.sku,
-                    brl_override    = row.brl_override,
-                    com_pct         = row.com_pct,
-                    ajuste_usd      = row.ajuste_usd,
-                    sobreprecio_pct = row.sobreprecio_pct,
-                    # F6 · El ancla viene como atributo no-modelo
-                    # (_anchor_for_history) porque la tabla viva no la usa.
-                    anchor          = getattr(row, "_anchor_for_history", None) or None,
-                    prices_matrix   = row.prices_matrix or {},
-                    sizes_pricing   = getattr(row, "sizes_pricing", None) or {},
-                    activo          = row.is_active,
-                ))
-            if history_skus:
-                MarluvasPriceHistorySku.objects.bulk_create(history_skus, batch_size=200)
-        except Exception as hist_exc:  # noqa: BLE001
-            log.warning(
-                "MarluvasSaveSimulationView history insert failed "
-                "(brand=%s cliente=%s): %s",
-                brand_id, cliente_id, hist_exc,
-            )
-
         return Response({
-            "saved":                len(rows_to_insert),
-            "cells":                total_cells,
-            "size_overrides_saved": size_overrides_saved,
+            "saved":                res["saved"],
+            "cells":                res["cells"],
+            "size_overrides_saved": res["size_overrides_saved"],
             "brand_id":             str(brand_id),
             "cliente_id":           str(cliente_id),
             "snapshot_at":          timezone.now().isoformat(),
+        }, status=200)
+
+
+# =====================================================================
+# MarluvasSaveSimulationBulkView - carga masiva por marca (Sprint 2026-07-16)
+# =====================================================================
+# POST /api/commercial/marluvas/save-simulation-bulk/
+#
+# Sube UNA vez la lista (parseada en el front) y genera+guarda la matriz de
+# precios para VARIOS clientes en una sola llamada. Cada cliente aporta su
+# propio `skus` (matriz ya calculada con SU comision en el front). Por cada
+# cliente el backend: (1) persiste el snapshot de precios (persist_snapshot)
+# y (2) upserta su BrandClientPricingAssignment con la metadata del archivo
+# + vigencia compartida, para que la card muestre "Archivo activo" sin volver
+# a subir el Excel por cliente.
+#
+# Payload:
+#   { brand_id, fecha_inicio?, fecha_fin?, custom_plazos?, banda_vigente_id?,
+#     file_name?, file_size_bytes?,
+#     clients: [ { cliente_id, skus:[...], notas? }, ... ] }
+# =====================================================================
+def _bulk_upsert_bcpa(*, brand_id, cliente_id, fecha_ini, fecha_fin,
+                      file_name, file_size_bytes, notas, user_id):
+    # Reemplaza (soft-delete) la asignacion activa previa del par
+    # (marca, cliente) y crea una nueva con metadata de archivo + vigencia.
+    # Copia el snapshot de comision/dias/limite del cliente.
+    from .models import BrandClientPricingAssignment
+
+    snap_comision = snap_dias = snap_limit = None
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT comision_pct, dias_credito, credito_aprobado "
+                "FROM clientes.cliente WHERE id = %s AND is_active = TRUE LIMIT 1",
+                [str(cliente_id)],
+            )
+            row = cur.fetchone()
+            if row:
+                snap_comision, snap_dias, snap_limit = row
+    except Exception as exc:  # noqa: BLE001
+        log.warning("bulk BCPA snapshot failed (%s): %s", cliente_id, exc)
+
+    with transaction.atomic():
+        BrandClientPricingAssignment.objects.filter(
+            brand_id=brand_id, cliente_id=cliente_id, is_active=True,
+        ).update(is_active=False)
+
+        bcpa = BrandClientPricingAssignment(
+            id           = uuid.uuid4(),
+            brand_id     = brand_id,
+            cliente_id   = cliente_id,
+            fecha_inicio = fecha_ini or timezone.now().date(),
+            fecha_fin    = fecha_fin,
+            notas        = notas or None,
+            is_active    = True,
+        )
+        if file_name:
+            bcpa.file_name = str(file_name)[:255]
+            bcpa.file_uploaded_at = timezone.now()
+            if user_id:
+                bcpa.file_uploaded_by = user_id
+        if file_size_bytes is not None:
+            try:
+                bcpa.file_size_bytes = int(file_size_bytes)
+            except (TypeError, ValueError):
+                pass
+        if snap_comision is not None:
+            bcpa.comision_pct_snapshot = snap_comision
+        if snap_dias is not None:
+            bcpa.credito_dias_snapshot = snap_dias
+        if snap_limit is not None:
+            bcpa.credito_limit_snapshot = snap_limit
+        if user_id:
+            bcpa.created_by_id = user_id
+            bcpa.updated_by_id = user_id
+        bcpa.save()
+    return bcpa.id
+
+
+class MarluvasSaveSimulationBulkView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        data = request.data or {}
+        try:
+            brand_id  = MarluvasSaveSimulationView._parse_uuid(data.get("brand_id"), "brand_id")
+            fecha_ini = MarluvasSaveSimulationView._parse_date_optional(data.get("fecha_inicio"), "fecha_inicio")
+            fecha_fin = MarluvasSaveSimulationView._parse_date_optional(data.get("fecha_fin"), "fecha_fin")
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+
+        clients = data.get("clients")
+        if not isinstance(clients, list) or not clients:
+            return Response({"detail": "clients debe ser un array no vacio."}, status=400)
+
+        custom_plazos = MarluvasSaveSimulationView._parse_custom_plazos(data.get("custom_plazos"))
+
+        banda_vigente_id = None
+        bv_raw = data.get("banda_vigente_id")
+        if bv_raw is not None:
+            try:
+                bv = int(bv_raw)
+                if 1 <= bv <= 12:
+                    banda_vigente_id = bv
+            except (TypeError, ValueError):
+                banda_vigente_id = None
+
+        file_name = data.get("file_name")
+        file_size_bytes = data.get("file_size_bytes")
+
+        user_obj = getattr(request, "user", None)
+        user_id = None
+        if user_obj is not None and getattr(user_obj, "is_authenticated", False):
+            raw = getattr(user_obj, "id", None) or getattr(user_obj, "pk", None)
+            try:
+                user_id = uuid.UUID(str(raw)) if raw else None
+            except (ValueError, AttributeError, TypeError):
+                user_id = None
+
+        results = []
+        saved_clients = 0
+        for entry in clients:
+            if not isinstance(entry, dict):
+                results.append({"ok": False, "error": "entrada de cliente invalida"})
+                continue
+            try:
+                cliente_id = MarluvasSaveSimulationView._parse_uuid(entry.get("cliente_id"), "cliente_id")
+            except ValueError as exc:
+                results.append({"ok": False, "error": str(exc)})
+                continue
+
+            skus_payload = entry.get("skus")
+            if not isinstance(skus_payload, list):
+                results.append({"cliente_id": str(cliente_id), "ok": False,
+                                "error": "skus debe ser un array"})
+                continue
+
+            notas = entry.get("notas") or f"[Marluvas v7 bulk - {len(skus_payload)} SKUs]"
+            try:
+                res = MarluvasSaveSimulationView.persist_snapshot(
+                    brand_id         = brand_id,
+                    cliente_id       = cliente_id,
+                    skus_payload     = skus_payload,
+                    custom_plazos    = custom_plazos,
+                    banda_vigente_id = banda_vigente_id,
+                    fecha_ini        = fecha_ini,
+                    fecha_fin        = fecha_fin,
+                    notas            = notas,
+                    user_id          = user_id,
+                )
+            except ValueError as exc:
+                results.append({"cliente_id": str(cliente_id), "ok": False, "error": str(exc)})
+                continue
+            except Exception as exc:  # noqa: BLE001
+                log.warning("bulk persist failed (cliente=%s): %s", cliente_id, exc)
+                results.append({"cliente_id": str(cliente_id), "ok": False, "error": str(exc)})
+                continue
+
+            assignment_id = None
+            try:
+                assignment_id = _bulk_upsert_bcpa(
+                    brand_id=brand_id, cliente_id=cliente_id,
+                    fecha_ini=fecha_ini, fecha_fin=fecha_fin,
+                    file_name=file_name, file_size_bytes=file_size_bytes,
+                    notas=notas, user_id=user_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("bulk BCPA upsert failed (cliente=%s): %s", cliente_id, exc)
+
+            saved_clients += 1
+            results.append({
+                "cliente_id":    str(cliente_id),
+                "ok":            True,
+                "saved":         res["saved"],
+                "cells":         res["cells"],
+                "assignment_id": str(assignment_id) if assignment_id else None,
+            })
+
+        return Response({
+            "brand_id":       str(brand_id),
+            "total_clients":  len(clients),
+            "saved_clients":  saved_clients,
+            "results":        results,
         }, status=200)
 
 

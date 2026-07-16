@@ -25,7 +25,7 @@
 //
 // El sub-tab bar queda pero con solo "Listas de Precios" por compatibilidad.
 // =====================================================================
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -44,6 +44,11 @@ const IconPencil = ({ size = 13 }) => (
 import { useRole } from "../../context/RoleContext.jsx";
 import { CLIENTS } from "../../data/mockData.js";
 import { apiFetch, getToken } from "../../lib/api.js";
+import * as XLSX from "xlsx";
+import {
+  parseExcelMarluvas, defaultSkuState, buildSimSkusPayload,
+} from "../../lib/marluvasPricing.js";
+import { BANDAS_MARLUVAS, PLAZOS_MARLUVAS } from "../../constants/marluvas.js";
 
 // Mapeo ISO-2 → emoji bandera (subset relevante para el grid de cards)
 const FLAG_BY_ISO2 = {
@@ -124,12 +129,295 @@ const ESTADO_COLORS = {
 // ═════════════════════════════════════════════════════════════
 // Componente raíz
 // ═════════════════════════════════════════════════════════════
+// -- estilos compartidos del panel de carga masiva --
+const _bulkLbl = {
+  display: "block", font: "600 10px/1.3 var(--font-body)", color: MUTED,
+  textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4,
+};
+const _bulkInp = {
+  width: "100%", padding: "7px 9px", border: "1px solid #E5E7EB",
+  borderRadius: 7, font: "500 12.5px/1 var(--font-body)", color: NAVY,
+  background: "#FFFFFF", outline: "none", boxSizing: "border-box",
+};
+
+// -------------------------------------------------------------
+// BulkPriceUploadPanel - Sprint 2026-07-16
+// Sube el Excel COMEX UNA vez a nivel de marca. Parsea client-side y
+// genera+guarda la matriz de precios para TODOS los clientes activos,
+// aplicando la comision pactada de cada uno. Usa el endpoint bulk
+// (save-simulation-bulk) que persiste el snapshot por cliente y upserta
+// su asignacion (BCPA) con la metadata del archivo + vigencia.
+// -------------------------------------------------------------
+function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
+  const [file, setFile]             = useState(null);
+  const [parsing, setParsing]       = useState(false);
+  const [parsedSkus, setParsedSkus] = useState([]);
+  const [error, setError]           = useState(null);
+  const _today = new Date().toISOString().slice(0, 10);
+  const [fechaInicio, setFechaInicio]     = useState(_today);
+  const [fechaFin, setFechaFin]           = useState("");
+  const [fechaFinIndef, setFechaFinIndef] = useState(true);
+  const [anchorBandaId, setAnchorBandaId] = useState(1);
+  const [anchorPlazoDias, setAnchorPlazoDias] = useState(90);
+  const [running, setRunning] = useState(false);
+  const [result, setResult]   = useState(null);
+  const fileInputRef = useRef(null);
+
+  const activeClients = useMemo(
+    () => (clients || []).filter(
+      (c) => String(c.estado || "ACTIVO").toUpperCase() === "ACTIVO"),
+    [clients],
+  );
+
+  const handleFile = async (f) => {
+    if (!f) return;
+    if (!/\.(xlsx|xls)$/i.test(f.name || "")) {
+      setError(lang === "es" ? "Formato no soportado. Usa .xlsx o .xls." : "Unsupported format.");
+      return;
+    }
+    if (f.size > 15 * 1024 * 1024) {
+      setError(lang === "es" ? "Maximo 15 MB." : "Max 15 MB.");
+      return;
+    }
+    setError(null); setResult(null); setFile(f); setParsing(true);
+    try {
+      const buf = await f.arrayBuffer();
+      const parsed = parseExcelMarluvas(buf, { XLSX });
+      if (!parsed.length) {
+        setError(lang === "es"
+          ? "No se detectaron SKUs Marluvas (7xxxxx / 8xxxxx) en el Excel."
+          : "No Marluvas SKUs detected.");
+        setParsedSkus([]);
+      } else {
+        setParsedSkus(parsed);
+      }
+    } catch (e) {
+      setError((lang === "es" ? "Error parseando Excel: " : "Excel parse error: ") + (e?.message || ""));
+      setParsedSkus([]);
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const generate = async () => {
+    if (!parsedSkus.length || !activeClients.length || running) return;
+    setRunning(true); setError(null); setResult(null);
+    try {
+      const anchor = { bandaId: Number(anchorBandaId), plazoDias: Number(anchorPlazoDias) };
+      const clientsPayload = activeClients.map((c) => {
+        const com = c.comision_pct != null ? Number(c.comision_pct) * 100 : 0;
+        const skusState = parsedSkus.map((p) => defaultSkuState(p, { com }));
+        const skus = buildSimSkusPayload(skusState, anchor, null);
+        return {
+          cliente_id: c.cliente_id,
+          notas: `[Marluvas v7 bulk - ${parsedSkus.length} SKUs - com ${com}%]`,
+          skus,
+        };
+      });
+      const body = {
+        brand_id:        brandId,
+        fecha_inicio:    fechaInicio || null,
+        fecha_fin:       fechaFinIndef ? null : (fechaFin || null),
+        banda_vigente_id: Number(anchorBandaId),
+        file_name:       file?.name || null,
+        file_size_bytes: file?.size || null,
+        clients:         clientsPayload,
+      };
+      const resp = await apiFetch("/commercial/marluvas/save-simulation-bulk/", {
+        method: "POST", body, token: getToken(),
+      });
+      setResult(resp || { saved_clients: clientsPayload.length });
+      if (Array.isArray(resp?.results)) {
+        const failed = resp.results.filter((r) => r && r.ok === false);
+        if (failed.length) console.warn("[BulkPriceUpload] clientes con error:", failed);
+      }
+      if (typeof onDone === "function") onDone();
+    } catch (e) {
+      setError(String(e?.body?.detail || e?.message || e));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const btnDisabled = !parsedSkus.length || !activeClients.length || running;
+
+  return (
+    <div style={{
+      background: "#FFFFFF", border: `1px solid ${MINT}44`,
+      borderRadius: 12, padding: 18, boxShadow: "0 1px 2px rgba(11,30,58,0.06)",
+    }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 14 }}>
+        <div style={{
+          width: 34, height: 34, borderRadius: 9, background: `${MINT}18`,
+          display: "grid", placeItems: "center", color: MINT, flexShrink: 0,
+        }}>
+          <IconDollar size={17}/>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ font: "700 14px/1.2 var(--font-body)", color: NAVY }}>
+            {lang === "es" ? "Carga masiva de precios - todos los clientes" : "Bulk price upload - all clients"}
+          </div>
+          <div style={{ font: "500 12px/1.4 var(--font-body)", color: MUTED, marginTop: 2 }}>
+            {lang === "es"
+              ? "Sube el Excel COMEX una sola vez. Se generan y guardan los precios para cada cliente activo usando su comision pactada."
+              : "Upload the COMEX Excel once. Prices are generated and saved for every active client using its agreed commission."}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14, alignItems: "start" }}>
+        <div
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
+          onClick={() => fileInputRef.current?.click()}
+          style={{
+            border: `2px dashed ${file ? MINT : "#E5E7EB"}`,
+            background: file ? `${MINT}08` : SOFT,
+            borderRadius: 10, padding: 20, textAlign: "center",
+            cursor: parsing ? "wait" : "pointer", transition: "all 160ms ease",
+          }}
+        >
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" hidden
+                 onChange={(e) => handleFile(e.target.files?.[0])}/>
+          {parsing ? (
+            <div style={{ color: MUTED, font: "500 12px/1.3 var(--font-body)" }}>
+              {lang === "es" ? "Procesando Excel..." : "Parsing Excel..."}
+            </div>
+          ) : file ? (
+            <div>
+              <IconCheck size={20} style={{ color: MINT, marginBottom: 6 }}/>
+              <div style={{ font: "700 13px/1.2 var(--font-body)", color: NAVY }}>{file.name}</div>
+              <div style={{ font: "500 10.5px/1.3 var(--font-body)", color: MUTED, marginTop: 3 }}>
+                {(file.size / 1024).toFixed(1)} KB - {parsedSkus.length} SKUs
+              </div>
+              <button type="button"
+                onClick={(e) => { e.stopPropagation(); setFile(null); setParsedSkus([]); setResult(null); }}
+                style={{
+                  marginTop: 8, padding: "3px 9px", border: "1px solid #E5E7EB",
+                  background: "#FFFFFF", color: MUTED, borderRadius: 6, cursor: "pointer",
+                  font: "500 10.5px/1 var(--font-body)",
+                }}>
+                {lang === "es" ? "Cambiar archivo" : "Change file"}
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div style={{ font: "700 20px/1 var(--font-body)", color: MUTED, marginBottom: 6 }}>&#8593;</div>
+              <div style={{ font: "700 13px/1.2 var(--font-body)", color: NAVY }}>
+                {lang === "es" ? "Arrastra el Excel o click" : "Drag the Excel or click"}
+              </div>
+              <div style={{ font: "500 10.5px/1.3 var(--font-body)", color: MUTED, marginTop: 3 }}>
+                .xlsx - .xls - max 15 MB
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div>
+            <label style={_bulkLbl}>{lang === "es" ? "Vigencia - inicio" : "Validity - start"}</label>
+            <input type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} style={_bulkInp}/>
+          </div>
+          <div>
+            <label style={_bulkLbl}>{lang === "es" ? "Vigencia - fin" : "Validity - end"}</label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input type="date" value={fechaFin} disabled={fechaFinIndef}
+                     onChange={(e) => setFechaFin(e.target.value)}
+                     style={{ ..._bulkInp, opacity: fechaFinIndef ? 0.45 : 1 }}/>
+              <button type="button"
+                onClick={() => { const n = !fechaFinIndef; setFechaFinIndef(n); if (n) setFechaFin(""); }}
+                style={{
+                  padding: "0 10px", borderRadius: 6, whiteSpace: "nowrap", cursor: "pointer",
+                  border: `1.5px solid ${fechaFinIndef ? MINT : "#E5E7EB"}`,
+                  background: fechaFinIndef ? `${MINT}10` : "#FFFFFF",
+                  color: fechaFinIndef ? MINT : INK, font: "600 11px/1 var(--font-body)",
+                }}>
+                {lang === "es" ? "Indef." : "Indef."}
+              </button>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ flex: 1 }}>
+              <label style={_bulkLbl}>{lang === "es" ? "Ancla - banda" : "Anchor - band"}</label>
+              <select value={anchorBandaId} onChange={(e) => setAnchorBandaId(Number(e.target.value))} style={_bulkInp}>
+                {BANDAS_MARLUVAS.map((b) => (
+                  <option key={b.id} value={b.id}>#{b.id} - {b.rango}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={_bulkLbl}>{lang === "es" ? "Ancla - plazo" : "Anchor - term"}</label>
+              <select value={anchorPlazoDias} onChange={(e) => setAnchorPlazoDias(Number(e.target.value))} style={_bulkInp}>
+                {PLAZOS_MARLUVAS.map((p) => (
+                  <option key={p.dias} value={p.dias}>{p.dias}d</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <div style={{
+          marginTop: 12, padding: "9px 12px", borderRadius: 8,
+          background: `${RED}10`, border: `1px solid ${RED}55`, color: "#7F1D1D",
+          font: "500 12px/1.4 var(--font-body)", display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <IconAlert size={13}/>{error}
+        </div>
+      )}
+
+      {result && (
+        <div style={{
+          marginTop: 12, padding: "9px 12px", borderRadius: 8,
+          background: `${MINT}12`, border: `1px solid ${MINT}55`, color: "#065F46",
+          font: "500 12px/1.4 var(--font-body)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
+        }}>
+          <IconCheck size={13}/>
+          {lang === "es"
+            ? `Precios generados para ${result.saved_clients ?? 0} de ${result.total_clients ?? activeClients.length} clientes activos.`
+            : `Prices generated for ${result.saved_clients ?? 0} of ${result.total_clients ?? activeClients.length} active clients.`}
+          {Array.isArray(result.results) && result.results.some((r) => r && r.ok === false) && (
+            <span style={{ color: AMBER }}>
+              {lang === "es" ? "- algunos fallaron (ver consola)" : "- some failed (see console)"}
+            </span>
+          )}
+        </div>
+      )}
+
+      <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ font: "500 12px/1.4 var(--font-body)", color: MUTED }}>
+          {parsedSkus.length > 0
+            ? (lang === "es"
+                ? `${parsedSkus.length} SKUs x ${activeClients.length} clientes activos - cada uno con su comision`
+                : `${parsedSkus.length} SKUs x ${activeClients.length} active clients - each with its commission`)
+            : (lang === "es" ? "Sube un Excel para empezar." : "Upload an Excel to start.")}
+        </div>
+        <button type="button" onClick={generate} disabled={btnDisabled}
+          style={{
+            padding: "9px 18px", borderRadius: 9, border: "none",
+            background: btnDisabled ? "#CBD5E1" : MINT, color: "#FFFFFF",
+            font: "700 13px/1 var(--font-body)",
+            cursor: btnDisabled ? "not-allowed" : "pointer",
+            display: "inline-flex", alignItems: "center", gap: 7,
+          }}>
+          {running
+            ? (lang === "es" ? "Generando..." : "Generating...")
+            : (lang === "es" ? `Generar para ${activeClients.length} clientes activos` : `Generate for ${activeClients.length} active clients`)}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
 export default function BrandPricingConsole({ brandId, lang = "es" }) {
   const { isAdmin } = useRole();
   const navigate = useNavigate();
 
   const [query,   setQuery]   = useState("");
   const [loading, setLoading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Clientes reales del backend con asignaciones de pricing por marca.
   // Endpoint: GET /api/commercial/brands/<brandId>/clients_summary/
@@ -183,7 +471,7 @@ export default function BrandPricingConsole({ brandId, lang = "es" }) {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [brandId]);
+  }, [brandId, reloadKey]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -258,7 +546,16 @@ export default function BrandPricingConsole({ brandId, lang = "es" }) {
         </div>
       </div>
 
-      {/* Grid de cards */}
+      {isAdmin && (
+        <BulkPriceUploadPanel
+          brandId={brandId}
+          clients={clients}
+          lang={lang}
+          onDone={() => setReloadKey((k) => k + 1)}
+        />
+      )}
+
+            {/* Grid de cards */}
       {filtered.length === 0 ? (
         <div style={{
           padding: 40, textAlign: "center",

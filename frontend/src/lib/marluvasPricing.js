@@ -429,3 +429,65 @@ export function anchorPrice(sku, anchor) {
 
   return { base, lista, banda, plazo };
 }
+
+/**
+ * Construye el array `skus` del payload de save-simulation a partir del
+ * estado de SKUs del editor. Fuente ÚNICA para el guardado por-cliente
+ * (BrandClientPricingForm) y la carga masiva por marca (BrandPricingConsole),
+ * garantizando payloads idénticos.
+ *
+ * Para cada SKU reconstruye la matriz con shape canónico: para CADA banda
+ * (1..12) incluye EXACTAMENTE los plazos efectivos (defaults + customPlazos).
+ * Si el operador editó manualmente una celda (s.matrix), esa edición gana
+ * sobre el cálculo base. El ancla efectiva por SKU = s.anchor || globalAnchor.
+ *
+ * @param {Array} skus            Estado de SKUs (con brl, com, ajuste, sobreprecio, matrix, anchor, activo)
+ * @param {{bandaId:number, plazoDias:number}} [globalAnchor]  Ancla global del editor
+ * @param {Object} [customPlazos] Fase 4 · { "<bandaId>": [{dias, factor}] } o null
+ * @returns {Array} skus payload listo para POST
+ */
+export function buildSimSkusPayload(skus, globalAnchor = null, customPlazos = null) {
+  return (skus || []).map((s) => {
+    const baseMatrix = computeMatrixFromInputs(s, customPlazos);
+    const userMatrix = (s.matrix && typeof s.matrix === "object") ? s.matrix : {};
+    const prices_matrix = {};
+    for (const banda of BANDAS_MARLUVAS) {
+      const bid = String(banda.id);
+      const baseRow = baseMatrix[bid] || {};
+      const userRow = userMatrix[bid] || {};
+      const plazos  = getBandPlazos(banda.id, customPlazos);
+      const plazosObj = {};
+      for (const p of plazos) {
+        const dKey = String(p.dias);
+        const candidate = Number.isFinite(Number(userRow[dKey]))
+          ? Number(userRow[dKey])
+          : Number(baseRow[dKey]);
+        if (Number.isFinite(candidate)) {
+          plazosObj[dKey] = Number(candidate.toFixed(4));
+        }
+      }
+      prices_matrix[bid] = plazosObj;
+    }
+    const effectiveAnchor = (s.anchor
+        && Number.isFinite(Number(s.anchor.bandaId))
+        && Number.isFinite(Number(s.anchor.plazoDias)))
+      ? { bandaId: Number(s.anchor.bandaId), plazoDias: Number(s.anchor.plazoDias) }
+      : (globalAnchor
+          && Number.isFinite(Number(globalAnchor.bandaId))
+          && Number.isFinite(Number(globalAnchor.plazoDias))
+          ? { bandaId: Number(globalAnchor.bandaId), plazoDias: Number(globalAnchor.plazoDias) }
+          : null);
+    return {
+      sku:             String(s.sku),
+      brl_override:    Number.isFinite(Number(s.brl)) ? Number(s.brl) : null,
+      com_pct:         Number(s.com || 0),
+      ajuste_usd:      Number(s.ajuste || 0),
+      sobreprecio_pct: Number(s.sobreprecio || 0),
+      prices_matrix,
+      ...(effectiveAnchor ? { anchor: effectiveAnchor } : {}),
+      ...(s.sizes_pricing && Object.keys(s.sizes_pricing).length > 0
+          ? { sizes_pricing: s.sizes_pricing } : {}),
+      activo:          !!s.activo,
+    };
+  });
+}

@@ -43,7 +43,7 @@ import {
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 import SkuSizesPanel from "../components/marluvas/SkuSizesPanel.jsx";
 import PlazoFormModal from "../components/marluvas/PlazoFormModal.jsx";
-import { getBandPlazos, materializeDefaultPlazos } from "../lib/marluvasPricing.js";
+import { getBandPlazos, materializeDefaultPlazos, buildSimSkusPayload } from "../lib/marluvasPricing.js";
 
 // ─── Helpers backend → shape interno ──────────────────────────
 const _FLAG_ISO2 = {
@@ -827,25 +827,31 @@ export default function ScreenBrandClientPricingForm() {
         volumen_pct: null,
         notas: notasPayload,
       };
-      const created = await apiFetch("/commercial/brand-client-pricing/", {
-        method: "POST",
-        body: payload,
-        token: accessToken,
-      });
-
-      if (file && created?.id) {
-        const fd = new FormData();
-        fd.append("file", file);
-        const API_BASE = import.meta.env.VITE_API_BASE || "/api";
-        const resp = await fetch(
-          `${API_BASE}/commercial/brand-client-pricing/${created.id}/upload-file/`,
-          { method: "POST",
-            headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
-            body: fd },
-        );
-        if (!resp.ok) {
-          const data = await resp.json().catch(() => ({}));
-          throw new Error(data?.detail || `HTTP ${resp.status}`);
+      // Sprint 2026-07-16 · el archivo + vigencia se gestionan desde la
+      // carga masiva por marca. En el detalle del cliente SOLO creamos/
+      // subimos BCPA si el operador adjuntó un archivo aquí (fallback);
+      // normalmente `file` es null y solo re-guardamos la matriz, dejando
+      // intacta la asignación (con su archivo) creada por la marca.
+      if (file) {
+        const created = await apiFetch("/commercial/brand-client-pricing/", {
+          method: "POST",
+          body: payload,
+          token: accessToken,
+        });
+        if (created?.id) {
+          const fd = new FormData();
+          fd.append("file", file);
+          const API_BASE = import.meta.env.VITE_API_BASE || "/api";
+          const resp = await fetch(
+            `${API_BASE}/commercial/brand-client-pricing/${created.id}/upload-file/`,
+            { method: "POST",
+              headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+              body: fd },
+          );
+          if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            throw new Error(data?.detail || `HTTP ${resp.status}`);
+          }
         }
       }
 
@@ -871,71 +877,7 @@ export default function ScreenBrandClientPricingForm() {
         // banda (raro), omitimos el campo y el backend deja NULL.
         ...(Number.isFinite(Number(bandaVigente?.id))
             ? { banda_vigente_id: Number(bandaVigente.id) } : {}),
-        skus: skus.map((s) => {
-          // F6.2 · 2026-05-20 · Reconstrucción de la matriz garantizando
-          // shape canónico: para CADA banda (1..12), incluir EXACTAMENTE
-          // los plazos efectivos (defaults + custom_plazos[banda]). Si el
-          // operador editó manualmente alguna celda, esa edición gana.
-          // Las celdas con plazos que ya no existen (plazo eliminado) se
-          // descartan — el snapshot refleja la grilla viva del momento
-          // del save.
-          //
-          // Bug fix: antes la matriz se persistía "tal cual" desde s.matrix,
-          // pero s.matrix podía no reflejar el último estado de customPlazos
-          // (ej. si el usuario agregaba 120d a banda 1 y luego cambiaba el
-          // BRL — el patchSku regenera la matriz con customPlazos sí, pero
-          // si por algún edge case s.matrix se quedaba viejo, el snapshot
-          // guardaba plazos defaults [90/60/30/8] y el visor mostraba "—"
-          // en el plazo custom).
-          const baseMatrix = computeMatrixFromInputs(s, customPlazos);
-          const userMatrix = (s.matrix && typeof s.matrix === "object") ? s.matrix : {};
-          const prices_matrix = {};
-          for (const banda of BANDAS_MARLUVAS) {
-            const bid = String(banda.id);
-            const baseRow = baseMatrix[bid] || {};
-            const userRow = userMatrix[bid] || {};
-            const plazos  = getBandPlazos(banda.id, customPlazos);
-            const plazosObj = {};
-            for (const p of plazos) {
-              const dKey = String(p.dias);
-              // Prioridad: override manual del operador (userRow) > cálculo base (baseRow).
-              const candidate = Number.isFinite(Number(userRow[dKey]))
-                ? Number(userRow[dKey])
-                : Number(baseRow[dKey]);
-              if (Number.isFinite(candidate)) {
-                plazosObj[dKey] = Number(candidate.toFixed(4));
-              }
-            }
-            // Persistir incluso si la banda no tiene celdas (caso degenerado).
-            prices_matrix[bid] = plazosObj;
-          }
-          // F6 · Ancla efectiva por SKU para el snapshot histórico.
-          // Si el SKU tiene override (s.anchor), usa ese; si no, hereda
-          // del ancla global del editor (anchor). El backend lo guarda
-          // sólo en marluvas_price_history_sku.anchor — la tabla viva
-          // (marluvas_client_sku_pricing) lo ignora.
-          const effectiveAnchor = (s.anchor
-              && Number.isFinite(Number(s.anchor.bandaId))
-              && Number.isFinite(Number(s.anchor.plazoDias)))
-            ? { bandaId: Number(s.anchor.bandaId), plazoDias: Number(s.anchor.plazoDias) }
-            : (Number.isFinite(Number(anchor?.bandaId)) && Number.isFinite(Number(anchor?.plazoDias))
-                ? { bandaId: Number(anchor.bandaId), plazoDias: Number(anchor.plazoDias) }
-                : null);
-          return {
-            sku:             String(s.sku),
-            brl_override:    Number.isFinite(Number(s.brl)) ? Number(s.brl) : null,
-            com_pct:         Number(s.com || 0),
-            ajuste_usd:      Number(s.ajuste || 0),
-            sobreprecio_pct: Number(s.sobreprecio || 0),
-            prices_matrix,
-            // F6 · Ancla congelada por SKU (snapshot histórico only).
-            ...(effectiveAnchor ? { anchor: effectiveAnchor } : {}),
-            // Fase 3 · overrides por talla (opcional, omitir si vacío)
-            ...(s.sizes_pricing && Object.keys(s.sizes_pricing).length > 0
-                ? { sizes_pricing: s.sizes_pricing } : {}),
-            activo:          !!s.activo,
-          };
-        }),
+        skus: buildSimSkusPayload(skus, anchor, customPlazos),
       };
       const simResp = await apiFetch("/commercial/marluvas/save-simulation/", {
         method: "POST",
@@ -1200,109 +1142,24 @@ export default function ScreenBrandClientPricingForm() {
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
-        {/* ── 1 · Archivo Excel + Vigencia (lado a lado) ── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 14 }}>
-          <Section
-            title={lang === "es" ? "Archivo de precios Marluvas v7" : "Marluvas v7 price file"}
-            subtitle={lang === "es"
-              ? "Sube el Excel COMEX 2026 v7. Detecta SKUs Marluvas (7xxxxx / 8xxxxx) y carga el precio BRL base."
-              : "Upload the COMEX 2026 v7 Excel."}
-            badge={skus.length ? { label: `${skus.length} SKUS`, color: NAVY, bg: `${MINT}22` } : null}
-          >
-            <div
-              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={onDrop}
-              onClick={() => fileInputRef.current?.click()}
-              style={{
-                border: `2px dashed ${dragOver ? MINT : file ? MINT : "var(--border)"}`,
-                background: dragOver ? `${MINT}0D` : file ? `${MINT}06` : SOFT,
-                borderRadius: 10,
-                padding: 22, textAlign: "center",
-                cursor: parsing ? "wait" : "pointer",
-                transition: "all 160ms ease",
-              }}
-            >
-              <input ref={fileInputRef} type="file" accept=".xlsx,.xls" hidden
-                     onChange={e => handleFile(e.target.files?.[0])}/>
-              {parsing ? (
-                <div style={{ color: MUTED, font: "500 12px/1.3 var(--font-body)" }}>
-                  {lang === "es" ? "Procesando Excel…" : "Parsing Excel…"}
-                </div>
-              ) : file ? (
-                <div>
-                  <IconCheck size={22} style={{ color: MINT, marginBottom: 6 }}/>
-                  <div style={{ font: "700 13px/1.2 var(--font-body)", color: NAVY }}>{file.name}</div>
-                  <div style={{ font: "500 10.5px/1.3 var(--font-body)", color: MUTED, marginTop: 3 }}>
-                    {(file.size / 1024).toFixed(1)} KB · {skus.length} SKUs
-                  </div>
-                  <button type="button"
-                    onClick={e => { e.stopPropagation(); setFile(null); }}
-                    style={{
-                      marginTop: 8, padding: "3px 9px",
-                      border: "1px solid var(--border)", background: "var(--surface-raised)",
-                      color: MUTED, borderRadius: 6, cursor: "pointer",
-                      font: "500 10.5px/1 var(--font-body)",
-                      display: "inline-flex", alignItems: "center", gap: 4,
-                    }}>
-                    <IconX size={10}/>{lang === "es" ? "Cambiar" : "Change"}
-                  </button>
-                </div>
-              ) : (
-                <div>
-                  <IconUpload size={22} style={{ color: dragOver ? MINT : MUTED, marginBottom: 8 }}/>
-                  <div style={{ font: "700 13px/1.2 var(--font-body)", color: NAVY }}>
-                    {lang === "es" ? "Arrastra el Excel o click" : "Drag the Excel or click"}
-                  </div>
-                  <div style={{ font: "500 10.5px/1.3 var(--font-body)", color: MUTED, marginTop: 3 }}>
-                    .xlsx · .xls · max 15 MB
-                  </div>
-                </div>
-              )}
-            </div>
-            {fileError && (
-              <div style={{
-                marginTop: 8, font: "500 11px/1.3 var(--font-body)", color: RED,
-                display: "inline-flex", alignItems: "center", gap: 4,
-              }}>
-                <IconAlert size={11}/>{fileError}
-              </div>
-            )}
-          </Section>
-
-          <Section
-            title={lang === "es" ? "Vigencia" : "Validity"}
-            subtitle={lang === "es" ? "Período activo de esta lista." : "Active period."}
-          >
-            <Field label={lang === "es" ? "Inicio" : "Start"}>
-              <Input type="date" value={fechaInicio} onChange={setFechaInicio}/>
-            </Field>
-            <div style={{ marginTop: 10 }}>
-              <Label>{lang === "es" ? "Fin" : "End"}</Label>
-              <div style={{ display: "flex", gap: 6 }}>
-                <Input type="date" value={fechaFin} onChange={setFechaFin}
-                       disabled={fechaFinIndef}
-                       style={{ opacity: fechaFinIndef ? 0.45 : 1 }}/>
-                <motion.button type="button" whileTap={{ scale: 0.97 }}
-                  onClick={() => {
-                    const next = !fechaFinIndef;
-                    setFechaFinIndef(next);
-                    if (next) setFechaFin("");
-                  }}
-                  style={{
-                    padding: "0 12px",
-                    border: `1.5px solid ${fechaFinIndef ? MINT : "var(--border)"}`,
-                    background: fechaFinIndef ? `${MINT}10` : "var(--surface-raised)",
-                    color: fechaFinIndef ? MINT : INK,
-                    font: "600 11px/1 var(--font-body)",
-                    borderRadius: 6, cursor: "pointer", whiteSpace: "nowrap",
-                  }}>
-                  {fechaFinIndef && <IconCheck size={10}/>}
-                  {lang === "es" ? " Indef." : " Indef."}
-                </motion.button>
-              </div>
-            </div>
-          </Section>
+        {/* ── 1 · Nota: archivo + vigencia se gestionan en la marca ── */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          padding: "12px 16px", borderRadius: 10,
+          background: SOFT, border: "1px solid var(--border)",
+          font: "500 12px/1.4 var(--font-body)", color: MUTED,
+        }}>
+          <span style={{ flex: 1, minWidth: 240 }}>
+            {lang === "es"
+              ? <>El archivo de precios y la vigencia se cargan <strong>una sola vez</strong> desde el <strong>Motor de Precios de la marca</strong> (aplica a todos los clientes). Aquí ajustás el ancla y la matriz de este cliente.</>
+              : <>The price file and validity are set <strong>once</strong> from the brand Pricing Engine (applies to all clients). Here you tune this client's anchor and matrix.</>}
+          </span>
+          {fechaInicio && (
+            <span style={{ color: INK, whiteSpace: "nowrap" }}>
+              {lang === "es" ? "Vigencia: " : "Validity: "}
+              <strong>{fechaInicio}</strong>{fechaFinIndef ? " → ∞" : (fechaFin ? ` → ${fechaFin}` : "")}
+            </span>
+          )}
         </div>
 
         {/* ── 2 · Editor SKUs · ancla configurable ── */}
