@@ -421,9 +421,9 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
               ) : null}
 
               {!picked.loading_sizes && picked.tallas.length >= 1 && (() => {
-                const allSystems = ["BASE","EU","US_M","US_W","UK_M","BR","CM","ALFA"];
+                const allSystems = ["EU","US_M","US_W","UK_M","BR","CM","ALFA"];
                 const systemsWithData = allSystems.filter((s) =>
-                  s === "BASE" || picked.tallas.some((t) => !!(t.equiv && t.equiv[s]))
+                  picked.tallas.some((t) => !!(t.equiv && t.equiv[s]))
                 );
                 const labels = {
                   BASE: lang === "es" ? "Base" : "Base",

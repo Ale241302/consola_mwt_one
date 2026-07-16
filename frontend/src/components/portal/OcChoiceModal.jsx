@@ -92,22 +92,22 @@ export default function OcChoiceModal({ open, lang = "es", onYes, onNo, onClose 
             type="button" onClick={onNo}
             style={{
               flex: 1, minWidth: 150, padding: "12px 18px", borderRadius: 11,
-              border: `1.5px solid ${NAVY}`, background: "#FFFFFF", color: NAVY,
+              border: "1.5px solid #CBD5E1", background: "#FFFFFF", color: "#334155",
               fontSize: 14, fontWeight: 700, cursor: "pointer",
-              transition: "background 140ms ease, color 140ms ease, transform 140ms ease",
+              transition: "background 140ms ease, border-color 140ms ease, transform 140ms ease",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = NAVY;
-              e.currentTarget.style.color = "#FFFFFF";
+              e.currentTarget.style.background = "#F1F5F9";
+              e.currentTarget.style.borderColor = "#94A3B8";
               e.currentTarget.style.transform = "translateY(-1px)";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = "#FFFFFF";
-              e.currentTarget.style.color = NAVY;
+              e.currentTarget.style.borderColor = "#CBD5E1";
               e.currentTarget.style.transform = "none";
             }}
           >
-            {t("No, agregar a mano", "No, add manually")}
+            {t("No, agregar manual", "No, add manually")}
           </button>
         </div>
       </div>
