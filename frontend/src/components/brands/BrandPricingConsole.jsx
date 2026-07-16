@@ -198,14 +198,55 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
     [anchorBandaId, anchorPlazoDias],
   );
 
+  // SKUs habilitados por cliente (validacion: solo se afectan los productos
+  // que cada cliente tiene habilitados, igual que la pagina individual).
+  const [enabledByClient, setEnabledByClient] = useState({});
+  const [enabledLoading, setEnabledLoading]   = useState(false);
+  useEffect(() => {
+    if (!parsedSkus.length || !activeClients.length || !brandId) {
+      setEnabledByClient({});
+      return;
+    }
+    let cancelled = false;
+    setEnabledLoading(true);
+    const tok = getToken();
+    Promise.all(activeClients.map((c) =>
+      apiFetch(
+        `/commercial/clients/${c.cliente_id}/enabled-skus/?brand_id=${encodeURIComponent(brandId)}`,
+        { token: tok },
+      )
+        .then((r) => ({ cid: c.cliente_id, skus: Array.isArray(r?.skus) ? r.skus.map(String) : [] }))
+        .catch(() => ({ cid: c.cliente_id, skus: [] })),
+    )).then((arr) => {
+      if (cancelled) return;
+      const map = {};
+      arr.forEach((x) => { map[x.cid] = new Set(x.skus); });
+      setEnabledByClient(map);
+      setEnabledLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [parsedSkus, activeClients, brandId]);
+
+  // Interseccion Excel ∩ habilitados, por cliente.
+  const availByClient = useMemo(() => {
+    const out = {};
+    activeClients.forEach((c) => {
+      const en = enabledByClient[c.cliente_id];
+      out[c.cliente_id] = en ? parsedSkus.filter((p) => en.has(String(p.sku))) : [];
+    });
+    return out;
+  }, [activeClients, enabledByClient, parsedSkus]);
+
   // Al (re)parsear o cambiar clientes: por defecto TODO seleccionado.
   useEffect(() => {
     if (!parsedSkus.length) { setSelection({}); return; }
-    const allSkus = parsedSkus.map((p) => p.sku);
     const next = {};
-    activeClients.forEach((c) => { next[c.cliente_id] = new Set(allSkus); });
+    activeClients.forEach((c) => {
+      const avail = availByClient[c.cliente_id] || [];
+      next[c.cliente_id] = new Set(avail.map((p) => p.sku));
+    });
     setSelection(next);
-  }, [parsedSkus, activeClients]);
+  }, [parsedSkus, activeClients, availByClient]);
 
   const handleFile = async (f) => {
     if (!f) return;
@@ -250,8 +291,8 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
   });
   const toggleAll = (cid) => setSelection((prev) => {
     const cur = prev[cid] || new Set();
-    const allSkus = parsedSkus.map((p) => p.sku);
-    const next = (cur.size >= allSkus.length) ? new Set() : new Set(allSkus);
+    const avail = (availByClient[cid] || []).map((p) => p.sku);
+    const next = (avail.length > 0 && cur.size >= avail.length) ? new Set() : new Set(avail);
     return { ...prev, [cid]: next };
   });
   const toggleOpen = (cid) => setOpenClients((prev) => {
@@ -420,32 +461,46 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
         </div>
       </div>
 
-      {/* Acordeon de seleccion por cliente */}
+      {/* Acordeon de seleccion por cliente (solo SKUs habilitados) */}
       {parsedSkus.length > 0 && (
         <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ font: "700 12px/1 var(--font-body)", color: NAVY, textTransform: "uppercase", letterSpacing: 0.4 }}>
-            {lang === "es" ? "Productos a afectar por cliente" : "Products to affect per client"}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <div style={{ font: "700 12px/1 var(--font-body)", color: NAVY, textTransform: "uppercase", letterSpacing: 0.4 }}>
+              {lang === "es" ? "Productos a afectar por cliente" : "Products to affect per client"}
+            </div>
+            {enabledLoading && (
+              <div style={{ font: "500 11px/1 var(--font-body)", color: MUTED }}>
+                {lang === "es" ? "Validando SKUs habilitados..." : "Validating enabled SKUs..."}
+              </div>
+            )}
+          </div>
+          <div style={{ font: "500 11px/1.4 var(--font-body)", color: MUTED }}>
+            {lang === "es"
+              ? "Cada cliente muestra solo los productos que tiene habilitados (interseccion con el Excel)."
+              : "Each client shows only its enabled products (intersection with the Excel)."}
           </div>
           {activeClients.map((c) => {
             const com = c.comision_pct != null ? Number(c.comision_pct) * 100 : 0;
+            const avail = availByClient[c.cliente_id] || [];
+            const total = avail.length;
             const sel = selection[c.cliente_id] || new Set();
             const n = sel.size;
-            const total = parsedSkus.length;
             const triState = n === 0 ? "none" : (n >= total ? "all" : "some");
             const isOpen = openClients.has(c.cliente_id);
+            const noneEnabled = total === 0;
             return (
               <div key={c.cliente_id} style={{
-                border: `1px solid ${n === 0 ? "#E5E7EB" : `${MINT}55`}`,
+                border: `1px solid ${noneEnabled ? `${AMBER}55` : (n === 0 ? "#E5E7EB" : `${MINT}55`)}`,
                 borderRadius: 10, overflow: "hidden",
-                background: n === 0 ? "#FBFCFD" : "#FFFFFF",
+                background: noneEnabled ? "#FFFDF7" : (n === 0 ? "#FBFCFD" : "#FFFFFF"),
               }}>
                 <div style={{
                   display: "flex", alignItems: "center", gap: 10,
-                  padding: "10px 12px", cursor: "pointer",
-                }} onClick={() => toggleOpen(c.cliente_id)}>
-                  <span onClick={(e) => { e.stopPropagation(); toggleAll(c.cliente_id); }}
+                  padding: "10px 12px", cursor: noneEnabled ? "default" : "pointer",
+                }} onClick={() => { if (!noneEnabled) toggleOpen(c.cliente_id); }}>
+                  <span onClick={(e) => { e.stopPropagation(); if (!noneEnabled) toggleAll(c.cliente_id); }}
                         title={lang === "es" ? "Seleccionar / quitar todos" : "Select / clear all"}
-                        style={{ display: "inline-flex", cursor: "pointer" }}>
+                        style={{ display: "inline-flex", cursor: noneEnabled ? "not-allowed" : "pointer" }}>
                     <TriBox state={triState}/>
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -456,21 +511,26 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
                       {c.razon_social}
                     </div>
                     <div style={{ font: "500 10.5px/1.3 var(--font-body)", color: MUTED, marginTop: 1 }}>
-                      {c.pais_iso2} · {lang === "es" ? "comision" : "commission"} {com.toFixed(2)}%
+                      {c.pais_iso2} - {lang === "es" ? "comision" : "commission"} {com.toFixed(2)}%
                     </div>
                   </div>
                   <div style={{
                     font: "700 11px/1 var(--font-body)",
-                    color: n === 0 ? MUTED : MINT,
+                    color: noneEnabled ? "#B45309" : (n === 0 ? MUTED : MINT),
                     padding: "3px 8px", borderRadius: 999,
-                    background: n === 0 ? "#F1F5F9" : `${MINT}14`, whiteSpace: "nowrap",
+                    background: noneEnabled ? `${AMBER}22` : (n === 0 ? "#F1F5F9" : `${MINT}14`),
+                    whiteSpace: "nowrap",
                   }}>
-                    {n} / {total} SKUs
+                    {noneEnabled
+                      ? (lang === "es" ? "Sin SKUs habilitados" : "No enabled SKUs")
+                      : `${n} / ${total} SKUs`}
                   </div>
-                  <span style={{ color: MUTED, font: "700 12px/1 var(--font-body)", transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 120ms" }}>&#8250;</span>
+                  {!noneEnabled && (
+                    <span style={{ color: MUTED, font: "700 12px/1 var(--font-body)", transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 120ms" }}>&#8250;</span>
+                  )}
                 </div>
 
-                {isOpen && (
+                {isOpen && !noneEnabled && (
                   <div style={{ maxHeight: 320, overflowY: "auto", borderTop: "1px solid #EEF1F5" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", font: "500 12px/1.3 var(--font-body)" }}>
                       <thead>
@@ -486,7 +546,7 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {parsedSkus.map((p) => {
+                        {avail.map((p) => {
                           const checked = sel.has(p.sku);
                           const baseUsd = anchorPrice({ brl: p.brl, com }, anchor).base;
                           return (
