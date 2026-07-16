@@ -109,6 +109,17 @@ class Talla(models.Model):
     drop_mm           = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     peso_g            = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True)
 
+    # ── Clasificadores multi-valor (Sprint 2026-07-16) ─────────────
+    # Una talla puede pertenecer a UNA O MÁS marcas, tipos y familias.
+    #   marca_ids → lista de UUIDs (texto) de brands.marca
+    #   tipos     → lista de tipos de calzado (Bota Alta, Tenis, Plantilla…)
+    #   familias  → lista de familias/líneas = prefijo del nombre del
+    #               producto (ej. 50B22 engloba 50B22M-CPAP-PAD, 50B22-V…)
+    # Ver backend/sql/G1_tallas_familias_attr_opciones.sql
+    marca_ids = models.JSONField(default=list, blank=True)
+    tipos     = models.JSONField(default=list, blank=True)
+    familias  = models.JSONField(default=list, blank=True)
+
     # ── Metadata libre ──────────────────────────────────────────────
     metadata = models.JSONField(default=dict, blank=True)
 

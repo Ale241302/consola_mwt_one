@@ -21,6 +21,7 @@
 //   Critical #DC2626 (CEO-ONLY)
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -38,7 +39,7 @@ import ProductExpedientesTab from "../components/productos/ProductExpedientesTab
 import { useRole } from "../context/RoleContext.jsx";
 import {
   productosApi, marcasApi, tallasApi, nodosApi, clientesApi,
-  productoAliasesApi, ncmApi, sizingApi,
+  productoAliasesApi, ncmApi, sizingApi, attrOptionsApi,
   apiFetch, getToken,
 } from "../lib/api.js";
 // Sprint 2026-07-16 · drawers embebidos para crear/editar NCM y tallas sin
@@ -809,38 +810,54 @@ export default function ScreenProductFormView() {
     }
   };
 
-  // ── Sprint 2026-07-16 · atributos técnicos: catálogo vivo ──
-  // Opciones = BRAND_ATTRIBUTES (base) ∪ valores ya usados en productos de
-  // la BD ∪ opciones agregadas en esta sesión. Un color/capellada nueva se
-  // agrega desde el propio select ("＋"); al guardar el producto queda en
-  // especificaciones y desde ahí aparece para todos los productos.
+  // ── Sprint 2026-07-16 · atributos técnicos: catálogo PERSISTIDO ──
+  // Fuente de verdad: GET /api/productos/attr-options/ (tabla
+  // productos.attr_opcion ∪ valores en uso). Esto hace posible ELIMINAR
+  // opciones de verdad (antes el catálogo era constante FE ∪ uso y la
+  // opción borrada re-aparecía al recargar). Fallback si el endpoint
+  // falla: BRAND_ATTRIBUTES ∪ valores usados en productos (legacy).
   const [attrOptions, setAttrOptions] = useState(() =>
     Object.fromEntries(Object.entries(BRAND_ATTRIBUTES).map(([k, v]) => [k, [...v]])));
-  useEffect(() => {
-    productosApi.list().then((r) => {
-      const rows = Array.isArray(r) ? r : (r?.results || []);
+  const loadAttrOptions = () =>
+    attrOptionsApi.list().then((cat) => {
+      if (!cat || typeof cat !== "object") return;
       setAttrOptions(prev => {
         const next = { ...prev };
-        const addVal = (key, val) => {
-          if (typeof val !== "string") return;
-          const t = val.trim();
-          if (!t) return;
-          if (!next[key].some(o => String(o).toLowerCase() === t.toLowerCase())) {
-            next[key] = [...next[key], t];
-          }
-        };
-        rows.forEach((p) => {
-          const e = p?.especificaciones || {};
-          ["tipo_calzado","cubrepuntera","tipo_puntera","antiperforante",
-           "protector_metatarsal","capellada","suela","cierre","color",
-           "materiales_circulares","plantilla_interna"].forEach(k => addVal(k, e[k]));
-          ["disipativo_energia","normativa","segmento","riesgo"].forEach(k => {
-            (Array.isArray(e[k]) ? e[k] : []).forEach(v => addVal(k, v));
-          });
+        Object.keys(prev).forEach(k => {
+          if (Array.isArray(cat[k])) next[k] = cat[k];
         });
         return next;
       });
-    }).catch(() => { /* sin lista de productos: quedan las opciones base */ });
+    });
+  useEffect(() => {
+    loadAttrOptions().catch(() => {
+      // Legacy fallback: BRAND_ATTRIBUTES ∪ valores en uso en la BD.
+      productosApi.list().then((r) => {
+        const rows = Array.isArray(r) ? r : (r?.results || []);
+        setAttrOptions(prev => {
+          const next = { ...prev };
+          const addVal = (key, val) => {
+            if (typeof val !== "string") return;
+            const t = val.trim();
+            if (!t) return;
+            if (!next[key].some(o => String(o).toLowerCase() === t.toLowerCase())) {
+              next[key] = [...next[key], t];
+            }
+          };
+          rows.forEach((p) => {
+            const e = p?.especificaciones || {};
+            ["tipo_calzado","cubrepuntera","tipo_puntera","antiperforante",
+             "protector_metatarsal","capellada","suela","cierre","color",
+             "materiales_circulares","plantilla_interna"].forEach(k => addVal(k, e[k]));
+            ["disipativo_energia","normativa","segmento","riesgo"].forEach(k => {
+              (Array.isArray(e[k]) ? e[k] : []).forEach(v => addVal(k, v));
+            });
+          });
+          return next;
+        });
+      }).catch(() => { /* sin lista de productos: quedan las opciones base */ });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const addAttrOption = (key) => (val) => {
     const t = String(val || "").trim();
@@ -848,6 +865,29 @@ export default function ScreenProductFormView() {
     setAttrOptions(prev => prev[key].some(o => String(o).toLowerCase() === t.toLowerCase())
       ? prev
       : { ...prev, [key]: [...prev[key], t] });
+    // Persistencia en el catálogo (best-effort; si falla, el valor igual
+    // quedará en el catálogo al guardarse el producto que lo usa).
+    attrOptionsApi.add(key, t).catch(() => {});
+  };
+  // Elimina la opción del catálogo persistido. El backend BLOQUEA (409)
+  // si algún producto la usa — mostramos el detalle con el conteo.
+  const deleteAttrOption = (key) => async (val) => {
+    const t = String(val || "").trim();
+    if (!t) return;
+    try {
+      await attrOptionsApi.remove(key, t);
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo eliminar la opción: " : "Delete failed: ")
+        + (e?.body?.detail || e?.message || ""));
+      return;
+    }
+    const nextList = (attrOptions[key] || [])
+      .filter(x => String(x).toLowerCase() !== t.toLowerCase());
+    const firstRemaining = nextList[0] || "";
+    setAttrOptions(prev => ({ ...prev, [key]: nextList }));
+    // Si el form tenía seleccionado el valor eliminado, saltamos a la
+    // primera opción restante (evita un select con valor fantasma).
+    setAttrs(prev => (prev[key] === t ? { ...prev, [key]: firstRemaining } : prev));
   };
   // Renombra la opción seleccionada en TODOS los productos (backend
   // attr-rename) y actualiza catálogo + valor local sin recargar.
@@ -881,16 +921,59 @@ export default function ScreenProductFormView() {
     }
   }, [realBrands, brandId, isEdit]);
 
+  // ── Sprint 2026-07-16 · detección de FAMILIA por el nombre ─────────
+  // La familia (ej. 50B22) es un prefijo del nombre del producto. Si el
+  // nombre contiene una familia conocida (la más larga gana: 50B22M
+  // matchea 50B22), la Sección C muestra solo las tallas relacionadas.
+  const detectedFamilia = useMemo(() => {
+    const name = String(nombre || "").toUpperCase().trim();
+    if (!name) return null;
+    const fams = new Set();
+    realSizes.forEach(t => (Array.isArray(t.familias) ? t.familias : [])
+      .forEach(f => {
+        const s = String(f).toUpperCase().trim();
+        if (s.length >= 3) fams.add(s);
+      }));
+    let best = null;
+    fams.forEach(f => {
+      if (name.includes(f) && (!best || f.length > best.length)) best = f;
+    });
+    return best;
+  }, [nombre, realSizes]);
+
+  // Tallas visibles en Sección C:
+  //   · lo YA seleccionado nunca se oculta (aunque sea de otra familia)
+  //   · tallas con marcas asignadas deben incluir la marca del producto
+  //   · con familia detectada → solo tallas de esa familia
+  //   · el resto se elige desde el modal "Más tallas".
+  const visibleSizes = useMemo(() => {
+    return realSizes.filter(t => {
+      if (selectedSizes.includes(t.id)) return true;
+      const marcas = Array.isArray(t.marca_ids) ? t.marca_ids : [];
+      if (brandId && marcas.length > 0 && !marcas.includes(brandId)) return false;
+      if (detectedFamilia) {
+        const fams = Array.isArray(t.familias)
+          ? t.familias.map(f => String(f).toUpperCase()) : [];
+        return fams.includes(detectedFamilia);
+      }
+      return true;
+    });
+  }, [realSizes, selectedSizes, detectedFamilia, brandId]);
+  const hiddenSizesCount = realSizes.length - visibleSizes.length;
+
+  // Modal "Más tallas" — permite traer tallas de OTRAS familias.
+  const [moreTallasOpen, setMoreTallasOpen] = useState(false);
+
   // Agrupa tallas por sistema (`tipo_producto` o `sistema_medida`) para
   // el render. Si solo hay tallas "calzado", todas caen en un grupo.
   const sizesGrouped = useMemo(() => {
     const groups = {};
-    realSizes.forEach(t => {
+    visibleSizes.forEach(t => {
       const sys = (t.tipo_producto || 'otro').toLowerCase();
       (groups[sys] ||= []).push(t);
     });
     return groups;   // {calzado: [...], plantilla: [...]}
-  }, [realSizes]);
+  }, [visibleSizes]);
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
@@ -1185,27 +1268,27 @@ export default function ScreenProductFormView() {
       </div>
 
       <div className="form-grid-3">
-        <AttrSelect label={lang==='es'?'Tipo de calzado':'Footwear type'} opts={attrOptions.tipo_calzado} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_calzado') : undefined} onEditOption={!isClient ? editAttrOption('tipo_calzado') : undefined}
+        <AttrSelect label={lang==='es'?'Tipo de calzado':'Footwear type'} opts={attrOptions.tipo_calzado} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_calzado') : undefined} onEditOption={!isClient ? editAttrOption('tipo_calzado') : undefined} onDeleteOption={!isClient ? deleteAttrOption('tipo_calzado') : undefined}
                     value={attrs.tipo_calzado} onChange={v=>setAttrs({...attrs, tipo_calzado: v})}/>
-        <AttrSelect label={lang==='es'?'Cubre puntera':'Toe cap cover'} opts={attrOptions.cubrepuntera} lang={lang} onAddOption={!isClient ? addAttrOption('cubrepuntera') : undefined} onEditOption={!isClient ? editAttrOption('cubrepuntera') : undefined}
+        <AttrSelect label={lang==='es'?'Cubre puntera':'Toe cap cover'} opts={attrOptions.cubrepuntera} lang={lang} onAddOption={!isClient ? addAttrOption('cubrepuntera') : undefined} onEditOption={!isClient ? editAttrOption('cubrepuntera') : undefined} onDeleteOption={!isClient ? deleteAttrOption('cubrepuntera') : undefined}
                     value={attrs.cubrepuntera} onChange={v=>setAttrs({...attrs, cubrepuntera: v})}/>
-        <AttrSelect label={lang==='es'?'Tipo de puntera':'Toe cap type'} opts={attrOptions.tipo_puntera} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_puntera') : undefined} onEditOption={!isClient ? editAttrOption('tipo_puntera') : undefined}
+        <AttrSelect label={lang==='es'?'Tipo de puntera':'Toe cap type'} opts={attrOptions.tipo_puntera} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_puntera') : undefined} onEditOption={!isClient ? editAttrOption('tipo_puntera') : undefined} onDeleteOption={!isClient ? deleteAttrOption('tipo_puntera') : undefined}
                     value={attrs.tipo_puntera} onChange={v=>setAttrs({...attrs, tipo_puntera: v})}/>
-        <AttrSelect label={lang==='es'?'Antiperforante':'Anti-perforation'} opts={attrOptions.antiperforante} lang={lang} onAddOption={!isClient ? addAttrOption('antiperforante') : undefined} onEditOption={!isClient ? editAttrOption('antiperforante') : undefined}
+        <AttrSelect label={lang==='es'?'Antiperforante':'Anti-perforation'} opts={attrOptions.antiperforante} lang={lang} onAddOption={!isClient ? addAttrOption('antiperforante') : undefined} onEditOption={!isClient ? editAttrOption('antiperforante') : undefined} onDeleteOption={!isClient ? deleteAttrOption('antiperforante') : undefined}
                     value={attrs.antiperforante} onChange={v=>setAttrs({...attrs, antiperforante: v})}/>
-        <AttrSelect label={lang==='es'?'Protector metatarsal':'Metatarsal protector'} opts={attrOptions.protector_metatarsal} lang={lang} onAddOption={!isClient ? addAttrOption('protector_metatarsal') : undefined} onEditOption={!isClient ? editAttrOption('protector_metatarsal') : undefined}
+        <AttrSelect label={lang==='es'?'Protector metatarsal':'Metatarsal protector'} opts={attrOptions.protector_metatarsal} lang={lang} onAddOption={!isClient ? addAttrOption('protector_metatarsal') : undefined} onEditOption={!isClient ? editAttrOption('protector_metatarsal') : undefined} onDeleteOption={!isClient ? deleteAttrOption('protector_metatarsal') : undefined}
                     value={attrs.protector_metatarsal} onChange={v=>setAttrs({...attrs, protector_metatarsal: v})}/>
-        <AttrSelect label={lang==='es'?'Capellada':'Upper'} opts={attrOptions.capellada} lang={lang} onAddOption={!isClient ? addAttrOption('capellada') : undefined} onEditOption={!isClient ? editAttrOption('capellada') : undefined}
+        <AttrSelect label={lang==='es'?'Capellada':'Upper'} opts={attrOptions.capellada} lang={lang} onAddOption={!isClient ? addAttrOption('capellada') : undefined} onEditOption={!isClient ? editAttrOption('capellada') : undefined} onDeleteOption={!isClient ? deleteAttrOption('capellada') : undefined}
                     value={attrs.capellada} onChange={v=>setAttrs({...attrs, capellada: v})}/>
-        <AttrSelect label="Suela" opts={attrOptions.suela} lang={lang} onAddOption={!isClient ? addAttrOption('suela') : undefined} onEditOption={!isClient ? editAttrOption('suela') : undefined}
+        <AttrSelect label="Suela" opts={attrOptions.suela} lang={lang} onAddOption={!isClient ? addAttrOption('suela') : undefined} onEditOption={!isClient ? editAttrOption('suela') : undefined} onDeleteOption={!isClient ? deleteAttrOption('suela') : undefined}
                     value={attrs.suela} onChange={v=>setAttrs({...attrs, suela: v})}/>
-        <AttrSelect label={lang==='es'?'Cierre':'Closure'} opts={attrOptions.cierre} lang={lang} onAddOption={!isClient ? addAttrOption('cierre') : undefined} onEditOption={!isClient ? editAttrOption('cierre') : undefined}
+        <AttrSelect label={lang==='es'?'Cierre':'Closure'} opts={attrOptions.cierre} lang={lang} onAddOption={!isClient ? addAttrOption('cierre') : undefined} onEditOption={!isClient ? editAttrOption('cierre') : undefined} onDeleteOption={!isClient ? deleteAttrOption('cierre') : undefined}
                     value={attrs.cierre} onChange={v=>setAttrs({...attrs, cierre: v})}/>
-        <AttrSelect label="Color" opts={attrOptions.color} lang={lang} onAddOption={!isClient ? addAttrOption('color') : undefined} onEditOption={!isClient ? editAttrOption('color') : undefined}
+        <AttrSelect label="Color" opts={attrOptions.color} lang={lang} onAddOption={!isClient ? addAttrOption('color') : undefined} onEditOption={!isClient ? editAttrOption('color') : undefined} onDeleteOption={!isClient ? deleteAttrOption('color') : undefined}
                     value={attrs.color} onChange={v=>setAttrs({...attrs, color: v})}/>
-        <AttrSelect label={lang==='es'?'Materiales circulares':'Circular materials'} opts={attrOptions.materiales_circulares} lang={lang} onAddOption={!isClient ? addAttrOption('materiales_circulares') : undefined} onEditOption={!isClient ? editAttrOption('materiales_circulares') : undefined}
+        <AttrSelect label={lang==='es'?'Materiales reciclados':'Recycled materials'} opts={attrOptions.materiales_circulares} lang={lang} onAddOption={!isClient ? addAttrOption('materiales_circulares') : undefined} onEditOption={!isClient ? editAttrOption('materiales_circulares') : undefined} onDeleteOption={!isClient ? deleteAttrOption('materiales_circulares') : undefined}
                     value={attrs.materiales_circulares} onChange={v=>setAttrs({...attrs, materiales_circulares: v})}/>
-        <AttrSelect label={lang==='es'?'Plantilla interna':'Insole'} opts={attrOptions.plantilla_interna} lang={lang} onAddOption={!isClient ? addAttrOption('plantilla_interna') : undefined} onEditOption={!isClient ? editAttrOption('plantilla_interna') : undefined}
+        <AttrSelect label={lang==='es'?'Plantilla interna':'Insole'} opts={attrOptions.plantilla_interna} lang={lang} onAddOption={!isClient ? addAttrOption('plantilla_interna') : undefined} onEditOption={!isClient ? editAttrOption('plantilla_interna') : undefined} onDeleteOption={!isClient ? deleteAttrOption('plantilla_interna') : undefined}
                     value={attrs.plantilla_interna} onChange={v=>setAttrs({...attrs, plantilla_interna: v})}/>
         <label className="form-field">
           <span style={{display:'flex', alignItems:'center', gap:8}}>
@@ -1416,6 +1499,46 @@ export default function ScreenProductFormView() {
               {selectedSizes.length} {lang==='es'?'seleccionadas':'selected'}
             </span>
           </div>
+          {/* Sprint 2026-07-16 · familia detectada en el nombre → tallas filtradas */}
+          {(detectedFamilia || hiddenSizesCount > 0) && realSizes.length > 0 && (
+            <div style={{
+              display:'flex', alignItems:'center', gap:8, flexWrap:'wrap',
+              margin:'6px 0 10px', padding:'7px 10px', borderRadius:8,
+              background:'rgba(0,178,134,0.07)',
+              border:'1px solid rgba(0,178,134,0.20)',
+            }}>
+              {detectedFamilia ? (
+                <span className="caption" style={{color:'#008B69', fontWeight:600}}>
+                  {lang==='es' ? 'Familia detectada en el nombre:' : 'Family detected in name:'}{' '}
+                  <span className="mono" style={{fontWeight:800}}>{detectedFamilia}</span>
+                  {' · '}
+                  {lang==='es'
+                    ? `mostrando ${visibleSizes.length} talla(s) relacionadas`
+                    : `showing ${visibleSizes.length} related size(s)`}
+                </span>
+              ) : (
+                <span className="caption" style={{color:'var(--text-secondary)'}}>
+                  {lang==='es'
+                    ? `${hiddenSizesCount} talla(s) de otras marcas ocultas.`
+                    : `${hiddenSizesCount} size(s) from other brands hidden.`}
+                </span>
+              )}
+              {hiddenSizesCount > 0 && (
+                <button type="button"
+                        onClick={() => setMoreTallasOpen(true)}
+                        style={{
+                          marginLeft:'auto', padding:'3px 10px', borderRadius:6,
+                          cursor:'pointer', border:'1px solid rgba(0,178,134,0.40)',
+                          background:'var(--surface)', color:'#008B69',
+                          fontWeight:700, fontSize:11, lineHeight:1.3,
+                        }}>
+                  ⊞ {lang==='es'
+                      ? `Más tallas (${hiddenSizesCount} de otras familias)`
+                      : `More sizes (${hiddenSizesCount} from other families)`}
+                </button>
+              )}
+            </div>
+          )}
           <div className="size-picker">
             {realSizes.length === 0 ? (
               <div className="caption" style={{padding:'12px 0', color:'var(--text-tertiary)'}}>
@@ -1460,6 +1583,20 @@ export default function ScreenProductFormView() {
             />
           )}
         </AnimatePresence>
+
+        {/* Sprint 2026-07-16 · modal "Más tallas" — trae tallas de otras
+            familias/marcas cuando el filtro por familia detectada no basta. */}
+        {moreTallasOpen && createPortal(
+          <MoreTallasModal
+            lang={lang}
+            tallas={realSizes}
+            selected={selectedSizes}
+            onToggle={toggleSize}
+            detectedFamilia={detectedFamilia}
+            onClose={() => setMoreTallasOpen(false)}
+          />,
+          document.body
+        )}
 
         {/* Nodos Logísticos: OCULTO para CLIENT B2B (POL_VISIBILIDAD).
             Solo staff (admin/CEO/manager) ve qué nodos operan el SKU. */}
@@ -2410,19 +2547,170 @@ export default function ScreenProductFormView() {
 }
 
 // ────────────────────────────────────────────────
+// MoreTallasModal — selector de tallas de TODAS las familias
+// ────────────────────────────────────────────────
+// Sprint 2026-07-16 · Cuando la Sección C filtra por la familia detectada
+// en el nombre, este modal permite ver el catálogo completo agrupado por
+// familia y seleccionar tallas adicionales (de otras familias/marcas).
+// Una talla puede pertenecer a varias familias → aparece en cada grupo.
+function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamilia, onClose }) {
+  const [q, setQ] = useState("");
+
+  const groups = useMemo(() => {
+    const ql = q.trim().toUpperCase();
+    const map = {};
+    const sinFam = [];
+    tallas.forEach(t => {
+      const fams = (Array.isArray(t.familias) ? t.familias : [])
+        .map(f => String(f).toUpperCase().trim()).filter(Boolean);
+      const label = t.talla_base || t.eu || t.us_men || t.nombre || '—';
+      const hit = !ql
+        || String(label).toUpperCase().includes(ql)
+        || fams.some(f => f.includes(ql));
+      if (!hit) return;
+      if (fams.length === 0) { sinFam.push(t); return; }
+      fams.forEach(f => { (map[f] ||= []).push(t); });
+    });
+    const ordered = Object.keys(map).sort((a, b) => {
+      // La familia detectada primero; el resto alfabético.
+      if (a === detectedFamilia) return -1;
+      if (b === detectedFamilia) return 1;
+      return a.localeCompare(b);
+    }).map(f => [f, map[f]]);
+    if (sinFam.length) {
+      ordered.push([lang === 'es' ? 'SIN FAMILIA' : 'NO FAMILY', sinFam]);
+    }
+    return ordered;
+  }, [tallas, q, detectedFamilia, lang]);
+
+  return (
+    <>
+      <div onClick={onClose}
+           style={{ position:'fixed', inset:0, zIndex:1000,
+                    background:'rgba(11,30,58,0.45)', backdropFilter:'blur(2px)' }}/>
+      <div role="dialog" aria-modal="true"
+           style={{
+             position:'fixed', top:'50%', left:'50%',
+             transform:'translate(-50%, -50%)', zIndex:1001,
+             width:'min(680px, 94vw)', maxHeight:'82vh',
+             display:'flex', flexDirection:'column',
+             background:'var(--surface, #FFFFFF)', borderRadius:14,
+             boxShadow:'0 24px 60px rgba(15,23,42,0.30)', overflow:'hidden',
+           }}>
+        {/* Head */}
+        <div style={{ display:'flex', alignItems:'center', gap:10,
+                      padding:'16px 18px', borderBottom:'1px solid var(--border-subtle, #E5E7EB)' }}>
+          <div style={{ flex:1 }}>
+            <div className="micro" style={{ color:'#00B286' }}>
+              {lang==='es' ? 'MOTOR DE TALLAS' : 'SIZING ENGINE'}
+            </div>
+            <div className="heading-md">
+              {lang==='es' ? 'Todas las tallas por familia' : 'All sizes by family'}
+            </div>
+            <div className="caption" style={{ color:'var(--text-tertiary)' }}>
+              {lang==='es'
+                ? 'Marca tallas de cualquier familia para agregarlas a este producto.'
+                : 'Tick sizes from any family to add them to this product.'}
+            </div>
+          </div>
+          <button type="button" onClick={onClose}
+                  title={lang==='es' ? 'Cerrar' : 'Close'}
+                  style={{ border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                           borderRadius:8, width:30, height:30, cursor:'pointer',
+                           fontWeight:800, fontSize:14, color:'var(--text-secondary)' }}>×</button>
+        </div>
+
+        {/* Search */}
+        <div style={{ padding:'10px 18px', borderBottom:'1px solid var(--border-subtle, #E5E7EB)' }}>
+          <input className="input" autoFocus value={q}
+                 onChange={e=>setQ(e.target.value)}
+                 placeholder={lang==='es'
+                   ? 'Buscar por talla o familia (42, 50B22…)'
+                   : 'Search by size or family (42, 50B22…)'}
+                 style={{ width:'100%' }}/>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding:'12px 18px', overflowY:'auto' }}>
+          {groups.length === 0 ? (
+            <div className="caption" style={{ color:'var(--text-tertiary)', padding:'16px 0' }}>
+              {lang==='es' ? 'Sin resultados.' : 'No results.'}
+            </div>
+          ) : groups.map(([fam, famTallas]) => (
+            <div key={fam} style={{ marginBottom:14 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                <span className="mono" style={{
+                        fontSize:12, fontWeight:800, letterSpacing:0.4,
+                        color: fam === detectedFamilia ? '#008B69' : 'var(--text-secondary)' }}>
+                  {fam}
+                </span>
+                {fam === detectedFamilia && (
+                  <span className="caption" style={{
+                          background:'rgba(0,178,134,0.10)', color:'#008B69',
+                          border:'1px solid rgba(0,178,134,0.30)',
+                          borderRadius:999, padding:'1px 8px', fontSize:10, fontWeight:700 }}>
+                    {lang==='es' ? 'detectada en el nombre' : 'detected in name'}
+                  </span>
+                )}
+                <span className="caption" style={{ marginLeft:'auto', color:'var(--text-tertiary)' }}>
+                  {famTallas.filter(t => selected.includes(t.id)).length}/{famTallas.length}{' '}
+                  {lang==='es' ? 'seleccionadas' : 'selected'}
+                </span>
+              </div>
+              <div className="size-picker-row" style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+                {famTallas.map(t => {
+                  const on = selected.includes(t.id);
+                  const label = t.talla_base || t.eu || t.us_men || t.nombre || '—';
+                  return (
+                    <button type="button" key={`${fam}-${t.id}`}
+                            className={`size-chip ${on ? 'size-chip-on' : ''}`}
+                            onClick={() => onToggle(t.id)}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Foot */}
+        <div style={{ display:'flex', justifyContent:'flex-end', gap:8,
+                      padding:'12px 18px', borderTop:'1px solid var(--border-subtle, #E5E7EB)' }}>
+          <button type="button" onClick={onClose}
+                  style={{ padding:'8px 16px', borderRadius:8, cursor:'pointer',
+                           border:'none', background:'#00B286', color:'#fff', fontWeight:700 }}>
+            {lang==='es' ? 'Listo' : 'Done'}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ────────────────────────────────────────────────
 // AttrSelect — small select field
 // ────────────────────────────────────────────────
-// Sprint 2026-07-16 · AttrSelect con alta inline de opciones ("＋") y merge
-// del valor actual (si el producto trae un valor fuera del catálogo, se
-// muestra igual en el select en vez de perderse).
-function AttrSelect({ label, opts, value, onChange, onAddOption, onEditOption, lang='es' }) {
-  // mode: null | 'add' | 'edit'  — 'edit' renombra la opción seleccionada en
-  // TODOS los productos (backend attr-rename), como el ✎ de NCM.
+// Sprint 2026-07-16 · AttrSelect con alta inline de opciones ("＋"), edición
+// (✎ → renombra en todos los productos vía attr-rename), ELIMINACIÓN
+// (🗑 → attr-delete; el backend bloquea con 409 si la opción está en uso)
+// y merge del valor actual (si el producto trae un valor fuera del
+// catálogo, se muestra igual en el select en vez de perderse).
+function AttrSelect({ label, opts, value, onChange, onAddOption, onEditOption, onDeleteOption, lang='es' }) {
+  // mode: null | 'add' | 'edit' | 'delete'
+  //   'edit'   renombra la opción seleccionada en TODOS los productos.
+  //   'delete' pide confirmación inline y la elimina del catálogo.
   const [mode, setMode]   = useState(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy]   = useState(false);
   const merged = (value && !opts.includes(value)) ? [...opts, value] : opts;
   const confirmIt = async () => {
+    if (mode === 'delete') {
+      setBusy(true);
+      try { await onDeleteOption?.(value); }
+      finally { setBusy(false); setMode(null); }
+      return;
+    }
     const v = draft.trim();
     if (!v) { setMode(null); return; }
     if (mode === 'add') {
@@ -2468,10 +2756,44 @@ function AttrSelect({ label, opts, value, onChange, onAddOption, onEditOption, l
                 {mode==='edit' ? '×' : '✎'}
               </button>
             )}
+            {onDeleteOption && (
+              <button type="button"
+                      disabled={!value}
+                      onClick={()=>{ setMode(m => m==='delete' ? null : 'delete'); setDraft(""); }}
+                      title={lang==='es'
+                        ? 'Eliminar la opción seleccionada del catálogo (bloqueado si algún producto la usa)'
+                        : 'Delete selected option from catalog (blocked if any product uses it)'}
+                      style={{ ...iconBtn(mode==='delete'),
+                               cursor: value ? 'pointer' : 'not-allowed',
+                               borderColor: mode==='delete' ? '#DC2626' : undefined,
+                               background: mode==='delete' ? 'rgba(220,38,38,0.08)' : undefined,
+                               color: value ? '#DC2626' : 'var(--border-subtle)' }}>
+                ×
+              </button>
+            )}
           </span>
         )}
       </span>
-      {mode ? (
+      {mode === 'delete' ? (
+        <div style={{display:'flex', gap:6, alignItems:'center'}}>
+          <span className="caption" style={{
+                  flex:1, color:'#DC2626', fontWeight:600,
+                  overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+            {lang==='es' ? `¿Eliminar "${value}"?` : `Delete "${value}"?`}
+          </span>
+          <button type="button" onClick={confirmIt} disabled={busy}
+                  title={lang==='es'?'Sí, eliminar':'Yes, delete'}
+                  style={{border:'none', background:'#DC2626', color:'#fff', borderRadius:6,
+                          width:34, height:26, cursor: busy ? 'wait' : 'pointer', fontWeight:800}}>
+            {busy ? '…' : '✓'}
+          </button>
+          <button type="button" onClick={()=>setMode(null)} disabled={busy}
+                  title={lang==='es'?'Cancelar':'Cancel'}
+                  style={{border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color:'var(--text-secondary)', borderRadius:6,
+                          width:26, height:26, cursor:'pointer', fontWeight:800}}>×</button>
+        </div>
+      ) : mode ? (
         <div style={{display:'flex', gap:6}}>
           <input className="input" autoFocus value={draft} disabled={busy}
                  onChange={e=>setDraft(e.target.value)}

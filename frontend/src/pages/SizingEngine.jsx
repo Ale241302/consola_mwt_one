@@ -69,6 +69,10 @@ export default function ScreenSizingEngine() {
   const [filterTipo, setFilterTipo] = useState("");
   const [q, setQ] = useState("");
   const [editing, setEditing]   = useState(null);    // null | {} (nuevo) | obj (edita)
+  // Sprint 2026-07-16 · filtros por clasificadores + duplicar familia
+  const [filterMarca,   setFilterMarca]   = useState("");
+  const [filterFamilia, setFilterFamilia] = useState("");
+  const [cloneFamOpen,  setCloneFamOpen]  = useState(false);
 
   // ── Carga inicial: opciones + tallas ──────────────────────────
   // Las opciones (catálogos) sí caen a MOCK_SIZING_OPTIONS si el
@@ -102,15 +106,38 @@ export default function ScreenSizingEngine() {
 
   useEffect(() => { loadAll(); }, []);
 
+  // ── Mapa id→nombre de marca + familias distintas (2026-07-16) ──
+  const marcaNameById = useMemo(() => {
+    const map = {};
+    (options?.marcas || []).forEach(m => { map[m.id] = m.nombre; });
+    return map;
+  }, [options]);
+
+  const familiasDistinct = useMemo(() => {
+    const set = new Set();
+    tallas.forEach(t => (Array.isArray(t.familias) ? t.familias : [])
+      .forEach(f => set.add(String(f).toUpperCase())));
+    return [...set].sort();
+  }, [tallas]);
+
   // ── Filtrado client-side ─────────────────────────────────────
   const filtered = useMemo(() => {
     let out = tallas;
     if (filterTipo) out = out.filter(t => (t.tipo_producto || "") === filterTipo);
+    if (filterMarca) {
+      out = out.filter(t => (Array.isArray(t.marca_ids) ? t.marca_ids : []).includes(filterMarca));
+    }
+    if (filterFamilia) {
+      out = out.filter(t => (Array.isArray(t.familias) ? t.familias : [])
+        .some(f => String(f).toUpperCase() === filterFamilia));
+    }
     const ql = q.trim().toLowerCase();
     if (ql) {
       out = out.filter(t => (
         (t.talla_base || "").toLowerCase().includes(ql) ||
         (t.nombre || "").toLowerCase().includes(ql) ||
+        (Array.isArray(t.familias) ? t.familias : []).some(f => String(f).toLowerCase().includes(ql)) ||
+        (Array.isArray(t.tipos) ? t.tipos : []).some(x => String(x).toLowerCase().includes(ql)) ||
         (t.eu || "").toLowerCase().includes(ql) ||
         (t.us_men || "").toLowerCase().includes(ql) ||
         (t.us_women || "").toLowerCase().includes(ql) ||
@@ -120,7 +147,7 @@ export default function ScreenSizingEngine() {
       ));
     }
     return out;
-  }, [tallas, filterTipo, q]);
+  }, [tallas, filterTipo, filterMarca, filterFamilia, q]);
 
   // ── KPIs superiores ──────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -237,6 +264,14 @@ export default function ScreenSizingEngine() {
           <button onClick={loadAll} className="siz-btn siz-btn-ghost" title="Recargar">
             <IconRefresh size={14}/> {lang === "es" ? "Recargar" : "Refresh"}
           </button>
+          {familiasDistinct.length > 0 && (
+            <button onClick={() => setCloneFamOpen(true)} className="siz-btn siz-btn-ghost"
+                    title={lang === "es"
+                      ? "Duplica la corrida de tallas de una familia a otra (sin re-digitar equivalencias)"
+                      : "Duplicate a family's size run into another family"}>
+              ⧉ {lang === "es" ? "Duplicar familia" : "Duplicate family"}
+            </button>
+          )}
           <button onClick={() => setEditing({})} className="siz-btn siz-btn-primary">
             <IconPlus size={14}/> {lang === "es" ? "Nueva talla" : "New size"}
           </button>
@@ -286,6 +321,29 @@ export default function ScreenSizingEngine() {
           <option value="">{lang === "es" ? "Todos los tipos" : "All types"}</option>
           {(options?.tipos_producto || []).map(t => (
             <option key={t.codigo} value={t.codigo}>{t.label}</option>
+          ))}
+        </select>
+        {/* Sprint 2026-07-16 · filtros por marca y familia */}
+        <select
+          className="siz-input siz-select"
+          value={filterMarca}
+          onChange={e => setFilterMarca(e.target.value)}
+          style={{ maxWidth: 200 }}
+        >
+          <option value="">{lang === "es" ? "Todas las marcas" : "All brands"}</option>
+          {(options?.marcas || []).map(m => (
+            <option key={m.id} value={m.id}>{m.nombre}</option>
+          ))}
+        </select>
+        <select
+          className="siz-input siz-select"
+          value={filterFamilia}
+          onChange={e => setFilterFamilia(e.target.value)}
+          style={{ maxWidth: 200 }}
+        >
+          <option value="">{lang === "es" ? "Todas las familias" : "All families"}</option>
+          {familiasDistinct.map(f => (
+            <option key={f} value={f}>{f}</option>
           ))}
         </select>
       </div>
@@ -434,6 +492,43 @@ export default function ScreenSizingEngine() {
                     >
                       {t.nombre || <span style={{ color: "#CBD5E1" }}>—</span>}
                     </div>
+                    {/* Marca · Tipo · Familia (Sprint 2026-07-16) */}
+                    {((t.marca_ids || []).length > 0 ||
+                      (t.tipos || []).length > 0 ||
+                      (t.familias || []).length > 0) && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
+                        {(t.marca_ids || []).map(mid => (
+                          <span key={mid} style={{
+                            background: "rgba(11,30,58,0.06)", color: "#0B1E3A",
+                            border: "1px solid rgba(11,30,58,0.15)",
+                            borderRadius: 999, padding: "2px 8px",
+                            fontSize: 10.5, fontWeight: 700,
+                          }}>
+                            {marcaNameById[mid] || mid.slice(0, 8)}
+                          </span>
+                        ))}
+                        {(t.tipos || []).map(tp => (
+                          <span key={tp} style={{
+                            background: "rgba(72,30,227,0.07)", color: "#481EE3",
+                            border: "1px solid rgba(72,30,227,0.22)",
+                            borderRadius: 999, padding: "2px 8px",
+                            fontSize: 10.5, fontWeight: 600,
+                          }}>
+                            {tp}
+                          </span>
+                        ))}
+                        {(t.familias || []).map(f => (
+                          <span key={f} className="mono" style={{
+                            background: "rgba(0,178,134,0.09)", color: "#008B69",
+                            border: "1px solid rgba(0,178,134,0.25)",
+                            borderRadius: 999, padding: "2px 8px",
+                            fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3,
+                          }}>
+                            {f}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Equivalencias */}
@@ -562,6 +657,17 @@ export default function ScreenSizingEngine() {
         )}
       </AnimatePresence>
 
+      {/* Modal duplicar familia (Sprint 2026-07-16) — vía portal */}
+      {cloneFamOpen && createPortal(
+        <CloneFamiliaModal
+          lang={lang}
+          familias={familiasDistinct}
+          onClose={() => setCloneFamOpen(false)}
+          onDone={async () => { setCloneFamOpen(false); await loadAll(); }}
+        />,
+        document.body
+      )}
+
       {/* Modal de confirmación (Desactivar / Eliminar) — vía portal */}
       {pendingAction && createPortal(
         <ConfirmModal
@@ -623,6 +729,10 @@ export function TallaFormDrawer({ lang, options, initial, onClose, onSave }) {
       talla_base: "",
       nombre: "",
       descripcion: "",
+      // Sprint 2026-07-16 · clasificadores multi-valor
+      marca_ids: [],
+      tipos: [],
+      familias: [],
       ...eqFields,
       ...dimFields,
     };
@@ -637,6 +747,27 @@ export function TallaFormDrawer({ lang, options, initial, onClose, onSave }) {
   }, [blank, initial]);
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  // ── Sprint 2026-07-16 · helpers de los clasificadores multi ─
+  const toggleInList = (k) => (v) => setForm(prev => {
+    const cur = Array.isArray(prev[k]) ? prev[k] : [];
+    return { ...prev, [k]: cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v] };
+  });
+  const addFamilia = (raw) => {
+    const v = String(raw || "").trim().toUpperCase();
+    if (!v) return;
+    setForm(prev => {
+      const cur = Array.isArray(prev.familias) ? prev.familias : [];
+      return cur.includes(v) ? prev : { ...prev, familias: [...cur, v] };
+    });
+  };
+  const [familiaDraft, setFamiliaDraft] = useState("");
+
+  // Familia sólo aplica si el tipo NO es exclusivamente Plantilla.
+  const soloPlantilla =
+    form.tipo_producto === "plantilla" ||
+    ((form.tipos || []).length > 0 &&
+     (form.tipos || []).every(t => /plantilla/i.test(t)));
 
   // ── Determinante de la lógica condicional ──────────────────
   const tipoMeta = useMemo(() => {
@@ -757,6 +888,101 @@ export function TallaFormDrawer({ lang, options, initial, onClose, onSave }) {
             </div>
           </Section>
 
+          {/* SECCIÓN 1B · Marca · Tipo · Familia (Sprint 2026-07-16)
+              Cada talla puede pertenecer a UNA O MÁS marcas, tipos y
+              familias. La familia (ej. 50B22) es el prefijo del nombre
+              del producto: el form de producto la detecta y muestra
+              las tallas relacionadas. */}
+          <Section
+            title={lang === "es" ? "Marca · Tipo · Familia" : "Brand · Type · Family"}
+            hint={lang === "es"
+              ? "Multi-selección: una talla puede estar en varias marcas y familias."
+              : "Multi-select: a size can belong to several brands and families."}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <Field label={lang === "es" ? "Marcas" : "Brands"}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {(options?.marcas || []).length === 0 && (
+                    <span className="caption" style={{ color: "#94A3B8" }}>
+                      {lang === "es" ? "Sin marcas en BD." : "No brands in DB."}
+                    </span>
+                  )}
+                  {(options?.marcas || []).map(m => (
+                    <TogglePill
+                      key={m.id}
+                      on={(form.marca_ids || []).includes(m.id)}
+                      label={m.nombre}
+                      onClick={() => toggleInList("marca_ids")(m.id)}
+                    />
+                  ))}
+                </div>
+              </Field>
+
+              <Field label={lang === "es" ? "Tipos" : "Types"}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {(options?.tipos_calzado || []).map(t => (
+                    <TogglePill
+                      key={t}
+                      on={(form.tipos || []).includes(t)}
+                      label={t}
+                      onClick={() => toggleInList("tipos")(t)}
+                    />
+                  ))}
+                </div>
+              </Field>
+
+              {!soloPlantilla && (
+                <Field
+                  label={lang === "es" ? "Familias de calzado" : "Footwear families"}
+                  hint={lang === "es" ? "prefijo del nombre, ej. 50B22" : "name prefix, e.g. 50B22"}
+                >
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                    {(form.familias || []).map(f => (
+                      <span key={f} className="mono"
+                            style={{
+                              display: "inline-flex", alignItems: "center", gap: 4,
+                              background: "rgba(0,178,134,0.10)", color: "#008B69",
+                              border: "1px solid rgba(0,178,134,0.30)",
+                              borderRadius: 999, padding: "3px 8px",
+                              fontSize: 12, fontWeight: 700, letterSpacing: 0.3,
+                            }}>
+                        {f}
+                        <button type="button"
+                                onClick={() => set("familias", (form.familias || []).filter(x => x !== f))}
+                                title={lang === "es" ? "Quitar familia" : "Remove family"}
+                                style={{ border: "none", background: "transparent", cursor: "pointer",
+                                         color: "#008B69", fontWeight: 800, padding: 0, lineHeight: 1 }}>
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    <input
+                      className="siz-input mono"
+                      list="siz-familias-sugeridas"
+                      style={{ width: 150, height: 30, fontSize: 12 }}
+                      placeholder={lang === "es" ? "＋ agregar (Enter)" : "＋ add (Enter)"}
+                      value={familiaDraft}
+                      onChange={e => setFamiliaDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addFamilia(familiaDraft);
+                          setFamiliaDraft("");
+                        }
+                      }}
+                      onBlur={() => { if (familiaDraft.trim()) { addFamilia(familiaDraft); setFamiliaDraft(""); } }}
+                    />
+                    <datalist id="siz-familias-sugeridas">
+                      {(options?.familias || [])
+                        .filter(f => !(form.familias || []).includes(f))
+                        .map(f => <option key={f} value={f}/>)}
+                    </datalist>
+                  </div>
+                </Field>
+              )}
+            </div>
+          </Section>
+
           {/* SECCIÓN 2 · Matriz de Equivalencias */}
           <Section
             title={lang === "es" ? "Matriz de Equivalencias" : "Equivalence Matrix"}
@@ -850,6 +1076,107 @@ function Section({ title, hint, children }) {
       </div>
       {children}
     </section>
+  );
+}
+
+// =====================================================================
+// Modal "Duplicar familia" (Sprint 2026-07-16)
+// Copia TODAS las tallas activas de una familia a otra nueva, para no
+// re-digitar las 15 equivalencias al abrir una línea de productos.
+// =====================================================================
+function CloneFamiliaModal({ lang, familias, onClose, onDone }) {
+  const [origen,  setOrigen]  = useState(familias[0] || "");
+  const [destino, setDestino] = useState("");
+  const [busy,    setBusy]    = useState(false);
+  const [error,   setError]   = useState(null);
+
+  const run = async () => {
+    const dst = destino.trim().toUpperCase();
+    if (!origen || !dst) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await sizingApi.cloneFamilia({ familia_origen: origen, familia_destino: dst });
+      await onDone(r);
+    } catch (e) {
+      setError(e?.body?.detail || e?.message || (lang === "es" ? "Falló la duplicación" : "Clone failed"));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="siz-drawer-backdrop" onClick={() => !busy && onClose()}/>
+      <div role="dialog" aria-modal="true"
+           style={{
+             position: "fixed", top: "50%", left: "50%",
+             transform: "translate(-50%, -50%)", zIndex: 1001,
+             width: "min(440px, 92vw)", background: "#FFFFFF",
+             borderRadius: 14, padding: 22,
+             boxShadow: "0 24px 60px rgba(15,23,42,0.25)",
+           }}>
+        <div className="micro" style={{ color: MINT }}>
+          {lang === "es" ? "MOTOR DE TALLAS" : "SIZING ENGINE"}
+        </div>
+        <div className="heading-md" style={{ margin: "2px 0 4px", color: NAVY }}>
+          {lang === "es" ? "Duplicar corrida de una familia" : "Duplicate a family's size run"}
+        </div>
+        <div className="caption" style={{ color: "#64748B", marginBottom: 14 }}>
+          {lang === "es"
+            ? "Crea una copia de cada talla activa de la familia origen, asignada a la familia destino (mismas equivalencias y marcas)."
+            : "Creates a copy of every active size in the source family, assigned to the target family."}
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <label className="siz-field">
+            <span className="siz-field-label">{lang === "es" ? "Familia origen" : "Source family"}</span>
+            <select className="siz-input siz-select" value={origen}
+                    onChange={e => setOrigen(e.target.value)} disabled={busy}>
+              {familias.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </label>
+          <label className="siz-field">
+            <span className="siz-field-label">
+              {lang === "es" ? "Familia destino (nueva)" : "Target family (new)"}
+            </span>
+            <input className="siz-input mono" value={destino} disabled={busy}
+                   placeholder={lang === "es" ? 'p.ej. "80B10"' : 'e.g. "80B10"'}
+                   onChange={e => setDestino(e.target.value.toUpperCase())}
+                   onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); run(); } }}/>
+          </label>
+        </div>
+        {error && (
+          <div className="caption" style={{ color: "#DC2626", marginTop: 10 }}>⚠ {error}</div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button className="siz-btn siz-btn-ghost" onClick={onClose} disabled={busy}>
+            {lang === "es" ? "Cancelar" : "Cancel"}
+          </button>
+          <button className="siz-btn siz-btn-primary" onClick={run}
+                  disabled={busy || !origen || !destino.trim() ||
+                            destino.trim().toUpperCase() === origen}>
+            {busy ? (lang === "es" ? "Duplicando…" : "Cloning…")
+                  : (lang === "es" ? "Duplicar" : "Duplicate")}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// Pill toggleable para los multi-select de Marca/Tipo (Sprint 2026-07-16).
+function TogglePill({ on, label, onClick }) {
+  return (
+    <button type="button" onClick={onClick}
+            style={{
+              borderRadius: 999, padding: "4px 11px", cursor: "pointer",
+              fontSize: 12, fontWeight: 600, lineHeight: 1.3,
+              border: `1px solid ${on ? "rgba(0,178,134,0.45)" : "#E2E8F0"}`,
+              background: on ? "rgba(0,178,134,0.12)" : "#FFFFFF",
+              color: on ? "#008B69" : "#475569",
+              transition: "all 120ms ease",
+            }}>
+      {on ? "✓ " : ""}{label}
+    </button>
   );
 }
 

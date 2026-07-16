@@ -1417,6 +1417,26 @@ export const sistemasMedidaCatApi    = resource("sizing/sistemas-medida");
 export const sizingApi = {
   options: () => apiFetch(`/sizing/options/`, { token: getToken() }),
   clone:   (tallaId) => tallasApi.action("clone", tallaId, {}),
+  // Sprint 2026-07-16 · duplica la corrida completa de una familia a otra.
+  //   body: { familia_origen, familia_destino, marca_ids?, tipos? }
+  cloneFamilia: (body) =>
+    apiFetch(`/sizing/tallas/clone-familia/`,
+             { method: "POST", body, token: getToken() }),
+};
+
+// ---------------------------------------------------------------------
+// Catálogo persistido de opciones de atributos técnicos (2026-07-16)
+//   GET  /api/productos/attr-options/          { tipo_calzado: [...], ... }
+//   POST /api/productos/attr-add/              { key, value }
+//   POST /api/productos/attr-delete/           { key, value } → 409 si en uso
+//   (attr-rename ya existía; renombra en todos los productos + catálogo)
+// ---------------------------------------------------------------------
+export const attrOptionsApi = {
+  list:   ()            => apiFetch(`/productos/attr-options/`, { token: getToken() }),
+  add:    (key, value)  => apiFetch(`/productos/attr-add/`,
+                                    { method: "POST", body: { key, value }, token: getToken() }),
+  remove: (key, value)  => apiFetch(`/productos/attr-delete/`,
+                                    { method: "POST", body: { key, value }, token: getToken() }),
 };
 
 

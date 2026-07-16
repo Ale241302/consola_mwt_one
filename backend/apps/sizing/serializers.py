@@ -87,12 +87,19 @@ class TallaSerializer(serializers.ModelSerializer):
 
     metadata = serializers.JSONField(required=False, default=dict)
 
+    # ── Clasificadores multi-valor (Sprint 2026-07-16) ─────────────
+    marca_ids = serializers.JSONField(required=False, default=list)
+    tipos     = serializers.JSONField(required=False, default=list)
+    familias  = serializers.JSONField(required=False, default=list)
+
     class Meta:
         model  = Talla
         fields = (
             "id", "is_active", "created_at", "updated_at",
             # clasificación / base
             "tipo_producto", "talla_base", "nombre", "descripcion",
+            # clasificadores multi-valor
+            "marca_ids", "tipos", "familias",
             # 15 sistemas
             *Talla.EQUIVALENCE_FIELDS,
             # dimensiones (sólo plantilla)
@@ -100,6 +107,32 @@ class TallaSerializer(serializers.ModelSerializer):
             # libre
             "metadata",
         )
+
+    # Normaliza los multi-valor: siempre lista de strings sin vacíos.
+    @staticmethod
+    def _clean_str_list(v, upper=False):
+        if not isinstance(v, (list, tuple)):
+            v = [v] if v else []
+        out = []
+        for x in v:
+            s = str(x or "").strip()
+            if not s:
+                continue
+            if upper:
+                s = s.upper()
+            if s not in out:
+                out.append(s)
+        return out
+
+    def validate_marca_ids(self, v):
+        return self._clean_str_list(v)
+
+    def validate_tipos(self, v):
+        return self._clean_str_list(v)
+
+    def validate_familias(self, v):
+        # Familias en MAYÚSCULAS para que el match por prefijo sea estable.
+        return self._clean_str_list(v, upper=True)
 
     # ── Construye dinámicamente los campos de equivalencia ──────
     def __init__(self, *args, **kwargs):
@@ -134,6 +167,8 @@ class TallaListSerializer(serializers.ModelSerializer):
         model  = Talla
         fields = (
             "id", "is_active", "tipo_producto", "talla_base", "nombre",
+            # clasificadores multi-valor (marca / tipo / familia)
+            "marca_ids", "tipos", "familias",
             # equivalencias rápidas — el FE muestra las más universales
             "eu", "us_men", "us_women", "uk_men", "br", "cm",
             # dimensiones (informativo en lista)

@@ -261,11 +261,172 @@ class ProductoViewSet(viewsets.ViewSet):
                         ["{%s}" % key, old, new, key, key, old],
                     )
                 updated = cur.rowcount
+                # Sprint 2026-07-16 · sincroniza el catálogo persistido:
+                # el valor viejo desaparece y el nuevo queda activo.
+                cur.execute(
+                    """
+                    DELETE FROM productos.attr_opcion
+                     WHERE key = %s AND lower(value) = lower(%s)
+                    """,
+                    [key, old],
+                )
+                cur.execute(
+                    """
+                    INSERT INTO productos.attr_opcion (key, value)
+                    VALUES (%s, %s)
+                    ON CONFLICT (key, lower(value)) DO UPDATE
+                       SET is_active = TRUE, updated_at = NOW()
+                    """,
+                    [key, new],
+                )
         except Exception as exc:  # noqa: BLE001
             log.exception("attr_rename failed")
             return Response({"detail": f"No se pudo renombrar: {exc}"}, status=500)
 
         return Response({"updated": updated, "key": key, "old": old, "new": new}, status=200)
+
+    # ── Sprint 2026-07-16 · catálogo persistido de opciones ────────────
+    # GET /api/productos/attr-options/
+    # → { tipo_calzado: [...], capellada: [...], ..., riesgo: [...] }
+    # Fuente de verdad: productos.attr_opcion (activas) ∪ valores en uso
+    # en especificaciones (un valor en uso SIEMPRE se lista, aunque haya
+    # sido quitado del catálogo, para no romper productos existentes).
+    @action(detail=False, methods=["get"], url_path="attr-options")
+    def attr_options(self, request):
+        keys = self._ATTR_SINGLE_KEYS | self._ATTR_MULTI_KEYS
+        out = {k: [] for k in keys}
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT key, value FROM productos.attr_opcion
+                    WHERE is_active = TRUE
+                    ORDER BY key, orden, value
+                    """
+                )
+                for k, v in cur.fetchall():
+                    if k in out and v not in out[k]:
+                        out[k].append(v)
+                # ∪ valores en uso (single)
+                for k in self._ATTR_SINGLE_KEYS:
+                    cur.execute(
+                        """
+                        SELECT DISTINCT trim(especificaciones ->> %s)
+                        FROM productos.producto
+                        WHERE especificaciones ->> %s IS NOT NULL
+                          AND trim(especificaciones ->> %s) <> ''
+                        """,
+                        [k, k, k],
+                    )
+                    for (v,) in cur.fetchall():
+                        if v and v not in out[k]:
+                            out[k].append(v)
+                # ∪ valores en uso (multi)
+                for k in self._ATTR_MULTI_KEYS:
+                    cur.execute(
+                        """
+                        SELECT DISTINCT trim(e.val)
+                        FROM productos.producto p,
+                             jsonb_array_elements_text(
+                                 CASE WHEN jsonb_typeof(p.especificaciones -> %s) = 'array'
+                                      THEN p.especificaciones -> %s
+                                      ELSE '[]'::jsonb END) AS e(val)
+                        WHERE trim(e.val) <> ''
+                        """,
+                        [k, k],
+                    )
+                    for (v,) in cur.fetchall():
+                        if v and v not in out[k]:
+                            out[k].append(v)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("attr_options failed")
+            return Response({"detail": f"No se pudo leer el catálogo: {exc}"}, status=500)
+        return Response(out, status=200)
+
+    # POST /api/productos/attr-add/  body: { key, value }
+    # Alta persistida de una opción (staff-only). Idempotente.
+    @action(detail=False, methods=["post"], url_path="attr-add")
+    def attr_add(self, request):
+        if not _is_staff_role(request):
+            return Response({"detail": "Solo staff puede agregar opciones."}, status=403)
+        data = request.data or {}
+        key = str(data.get("key") or "").strip()
+        value = str(data.get("value") or "").strip()
+        if key not in (self._ATTR_SINGLE_KEYS | self._ATTR_MULTI_KEYS):
+            return Response({"detail": f"key no permitida: {key}"}, status=400)
+        if not value:
+            return Response({"detail": "value es obligatorio."}, status=400)
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO productos.attr_opcion (key, value)
+                    VALUES (%s, %s)
+                    ON CONFLICT (key, lower(value)) DO UPDATE
+                       SET is_active = TRUE, updated_at = NOW()
+                    """,
+                    [key, value],
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("attr_add failed")
+            return Response({"detail": f"No se pudo agregar: {exc}"}, status=500)
+        return Response({"key": key, "value": value}, status=201)
+
+    # POST /api/productos/attr-delete/  body: { key, value }
+    # Elimina una opción del catálogo. BLOQUEADA si algún producto la usa
+    # (decisión CEO 2026-07-16): responde 409 con el conteo para que el
+    # usuario renombre (✎) o cambie esos productos primero.
+    @action(detail=False, methods=["post"], url_path="attr-delete")
+    def attr_delete(self, request):
+        if not _is_staff_role(request):
+            return Response({"detail": "Solo staff puede eliminar opciones."}, status=403)
+        data = request.data or {}
+        key = str(data.get("key") or "").strip()
+        value = str(data.get("value") or "").strip()
+        if key not in (self._ATTR_SINGLE_KEYS | self._ATTR_MULTI_KEYS):
+            return Response({"detail": f"key no permitida: {key}"}, status=400)
+        if not value:
+            return Response({"detail": "value es obligatorio."}, status=400)
+        try:
+            with connection.cursor() as cur:
+                if key in self._ATTR_SINGLE_KEYS:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) FROM productos.producto
+                        WHERE is_active = TRUE
+                          AND especificaciones ->> %s = %s
+                        """,
+                        [key, value],
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) FROM productos.producto
+                        WHERE is_active = TRUE
+                          AND especificaciones -> %s ? %s
+                        """,
+                        [key, value],
+                    )
+                in_use = cur.fetchone()[0]
+                if in_use > 0:
+                    return Response(
+                        {"detail": (f"'{value}' está en uso por {in_use} producto(s). "
+                                    "Renómbrala (✎) o cambia esos productos antes de eliminarla."),
+                         "in_use": in_use},
+                        status=409,
+                    )
+                cur.execute(
+                    """
+                    DELETE FROM productos.attr_opcion
+                    WHERE key = %s AND lower(value) = lower(%s)
+                    """,
+                    [key, value],
+                )
+                deleted = cur.rowcount
+        except Exception as exc:  # noqa: BLE001
+            log.exception("attr_delete failed")
+            return Response({"detail": f"No se pudo eliminar: {exc}"}, status=500)
+        return Response({"deleted": deleted, "key": key, "value": value}, status=200)
 
     @action(detail=False, methods=["get"])
     def select_paises(self, request):
