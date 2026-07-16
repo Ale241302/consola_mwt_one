@@ -69,20 +69,20 @@ export default function OcChoiceModal({ open, lang = "es", onYes, onNo, onClose 
             type="button" onClick={onYes}
             style={{
               flex: 1, minWidth: 150, padding: "12px 18px", borderRadius: 11,
-              border: "none", background: MINT, color: "#FFFFFF",
+              border: "none", background: NAVY, color: "#FFFFFF",
               fontSize: 14, fontWeight: 700, cursor: "pointer",
-              boxShadow: "0 4px 12px rgba(0,178,134,0.30)",
+              boxShadow: "0 4px 12px rgba(11,30,58,0.30)",
               transition: "background 140ms ease, transform 140ms ease, box-shadow 140ms ease",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = MINT_DARK;
+              e.currentTarget.style.background = "#0A1730";
               e.currentTarget.style.transform = "translateY(-1px)";
-              e.currentTarget.style.boxShadow = "0 8px 20px rgba(0,178,134,0.40)";
+              e.currentTarget.style.boxShadow = "0 8px 20px rgba(11,30,58,0.42)";
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = MINT;
+              e.currentTarget.style.background = NAVY;
               e.currentTarget.style.transform = "none";
-              e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,178,134,0.30)";
+              e.currentTarget.style.boxShadow = "0 4px 12px rgba(11,30,58,0.30)";
             }}
           >
             {t("Sí, subir mi OC", "Yes, upload my PO")}
@@ -92,18 +92,18 @@ export default function OcChoiceModal({ open, lang = "es", onYes, onNo, onClose 
             type="button" onClick={onNo}
             style={{
               flex: 1, minWidth: 150, padding: "12px 18px", borderRadius: 11,
-              border: "1.5px solid #CBD5E1", background: "#FFFFFF", color: "#334155",
+              border: `1.5px solid ${NAVY}`, background: "#FFFFFF", color: NAVY,
               fontSize: 14, fontWeight: 700, cursor: "pointer",
-              transition: "background 140ms ease, border-color 140ms ease, transform 140ms ease",
+              transition: "background 140ms ease, color 140ms ease, transform 140ms ease",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = "#F1F5F9";
-              e.currentTarget.style.borderColor = "#94A3B8";
+              e.currentTarget.style.background = NAVY;
+              e.currentTarget.style.color = "#FFFFFF";
               e.currentTarget.style.transform = "translateY(-1px)";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = "#FFFFFF";
-              e.currentTarget.style.borderColor = "#CBD5E1";
+              e.currentTarget.style.color = NAVY;
               e.currentTarget.style.transform = "none";
             }}
           >

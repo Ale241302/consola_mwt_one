@@ -47,6 +47,7 @@ import { apiFetch, getToken } from "../../lib/api.js";
 import * as XLSX from "xlsx";
 import {
   parseExcelMarluvas, defaultSkuState, buildSimSkusPayload, anchorPrice,
+  computeMatrixFromInputs,
 } from "../../lib/marluvasPricing.js";
 import { BANDAS_MARLUVAS, PLAZOS_MARLUVAS } from "../../constants/marluvas.js";
 
@@ -305,11 +306,48 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
     if (!parsedSkus.length || !clientsWithSel.length || running) return;
     setRunning(true); setError(null); setResult(null);
     try {
+      // Sprint 2026-07-16 · preservar los modificadores manuales por SKU del
+      // cliente (sobreprecio % y ajuste $): si el admin los movio en el
+      // detalle del cliente, deben mantenerse aunque se suba un Excel nuevo.
+      // Leemos la simulacion guardada de cada cliente y re-aplicamos.
+      const tok0 = getToken();
+      const existingByClient = {};
+      await Promise.all(clientsWithSel.map((c) =>
+        apiFetch(
+          `/commercial/marluvas/load-simulation/?brand_id=${encodeURIComponent(brandId)}&cliente_id=${encodeURIComponent(c.cliente_id)}`,
+          { token: tok0 },
+        )
+          .then((r) => {
+            const m = {};
+            (Array.isArray(r?.skus) ? r.skus : []).forEach((sk) => {
+              if (!sk || !sk.sku) return;
+              m[String(sk.sku)] = {
+                sobreprecio: Number(sk.sobreprecio_pct) || 0,
+                ajuste:      Number(sk.ajuste_usd) || 0,
+              };
+            });
+            existingByClient[c.cliente_id] = m;
+          })
+          .catch(() => { existingByClient[c.cliente_id] = {}; }),
+      ));
+
       const clientsPayload = clientsWithSel.map((c) => {
         const com = c.comision_pct != null ? Number(c.comision_pct) * 100 : 0;
         const sel = selection[c.cliente_id] || new Set();
+        const prev = existingByClient[c.cliente_id] || {};
         const chosen = parsedSkus.filter((p) => sel.has(p.sku));
-        const skusState = chosen.map((p) => defaultSkuState(p, { com }));
+        const skusState = chosen.map((p) => {
+          const st = defaultSkuState(p, { com });
+          const ex = prev[String(p.sku)];
+          // Re-aplicar sobreprecio/ajuste previos y recalcular la matriz para
+          // que el precio congelado los incluya.
+          if (ex && (ex.sobreprecio || ex.ajuste)) {
+            st.sobreprecio = ex.sobreprecio;
+            st.ajuste = ex.ajuste;
+            st.matrix = computeMatrixFromInputs(st, null);
+          }
+          return st;
+        });
         const skus = buildSimSkusPayload(skusState, anchor, null);
         return {
           cliente_id: c.cliente_id,
