@@ -729,12 +729,15 @@ function StepUpload({ state, patch, isClient }) {
         <div style={styles.clientConfirmBox}>
           <span style={{ fontSize: 22 }}>✅</span>
           <div>
-            <strong>{state.ocrPayload.lines?.length || 0} productos detectados</strong>
+            <strong>{new Set((state.ocrPayload.lines || []).map((l) => String(l.sku || "—").toUpperCase())).size} SKUs detectados</strong>
             {state.ocrPayload.po?.number && (
               <span style={{ marginLeft: 8, color: COLORS.inkSoft }}>
                 · OC #{state.ocrPayload.po.number}
               </span>
             )}
+            <span style={{ marginLeft: 8, color: COLORS.inkSoft }}>
+              · {state.ocrPayload.lines?.length || 0} línea(s)
+            </span>
             <p style={{ margin: "4px 0 0", fontSize: 13, color: COLORS.inkSoft }}>
               Revisa los productos en el siguiente paso.
             </p>
