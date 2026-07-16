@@ -206,6 +206,33 @@ class LoginView(APIView):
         _touch_last_login(user["id"])
         tokens = _make_tokens(user)
 
+        # Sprint 2026-07-16 · el login ahora incluye legal_entity_ids (Portal
+        # multi-empresa). Sin esto el frontend del cliente B2B no sabe a qué
+        # empresa pertenece → el buscador de productos del wizard marca todo
+        # como "NO ASIGNADO". Fuente: users.mwtuser (misma que /auth/me/).
+        try:
+            _email_low = (user.get("email_plain") or "").strip().lower()
+            if _email_low:
+                with connection.cursor() as _c:
+                    _c.execute(
+                        """
+                        SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                          FROM users.mwtuser
+                         WHERE lower(trim(email_plain)) = %s
+                            OR lower(trim(COALESCE(contact_email, ''))) = %s
+                         ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                                  cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
+                                  updated_at DESC NULLS LAST
+                         LIMIT 1
+                        """,
+                        [_email_low, _email_low],
+                    )
+                    _r = _c.fetchone()
+                    if _r and _r[0]:
+                        user["legal_entity_ids"] = [str(x) for x in _r[0] if x]
+        except Exception:  # noqa: BLE001
+            pass
+
         return Response({
             "access":  tokens["access"],
             "refresh": tokens["refresh"],

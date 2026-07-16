@@ -135,6 +135,19 @@ _RE_LINE_QTYFIRST = re.compile(
     re.I | re.M,
 )
 
+# Layout FRAGMENTADO (Sprint 2026-07-16): línea de ítem partida por salto de
+# página + pie (qty / SKU-talla / desc / fecha / precio / total en renglones
+# separados). Se valida qty×precio≈total antes de aceptar (ver _parse_text).
+_RE_LINE_FRAG = re.compile(
+    r"(?P<qty>\d{1,6})\s*\n+\s*"
+    r"(?P<part>[A-Z0-9][A-Z0-9\-\_\.\/]*?)-(?P<size>\d{2,3})\s*\n+"
+    r"(?P<desc>.*?)\n+\s*"
+    r"\d{1,2}/\d{1,2}/\d{2,4}\s*\n+\s*"
+    r"(?P<price>\d+[.,]\d{2})\s*\n+\s*"
+    r"(?P<total>\d[\d\s.]*[.,]\d{2})",
+    re.I | re.S,
+)
+
 
 def _extract_po_number(raw: str) -> Optional[str]:
     """Número de OC robusto. Orden: prefijo explícito que contenga un
@@ -245,6 +258,44 @@ def _parse_text(raw: str) -> dict:
                     "ocr_raw_line":  m.group(0).strip(),
                     "confidence":    0.78,
                 })
+
+    # ── Fallback fragmentado (Sprint 2026-07-16) ──────────────────────
+    # En PDFs multi-página, pdfminer a veces PARTE una línea de ítem por el
+    # salto de página + pie de página: qty, SKU, descripción, fecha, precio
+    # y total quedan en renglones separados. El regex principal (una sola
+    # línea) la pierde (ej. PO 505244: 50B22-EV-CPAP-CP-41 · 470 uds cae en
+    # la pág. 2). Este pase rescata esos ítems, y SOLO los acepta si
+    # qty × precio ≈ total (validación anti-desalineación de montos).
+    _seen_ps = {
+        (str(l.get("sku") or "").upper(), str(l.get("size") or ""))
+        for l in out["lines"]
+    }
+    for m in _RE_LINE_FRAG.finditer(raw):
+        part = (m.group("part") or "").strip()
+        size = (m.group("size") or "").strip() or None
+        if not part:
+            continue
+        if (part.upper(), str(size or "")) in _seen_ps:
+            continue
+        qty   = _safe_decimal(m.group("qty"))
+        price = _safe_decimal(m.group("price"))
+        total = _safe_decimal((m.group("total") or "").replace(" ", ""))
+        if not (qty and price and total) or price <= 0 or total <= 0:
+            continue
+        expected = qty * price
+        # Tolerancia 1%: solo aceptamos si qty×precio cuadra con el total.
+        if expected <= 0 or abs(expected - total) / total > Decimal("0.01"):
+            continue
+        _seen_ps.add((part.upper(), str(size or "")))
+        out["lines"].append({
+            "sku":          part,
+            "descripcion":  (m.group("desc") or "").strip().replace("\n", " ")[:120],
+            "size":         size,
+            "qty":          float(qty),
+            "unit_price":   float(price),
+            "ocr_raw_line": m.group(0).strip().replace("\n", " ")[:200],
+            "confidence":   0.75,
+        })
 
     # Total = sum(qty * unit_price) si no lo detectamos en texto
     if out["lines"]:
