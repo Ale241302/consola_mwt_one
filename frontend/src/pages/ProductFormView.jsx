@@ -809,6 +809,47 @@ export default function ScreenProductFormView() {
     }
   };
 
+  // ── Sprint 2026-07-16 · atributos técnicos: catálogo vivo ──
+  // Opciones = BRAND_ATTRIBUTES (base) ∪ valores ya usados en productos de
+  // la BD ∪ opciones agregadas en esta sesión. Un color/capellada nueva se
+  // agrega desde el propio select ("＋"); al guardar el producto queda en
+  // especificaciones y desde ahí aparece para todos los productos.
+  const [attrOptions, setAttrOptions] = useState(() =>
+    Object.fromEntries(Object.entries(BRAND_ATTRIBUTES).map(([k, v]) => [k, [...v]])));
+  useEffect(() => {
+    productosApi.list().then((r) => {
+      const rows = Array.isArray(r) ? r : (r?.results || []);
+      setAttrOptions(prev => {
+        const next = { ...prev };
+        const addVal = (key, val) => {
+          if (typeof val !== "string") return;
+          const t = val.trim();
+          if (!t) return;
+          if (!next[key].some(o => String(o).toLowerCase() === t.toLowerCase())) {
+            next[key] = [...next[key], t];
+          }
+        };
+        rows.forEach((p) => {
+          const e = p?.especificaciones || {};
+          ["tipo_calzado","cubrepuntera","tipo_puntera","antiperforante",
+           "protector_metatarsal","capellada","suela","cierre","color",
+           "materiales_circulares","plantilla_interna"].forEach(k => addVal(k, e[k]));
+          ["disipativo_energia","normativa","segmento","riesgo"].forEach(k => {
+            (Array.isArray(e[k]) ? e[k] : []).forEach(v => addVal(k, v));
+          });
+        });
+        return next;
+      });
+    }).catch(() => { /* sin lista de productos: quedan las opciones base */ });
+  }, []);
+  const addAttrOption = (key) => (val) => {
+    const t = String(val || "").trim();
+    if (!t) return;
+    setAttrOptions(prev => prev[key].some(o => String(o).toLowerCase() === t.toLowerCase())
+      ? prev
+      : { ...prev, [key]: [...prev[key], t] });
+  };
+
   // En modo CREATE, si no hay brandId seleccionado y ya cargaron las
   // marcas reales, autoselecciona la primera (mejor UX que dropdown vacío).
   useEffect(() => {
@@ -1121,27 +1162,27 @@ export default function ScreenProductFormView() {
       </div>
 
       <div className="form-grid-3">
-        <AttrSelect label={lang==='es'?'Tipo de calzado':'Footwear type'} opts={BRAND_ATTRIBUTES.tipo_calzado}
+        <AttrSelect label={lang==='es'?'Tipo de calzado':'Footwear type'} opts={attrOptions.tipo_calzado} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_calzado') : undefined}
                     value={attrs.tipo_calzado} onChange={v=>setAttrs({...attrs, tipo_calzado: v})}/>
-        <AttrSelect label={lang==='es'?'Cubre puntera':'Toe cap cover'} opts={BRAND_ATTRIBUTES.cubrepuntera}
+        <AttrSelect label={lang==='es'?'Cubre puntera':'Toe cap cover'} opts={attrOptions.cubrepuntera} lang={lang} onAddOption={!isClient ? addAttrOption('cubrepuntera') : undefined}
                     value={attrs.cubrepuntera} onChange={v=>setAttrs({...attrs, cubrepuntera: v})}/>
-        <AttrSelect label={lang==='es'?'Tipo de puntera':'Toe cap type'} opts={BRAND_ATTRIBUTES.tipo_puntera}
+        <AttrSelect label={lang==='es'?'Tipo de puntera':'Toe cap type'} opts={attrOptions.tipo_puntera} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_puntera') : undefined}
                     value={attrs.tipo_puntera} onChange={v=>setAttrs({...attrs, tipo_puntera: v})}/>
-        <AttrSelect label={lang==='es'?'Antiperforante':'Anti-perforation'} opts={BRAND_ATTRIBUTES.antiperforante}
+        <AttrSelect label={lang==='es'?'Antiperforante':'Anti-perforation'} opts={attrOptions.antiperforante} lang={lang} onAddOption={!isClient ? addAttrOption('antiperforante') : undefined}
                     value={attrs.antiperforante} onChange={v=>setAttrs({...attrs, antiperforante: v})}/>
-        <AttrSelect label={lang==='es'?'Protector metatarsal':'Metatarsal protector'} opts={BRAND_ATTRIBUTES.protector_metatarsal}
+        <AttrSelect label={lang==='es'?'Protector metatarsal':'Metatarsal protector'} opts={attrOptions.protector_metatarsal} lang={lang} onAddOption={!isClient ? addAttrOption('protector_metatarsal') : undefined}
                     value={attrs.protector_metatarsal} onChange={v=>setAttrs({...attrs, protector_metatarsal: v})}/>
-        <AttrSelect label={lang==='es'?'Capellada':'Upper'} opts={BRAND_ATTRIBUTES.capellada}
+        <AttrSelect label={lang==='es'?'Capellada':'Upper'} opts={attrOptions.capellada} lang={lang} onAddOption={!isClient ? addAttrOption('capellada') : undefined}
                     value={attrs.capellada} onChange={v=>setAttrs({...attrs, capellada: v})}/>
-        <AttrSelect label="Suela" opts={BRAND_ATTRIBUTES.suela}
+        <AttrSelect label="Suela" opts={attrOptions.suela} lang={lang} onAddOption={!isClient ? addAttrOption('suela') : undefined}
                     value={attrs.suela} onChange={v=>setAttrs({...attrs, suela: v})}/>
-        <AttrSelect label={lang==='es'?'Cierre':'Closure'} opts={BRAND_ATTRIBUTES.cierre}
+        <AttrSelect label={lang==='es'?'Cierre':'Closure'} opts={attrOptions.cierre} lang={lang} onAddOption={!isClient ? addAttrOption('cierre') : undefined}
                     value={attrs.cierre} onChange={v=>setAttrs({...attrs, cierre: v})}/>
-        <AttrSelect label="Color" opts={BRAND_ATTRIBUTES.color}
+        <AttrSelect label="Color" opts={attrOptions.color} lang={lang} onAddOption={!isClient ? addAttrOption('color') : undefined}
                     value={attrs.color} onChange={v=>setAttrs({...attrs, color: v})}/>
-        <AttrSelect label={lang==='es'?'Materiales circulares':'Circular materials'} opts={BRAND_ATTRIBUTES.materiales_circulares}
+        <AttrSelect label={lang==='es'?'Materiales circulares':'Circular materials'} opts={attrOptions.materiales_circulares} lang={lang} onAddOption={!isClient ? addAttrOption('materiales_circulares') : undefined}
                     value={attrs.materiales_circulares} onChange={v=>setAttrs({...attrs, materiales_circulares: v})}/>
-        <AttrSelect label={lang==='es'?'Plantilla interna':'Insole'} opts={BRAND_ATTRIBUTES.plantilla_interna}
+        <AttrSelect label={lang==='es'?'Plantilla interna':'Insole'} opts={attrOptions.plantilla_interna} lang={lang} onAddOption={!isClient ? addAttrOption('plantilla_interna') : undefined}
                     value={attrs.plantilla_interna} onChange={v=>setAttrs({...attrs, plantilla_interna: v})}/>
         <label className="form-field">
           <span style={{display:'flex', alignItems:'center', gap:8}}>
@@ -1208,7 +1249,7 @@ export default function ScreenProductFormView() {
           </span>
         </span>
         <div className="riesgo-grid">
-          {BRAND_ATTRIBUTES.disipativo_energia.map(v => {
+          {[...new Set([...attrOptions.disipativo_energia, ...disipativos])].map(v => {
             const on = disipativos.includes(v);
             return (
               <button type="button" key={v}
@@ -1219,6 +1260,7 @@ export default function ScreenProductFormView() {
               </button>
             );
           })}
+          {!isClient && <AddOptionChip lang={lang} onAdd={(v)=>{ addAttrOption('disipativo_energia')(v); toggleDisipativo(v); }}/>}
         </div>
       </div>
 
@@ -1231,7 +1273,7 @@ export default function ScreenProductFormView() {
           </span>
         </span>
         <div className="riesgo-grid">
-          {BRAND_ATTRIBUTES.normativa.map(v => {
+          {[...new Set([...attrOptions.normativa, ...normativas])].map(v => {
             const on = normativas.includes(v);
             return (
               <button type="button" key={v}
@@ -1242,6 +1284,7 @@ export default function ScreenProductFormView() {
               </button>
             );
           })}
+          {!isClient && <AddOptionChip lang={lang} onAdd={(v)=>{ addAttrOption('normativa')(v); toggleNormativa(v); }}/>}
         </div>
       </div>
 
@@ -1254,7 +1297,7 @@ export default function ScreenProductFormView() {
           </span>
         </span>
         <div className="riesgo-grid">
-          {BRAND_ATTRIBUTES.segmento.map(v => {
+          {[...new Set([...attrOptions.segmento, ...segmentos])].map(v => {
             const on = segmentos.includes(v);
             return (
               <button type="button" key={v}
@@ -1265,6 +1308,7 @@ export default function ScreenProductFormView() {
               </button>
             );
           })}
+          {!isClient && <AddOptionChip lang={lang} onAdd={(v)=>{ addAttrOption('segmento')(v); toggleSegmento(v); }}/>}
         </div>
       </div>
 
@@ -1277,7 +1321,7 @@ export default function ScreenProductFormView() {
           </span>
         </span>
         <div className="riesgo-grid">
-          {BRAND_ATTRIBUTES.riesgo.map(r => {
+          {[...new Set([...attrOptions.riesgo, ...riesgos])].map(r => {
             const on = riesgos.includes(r);
             return (
               <button type="button" key={r}
@@ -1288,6 +1332,7 @@ export default function ScreenProductFormView() {
               </button>
             );
           })}
+          {!isClient && <AddOptionChip lang={lang} onAdd={(v)=>{ addAttrOption('riesgo')(v); toggleRiesgo(v); }}/>}
         </div>
       </div>
     </div>
@@ -2344,14 +2389,87 @@ export default function ScreenProductFormView() {
 // ────────────────────────────────────────────────
 // AttrSelect — small select field
 // ────────────────────────────────────────────────
-function AttrSelect({ label, opts, value, onChange }) {
+// Sprint 2026-07-16 · AttrSelect con alta inline de opciones ("＋") y merge
+// del valor actual (si el producto trae un valor fuera del catálogo, se
+// muestra igual en el select en vez de perderse).
+function AttrSelect({ label, opts, value, onChange, onAddOption, lang='es' }) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft]   = useState("");
+  const merged = (value && !opts.includes(value)) ? [...opts, value] : opts;
+  const confirmAdd = () => {
+    const v = draft.trim();
+    if (!v) { setAdding(false); return; }
+    onAddOption?.(v);
+    onChange(v);
+    setDraft(""); setAdding(false);
+  };
   return (
     <label className="form-field">
-      <span>{label}</span>
-      <select className="input" value={value} onChange={e=>onChange(e.target.value)}>
-        {opts.map(o => <option key={o} value={o}>{o}</option>)}
-      </select>
+      <span style={{display:'flex', alignItems:'center', gap:6}}>
+        {label}
+        {onAddOption && (
+          <button type="button"
+                  onClick={()=>{ setAdding(a=>!a); setDraft(""); }}
+                  title={lang==='es'?'Agregar opción nueva':'Add new option'}
+                  style={{ marginLeft:'auto', width:20, height:20, borderRadius:5, cursor:'pointer',
+                           border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                           color:'#00B286', fontWeight:800, fontSize:12, lineHeight:1 }}>
+            {adding ? '×' : '＋'}
+          </button>
+        )}
+      </span>
+      {adding ? (
+        <div style={{display:'flex', gap:6}}>
+          <input className="input" autoFocus value={draft}
+                 onChange={e=>setDraft(e.target.value)}
+                 onKeyDown={e=>{
+                   if (e.key==='Enter'){ e.preventDefault(); confirmAdd(); }
+                   if (e.key==='Escape'){ setDraft(''); setAdding(false); }
+                 }}
+                 placeholder={lang==='es'?'Nueva opción…':'New option…'}/>
+          <button type="button" onClick={confirmAdd}
+                  style={{border:'none', background:'#00B286', color:'#fff', borderRadius:6,
+                          width:34, cursor:'pointer', fontWeight:800}}>✓</button>
+        </div>
+      ) : (
+        <select className="input" value={value} onChange={e=>onChange(e.target.value)}>
+          {merged.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      )}
     </label>
+  );
+}
+
+// Chip "＋ Agregar opción" para los grupos multi-selección (staff only).
+function AddOptionChip({ lang='es', onAdd }) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft]   = useState("");
+  const confirmAdd = () => {
+    const v = draft.trim();
+    if (v) onAdd(v);
+    setDraft(""); setAdding(false);
+  };
+  if (!adding) return (
+    <button type="button" className="riesgo-chip"
+            style={{borderStyle:'dashed', color:'#008B69'}}
+            onClick={()=>setAdding(true)}>
+      <span>＋ {lang==='es'?'Agregar opción':'Add option'}</span>
+    </button>
+  );
+  return (
+    <span className="riesgo-chip" style={{display:'inline-flex', gap:6, alignItems:'center'}}>
+      <input className="input" autoFocus value={draft}
+             onChange={e=>setDraft(e.target.value)}
+             onKeyDown={e=>{
+               if (e.key==='Enter'){ e.preventDefault(); confirmAdd(); }
+               if (e.key==='Escape'){ setDraft(''); setAdding(false); }
+             }}
+             placeholder={lang==='es'?'Nueva opción…':'New option…'}
+             style={{height:26, fontSize:12, padding:'2px 8px', width:150}}/>
+      <button type="button" onClick={confirmAdd}
+              style={{border:'none', background:'#00B286', color:'#fff', borderRadius:5,
+                      width:22, height:22, cursor:'pointer', fontWeight:800}}>✓</button>
+    </span>
   );
 }
 
