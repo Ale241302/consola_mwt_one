@@ -38,9 +38,13 @@ import ProductExpedientesTab from "../components/productos/ProductExpedientesTab
 import { useRole } from "../context/RoleContext.jsx";
 import {
   productosApi, marcasApi, tallasApi, nodosApi, clientesApi,
-  productoAliasesApi, ncmApi,
+  productoAliasesApi, ncmApi, sizingApi,
   apiFetch, getToken,
 } from "../lib/api.js";
+// Sprint 2026-07-16 · drawers embebidos para crear/editar NCM y tallas sin
+// salir del formulario de producto (reusa los editores de /ncm y /tallas).
+import { NcmFormDrawer } from "./NcmEngine.jsx";
+import { TallaFormDrawer } from "./SizingEngine.jsx";
 
 // Backend → shape lista compacta para los grids
 // "Excepciones por cliente" / "Override por cliente".
@@ -734,6 +738,77 @@ export default function ScreenProductFormView() {
     ncmApi.list().then(r => setRealNcms(norm(r))).catch(() => setRealNcms([]));
   }, []);
 
+  // ── Sprint 2026-07-16 · crear/editar NCM y tallas SIN salir del form ──
+  // Botón junto al select de NCM y en el Motor de Tallas → drawer embebido.
+  // Al guardar: recarga la lista en memoria y auto-selecciona el valor —
+  // sin recargar la página.
+  const [ncmDrawer,     setNcmDrawer]     = useState(null); // null | {} | ncmObj
+  const [tallaDrawer,   setTallaDrawer]   = useState(null); // null | {} | tallaObj
+  const [tallaEditMode, setTallaEditMode] = useState(false);
+  const [ncmCountries,  setNcmCountries]  = useState([]);
+  const [sizingOptions, setSizingOptions] = useState(null);
+
+  const openNcmDrawer = async (initial) => {
+    setNcmDrawer(initial || {});
+    if (ncmCountries.length === 0) {
+      try {
+        const c = await productosApi.select("paises");
+        setNcmCountries(Array.isArray(c) ? c : []);
+      } catch { /* sin catálogo de países las tarifas quedan sin labels */ }
+    }
+  };
+  const openTallaDrawer = async (initial) => {
+    setTallaDrawer(initial || {});
+    if (!sizingOptions) {
+      try { setSizingOptions(await sizingApi.options()); }
+      catch { /* el form dinámico degrada a campos base */ }
+    }
+  };
+
+  const handleNcmSave = async (form) => {
+    try {
+      const payload = {
+        code:        (form.code || "").trim(),
+        descripcion: (form.descripcion || "").trim() || null,
+        tarifas:     Array.isArray(form.tarifas) ? form.tarifas : [],
+        is_active:   form.is_active !== false,
+      };
+      if (!payload.code) return;
+      if (form.id) await ncmApi.update(form.id, payload);
+      else         await ncmApi.create(payload);
+      const _n = (r) => Array.isArray(r) ? r : (r?.results || []);
+      const list = await ncmApi.list().then(_n).catch(() => []);
+      if (list.length) setRealNcms(list);
+      setAttrs(prev => ({ ...prev, ncm: payload.code }));
+      setNcmDrawer(null);
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo guardar el NCM: " : "NCM save failed: ") + (e?.message || ""));
+    }
+  };
+
+  const handleTallaSave = async (form) => {
+    try {
+      const payload = {};
+      Object.entries(form).forEach(([k, v]) => {
+        payload[k] = (typeof v === "string" && v.trim() === "") ? null : v;
+      });
+      let saved = null;
+      if (form.id) saved = await tallasApi.update(form.id, payload);
+      else         saved = await tallasApi.create(payload);
+      const _n = (r) => Array.isArray(r) ? r : (r?.results || []);
+      const list = await tallasApi.list().then(_n).catch(() => []);
+      if (list.length) setRealSizes(list);
+      const newId = saved?.id;
+      if (!form.id && newId) {
+        setSelectedSizes(prev => prev.includes(newId) ? prev : [...prev, newId]);
+      }
+      setTallaDrawer(null);
+      setTallaEditMode(false);
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo guardar la talla: " : "Size save failed: ") + (e?.message || ""));
+    }
+  };
+
   // En modo CREATE, si no hay brandId seleccionado y ya cargaron las
   // marcas reales, autoselecciona la primera (mejor UX que dropdown vacío).
   useEffect(() => {
@@ -1069,7 +1144,35 @@ export default function ScreenProductFormView() {
         <AttrSelect label={lang==='es'?'Plantilla interna':'Insole'} opts={BRAND_ATTRIBUTES.plantilla_interna}
                     value={attrs.plantilla_interna} onChange={v=>setAttrs({...attrs, plantilla_interna: v})}/>
         <label className="form-field">
-          <span>NCM</span>
+          <span style={{display:'flex', alignItems:'center', gap:8}}>
+            NCM
+            {!isClient && (
+              <span style={{marginLeft:'auto', display:'inline-flex', gap:6}}>
+                <button type="button"
+                        onClick={() => openNcmDrawer({})}
+                        title={lang==='es' ? 'Crear código NCM' : 'Create NCM code'}
+                        style={{
+                          width:24, height:24, borderRadius:6, cursor:'pointer',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color:'#00B286', fontWeight:800, fontSize:14, lineHeight:1,
+                        }}>＋</button>
+                <button type="button"
+                        disabled={!attrs.ncm}
+                        onClick={() => {
+                          const cur = realNcms.find(n => n.code === attrs.ncm);
+                          if (cur) openNcmDrawer(cur);
+                        }}
+                        title={lang==='es' ? 'Editar NCM seleccionado' : 'Edit selected NCM'}
+                        style={{
+                          width:24, height:24, borderRadius:6,
+                          cursor: attrs.ncm ? 'pointer' : 'not-allowed',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color: attrs.ncm ? 'var(--text-secondary)' : 'var(--border-subtle)',
+                          fontSize:12, lineHeight:1,
+                        }}>✎</button>
+              </span>
+            )}
+          </span>
           <select
             className="input select mono-sm"
             value={attrs.ncm || ""}
@@ -1083,6 +1186,17 @@ export default function ScreenProductFormView() {
             ))}
           </select>
         </label>
+        <AnimatePresence>
+          {ncmDrawer !== null && (
+            <NcmFormDrawer
+              lang={lang}
+              countries={ncmCountries}
+              initial={ncmDrawer}
+              onClose={() => setNcmDrawer(null)}
+              onSave={handleNcmSave}
+            />
+          )}
+        </AnimatePresence>
       </div>
 
       {/* ── Disipativo de energía — MULTI-CHECKBOX ───────────────── */}
@@ -1201,6 +1315,35 @@ export default function ScreenProductFormView() {
         <div>
           <div className="form-sub-title">
             <IconSliders size={13}/> {lang==='es'?'Motor de Tallas':'Sizing Engine'}
+            {!isClient && (
+              <span style={{marginLeft:10, display:'inline-flex', gap:6}}>
+                <button type="button"
+                        onClick={() => openTallaDrawer({})}
+                        title={lang==='es' ? 'Crear talla nueva' : 'Create new size'}
+                        style={{
+                          padding:'3px 9px', borderRadius:6, cursor:'pointer',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color:'#00B286', fontWeight:700, fontSize:11, lineHeight:1.2,
+                        }}>＋ {lang==='es'?'Nueva':'New'}</button>
+                <button type="button"
+                        onClick={() => setTallaEditMode(m => !m)}
+                        title={lang==='es'
+                          ? 'Modo edición: click en una talla para editarla'
+                          : 'Edit mode: click a size to edit it'}
+                        style={{
+                          padding:'3px 9px', borderRadius:6, cursor:'pointer',
+                          border:`1px solid ${tallaEditMode ? '#00B286' : 'var(--border-subtle)'}`,
+                          background: tallaEditMode ? 'rgba(0,178,134,0.10)' : 'var(--surface)',
+                          color: tallaEditMode ? '#008B69' : 'var(--text-secondary)',
+                          fontWeight:700, fontSize:11, lineHeight:1.2,
+                        }}>✎ {lang==='es'?'Editar':'Edit'}</button>
+              </span>
+            )}
+            {tallaEditMode && !isClient && (
+              <span className="caption" style={{marginLeft:8, color:'#008B69'}}>
+                {lang==='es' ? 'click en una talla para editarla' : 'click a size to edit it'}
+              </span>
+            )}
             <span className="caption" style={{marginLeft:'auto', color:'var(--text-tertiary)'}}>
               {selectedSizes.length} {lang==='es'?'seleccionadas':'selected'}
             </span>
@@ -1225,7 +1368,9 @@ export default function ScreenProductFormView() {
                     return (
                       <button type="button" key={sz.id}
                               className={`size-chip ${on ? 'size-chip-on' : ''}`}
-                              onClick={()=>toggleSize(sz.id)}>
+                              style={tallaEditMode && !isClient ? { outline:'1px dashed #00B286', outlineOffset:1 } : undefined}
+                              title={tallaEditMode && !isClient ? (lang==='es'?'Editar esta talla':'Edit this size') : undefined}
+                              onClick={()=> (tallaEditMode && !isClient) ? openTallaDrawer(sz) : toggleSize(sz.id)}>
                         {label}
                       </button>
                     );
@@ -1235,6 +1380,18 @@ export default function ScreenProductFormView() {
             ))}
           </div>
         </div>
+
+        <AnimatePresence>
+          {tallaDrawer !== null && !isClient && (
+            <TallaFormDrawer
+              lang={lang}
+              options={sizingOptions}
+              initial={tallaDrawer}
+              onClose={() => setTallaDrawer(null)}
+              onSave={handleTallaSave}
+            />
+          )}
+        </AnimatePresence>
 
         {/* Nodos Logísticos: OCULTO para CLIENT B2B (POL_VISIBILIDAD).
             Solo staff (admin/CEO/manager) ve qué nodos operan el SKU. */}

@@ -447,7 +447,7 @@ function KpiTile({ label, value, hint, accent = MINT }) {
   );
 }
 
-function NcmFormDrawer({ lang, countries, initial, onClose, onSave }) {
+export function NcmFormDrawer({ lang, countries, initial, onClose, onSave }) {
   const isEdit = !!initial?.id;
 
   const [form, setForm] = useState({

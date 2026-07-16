@@ -609,7 +609,7 @@ function KpiTile({ label, value, hint, accent = MINT }) {
 //       o 'calzado') la oculta.
 //   · Cero validación required: el botón "Guardar" siempre está activo.
 // =====================================================================
-function TallaFormDrawer({ lang, options, initial, onClose, onSave }) {
+export function TallaFormDrawer({ lang, options, initial, onClose, onSave }) {
   const isEdit = !!initial?.id;
 
   // Form state — arranca con un esquema vacío y rellena con `initial`.
