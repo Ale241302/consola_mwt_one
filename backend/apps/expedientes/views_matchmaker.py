@@ -95,6 +95,58 @@ def _bump_oc_correlativo(client_id, po_number) -> None:
 
 
 # ═════════════════════════════════════════════════════════════════════
+# Renombrar OC-AUTO-* con el PO real leído por la IA
+# ═════════════════════════════════════════════════════════════════════
+def _rename_oc_auto(exp, po_number) -> None:
+    """Sprint 2026-07-18 · si la OC del expediente quedó con codigo
+    OC-AUTO-* (creada sin número de PO en el wizard) y la IA leyó el PO
+    real del documento, renumbramos con ese PO:
+
+      · expedientes.oc.codigo            → <po>          (p.ej. 505244)
+      · expedientes.expediente.codigo    → EXP-<po>      (dedup -2, -3…)
+      · expedientes.documento R4 (sin archivo, 'PO OC-AUTO-*') → 'PO <po>'
+
+    No toca display_label (alias manual del usuario manda) ni OCs que
+    ya tienen codigo real. Best-effort: un fallo no rompe el upload-match.
+    """
+    po = str(po_number or "").strip()
+    if not po:
+        return
+    try:
+        with connection.cursor() as c:
+            c.execute("SELECT codigo FROM expedientes.oc WHERE id = %s::uuid",
+                      [str(exp.oc_id)])
+            row = c.fetchone()
+            if not row or not (row[0] or "").startswith("OC-AUTO-"):
+                return
+            c.execute("UPDATE expedientes.oc SET codigo = %s WHERE id = %s::uuid",
+                      [po, str(exp.oc_id)])
+            # expediente.codigo es único → dedup con sufijo como el wizard
+            base = f"EXP-{po}"
+            c.execute(
+                "SELECT COUNT(*) FROM expedientes.expediente "
+                "WHERE codigo = %s OR codigo LIKE %s",
+                [base, base + "-%"],
+            )
+            dups = int((c.fetchone() or [0])[0] or 0)
+            new_code = base if dups == 0 else f"{base}-{dups + 1}"
+            c.execute("UPDATE expedientes.expediente SET codigo = %s "
+                      "WHERE id = %s::uuid", [new_code, str(exp.id)])
+            c.execute(
+                """UPDATE expedientes.documento
+                      SET codigo = %s
+                    WHERE oc_id = %s::uuid AND kind = 'OC' AND is_active = TRUE
+                      AND codigo LIKE 'PO OC-AUTO-%%'""",
+                [f"PO {po}", str(exp.oc_id)],
+            )
+        log.info("[matchmaker] OC-AUTO renombrada con PO real: exp=%s po=%s",
+                 exp.id, po)
+    except Exception as e:
+        log.warning("[matchmaker] rename OC-AUTO falló (exp %s, po %s): %s",
+                    exp.id, po_number, e)
+
+
+# ═════════════════════════════════════════════════════════════════════
 # POST /api/expedientes/{id}/upload-match/
 # ═════════════════════════════════════════════════════════════════════
 class UploadMatchView(APIView):
@@ -184,10 +236,13 @@ class UploadMatchView(APIView):
         # ── 3b. G3 · adelantar el correlativo de OC del cliente ──
         # Sprint 2026-07-18: si la IA leyó un PO numérico del documento
         # (p.ej. 505300), la serie del cliente sube a ese piso y la
-        # próxima OC auto-numerada del wizard sale en po + 1.
+        # próxima OC auto-numerada del wizard sale en po + 1. Además,
+        # si la OC quedó como OC-AUTO-* (creada sin PO), se renombra
+        # con el PO real (expediente + documento R4 incluidos).
         if document_type == "ART-01_OC":
             _bump_oc_correlativo(getattr(exp, "client_id", None),
                                  ai_payload.get("client_po_number"))
+            _rename_oc_auto(exp, ai_payload.get("client_po_number"))
 
         # ── 4. Cruce IA vs BD ───────────────────────────────
         mismatch_payload = cross_match(ai_payload, str(exp.id))
