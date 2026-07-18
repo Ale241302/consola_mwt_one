@@ -34,11 +34,10 @@ import { apiFetch, clientesApi, marcasApi } from "../lib/api.js";
 import { CLIENTS, BRANDS } from "../data/mockData.js";
 import {
   BANDAS_MARLUVAS, PLAZOS_MARLUVAS, bandaForTC, fmtUSD, fmtPct,
-  FACTOR_COMISION, INDICE_ME_90,
 } from "../constants/marluvas.js";
 import {
   calcSKU, parseExcelMarluvas, defaultSkuState,
-  computeMatrixFromInputs, cascadeRow, anchorPrice,
+  computeMatrixFromInputs, cascadeRow, anchorPrice, precioBaseUSD,
 } from "../lib/marluvasPricing.js";
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 import SkuSizesPanel from "../components/marluvas/SkuSizesPanel.jsx";
@@ -582,7 +581,7 @@ export default function ScreenBrandClientPricingForm() {
   //     rompiendo intencionalmente los descuentos default por esa banda.
   //
   // Fórmula del derrame 90d:
-  //   nuevo_sobreprecio% = (P_90d_edited − P_base[banda] − Ajuste$) / P_base[banda]
+  //   nuevo_sobreprecio% = (P_90d_edited − P_base[banda]) / P_base[banda]
   //   donde P_base[banda] = (BRL / div[banda]) × 1.0183^com × 1.030
   // Luego computeMatrixFromInputs regenera las 12 bandas con ese sobreprecio%.
   const patchCell = (idx, bandaId, plazoDias, newValue) => {
@@ -592,20 +591,18 @@ export default function ScreenBrandClientPricingForm() {
       const isAnchor90 = Number(plazoDias) === 90;
 
       if (isAnchor90) {
-        // Edit 90d → retro-calcula BRL inverso, resetea ajuste/sobreprecio.
+        // Sprint 2026-07-18 · Edit 90d → el ajuste se AUTO-CALCULA en el
+        // editor (Ajuste $ / Sobreprecio %), en vez de retro-calcular el
+        // BRL y resetear a 0. sp = (V − base90)/base90 se aplica vía la
+        // fórmula maestra a TODAS las bandas (mismo efecto proporcional
+        // que el retro-BRL: las bandas de adelante y de atrás se mueven),
+        // pero el BRL del Excel queda intacto y el ajuste queda visible
+        // y editable en la card SKUs.
         const banda = BANDAS_MARLUVAS.find((b) => b.id === bandaId);
         if (!banda) return s;
-        const factorCom = Math.pow(FACTOR_COMISION, Number(s.com || 0));
-        const denom = factorCom * INDICE_ME_90;
-        const newBrl = denom > 0
-          ? Number(((val * banda.div) / denom).toFixed(4))
-          : Number(s.brl || 0);
-        const updated = {
-          ...s,
-          brl:         newBrl,
-          ajuste:      0,
-          sobreprecio: 0,
-        };
+        const base90 = precioBaseUSD(s.brl, banda.div, s.com);
+        const sp = base90 > 0 ? (val - base90) / base90 : 0;
+        const updated = { ...s, ajuste: 0, sobreprecio: sp };
         updated.matrix = computeMatrixFromInputs(updated, customPlazos);
         return updated;
       }
