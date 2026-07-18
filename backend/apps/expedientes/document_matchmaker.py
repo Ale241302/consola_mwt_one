@@ -34,7 +34,19 @@ from django.db import connection
 
 log = logging.getLogger(__name__)
 
-OCR_MODEL = os.environ.get("OPENAI_OCR_MODEL", "gpt-5-nano")
+# Sprint 2026-07-18 · el extractor de documentos (OC/Factura/SAP/Otros)
+# migra de OpenAI a Kimi Code. La key sk-kimi-… es de Kimi Code Console
+# y SOLO la acepta https://api.kimi.com/coding/v1 (api.moonshot.ai/.cn la
+# rechazan con invalid_authentication_error). Sin KIMI_API_KEY se cae a
+# OpenAI como antes (backward-compat).
+_KIMI_API_KEY = os.environ.get("KIMI_API_KEY")
+OCR_BASE_URL = os.environ.get("KIMI_BASE_URL", "https://api.kimi.com/coding/v1")
+OCR_API_KEY  = _KIMI_API_KEY or os.environ.get("OPENAI_API_KEY")
+OCR_MODEL    = (
+    os.environ.get("KIMI_OCR_MODEL")
+    or (None if _KIMI_API_KEY else os.environ.get("OPENAI_OCR_MODEL"))
+    or ("kimi-for-coding" if _KIMI_API_KEY else "gpt-5-nano")
+)
 
 # Sufijo de talla típico: -37, -38, -XL, _M, etc. al final del código.
 _RE_TALLA_SUFFIX = re.compile(r"[-_]([0-9]{2,3}|[A-Z]{1,3})$", re.IGNORECASE)
@@ -253,14 +265,15 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
                                 expediente_id=expediente_id)
 
     # ── Resto (OC, SAP, Otros) → path original ─────────────────────
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = OCR_API_KEY
     kind_map = {
         "ART-01_OC": "OC", "ART-02_PROFORMA": "PROFORMA", "ART-04_SAP": "SAP",
     }
     document_kind = kind_map.get(document_type, "OTHER")
 
     if not api_key:
-        return _empty_result(document_kind, "OPENAI_API_KEY no configurada en el servidor.")
+        return _empty_result(document_kind,
+                             "KIMI_API_KEY (u OPENAI_API_KEY) no configurada en el servidor.")
 
     is_pdf   = content_type == "application/pdf" or filename.lower().endswith(".pdf")
     is_image = content_type.startswith("image/") or any(
@@ -334,7 +347,12 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
     # falla silenciosa de pypdf) tomaban >45s y daban APITimeoutError. El
     # worker gunicorn tiene timeout 120s, así que 90s + max_retries=1
     # sigue dejando margen seguro.
-    client = OpenAI(api_key=api_key, timeout=90.0, max_retries=1)
+    # base_url solo aplica cuando el proveedor es Kimi; con una
+    # OPENAI_API_KEY pura queda None → api.openai.com (comportamiento
+    # previo a la migración).
+    client = OpenAI(api_key=api_key,
+                    base_url=(OCR_BASE_URL if _KIMI_API_KEY else None),
+                    timeout=90.0, max_retries=1)
     system_prompt = PROMPT_BY_TYPE.get(document_type, SYSTEM_PROMPT_OC)
     # Trazabilidad: qué path tomó el extractor. Lo necesitamos para
     # diagnosticar timeouts (text-only es 5-10s, vision puede ser 60s+).
@@ -387,8 +405,8 @@ def extract_document(file_bytes: bytes, filename: str, content_type: str,
                 )
                 raw_text = chat.choices[0].message.content
     except Exception as e:
-        log.exception("[matchmaker] OpenAI call failed")
-        return _empty_result(document_kind, f"OpenAI API error: {type(e).__name__}: {e}")
+        log.exception("[matchmaker] LLM call failed")
+        return _empty_result(document_kind, f"LLM API error: {type(e).__name__}: {e}")
 
     try:
         data = json.loads(raw_text)

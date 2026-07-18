@@ -509,6 +509,11 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                              value={t.qty}
                              onChange={(e) => {
                                const v = Math.max(0, Number(e.target.value) || 0);
+                               // Sprint 2026-07-18 · forzamos el texto del DOM al
+                               // número canónico: sin esto, teclear "05" sobre un
+                               // state que ya valía 5 no disparaba re-render y el
+                               // input se quedaba mostrando "05".
+                               e.target.value = String(v);
                                setPicked((p) => {
                                  const tallas = p.tallas.slice();
                                  tallas[idx] = { ...tallas[idx], qty: v };

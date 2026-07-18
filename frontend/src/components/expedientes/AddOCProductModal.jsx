@@ -738,7 +738,14 @@ export default function AddOCProductModal({
                             type="number" min={0}
                             className="input tabular-nums"
                             value={t.qty}
-                            onChange={(e) => updateTallaQty(i, Math.max(0, Number(e.target.value || 0)))}
+                            onChange={(e) => {
+                              // Sprint 2026-07-18 · mismo fix que ManualLineModal:
+                              // coaccionamos el texto del DOM al número canónico
+                              // para que "05" no persista si el state no cambia.
+                              const v = Math.max(0, Number(e.target.value || 0));
+                              e.target.value = String(v);
+                              updateTallaQty(i, v);
+                            }}
                             style={{
                               fontSize: 14, padding: "6px 10px",
                               border: t.qty > 0
