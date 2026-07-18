@@ -179,6 +179,10 @@ function useLoadSimulation(clienteId, brandId, accessToken) {
           return {
             ...inputs,
             matrix: frozen,
+            // Sprint 2026-07-18 · snapshot del precio ORIGINAL (columnas
+            // gemelas de solo lectura en la matriz). Se toma una sola vez
+            // al hidratar — las ediciones locales nunca lo tocan.
+            origMatrix: frozen,
             // Fase 3 · hidratar overrides por talla si vinieron del backend
             ...(s.sizes_pricing && typeof s.sizes_pricing === "object"
                 && Object.keys(s.sizes_pricing).length > 0
@@ -478,10 +482,15 @@ export default function ScreenBrandClientPricingForm() {
           const next = { ...prev, brl: p.brl, ref: p.ref || prev.ref };
           if (Number(prev.brl) !== Number(p.brl) || !prev.matrix) {
             next.matrix = computeMatrixFromInputs(next);
+            // Sprint 2026-07-18 · el BRL nuevo del Excel redefine la base:
+            // el "original" también se re-siembra con esa nueva base.
+            next.origMatrix = next.matrix;
           }
           return next;
         }
-        return defaultSkuState(p, { com: comDefault });
+        const st = defaultSkuState(p, { com: comDefault });
+        // Sprint 2026-07-18 · snapshot original para las columnas gemelas.
+        return { ...st, origMatrix: st.matrix };
       });
       setSkus(merged);
       setFilterStats({
@@ -525,6 +534,23 @@ export default function ScreenBrandClientPricingForm() {
   };
 
   // ── Mutadores por SKU ──
+  // Sprint 2026-07-18 · Ajuste $ ↔ Sobreprecio % ENLAZADOS.
+  // Los dos campos muestran EL MISMO ajuste efectivo en sus dos unidades:
+  //   efectivo_$  = ajuste + base × sobreprecio
+  //   efectivo_%  = efectivo_$ / base
+  // Escribir en uno pisa el otro en estado (una sola perilla, sin doble
+  // conteo en la fórmula), pero ambos displays reflejan el equivalente.
+  const ajusteEfectivoUSD = (s, base) =>
+    Number(s.ajuste || 0) + Number(base || 0) * Number(s.sobreprecio || 0);
+  // Drafts de texto para los inputs de dinero: mientras el usuario escribe
+  // conservamos su texto crudo ("5.98", "5.") y solo al blur volvemos al
+  // formato canónico — con toFixed() directo era imposible teclear decimales.
+  const [inputDrafts, setInputDrafts] = useState({});
+  const setDraft = (k, v) => setInputDrafts((d) => {
+    const next = { ...d };
+    if (v == null) delete next[k]; else next[k] = v;
+    return next;
+  });
   // Si el patch toca cualquier input bulk (brl, com, ajuste, sobreprecio),
   // REGENERAMOS la matriz desde la fórmula maestra. Los overrides manuales
   // por celda se pierden — es lo más predecible (el editor de la izquierda
@@ -1523,25 +1549,59 @@ export default function ScreenBrandClientPricingForm() {
                         </td>
                         <td style={{ ...tdSku, background: `${sBg}99` }}>{fmtUSD(ap.base)}</td>
                         <td style={{ ...tdSku, background: `${sBg}99` }}>
-                          <input type="number" min={0} step={0.25}
-                            value={Number(s.ajuste).toFixed(2)}
-                            onChange={(e) => patchSku(i, { ajuste: Math.max(0, Number(e.target.value) || 0) })}
-                            onFocus={(e) => e.target.select()}
-                            style={{ ...inpMono(70), background: sBg, borderColor: sFg + "55", fontWeight: 700 }}/>
+                          {(() => {
+                            // Sprint 2026-07-18 · Ajuste $ enlazado con Sobreprecio:
+                            // muestra el ajuste EFECTIVO en USD; al escribir, pisa
+                            // el sobreprecio (una sola perilla) y el % se recalcula.
+                            const key = `${i}:ajuste`;
+                            const eff = ajusteEfectivoUSD(s, ap.base);
+                            return (
+                              <input type="number" min={0} step={0.25}
+                                value={inputDrafts[key] ?? eff.toFixed(2)}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  setDraft(key, raw);
+                                  const v = Math.max(0, parseFloat(raw) || 0);
+                                  patchSku(i, { ajuste: v, sobreprecio: 0 });
+                                }}
+                                onFocus={(e) => e.target.select()}
+                                onBlur={() => setDraft(key, null)}
+                                title={lang === "es"
+                                  ? "Ajuste $ — enlazado con Sobreprecio % (muestran el mismo ajuste)"
+                                  : "Adj. $ — linked to Markup % (same adjustment)"}
+                                style={{ ...inpMono(70), background: sBg, borderColor: sFg + "55", fontWeight: 700 }}/>
+                            );
+                          })()}
                         </td>
                         <td style={tdSku}>
-                          <input type="number" min={0} max={500} step={0.5}
-                            value={(Number(s.sobreprecio || 0) * 100).toFixed(2)}
-                            onChange={(e) => {
-                              const nuevoPct = Math.max(0, Number(e.target.value) || 0) / 100;
-                              patchSku(i, { sobreprecio: nuevoPct });
-                            }}
-                            onFocus={(e) => e.target.select()}
-                            style={{ ...inpMono(58), color: AMBER, fontWeight: 700 }}
-                            title={lang === "es"
-                              ? "% sobre la base — independiente del Ajuste $"
-                              : "% over base — independent from Adj. $"}/>
-                          <span style={{ color: AMBER, fontWeight: 700, fontSize: 9, marginLeft: 2 }}>%</span>
+                          {(() => {
+                            // Mismo ajuste efectivo en %: escribir aquí convierte a $
+                            // en la columna Ajuste (y viceversa).
+                            const key = `${i}:sp`;
+                            const effUsd = ajusteEfectivoUSD(s, ap.base);
+                            const effPct = ap.base > 0
+                              ? (effUsd / ap.base) * 100
+                              : Number(s.sobreprecio || 0) * 100;
+                            return (
+                              <>
+                                <input type="number" min={0} max={500} step={0.5}
+                                  value={inputDrafts[key] ?? effPct.toFixed(2)}
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    setDraft(key, raw);
+                                    const pct = Math.max(0, parseFloat(raw) || 0);
+                                    patchSku(i, { ajuste: 0, sobreprecio: pct / 100 });
+                                  }}
+                                  onFocus={(e) => e.target.select()}
+                                  onBlur={() => setDraft(key, null)}
+                                  style={{ ...inpMono(58), color: AMBER, fontWeight: 700 }}
+                                  title={lang === "es"
+                                    ? "% sobre la base — enlazado con Ajuste $ (muestran el mismo ajuste)"
+                                    : "% over base — linked to Adj. $"}/>
+                                <span style={{ color: AMBER, fontWeight: 700, fontSize: 9, marginLeft: 2 }}>%</span>
+                              </>
+                            );
+                          })()}
                         </td>
                         <td style={{ ...tdSku, background: `${sBg}99`, fontWeight: 700, color: NAVY }}>
                           {fmtUSD(ap.lista)}
@@ -1820,9 +1880,9 @@ export default function ScreenBrandClientPricingForm() {
                           </th>
                         )];
                       }
-                      return bandPlazos.map((p) => {
+                      return bandPlazos.flatMap((p) => {
                         const isBase = Math.abs(p.factor - 1) < 0.0001;
-                        return (
+                        return [(
                           <th key={`${b.id}-${p.dias}`}
                               style={plazoHeaderStyle(b, isCurrent, isBase)}>
                             <div style={{
@@ -1855,8 +1915,19 @@ export default function ScreenBrandClientPricingForm() {
                               opacity: 0.7, marginTop: 2 }}>
                               {isBase ? (lang === "es" ? "base" : "base") : p.sub}
                             </div>
-                          </th>
-                        );
+                          </th>),
+                          // Sprint 2026-07-18 · encabezado gemelo de la columna
+                          // de precio ORIGINAL (solo lectura, nunca editable).
+                          (<th key={`${b.id}-${p.dias}-orig`}
+                              style={{ ...plazoHeaderStyle(b, isCurrent, false), color: MUTED }}>
+                            <div style={{ font: "600 9.5px/1 var(--font-body)", color: MUTED }}>
+                              {p.dias}d<span style={{ opacity: 0.6, marginLeft: 3 }}>orig</span>
+                            </div>
+                            <div style={{ font: "500 8.5px/1 var(--font-body)", opacity: 0.55, marginTop: 2 }}>
+                              {lang === "es" ? "solo lectura" : "read-only"}
+                            </div>
+                          </th>),
+                        ];
                       });
                     })}
                   </tr>
@@ -1894,7 +1965,14 @@ export default function ScreenBrandClientPricingForm() {
                           const basePrice = baseEntry
                             ? Number(row[String(baseEntry.dias)] ?? 0)
                             : Number(row["90"] ?? 0);
-                          return bandPlazos.map((p) => {
+                          // Sprint 2026-07-18 · fila de precios ORIGINALES
+                          // (snapshot tomado al cargar; las ediciones no lo tocan).
+                          const origMatrix = s.origMatrix || matrix;
+                          const origRow = origMatrix[String(b.id)] || {};
+                          const origBasePrice = baseEntry
+                            ? Number(origRow[String(baseEntry.dias)] ?? 0)
+                            : Number(origRow["90"] ?? 0);
+                          return bandPlazos.flatMap((p) => {
                             const isBase = Math.abs(p.factor - 1) < 0.0001;
                             // Si la celda no existe en matrix (plazo custom recién
                             // agregado), la derivamos on-the-fly desde base × factor.
@@ -1902,8 +1980,12 @@ export default function ScreenBrandClientPricingForm() {
                             const price = stored != null
                               ? Number(stored)
                               : Number((basePrice * Number(p.factor)).toFixed(4));
-                            return (
-                              <td key={`${b.id}-${p.dias}`}
+                            const origStored = origRow[String(p.dias)];
+                            const origPrice = origStored != null
+                              ? Number(origStored)
+                              : Number((origBasePrice * Number(p.factor)).toFixed(4));
+                            return [
+                              (<td key={`${b.id}-${p.dias}`}
                                   style={plazoCellStyle(b, isCurrent, isBase)}>
                                 <MtxCellInput
                                   value={price}
@@ -1915,8 +1997,21 @@ export default function ScreenBrandClientPricingForm() {
                                         : `Banda ${b.id} · ${p.dias}d · editar recalcula plazos más cortos`)
                                     : ""}
                                 />
-                              </td>
-                            );
+                              </td>),
+                              // Columna gemela DESACTIVADA · precio original.
+                              (<td key={`${b.id}-${p.dias}-orig`}
+                                  style={{ ...plazoCellStyle(b, isCurrent, false),
+                                    color: MUTED, background: "var(--bg-alt)",
+                                    font: "500 10.5px/1.2 var(--font-mono)",
+                                    textAlign: "center", userSelect: "none",
+                                    cursor: "default",
+                                  }}
+                                  title={lang === "es"
+                                    ? `Original ${b.id} · ${p.dias}d (solo lectura)`
+                                    : `Original ${b.id} · ${p.dias}d (read-only)`}>
+                                {Number(origPrice).toFixed(2)}
+                              </td>),
+                            ];
                           });
                         })}
                       </tr>
