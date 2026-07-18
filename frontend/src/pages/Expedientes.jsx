@@ -30,8 +30,8 @@ import {
   StatusBadge, CreditDot, CountryFlag,
 } from "../components/ui/primitives.jsx";
 import {
-  IconDownload, IconPlus, IconSearch, IconChevDown, IconChevRight,
-  IconCreditCard, IconDollar, IconFolder, IconCheck, IconTrash, IconX,
+  IconDownload, IconPlus, IconSearch, IconChevRight,
+  IconCreditCard, IconDollar, IconCheck, IconTrash, IconX,
 } from "../lib/icons.jsx";
 import {
   EXPEDIENTES as MOCK_EXPEDIENTES,
@@ -326,13 +326,10 @@ export default function ScreenExpedientes() {
   // Sprint 2026-05-20 · Toggle nuevo: Tabla vs Kanban.
   // El antiguo selector Financial/Ops/Fleet se ocultó por simplificación de UX.
   const [viewMode, setViewMode] = useState('table');       // 'table' | 'kanban'
-  const [expandedId, setExpandedId] = useState(null);
   // En CLIENT forzamos la vista "fleet" (origen→destino, modo, ETA, total
   // facturado como "precio") y escondemos el selector. Esa vista es la más
   // limpia y útil para el cliente, sin columnas internas de margen.
   const effectiveView = isClient ? 'fleet' : view;
-  // In-memory edits of deferred price / visibility toggle
-  const [deferredEdits, setDeferredEdits] = useState({});
 
   // ── Bulk delete (sprint 2026-05-01) ────────────────────────
   // selected: Set de UUIDs (no codigos) para llamar al API DELETE.
@@ -1095,7 +1092,6 @@ export default function ScreenExpedientes() {
                   />
                 </th>
               )}
-              <th style={{width:38}}></th>
               <th>{tr(lang,'ref')}</th>
               <th>{tr(lang,'client')}</th>
               {/* Columna MARCA quitada — el wizard simplificado no asigna
@@ -1169,9 +1165,6 @@ export default function ScreenExpedientes() {
                     onClick={toggleFusion}
                   >
                     {isAdmin && <td style={{ borderLeft: '3px solid var(--brand-accent)' }}/>}
-                    <td onClick={(ev) => { ev.stopPropagation(); toggleFusion(); }}>
-                      <IconChevDown size={14} style={{ color: 'var(--text-tertiary)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 160ms' }}/>
-                    </td>
                     <td>
                       <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>{label}</span>
@@ -1275,14 +1268,11 @@ export default function ScreenExpedientes() {
                   </tr>
                 );
               }
-              const isOpen = expandedId === e.id;
               const driftE = e.real_margin - e.projected_margin;
               const stIdx = STATES.indexOf(e.status);
-              const deferredVal = deferredEdits[e.id]?.deferred ?? e.deferred_total_price;
-              const showDeferred = deferredEdits[e.id]?.show ?? e.show_deferred_to_client;
               return (
                 <Fragment key={e.id}>
-                  <tr data-selected={isOpen || (e.uuid && selected.has(e.uuid))} style={{ cursor:'pointer' }}
+                  <tr data-selected={!!(e.uuid && selected.has(e.uuid))} style={{ cursor:'pointer' }}
                       onClick={() => {
                         // Para CLIENT, el click directo en la fila abre el
                         // detalle de la OC (no hay expandible con data interna).
@@ -1296,7 +1286,11 @@ export default function ScreenExpedientes() {
                           else onOpenExpediente(e.id);
                           return;
                         }
-                        setExpandedId(isOpen ? null : e.id);
+                        // Sprint 2026-07-18 · la fila expandida inline (costos
+                        // internos + deferred + Guardar) se eliminó: el click
+                        // en la fila navega siempre al detalle de la OC.
+                        if (e.oc_id) navigate(`/expedientes/${e.oc_id}`);
+                        else onOpenExpediente(e.id);
                       }}>
                     {isAdmin && (
                       <td
@@ -1321,18 +1315,6 @@ export default function ScreenExpedientes() {
                         />
                       </td>
                     )}
-                    <td onClick={(ev)=>{
-                          ev.stopPropagation();
-                          // El chevron tampoco expande en CLIENT; navega al detalle.
-                          if (isClient) {
-                            const oc = OCS.find(o => o.code === e.oc_client) || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));
-                            if (oc) navigate(`/expedientes/${oc.id}`);
-                            return;
-                          }
-                          setExpandedId(isOpen?null:e.id);
-                        }}>
-                      <IconChevDown size={14} style={{ color:'var(--text-tertiary)', transform: isOpen?'rotate(180deg)':'none', transition:'transform 160ms' }}/>
-                    </td>
                     <td>
                       {/* Sprint 2026-05-17 · Celda REF role-aware.
                           ADMIN/CEO  → REF + chips de Proforma(s) + OC(s) + SAP(s)
@@ -1508,21 +1490,6 @@ export default function ScreenExpedientes() {
                       </td>
                     )}
                   </tr>
-
-                  {/* Fila expandida con costos internos + deferred pricing: CEO-ONLY.
-                      CLIENT nunca puede expandir (el click ya lo redirigió al detalle). */}
-                  {isAdmin && isOpen && (
-                    <tr className="expand-row">
-                      <td colSpan={13}>
-                        <CeoDetailRow e={e} lang={lang}
-                          deferredVal={deferredVal}
-                          showDeferred={showDeferred}
-                          onUpdate={(patch) => setDeferredEdits(prev => ({...prev, [e.id]: {...prev[e.id], ...patch}}))}
-                          onOpen={() => onOpenExpediente(e.id)}
-                        />
-                      </td>
-                    </tr>
-                  )}
                 </Fragment>
               );
             })}
@@ -1708,120 +1675,6 @@ function AlertStack({ e, lang }) {
   return (
     <div className="flex" style={{flexWrap:'wrap', gap:4}}>
       {chips.map((ch,i) => <span key={i} className={`alert-chip ${ch.c}`} title={ch.label}>{ch.t}</span>)}
-    </div>
-  );
-}
-
-// ── Expanded detail row with payments breakdown + internal costs + deferred pricing ─────
-function CeoDetailRow({ e, lang, deferredVal, showDeferred, onUpdate, onOpen }) {
-  // Sprint 2026-06-22 · sin mock CLIENTS. El nombre del cliente ya viene
-  // hidratado en e.client; el crédito límite/usado real NO viaja en el
-  // expediente, así que mostramos "—" en vez de un número fabricado.
-  const clientName = e.client || '';
-  const hasCredit = !!e._raw && (e._raw.credit_limit != null || e._raw.credit_used != null);
-  const creditAvail = hasCredit
-    ? Number(e._raw.credit_limit || 0) - Number(e._raw.credit_used || 0)
-    : null;
-  const exposure    = e.balance;
-  return (
-    <div className="expand-inner">
-      {/* Payments breakdown */}
-      <div>
-        <div className="micro" style={{marginBottom:10}}>{tr(lang,'payments_breakdown')}</div>
-        <PayBar e={e}/>
-        <div className="pay-legend">
-          <div className="it"><span className="sw" style={{background:'var(--success)'}}/>{tr(lang,'pg_verified')} {fmtMoney(e.pg_verified)}</div>
-          <div className="it"><span className="sw" style={{background:'var(--brand-accent)'}}/>{tr(lang,'pg_released')} {fmtMoney(e.pg_released)}</div>
-          <div className="it"><span className="sw" style={{background:'var(--warning)'}}/>{tr(lang,'pg_pending')} {fmtMoney(e.pg_pending)}</div>
-          <div className="it"><span className="sw" style={{background:'var(--critical)'}}/>{tr(lang,'pg_rejected')} {fmtMoney(e.pg_rejected)}</div>
-        </div>
-        <div style={{marginTop:16, paddingTop:14, borderTop:'1px dashed var(--divider)'}}>
-          <div className="metric-row">
-            <span className="ml">{tr(lang,'credit_available')}{clientName ? ` · ${clientName}` : ''}</span>
-            <span className="mv" style={{color: creditAvail != null && creditAvail < 20000 ? 'var(--critical)' : 'var(--text-primary)'}}>{creditAvail != null ? fmtMoney(creditAvail) : '—'}</span>
-          </div>
-          <div className="metric-row">
-            <span className="ml">{tr(lang,'exposure')}</span>
-            <span className="mv">{fmtMoney(exposure)}</span>
-          </div>
-          <div className="metric-row">
-            <span className="ml">{tr(lang,'balance')}</span>
-            <span className="mv" style={{color:'var(--brand-primary)'}}>{fmtMoney(e.balance)}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Internal costs (CEO-ONLY) */}
-      <div>
-        <div className="micro" style={{marginBottom:10, color:'var(--brand-accent-dark, #0E8A6D)'}}>
-          🔒 {tr(lang,'internal_costs')}
-        </div>
-        <div className="metric-row">
-          <span className="ml">{tr(lang,'logistic_cost')}</span>
-          <span className="mv">{fmtMoney(e.logistic_cost)}</span>
-        </div>
-        <div className="metric-row">
-          <span className="ml">DAI ({(e.dai_pct*100).toFixed(1)}%)</span>
-          <span className="mv">{fmtMoney(e.dai_amount)}</span>
-        </div>
-        <div className="metric-row">
-          <span className="ml">IVA ({(e.iva_pct*100).toFixed(0)}%)</span>
-          <span className="mv">{fmtMoney(e.iva_amount)}</span>
-        </div>
-        <div className="metric-row">
-          <span className="ml">{tr(lang,'mode_op')}</span>
-          <span className="mv">{e.op_mode === 'COMISION' ? `${tr(lang,'commission')} ${(e.commission_pct*100).toFixed(1)}%` : tr(lang,'full_mode')}</span>
-        </div>
-        <div className="metric-row">
-          <span className="ml">{tr(lang,'base_price_lbl')}</span>
-          <span className="mv">{fmtMoney(e.base_price)}</span>
-        </div>
-        <div className="metric-row">
-          <span className="ml">{tr(lang,'projected_margin')}</span>
-          <span className="mv" style={{color:'var(--text-secondary)'}}>{(e.projected_margin*100).toFixed(1)}%</span>
-        </div>
-        <div className="metric-row">
-          <span className="ml">{tr(lang,'real_margin')}</span>
-          <span className="mv" style={{color: e.real_margin >= e.projected_margin ? 'var(--success)' : 'var(--critical)'}}>
-            {(e.real_margin*100).toFixed(1)}%
-          </span>
-        </div>
-      </div>
-
-      {/* Deferred price + visibility */}
-      <div>
-        <div className="micro" style={{marginBottom:10}}>{tr(lang,'deferred_price')}</div>
-        <div className="caption" style={{marginBottom:10}}>{tr(lang,'deferred_price_sub')}</div>
-
-        <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:10}}>
-          <div className="input" style={{fontFamily:'var(--font-mono)', fontWeight:600, fontSize:15, padding:'8px 10px', background:'var(--bg-alt)', borderRadius:8, flex:1, display:'flex', alignItems:'center'}}>
-            <span style={{color:'var(--text-tertiary)', marginRight:4}}>USD</span>
-            <input
-              type="number"
-              value={deferredVal}
-              onChange={(ev) => onUpdate({deferred: +ev.target.value})}
-              style={{border:0, background:'transparent', outline:'none', flex:1, font:'inherit', color:'inherit'}}
-            />
-          </div>
-        </div>
-
-        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 0', borderTop:'1px dashed var(--divider)', borderBottom:'1px dashed var(--divider)'}}>
-          <div>
-            <div className="body-sm" style={{fontWeight:500}}>{tr(lang,'visible_to_client')}</div>
-            <div className="caption">{showDeferred ? (lang==='es'?'El cliente ve este precio':'Client sees this price') : (lang==='es'?'Solo visible internamente':'Internal only')}</div>
-          </div>
-          <div className="switch" data-on={showDeferred} onClick={()=>onUpdate({show: !showDeferred})}/>
-        </div>
-
-        <div style={{marginTop:14, display:'flex', gap:8}}>
-          <button className="btn btn-sm btn-secondary" onClick={onOpen}>
-            <IconFolder size={12}/> {lang==='es'?'Abrir expediente':'Open file'}
-          </button>
-          <button className="btn btn-sm btn-primary">
-            <IconCheck size={12}/> {tr(lang,'save')}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
