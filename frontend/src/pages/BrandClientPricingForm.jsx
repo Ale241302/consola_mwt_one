@@ -1815,7 +1815,7 @@ export default function ScreenBrandClientPricingForm() {
                         && customPlazos[String(b.id)].length >= 0
                         && Object.prototype.hasOwnProperty.call(customPlazos, String(b.id));
                       return (
-                        <th key={b.id} colSpan={Math.max(bandPlazos.length, 1)}
+                        <th key={b.id} colSpan={Math.max(bandPlazos.length * 2, 1)}
                             style={bandHeaderStyle(b, isCurrent)}>
                           <div style={{ font: "700 11.5px/1.2 var(--font-body)" }}>{b.rango}</div>
                           <div style={{ font: "500 9.5px/1 var(--font-mono, ui-monospace)",
