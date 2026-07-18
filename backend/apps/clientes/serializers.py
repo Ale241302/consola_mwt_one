@@ -133,7 +133,7 @@ class ClienteSerializer(serializers.ModelSerializer):
             "contacto_nombre", "contacto_email", "contacto_tel",
             # Comercial
             "canal", "incoterm", "medio_pago", "dias_credito",
-            "moneda",
+            "moneda", "oc_correlativo",
             # CEO-ONLY
             "credito_limit_usd",         # ← alias credito_aprobado
             "credito_aprobado",           # ← dejamos expuesto para compat legacy

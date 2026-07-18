@@ -825,6 +825,61 @@ def _notify_admins_expediente_created(*, expediente_id, expediente_codigo,
 
 
 # ═════════════════════════════════════════════════════════════════════
+# Correlativo de OC por cliente (G3 · Sprint 2026-07-18)
+# ═════════════════════════════════════════════════════════════════════
+def _next_oc_correlativo(client_id) -> Optional[str]:
+    """Siguiente número de la serie de OC del cliente, o None.
+
+    Regla:
+        siguiente = GREATEST(clientes.cliente.oc_correlativo,
+                             mayor expedientes.oc.codigo numérico del cliente) + 1
+
+    · El valor persistido en clientes.cliente.oc_correlativo es el
+      ÚLTIMO consumido (editable desde el form de cliente).
+    · None si el cliente no tiene serie configurada NI OCs con codigo
+      puramente numérico → el caller cae al fallback OC-AUTO-XXXX.
+    · UPDATE atómico en UNA sola sentencia (row lock) → dos submissions
+      concurrentes no pueden sacar el mismo número.
+    · Corre fuera de la tx principal: si ésta hace rollback después, el
+      número queda consumido con gap (mismo criterio que las series de
+      facturación; la idempotencia por token evita doble consumo en
+      reintentos del wizard).
+    """
+    sql = """
+        UPDATE clientes.cliente AS cl
+           SET oc_correlativo = GREATEST(
+                   COALESCE(cl.oc_correlativo, 0),
+                   COALESCE((
+                       SELECT MAX(o.codigo::bigint)
+                         FROM expedientes.oc o
+                        WHERE o.client_id = cl.id
+                          AND o.is_active = TRUE
+                          AND o.codigo ~ '^[0-9]+$'
+                   ), 0)
+               ) + 1
+         WHERE cl.id = %s::uuid
+           AND (
+                 cl.oc_correlativo IS NOT NULL
+                 OR EXISTS (
+                       SELECT 1 FROM expedientes.oc o
+                        WHERE o.client_id = cl.id
+                          AND o.is_active = TRUE
+                          AND o.codigo ~ '^[0-9]+$'
+                 )
+           )
+        RETURNING cl.oc_correlativo
+    """
+    try:
+        with connection.cursor() as c:
+            c.execute(sql, [str(client_id)])
+            row = c.fetchone()
+        return str(row[0]) if row else None
+    except Exception as e:
+        log.warning("_next_oc_correlativo falló (cliente %s): %s", client_id, e)
+        return None
+
+
+# ═════════════════════════════════════════════════════════════════════
 # POST /api/expedientes/create-from-oc/
 # ═════════════════════════════════════════════════════════════════════
 @api_view(["POST"])
@@ -984,8 +1039,13 @@ def create_from_oc(request):
 
     # ── 6. Datos derivados ──────────────────────────────────────────
     po = ocr_payload.get("po") or {}
+    # Sprint 2026-07-18 (G3) · si el wizard no trajo número de PO
+    # (portal B2B sin archivo / payload sintético), auto-numeramos con
+    # el correlativo del cliente. Sin serie configurada ni OCs numéricas
+    # previas → fallback OC-AUTO-XXXX de siempre.
     po_number = (request.data.get("po_number")
                  or po.get("number")
+                 or _next_oc_correlativo(client_id)
                  or f"OC-AUTO-{uuid.uuid4().hex[:8].upper()}")
 
     total_value = Decimal("0")

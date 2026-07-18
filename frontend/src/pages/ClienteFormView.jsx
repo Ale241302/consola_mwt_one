@@ -539,6 +539,20 @@ export default function ScreenClienteFormView() {
                      min={0} max={180}
                      mono/>
             </Field>
+            {/* Sprint 2026-07-18 (G3) · correlativo de OC: último número
+                usado de la serie del cliente. El wizard del portal
+                auto-numera la próxima OC sin PO como este valor + 1
+                (o el mayor PO numérico previo + 1, lo que sea mayor). */}
+            <Field label={lang === "es" ? "Correlativo OC" : "OC sequence"}
+                   hint={lang === "es"
+                     ? "Último usado · la próxima OC sin PO será este + 1"
+                     : "Last used · next PO-less OC will be this + 1"}>
+              <Input type="number"
+                     value={form.oc_correlativo ?? ""}
+                     onChange={v => update("oc_correlativo", v === "" ? null : Number(v))}
+                     min={0}
+                     mono/>
+            </Field>
           </Grid>
         </Section>
 
@@ -797,6 +811,7 @@ function defaultsFrom(initial) {
     incoterm:          i.incoterm          || "CIF",
     medio_pago:        (i.medio_pago       || "TRANSFER_BANCARIA").toUpperCase().replace(/\s+/g, "_"),
     dias_credito:      (i.dias_credito ?? i.credito_dias ?? 60),
+    oc_correlativo:    i.oc_correlativo ?? null,
     credito_limit_usd: i.credito_limit_usd ?? i.credito_limit ?? i.credito_aprobado ?? null,
     comision_pct:      i.comision_pct ?? null,
     estado:            (i.estado || i.estado_operativo || "ACTIVO").toUpperCase(),

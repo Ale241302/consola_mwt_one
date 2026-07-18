@@ -55,6 +55,11 @@ class Cliente(models.Model):
     # Validación 2 niveles en app layer (clean()) y serializer.
     parent_id         = models.CharField(max_length=36, null=True, blank=True)
 
+    # Extensión G3_clientes_oc_correlativo.sql (sprint 2026-07-18):
+    # último número de OC correlativo consumido; el wizard del portal lo
+    # usa para auto-numerar OCs sin PO en vez de OC-AUTO-XXXX.
+    oc_correlativo    = models.BigIntegerField(null=True, blank=True)
+
     is_active        = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     updated_at       = models.DateTimeField(auto_now=True)
