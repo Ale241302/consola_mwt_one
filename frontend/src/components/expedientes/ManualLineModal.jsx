@@ -61,7 +61,10 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   const [requestSent,    setRequestSent]    = useState(new Set());
   const [requestErr,     setRequestErr]     = useState({});
   const [sizingMap, setSizingMap] = useState({});
-  const [displaySystem, setDisplaySystem] = useState("BR");
+  // Sprint 2026-07-18 · sistema de talla por defecto: EU (la base de la
+  // matriz MWT es EU 34-49). Antes era "BR" y el cliente veía la talla
+  // brasileña al abrir el modal de línea manual.
+  const [displaySystem, setDisplaySystem] = useState("EU");
 
   // Cargar CPA del cliente (legacy /commercial/client-assignments).
   // Sprint 2026-05-03 v3: opcional. Fuente principal de "asignado" es
