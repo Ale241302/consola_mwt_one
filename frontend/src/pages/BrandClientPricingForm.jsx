@@ -1495,11 +1495,14 @@ export default function ScreenBrandClientPricingForm() {
                               value={sAnchor.bandaId}
                               onChange={(e) => patchSkuAnchor(i, { bandaId: Number(e.target.value) })}
                               style={{
-                                padding: "3px 4px", borderRadius: 4,
+                                padding: "3px 3px", borderRadius: 4,
+                                // Sprint 2026-07-18 · ancho tope: el select no debe
+                                // comerse el ancho de Ajuste/Sobreprecio.
+                                maxWidth: 92,
                                 border: `1px solid ${hasOverride ? sFg + "55" : "var(--border)"}`,
                                 background: hasOverride ? `${sBg}55` : "var(--surface-raised)",
                                 color: hasOverride ? sFg : NAVY,
-                                font: "600 10px/1 var(--font-body)",
+                                font: "600 9.5px/1 var(--font-body)",
                                 cursor: "pointer", outline: "none",
                                 fontVariantNumeric: "tabular-nums",
                               }}
@@ -1514,11 +1517,12 @@ export default function ScreenBrandClientPricingForm() {
                               value={sAnchor.plazoDias}
                               onChange={(e) => patchSkuAnchor(i, { plazoDias: Number(e.target.value) })}
                               style={{
-                                padding: "3px 4px", borderRadius: 4,
+                                padding: "3px 3px", borderRadius: 4,
+                                maxWidth: 56,
                                 border: `1px solid ${hasOverride ? sFg + "55" : "var(--border)"}`,
                                 background: hasOverride ? `${sBg}55` : "var(--surface-raised)",
                                 color: hasOverride ? sFg : NAVY,
-                                font: "600 10px/1 var(--font-body)",
+                                font: "600 9.5px/1 var(--font-body)",
                                 cursor: "pointer", outline: "none",
                                 fontVariantNumeric: "tabular-nums",
                               }}
@@ -1591,7 +1595,7 @@ export default function ScreenBrandClientPricingForm() {
                                   }}
                                   onFocus={(e) => e.target.select()}
                                   onBlur={() => setDraft(key, null)}
-                                  style={{ ...inpMono(58), color: AMBER, fontWeight: 700 }}
+                                  style={{ ...inpMono(76), color: AMBER, fontWeight: 700 }}
                                   title={lang === "es"
                                     ? "% sobre la base — enlazado con Ajuste $ (muestran el mismo ajuste)"
                                     : "% over base — linked to Adj. $"}/>
@@ -2624,6 +2628,9 @@ function MtxCellInput({ value, onCommit, isBase, title }) {
       <input
         ref={inputRef}
         type="number" step="0.01" min={0}
+        // Sprint 2026-07-18 · sin flechas (CSS .mtx-cell-editing) + piso de
+        // ancho: al escribir el valor ya no se recorta ni la celda se encoge.
+        className="mtx-cell-editing"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
@@ -2633,7 +2640,7 @@ function MtxCellInput({ value, onCommit, isBase, title }) {
         }}
         title={title}
         style={{
-          width: "100%", padding: "3px 4px",
+          width: "100%", minWidth: 68, padding: "3px 4px",
           border: `1.5px solid ${"#00B286"}`,
           borderRadius: 4, outline: "none",
           background: "var(--surface-raised)",
