@@ -560,6 +560,12 @@ export default function ScreenFusionDetail() {
   const allDocs = members.flatMap((m) =>
     m.docs
       .filter((d) => {
+        // Sprint 2026-07-18 · ocultar registros sin archivo almacenado
+        // (p.ej. el documento kind='OC' que crea el wizard aunque el
+        // cliente no suba la OC — existe solo para el código PO del
+        // header): abrirlos siempre devolvía "documento_sin_archivo".
+        // storage_url 'dynamic://proforma…' SÍ cuenta como con archivo.
+        if (!String(d.storage_url || "")) return false;
         const aud = String(d.audience || "CLIENT").toUpperCase();
         const isArt04 = String(d.kind || "").toUpperCase() === "ART-04";
         if (isClient) {

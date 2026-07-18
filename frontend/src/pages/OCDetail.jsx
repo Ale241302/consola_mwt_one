@@ -1095,6 +1095,31 @@ export default function ScreenOCDetail() {
   const latestOcClienteCode = _docsByKind('OC')[0]?.codigo
     || _docsByKind('OC Cliente')[0]?.codigo
     || null;
+
+  // Sprint 2026-07-18 · docs VISIBLES del hub "Documentos comerciales":
+  // filtro de audiencia por rol (Sprint 2026-05-06/05-08, idéntico al de
+  // FusionDetail) + regla nueva: se OCULTAN los registros sin archivo
+  // almacenado. El wizard crea siempre un documento kind='OC' con el
+  // código PO (R4) aunque el cliente no suba la OC — esa fila existe
+  // solo para exponer el código en el header (_docsByKind la sigue
+  // viendo); renderizarla como archivo clickeable siempre terminaba en
+  // el error "documento_sin_archivo". Los docs dinámicos (storage_url
+  // 'dynamic://proforma…') SÍ cuentan como con archivo.
+  const visibleOcDocs = (oc?.docs || []).filter((d) => {
+    if (!String((d._raw && d._raw.storage_url) || '')) return false;
+    // Simular vista por rol cuando Admin togglea Tweaks→Cliente (B2B).
+    // El backend ya filtra ADMIN_ONLY/MWT_INTERNAL para CLIENT_* reales;
+    // aquí replicamos el filtro para la simulación frontend.
+    const aud = String(d.audience || 'CLIENT').toUpperCase();
+    // ART-04 (Confirmación SAP) SIEMPRE se oculta del lado cliente,
+    // aunque el campo audience venga mal seteado en docs legacy.
+    const rawKind = String((d._raw && d._raw.kind) || '').toUpperCase();
+    if (isClient) {
+      if (rawKind === 'ART-04') return false;
+      return aud === 'CLIENT';
+    }
+    return true;
+  });
   // Codigo a mostrar en el h1 del header.
   // Sprint 2026-06-11 · si el admin/CEO definió un alias (display_label,
   // E4), TODOS los roles lo ven. Si no, comportamiento por defecto:
@@ -2449,7 +2474,7 @@ export default function ScreenOCDetail() {
           <div className="card-head">
             <div>
               <div className="card-title">{tr(lang,'documents_hub')}</div>
-              <div className="card-subtitle">{oc.docs.length} {lang==='es'?'archivos':'files'}</div>
+              <div className="card-subtitle">{visibleOcDocs.length} {lang==='es'?'archivos':'files'}</div>
             </div>
           </div>
           <div style={{padding:'8px 0'}}>
@@ -2475,7 +2500,7 @@ export default function ScreenOCDetail() {
                 </button>
               </div>
             )}
-            {oc.docs.length === 0 && (
+            {visibleOcDocs.length === 0 && (
               <div className="caption" style={{
                 padding: '12px 22px',
                 color: 'var(--text-tertiary)',
@@ -2484,23 +2509,7 @@ export default function ScreenOCDetail() {
                 {lang === 'es' ? 'Aún no hay documentos.' : 'No documents yet.'}
               </div>
             )}
-            {oc.docs.filter(d => {
-              // Sprint 2026-05-06 · simular vista por rol cuando Admin
-              // togglea Tweaks→Cliente (B2B). El backend ya filtra
-              // ADMIN_ONLY/MWT_INTERNAL para CLIENT_* reales; aquí
-              // replicamos el filtro para la simulación frontend.
-              const aud = String(d.audience || 'CLIENT').toUpperCase();
-              // Sprint 2026-05-08 · ART-04 (Confirmación SAP) SIEMPRE
-              // se oculta del lado cliente, aunque el campo audience
-              // venga mal seteado en docs legacy. Defensa en profundidad.
-              const rawKind = String((d._raw && d._raw.kind) || '').toUpperCase();
-              const isArt04 = rawKind === 'ART-04';
-              if (isClient) {
-                if (isArt04) return false;
-                return aud === 'CLIENT';
-              }
-              return true;
-            }).map(d => {
+            {visibleOcDocs.map(d => {
               // Defensivo: cualquier campo faltante cae a un valor seguro
               // para no romper la UI con docs legacy o shape inesperado.
               const ext = String(d.ext || 'file').toLowerCase();
