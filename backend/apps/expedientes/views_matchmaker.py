@@ -61,6 +61,40 @@ ARTIFACT_KIND_BY_TYPE = {
 
 
 # ═════════════════════════════════════════════════════════════════════
+# G3 · adelanto del correlativo de OC con el PO leído por la IA
+# ═════════════════════════════════════════════════════════════════════
+def _bump_oc_correlativo(client_id, po_number) -> None:
+    """Sprint 2026-07-18 (G3) · si la IA leyó un número de PO del
+    documento, sube el piso de la serie del cliente:
+
+        oc_correlativo = GREATEST(COALESCE(oc_correlativo, 0), po)
+
+    La próxima OC auto-numerada del wizard saldrá en po + 1. Solo POs
+    puramente numéricos (p.ej. SonDel 505244); los alfanuméricos y los
+    OC-AUTO-* no alimentan la serie. Nunca la baja. Best-effort: un
+    error aquí jamás rompe el upload-match (warning y sigue).
+    """
+    if not client_id or not po_number:
+        return
+    digits = str(po_number).strip()
+    if not digits.isdigit():
+        return
+    try:
+        with connection.cursor() as c:
+            c.execute(
+                """
+                UPDATE clientes.cliente
+                   SET oc_correlativo = GREATEST(COALESCE(oc_correlativo, 0), %s)
+                 WHERE id = %s::uuid
+                """,
+                [int(digits), str(client_id)],
+            )
+    except Exception as e:
+        log.warning("[matchmaker] bump oc_correlativo falló (cliente %s, po %s): %s",
+                    client_id, po_number, e)
+
+
+# ═════════════════════════════════════════════════════════════════════
 # POST /api/expedientes/{id}/upload-match/
 # ═════════════════════════════════════════════════════════════════════
 class UploadMatchView(APIView):
@@ -146,6 +180,14 @@ class UploadMatchView(APIView):
             document_type = document_type,
             expediente_id = str(exp.id),
         )
+
+        # ── 3b. G3 · adelantar el correlativo de OC del cliente ──
+        # Sprint 2026-07-18: si la IA leyó un PO numérico del documento
+        # (p.ej. 505300), la serie del cliente sube a ese piso y la
+        # próxima OC auto-numerada del wizard sale en po + 1.
+        if document_type == "ART-01_OC":
+            _bump_oc_correlativo(getattr(exp, "client_id", None),
+                                 ai_payload.get("client_po_number"))
 
         # ── 4. Cruce IA vs BD ───────────────────────────────
         mismatch_payload = cross_match(ai_payload, str(exp.id))
