@@ -11,11 +11,19 @@
 //     (alejandro@muitowork.com / MuitoWork2026?). Esto permite probar
 //     la UI antes de levantar Django.
 // =====================================================================
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { authApi, ApiError, refreshAccessToken } from "../lib/api.js";
 import { clearCache } from "../lib/swrCache.js";
 
 const AUTH_KEY = "mwt-auth";
+
+// Sprint 2026-07-19 · Cierre de sesión por inactividad (30 min).
+// La última actividad REAL del usuario vive en localStorage para que
+// cuente en cualquier pestaña abierta. Los timers automáticos (refresh
+// proactivo, etc.) NO cuentan como actividad.
+const ACTIVITY_KEY  = "mwt-activity";
+const IDLE_LIMIT_MS = 30 * 60 * 1000;
+const ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "touchstart", "scroll", "click"];
 
 // Hash SHA-256 del password admin (para fallback DEV). Generado con:
 //   printf '%s' 'MuitoWork2026?' | sha256sum
@@ -86,6 +94,7 @@ export function AuthProvider({ children }) {
       setAccessToken(null);
       setRefresh(null);
       try { localStorage.removeItem(AUTH_KEY); } catch { /* noop */ }
+      try { localStorage.removeItem(ACTIVITY_KEY); } catch { /* noop */ }
     };
     window.addEventListener("mwt-auth-refreshed", onRefreshed);
     window.addEventListener("mwt-auth-logout", onForcedLogout);
@@ -160,8 +169,49 @@ export function AuthProvider({ children }) {
     setAccessToken(null);
     setRefresh(null);
     clearPersist();
+    try { localStorage.removeItem(ACTIVITY_KEY); } catch { /* noop */ }
     clearCache(); // purga la caché SWR de datos del usuario saliente (R3)
   }, [accessToken, refresh]);
+
+  // Sprint 2026-07-19 · Cierre automático por inactividad (30 min).
+  //
+  // La sesión PERSISTE en localStorage: cerrar el navegador o apagar la
+  // computadora NO la pierde (bootstrap la restaura y el refresh dura
+  // 7 días). El cierre por inactividad escucha SOLO actividad real del
+  // usuario: mouse, teclado, touch, scroll y click (una recarga también
+  // cuenta — el montaje renueva la actividad). El refresh proactivo de
+  // 25 min NO cuenta (es un timer, no el usuario).
+  //
+  // Última actividad compartida en localStorage → una acción en
+  // cualquier pestaña mantiene vivas todas las pestañas abiertas.
+  const logoutRef = useRef(null);
+  useEffect(() => { logoutRef.current = logout; }, [logout]);
+
+  useEffect(() => {
+    if (!bootstrapped || !user) return;
+    // Montaje/login cuenta como actividad fresca.
+    try { localStorage.setItem(ACTIVITY_KEY, String(Date.now())); } catch { /* noop */ }
+    let lastWrite = 0;
+    const onActivity = () => {
+      const t = Date.now();
+      if (t - lastWrite < 5000) return; // throttle: 1 escritura / 5 s
+      lastWrite = t;
+      try { localStorage.setItem(ACTIVITY_KEY, String(t)); } catch { /* noop */ }
+    };
+    ACTIVITY_EVENTS.forEach((ev) =>
+      window.addEventListener(ev, onActivity, { passive: true }));
+    const id = setInterval(() => {
+      let last = 0;
+      try { last = Number(localStorage.getItem(ACTIVITY_KEY) || 0); } catch { /* noop */ }
+      if (last && Date.now() - last > IDLE_LIMIT_MS) {
+        logoutRef.current?.();
+      }
+    }, 30 * 1000);
+    return () => {
+      ACTIVITY_EVENTS.forEach((ev) => window.removeEventListener(ev, onActivity));
+      clearInterval(id);
+    };
+  }, [bootstrapped, user]);
 
   // --- autorización ---
   const has = useCallback((module, action = "view") => {
