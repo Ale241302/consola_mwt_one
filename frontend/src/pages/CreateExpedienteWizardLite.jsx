@@ -2091,16 +2091,34 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     const mwtFactor = _factorForDays(mwtDays);
     const cliFactor = _factorForDays(cliDays);
     const out = [];
+    // Sprint 2026-07-19 · el Precio CLIENTE se emite SIEMPRE para cada SKU
+    // (override manual o default de la matriz — lo que el wizard muestra en
+    // la columna Precio Cliente es lo que debe quedar guardado). Antes solo
+    // viajaba cuando el admin lo editaba a mano y las líneas se quedaban
+    // con el precio estático viejo de especificaciones.client_prices.
+    const seen = new Set();
+    orderLines.forEach((l) => {
+      const sku = String(l.sku || "").trim().toUpperCase();
+      if (!sku || seen.has(sku)) return;
+      seen.add(sku);
+      const cp = clientPriceOf(sku);
+      if (cp != null) {
+        out.push({ sku, unit_price_client: Math.round(cp * cliFactor * 10000) / 10000 });
+      }
+    });
+    // MWT: conserva el comportamiento previo — solo si el admin lo
+    // overrideó a mano. Se fusiona con la entrada de client si ya existe.
     Object.entries(priceOverrides || {}).forEach(([sku, o]) => {
       const ovm = _numPos(o && o.mwt);
-      const ovc = _numPos(o && o.client);
-      const entry = { sku };
-      if (ovm != null) entry.unit_price_mwt    = Math.round(ovm * mwtFactor * 10000) / 10000;
-      if (ovc != null) entry.unit_price_client = Math.round(ovc * cliFactor * 10000) / 10000;
-      if (entry.unit_price_mwt != null || entry.unit_price_client != null) out.push(entry);
+      if (ovm == null) return;
+      const key = String(sku || "").trim().toUpperCase();
+      const upm = Math.round(ovm * mwtFactor * 10000) / 10000;
+      const existing = out.find((x) => x.sku === key);
+      if (existing) existing.unit_price_mwt = upm;
+      else out.push({ sku: key, unit_price_mwt: upm });
     });
     linePricesRef.current = out;
-  }, [priceOverrides, effectiveTiers, paymentDays, paymentDaysMwt, paymentDaysCliente, operatedByMwt, linePricesRef]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [orderLines, priceOverrides, effectiveTiers, paymentDays, paymentDaysMwt, paymentDaysCliente, operatedByMwt, linePricesRef]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sprint 2026-05-22 · Precios reales del snapshot por plazo.
   // tierTotals[dias] = suma sobre TODOS los SKUs de la OC:
