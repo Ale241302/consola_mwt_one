@@ -29,7 +29,8 @@ from rest_framework.response import Response
 
 from .models import Documento, Expediente
 from .proforma_renderer import render_proforma_html
-from .proforma_renderer_marluvas import render_proforma_html_marluvas
+from .proforma_renderer_marluvas import render_proforma_html_marluvas  # noqa: F401
+from .proforma_renderer_triview import render_proforma_html_triview
 from .serializers import DocumentoSerializer
 from .views import _deny_client_mutation
 
@@ -66,11 +67,10 @@ def generate_proforma(request, expediente_id):
     # 1) Render -- ruteo segun audience
     try:
         if raw_audience in ("MWT_INTERNAL", "ADMIN_ONLY"):
-            # Sprint 2026-05-24 · ADMIN_ONLY tambien usa vista MARLUVAS
-            # (perspectiva MWT-compra, credit_days_mwt). Se diferencia de
-            # MWT_INTERNAL solo en la columna `audience` del Documento
-            # (ADMIN_ONLY = CEO/superuser only · MWT_INTERNAL = staff MWT).
-            html_str, metadata = render_proforma_html_marluvas(
+            # Sprint 2026-07-19 · las audiencias internas generan la
+            # proforma TRI-VISTA (CEO · Marluvas · Cliente en un solo
+            # HTML con tabs). Antes solo existía la vista MARLUVAS.
+            html_str, metadata = render_proforma_html_triview(
                 expediente_id,
                 request_user=request.user,
                 codigo_override=codigo_override,
