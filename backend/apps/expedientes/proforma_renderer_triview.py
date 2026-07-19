@@ -21,7 +21,7 @@ congelados, clientes.cliente, productos.producto, brands.marca).
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import connection
 from django.utils import timezone
@@ -45,6 +45,13 @@ from .proforma_renderer_marluvas import (
 log = logging.getLogger(__name__)
 
 D15 = Decimal("0.15")  # diferencial fiscal interno (DAI+Ley6946)
+
+
+def _q2(d) -> Decimal:
+    """Sprint 2026-07-19 · redondeo a centavos HALF-UP — el mismo que usa
+    SQL round() en la OC, para que la proforma coincida al centavo con el
+    total de la orden (Python Decimal usa half-even por default)."""
+    return Decimal(d or 0).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -191,8 +198,8 @@ def _group_lines(lineas, prod_map):
         g["sizes"].append((size, qty))
     out = sorted(groups.values(), key=lambda g: g["sku"])
     for g in out:
-        g["sub_mwt"] = g["qty"] * g["upm"]
-        g["sub_cli"] = g["qty"] * g["upc"]
+        g["sub_mwt"] = _q2(g["qty"] * g["upm"])
+        g["sub_cli"] = _q2(g["qty"] * g["upc"])
         def _key(t):
             try:
                 return (0, float(t[0]))
@@ -282,13 +289,13 @@ def render_proforma_html_triview(expediente_id, request_user=None,
     po_codigo = (oc.codigo if oc and oc.codigo else (expediente.codigo or ""))
     po_fecha = _fmt_date_es(oc.issued_at) if oc and oc.issued_at else "—"
 
-    # Totales
+    # Totales (redondeo HALF-UP como SQL round() — ver _q2)
     total_pares = sum(g["qty"] for g in groups)
-    total_mwt = sum(g["sub_mwt"] for g in groups)
-    total_cli = sum(g["sub_cli"] for g in groups)
-    sobreprecio = total_cli - total_mwt
-    diferencial = (sobreprecio * D15).quantize(Decimal("0.01"))
-    margen = sobreprecio + diferencial
+    total_mwt = _q2(sum(g["sub_mwt"] for g in groups))
+    total_cli = _q2(sum(g["sub_cli"] for g in groups))
+    sobreprecio = _q2(total_cli - total_mwt)
+    diferencial = _q2(sobreprecio * D15)
+    margen = _q2(sobreprecio + diferencial)
     roi = (margen / total_mwt * 100).quantize(Decimal("0.1")) if total_mwt > 0 else Decimal("0")
     pct_venta = (margen / total_cli * 100).quantize(Decimal("0.1")) if total_cli > 0 else Decimal("0")
     ciclo = cli_days - mwt_days
@@ -308,7 +315,7 @@ def render_proforma_html_triview(expediente_id, request_user=None,
         "filename": filename,
         "codigo": codigo,
         "total_pares": int(total_pares),
-        "total_value_usd": str(total_mwt.quantize(Decimal("0.01"))),
+        "total_value_usd": str(_q2(total_mwt)),
     }
 
     # ── VISTA 1 · CEO — modelo triangular ────────────────────────────
