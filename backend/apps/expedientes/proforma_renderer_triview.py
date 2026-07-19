@@ -316,6 +316,9 @@ def render_proforma_html_triview(expediente_id, request_user=None,
         "codigo": codigo,
         "total_pares": int(total_pares),
         "total_value_usd": str(_q2(total_mwt)),
+        # Sprint 2026-07-19 · sin esto el Documento quedaba con oc_id NULL
+        # y no aparecía en "Documentos comerciales" (la lista filtra ?oc=).
+        "oc_id": str(expediente.oc_id) if expediente.oc_id else None,
     }
 
     # ── VISTA 1 · CEO — modelo triangular ────────────────────────────
