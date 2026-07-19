@@ -169,8 +169,11 @@ class TallaListSerializer(serializers.ModelSerializer):
             "id", "is_active", "tipo_producto", "talla_base", "nombre",
             # clasificadores multi-valor (marca / tipo / familia)
             "marca_ids", "tipos", "familias",
-            # equivalencias rápidas — el FE muestra las más universales
-            "eu", "us_men", "us_women", "uk_men", "br", "cm",
+            # Sprint 2026-07-18 · TODOS los 15 sistemas. Antes sólo 6
+            # ("equivalencias rápidas") y el drawer de edición recibía la
+            # talla INCOMPLETA: al guardar se nulaban los otros 9
+            # (us_youth, uk_women, uk_youth, mx, ar, jp, cn, kr, alfa).
+            *Talla.EQUIVALENCE_FIELDS,
             # dimensiones (informativo en lista)
             "grosor_antepie_mm", "grosor_talon_mm", "drop_mm", "peso_g",
             "created_at", "updated_at",
