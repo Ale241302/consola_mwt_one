@@ -147,7 +147,7 @@ export const BRANDS = [
 // (para formularios y mapeo Excel)
 // ─────────────────────────────────────────────────────────
 export const BRAND_ATTRIBUTES = {
-  tipo_calzado:      ['Bota Alta','Bota al Tobillo','Zapato','Tenis'],
+  tipo_calzado:      ['Bota Alta','Bota al Tobillo','Zapato tipo crocs','Tenis','Plantilla'],
   cubrepuntera:      ['Sí','No'],
   tipo_puntera:      ['Acero 200J','Composite 200J','No tiene','Plástico','Citoplástico 200C'],
   antiperforante:    ['Acero 1100 N','Textil 1100 N','No'],
