@@ -21,7 +21,7 @@
 //     puede enviarse con campos vacíos (se mandan como null).
 //   · Tokens: Navy #0B1E3A, Mint #00B286, Light #1DE394, tabular-nums.
 // =====================================================================
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -651,6 +651,7 @@ export default function ScreenSizingEngine() {
             lang={lang}
             options={options}
             initial={editing}
+            tallas={tallas}
             onClose={() => setEditing(null)}
             onSave={handleSave}
           />
@@ -715,7 +716,7 @@ function KpiTile({ label, value, hint, accent = MINT }) {
 //       o 'calzado') la oculta.
 //   · Cero validación required: el botón "Guardar" siempre está activo.
 // =====================================================================
-export function TallaFormDrawer({ lang, options, initial, onClose, onSave }) {
+export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSave }) {
   const isEdit = !!initial?.id;
 
   // Form state — arranca con un esquema vacío y rellena con `initial`.
@@ -761,7 +762,41 @@ export function TallaFormDrawer({ lang, options, initial, onClose, onSave }) {
       return cur.includes(v) ? prev : { ...prev, familias: [...cur, v] };
     });
   };
-  const [familiaDraft, setFamiliaDraft] = useState("");
+
+  // ── Sprint 2026-07-18 · auto-sugerir la Matriz de Equivalencias ─────
+  // Al escribir la talla base (BR): si ya existe en el catálogo cargado,
+  // copiamos su matriz; si no, calculamos eu/br/cm con las reglas
+  // documentadas (eu = BR+2 · cm = 21.97 + (BR−32)·⅔, paso Marluvas).
+  // Solo rellena campos vacíos o con el valor de la sugerencia ANTERIOR
+  // — nunca pisa lo que el usuario escribió a mano.
+  const lastSugRef = useRef({});
+  useEffect(() => {
+    const base = parseInt(form.talla_base, 10);
+    if (!Number.isFinite(base)) { lastSugRef.current = {}; return; }
+    setForm(prev => {
+      const prevSug = lastSugRef.current || {};
+      const keys = (options?.equivalence_fields || []);
+      const existing = (tallas || []).find(t => String(t.br) === String(base));
+      let sug = {};
+      if (existing) {
+        for (const k of keys) if (existing[k]) sug[k] = existing[k];
+      } else {
+        sug = {
+          eu: String(base + 2),
+          br: String(base),
+          cm: (21.97 + (base - 32) * (2 / 3)).toFixed(2),
+        };
+      }
+      const patch = {};
+      for (const [k, v] of Object.entries(sug)) {
+        const cur = prev[k] ?? "";
+        if (cur === "" || cur === prevSug[k]) patch[k] = v;
+      }
+      lastSugRef.current = sug;
+      return Object.keys(patch).length ? { ...prev, ...patch } : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.talla_base]);
 
   // Familia sólo aplica si el tipo NO es exclusivamente Plantilla.
   const soloPlantilla =
@@ -956,27 +991,27 @@ export function TallaFormDrawer({ lang, options, initial, onClose, onSave }) {
                         </button>
                       </span>
                     ))}
-                    <input
+                    {/* Sprint 2026-07-18 · select NORMAL (antes un input con
+                        datalist nativo que desplegaba una lista gigante sin
+                        estilo). Se alimenta de options.familias — que desde
+                        G6 sale de los productos de la DB, no del Excel. */}
+                    <select
                       className="siz-input mono"
-                      list="siz-familias-sugeridas"
-                      style={{ width: 150, height: 30, fontSize: 12 }}
-                      placeholder={lang === "es" ? "＋ agregar (Enter)" : "＋ add (Enter)"}
-                      value={familiaDraft}
-                      onChange={e => setFamiliaDraft(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addFamilia(familiaDraft);
-                          setFamiliaDraft("");
-                        }
+                      style={{ height: 30, fontSize: 12, padding: "0 8px", cursor: "pointer" }}
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value) addFamilia(e.target.value);
+                        e.target.value = "";
                       }}
-                      onBlur={() => { if (familiaDraft.trim()) { addFamilia(familiaDraft); setFamiliaDraft(""); } }}
-                    />
-                    <datalist id="siz-familias-sugeridas">
+                      title={lang === "es" ? "Agregar familia" : "Add family"}
+                    >
+                      <option value="" disabled>
+                        {lang === "es" ? "＋ agregar familia…" : "＋ add family…"}
+                      </option>
                       {(options?.familias || [])
                         .filter(f => !(form.familias || []).includes(f))
-                        .map(f => <option key={f} value={f}/>)}
-                    </datalist>
+                        .map(f => <option key={f} value={f}>{f}</option>)}
+                    </select>
                   </div>
                 </Field>
               )}
