@@ -67,6 +67,8 @@ const KEY_TO_PATH = {
   roles:       '/roles',
   // F6 · Bitácora histórica
   'price-history': '/historial-precios',
+  // Sprint 2026-07-20 · Mesa de trabajo (admin/CEO/superadmin)
+  'mesa-trabajo': '/mesa-trabajo',
 };
 
 // derive currentScreen key from the URL pathname
@@ -98,6 +100,7 @@ function screenFromPath(pathname) {
   if (pathname.startsWith('/notificaciones')) return 'history';
   if (pathname.startsWith('/cobros')) return 'collections';
   if (pathname.startsWith('/historial-precios')) return 'price-history';
+  if (pathname.startsWith('/mesa-trabajo')) return 'mesa-trabajo';
   if (pathname.startsWith('/wizard')) return 'wizard';
   if (pathname.startsWith('/ai/governance')) return 'ai-governance';
   if (pathname.startsWith('/ai')) return 'ai-hub';
@@ -112,7 +115,7 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, roleName, role: backendRoleName } = useAuth();
-  const { isClient, canSeeModule, role: viewportRole } = useRole();
+  const { isClient, canSeeModule, role: viewportRole, isCeoAdmin } = useRole();
   const currentScreen = screenFromPath(location.pathname);
   const onNavigate = (key) => {
     const path = KEY_TO_PATH[key];
@@ -171,6 +174,9 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
   const allItems = [
     { key: 'dashboard',      icon: <IconHome/>,       label: tr(lang,'dashboard'),     group: 'core' },
     { key: 'expedientes',    icon: <IconFolder/>,     label: expedientesLabel,         group: 'core', counter: expedientesCount },
+    // Sprint 2026-07-20 · Mesa de trabajo: expedientes que requieren
+    // atención. adminOnly → solo admin/CEO/superadmin (no staff MWT, no client).
+    { key: 'mesa-trabajo',   icon: <IconClipboard/>,  label: lang === 'en' ? 'Workbench' : 'Mesa de trabajo', group: 'core', adminOnly: true },
     { key: 'cronograma',     icon: <IconHistory/>,    label: lang === 'en' ? 'Timeline' : 'Cronograma', group: 'core' },
     { key: 'portal',         icon: <IconBuilding/>,   label: tr(lang,'portal'),        group: 'core' },
     // Almacén & Logística
@@ -200,7 +206,9 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
   // ───────────────────────────────── FILTRO POR ROL ────────────────────
   // Fuente de verdad: CLIENT_ALLOWED_MODULES (RoleContext).
   // ADMIN → todo; CLIENT → solo los keys whitelisteados.
-  const items = allItems.filter(it => canSeeModule(it.key));
+  // Sprint 2026-07-20 · items adminOnly (Mesa de trabajo): solo
+  // admin/CEO/superadmin — ni staff MWT ni CLIENT_* los ven.
+  const items = allItems.filter(it => canSeeModule(it.key) && (!it.adminOnly || isCeoAdmin));
 
   // Helper de etiqueta: tr() devuelve la clave literal si no existe traducción,
   // lo que hace inútil el `|| fallback`. Usamos un fallback explícito.

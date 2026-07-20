@@ -26,6 +26,7 @@ from decimal import Decimal, InvalidOperation
 from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -1377,6 +1378,186 @@ class ExpedienteViewSet(viewsets.ViewSet):
             for m in acc
         }
         return Response({"phase_stats": out})
+
+    # ─────────────────────────────────────────────────────────────────
+    # GET /api/expedientes/atencion/  ·  Sprint 2026-07-20
+    # "Mesa de trabajo" (Admin/CEO/superuser): expedientes que REQUIEREN
+    # ATENCIÓN:
+    #   · stale_state      — llevan MÁS días en su estado actual que el
+    #                        promedio de esa fase (misma semántica que
+    #                        phase-stats: EventLog + overrides; promedio
+    #                        por método de envío si existe, si no _ALL).
+    #   · missing_proforma — no tienen NINGÚN documento PROFORMA activo
+    #                        (ej. el cliente creó la OC del portal y nadie
+    #                        ha generado la PF). Estados terminales
+    #                        (CERRADO) no se flaggean.
+    # ─────────────────────────────────────────────────────────────────
+    @action(detail=False, methods=["get"], url_path="atencion")
+    def atencion(self, request):
+        if not _is_admin_viewer(request):
+            return Response({"detail": "forbidden"}, status=403)
+
+        order = ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO",
+                 "TRANSITO", "EN_DESTINO", "CERRADO"]
+        now = timezone.now()
+
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT e.id::text, e.codigo, e.oc_id::text, e.client_id::text,
+                       e.estado, COALESCE(e.freight_mode, ''), e.created_at,
+                       e.total_cost, e.moneda
+                  FROM expedientes.expediente e
+                 WHERE e.is_active = TRUE
+            """)
+            exp_rows = c.fetchall()
+            # EventLog — idéntico a phase_stats (sin filtrar phase_to NULL
+            # para poder sintetizar REGISTRO con el evento de creación).
+            c.execute("""
+                SELECT el.aggregate_id::text, el.phase_to, el.created_at
+                FROM pipeline.event_log el
+                JOIN expedientes.expediente e ON e.id = el.aggregate_id
+                WHERE el.aggregate_type = 'expediente'
+                  AND el.is_active = TRUE
+                  AND e.is_active = TRUE
+                ORDER BY el.aggregate_id, el.created_at
+            """)
+            ev_rows = c.fetchall()
+            c.execute("""
+                SELECT e.id::text, COALESCE(e.phase_durations_json, '{}'::jsonb)
+                FROM expedientes.expediente e
+                WHERE e.is_active = TRUE
+            """)
+            over_rows = c.fetchall()
+            c.execute("""
+                SELECT DISTINCT expediente_id::text
+                  FROM expedientes.documento
+                 WHERE kind = 'PROFORMA' AND is_active = TRUE
+                   AND expediente_id IS NOT NULL
+            """)
+            pf_ids = {r[0] for r in c.fetchall()}
+            c.execute("SELECT id::text, razon_social FROM clientes.cliente WHERE is_active = TRUE")
+            client_name = {r[0]: (r[1] or "") for r in c.fetchall()}
+            c.execute("SELECT id::text, codigo FROM expedientes.oc WHERE is_active = TRUE")
+            oc_codigo = {r[0]: (r[1] or "") for r in c.fetchall()}
+
+        # ── Entradas a fase por expediente (mismo algoritmo que phase_stats)
+        entries, first_ev = {}, {}
+        for eid, fase, at in ev_rows:
+            if eid not in first_ev or at < first_ev[eid]:
+                first_ev[eid] = at
+            fase = (fase or "").upper()
+            if fase not in order:
+                continue
+            d = entries.setdefault(eid, {})
+            if fase not in d or at < d[fase]:
+                d[fase] = at
+        for eid, at0 in first_ev.items():
+            d = entries.setdefault(eid, {})
+            if "REGISTRO" not in d:
+                d["REGISTRO"] = at0
+
+        over_by_exp = {}
+        for eid, pdj in over_rows:
+            if isinstance(pdj, str):
+                try:
+                    pdj = json.loads(pdj)
+                except (ValueError, TypeError):
+                    pdj = {}
+            over_by_exp[eid] = pdj if isinstance(pdj, dict) else {}
+
+        def _ov_days(ov):
+            if isinstance(ov, dict):
+                try:
+                    return float(ov.get("days"))
+                except (TypeError, ValueError):
+                    return None
+            if ov in (None, ""):
+                return None
+            try:
+                return float(ov)
+            except (TypeError, ValueError):
+                return None
+
+        # ── Promedios por fase: _ALL + por método de envío (muestras =
+        #    transiciones cerradas + overrides manuales, como phase_stats).
+        acc = {"Aereo": {}, "Maritimo": {}, "_ALL": {}}
+        modo_by_exp = {}
+        for (eid, _cod, _oc, _cli, _est, fm, _cat, _tc, _mon) in exp_rows:
+            fmu = (fm or "").upper()
+            modo_by_exp[eid] = "Aereo" if fmu == "AIR" else ("Maritimo" if fmu == "SEA" else "")
+        for eid in set(list(entries.keys()) + list(over_by_exp.keys())):
+            modo = modo_by_exp.get(eid) or ""
+            buckets = ["_ALL"] + ([modo] if modo in ("Aereo", "Maritimo") else [])
+
+            def _push(fase, days, _b=buckets):
+                for b in _b:
+                    acc[b].setdefault(fase, []).append(days)
+
+            fases = entries.get(eid) or {}
+            seq = [s for s in order if s in fases]
+            over = over_by_exp.get(eid) or {}
+            done = set()
+            for fase, ov in over.items():
+                fase = str(fase).upper()
+                days = _ov_days(ov)
+                if fase in order and days is not None and days >= 0:
+                    _push(fase, days)
+                    done.add(fase)
+            for i in range(len(seq) - 1):
+                fase = seq[i]
+                if fase in done:
+                    continue
+                delta = fases[seq[i + 1]] - fases[fase]
+                _push(fase, max(0.0, delta.total_seconds() / 86400.0))
+
+        avg = {
+            m: {f: (sum(v) / len(v)) for f, v in acc[m].items() if v}
+            for m in acc
+        }
+
+        # ── Evaluar cada expediente activo ─────────────────────────────
+        items = []
+        for (eid, cod, oc_id, cli, est, _fm, created_at, tc, mon) in exp_rows:
+            estado = (est or "REGISTRO").upper()
+            fases = entries.get(eid) or {}
+            entered = fases.get(estado) or created_at
+            days_in_state = max(0.0, (now - entered).total_seconds() / 86400.0) if entered else 0.0
+            modo = modo_by_exp.get(eid) or ""
+            avg_days = (avg.get(modo) or {}).get(estado)
+            if avg_days is None:
+                avg_days = (avg.get("_ALL") or {}).get(estado)
+            stale = bool(avg_days is not None and days_in_state > avg_days)
+            missing_pf = bool(estado != "CERRADO" and eid not in pf_ids)
+            if not (stale or missing_pf):
+                continue
+            items.append({
+                "id":                eid,
+                "codigo":            cod,
+                "oc_id":             oc_id,
+                "oc_codigo":         oc_codigo.get(oc_id) or "",
+                "client_label":      client_name.get(cli) or "",
+                "estado":            estado,
+                "days_in_state":     round(days_in_state, 1),
+                "avg_days":          round(avg_days, 2) if avg_days is not None else None,
+                "stale_state":       stale,
+                "missing_proforma":  missing_pf,
+                "total_cost":        str(tc or 0),
+                "moneda":            mon or "USD",
+                "created_at":        created_at.isoformat() if created_at else None,
+            })
+
+        # Peores primero: mayor ratio días/promedio; luego más recientes.
+        def _sev(it):
+            if it["stale_state"] and it["avg_days"]:
+                return it["days_in_state"] / max(it["avg_days"], 0.01)
+            return 0.0
+        items.sort(key=lambda it: (_sev(it), it["created_at"] or ""), reverse=True)
+
+        return Response({
+            "results":   items,
+            "phase_avg": {m: {f: round(v, 2) for f, v in avg[m].items()} for m in avg},
+            "count":     len(items),
+        })
 
     @action(detail=False, methods=["get"])
     def kanban(self, request):

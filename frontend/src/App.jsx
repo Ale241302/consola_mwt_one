@@ -53,6 +53,9 @@ import ScreenUserFormView from "./pages/UserFormView.jsx";
 import ScreenRolesPermissions from "./pages/RolesPermissions.jsx";
 // F6 · Sprint 2026-05-20 · Bitácora histórica de precios (CEO-ONLY).
 import ScreenPriceHistory from "./pages/PriceHistory.jsx";
+// Sprint 2026-07-20 · Mesa de trabajo (CEO/Admin) — expedientes que
+// requieren atención (estancados vs promedio de fase / sin proforma).
+import ScreenMesaTrabajo from "./pages/MesaTrabajo.jsx";
 import ScreenProfilePage from "./pages/ProfilePage.jsx";
 import ScreenTickets from "./pages/Tickets.jsx";
 import ScreenTicketDetail from "./pages/TicketDetail.jsx";
@@ -115,6 +118,8 @@ export default function App() {
             AdminOnlyRoute bloquea CLIENT_* redirigiendolos a /ai.
             El backend ademas hace 403 si el rol no es admin (defense in depth). */}
         <Route path="/finanzas" element={<CeoAdminOnlyRoute><ScreenFinanzas /></CeoAdminOnlyRoute>} />
+        {/* Sprint 2026-07-20 · Mesa de trabajo — CEO/Admin/superadmin. */}
+        <Route path="/mesa-trabajo" element={<CeoAdminOnlyRoute><ScreenMesaTrabajo /></CeoAdminOnlyRoute>} />
         <Route path="/inventario" element={<InternalOnlyRoute><ScreenInventario /></InternalOnlyRoute>} />
         {/* Sprint Inbound Engine v1 (2026-04-29) — wizard full-page */}
         <Route path="/inventario/recepcion" element={<InternalOnlyRoute><InboundReceptionWizard /></InternalOnlyRoute>} />
