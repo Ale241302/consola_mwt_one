@@ -2082,6 +2082,85 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     const t = (effectiveTiers || []).find((x) => Number(x.days) === Number(days));
     return t ? (1 - (Number(t.pct) || 0) / 100) : 1;
   };
+
+  // ── Sprint 2026-07-20 · Bloque PROPUESTA MWT — selector Banda/Días ──
+  // El backend (sku_pricing_matrix) ahora expone la matriz COMPLETA del
+  // operador: operator_results[sku].bands = {bandaId: {dias: price}} y
+  // bandas[] = catálogo de las 12 bandas FX. El precio MWT final se toma
+  // EXACTO de (banda, días) — sin aproximar base × factor.
+  const mwtResults    = pricingMatrix && pricingMatrix.operator_results ? pricingMatrix.operator_results : null;
+  const clientResults = pricingMatrix && pricingMatrix.results ? pricingMatrix.results : null;
+  const bandasList = (pricingMatrix && Array.isArray(pricingMatrix.bandas))
+    ? pricingMatrix.bandas : [];
+  const tcBandaId = (() => {
+    const first = mwtResults && Object.values(mwtResults).find((m) => m && m.ok && m.banda_id);
+    return first ? Number(first.banda_id) : 6;
+  })();
+  const [bandaMwtSel, setBandaMwtSel] = useState(null);   // null → banda del TC
+  const bandaMwt = bandaMwtSel || tcBandaId;
+  // Días disponibles en una banda = unión de los plazos con precio en el
+  // motor para los SKUs del pedido (si un día no está en el motor, no aplica).
+  const _bandDays = (b) => {
+    const set = new Set();
+    (orderLines || []).forEach((l) => {
+      const sku = String(l.sku || "").trim();
+      const bd = mwtResults && mwtResults[sku] && mwtResults[sku].bands;
+      const pl = bd && bd[String(b)];
+      if (pl) Object.keys(pl).forEach((d) => set.add(Number(d)));
+    });
+    return [...set].sort((a, x) => a - x);
+  };
+  const daysMwtBand = _bandDays(bandaMwt);
+  const mwtDiasEff = daysMwtBand.includes(Number(paymentDaysMwt))
+    ? Number(paymentDaysMwt)
+    : (daysMwtBand.includes(90) ? 90 : daysMwtBand[daysMwtBand.length - 1]);
+  const _mwtBandPrice = (sku, b, d) => {
+    const bd = mwtResults && mwtResults[sku] && mwtResults[sku].bands;
+    const pl = bd && bd[String(b)];
+    const n = pl ? Number(pl[String(d)]) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  // Precio base de la banda (90d o el plazo mayor) — referencia del % desc.
+  const _mwtBandBasePrice = (sku, b) => {
+    const bd = mwtResults && mwtResults[sku] && mwtResults[sku].bands;
+    const pl = bd && bd[String(b)];
+    if (!pl) return null;
+    const keys = Object.keys(pl).map(Number).filter((x) => x > 0).sort((a, x) => a - x);
+    if (!keys.length) return null;
+    const d = keys.includes(90) ? 90 : keys[keys.length - 1];
+    const n = Number(pl[String(d)]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  // Precio MWT final por SKU: override manual (re-escalado) > precio exacto
+  // de (banda, días) > fallback base × factor (matriz del TC).
+  const mwtPriceFinal = (sku) => {
+    const _f = () => _factorForDays(
+      operatedByMwt ? (Number(paymentDaysMwt) || Number(paymentDays) || 90)
+                    : (Number(paymentDays) || 90));
+    const o = _numPos(ovOf(sku).mwt);
+    if (o != null) return Math.round(o * _f() * 10000) / 10000;
+    const exact = _mwtBandPrice(sku, bandaMwt, mwtDiasEff);
+    if (exact != null) return exact;
+    const snap = mwtPriceOf(sku);
+    return snap != null ? Math.round(snap * _f() * 10000) / 10000 : null;
+  };
+  // Precio por SKU en una card de plazo (bloque CLIENTE) — misma lógica
+  // por-SKU que _buildTierTotals (con re-escalado por override).
+  const _tierSkuPrice = (matrixSrc, sku, dias, overrideField) => {
+    const matrix = matrixSrc && matrixSrc[sku];
+    if (!matrix || !matrix.ok || !Array.isArray(matrix.plazos)) return null;
+    const plazo = matrix.plazos.find((p) => Number(p.dias) === Number(dias));
+    if (!plazo) return null;
+    let price = Number(plazo.price);
+    const ov = overrideField ? _numPos((priceOverrides[_ovKey(sku)] || {})[overrideField]) : null;
+    if (ov != null) {
+      const bp = matrix.plazos.find((p) => p.is_base);
+      const bv = bp ? Number(bp.price) : null;
+      price = (bv && bv > 0) ? price * (ov / bv) : ov;
+    }
+    return price;
+  };
+
   useEffect(() => {
     if (!linePricesRef) return;
     const mwtDays = operatedByMwt
@@ -2107,15 +2186,17 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       if (!sku || seen.has(sku)) return;
       seen.add(sku);
       const cp = clientPriceOf(sku);
-      const mp = mwtPriceOf(sku);
+      // Sprint 2026-07-20 · MWT exacto de (banda, días) del selector —
+      // ya no se aproxima base × factor.
+      const mp = mwtPriceFinal(sku);
       if (cp == null && mp == null) return;
       const entry = { sku };
       if (cp != null) entry.unit_price_client = Math.round(cp * cliFactor * 10000) / 10000;
-      if (mp != null) entry.unit_price_mwt    = Math.round(mp * mwtFactor * 10000) / 10000;
+      if (mp != null) entry.unit_price_mwt    = mp;
       out.push(entry);
     });
     linePricesRef.current = out;
-  }, [orderLines, priceOverrides, effectiveTiers, paymentDays, paymentDaysMwt, paymentDaysCliente, operatedByMwt, linePricesRef]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [orderLines, priceOverrides, effectiveTiers, paymentDays, paymentDaysMwt, paymentDaysCliente, operatedByMwt, bandaMwt, mwtDiasEff, mwtResults, linePricesRef]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sprint 2026-05-22 · Precios reales del snapshot por plazo.
   // tierTotals[dias] = suma sobre TODOS los SKUs de la OC:
@@ -2163,8 +2244,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   // no necesariamente la del cliente final).
   // - mwtResults    -> precios MWT (operator_results del backend)
   // - clientResults -> precios cliente final (results del backend)
-  const mwtResults    = pricingMatrix && pricingMatrix.operator_results ? pricingMatrix.operator_results : null;
-  const clientResults = pricingMatrix && pricingMatrix.results ? pricingMatrix.results : null;
+  // (Sprint 2026-07-20 · definidas arriba, junto al selector Banda/Días.)
 
   // Helper: dado una matriz (cualquiera), calcular { dias: total } para cada tier.
   const _buildTierTotals = (matrixSrc, overrideField) => {
@@ -2564,57 +2644,134 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
               ? "PROPUESTA — MUITO WORK LIMITADA (operador)"
               : "PROPOSAL — MUITO WORK LIMITADA (operator)"}
           </div>
+          {/* Sprint 2026-07-20 · Selector Días de plazo + Banda (12 bandas
+              FX del motor de precios) y tabla por SKU con precio exacto de
+              (banda, días) y % descuento vs la base de la banda. Los días
+              vienen del motor: si un día no tiene precio en la banda para
+              ese SKU, la celda muestra "—" (no aplica). */}
           <div style={{
-            display: "grid",
-            gridTemplateColumns: `repeat(${effectiveTiers.length}, minmax(0, 1fr))`,
-            gap: 10,
+            border: "1px solid var(--border)", borderRadius: 12,
+            background: "var(--surface-raised)", padding: "14px 16px",
           }}>
-            {effectiveTiers.map((tier) => {
-              const isSelected   = Number(paymentDaysMwt) === tier.days;
-              const tierDiscount = tier.pct / 100;
-              const baseTier     = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
-              // Sprint 2026-05-24 · este bloque (MWT) usa tierTotalsMwt (precios operator).
-              const _tt          = tierTotalsMwt || tierTotals;
-              const tierTotal    = _tt && _tt[tier.days] != null
-                ? _tt[tier.days]
-                : totalValue * (1 - tierDiscount);
-              const baseTotal    = _tt && baseTier && _tt[baseTier.days] != null
-                ? _tt[baseTier.days]
-                : totalValue * (1 - (baseTier ? baseTier.pct/100 : 0));
-              const tierUnit     = totalUnits > 0 ? tierTotal / totalUnits : 0;
-              const ahorro       = baseTotal - tierTotal;
-              const fmt = (v) => `$${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-              return (
-                <button
-                  key={`mwt-${tier.days}`}
-                  type="button"
-                  onClick={() => setPaymentDaysMwt(tier.days)}
-                  style={{
-                    textAlign: "left", padding: "14px 14px", borderRadius: 10,
-                    cursor: "pointer",
-                    background: isSelected ? "rgba(0,178,134,0.08)" : "var(--surface-raised)",
-                    border: isSelected ? "2px solid #00B286" : "1px solid var(--border)",
-                    transition: "all 0.15s ease",
-                  }}
+            <div style={{
+              display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12,
+            }}>
+              <label style={{ flex: "1 1 170px" }}>
+                <div className="micro" style={{
+                  fontSize: 10, fontWeight: 700, letterSpacing: 0.5,
+                  color: "var(--text-tertiary)", textTransform: "uppercase",
+                  marginBottom: 4,
+                }}>
+                  {lang === "es" ? "Días de plazo" : "Payment days"}
+                </div>
+                <select
+                  className="input"
+                  value={mwtDiasEff || ""}
+                  onChange={(e) => setPaymentDaysMwt(Number(e.target.value))}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 13, fontWeight: 700 }}
+                  disabled={!daysMwtBand.length}
                 >
-                  <div style={{ fontSize: 11, color: "var(--text-tertiary)", letterSpacing: 0.5, fontWeight: 600 }}>
-                    {lang === "es" ? (tier.label_es || `${tier.days} días`) : (tier.label_en || `${tier.days} days`)}
-                  </div>
-                  <div className="tabular-nums" style={{ fontSize: 22, fontWeight: 800, color: tier.isBase ? "var(--text-tertiary)" : "#00B286", marginTop: 4 }}>
-                    {tier.isBase ? (lang === "es" ? "base" : "base") : `${tier.pct < 0 ? "+" : "-"}${Math.abs(tier.pct).toFixed(2)}%`}
-                  </div>
-                  <div className="tabular-nums" style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary)", marginTop: 8 }}>
-                    {fmt(tierUnit)} <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 500 }}>{lang === "es" ? "por par" : "per pair"}</span>
-                  </div>
-                  <div className="tabular-nums" style={{ fontSize: 14, color: "var(--text-primary)", marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
-                    {fmt(tierTotal)}
-                  </div>
-                  <div className="tabular-nums" style={{ fontSize: 11, color: ahorro > 0 ? "#00B286" : "var(--text-tertiary)", marginTop: 2 }}>
-                    {ahorro > 0 ? `${lang === "es" ? "Ahorro" : "Save"} ${fmt(ahorro)}` : (tier.isBase ? (lang === "es" ? "Plazo actual MWT" : "Current MWT term") : "")}
-                  </div>
-                </button>
+                  {daysMwtBand.map((d) => (
+                    <option key={d} value={d}>{d} {lang === "es" ? "días" : "days"}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ flex: "1 1 230px" }}>
+                <div className="micro" style={{
+                  fontSize: 10, fontWeight: 700, letterSpacing: 0.5,
+                  color: "var(--text-tertiary)", textTransform: "uppercase",
+                  marginBottom: 4,
+                }}>
+                  {lang === "es" ? "Banda (TC USD/BRL)" : "Band (FX USD/BRL)"}
+                </div>
+                <select
+                  className="input"
+                  value={bandaMwt}
+                  onChange={(e) => {
+                    const b = Number(e.target.value);
+                    setBandaMwtSel(b);
+                    // Si el plazo actual no existe en la nueva banda, caer
+                    // a 90d (o al plazo mayor disponible).
+                    const days = _bandDays(b);
+                    if (days.length && !days.includes(Number(paymentDaysMwt))) {
+                      setPaymentDaysMwt(days.includes(90) ? 90 : days[days.length - 1]);
+                    }
+                  }}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 13, fontWeight: 700 }}
+                >
+                  {(bandasList.length ? bandasList : [{ id: tcBandaId, rango: "" }]).map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {lang === "es" ? `Banda ${b.id}${b.rango ? ` · ${b.rango}` : ""}` : `Band ${b.id}${b.rango ? ` · ${b.rango}` : ""}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {(() => {
+              const fmt = (v) => `$${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+              let totQty = 0, totSub = 0, anyPrice = false;
+              const rowsHtml = groups.map((g) => {
+                const price = _mwtBandPrice(g.sku, bandaMwt, mwtDiasEff);
+                const base  = _mwtBandBasePrice(g.sku, bandaMwt);
+                const pct   = (price != null && base) ? (price - base) / base : null;
+                const qty   = Number(g.qty || 0);
+                totQty += qty;
+                if (price != null) { anyPrice = true; totSub += price * qty; }
+                return (
+                  <tr key={g.sku} style={{ borderTop: "1px solid var(--border)" }}>
+                    <td style={{ padding: "7px 8px", fontFamily: "var(--font-mono, monospace)", fontWeight: 800, fontSize: 12 }}>{g.sku}</td>
+                    <td style={{ padding: "7px 8px", fontSize: 12, color: "var(--text-secondary)" }}>{g.label || "—"}</td>
+                    <td className="tabular-nums" style={{ padding: "7px 8px", textAlign: "right", fontSize: 12 }}>{qty.toLocaleString("en-US")}</td>
+                    <td className="tabular-nums" style={{ padding: "7px 8px", textAlign: "right", fontWeight: 800, fontSize: 12.5 }}>
+                      {price != null ? fmt(price) : "—"}
+                    </td>
+                    <td className="tabular-nums" style={{
+                      padding: "7px 8px", textAlign: "right", fontSize: 12, fontWeight: 700,
+                      color: pct != null && pct < 0 ? "#00875A" : (pct != null && pct > 0 ? "#B45309" : "var(--text-tertiary)"),
+                    }}>
+                      {pct != null
+                        ? `${pct < 0 ? "−" : "+"}${(Math.abs(pct) * 100).toFixed(2)}%`
+                        : "—"}
+                    </td>
+                    <td className="tabular-nums" style={{ padding: "7px 8px", textAlign: "right", fontSize: 12 }}>
+                      {price != null ? fmt(price * qty) : "—"}
+                    </td>
+                  </tr>
+                );
+              });
+              return (
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "rgba(11,30,58,0.03)" }}>
+                      <th style={{ padding: "7px 8px", textAlign: "left", fontSize: 10, letterSpacing: 0.5, color: "var(--text-tertiary)" }}>SKU</th>
+                      <th style={{ padding: "7px 8px", textAlign: "left", fontSize: 10, letterSpacing: 0.5, color: "var(--text-tertiary)" }}>{lang === "es" ? "DESCRIPCIÓN" : "DESCRIPTION"}</th>
+                      <th style={{ padding: "7px 8px", textAlign: "right", fontSize: 10, letterSpacing: 0.5, color: "var(--text-tertiary)" }}>{lang === "es" ? "CANT." : "QTY"}</th>
+                      <th style={{ padding: "7px 8px", textAlign: "right", fontSize: 10, letterSpacing: 0.5, color: "var(--text-tertiary)" }}>{lang === "es" ? "PRECIO POR PAR" : "PRICE PER PAIR"}</th>
+                      <th style={{ padding: "7px 8px", textAlign: "right", fontSize: 10, letterSpacing: 0.5, color: "var(--text-tertiary)" }}>{lang === "es" ? "% DESC." : "% DISC."}</th>
+                      <th style={{ padding: "7px 8px", textAlign: "right", fontSize: 10, letterSpacing: 0.5, color: "var(--text-tertiary)" }}>SUBTOTAL</th>
+                    </tr>
+                  </thead>
+                  <tbody>{rowsHtml}</tbody>
+                  <tfoot>
+                    <tr style={{ borderTop: "2px solid var(--navy, #013A57)" }}>
+                      <td colSpan={2} style={{ padding: "8px", fontWeight: 800, fontSize: 12 }}>TOTAL</td>
+                      <td className="tabular-nums" style={{ padding: "8px", textAlign: "right", fontWeight: 800, fontSize: 12 }}>{totQty.toLocaleString("en-US")}</td>
+                      <td />
+                      <td />
+                      <td className="tabular-nums" style={{ padding: "8px", textAlign: "right", fontWeight: 800, fontSize: 13.5, color: "var(--navy, #013A57)" }}>
+                        {anyPrice ? fmt(totSub) : "—"}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
               );
-            })}
+            })()}
+            <div className="caption" style={{ marginTop: 8, fontSize: 11, color: "var(--text-tertiary)" }}>
+              {lang === "es"
+                ? "El precio por par es el exacto del motor de precios para la banda y el plazo elegidos; se congela como unit_price_mwt de cada línea al guardar."
+                : "The per-pair price is the exact pricing-engine value for the chosen band and term; it is frozen as each line's unit_price_mwt on save."}
+            </div>
           </div>
         </div>
       )}
@@ -2640,6 +2797,9 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
             display: "grid",
             gridTemplateColumns: `repeat(${effectiveTiers.length}, minmax(0, 1fr))`,
             gap: 10,
+            // Sprint 2026-07-20 · alto por contenido (las cards con más
+            // SKUs crecen sin estirar a las demás).
+            alignItems: "start",
           }}>
             {effectiveTiers.map((tier) => {
               // Sprint 2026-05-24 (fix v3) · usar paymentDaysCliente para
@@ -2700,15 +2860,33 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                           ? `−${tier.pct.toFixed(2)}%`
                           : `+${Math.abs(tier.pct).toFixed(2)}%`)}
                   </div>
-                  <div className="tabular-nums" style={{
-                    fontSize: 16, fontWeight: 700, color: "var(--text-primary)",
-                  }}>
-                    {fmt(tierUnit)}
-                  </div>
+                  {/* Sprint 2026-07-20 · precio por par POR SKU (con su
+                      descripción) — el promedio "por par" único no decía
+                      nada cuando los SKUs tienen precios distintos. */}
                   <div style={{
-                    fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8,
+                    display: "flex", flexDirection: "column", gap: 3,
+                    marginBottom: 8, minHeight: 32,
                   }}>
-                    {lang === "es" ? "por par" : "per pair"}
+                    {groups.map((g) => {
+                      const unit = _tierSkuPrice(clientResults, g.sku, tier.days, 'client');
+                      return (
+                        <div key={g.sku} style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                          <span style={{
+                            fontSize: 10, fontWeight: 800, flexShrink: 0,
+                            color: "var(--text-primary)",
+                            fontFamily: "var(--font-mono, monospace)",
+                          }}>{g.sku}</span>
+                          <span style={{
+                            fontSize: 9.5, color: "var(--text-tertiary)", flex: 1,
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>{g.label}</span>
+                          <span className="tabular-nums" style={{
+                            fontSize: 11.5, fontWeight: 700, flexShrink: 0,
+                            color: "var(--text-primary)",
+                          }}>{unit != null ? fmt(unit) : "—"}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                   <div style={{
                     height: 1, background: "var(--border)", margin: "6px 0",

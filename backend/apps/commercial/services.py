@@ -421,3 +421,96 @@ def get_client_price_matrix(
                         else "fallback_band_default"),
     })
     return out
+
+
+# =====================================================================
+# Sprint 2026-07-20 · Matriz COMPLETA 12 bandas (selector Banda/Días
+# del Paso 3 del wizard admin — bloque PROPUESTA MWT).
+# =====================================================================
+def list_bandas() -> list[Dict[str, Any]]:
+    """Las 12 bandas Marluvas con su rango FX — espejo de _BAND_*.
+
+    Retorna [{"id": 1..12, "piso": float, "techo": float,
+              "rango": "4,00 – 4,20"}] ordenadas por id."""
+    out: list[Dict[str, Any]] = []
+    for i in range(_BAND_MIN, _BAND_MAX + 1):
+        piso = _BAND_PISO + _BAND_STEP * (i - 1)
+        techo = piso + _BAND_STEP
+        out.append({
+            "id":    i,
+            "piso":  round(piso, 2),
+            "techo": round(techo, 2),
+            "rango": f"{piso:.2f} – {techo:.2f}".replace(".", ","),
+        })
+    return out
+
+
+def get_full_band_matrix(
+    client_id:   Union[str, "UUID"],
+    brand_id:    Union[str, "UUID"],
+    product_sku: str,
+) -> Dict[str, Any]:
+    """Matriz COMPLETA 12 bandas × plazos para (cliente, marca, sku).
+
+    A diferencia de get_client_price_matrix (que resuelve UNA banda
+    vigente según TC), aquí se devuelven todas las bandas con precios
+    positivos del snapshot `pricing.marluvas_client_sku_pricing` — el
+    caller escoge (banda, días). Shape:
+
+        {
+            "ok":     bool,
+            "bands":  { <banda_id:int>: { <dias:int>: Decimal } },
+            "reason": str | None,
+        }
+    """
+    out: Dict[str, Any] = {"ok": False, "bands": {}, "reason": None}
+
+    if not (client_id and brand_id and product_sku):
+        out["reason"] = "missing_required_args"
+        return out
+
+    try:
+        row, _drift = _find_active_pricing_row(
+            str(brand_id), str(client_id), str(product_sku).strip())
+    except Exception as e:
+        log.warning("get_full_band_matrix · DB lookup falló · %s", e)
+        out["reason"] = f"db_error: {e}"
+        return out
+
+    if not row:
+        out["reason"] = "no_active_pricing_row"
+        return out
+
+    matrix = row.prices_matrix or {}
+    if not isinstance(matrix, dict) or not matrix:
+        out["reason"] = "empty_prices_matrix"
+        return out
+
+    bands: Dict[int, Dict[int, Any]] = {}
+    for b_key, plazos in matrix.items():
+        if not isinstance(plazos, dict) or not plazos:
+            continue
+        try:
+            b_id = int(str(b_key).strip())
+        except (TypeError, ValueError):
+            continue
+        days: Dict[int, Any] = {}
+        for d_key, p_val in plazos.items():
+            try:
+                dias = int(str(d_key).strip())
+                price = Decimal(str(p_val))
+            except Exception:  # noqa: BLE001
+                continue
+            if dias <= 0 or price <= 0:
+                continue
+            days[dias] = price
+        if days:
+            bands[b_id] = days
+
+    if not bands:
+        out["reason"] = "no_positive_prices"
+        return out
+
+    out["ok"] = True
+    out["bands"] = bands
+    return out

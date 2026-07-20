@@ -1977,6 +1977,42 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
                     "source":      om.get("source"),
                     "reason":      om.get("reason"),
                 }
+                # Sprint 2026-07-20 · matriz COMPLETA 12 bandas × plazos del
+                # operador — la usa el selector Banda/Días del bloque
+                # PROPUESTA MWT (Paso 3 del wizard admin): precio exacto
+                # por (banda, días) sin re-resolver contra el TC.
+                try:
+                    from apps.commercial.services import (  # noqa: PLC0415
+                        get_full_band_matrix,
+                    )
+                    fm = get_full_band_matrix(
+                        client_id=operator_id,
+                        brand_id=str(bid_for_sku),
+                        product_sku=sku,
+                    )
+                    if fm.get("ok"):
+                        operator_results[sku]["bands"] = {
+                            str(b): {
+                                str(d): _ser(price)
+                                for d, price in sorted(days.items())
+                            }
+                            for b, days in sorted(fm["bands"].items())
+                        }
+                except Exception as e:
+                    log.warning(
+                        "sku_pricing_matrix · full band matrix falló · "
+                        "sku=%s op=%s · %s", sku, operator_id, e,
+                    )
+
+        # Sprint 2026-07-20 · catálogo de las 12 bandas (id + rango FX) —
+        # alimenta el select Banda del bloque PROPUESTA MWT.
+        bandas_catalog = None
+        if operator_id:
+            try:
+                from apps.commercial.services import list_bandas  # noqa: PLC0415
+                bandas_catalog = list_bandas()
+            except Exception as e:
+                log.warning("sku_pricing_matrix · list_bandas falló · %s", e)
 
         return Response({
             "ok":          any(r.get("ok") for r in results.values()),
@@ -1986,6 +2022,7 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
             "results":     results,
             "operator_id":      operator_id or None,
             "operator_results": operator_results or None,
+            "bandas":           bandas_catalog,
         }, status=200)
 
     # ── Bloqueo explícito de métodos no permitidos (403 > 405) ───
