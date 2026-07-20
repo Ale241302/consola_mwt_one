@@ -1041,6 +1041,9 @@ export default function ScreenOCDetail() {
     const unit = upc > 0 ? upc : Number(l.unit_price || 0);
     return Number(l.qty || 0) * unit;
   };
+  // Sprint 2026-07-20 · Total MWT por línea (columna "Total MWT" de
+  // Productos OC cuando la opera Muito Work Limitada).
+  const lineMwtTotal = (l) => Number(l.qty || 0) * Number(l.unit_price_mwt || 0);
   const computedTotal = allLines.reduce((a, l) => a + lineClientTotal(l), 0);
   const computedDeferred = allLines.reduce((a, l) => a + ((l.deferred_qty||0) * (l.deferred_unit_price||0)), 0);
   // Sprint 2026-07-15 (CEO) · totales por columna + ocultar columnas de
@@ -2216,6 +2219,14 @@ export default function ScreenOCDetail() {
                               : undefined}}>
                   {lang==='es'?'Precio Cliente':'Client Price'}
                 </th>
+                {/* Sprint 2026-07-20 · Total MWT por línea (qty × Precio MWT)
+                    — solo cuando la OC la opera MWT (gemelo de la columna
+                    Precio MWT). El "Total" de siempre sigue siendo cliente. */}
+                {isMwtOp && canSeeMwtPrice && (
+                  <th style={{width:120, textAlign:'right'}}>
+                    {lang==='es'?'Total MWT':'MWT Total'}
+                  </th>
+                )}
                 <th style={{width:120, textAlign:'right'}}>{lang==='es'?'Total':'Total'}</th>
                 <th style={{width:140}}>SAP</th>
                 {/* Sprint 2026-05-11 fase 6 · columna Nodo (read-only). */}
@@ -2343,6 +2354,9 @@ export default function ScreenOCDetail() {
                       ${Number(l.unit_price_client || 0).toFixed(2)}
                     </td>
                   )}
+                  {isMwtOp && canSeeMwtPrice && (
+                    <td className="td-money">{fmtMoney(lineMwtTotal(l))}</td>
+                  )}
                   <td className="td-money">{fmtMoney(lineClientTotal(l))}</td>
                   <td>
                     {l.sap ? (
@@ -2446,7 +2460,7 @@ export default function ScreenOCDetail() {
                 </tr>
               ))}
               {allLines.length === 0 && (
-                <tr><td colSpan={8 + (isMwtOp && canSeeMwtPrice ? 1 : 0) + (can('delete_oc_line') ? 1 : 0)} style={{textAlign:'center', padding:'32px', color:'var(--text-tertiary)'}}>
+                <tr><td colSpan={8 + (isMwtOp && canSeeMwtPrice ? 2 : 0) + (can('delete_oc_line') ? 1 : 0)} style={{textAlign:'center', padding:'32px', color:'var(--text-tertiary)'}}>
                   {lang==='es'
                     ? (isClient ? 'Sin productos en esta orden.' : 'Sin productos. Agrega el primero.')
                     : (isClient ? 'No products in this order.' : 'No products yet. Add your first.')}
@@ -2463,10 +2477,16 @@ export default function ScreenOCDetail() {
                 <td className="tabular-nums" style={{textAlign:'right', fontWeight:700}}>
                   {computedQty.toLocaleString('en-US')}
                 </td>
+                {/* Sprint 2026-07-20 · los totales se alinean a las columnas
+                    TOTAL (no a las de precio): Precio MWT/Cliente quedan
+                    vacíos; Total MWT = Σ qty×mwt y Total = Σ cliente. */}
+                {isMwtOp && canSeeMwtPrice && (
+                  <td/>/* Precio MWT */
+                )}
+                <td/>{/* Precio Cliente */}
                 {isMwtOp && canSeeMwtPrice && (
                   <td className="td-money" style={{fontWeight:700}}>{fmtMoney(computedMwtTotal)}</td>
                 )}
-                <td className="td-money" style={{fontWeight:700}}>{fmtMoney(computedClientTotal)}</td>
                 <td className="td-money" style={{fontSize:15, fontWeight:700}}>{fmtMoney(computedTotal)}</td>
                 <td/>{/* SAP */}
                 <td/>{/* Nodo */}
