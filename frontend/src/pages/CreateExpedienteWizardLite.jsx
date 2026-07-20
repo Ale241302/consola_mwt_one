@@ -2096,26 +2096,23 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     // la columna Precio Cliente es lo que debe quedar guardado). Antes solo
     // viajaba cuando el admin lo editaba a mano y las líneas se quedaban
     // con el precio estático viejo de especificaciones.client_prices.
+    // Sprint 2026-07-20 · el Precio MWT se emite con la MISMA regla (lo que
+    // el wizard muestra en la columna Precio MWT × el factor del plazo MWT).
+    // Antes solo viajaba con override manual y, tras un split en edit-full,
+    // el backend re-derivaba la lista cruda del operador (sin el descuento
+    // del plazo) → el total MWT quedaba por debajo de lo mostrado en Paso 3.
     const seen = new Set();
     orderLines.forEach((l) => {
       const sku = String(l.sku || "").trim().toUpperCase();
       if (!sku || seen.has(sku)) return;
       seen.add(sku);
       const cp = clientPriceOf(sku);
-      if (cp != null) {
-        out.push({ sku, unit_price_client: Math.round(cp * cliFactor * 10000) / 10000 });
-      }
-    });
-    // MWT: conserva el comportamiento previo — solo si el admin lo
-    // overrideó a mano. Se fusiona con la entrada de client si ya existe.
-    Object.entries(priceOverrides || {}).forEach(([sku, o]) => {
-      const ovm = _numPos(o && o.mwt);
-      if (ovm == null) return;
-      const key = String(sku || "").trim().toUpperCase();
-      const upm = Math.round(ovm * mwtFactor * 10000) / 10000;
-      const existing = out.find((x) => x.sku === key);
-      if (existing) existing.unit_price_mwt = upm;
-      else out.push({ sku: key, unit_price_mwt: upm });
+      const mp = mwtPriceOf(sku);
+      if (cp == null && mp == null) return;
+      const entry = { sku };
+      if (cp != null) entry.unit_price_client = Math.round(cp * cliFactor * 10000) / 10000;
+      if (mp != null) entry.unit_price_mwt    = Math.round(mp * mwtFactor * 10000) / 10000;
+      out.push(entry);
     });
     linePricesRef.current = out;
   }, [orderLines, priceOverrides, effectiveTiers, paymentDays, paymentDaysMwt, paymentDaysCliente, operatedByMwt, linePricesRef]); // eslint-disable-line react-hooks/exhaustive-deps
