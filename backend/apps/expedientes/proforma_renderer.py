@@ -463,7 +463,9 @@ def render_proforma_html(expediente_id, request_user=None,
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Proforma {_esc(codigo)} · PO {_esc(po_codigo)}</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<style>{_TRIVIEW_CSS}</style>
+<style>{_TRIVIEW_CSS}
+/* Sin barra de tabs fija en la vista standalone — recuperar los 52px */
+.view{{padding-top:0;}}</style>
 </head>
 <body>
 

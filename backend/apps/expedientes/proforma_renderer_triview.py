@@ -636,6 +636,12 @@ table.ct .trow td{border-top:2px solid var(--navy);}
 .pend-card strong{color:#5c3708;}
 .balance-card{background:var(--ice-s);border:1px solid var(--ice);border-radius:8px;padding:14px 18px;font-size:11px;color:var(--navy);line-height:1.7;margin-bottom:16px;}
 .balance-card strong{color:var(--navy);}
+.actions{display:flex;gap:8px;padding:16px 0;justify-content:center;}
+.btn{padding:9px 18px;border-radius:7px;font-size:12px;font-weight:600;border:none;cursor:pointer;font-family:inherit;}
+.btn-p{background:var(--navy);color:#fff;}
+.btn-p:hover{background:#0a4d6e;}
+.btn-o{background:none;border:1.5px solid var(--brd2);color:var(--t1);}
+.btn-o:hover{border-color:var(--navy);color:var(--navy);}
 @media(max-width:900px){.dual,.tri{grid-template-columns:1fr;}}
 @media print{
   *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important;}

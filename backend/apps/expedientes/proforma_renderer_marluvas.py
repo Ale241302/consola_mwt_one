@@ -118,7 +118,7 @@ def _fetch_brand_name(brand_id) -> str:
     try:
         with connection.cursor() as c:
             c.execute(
-                "SELECT razon_social FROM brands.marca WHERE id = %s",
+                "SELECT nombre FROM brands.marca WHERE id = %s",
                 [str(brand_id)],
             )
             row = c.fetchone()
