@@ -111,6 +111,14 @@ export function PipelineBoard({ enriched, lang = "es", labelOf, onOpen }) {
   const by = {};
   STAGES.forEach((s) => { by[s] = []; });
   enriched.forEach((e) => { (by[e.it.estado] || (by[e.it.estado] = [])).push(e); });
+  // Sprint 2026-07-20 · dentro de cada columna, las cards MÁS NUEVAS
+  // primero (created_at DESC) — antes heredaban el orden del fetch y
+  // los expedientes recién creados caían al FONDO de la columna.
+  Object.values(by).forEach((arr) => arr.sort((a, b) => {
+    const ta = Date.parse(a.it?._row?.created_at || "") || 0;
+    const tb = Date.parse(b.it?._row?.created_at || "") || 0;
+    return tb - ta;
+  }));
   return (
     <div style={{ display: "grid", gridTemplateColumns: `repeat(${STAGES.length}, minmax(130px, 1fr))`, gap: 8, overflowX: "auto" }}>
       {STAGES.map((s) => (

@@ -7,8 +7,9 @@
 // asignados al usuario (legal_entity_ids — el backend ya scopea
 // server-side; aquí se filtra defensivamente):
 //   · KPIs: expedientes, entregados, en tránsito, por salir, pares.
-//   · Próximas entregas (proyección real del Cronograma).
-//   · Pipeline por fase.
+//   · Pipeline por fase (cards nuevas primero en cada columna).
+//   (Sprint 2026-07-20 · la grilla "Próximas entregas" se retiró:
+//    redundaba con el pipeline.)
 //
 // R3 · POL_VISIBILIDAD: todo se etiqueta con la PO del cliente; el
 // código EXP interno y los precios MWT nunca llegan a este render.
@@ -20,7 +21,7 @@ import {
   loadCronograma, buildAvgs, computeSegments, projectedDelivery,
 } from "../../lib/cronogramaData.js";
 import {
-  KpiStrip, UpcomingDeliveries, PipelineBoard,
+  KpiStrip, PipelineBoard,
 } from "../cronograma/CronogramaExtras.jsx";
 import { useRole } from "../../context/RoleContext.jsx";
 
@@ -104,10 +105,9 @@ export default function ClientDashboard({ lang = "es" }) {
       {/* KPIs de SU operación (expedientes/entregados/tránsito/pares) */}
       <KpiStrip enriched={enriched} lang={lang}/>
 
-      {/* Próximas entregas — proyección real del Cronograma.
-          (Sprint 2026-06-11 rev2 · "Pares por talla" retirada a pedido
-          del CEO: no aportaba en el dashboard del cliente.) */}
-      <UpcomingDeliveries enriched={enriched} lang={lang} labelOf={labelOf} onOpen={onOpen}/>
+      {/* Sprint 2026-07-20 · sección "Próximas entregas" (grilla de cards
+          PO) retirada a pedido del cliente — el pipeline de abajo ya
+          muestra la misma info ordenada por fase. */}
 
       {/* Pipeline por fase — dónde está cada pedido */}
       <PipelineBoard enriched={enriched} lang={lang} labelOf={labelOf} onOpen={onOpen}/>
