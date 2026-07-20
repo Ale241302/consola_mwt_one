@@ -2715,7 +2715,10 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 const price = _mwtBandPrice(g.sku, bandaMwt, mwtDiasEff);
                 const base  = _mwtBandBasePrice(g.sku, bandaMwt);
                 const pct   = (price != null && base) ? (price - base) / base : null;
-                const qty   = Number(g.qty || 0);
+                // Sprint 2026-07-20 (fix) · groups NO trae `qty` — las
+                // cantidades viven en tallas[].cantidad (bug: CANT salía 0).
+                const qty   = (g.tallas || []).reduce(
+                  (a, t) => a + Number(t.cantidad || 0), 0);
                 totQty += qty;
                 if (price != null) { anyPrice = true; totSub += price * qty; }
                 return (
