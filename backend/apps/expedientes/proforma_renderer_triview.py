@@ -488,75 +488,19 @@ def render_proforma_html_triview(expediente_id, request_user=None,
 """
 
     # ── VISTA 3 · CLIENTE ────────────────────────────────────────────
-    rows_cli = []
-    for i, g in enumerate(groups, 1):
-        rows_cli.append(
-            f'<tr><td>{i}</td><td class="m">{_esc(g["sku"])}</td>'
-            f'<td>{_esc(g["label"])} — Marca {_esc(brand_name)}</td>'
-            f'<td>{_esc(g["color"] or "—")}</td>'
-            f'<td class="r">{_fmt_int(g["qty"])}</td>'
-            f'<td class="r">{_fmt_money(g["upc"])}</td>'
-            f'<td class="r">{_fmt_money(g["sub_cli"])}</td></tr>'
-        )
-    rows_cli = "".join(rows_cli)
-
-    view_cliente = f"""
-<div id="v-cliente" class="view">
-<div class="dash">
-  <div class="head">
-    <div>
-      <h2>{_esc(mwt["razon_social"]).upper()} · {_esc(codigo)}</h2>
-      <div class="meta"><strong>Proveedor:</strong> {_esc(mwt["razon_social"])} {("· " + _esc(mwt["tax_id"])) if mwt.get("tax_id") else ""}<br>
-        <strong>Cliente:</strong> {_esc(cliente["razon_social"] if cliente else "—")} {("· " + _esc(cliente["cedula"])) if cliente and cliente.get("cedula") else ""} · <strong>Contacto:</strong> {_esc(cliente["contacto_nombre"] if cliente else "—")} · <strong>Ref. PO:</strong> {_esc(po_codigo)}</div>
-    </div>
-    <span class="badge bg-tri">VISTA CLIENTE</span>
-  </div>
-  <div class="tri">
-    <div class="card">
-      <div class="card-h cli"><h3>Cliente</h3></div>
-      <div class="card-b">
-        <div class="sr"><span class="k">Empresa</span><span class="v">{_esc(cliente["razon_social"] if cliente else "—")}</span></div>
-        <div class="sr"><span class="k">Cédula Jurídica</span><span class="v" style="font-family:'JetBrains Mono';font-size:11px;">{_esc(cliente["cedula"] if cliente else "—")}</span></div>
-        <div class="sr"><span class="k">Contacto</span><span class="v">{_esc(cliente["contacto_nombre"] if cliente else "—")}</span></div>
-        <div class="sr"><span class="k">País</span><span class="v">{_esc(cliente["pais"] if cliente and cliente["pais"] else "Costa Rica")}</span></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-h info"><h3>Condiciones</h3></div>
-      <div class="card-b">
-        <div class="sr"><span class="k">Forma de Pago</span><span class="v">{_esc(_forma_pago_label(expediente.forma_pago))}</span></div>
-        <div class="sr"><span class="k">Plazo de pago</span><span class="v">{cli_days} días</span></div>
-        <div class="sr"><span class="k">Entrega</span><span class="v" style="font-size:11px;">DDP bodega (nacionalizado)</span></div>
-        <div class="sr"><span class="k">Moneda</span><span class="v" style="font-size:11px;">Dólares (USD)</span></div>
-        <div class="sr"><span class="k">Valor Neto</span><span class="v" style="font-size:9.5px;font-style:italic;">{_esc(_money_words_es(total_cli))}</span></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-h mlv"><h3>Datos proforma</h3></div>
-      <div class="card-b">
-        <div class="sr"><span class="k">Proforma</span><span class="v" style="font-family:'JetBrains Mono';font-size:11px;">{_esc(codigo)}</span></div>
-        <div class="sr"><span class="k">Ref. PO</span><span class="v" style="font-family:'JetBrains Mono';font-size:11px;">{_esc(po_codigo)}</span></div>
-        <div class="sr"><span class="k">Fecha</span><span class="v" style="font-size:11px;">{_fmt_date_es(today)}</span></div>
-        <div class="sr"><span class="k">Total pares</span><span class="v">{_fmt_int(total_pares)}</span></div>
-        <div class="sr big"><span class="k" style="font-weight:700;">Total</span><span class="v" style="color:var(--navy);">{_fmt_money(total_cli)}</span></div>
-      </div>
-    </div>
-  </div>
-  <div class="sect">
-    <div class="sect-h"><h3>Líneas de producto — Marca {_esc(brand_name)}</h3></div>
-    <table class="ct">
-      <thead><tr><th>#</th><th>Código</th><th>Descripción</th><th>Color</th><th class="r">Cantidad</th><th class="r">Precio USD</th><th class="r">Total USD</th></tr></thead>
-      <tbody>
-        {rows_cli}
-        <tr class="trow"><td colspan="4"><strong>TOTAL</strong></td><td class="r"><strong>{_fmt_int(total_pares)}</strong></td><td></td><td class="r"><strong>{_fmt_money(total_cli)}</strong></td></tr>
-      </tbody>
-    </table>
-  </div>
-  <div class="notes-card"><strong>Observaciones:</strong> Entrega <strong>DDP</strong> (Delivered Duty Paid) en bodega del cliente, mercancía nacionalizada por {_esc(mwt["razon_social"])} — el cliente no gestiona importación ni aduana. Ref. PO {_esc(po_codigo)}. Operado por {_esc(mwt["razon_social"])}. Precios sujetos a ajuste por flete definitivo.</div>
-  {_talla_sections(groups, "Desglose por talla")}
-</div>
-</div>
-"""
+    view_cliente = _build_view_cliente(
+        expediente=expediente,
+        cliente=cliente,
+        groups=groups,
+        mwt=mwt,
+        brand_name=brand_name,
+        codigo=codigo,
+        cli_days=cli_days,
+        po_codigo=po_codigo,
+        total_pares=total_pares,
+        total_cli=total_cli,
+        today=today,
+    )
 
     html_str = f"""<!DOCTYPE html>
 <html lang="es">
@@ -720,5 +664,117 @@ table.ct .trow td{border-top:2px solid var(--navy);}
   .pill .s{font-size:8px;}.pill .q{font-size:11px;}
   a{text-decoration:none;color:inherit;}
   .badge{border:1px solid currentColor;}
+}
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Vista CLIENTE reutilizable (Sprint 2026-07-19)
+# La usa la tri-vista (tab) y el renderer standalone de audiencia CLIENT.
+# ─────────────────────────────────────────────────────────────────────
+def _build_view_cliente(*, expediente, cliente, groups, mwt, brand_name,
+                        codigo, cli_days, po_codigo, total_pares, total_cli,
+                        today, active=False, with_print_buttons=True):
+    """HTML de la vista CLIENTE (V2): card cliente, condiciones (valor
+    neto en letras), datos proforma, líneas con precio unit_price_client,
+    observaciones DDP y desglose por talla en pills."""
+    rows_cli = []
+    for i, g in enumerate(groups, 1):
+        rows_cli.append(
+            f'<tr><td>{i}</td><td class="m">{_esc(g["sku"])}</td>'
+            f'<td>{_esc(g["label"])} — Marca {_esc(brand_name)}</td>'
+            f'<td>{_esc(g["color"] or "—")}</td>'
+            f'<td class="r">{_fmt_int(g["qty"])}</td>'
+            f'<td class="r">{_fmt_money(g["upc"])}</td>'
+            f'<td class="r">{_fmt_money(g["sub_cli"])}</td></tr>'
+        )
+    rows_cli = "".join(rows_cli)
+
+    buttons = ""
+    if with_print_buttons:
+        buttons = """
+  <div class="actions print-actions">
+    <button class="btn btn-p" onclick="printV('cliente','portrait')">🖨 Imprimir Carta Vertical</button>
+    <button class="btn btn-o" onclick="printV('cliente','landscape')">🖨 Imprimir Carta Horizontal</button>
+  </div>"""
+
+    return f"""
+<div id="v-cliente" class="view{' active' if active else ''}">
+<div class="dash">
+  <div class="head">
+    <div>
+      <h2>{_esc(mwt["razon_social"]).upper()} · {_esc(codigo)}</h2>
+      <div class="meta"><strong>Proveedor:</strong> {_esc(mwt["razon_social"])} {("· " + _esc(mwt["tax_id"])) if mwt.get("tax_id") else ""}<br>
+        <strong>Cliente:</strong> {_esc(cliente["razon_social"] if cliente else "—")} {("· " + _esc(cliente["cedula"])) if cliente and cliente.get("cedula") else ""} · <strong>Contacto:</strong> {_esc(cliente["contacto_nombre"] if cliente else "—")} · <strong>Ref. PO:</strong> {_esc(po_codigo)}</div>
+    </div>
+    <span class="badge bg-tri">VISTA CLIENTE</span>
+  </div>
+  <div class="tri">
+    <div class="card">
+      <div class="card-h cli"><h3>Cliente</h3></div>
+      <div class="card-b">
+        <div class="sr"><span class="k">Empresa</span><span class="v">{_esc(cliente["razon_social"] if cliente else "—")}</span></div>
+        <div class="sr"><span class="k">Cédula Jurídica</span><span class="v" style="font-family:'JetBrains Mono';font-size:11px;">{_esc(cliente["cedula"] if cliente else "—")}</span></div>
+        <div class="sr"><span class="k">Contacto</span><span class="v">{_esc(cliente["contacto_nombre"] if cliente else "—")}</span></div>
+        <div class="sr"><span class="k">País</span><span class="v">{_esc(cliente["pais"] if cliente and cliente["pais"] else "Costa Rica")}</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h info"><h3>Condiciones</h3></div>
+      <div class="card-b">
+        <div class="sr"><span class="k">Forma de Pago</span><span class="v">{_esc(_forma_pago_label(expediente.forma_pago))}</span></div>
+        <div class="sr"><span class="k">Plazo de pago</span><span class="v">{cli_days} días</span></div>
+        <div class="sr"><span class="k">Entrega</span><span class="v" style="font-size:11px;">DDP bodega (nacionalizado)</span></div>
+        <div class="sr"><span class="k">Moneda</span><span class="v" style="font-size:11px;">Dólares (USD)</span></div>
+        <div class="sr"><span class="k">Valor Neto</span><span class="v" style="font-size:9.5px;font-style:italic;">{_esc(_money_words_es(total_cli))}</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h mlv"><h3>Datos proforma</h3></div>
+      <div class="card-b">
+        <div class="sr"><span class="k">Proforma</span><span class="v" style="font-family:'JetBrains Mono';font-size:11px;">{_esc(codigo)}</span></div>
+        <div class="sr"><span class="k">Ref. PO</span><span class="v" style="font-family:'JetBrains Mono';font-size:11px;">{_esc(po_codigo)}</span></div>
+        <div class="sr"><span class="k">Fecha</span><span class="v" style="font-size:11px;">{_fmt_date_es(today)}</span></div>
+        <div class="sr"><span class="k">Total pares</span><span class="v">{_fmt_int(total_pares)}</span></div>
+        <div class="sr big"><span class="k" style="font-weight:700;">Total</span><span class="v" style="color:var(--navy);">{_fmt_money(total_cli)}</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="sect">
+    <div class="sect-h"><h3>Líneas de producto — Marca {_esc(brand_name)}</h3></div>
+    <table class="ct">
+      <thead><tr><th>#</th><th>Código</th><th>Descripción</th><th>Color</th><th class="r">Cantidad</th><th class="r">Precio USD</th><th class="r">Total USD</th></tr></thead>
+      <tbody>
+        {rows_cli}
+        <tr class="trow"><td colspan="4"><strong>TOTAL</strong></td><td class="r"><strong>{_fmt_int(total_pares)}</strong></td><td></td><td class="r"><strong>{_fmt_money(total_cli)}</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="notes-card"><strong>Observaciones:</strong> Entrega <strong>DDP</strong> (Delivered Duty Paid) en bodega del cliente, mercancía nacionalizada por {_esc(mwt["razon_social"])} — el cliente no gestiona importación ni aduana. Ref. PO {_esc(po_codigo)}. Operado por {_esc(mwt["razon_social"])}. Precios sujetos a ajuste por flete definitivo.</div>
+  {_talla_sections(groups, "Desglose por talla")}
+  {buttons}
+</div>
+</div>
+"""
+
+
+# JS compartido: tabs + impresión por vista (Carta vertical/horizontal).
+_PRINT_SCRIPT = """
+function sw(v, btn){
+  document.querySelectorAll('.view').forEach(function(el){el.classList.remove('active');});
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
+  document.getElementById('v-'+v).classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+function printV(view,orientation){
+  var origTitle=document.title; document.title=' ';
+  document.querySelectorAll('.view').forEach(function(el){el.classList.remove('active');});
+  document.getElementById('v-'+view).classList.add('active');
+  var style=document.getElementById('print-orientation');
+  var css='@media print { @page { size: letter '+orientation+'; margin: 6mm 8mm; }';
+  if(orientation==='landscape'){css+=' table.ct{font-size:11px;} table.ct thead th{font-size:9px;padding:8px 10px;} table.ct tbody td{padding:7px 10px;}';}
+  css+='}';
+  style.textContent=css;
+  setTimeout(function(){window.print();setTimeout(function(){document.title=origTitle;style.textContent='';},500);},100);
 }
 """
