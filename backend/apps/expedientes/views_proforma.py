@@ -64,25 +64,64 @@ def generate_proforma(request, expediente_id):
     codigo_override = (body.get("codigo") or body.get("numero") or "").strip() or None
     payment_days_override = body.get("payment_days")
 
-    # 1) Render -- ruteo segun audience
+    # 0) Expediente — define el modo de generación (operador MWT o no).
     try:
-        if raw_audience in ("MWT_INTERNAL", "ADMIN_ONLY"):
-            # Sprint 2026-07-19 · las audiencias internas generan la
-            # proforma TRI-VISTA (CEO · Marluvas · Cliente en un solo
-            # HTML con tabs). Antes solo existía la vista MARLUVAS.
-            html_str, metadata = render_proforma_html_triview(
+        exp = Expediente.objects.get(id=expediente_id, is_active=True)
+    except Expediente.DoesNotExist:
+        return Response({"detail": "Expediente no encontrado"}, status=404)
+
+    # Sprint 2026-07-20 · prefijo PF por defecto: si el admin tipea el
+    # número sin "PF" (ej. "2488-2026"), se normaliza a "PF 2488-2026".
+    if codigo_override and not codigo_override.upper().startswith("PF"):
+        codigo_override = "PF " + codigo_override
+
+    # Sprint 2026-07-20 · expediente operado por MWT → ya NO se elige
+    # audiencia: se generan TRES proformas de una vez (Cliente, MWT/CEO
+    # triangular y Fábrica — compra MWT al proveedor). Si no es MWT, se
+    # mantiene el ruteo clásico por audience (tri-vista para internas).
+    from apps.core.constants import MWT_OPERATING_CLIENT_ID  # noqa: PLC0415
+    from django.utils import timezone  # noqa: PLC0415
+    from .proforma_renderer import _next_proforma_codigo  # noqa: PLC0415
+    from .proforma_renderer_triview import (  # noqa: PLC0415
+        render_proforma_html_ceo,
+        render_proforma_html_fabrica,
+    )
+
+    is_mwt_op = (
+        str(getattr(exp, "operating_company_id", "") or "").lower()
+        == str(MWT_OPERATING_CLIENT_ID).lower()
+    )
+    if is_mwt_op:
+        jobs = [
+            ("CLIENT",       render_proforma_html,         {}),
+            ("MWT_INTERNAL", render_proforma_html_ceo,     {}),
+            ("FABRICA",      render_proforma_html_fabrica, {}),
+        ]
+        # Código único para los 3 documentos: se resuelve UNA vez, antes
+        # de renderizar/insertar (si no, cada renderer sacaría un
+        # secuencial distinto al ver los docs recién creados).
+        if not codigo_override:
+            codigo_override = _next_proforma_codigo(timezone.now().date().year)
+    elif raw_audience in ("MWT_INTERNAL", "ADMIN_ONLY"):
+        # Sprint 2026-07-19 · las audiencias internas generan la proforma
+        # TRI-VISTA (CEO · Marluvas · Cliente en un solo HTML con tabs).
+        jobs = [(raw_audience, render_proforma_html_triview,
+                 {"payment_days_override": payment_days_override})]
+    else:
+        # CLIENT usa la vista cliente (SONDEL) con credit_days_cliente.
+        jobs = [("CLIENT", render_proforma_html, {})]
+
+    # 1) Render de cada documento
+    renders = []
+    try:
+        for job_audience, renderer, extra_kwargs in jobs:
+            html_str, metadata = renderer(
                 expediente_id,
                 request_user=request.user,
                 codigo_override=codigo_override,
-                payment_days_override=payment_days_override,
+                **extra_kwargs,
             )
-        else:
-            # CLIENT usa la vista cliente (SONDEL) con credit_days_cliente.
-            html_str, metadata = render_proforma_html(
-                expediente_id,
-                request_user=request.user,
-                codigo_override=codigo_override,
-            )
+            renders.append((job_audience, html_str, metadata))
     except Expediente.DoesNotExist:
         return Response({"detail": "Expediente no encontrado"}, status=404)
     except ValueError as ve:
@@ -91,14 +130,6 @@ def generate_proforma(request, expediente_id):
             {"detail": "no se puede generar la proforma", "error": msg},
             status=422,
         )
-
-    html_bytes = html_str.encode("utf-8")
-    file_size = len(html_bytes)
-
-    # 2) Upload a MinIO
-    doc_uuid = uuid.uuid4()
-    safe_name = metadata["filename"].replace("/", "_").replace("\\", "_")
-    key = f"documento/{doc_uuid}/{safe_name}"
 
     try:
         from apps.storage.services import (
@@ -112,85 +143,108 @@ def generate_proforma(request, expediente_id):
             status=502,
         )
 
-    import io as _io
-    up = put_object_stream(
-        key=key,
-        file_stream=_io.BytesIO(html_bytes),
-        content_type="text/html; charset=utf-8",
-        length=file_size,
-    )
-    if not up.get("ok"):
-        log.error(
-            "proforma.generate put_object_stream failed: %s",
-            up.get("error"),
-        )
-        return Response(
-            {"detail": "minio_upload_failed", "error": up.get("error") or "unknown"},
-            status=502,
-        )
-
-    # 3) Persistir documento en BD
     author = (
         getattr(request.user, "email", None)
         or getattr(request.user, "username", None)
         or "system"
     )
-    codigo = metadata["codigo"]
-    oc_id = metadata.get("oc_id")
 
-    try:
-        with transaction.atomic():
-            with connection.cursor() as c:
-                c.execute(
-                    """
-                    INSERT INTO expedientes.documento (
-                        id, oc_id, expediente_id,
-                        kind, audience, codigo,
-                        file_ext, file_size_bytes, storage_url,
-                        author, fecha,
-                        is_active, created_at, updated_at
-                    ) VALUES (
-                        %s, %s, %s,
-                        %s, %s, %s,
-                        %s, %s, %s,
-                        %s, CURRENT_DATE,
-                        TRUE, now(), now()
-                    )
-                    """,
-                    [
-                        str(doc_uuid),
-                        oc_id if oc_id else None,
-                        str(expediente_id),
-                        "PROFORMA", raw_audience, codigo,
-                        "html", file_size, key,
-                        author,
-                    ],
-                )
-        d = Documento.objects.get(pk=doc_uuid)
-    except Exception as exc:
-        log.exception("proforma.generate insert failed: %s", exc)
-        return Response(
-            {"detail": "documento_insert_failed", "error": str(exc)[:200]},
-            status=500,
+    # 2) Upload a MinIO + persistir documento en BD (por cada render)
+    import io as _io
+    results = []
+    for job_audience, html_str, metadata in renders:
+        html_bytes = html_str.encode("utf-8")
+        file_size = len(html_bytes)
+        doc_uuid = uuid.uuid4()
+        safe_name = metadata["filename"].replace("/", "_").replace("\\", "_")
+        key = f"documento/{doc_uuid}/{safe_name}"
+
+        up = put_object_stream(
+            key=key,
+            file_stream=_io.BytesIO(html_bytes),
+            content_type="text/html; charset=utf-8",
+            length=file_size,
         )
+        if not up.get("ok"):
+            log.error(
+                "proforma.generate put_object_stream failed (%s): %s",
+                job_audience, up.get("error"),
+            )
+            return Response(
+                {"detail": "minio_upload_failed", "error": up.get("error") or "unknown"},
+                status=502,
+            )
 
-    # 4) Signed URL best-effort
-    signed = None
-    try:
-        signed = generate_signed_url(key=key, kind="get", ttl=900)
-    except Exception as exc:
-        log.warning("generate_signed_url best-effort failed: %s", exc)
-        signed = {"url": None, "available": False, "error": str(exc)}
+        codigo = metadata["codigo"]
+        oc_id = metadata.get("oc_id")
+        try:
+            with transaction.atomic():
+                with connection.cursor() as c:
+                    c.execute(
+                        """
+                        INSERT INTO expedientes.documento (
+                            id, oc_id, expediente_id,
+                            kind, audience, codigo,
+                            file_ext, file_size_bytes, storage_url,
+                            author, fecha,
+                            is_active, created_at, updated_at
+                        ) VALUES (
+                            %s, %s, %s,
+                            %s, %s, %s,
+                            %s, %s, %s,
+                            %s, CURRENT_DATE,
+                            TRUE, now(), now()
+                        )
+                        """,
+                        [
+                            str(doc_uuid),
+                            oc_id if oc_id else None,
+                            str(expediente_id),
+                            "PROFORMA", job_audience, codigo,
+                            "html", file_size, key,
+                            author,
+                        ],
+                    )
+            d = Documento.objects.get(pk=doc_uuid)
+        except Exception as exc:
+            log.exception(
+                "proforma.generate insert failed (%s): %s", job_audience, exc)
+            return Response(
+                {"detail": "documento_insert_failed", "error": str(exc)[:200]},
+                status=500,
+            )
 
+        # Signed URL best-effort
+        try:
+            signed = generate_signed_url(key=key, kind="get", ttl=900)
+        except Exception as exc:
+            log.warning("generate_signed_url best-effort failed: %s", exc)
+            signed = {"url": None, "available": False, "error": str(exc)}
+
+        results.append({
+            "documento":       DocumentoSerializer(d).data,
+            "audience":        job_audience,
+            "codigo":          codigo,
+            "documento_id":    str(d.id),
+            "filename":        metadata["filename"],
+            "total_pares":     metadata["total_pares"],
+            "total_value_usd": str(metadata["total_value_usd"]),
+            "signed_url":      signed,
+        })
+
+    first = results[0]
     payload = {
-        "documento":       DocumentoSerializer(d).data,
-        "codigo":          codigo,
-        "documento_id":    str(d.id),
+        # Sprint 2026-07-20 · multi-documento (MWT: Cliente + MWT + Fábrica).
+        "documentos":      results,
+        # Compat hacia atrás: campos planos del primer documento (CLIENT).
+        "documento":       first["documento"],
+        "codigo":          first["codigo"],
+        "documento_id":    first["documento_id"],
         "expediente_id":   str(expediente_id),
-        "filename":        metadata["filename"],
-        "total_pares":     metadata["total_pares"],
-        "total_value_usd": str(metadata["total_value_usd"]),
-        "signed_url":      signed,
+        "filename":        first["filename"],
+        "total_pares":     first["total_pares"],
+        "total_value_usd": first["total_value_usd"],
+        "signed_url":      first["signed_url"],
     }
     return Response(payload, status=201)
 

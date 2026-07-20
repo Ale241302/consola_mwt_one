@@ -76,6 +76,10 @@ export default function UploadDocumentModal({
   // y se PATCHee el expediente antes del upload — así el HTML cliente
   // auto-generado refleja el descuento aplicado.
   expedienteCreditDays = 90,
+  // Sprint 2026-07-20 · el expediente es operado por Muito Work Limitada.
+  // En ese caso la Proforma NO ofrece selector de audiencia: el backend
+  // genera 3 documentos (Cliente, MWT y Fábrica) en una sola llamada.
+  operatedByMwt = false,
   // Sprint 2026-06-11 · FUSIÓN: lista de destinos posibles del documento
   // [{label, ocId, expedienteId, creditDays}]. Si viene, el modal muestra
   // un selector "Pertenece a" ARRIBA del tipo y resuelve ocId/expedienteId
@@ -160,6 +164,9 @@ export default function UploadDocumentModal({
   const isAutoProforma = (
     kind === "PROFORMA" && !!expedienteId && !viewerIsClient
   );
+  // Sprint 2026-07-20 · MWT-operado: sin selector de audiencia — el
+  // backend genera Cliente + MWT + Fábrica de una vez.
+  const isTripleProforma = isAutoProforma && !!operatedByMwt;
   // Sprint 2026-06-01 · Auto-Factura: la Factura comercial se GENERA (no se
   // sube archivo) con el mismo formato que la factura de transferencia,
   // ruteada por audiencia (cliente vs MWT/admin).
@@ -222,7 +229,9 @@ export default function UploadDocumentModal({
         const targetExpId = expedienteId;
         const audiencePayload = audienceApplies ? audience : "CLIENT";
         const body = {
-          audience: audiencePayload,
+          // Sprint 2026-07-20 · MWT-operado: el backend decide solo
+          // (genera 3 docs) — no mandamos audience.
+          ...(isTripleProforma ? {} : { audience: audiencePayload }),
           codigo: (codigo || "").trim() || null,
           // Sprint 2026-05-24 · NO enviar payment_days. El backend ya
           // rutea segun audience: CLIENT -> expediente.credit_days,
@@ -630,8 +639,23 @@ export default function UploadDocumentModal({
 
           {/* Sprint 2026-05-06 · AUDIENCIA del documento. Solo se muestra
               al ADMIN/MWT y solo cuando el tipo es Proforma o Factura.
-              CLIENT_* nunca lo ve — el backend fuerza CLIENT igualmente. */}
-          {audienceApplies && (
+              CLIENT_* nunca lo ve — el backend fuerza CLIENT igualmente.
+              Sprint 2026-07-20 · si el expediente es operado por MWT, el
+              selector NO se muestra: generate-proforma crea los 3 docs
+              (Cliente, MWT y Fábrica) automáticamente. */}
+          {isTripleProforma && (
+            <div style={{
+              padding: "10px 12px", fontSize: 11, lineHeight: 1.5,
+              border: "1px solid var(--border)", borderRadius: 8,
+              background: "var(--surface-raised, #fff)",
+              color: "var(--text-tertiary)",
+            }}>
+              {lang === "es"
+                ? "Operado por Muito Work Limitada — se generarán 3 proformas: Cliente, Muito Work Limitada y Fábrica."
+                : "Operated by Muito Work Limitada — 3 proformas will be generated: Client, Muito Work Limitada and Factory."}
+            </div>
+          )}
+          {audienceApplies && !isTripleProforma && (
             <div>
               <div className="micro" style={{
                 fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
@@ -784,7 +808,7 @@ export default function UploadDocumentModal({
               color: "var(--text-tertiary)", textTransform: "uppercase",
               marginBottom: 6,
             }}>
-              {lang === "es" ? "Numero / Codigo (opcional)" : "Number / Code (optional)"}
+              {lang === "es" ? "Numero / Codigo" : "Number / Code"}
             </div>
             <input
               type="text" className="input mono-sm"

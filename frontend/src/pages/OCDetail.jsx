@@ -93,6 +93,7 @@ function _docKindLabel(kind, lang, audience) {
   // variantes en el listado "Documentos comerciales".
   if (k === 'PROFORMA') {
     const a = String(audience || '').toUpperCase();
+    if (a === 'FABRICA')      return lang === 'en' ? 'Factory Proforma' : 'Proforma Fábrica';
     if (a === 'MWT_INTERNAL') return lang === 'en' ? 'MWT Proforma' : 'Proforma MWT';
     if (a === 'ADMIN_ONLY')   return lang === 'en' ? 'CEO Proforma' : 'Proforma CEO';
     if (a === 'CLIENT')       return lang === 'en' ? 'Client Proforma' : 'Proforma Cliente';
@@ -1432,6 +1433,14 @@ export default function ScreenOCDetail() {
           expedienteCreditDays={
             (Array.isArray(apiOcExpedientes) && apiOcExpedientes[0]?.credit_days)
             || 90
+          }
+          /* Sprint 2026-07-20 · si el expediente destino es operado por
+             MWT, el modal oculta el selector de audiencia: el backend
+             genera Cliente + MWT + Fábrica en una sola llamada. */
+          operatedByMwt={
+            isMwtOperated(
+              (Array.isArray(apiOcExpedientes) && apiOcExpedientes[0]?.operating_company_id)
+            )
           }
           contextLabel={oc?.code || oc?.codigo}
           onUploaded={(doc) => {

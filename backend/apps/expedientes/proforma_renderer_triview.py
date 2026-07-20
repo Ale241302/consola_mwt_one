@@ -784,3 +784,377 @@ function printV(view,orientation){
   setTimeout(function(){window.print();setTimeout(function(){document.title=origTitle;style.textContent='';},500);},100);
 }
 """
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 2026-07-20 · Renders STANDALONE CEO y FÁBRICA (Marluvas)
+#
+# Cuando el expediente es operado por Muito Work Limitada,
+# generate-proforma crea TRES documentos en una llamada:
+#   · CLIENT       → render_proforma_html (vista cliente, proforma_renderer)
+#   · MWT_INTERNAL → render_proforma_html_ceo (triangular compra/reventa)
+#   · FABRICA      → render_proforma_html_fabrica (compra MWT al proveedor)
+#
+# Estos builders reutilizan el markup de las vistas CEO/Marluvas de la
+# tri-vista, pero en HTML standalone (sin barra de tabs) y con los
+# botones de impresión Carta Vertical/Horizontal de la vista cliente.
+# La tri-vista (render_proforma_html_triview) NO cambia.
+# ─────────────────────────────────────────────────────────────────────
+
+def _proforma_context(expediente_id, codigo_override=None):
+    """Datos compartidos de la proforma — el mismo criterio de fetch,
+    plazos y totales (HALF-UP) que render_proforma_html_triview."""
+    expediente = Expediente.objects.get(id=expediente_id, is_active=True)
+    if not expediente.client_id:
+        raise ValueError("expediente_sin_cliente")
+
+    cliente = _fetch_cliente_full(expediente.client_id)
+    oc = None
+    if expediente.oc_id:
+        oc = Oc.objects.filter(id=expediente.oc_id, is_active=True).first()
+
+    lineas = list(
+        Linea.objects
+        .filter(expediente_id=expediente.id, is_active=True)
+        .order_by("sku", "size", "created_at")
+    )
+    if not lineas:
+        raise ValueError("expediente_sin_lineas_activas")
+
+    producto_ids = list({l.producto_id for l in lineas if l.producto_id})
+    prod_map = _fetch_producto_map(producto_ids)
+    groups = _group_lines(lineas, prod_map)
+
+    today = timezone.now().date()
+    if codigo_override and str(codigo_override).strip():
+        codigo = str(codigo_override).strip()
+    else:
+        codigo = _next_proforma_codigo(today.year)
+
+    mwt = _fetch_mwt_company_data()
+    brand_name = _fetch_brand_name(getattr(expediente, "brand_id", None)) or "MARCA"
+
+    def _int_pos(v):
+        try:
+            n = int(v)
+            return n if n > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    cli_days = (_int_pos(getattr(expediente, "credit_days_cliente", None))
+                or _int_pos(expediente.credit_days) or 90)
+    mwt_days = (_int_pos(getattr(expediente, "credit_days_mwt", None)) or 15)
+
+    po_codigo = (oc.codigo if oc and oc.codigo else (expediente.codigo or ""))
+    po_fecha = _fmt_date_es(oc.issued_at) if oc and oc.issued_at else "—"
+
+    total_pares = sum(g["qty"] for g in groups)
+    total_mwt = _q2(sum(g["sub_mwt"] for g in groups))
+    total_cli = _q2(sum(g["sub_cli"] for g in groups))
+    sobreprecio = _q2(total_cli - total_mwt)
+    diferencial = _q2(sobreprecio * D15)
+    margen = _q2(sobreprecio + diferencial)
+    roi = (margen / total_mwt * 100).quantize(Decimal("0.1")) if total_mwt > 0 else Decimal("0")
+    pct_venta = (margen / total_cli * 100).quantize(Decimal("0.1")) if total_cli > 0 else Decimal("0")
+    ciclo = cli_days - mwt_days
+
+    is_mwt_op = (
+        str(getattr(expediente, "operating_company_id", "") or "").lower()
+        == str(MWT_OPERATING_CLIENT_ID).lower()
+    )
+    modelo_lbl = "B (Triangular — MWT compra/revende)" if is_mwt_op else "A (Directo)"
+
+    cli_slug = (cliente.get("razon_social") if cliente else "mwt") or "mwt"
+    cli_slug = "".join(ch if ch.isalnum() else "-" for ch in cli_slug).strip("-").lower() or "mwt"
+
+    return {
+        "expediente": expediente, "cliente": cliente, "oc": oc,
+        "groups": groups, "today": today, "codigo": codigo,
+        "mwt": mwt, "brand_name": brand_name,
+        "cli_days": cli_days, "mwt_days": mwt_days,
+        "po_codigo": po_codigo, "po_fecha": po_fecha,
+        "total_pares": total_pares, "total_mwt": total_mwt, "total_cli": total_cli,
+        "sobreprecio": sobreprecio, "diferencial": diferencial, "margen": margen,
+        "roi": roi, "pct_venta": pct_venta, "ciclo": ciclo,
+        "modelo_lbl": modelo_lbl, "cli_slug": cli_slug,
+    }
+
+
+def _print_buttons(view_id):
+    """Botones de impresión Carta V/H — mismos que la vista cliente."""
+    return f"""
+  <div class="actions print-actions">
+    <button class="btn btn-p" onclick="printV('{view_id}','portrait')">🖨 Imprimir Carta Vertical</button>
+    <button class="btn btn-o" onclick="printV('{view_id}','landscape')">🖨 Imprimir Carta Horizontal</button>
+  </div>"""
+
+
+def _standalone_shell(title, view_html):
+    """Shell HTML standalone: CSS tri-vista + sin padding-top (no hay
+    barra de tabs fija) + printV para los botones de impresión."""
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>{_TRIVIEW_CSS}
+/* Sin barra de tabs fija en la vista standalone — recuperar los 52px */
+.view{{padding-top:0;}}</style>
+</head>
+<body>
+
+{view_html}
+
+<style id="print-orientation"></style>
+<script>{_PRINT_SCRIPT}</script>
+</body>
+</html>
+"""
+
+
+def _build_view_ceo(ctx, *, active=True, with_print_buttons=True):
+    """HTML de la vista CEO (triangular MWT) — mismo markup que la tab
+    CEO de la tri-vista, con botones de impresión opcionales."""
+    expediente  = ctx["expediente"]
+    cliente     = ctx["cliente"]
+    groups      = ctx["groups"]
+    brand_name  = ctx["brand_name"]
+    codigo      = ctx["codigo"]
+    cli_days    = ctx["cli_days"]
+    mwt_days    = ctx["mwt_days"]
+    po_codigo   = ctx["po_codigo"]
+    po_fecha    = ctx["po_fecha"]
+    total_pares = ctx["total_pares"]
+    total_mwt   = ctx["total_mwt"]
+    total_cli   = ctx["total_cli"]
+    sobreprecio = ctx["sobreprecio"]
+    diferencial = ctx["diferencial"]
+    margen      = ctx["margen"]
+    roi         = ctx["roi"]
+    pct_venta   = ctx["pct_venta"]
+    ciclo       = ctx["ciclo"]
+    modelo_lbl  = ctx["modelo_lbl"]
+    today       = ctx["today"]
+
+    line_rows = []
+    for i, g in enumerate(groups, 1):
+        delta = g["upc"] - g["upm"]
+        line_rows.append(
+            f'<tr><td>{i}</td><td class="m">{_esc(g["sku"])}</td>'
+            f'<td>{_esc(g["label"])}</td>'
+            f'<td class="m" style="font-size:10px;">{_esc(g["ncm"] or "—")}</td>'
+            f'<td>{_esc(g["color"] or "—")}</td>'
+            f'<td class="r">{_fmt_int(g["qty"])}</td>'
+            f'<td class="r cb">{_fmt_money(g["upm"])}</td>'
+            f'<td class="r cb">{_fmt_money(g["sub_mwt"])}</td>'
+            f'<td class="r rb">{_fmt_money(g["upc"])}</td>'
+            f'<td class="r rb">{_fmt_money(g["sub_cli"])}</td>'
+            f'<td class="r" style="color:var(--ok);font-weight:700;">+{_fmt_money(delta)}</td></tr>'
+        )
+    lines_ceo = "".join(line_rows)
+    buttons = _print_buttons("ceo") if with_print_buttons else ""
+
+    return f"""
+<div id="v-ceo" class="view{' active' if active else ''}">
+<div class="dash">
+  <div class="head">
+    <div>
+      <h2>{_esc(codigo)} — Triangular: MWT compra a {_esc(brand_name)} y revende a {_esc(cliente["razon_social"] if cliente else "cliente")}</h2>
+      <div class="meta">
+        <strong>Expediente:</strong> {_esc(expediente.codigo or "—")} · <strong>PO Cliente:</strong> {_esc(po_codigo)} · <strong>Modelo:</strong> {_esc(modelo_lbl)}<br>
+        <strong>Cliente final:</strong> {_esc(cliente["razon_social"] if cliente else "—")}{(", " + _esc(cliente["ciudad"]) + ", " + _esc(cliente["pais"])) if cliente and (cliente["ciudad"] or cliente["pais"]) else ""} · <strong>Contacto:</strong> {_esc(cliente["contacto_nombre"] if cliente else "—")} · <strong>Creada:</strong> {_fmt_date_es(today)}<br>
+        {f'<strong>Cód. SAP cliente:</strong> {_esc(cliente["codigo_marluvas"])}<br>' if cliente and cliente.get("codigo_marluvas") else ""}
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">
+      <span class="badge bg-tri">TRIANGULAR MWT</span>
+      <span class="badge bg-ceo">CEO-ONLY · INTERNAL</span>
+    </div>
+  </div>
+
+  <div class="dual">
+    <div class="card">
+      <div class="card-h cost"><h3>Compra MWT &larr; {_esc(brand_name)} (UF · {mwt_days}d)</h3></div>
+      <div class="card-b">
+        <div class="sr"><span class="k">Comisión MWT</span><span class="v">0% (compra/reventa)</span></div>
+        <div class="sr"><span class="k">Condición pago</span><span class="v" style="font-size:11px;">{mwt_days}d desde aviso embarque</span></div>
+        <div class="sr"><span class="k">Medio de pago</span><span class="v" style="font-size:11px;">Transferencia bancaria</span></div>
+        <div class="sr"><span class="k">Total pares</span><span class="v">{_fmt_int(total_pares)}</span></div>
+        <div class="sr big"><span class="k" style="font-weight:700;">Total compra MWT</span><span class="v" style="color:var(--navy);">{_fmt_money(total_mwt)}</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h rev"><h3>Venta MWT &rarr; {_esc(cliente["razon_social"] if cliente else "Cliente")} (orden · {cli_days}d)</h3></div>
+      <div class="card-b">
+        <div class="sr"><span class="k">PO Cliente</span><span class="v" style="font-family:'JetBrains Mono';font-size:11px;">{_esc(po_codigo)}</span></div>
+        <div class="sr"><span class="k">Fecha PO</span><span class="v" style="font-size:11px;">{po_fecha}</span></div>
+        <div class="sr"><span class="k">Crédito</span><span class="v" style="font-size:11px;">{cli_days} días</span></div>
+        <div class="sr"><span class="k">Precio</span><span class="v" style="font-size:11px;">Precio de la orden (OC {_esc(po_codigo)})</span></div>
+        <div class="sr big"><span class="k" style="font-weight:700;">Total venta cliente</span><span class="v" style="color:var(--ok);">{_fmt_money(total_cli)}</span></div>
+        <div class="sr"><span class="k" style="font-weight:600;">Delta (margen bruto)</span><span class="v" style="color:var(--ok);font-size:15px;">+{_fmt_money(margen)}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sect">
+    <div class="sect-h"><h3>Líneas — Compra UF vs Venta</h3></div>
+    <table class="ct">
+      <thead><tr><th>#</th><th>Código</th><th>Producto</th><th>NCM</th><th>Color</th><th class="r">Qty</th><th class="r cb">UF {mwt_days}d</th><th class="r cb">Subt. MWT</th><th class="r rb">Venta OC</th><th class="r rb">Subt. Cliente</th><th class="r">Δ fábrica/par</th></tr></thead>
+      <tbody>
+        {lines_ceo}
+        <tr class="trow"><td colspan="5">TOTAL</td><td class="r">{_fmt_int(total_pares)}</td><td class="r cb"></td><td class="r cb">{_fmt_money(total_mwt)}</td><td class="r rb"></td><td class="r rb">{_fmt_money(total_cli)}</td><td class="r" style="color:var(--ok);">+{_fmt_money(sobreprecio)}</td></tr>
+      </tbody>
+    </table>
+    <div style="padding:8px 12px;font-size:10px;color:var(--t3);">UF = compra MWT (unit_price_mwt congelado, pago {mwt_days}d). Venta OC = unit_price_client congelado de cada línea. El diferencial fiscal (15% DAI+Ley6946) NO se suma al precio del cliente: es ganancia interna de MWT que se captura en aduana declarando el valor UF. Ver arbitraje.</div>
+  </div>
+
+  <div class="arb">
+    <h3>Arbitraje CEO-ONLY — Modelo B Triangular</h3>
+    <div class="arb-grid">
+      <div class="arb-card"><div class="p">Sobreprecio de fábrica</div><div class="f">Venta − UF · {_fmt_int(total_pares)} prs</div><div class="r pos">+{_fmt_money(sobreprecio)}</div></div>
+      <div class="arb-card"><div class="p">Diferencial de impuestos (interno)</div><div class="f">15% s/ sobreprecio · arbitraje aduanero</div><div class="r pos">+{_fmt_money(diferencial)}</div></div>
+      <div class="arb-card"><div class="p">Capital requerido</div><div class="f">UF {mwt_days}d</div><div class="r neu">{_fmt_money(total_mwt)}</div></div>
+      <div class="arb-card"><div class="p">Ciclo de caja</div><div class="f">pago {mwt_days}d / cobro {cli_days}d</div><div class="r neu">−{ciclo} días</div></div>
+    </div>
+    <div class="arb-tot"><span class="tl">Margen bruto MWT (ROI {roi}% · {pct_venta}% s/venta)</span><span class="tv">+{_fmt_money(margen)}</span></div>
+  </div>
+
+  <div class="pend-card">
+    <strong>⏳ Nacionalización DDP — pendiente flete real.</strong> Este documento fija el margen comercial (sobreprecio de fábrica + diferencial fiscal), que <strong>no depende del flete</strong>. La liquidación aduanera completa al centavo (Valor de Aduana = FOB + flete + seguro; DAI 14%, Ley 6946 1%, IVA 13% acreditable, timbres) se agrega cuando se tenga el <strong>flete exacto, seguro, TC ₡/USD y peso/cajas</strong> del envío. El diferencial fiscal ya trasladado (15% del sobreprecio) es independiente del flete porque el flete es idéntico en ambas declaraciones y se cancela.
+  </div>
+
+  <div class="balance-card">
+    <strong>Lógica del negocio:</strong> MWT compra a {_esc(brand_name)} al precio UF (bajo, {mwt_days}d), nacionaliza declarando ese valor, y entrega DDP a {_esc(cliente["razon_social"] if cliente else "el cliente")} a {cli_days}d cobrando el precio de la orden (OC {_esc(po_codigo)}). El diferencial de impuestos lo captura internamente en aduana al declarar el valor UF, no lo suma al precio del cliente. Gana el spread de fábrica (+{_fmt_money(sobreprecio)}) + el spread fiscal (+{_fmt_money(diferencial)}) = <strong>{_fmt_money(margen)}</strong>. Contrapartida: MWT financia el ciclo (paga a {mwt_days}d, cobra a {cli_days}d → {ciclo} días de descalce, {_fmt_money(total_mwt)} inmovilizados). <strong>Riesgo:</strong> declarar el precio intercompañía UF y no el de reventa es subvaluación aduanera observable — palanca y riesgo del modelo.
+  </div>
+  {buttons}
+</div>
+</div>
+"""
+
+
+def _build_view_fabrica(ctx, *, active=True, with_print_buttons=True):
+    """HTML de la vista FÁBRICA (compra MWT al proveedor) — mismo markup
+    que la tab Marluvas de la tri-vista, con botones de impresión."""
+    expediente  = ctx["expediente"]
+    groups      = ctx["groups"]
+    mwt         = ctx["mwt"]
+    brand_name  = ctx["brand_name"]
+    codigo      = ctx["codigo"]
+    mwt_days    = ctx["mwt_days"]
+    total_pares = ctx["total_pares"]
+    total_mwt   = ctx["total_mwt"]
+
+    rows_mlv = []
+    for i, g in enumerate(groups, 1):
+        rows_mlv.append(
+            f'<tr><td>{i}</td><td class="m">{_esc(g["sku"])}</td>'
+            f'<td>{_esc(g["label"])}</td>'
+            f'<td class="m" style="font-size:10px;">{_esc(g["ncm"] or "—")}</td>'
+            f'<td>{_esc((g["color"] or "—").upper())}</td>'
+            f'<td class="r">{_fmt_int(g["qty"])}</td>'
+            f'<td class="r">{_fmt_money(g["upm"])}</td>'
+            f'<td class="r">{_fmt_money(g["sub_mwt"])}</td></tr>'
+        )
+    rows_mlv = "".join(rows_mlv)
+    buttons = _print_buttons("fabrica") if with_print_buttons else ""
+
+    return f"""
+<div id="v-fabrica" class="view{' active' if active else ''}">
+<div class="dash">
+  <div class="head">
+    <div>
+      <h2>{_esc(brand_name.upper())} · {_esc(codigo)}</h2>
+      <div class="meta"><strong>Emisor:</strong> {_esc(mwt["razon_social"])} {("· " + _esc(mwt["tax_id"])) if mwt.get("tax_id") else ""}<br>
+        <strong>Comprador:</strong> {_esc(mwt["razon_social"]).upper()}</div>
+    </div>
+    <span class="badge bg-mlv">VISTA FÁBRICA</span>
+  </div>
+  <div class="tri">
+    <div class="card">
+      <div class="card-h info"><h3>Comprador</h3></div>
+      <div class="card-b">
+        <div class="sr"><span class="k">Empresa</span><span class="v">{_esc(mwt["razon_social"]).upper()}</span></div>
+        <div class="sr"><span class="k">Cédula Jurídica</span><span class="v" style="font-family:'JetBrains Mono';font-size:11px;">{_esc(mwt["tax_id"] or "—")}</span></div>
+        <div class="sr"><span class="k">Contacto</span><span class="v">{_esc(mwt["contacto_nombre"] or "—")}</span></div>
+        <div class="sr"><span class="k">País</span><span class="v">{_esc(mwt["pais"] or "Costa Rica")}</span></div>
+        <div class="sr"><span class="k">Email</span><span class="v" style="font-size:10px;">{_esc(mwt["contacto_email"] or "—")}</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h info"><h3>Condiciones</h3></div>
+      <div class="card-b">
+        <div class="sr"><span class="k">Forma de Pago</span><span class="v">{_esc(_forma_pago_label(expediente.forma_pago))}</span></div>
+        <div class="sr"><span class="k">Plazo de pago</span><span class="v">{mwt_days} días</span></div>
+        <div class="sr"><span class="k">Moneda</span><span class="v" style="font-size:11px;">Dólares (USD)</span></div>
+        <div class="sr"><span class="k">Valor Neto</span><span class="v" style="font-size:9.5px;font-style:italic;">{_esc(_money_words_es(total_mwt))}</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h mlv"><h3>Datos proforma</h3></div>
+      <div class="card-b">
+        <div class="sr"><span class="k">Proforma</span><span class="v" style="font-family:'JetBrains Mono';font-size:11px;">{_esc(codigo)}</span></div>
+        <div class="sr"><span class="k">Fecha</span><span class="v" style="font-size:11px;">{_fmt_date_es(ctx["today"])}</span></div>
+        <div class="sr"><span class="k">Precios</span><span class="v">FOB</span></div>
+        <div class="sr"><span class="k">Total pares</span><span class="v">{_fmt_int(total_pares)}</span></div>
+        <div class="sr big"><span class="k" style="font-weight:700;">Total</span><span class="v" style="color:var(--navy);">{_fmt_money(total_mwt)}</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="sect">
+    <div class="sect-h"><h3>Líneas de producto (compra MWT)</h3></div>
+    <table class="ct">
+      <thead><tr><th>#</th><th>Código</th><th>Referencia</th><th>NCM</th><th>Color</th><th class="r">Cantidad</th><th class="r">Precio $</th><th class="r">Total</th></tr></thead>
+      <tbody>
+        {rows_mlv}
+        <tr class="trow"><td colspan="5"><strong>TOTAL</strong></td><td class="r"><strong>{_fmt_int(total_pares)}</strong></td><td></td><td class="r"><strong>{_fmt_money(total_mwt)}</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="notes-card"><strong>Observações:</strong> Compra de {_esc(mwt["razon_social"]).upper()} a {_esc(brand_name)}. Preços FOB en USD. Pago a {mwt_days} días desde aviso de embarque.</div>
+  {_talla_sections(groups, "Tallas BRA")}
+  {buttons}
+</div>
+</div>
+"""
+
+
+def render_proforma_html_ceo(expediente_id, request_user=None,
+                             codigo_override=None):
+    """HTML standalone de la vista CEO (triangular MWT). Devuelve
+    (html_string, metadata_dict) — mismo contrato que render_proforma_html."""
+    ctx = _proforma_context(expediente_id, codigo_override)
+    view = _build_view_ceo(ctx, active=True, with_print_buttons=True)
+    html_str = _standalone_shell(
+        f"Proforma {_esc(ctx['codigo'])} · PO {_esc(ctx['po_codigo'])} · Triangular MWT",
+        view,
+    )
+    metadata = {
+        "filename": f"{ctx['codigo']}_MWT_{ctx['cli_slug']}_{ctx['today'].isoformat()}.html",
+        "codigo": ctx["codigo"],
+        "total_pares": int(ctx["total_pares"]),
+        "total_value_usd": str(_q2(ctx["total_mwt"])),
+        "oc_id": str(ctx["expediente"].oc_id) if ctx["expediente"].oc_id else None,
+    }
+    return html_str, metadata
+
+
+def render_proforma_html_fabrica(expediente_id, request_user=None,
+                                 codigo_override=None):
+    """HTML standalone de la vista FÁBRICA (compra MWT al proveedor).
+    Devuelve (html_string, metadata_dict)."""
+    ctx = _proforma_context(expediente_id, codigo_override)
+    view = _build_view_fabrica(ctx, active=True, with_print_buttons=True)
+    html_str = _standalone_shell(
+        f"Proforma Fábrica {_esc(ctx['codigo'])} · {_esc(ctx['brand_name'])}",
+        view,
+    )
+    metadata = {
+        "filename": f"{ctx['codigo']}_FABRICA_{ctx['cli_slug']}_{ctx['today'].isoformat()}.html",
+        "codigo": ctx["codigo"],
+        "total_pares": int(ctx["total_pares"]),
+        "total_value_usd": str(_q2(ctx["total_mwt"])),
+        "oc_id": str(ctx["expediente"].oc_id) if ctx["expediente"].oc_id else None,
+    }
+    return html_str, metadata
