@@ -1405,7 +1405,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
             c.execute("""
                 SELECT e.id::text, e.codigo, e.oc_id::text, e.client_id::text,
                        e.estado, COALESCE(e.freight_mode, ''), e.created_at,
-                       e.total_cost, e.moneda
+                       e.total_cost, e.moneda, COALESCE(e.sap, '')
                   FROM expedientes.expediente e
                  WHERE e.is_active = TRUE
             """)
@@ -1428,13 +1428,18 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 WHERE e.is_active = TRUE
             """)
             over_rows = c.fetchall()
+            # Sprint 2026-07-20 (rev2) · no solo existencia: también el
+            # CÓDIGO de la proforma más reciente por expediente — el Ref
+            # principal de la Mesa es el número de PF, no el PO ni el EXP.
             c.execute("""
-                SELECT DISTINCT expediente_id::text
+                SELECT DISTINCT ON (expediente_id)
+                       expediente_id::text, codigo
                   FROM expedientes.documento
                  WHERE kind = 'PROFORMA' AND is_active = TRUE
                    AND expediente_id IS NOT NULL
+                 ORDER BY expediente_id, created_at DESC
             """)
-            pf_ids = {r[0] for r in c.fetchall()}
+            pf_by_exp = {r[0]: (r[1] or "") for r in c.fetchall()}
             c.execute("SELECT id::text, razon_social FROM clientes.cliente WHERE is_active = TRUE")
             client_name = {r[0]: (r[1] or "") for r in c.fetchall()}
             c.execute("SELECT id::text, codigo FROM expedientes.oc WHERE is_active = TRUE")
@@ -1482,7 +1487,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
         #    transiciones cerradas + overrides manuales, como phase_stats).
         acc = {"Aereo": {}, "Maritimo": {}, "_ALL": {}}
         modo_by_exp = {}
-        for (eid, _cod, _oc, _cli, _est, fm, _cat, _tc, _mon) in exp_rows:
+        for (eid, _cod, _oc, _cli, _est, fm, _cat, _tc, _mon, _sap) in exp_rows:
             fmu = (fm or "").upper()
             modo_by_exp[eid] = "Aereo" if fmu == "AIR" else ("Maritimo" if fmu == "SEA" else "")
         for eid in set(list(entries.keys()) + list(over_by_exp.keys())):
@@ -1517,7 +1522,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
 
         # ── Evaluar cada expediente activo ─────────────────────────────
         items = []
-        for (eid, cod, oc_id, cli, est, _fm, created_at, tc, mon) in exp_rows:
+        for (eid, cod, oc_id, cli, est, _fm, created_at, tc, mon, sap) in exp_rows:
             estado = (est or "REGISTRO").upper()
             fases = entries.get(eid) or {}
             entered = fases.get(estado) or created_at
@@ -1527,8 +1532,12 @@ class ExpedienteViewSet(viewsets.ViewSet):
             if avg_days is None:
                 avg_days = (avg.get("_ALL") or {}).get(estado)
             stale = bool(avg_days is not None and days_in_state > avg_days)
-            missing_pf = bool(estado != "CERRADO" and eid not in pf_ids)
-            if not (stale or missing_pf):
+            # Sprint 2026-07-20 (rev2) · tres faltantes que también son
+            # atención: sin número de proforma, sin número SAP y sin OC.
+            missing_pf  = bool(estado != "CERRADO" and eid not in pf_by_exp)
+            missing_sap = bool(estado != "CERRADO" and not (sap or "").strip())
+            missing_oc  = bool(not oc_id)
+            if not (stale or missing_pf or missing_sap or missing_oc):
                 continue
             items.append({
                 "id":                eid,
@@ -1541,6 +1550,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 "avg_days":          round(avg_days, 2) if avg_days is not None else None,
                 "stale_state":       stale,
                 "missing_proforma":  missing_pf,
+                "missing_sap":       missing_sap,
+                "missing_oc":        missing_oc,
+                "proforma_codigo":   pf_by_exp.get(eid) or "",
                 "total_cost":        str(tc or 0),
                 "moneda":            mon or "USD",
                 "created_at":        created_at.isoformat() if created_at else None,
