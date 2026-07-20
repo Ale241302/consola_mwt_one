@@ -27,7 +27,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { IconSearch, IconPackage } from "../../lib/icons.jsx";
 import {
-  productosApi, tallasApi, apiFetch, getToken,
+  productosApi, tallasApi, apiFetch, getToken, storageApi,
 } from "../../lib/api.js";
 
 
@@ -61,10 +61,16 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   const [requestSent,    setRequestSent]    = useState(new Set());
   const [requestErr,     setRequestErr]     = useState({});
   const [sizingMap, setSizingMap] = useState({});
-  // Sprint 2026-07-18 · sistema de talla por defecto: EU (la base de la
-  // matriz MWT es EU 34-49). Antes era "BR" y el cliente veía la talla
-  // brasileña al abrir el modal de línea manual.
-  const [displaySystem, setDisplaySystem] = useState("EU");
+  // Sprint 2026-07-20 · sistema de talla por defecto: BRA (la base del
+  // Motor de Tallas para calzado Marluvas). El toggle muestra BRA primero
+  // y US M / US W solo como referencia (inputs deshabilitados).
+  const [displaySystem, setDisplaySystem] = useState("BR");
+  // Sprint 2026-07-20 · resultados divididos: asignados visibles y, bajo
+  // el chevron "Más opciones", los NO asignados que matchean la búsqueda.
+  const [showMore, setShowMore] = useState(false);
+  // Sprint 2026-07-20 · modal anidado "Ver especificaciones" (no cierra
+  // este modal de búsqueda).
+  const [specsProduct, setSpecsProduct] = useState(null);
 
   // Cargar CPA del cliente (legacy /commercial/client-assignments).
   // Sprint 2026-05-03 v3: opcional. Fuente principal de "asignado" es
@@ -241,14 +247,25 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
     if (!picked) return;
     const rows = picked.tallas
       .filter((t) => Number(t.qty || 0) > 0)
-      .map((t) => ({
-        sku:           picked.sku,
-        talla:         t.base === "ÚNICA" ? null : t.base,
-        cantidad:      Number(t.qty),
-        producto_id:   picked.producto_id,
-        product_label: picked.product_label,
-        is_assigned:   picked.is_assigned,
-      }));
+      .map((t) => {
+        // Sprint 2026-07-20 · la línea siempre guarda la talla BRA (base
+        // del Motor), pero si el usuario ingresó cantidades en OTRO
+        // sistema (EU, CM, …) también conservamos la talla ORIGINAL que
+        // vio al digitar, para mostrarla en la tabla del Paso 2.
+        const shown = (t.equiv && t.equiv[displaySystem]) || t.base;
+        const isBra = displaySystem === "BR" || displaySystem === "BASE"
+          || shown === t.base;
+        return {
+          sku:           picked.sku,
+          talla:         t.base === "ÚNICA" ? null : t.base,
+          cantidad:      Number(t.qty),
+          producto_id:   picked.producto_id,
+          product_label: picked.product_label,
+          is_assigned:   picked.is_assigned,
+          talla_sistema: isBra ? null : displaySystem,
+          talla_original: isBra ? null : shown,
+        };
+      });
     if (rows.length === 0) return;
     onAdd(rows);
     setPicked(null);
@@ -256,6 +273,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   };
 
   return (
+    <>
     <div style={{
       position: "fixed", inset: 0, zIndex: 100,
       background: "rgba(11,30,58,0.45)",
@@ -303,87 +321,134 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                 </div>
               )}
               <div style={{ maxHeight: 420, overflowY: "auto" }}>
-                {results.map((p) => {
-                  const sku = (p.sku || "").toUpperCase();
-                  const isAssigned = isProductAssigned(p);
-                  const pending = requestPending.has(sku);
-                  const sent    = requestSent.has(sku);
-                  const err     = requestErr[sku];
-                  return (
-                    <div key={p.id || sku}
-                         style={{
-                           width: "100%",
-                           padding: "10px 14px",
-                           border: "1px solid var(--border)",
-                           borderRadius: 8, marginBottom: 6,
-                           background: "#fff",
-                           display: "flex", alignItems: "center", gap: 12,
-                         }}>
-                      <IconPackage size={14} style={{ color: "#3083FE", flexShrink: 0 }}/>
-                      <button type="button"
-                              onClick={() => isAssigned ? pick(p) : null}
-                              disabled={!isAssigned}
-                              style={{
-                                flex: 1, minWidth: 0, textAlign: "left",
-                                background: "transparent", border: 0,
-                                padding: 0, cursor: isAssigned ? "pointer" : "default",
-                                opacity: isAssigned ? 1 : 0.78,
-                              }}
-                              title={isAssigned
-                                ? ""
-                                : (lang === "es"
-                                    ? "Producto no asignado al cliente. Solicitá la asignación al equipo MWT."
-                                    : "Product not assigned. Request assignment to the MWT team.")}>
-                        <div style={{ fontWeight: 600, color: "#0B1E3A" }}>
-                          <span className="mono-sm">{sku}</span>
-                          {isAssigned ? (
-                            <span style={{
-                              marginLeft: 8, padding: "2px 8px", borderRadius: 999,
-                              background: "rgba(0,178,134,0.12)", color: "#00875A",
-                              fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
-                            }}>
-                              ✓ {lang === "es" ? "ASIGNADO" : "ASSIGNED"}
-                            </span>
-                          ) : (
-                            <span style={{
-                              marginLeft: 8, padding: "2px 8px", borderRadius: 999,
-                              background: "rgba(180,83,9,0.10)", color: "#B45309",
-                              fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
-                            }}>
-                              ⚠ {lang === "es" ? "NO ASIGNADO" : "NOT ASSIGNED"}
-                            </span>
-                          )}
-                        </div>
-                        <div className="caption tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-                          {p.nombre || p.product_label || ""}
-                        </div>
-                      </button>
-                      {!isAssigned && (
+                {(() => {
+                  const renderProductRow = (p) => {
+                    const sku = (p.sku || "").toUpperCase();
+                    const isAssigned = isProductAssigned(p);
+                    const pending = requestPending.has(sku);
+                    const sent    = requestSent.has(sku);
+                    const err     = requestErr[sku];
+                    return (
+                      <div key={p.id || sku}
+                           style={{
+                             width: "100%",
+                             padding: "10px 14px",
+                             border: "1px solid var(--border)",
+                             borderRadius: 8, marginBottom: 6,
+                             background: "#fff",
+                             display: "flex", alignItems: "center", gap: 12,
+                           }}>
+                        <IconPackage size={14} style={{ color: "#3083FE", flexShrink: 0 }}/>
                         <button type="button"
-                                onClick={(e) => { e.stopPropagation(); requestAssignment(p); }}
-                                disabled={pending || sent}
+                                onClick={() => isAssigned ? pick(p) : null}
+                                disabled={!isAssigned}
+                                style={{
+                                  flex: 1, minWidth: 0, textAlign: "left",
+                                  background: "transparent", border: 0,
+                                  padding: 0, cursor: isAssigned ? "pointer" : "default",
+                                  opacity: isAssigned ? 1 : 0.78,
+                                }}
+                                title={isAssigned
+                                  ? ""
+                                  : (lang === "es"
+                                      ? "Producto no asignado al cliente. Solicitá la asignación al equipo MWT."
+                                      : "Product not assigned. Request assignment to the MWT team.")}>
+                          <div style={{ fontWeight: 600, color: "#0B1E3A" }}>
+                            <span className="mono-sm">{sku}</span>
+                            {isAssigned ? (
+                              <span style={{
+                                marginLeft: 8, padding: "2px 8px", borderRadius: 999,
+                                background: "rgba(0,178,134,0.12)", color: "#00875A",
+                                fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+                              }}>
+                                ✓ {lang === "es" ? "ASIGNADO" : "ASSIGNED"}
+                              </span>
+                            ) : (
+                              <span style={{
+                                marginLeft: 8, padding: "2px 8px", borderRadius: 999,
+                                background: "rgba(180,83,9,0.10)", color: "#B45309",
+                                fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+                              }}>
+                                ⚠ {lang === "es" ? "NO ASIGNADO" : "NOT ASSIGNED"}
+                              </span>
+                            )}
+                          </div>
+                          <div className="caption tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+                            {p.nombre || p.product_label || ""}
+                          </div>
+                        </button>
+                        {/* Sprint 2026-07-20 · Ver especificaciones — abre un
+                            modal anidado con la ficha del producto SIN cerrar
+                            este modal de búsqueda. */}
+                        <button type="button"
+                                onClick={(e) => { e.stopPropagation(); setSpecsProduct(p); }}
                                 style={{
                                   flexShrink: 0,
                                   padding: "8px 12px",
                                   borderRadius: 8,
-                                  border: "1px solid " + (sent ? "rgba(0,135,90,0.25)" : "rgba(0,178,134,0.35)"),
-                                  background: sent ? "rgba(0,135,90,0.10)" : "#fff",
-                                  color: sent ? "#00875A" : "#00B286",
+                                  border: "1px solid var(--border)",
+                                  background: "#fff",
+                                  color: "#013A57",
                                   fontWeight: 700, fontSize: 12,
-                                  cursor: (pending || sent) ? "default" : "pointer",
+                                  cursor: "pointer",
                                   whiteSpace: "nowrap",
-                                }}
-                                title={err || ""}>
-                          {pending
-                            ? (lang === "es" ? "Enviando…" : "Sending…")
-                            : sent
-                              ? (lang === "es" ? "✓ Solicitado" : "✓ Requested")
-                              : (lang === "es" ? "Solicitar Asignación" : "Request Assignment")}
+                                }}>
+                          {lang === "es" ? "Ver especificaciones" : "View specs"}
+                        </button>
+                        {!isAssigned && (
+                          <button type="button"
+                                  onClick={(e) => { e.stopPropagation(); requestAssignment(p); }}
+                                  disabled={pending || sent}
+                                  style={{
+                                    flexShrink: 0,
+                                    padding: "8px 12px",
+                                    borderRadius: 8,
+                                    border: "1px solid " + (sent ? "rgba(0,135,90,0.25)" : "rgba(0,178,134,0.35)"),
+                                    background: sent ? "rgba(0,135,90,0.10)" : "#fff",
+                                    color: sent ? "#00875A" : "#00B286",
+                                    fontWeight: 700, fontSize: 12,
+                                    cursor: (pending || sent) ? "default" : "pointer",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                  title={err || ""}>
+                            {pending
+                              ? (lang === "es" ? "Enviando…" : "Sending…")
+                              : sent
+                                ? (lang === "es" ? "✓ Solicitado" : "✓ Requested")
+                                : (lang === "es" ? "Solicitar Asignación" : "Request Assignment")}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  };
+                  // Sprint 2026-07-20 · split: asignados visibles; los NO
+                  // asignados quedan tras el chevron "Más opciones" (solo si
+                  // hay alguno — si no, el chevron no se muestra).
+                  const assignedRes   = results.filter((p) => isProductAssigned(p));
+                  const unassignedRes = results.filter((p) => !isProductAssigned(p));
+                  return (
+                    <>
+                      {assignedRes.map(renderProductRow)}
+                      {unassignedRes.length > 0 && (
+                        <button type="button"
+                                onClick={() => setShowMore((v) => !v)}
+                                style={{
+                                  width: "100%", textAlign: "left",
+                                  padding: "8px 12px", marginBottom: 6,
+                                  background: "transparent", border: 0,
+                                  color: "#013A57", fontWeight: 700, fontSize: 12,
+                                  cursor: "pointer",
+                                }}>
+                          {showMore ? "▾" : "▸"}{" "}
+                          {lang === "es"
+                            ? `Más opciones (${unassignedRes.length})`
+                            : `More options (${unassignedRes.length})`}
                         </button>
                       )}
-                    </div>
+                      {showMore && unassignedRes.map(renderProductRow)}
+                    </>
                   );
-                })}
+                })()}
               </div>
             </>
           ) : (
@@ -424,14 +489,17 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
               ) : null}
 
               {!picked.loading_sizes && picked.tallas.length >= 1 && (() => {
-                const allSystems = ["EU","US_M","US_W","UK_M","BR","CM","ALFA"];
+                // Sprint 2026-07-20 · BRA primero y por defecto (es la base
+                // del Motor). US M / US W se muestran solo como referencia
+                // de equivalencia — sus inputs quedan deshabilitados.
+                const allSystems = ["BR","EU","US_M","US_W","UK_M","CM","ALFA"];
                 const systemsWithData = allSystems.filter((s) =>
                   picked.tallas.some((t) => !!(t.equiv && t.equiv[s]))
                 );
                 const labels = {
                   BASE: lang === "es" ? "Base" : "Base",
                   EU: "EU", US_M: "US M", US_W: "US W",
-                  UK_M: "UK", BR: "BR", CM: "CM",
+                  UK_M: "UK", BR: "BRA", CM: "CM",
                   ALFA: lang === "es" ? "Letras" : "Letter",
                 };
                 if (systemsWithData.length <= 1) return null;
@@ -470,6 +538,15 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                 );
               })()}
 
+              {(displaySystem === "US_M" || displaySystem === "US_W") && (
+                <div className="caption" style={{
+                  marginBottom: 8, fontSize: 11, fontWeight: 600, color: "#B45309",
+                }}>
+                  {lang === "es"
+                    ? "US M / US W son solo referencia de equivalencia — las cantidades se ingresan en BRA u otro sistema."
+                    : "US M / US W are reference-only — enter quantities in BRA or another system."}
+                </div>
+              )}
               <div style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
@@ -480,6 +557,9 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                   const isFallback = displaySystem !== "BASE"
                     && (!t.equiv || !t.equiv[displaySystem])
                     && !!t.base;
+                  // Sprint 2026-07-20 · US M / US W: solo referencia de
+                  // equivalencia — el input queda deshabilitado.
+                  const refOnly = displaySystem === "US_M" || displaySystem === "US_W";
                   return (
                     <div key={t.base} style={{
                       border: "1px solid var(--border)", borderRadius: 8,
@@ -499,14 +579,20 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                       >{showLabel}</div>
                       {displaySystem !== "BASE" && t.base !== showLabel && (
                         <div className="caption" style={{
-                          fontSize: 9, textAlign: "center",
-                          color: "var(--text-tertiary)",
+                          fontSize: 11, textAlign: "center",
+                          color: "#013A57", fontWeight: 700,
                           marginBottom: 4,
                           fontFamily: "var(--font-mono, monospace)",
-                        }}>= {t.base}</div>
+                        }}>BRA {t.base}</div>
                       )}
                       <input className="input tabular-nums" type="number" min="0"
                              value={t.qty}
+                             disabled={refOnly}
+                             title={refOnly
+                               ? (lang === "es"
+                                   ? "Solo referencia — ingresá las cantidades en BRA u otro sistema"
+                                   : "Reference only — enter quantities in BRA or another system")
+                               : undefined}
                              onChange={(e) => {
                                const v = Math.max(0, Number(e.target.value) || 0);
                                // Sprint 2026-07-18 · forzamos el texto del DOM al
@@ -520,7 +606,13 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                                  return { ...p, tallas };
                                });
                              }}
-                             style={{ textAlign: "center" }}/>
+                             style={{
+                               textAlign: "center",
+                               ...(refOnly ? {
+                                 background: "#F1F5F9", color: "#94A3B8",
+                                 cursor: "not-allowed",
+                               } : {}),
+                             }}/>
                     </div>
                   );
                 })}
@@ -544,6 +636,16 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
         </div>
       </div>
     </div>
+    {/* Sprint 2026-07-20 · modal anidado "Ver especificaciones" — se abre
+        ENCIMA de este modal sin cerrarlo (zIndex mayor). */}
+    {specsProduct && (
+      <ProductSpecsModal
+        lang={lang}
+        product={specsProduct}
+        onClose={() => setSpecsProduct(null)}
+      />
+    )}
+    </>
   );
 }
 
@@ -622,6 +724,176 @@ export function RequestAssignmentDialog({ lang, sku, clientId, clientEmail, onCl
                   : (lang === "es" ? "Enviar solicitud" : "Send request")}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ═════════════════════════════════════════════════════════════
+// PRODUCT SPECS MODAL — Sprint 2026-07-20
+// Ficha read-only del producto (como /portal/productos/:id pero en
+// modal): imagen, datos base y atributos técnicos. Se abre anidado
+// desde el buscador de línea manual SIN cerrarlo.
+// ═════════════════════════════════════════════════════════════
+export function ProductSpecsModal({ lang = "es", product, onClose }) {
+  const [full, setFull] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    if (!product?.id) return undefined;
+    productosApi.get(product.id)
+      .then((d) => { if (alive) setFull(d); })
+      .catch(() => { /* fallback: mostramos lo que ya trae la fila */ });
+    return () => { alive = false; };
+  }, [product?.id]);
+
+  const p = full || product || {};
+  const esp = p.especificaciones || {};
+  const L = (es, en) => (lang === "es" ? es : en);
+  const imgKey = p.imagen_url
+    || (Array.isArray(esp.gallery) && esp.gallery.length ? esp.gallery[0] : null);
+
+  const specRows = [
+    [L("Tipo de calzado", "Footwear type"), esp.tipo_calzado],
+    [L("Tipo de puntera", "Toe cap type"), esp.tipo_puntera],
+    [L("Cubre puntera", "Toe cover"), esp.cubrepuntera],
+    [L("Antiperforante", "Puncture resistant"), esp.antiperforante],
+    [L("Protector metatarsal", "Metatarsal guard"), esp.protector_metatarsal],
+    [L("Capellada", "Upper"), esp.capellada],
+    [L("Suela", "Sole"), esp.suela],
+    [L("Cierre", "Closure"), esp.cierre],
+    [L("Color", "Color"), esp.color],
+    [L("Plantilla interna", "Insole"), esp.plantilla_interna],
+    [L("Materiales circulares", "Circular materials"), esp.materiales_circulares],
+    ["NCM", esp.ncm],
+    [L("País de origen", "Country of origin"), p.pais_origen_iso2],
+    [L("Categoría", "Category"), p.categoria],
+  ].filter(([, v]) => v);
+
+  const chipGroups = [
+    ["Normativa", esp.normativa],
+    [L("Disipativo de energía", "Energy dissipative"), esp.disipativo_energia],
+    [L("Riesgo", "Risk"), esp.riesgo],
+    [L("Segmento", "Segment"), esp.segmento],
+  ].filter(([, arr]) => Array.isArray(arr) && arr.length > 0);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 130,
+      background: "rgba(11,30,58,0.55)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+    }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()}
+           style={{
+             background: "#fff", borderRadius: 14, width: "min(620px, 96vw)",
+             maxHeight: "86vh", overflow: "hidden", display: "flex", flexDirection: "column",
+             boxShadow: "0 30px 60px -20px rgba(15,27,61,0.55)",
+           }}>
+        <header style={{
+          padding: "14px 20px", borderBottom: "1px solid #F1F4F9",
+          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div className="micro" style={{ color: "#013A57", letterSpacing: 1 }}>
+              {L("ESPECIFICACIONES DEL PRODUCTO", "PRODUCT SPECS")}
+            </div>
+            <div style={{
+              font: "700 16px/1.25 inherit", color: "#0B1E3A",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              <span className="mono-sm">{(p.sku || "").toUpperCase()}</span>
+              {" · "}{p.nombre || p.product_label || "—"}
+            </div>
+            <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+              {p.marca_nombre || ""}
+            </div>
+          </div>
+          <button onClick={onClose} className="btn btn-ghost">✕</button>
+        </header>
+
+        <div style={{ padding: 18, overflowY: "auto", flex: 1 }}>
+          <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+            {imgKey ? (
+              <img
+                src={storageApi.downloadUrl(imgKey)}
+                alt={p.nombre || p.sku || "producto"}
+                style={{
+                  width: 132, height: 132, objectFit: "contain", flexShrink: 0,
+                  border: "1px solid var(--border)", borderRadius: 10,
+                  background: "#F8FAFB",
+                }}
+                onError={(e) => { e.currentTarget.style.display = "none"; }}
+              />
+            ) : (
+              <div style={{
+                width: 132, height: 132, flexShrink: 0, borderRadius: 10,
+                border: "1px dashed var(--border)", background: "#F8FAFB",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "var(--text-tertiary)", fontSize: 11,
+              }}>
+                {L("Sin imagen", "No image")}
+              </div>
+            )}
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div className="micro" style={{
+                color: "var(--text-tertiary)", letterSpacing: 0.5, marginBottom: 6,
+              }}>
+                {L("INFORMACIÓN BASE", "BASE INFO")}
+              </div>
+              {specRows.length === 0 && (
+                <div className="caption" style={{ color: "var(--text-tertiary)" }}>
+                  {L("Cargando especificaciones…", "Loading specs…")}
+                </div>
+              )}
+              {specRows.map(([k, v]) => (
+                <div key={k} style={{
+                  display: "flex", justifyContent: "space-between", gap: 12,
+                  padding: "5px 0", borderBottom: "1px solid #F1F5F9", fontSize: 12,
+                }}>
+                  <span style={{ color: "var(--text-tertiary)" }}>{k}</span>
+                  <span style={{
+                    fontWeight: 700, color: "#0B1E3A", textAlign: "right",
+                  }}>{String(v)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {chipGroups.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div className="micro" style={{
+                color: "var(--text-tertiary)", letterSpacing: 0.5, marginBottom: 6,
+              }}>
+                {L("ATRIBUTOS TÉCNICOS", "TECHNICAL ATTRIBUTES")}
+              </div>
+              {chipGroups.map(([k, arr]) => (
+                <div key={k} style={{ marginBottom: 8 }}>
+                  <div className="caption" style={{
+                    fontWeight: 700, color: "#013A57", marginBottom: 4, fontSize: 11,
+                  }}>{k}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {arr.map((x) => (
+                      <span key={String(x)} style={{
+                        padding: "3px 9px", borderRadius: 999, fontSize: 11,
+                        border: "1px solid var(--border)", background: "#F8FAFB",
+                        color: "#0B1E3A", fontWeight: 600,
+                      }}>{String(x)}</span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <footer style={{
+          padding: "12px 20px", borderTop: "1px solid #F1F4F9",
+          display: "flex", justifyContent: "flex-end",
+        }}>
+          <button className="btn btn-ghost" onClick={onClose}>
+            {L("Cerrar", "Close")}
+          </button>
+        </footer>
       </div>
     </div>
   );

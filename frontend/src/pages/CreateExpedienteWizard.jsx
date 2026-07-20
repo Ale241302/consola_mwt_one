@@ -739,9 +739,6 @@ function StepUpload({ state, patch, isClient }) {
                 · OC #{state.ocrPayload.po.number}
               </span>
             )}
-            <span style={{ marginLeft: 8, color: COLORS.inkSoft }}>
-              · {state.ocrPayload.lines?.length || 0} línea(s)
-            </span>
             <p style={{ margin: "4px 0 0", fontSize: 13, color: COLORS.inkSoft }}>
               Revisa los productos en el siguiente paso.
             </p>
@@ -1101,6 +1098,16 @@ function StepProducts({ state, patch, isClient, clientId }) {
     (acc, l) => acc + (isAssigned(l) ? (Number(l.qty) || 0) * (Number(l.unit_price) || 0) : 0),
     0,
   );
+  // Sprint 2026-07-20 · columnas dinámicas "Talla {sistema}" — aparece una
+  // por cada sistema distinto de BRA que el usuario haya usado al agregar
+  // líneas manuales (la talla original escogida; `size` siempre es BRA).
+  const SIZE_SYS_LABELS = {
+    EU: "EU", US_M: "US M", US_W: "US W", UK_M: "UK", BR: "BRA",
+    CM: "CM", ALFA: "Letras",
+  };
+  const extraSystems = [...new Set(
+    (state.lines || []).map((l) => l.talla_sistema).filter(Boolean)
+  )];
 
   // ── Alta manual de productos (CLIENT) — Sprint 2026-07-15 ──────
   // Mismo componente que la vista admin (ManualLinePanel): buscar por
@@ -1114,6 +1121,11 @@ function StepProducts({ state, patch, isClient, clientId }) {
       descripcion:        r.product_label || r.sku,
       product_label:      r.product_label || r.sku,
       size:               r.talla || null,
+      // Sprint 2026-07-20 · sistema/talla ORIGINAL escogidos en el modal
+      // (la línea siempre guarda la BRA en `size`; estos alimentan las
+      // columnas dinámicas "Talla EU/CM/…" de la tabla).
+      talla_sistema:      r.talla_sistema || null,
+      talla_original:     r.talla_original || null,
       qty:                Number(r.cantidad) || 0,
       unit_price:         0,
       producto_id:        r.producto_id || null,
@@ -1201,7 +1213,10 @@ function StepProducts({ state, patch, isClient, clientId }) {
           <tr>
             <th style={styles.th}>SKU</th>
             <th style={styles.th}>Descripción</th>
-            <th style={styles.th}>Talla</th>
+            <th style={styles.th}>Talla BRA</th>
+            {extraSystems.map((s) => (
+              <th key={s} style={styles.th}>Talla {SIZE_SYS_LABELS[s] || s}</th>
+            ))}
             <th style={styles.thRight}>Qty</th>
             <th style={styles.thRight}>Precio Unit.</th>
             <th style={styles.thRight}>Subtotal</th>
@@ -1226,6 +1241,11 @@ function StepProducts({ state, patch, isClient, clientId }) {
               </td>
               <td style={styles.td}>{l.product_label || l.descripcion || "—"}</td>
               <td style={styles.td}>{l.size || "—"}</td>
+              {extraSystems.map((s) => (
+                <td key={s} style={styles.td}>
+                  {l.talla_sistema === s ? (l.talla_original || "—") : "—"}
+                </td>
+              ))}
               <td style={styles.tdRight}>
                 <input
                   type="number"
@@ -1295,7 +1315,7 @@ function StepProducts({ state, patch, isClient, clientId }) {
           {state.lines.length === 0 && (
             <tr>
               <td
-                colSpan={isClient ? 7 : 8}
+                colSpan={(isClient ? 7 : 8) + extraSystems.length}
                 style={{ ...styles.td, textAlign: "center", padding: 24, color: COLORS.inkSoft }}
               >
                 {isClient
@@ -1307,7 +1327,7 @@ function StepProducts({ state, patch, isClient, clientId }) {
         </tbody>
         <tfoot>
           <tr>
-            <td colSpan={5} style={{ ...styles.td, textAlign: "right", fontWeight: 600 }}>
+            <td colSpan={5 + extraSystems.length} style={{ ...styles.td, textAlign: "right", fontWeight: 600 }}>
               Subtotal
             </td>
             <td style={{ ...styles.tdRight, fontWeight: 700, color: COLORS.navy }}>
