@@ -730,11 +730,14 @@ export function RequestAssignmentDialog({ lang, sku, clientId, clientEmail, onCl
 }
 
 
+
 // ═════════════════════════════════════════════════════════════
-// PRODUCT SPECS MODAL — Sprint 2026-07-20
+// PRODUCT SPECS MODAL — Sprint 2026-07-20 (rev2 · diseño amplio)
 // Ficha read-only del producto (como /portal/productos/:id pero en
-// modal): imagen, datos base y atributos técnicos. Se abre anidado
-// desde el buscador de línea manual SIN cerrarlo.
+// modal): imagen grande, datos base, atributos técnicos y botón de
+// DESCARGA DE FICHA TÉCNICA (PDF desde especificaciones.fichas /
+// ficha_url vía /api/storage/download/). Se abre anidado desde el
+// buscador de línea manual SIN cerrarlo.
 // ═════════════════════════════════════════════════════════════
 export function ProductSpecsModal({ lang = "es", product, onClose }) {
   const [full, setFull] = useState(null);
@@ -753,6 +756,24 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
   const imgKey = p.imagen_url
     || (Array.isArray(esp.gallery) && esp.gallery.length ? esp.gallery[0] : null);
 
+  // ── Fichas técnicas (PDF) — ficha_url + especificaciones.fichas[]
+  const fichaKeys = [...new Set(
+    [p.ficha_url, ...(Array.isArray(esp.fichas) ? esp.fichas : [])]
+      .filter((k) => k && typeof k === "string")
+  )];
+  const fichaName = (key) => {
+    const base = String(key).split("/").pop() || "ficha.pdf";
+    // Quita el prefijo hex de 8 chars que agrega el uploader ("e70cb4df-…")
+    return base.replace(/^[0-9a-f]{8}-/i, "");
+  };
+
+  const quickFacts = [
+    [L("Categoría", "Category"), p.categoria],
+    [L("Color", "Color"), esp.color],
+    [L("País de origen", "Country of origin"), p.pais_origen_iso2],
+    ["NCM", esp.ncm || p.hs_code],
+  ].filter(([, v]) => v);
+
   const specRows = [
     [L("Tipo de calzado", "Footwear type"), esp.tipo_calzado],
     [L("Tipo de puntera", "Toe cap type"), esp.tipo_puntera],
@@ -762,12 +783,10 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
     [L("Capellada", "Upper"), esp.capellada],
     [L("Suela", "Sole"), esp.suela],
     [L("Cierre", "Closure"), esp.cierre],
-    [L("Color", "Color"), esp.color],
     [L("Plantilla interna", "Insole"), esp.plantilla_interna],
     [L("Materiales circulares", "Circular materials"), esp.materiales_circulares],
-    ["NCM", esp.ncm],
-    [L("País de origen", "Country of origin"), p.pais_origen_iso2],
-    [L("Categoría", "Category"), p.categoria],
+    [L("Unidad", "Unit"), p.unidad],
+    [L("Moneda", "Currency"), p.moneda],
   ].filter(([, v]) => v);
 
   const chipGroups = [
@@ -777,119 +796,212 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
     [L("Segmento", "Segment"), esp.segmento],
   ].filter(([, arr]) => Array.isArray(arr) && arr.length > 0);
 
+  const sectionTitle = (txt) => (
+    <div style={{
+      fontSize: 11, fontWeight: 800, letterSpacing: 0.8,
+      color: "#013A57", textTransform: "uppercase",
+      marginBottom: 8, marginTop: 4,
+    }}>{txt}</div>
+  );
+
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 130,
-      background: "rgba(11,30,58,0.55)",
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+      background: "rgba(11,30,58,0.58)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 18,
     }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()}
            style={{
-             background: "#fff", borderRadius: 14, width: "min(620px, 96vw)",
-             maxHeight: "86vh", overflow: "hidden", display: "flex", flexDirection: "column",
-             boxShadow: "0 30px 60px -20px rgba(15,27,61,0.55)",
+             background: "#fff", borderRadius: 16, width: "min(880px, 96vw)",
+             height: "min(92vh, 900px)", overflow: "hidden",
+             display: "flex", flexDirection: "column",
+             boxShadow: "0 40px 80px -24px rgba(15,27,61,0.60)",
            }}>
+        {/* ── Header navy ─────────────────────────────────── */}
         <header style={{
-          padding: "14px 20px", borderBottom: "1px solid #F1F4F9",
-          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+          padding: "18px 24px",
+          background: "linear-gradient(120deg, #013A57 0%, #0a4d6e 100%)",
+          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14,
+          flexShrink: 0,
         }}>
           <div style={{ minWidth: 0 }}>
-            <div className="micro" style={{ color: "#013A57", letterSpacing: 1 }}>
-              {L("ESPECIFICACIONES DEL PRODUCTO", "PRODUCT SPECS")}
+            <div style={{
+              fontSize: 10.5, fontWeight: 800, letterSpacing: 1.2,
+              color: "#75CBB3", textTransform: "uppercase", marginBottom: 4,
+            }}>
+              {L("Especificaciones del producto", "Product specs")}
             </div>
             <div style={{
-              font: "700 16px/1.25 inherit", color: "#0B1E3A",
+              fontSize: 20, fontWeight: 800, color: "#fff", lineHeight: 1.2,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}>
-              <span className="mono-sm">{(p.sku || "").toUpperCase()}</span>
-              {" · "}{p.nombre || p.product_label || "—"}
+              <span style={{ fontFamily: "var(--font-mono, monospace)" }}>
+                {(p.sku || "").toUpperCase()}
+              </span>
+              <span style={{ opacity: 0.55, fontWeight: 600 }}> · </span>
+              {p.nombre || p.product_label || "—"}
             </div>
-            <div className="caption" style={{ color: "var(--text-tertiary)" }}>
-              {p.marca_nombre || ""}
-            </div>
+            {p.marca_nombre && (
+              <span style={{
+                display: "inline-block", marginTop: 7, padding: "3px 10px",
+                borderRadius: 999, fontSize: 11, fontWeight: 700,
+                background: "rgba(255,255,255,0.14)", color: "#E8F5F0",
+              }}>{p.marca_nombre}</span>
+            )}
           </div>
-          <button onClick={onClose} className="btn btn-ghost">✕</button>
+          <button onClick={onClose}
+                  style={{
+                    flexShrink: 0, width: 34, height: 34, borderRadius: 9,
+                    border: "1px solid rgba(255,255,255,0.25)",
+                    background: "rgba(255,255,255,0.10)", color: "#fff",
+                    fontSize: 15, cursor: "pointer", lineHeight: 1,
+                  }}>✕</button>
         </header>
 
-        <div style={{ padding: 18, overflowY: "auto", flex: 1 }}>
-          <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-            {imgKey ? (
-              <img
-                src={storageApi.downloadUrl(imgKey)}
-                alt={p.nombre || p.sku || "producto"}
-                style={{
-                  width: 132, height: 132, objectFit: "contain", flexShrink: 0,
-                  border: "1px solid var(--border)", borderRadius: 10,
-                  background: "#F8FAFB",
-                }}
-                onError={(e) => { e.currentTarget.style.display = "none"; }}
-              />
-            ) : (
-              <div style={{
-                width: 132, height: 132, flexShrink: 0, borderRadius: 10,
-                border: "1px dashed var(--border)", background: "#F8FAFB",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                color: "var(--text-tertiary)", fontSize: 11,
-              }}>
-                {L("Sin imagen", "No image")}
+        {/* ── Body ────────────────────────────────────────── */}
+        <div style={{ padding: "20px 24px", overflowY: "auto", flex: 1 }}>
+          {/* Hero: imagen + quick facts + ficha */}
+          <div style={{ display: "flex", gap: 20, alignItems: "stretch", flexWrap: "wrap" }}>
+            <div style={{
+              width: 220, minHeight: 220, flexShrink: 0,
+              border: "1px solid var(--border)", borderRadius: 14,
+              background: "linear-gradient(180deg,#F8FAFB 0%,#EFF4F8 100%)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              overflow: "hidden",
+            }}>
+              {imgKey ? (
+                <img
+                  src={storageApi.downloadUrl(imgKey)}
+                  alt={p.nombre || p.sku || "producto"}
+                  style={{ width: "100%", height: "100%", objectFit: "contain", padding: 10 }}
+                  onError={(e) => { e.currentTarget.style.display = "none"; }}
+                />
+              ) : (
+                <span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
+                  {L("Sin imagen", "No image")}
+                </span>
+              )}
+            </div>
+            <div style={{ flex: 1, minWidth: 260, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                {sectionTitle(L("Información base", "Base info"))}
+                <div style={{
+                  display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8,
+                }}>
+                  {quickFacts.map(([k, v]) => (
+                    <div key={k} style={{
+                      border: "1px solid var(--border)", borderRadius: 10,
+                      padding: "8px 12px", background: "#F8FAFB",
+                    }}>
+                      <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>{k}</div>
+                      <div style={{ fontSize: 13.5, fontWeight: 800, color: "#0B1E3A", marginTop: 2 }}>{String(v)}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            )}
-            <div style={{ flex: 1, minWidth: 220 }}>
-              <div className="micro" style={{
-                color: "var(--text-tertiary)", letterSpacing: 0.5, marginBottom: 6,
-              }}>
-                {L("INFORMACIÓN BASE", "BASE INFO")}
-              </div>
+              {fichaKeys.length > 0 && (
+                <div style={{
+                  border: "1px solid rgba(1,58,87,0.18)", borderRadius: 12,
+                  background: "rgba(1,58,87,0.04)", padding: "12px 14px",
+                }}>
+                  {sectionTitle(L("Ficha técnica (PDF)", "Datasheet (PDF)"))}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {fichaKeys.map((k) => (
+                      <a key={k}
+                         href={storageApi.downloadUrl(k)}
+                         target="_blank" rel="noreferrer"
+                         style={{
+                           display: "inline-flex", alignItems: "center", gap: 8,
+                           padding: "9px 14px", borderRadius: 9,
+                           background: "#013A57", color: "#fff",
+                           fontSize: 12.5, fontWeight: 700, textDecoration: "none",
+                         }}>
+                        <span style={{ fontSize: 14 }}>⬇</span>
+                        {L("Descargar ficha técnica", "Download datasheet")}
+                        <span style={{
+                          fontWeight: 500, fontSize: 11, opacity: 0.75,
+                          overflow: "hidden", textOverflow: "ellipsis",
+                          whiteSpace: "nowrap", maxWidth: 320,
+                        }}>· {fichaName(k)}</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Atributos */}
+          <div style={{ marginTop: 20 }}>
+            {sectionTitle(L("Atributos del calzado", "Footwear attributes"))}
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+              gap: "0 24px",
+            }}>
+              {specRows.map(([k, v]) => (
+                <div key={k} style={{
+                  display: "flex", justifyContent: "space-between", gap: 14,
+                  padding: "7px 0", borderBottom: "1px solid #F1F5F9", fontSize: 12.5,
+                }}>
+                  <span style={{ color: "var(--text-tertiary)" }}>{k}</span>
+                  <span style={{ fontWeight: 700, color: "#0B1E3A", textAlign: "right" }}>{String(v)}</span>
+                </div>
+              ))}
               {specRows.length === 0 && (
                 <div className="caption" style={{ color: "var(--text-tertiary)" }}>
                   {L("Cargando especificaciones…", "Loading specs…")}
                 </div>
               )}
-              {specRows.map(([k, v]) => (
-                <div key={k} style={{
-                  display: "flex", justifyContent: "space-between", gap: 12,
-                  padding: "5px 0", borderBottom: "1px solid #F1F5F9", fontSize: 12,
-                }}>
-                  <span style={{ color: "var(--text-tertiary)" }}>{k}</span>
-                  <span style={{
-                    fontWeight: 700, color: "#0B1E3A", textAlign: "right",
-                  }}>{String(v)}</span>
-                </div>
-              ))}
             </div>
           </div>
 
+          {/* Chips */}
           {chipGroups.length > 0 && (
-            <div style={{ marginTop: 14 }}>
-              <div className="micro" style={{
-                color: "var(--text-tertiary)", letterSpacing: 0.5, marginBottom: 6,
+            <div style={{ marginTop: 18 }}>
+              {sectionTitle(L("Normativa · Riesgos · Segmentos", "Standards · Risks · Segments"))}
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 14,
               }}>
-                {L("ATRIBUTOS TÉCNICOS", "TECHNICAL ATTRIBUTES")}
-              </div>
-              {chipGroups.map(([k, arr]) => (
-                <div key={k} style={{ marginBottom: 8 }}>
-                  <div className="caption" style={{
-                    fontWeight: 700, color: "#013A57", marginBottom: 4, fontSize: 11,
-                  }}>{k}</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                    {arr.map((x) => (
-                      <span key={String(x)} style={{
-                        padding: "3px 9px", borderRadius: 999, fontSize: 11,
-                        border: "1px solid var(--border)", background: "#F8FAFB",
-                        color: "#0B1E3A", fontWeight: 600,
-                      }}>{String(x)}</span>
-                    ))}
+                {chipGroups.map(([k, arr]) => (
+                  <div key={k}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#013A57", marginBottom: 5 }}>{k}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                      {arr.map((x) => (
+                        <span key={String(x)} style={{
+                          padding: "4px 10px", borderRadius: 999, fontSize: 11,
+                          border: "1px solid rgba(1,58,87,0.20)",
+                          background: "rgba(1,58,87,0.05)",
+                          color: "#013A57", fontWeight: 600,
+                        }}>{String(x)}</span>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
         </div>
 
+        {/* ── Footer ──────────────────────────────────────── */}
         <footer style={{
-          padding: "12px 20px", borderTop: "1px solid #F1F4F9",
-          display: "flex", justifyContent: "flex-end",
+          padding: "12px 24px", borderTop: "1px solid #F1F4F9",
+          display: "flex", justifyContent: "flex-end", gap: 10, flexShrink: 0,
         }}>
+          {fichaKeys.length > 0 && (
+            <a href={storageApi.downloadUrl(fichaKeys[0])}
+               target="_blank" rel="noreferrer"
+               style={{
+                 display: "inline-flex", alignItems: "center", gap: 7,
+                 padding: "9px 16px", borderRadius: 9,
+                 border: "1.5px solid #013A57",
+                 background: "#fff", color: "#013A57",
+                 fontSize: 12.5, fontWeight: 700, textDecoration: "none",
+               }}>
+              ⬇ {L("Descargar ficha técnica", "Download datasheet")}
+            </a>
+          )}
           <button className="btn btn-ghost" onClick={onClose}>
             {L("Cerrar", "Close")}
           </button>
