@@ -85,6 +85,14 @@ class TallaSerializer(serializers.ModelSerializer):
         required=False, allow_null=True, max_digits=7, decimal_places=2,
     )
 
+    # ── Medidas internas calzado (mm) — Sprint 2026-07-21 ─────────
+    ancho_mm = serializers.DecimalField(
+        required=False, allow_null=True, max_digits=5, decimal_places=1,
+    )
+    comprimento_mm = serializers.DecimalField(
+        required=False, allow_null=True, max_digits=6, decimal_places=2,
+    )
+
     metadata = serializers.JSONField(required=False, default=dict)
 
     # ── Clasificadores multi-valor (Sprint 2026-07-16) ─────────────
@@ -104,6 +112,8 @@ class TallaSerializer(serializers.ModelSerializer):
             *Talla.EQUIVALENCE_FIELDS,
             # dimensiones (sólo plantilla)
             *Talla.DIMENSION_FIELDS,
+            # medidas internas calzado (mm)
+            *Talla.MEDIDA_FIELDS,
             # libre
             "metadata",
         )
@@ -161,12 +171,18 @@ class TallaSerializer(serializers.ModelSerializer):
 
 class TallaListSerializer(serializers.ModelSerializer):
     """Versión compacta para la grilla principal del frontend."""
+
     id = serializers.UUIDField(read_only=True)
 
     class Meta:
         model  = Talla
         fields = (
             "id", "is_active", "tipo_producto", "talla_base", "nombre",
+            # Sprint 2026-07-21 · `descripcion` y las medidas internas
+            # (mm) viajan en la lista: sin ellas el drawer las recibía
+            # vacías y al guardar las NULABA (mismo bug que los 9
+            # sistemas de equivalencias, ver abajo).
+            "descripcion", "ancho_mm", "comprimento_mm",
             # clasificadores multi-valor (marca / tipo / familia)
             "marca_ids", "tipos", "familias",
             # Sprint 2026-07-18 · TODOS los 15 sistemas. Antes sólo 6

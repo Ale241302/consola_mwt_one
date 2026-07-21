@@ -109,6 +109,12 @@ class Talla(models.Model):
     drop_mm           = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     peso_g            = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True)
 
+    # ── Medidas internas del calzado (mm) — Sprint 2026-07-21 ─────
+    # PDF oficial Marluvas "Sepa la talla". CM (Mondopoint) =
+    # comprimento_mm ÷ 10. Opcionales; ver G11_tallas_ancho_comprimento_borra_32.sql
+    ancho_mm       = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
+    comprimento_mm = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+
     # ── Clasificadores multi-valor (Sprint 2026-07-16) ─────────────
     # Una talla puede pertenecer a UNA O MÁS marcas, tipos y familias.
     #   marca_ids → lista de UUIDs (texto) de brands.marca
@@ -131,6 +137,10 @@ class Talla(models.Model):
     )
     DIMENSION_FIELDS = (
         "grosor_antepie_mm", "grosor_talon_mm", "drop_mm", "peso_g",
+    )
+    # Sprint 2026-07-21 · medidas internas del calzado (mm) — PDF Marluvas
+    MEDIDA_FIELDS = (
+        "ancho_mm", "comprimento_mm",
     )
 
     class Meta:

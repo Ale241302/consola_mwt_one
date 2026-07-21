@@ -739,6 +739,9 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
       marca_ids: [],
       tipos: [],
       familias: [],
+      // Sprint 2026-07-21 · medidas internas del calzado (mm, PDF Marluvas)
+      ancho_mm: "",
+      comprimento_mm: "",
       ...eqFields,
       ...dimFields,
     };
@@ -847,6 +850,12 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
       const payload = { ...form };
       if (!showDimensionales) {
         (options?.dimension_fields || []).forEach(d => { payload[d.key] = null; });
+      }
+      // Sprint 2026-07-21 · simétrico: en plantillas las medidas
+      // internas de calzado (ancho/comprimento) no aplican.
+      if (showDimensionales) {
+        payload.ancho_mm = null;
+        payload.comprimento_mm = null;
       }
       await onSave(payload);
     } catch (e) {
@@ -1070,6 +1079,41 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
               ))}
             </div>
           </Section>
+
+          {/* SECCIÓN 2B · Medidas internas del calzado (Sprint 2026-07-21)
+              Ancho y comprimento internos en mm, según el PDF oficial
+              Marluvas "Sepa la talla". CM (Mondopoint) = comprimento ÷ 10.
+              Sólo aplica a calzado (en plantillas se oculta, igual que
+              las dimensionales se ocultan en calzado). */}
+          {!showDimensionales && (
+            <Section
+              title={lang === "es" ? "Medidas internas (mm)" : "Internal measurements (mm)"}
+              hint={lang === "es"
+                ? "Ancho y comprimento internos del calzado. Opcionales. CM = comprimento ÷ 10."
+                : "Shoe internal width and length. Optional. CM = length ÷ 10."}
+            >
+              <div className="siz-grid-2">
+                <Field label={lang === "es" ? "Ancho interno" : "Internal width"} hint="mm">
+                  <input
+                    type="number" step="0.1" min="0"
+                    className="siz-input tabular"
+                    placeholder="83,1"
+                    value={form.ancho_mm ?? ""}
+                    onChange={e => set("ancho_mm", e.target.value === "" ? null : e.target.value)}
+                  />
+                </Field>
+                <Field label={lang === "es" ? "Comprimento interno" : "Internal length"} hint="mm">
+                  <input
+                    type="number" step="0.01" min="0"
+                    className="siz-input tabular"
+                    placeholder="226,38"
+                    value={form.comprimento_mm ?? ""}
+                    onChange={e => set("comprimento_mm", e.target.value === "" ? null : e.target.value)}
+                  />
+                </Field>
+              </div>
+            </Section>
+          )}
 
           {/* SECCIÓN 3 · DINÁMICA — sólo plantillas */}
           <AnimatePresence initial={false}>
