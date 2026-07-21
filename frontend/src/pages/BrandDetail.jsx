@@ -563,6 +563,9 @@ export default function ScreenBrandDetail() {
                 mercados_activos:    payload.mercados_activos || payload.territorios || [],
                 tipo:                payload.tipo || brand._raw?.tipo || 'TERCEROS',
                 brand_code:          payload.brand_id || payload.brand_code || brand._raw?.brand_code || null,
+                // Sprint 2026-07-20 · correlativo de proformas (opcional).
+                pf_correlativo:      (payload.pf_correlativo != null && payload.pf_correlativo !== '')
+                                       ? Number(payload.pf_correlativo) : null,
               };
               try {
                 const updated = await marcasApi.update(brandId, body);

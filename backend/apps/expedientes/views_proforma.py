@@ -37,6 +37,38 @@ from .views import _deny_client_mutation
 log = logging.getLogger(__name__)
 
 
+def _consume_pf_correlativo_marca(expediente):
+    """Correlativo de proformas configurado en la MARCA del expediente.
+
+    Si brands.marca.pf_correlativo tiene valor, devuelve el código
+    "PF <n>-<año actual>" e incrementa el contador en 1 (UPDATE ...
+    RETURNING — atómico, dos generaciones concurrentes no repiten).
+    None si la marca no tiene correlativo configurado: el caller cae
+    al secuencial global (_next_proforma_codigo).
+    """
+    from django.utils import timezone  # noqa: PLC0415
+    brand_id = getattr(expediente, "brand_id", None)
+    if not brand_id:
+        return None
+    with connection.cursor() as c:
+        c.execute(
+            """
+            UPDATE brands.marca
+               SET pf_correlativo = pf_correlativo + 1,
+                   updated_at = NOW()
+             WHERE id = %s::uuid
+               AND pf_correlativo IS NOT NULL
+            RETURNING pf_correlativo - 1
+            """,
+            [str(brand_id)],
+        )
+        row = c.fetchone()
+    if not row or row[0] is None:
+        return None
+    year = timezone.now().date().year
+    return f"PF {int(row[0])}-{year}"
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def generate_proforma(request, expediente_id):
@@ -74,6 +106,13 @@ def generate_proforma(request, expediente_id):
     # número sin "PF" (ej. "2488-2026"), se normaliza a "PF 2488-2026".
     if codigo_override and not codigo_override.upper().startswith("PF"):
         codigo_override = "PF " + codigo_override
+
+    # Sprint 2026-07-20 · correlativo de la MARCA: si el código quedó en
+    # blanco y la marca tiene pf_correlativo configurado, la PF sale
+    # "PF <n>-<año actual>" (y el contador se incrementa atómicamente).
+    # Si la marca no lo tiene, cae al secuencial global (abajo).
+    if not codigo_override:
+        codigo_override = _consume_pf_correlativo_marca(exp)
 
     # Sprint 2026-07-20 · expediente operado por MWT → ya NO se elige
     # audiencia: se generan TRES proformas de una vez (Cliente, MWT/CEO

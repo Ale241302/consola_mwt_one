@@ -30,7 +30,7 @@ const COUNTRIES = [
 
 export default function CreateBrandDrawer({ lang='es', initial=null, onClose, onCreated }) {
   const isEdit = !!initial;
-  const [form, setForm] = useState(initial || {
+  const [form, setForm] = useState({
     brand_id: '',
     name: '',
     tipo: 'PROPIA',
@@ -39,6 +39,10 @@ export default function CreateBrandDrawer({ lang='es', initial=null, onClose, on
     status: 'ACTIVO',
     description: '',
     color: '#00B286',
+    // Sprint 2026-07-20 · correlativo de proformas (opcional). PRÓXIMO
+    // número PF de la marca — el año es automático (año actual).
+    pf_correlativo: null,
+    ...(initial || {}),
   });
 
   const update = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -128,6 +132,19 @@ export default function CreateBrandDrawer({ lang='es', initial=null, onClose, on
                          onChange={e=>update('color', e.target.value)}
                          style={{width:28, height:28, border:0, background:'transparent', cursor:'pointer'}}/>
                   <span className="mono-sm">{form.color}</span>
+                </div>
+              </div>
+              <div>
+                <label className="field-label">{lang==='es'?'Correlativo de Proformas':'Proforma sequence'}</label>
+                <input className="input tabular-nums" type="number" min="1" step="1"
+                       placeholder={lang==='es'?'Ej. 2489':'E.g. 2489'}
+                       value={form.pf_correlativo ?? ''}
+                       onChange={e=>update('pf_correlativo',
+                         e.target.value === '' ? null : Math.max(1, parseInt(e.target.value, 10) || 1))}/>
+                <div className="field-hint">
+                  {lang==='es'
+                    ? `Próximo número PF de la marca (PF ${form.pf_correlativo || 'N'}-${new Date().getFullYear()}). El año es automático.`
+                    : `Next proforma number for this brand (PF ${form.pf_correlativo || 'N'}-${new Date().getFullYear()}). Year is automatic.`}
                 </div>
               </div>
             </div>

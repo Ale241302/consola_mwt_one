@@ -30,6 +30,11 @@ class Marca(models.Model):
     tipo                   = models.CharField(max_length=16, null=True, blank=True)
                               # PROPIA / EXCLUSIVA / TERCEROS
 
+    # Sprint 2026-07-20 · correlativo de proformas de la marca (C4).
+    # PRÓXIMO número PF (<n>-<año actual>); generate-proforma lo consume
+    # e incrementa atómicamente. NULL → secuencial global.
+    pf_correlativo         = models.IntegerField(null=True, blank=True)
+
     # Extensión 21b_brands_feature_flags.sql — toggles persistentes de
     # capacidades por marca (storefront / B2B / expedientes / scanner).
     feature_flags          = models.JSONField(default=dict, blank=True)

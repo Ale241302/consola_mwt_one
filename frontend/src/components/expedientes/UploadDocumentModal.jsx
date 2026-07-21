@@ -114,6 +114,10 @@ export default function UploadDocumentModal({
   // El selector de audiencia solo aplica a ADMIN/MWT y a Proforma/Factura.
   const { isClient: viewerIsClient, isAdmin: viewerIsAdmin } = useRole();
   const audienceApplies = !viewerIsClient && (kind === "PROFORMA" || kind === "FACTURA");
+  // Sprint 2026-07-20 · la audiencia YA NO se elige en Proforma (para
+  // nadie): MWT-operado genera 3 docs; el resto, la proforma cliente.
+  // El selector sobrevive solo para Factura comercial.
+  const showAudience = audienceApplies && kind === "FACTURA";
 
   if (!open) return null;
 
@@ -655,7 +659,7 @@ export default function UploadDocumentModal({
                 : "Operated by Muito Work Limitada — 3 proformas will be generated: Client, Muito Work Limitada and Factory."}
             </div>
           )}
-          {audienceApplies && !isTripleProforma && (
+          {audienceApplies && showAudience && (
             <div>
               <div className="micro" style={{
                 fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
@@ -827,6 +831,18 @@ export default function UploadDocumentModal({
                 fontFamily: "var(--font-mono, monospace)",
               }}
             />
+            {/* Sprint 2026-07-20 · en Proforma el código es OPCIONAL: si se
+                deja en blanco, el backend toma el correlativo configurado
+                en la marca (pf_correlativo) y lo incrementa. */}
+            {kind === "PROFORMA" && (
+              <div className="caption" style={{
+                marginTop: 5, fontSize: 11, color: "var(--text-tertiary)",
+              }}>
+                {lang === "es"
+                  ? `En blanco → correlativo de la marca (PF N-${new Date().getFullYear()}).`
+                  : `Blank → brand proforma sequence (PF N-${new Date().getFullYear()}).`}
+              </div>
+            )}
           </label>
           )}
 

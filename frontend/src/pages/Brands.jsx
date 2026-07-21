@@ -336,6 +336,9 @@ export default function ScreenBrands() {
                 mercados_activos:    payload.mercados_activos || payload.territorios || [],
                 tipo:                payload.tipo || "TERCEROS",
                 brand_code:          payload.brand_id || payload.brand_code || null,
+                // Sprint 2026-07-20 · correlativo de proformas (opcional).
+                pf_correlativo:      (payload.pf_correlativo != null && payload.pf_correlativo !== '')
+                                       ? Number(payload.pf_correlativo) : null,
               };
               try {
                 await marcasApi.create(body);
