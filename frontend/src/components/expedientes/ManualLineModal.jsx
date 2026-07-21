@@ -62,8 +62,9 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   const [requestErr,     setRequestErr]     = useState({});
   const [sizingMap, setSizingMap] = useState({});
   // Sprint 2026-07-20 · sistema de talla por defecto: BRA (la base del
-  // Motor de Tallas para calzado Marluvas). El toggle muestra BRA primero
-  // y US M / US W solo como referencia (inputs deshabilitados).
+  // Motor de Tallas para calzado Marluvas). El toggle muestra BRA primero.
+  // Sprint 2026-07-21 · US M / US W habilitados otra vez (inputs activos;
+  // la cantidad siempre se registra contra la talla base BRA).
   const [displaySystem, setDisplaySystem] = useState("BR");
   // Sprint 2026-07-20 · resultados divididos: asignados visibles y, bajo
   // el chevron "Más opciones", los NO asignados que matchean la búsqueda.
@@ -490,8 +491,8 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
 
               {!picked.loading_sizes && picked.tallas.length >= 1 && (() => {
                 // Sprint 2026-07-20 · BRA primero y por defecto (es la base
-                // del Motor). US M / US W se muestran solo como referencia
-                // de equivalencia — sus inputs quedan deshabilitados.
+                // del Motor). Sprint 2026-07-21 · todos los sistemas con
+                // datos permiten digitar cantidades (incluidos US M / US W).
                 const allSystems = ["BR","EU","US_M","US_W","UK_M","CM","ALFA"];
                 const systemsWithData = allSystems.filter((s) =>
                   picked.tallas.some((t) => !!(t.equiv && t.equiv[s]))
@@ -538,15 +539,9 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                 );
               })()}
 
-              {(displaySystem === "US_M" || displaySystem === "US_W") && (
-                <div className="caption" style={{
-                  marginBottom: 8, fontSize: 11, fontWeight: 600, color: "#B45309",
-                }}>
-                  {lang === "es"
-                    ? "US M / US W son solo referencia de equivalencia — las cantidades se ingresan en BRA u otro sistema."
-                    : "US M / US W are reference-only — enter quantities in BRA or another system."}
-                </div>
-              )}
+              {/* Sprint 2026-07-21 · US M / US W habilitados otra vez:
+                  el cliente puede digitar cantidades en cualquier sistema
+                  (la talla se guarda siempre contra la base BRA). */}
               <div style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
@@ -557,9 +552,6 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                   const isFallback = displaySystem !== "BASE"
                     && (!t.equiv || !t.equiv[displaySystem])
                     && !!t.base;
-                  // Sprint 2026-07-20 · US M / US W: solo referencia de
-                  // equivalencia — el input queda deshabilitado.
-                  const refOnly = displaySystem === "US_M" || displaySystem === "US_W";
                   return (
                     <div key={t.base} style={{
                       border: "1px solid var(--border)", borderRadius: 8,
@@ -587,12 +579,6 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                       )}
                       <input className="input tabular-nums" type="number" min="0"
                              value={t.qty}
-                             disabled={refOnly}
-                             title={refOnly
-                               ? (lang === "es"
-                                   ? "Solo referencia — ingresá las cantidades en BRA u otro sistema"
-                                   : "Reference only — enter quantities in BRA or another system")
-                               : undefined}
                              onChange={(e) => {
                                const v = Math.max(0, Number(e.target.value) || 0);
                                // Sprint 2026-07-18 · forzamos el texto del DOM al
@@ -606,13 +592,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                                  return { ...p, tallas };
                                });
                              }}
-                             style={{
-                               textAlign: "center",
-                               ...(refOnly ? {
-                                 background: "#F1F5F9", color: "#94A3B8",
-                                 cursor: "not-allowed",
-                               } : {}),
-                             }}/>
+                             style={{ textAlign: "center" }}/>
                     </div>
                   );
                 })}
