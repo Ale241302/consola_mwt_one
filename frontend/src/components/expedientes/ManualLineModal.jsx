@@ -136,6 +136,9 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
           map[String(sz.id)] = {
             base,
             tipo: sz.tipo_producto || null,
+            // Sprint 2026-07-21 · medidas internas (mm) del PDF Marluvas
+            ancho:       sz.ancho_mm       ?? null,
+            comprimento: sz.comprimento_mm ?? null,
             equiv: {
               BASE: base,
               EU:   sz.eu       || null,
@@ -205,6 +208,8 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
         if (base) {
           entry = {
             base,
+            ancho:       t.ancho_mm       ?? null,
+            comprimento: t.comprimento_mm ?? null,
             equiv: {
               BASE: base,
               EU:   t.eu       || null,
@@ -226,7 +231,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
         }
       } else {
         const m = sizingMap[String(t)];
-        if (m?.base) entry = { base: m.base, equiv: m.equiv };
+        if (m?.base) entry = { base: m.base, equiv: m.equiv, ancho: m.ancho ?? null, comprimento: m.comprimento ?? null };
       }
       if (entry && !seen.has(entry.base)) {
         seen.add(entry.base);
@@ -493,7 +498,9 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                 // Sprint 2026-07-20 · BRA primero y por defecto (es la base
                 // del Motor). Sprint 2026-07-21 · todos los sistemas con
                 // datos permiten digitar cantidades (incluidos US M / US W).
-                const allSystems = ["BR","EU","US_M","US_W","UK_M","CM","ALFA"];
+                // Se quita "Letras" (ALFA): el cliente ordena en sistemas
+                // numéricos; las medidas internas van bajo cada talla.
+                const allSystems = ["BR","EU","US_M","US_W","UK_M","CM"];
                 const systemsWithData = allSystems.filter((s) =>
                   picked.tallas.some((t) => !!(t.equiv && t.equiv[s]))
                 );
@@ -501,7 +508,6 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                   BASE: lang === "es" ? "Base" : "Base",
                   EU: "EU", US_M: "US M", US_W: "US W",
                   UK_M: "UK", BR: "BRA", CM: "CM",
-                  ALFA: lang === "es" ? "Letras" : "Letter",
                 };
                 if (systemsWithData.length <= 1) return null;
                 return (
@@ -576,6 +582,24 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                           marginBottom: 4,
                           fontFamily: "var(--font-mono, monospace)",
                         }}>BRA {t.base}</div>
+                      )}
+                      {/* Sprint 2026-07-21 · medidas internas del PDF
+                          Marluvas: ancho × comprimento (mm) bajo la talla. */}
+                      {(t.ancho || t.comprimento) && (
+                        <div className="caption"
+                             title={lang === "es"
+                               ? "Ancho × Comprimento interno (mm) — tabla Marluvas"
+                               : "Internal width × length (mm) — Marluvas chart"}
+                             style={{
+                               fontSize: 10, textAlign: "center",
+                               color: "var(--text-tertiary)",
+                               marginBottom: 4, fontWeight: 600,
+                             }}>
+                          {[t.ancho, t.comprimento]
+                            .filter(Boolean)
+                            .map(v => lang === "es" ? String(v).replace(".", ",") : String(v))
+                            .join(" × ")} mm
+                        </div>
                       )}
                       <input className="input tabular-nums" type="number" min="0"
                              value={t.qty}
