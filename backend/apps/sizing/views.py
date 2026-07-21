@@ -18,6 +18,7 @@ Reglas MWT:
 """
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -29,6 +30,17 @@ from .serializers import (
     TallaSerializer, TallaListSerializer,
     TipoProductoCatSerializer, MedidaSistemaCatSerializer,
 )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 2026-07-21 · paginación amplia para el catálogo de tallas.
+# Con las corridas por capellada × puntera (G8) el catálogo pasó de 17 a
+# 83 registros y el global PAGE_SIZE=50 cortaba la lista en el FE.
+# Es un catálogo (filas pequeñas, crecimiento acotado): servimos 500.
+# ─────────────────────────────────────────────────────────────────────
+class TallaPagination(LimitOffsetPagination):
+    default_limit = 500
+    max_limit     = 1000
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -45,6 +57,7 @@ class TallaViewSet(viewsets.ModelViewSet):
       · ?q=42                       → coincidencia parcial en talla_base / nombre / equivalencias top
     """
     permission_classes = [IsAuthenticated]
+    pagination_class   = TallaPagination
     queryset           = Talla.objects.all()
     lookup_field       = "id"
 
@@ -73,7 +86,9 @@ class TallaViewSet(viewsets.ModelViewSet):
         if marca:
             qs = qs.filter(marca_ids__contains=[marca])
 
-        familia = (params.get("familia") or "").strip().upper()
+        # Sprint 2026-07-21 · `familias` ahora guarda el TIPO DE PUNTERA
+        # del catálogo ("Acero 200J", mix-case): no transformar el caso.
+        familia = (params.get("familia") or "").strip()
         if familia:
             qs = qs.filter(familias__contains=[familia])
 
