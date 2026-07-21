@@ -69,7 +69,7 @@ export default function ScreenSizingEngine() {
   const [filterTipo, setFilterTipo] = useState("");
   const [q, setQ] = useState("");
   const [editing, setEditing]   = useState(null);    // null | {} (nuevo) | obj (edita)
-  // Sprint 2026-07-16 · filtros por clasificadores + duplicar familia
+  // Sprint 2026-07-16 · filtros por clasificadores + duplicar puntera
   const [filterMarca,   setFilterMarca]   = useState("");
   const [filterFamilia, setFilterFamilia] = useState("");
   const [cloneFamOpen,  setCloneFamOpen]  = useState(false);
@@ -106,7 +106,10 @@ export default function ScreenSizingEngine() {
 
   useEffect(() => { loadAll(); }, []);
 
-  // ── Mapa id→nombre de marca + familias distintas (2026-07-16) ──
+  // ── Mapa id→nombre de marca + punteras distintas ─────────────
+  // Sprint 2026-07-21 · las "familias" ahora son tipos de puntera:
+  // se muestran tal cual están guardadas (sin forzar MAYÚSCULAS) y
+  // se excluye cualquier valor "DALUPO" del catálogo.
   const marcaNameById = useMemo(() => {
     const map = {};
     (options?.marcas || []).forEach(m => { map[m.id] = m.nombre; });
@@ -116,7 +119,7 @@ export default function ScreenSizingEngine() {
   const familiasDistinct = useMemo(() => {
     const set = new Set();
     tallas.forEach(t => (Array.isArray(t.familias) ? t.familias : [])
-      .forEach(f => set.add(String(f).toUpperCase())));
+      .forEach(f => { if (!/dalupo/i.test(String(f))) set.add(String(f)); }));
     return [...set].sort();
   }, [tallas]);
 
@@ -128,8 +131,10 @@ export default function ScreenSizingEngine() {
       out = out.filter(t => (Array.isArray(t.marca_ids) ? t.marca_ids : []).includes(filterMarca));
     }
     if (filterFamilia) {
+      // Sprint 2026-07-21 · comparación exacta: las punteras se guardan
+      // con su capitalización de catálogo (ej. "Acero 200J").
       out = out.filter(t => (Array.isArray(t.familias) ? t.familias : [])
-        .some(f => String(f).toUpperCase() === filterFamilia));
+        .some(f => String(f) === filterFamilia));
     }
     const ql = q.trim().toLowerCase();
     if (ql) {
@@ -267,9 +272,9 @@ export default function ScreenSizingEngine() {
           {familiasDistinct.length > 0 && (
             <button onClick={() => setCloneFamOpen(true)} className="siz-btn siz-btn-ghost"
                     title={lang === "es"
-                      ? "Duplica la corrida de tallas de una familia a otra (sin re-digitar equivalencias)"
-                      : "Duplicate a family's size run into another family"}>
-              ⧉ {lang === "es" ? "Duplicar familia" : "Duplicate family"}
+                      ? "Duplica la corrida de tallas de una puntera a otra (sin re-digitar equivalencias)"
+                      : "Duplicate a toe cap's size run into another toe cap"}>
+              ⧉ {lang === "es" ? "Duplicar puntera" : "Duplicate toe cap"}
             </button>
           )}
           <button onClick={() => setEditing({})} className="siz-btn siz-btn-primary">
@@ -323,7 +328,7 @@ export default function ScreenSizingEngine() {
             <option key={t.codigo} value={t.codigo}>{t.label}</option>
           ))}
         </select>
-        {/* Sprint 2026-07-16 · filtros por marca y familia */}
+        {/* Sprint 2026-07-16 · filtros por marca y puntera */}
         <select
           className="siz-input siz-select"
           value={filterMarca}
@@ -341,7 +346,7 @@ export default function ScreenSizingEngine() {
           onChange={e => setFilterFamilia(e.target.value)}
           style={{ maxWidth: 200 }}
         >
-          <option value="">{lang === "es" ? "Todas las familias" : "All families"}</option>
+          <option value="">{lang === "es" ? "Todas las punteras" : "All toe caps"}</option>
           {familiasDistinct.map(f => (
             <option key={f} value={f}>{f}</option>
           ))}
@@ -492,7 +497,7 @@ export default function ScreenSizingEngine() {
                     >
                       {t.nombre || <span style={{ color: "#CBD5E1" }}>—</span>}
                     </div>
-                    {/* Marca · Tipo · Familia (Sprint 2026-07-16) */}
+                    {/* Marca · Capellada · Tipo puntera (Sprint 2026-07-21) */}
                     {((t.marca_ids || []).length > 0 ||
                       (t.tipos || []).length > 0 ||
                       (t.familias || []).length > 0) && (
@@ -658,7 +663,7 @@ export default function ScreenSizingEngine() {
         )}
       </AnimatePresence>
 
-      {/* Modal duplicar familia (Sprint 2026-07-16) — vía portal */}
+      {/* Modal duplicar puntera (Sprint 2026-07-21) — vía portal */}
       {cloneFamOpen && createPortal(
         <CloneFamiliaModal
           lang={lang}
@@ -755,7 +760,9 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     return { ...prev, [k]: cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v] };
   });
   const addFamilia = (raw) => {
-    const v = String(raw || "").trim().toUpperCase();
+    // Sprint 2026-07-21 · SIN .toUpperCase(): los tipos de puntera del
+    // catálogo (ej. "Acero 200J") se guardan con su capitalización exacta.
+    const v = String(raw || "").trim();
     if (!v) return;
     setForm(prev => {
       const cur = Array.isArray(prev.familias) ? prev.familias : [];
@@ -798,11 +805,30 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.talla_base]);
 
-  // Familia sólo aplica si el tipo NO es exclusivamente Plantilla.
+  // Tipo puntera sólo aplica si el tipo NO es exclusivamente Plantilla.
   const soloPlantilla =
     form.tipo_producto === "plantilla" ||
     ((form.tipos || []).length > 0 &&
      (form.tipos || []).every(t => /plantilla/i.test(t)));
+
+  // ── Sprint 2026-07-21 · catálogos Capellada / Tipo puntera ─────────
+  // /api/sizing/options/ expone las claves NUEVAS `capellada` y
+  // `tipo_puntera`; si vienen vacías o ausentes (backend viejo o mock)
+  // caemos a las claves legacy `tipos_calzado` / `familias`. En ambos
+  // casos se excluye cualquier valor "DALUPO".
+  const capelladaOpts = useMemo(() => {
+    const src = (Array.isArray(options?.capellada) && options.capellada.length > 0)
+      ? options.capellada
+      : (options?.tipos_calzado || []);
+    return src.filter(v => !/dalupo/i.test(String(v)));
+  }, [options]);
+
+  const punteraOpts = useMemo(() => {
+    const src = (Array.isArray(options?.tipo_puntera) && options.tipo_puntera.length > 0)
+      ? options.tipo_puntera
+      : (options?.familias || []);
+    return src.filter(v => !/dalupo/i.test(String(v)));
+  }, [options]);
 
   // ── Determinante de la lógica condicional ──────────────────
   const tipoMeta = useMemo(() => {
@@ -923,16 +949,18 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
             </div>
           </Section>
 
-          {/* SECCIÓN 1B · Marca · Tipo · Familia (Sprint 2026-07-16)
-              Cada talla puede pertenecer a UNA O MÁS marcas, tipos y
-              familias. La familia (ej. 50B22) es el prefijo del nombre
-              del producto: el form de producto la detecta y muestra
-              las tallas relacionadas. */}
+          {/* SECCIÓN 1B · Marca · Capellada · Tipo puntera
+              (Sprint 2026-07-21 · antes "Marca · Tipo · Familia", 2026-07-16)
+              Cada talla puede pertenecer a UNA O MÁS marcas, capelladas y
+              punteras. La capellada (ej. "Cuero Nobuck") es el material
+              superior del calzado; el tipo puntera (ej. "Acero 200J") es
+              la protección de la punta: el form de producto lo detecta y
+              muestra las tallas relacionadas. */}
           <Section
-            title={lang === "es" ? "Marca · Tipo · Familia" : "Brand · Type · Family"}
+            title={lang === "es" ? "Marca · Capellada · Tipo puntera" : "Brand · Upper · Toe cap"}
             hint={lang === "es"
-              ? "Multi-selección: una talla puede estar en varias marcas y familias."
-              : "Multi-select: a size can belong to several brands and families."}
+              ? "Multi-selección: una talla puede estar en varias marcas y punteras."
+              : "Multi-select: a size can belong to several brands and toe caps."}
           >
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <Field label={lang === "es" ? "Marcas" : "Brands"}>
@@ -953,9 +981,12 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                 </div>
               </Field>
 
-              <Field label={lang === "es" ? "Tipos" : "Types"}>
+              {/* Sprint 2026-07-21 · "Tipos" → Capellada. Las pills salen
+                  de options.capellada (fallback: tipos_calzado); el dato se
+                  sigue guardando en form.tipos — el payload no cambia. */}
+              <Field label={lang === "es" ? "Capellada" : "Upper"}>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {(options?.tipos_calzado || []).map(t => (
+                  {capelladaOpts.map(t => (
                     <TogglePill
                       key={t}
                       on={(form.tipos || []).includes(t)}
@@ -968,8 +999,8 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
 
               {!soloPlantilla && (
                 <Field
-                  label={lang === "es" ? "Familias de calzado" : "Footwear families"}
-                  hint={lang === "es" ? "prefijo del nombre, ej. 50B22" : "name prefix, e.g. 50B22"}
+                  label={lang === "es" ? "Tipo puntera" : "Toe cap type"}
+                  hint={lang === "es" ? "puntera del calzado, ej. Acero 200J" : "shoe toe cap, e.g. Acero 200J"}
                 >
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
                     {(form.familias || []).map(f => (
@@ -984,7 +1015,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                         {f}
                         <button type="button"
                                 onClick={() => set("familias", (form.familias || []).filter(x => x !== f))}
-                                title={lang === "es" ? "Quitar familia" : "Remove family"}
+                                title={lang === "es" ? "Quitar puntera" : "Remove toe cap"}
                                 style={{ border: "none", background: "transparent", cursor: "pointer",
                                          color: "#008B69", fontWeight: 800, padding: 0, lineHeight: 1 }}>
                           ×
@@ -993,8 +1024,9 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                     ))}
                     {/* Sprint 2026-07-18 · select NORMAL (antes un input con
                         datalist nativo que desplegaba una lista gigante sin
-                        estilo). Se alimenta de options.familias — que desde
-                        G6 sale de los productos de la DB, no del Excel. */}
+                        estilo). Sprint 2026-07-21 · se alimenta de
+                        options.tipo_puntera (fallback: options.familias);
+                        el dato se sigue guardando en form.familias. */}
                     <select
                       className="siz-input mono"
                       style={{ height: 30, fontSize: 12, padding: "0 8px", cursor: "pointer" }}
@@ -1003,12 +1035,12 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                         if (e.target.value) addFamilia(e.target.value);
                         e.target.value = "";
                       }}
-                      title={lang === "es" ? "Agregar familia" : "Add family"}
+                      title={lang === "es" ? "Agregar puntera" : "Add toe cap"}
                     >
                       <option value="" disabled>
-                        {lang === "es" ? "＋ agregar familia…" : "＋ add family…"}
+                        {lang === "es" ? "＋ agregar puntera…" : "＋ add toe cap…"}
                       </option>
-                      {(options?.familias || [])
+                      {punteraOpts
                         .filter(f => !(form.familias || []).includes(f))
                         .map(f => <option key={f} value={f}>{f}</option>)}
                     </select>
@@ -1115,9 +1147,10 @@ function Section({ title, hint, children }) {
 }
 
 // =====================================================================
-// Modal "Duplicar familia" (Sprint 2026-07-16)
-// Copia TODAS las tallas activas de una familia a otra nueva, para no
-// re-digitar las 15 equivalencias al abrir una línea de productos.
+// Modal "Duplicar puntera" (Sprint 2026-07-21 · antes "Duplicar familia")
+// Copia TODAS las tallas activas de un tipo puntera a otro nuevo, para
+// no re-digitar las 15 equivalencias al abrir una línea de productos.
+// Los parámetros del API siguen siendo familia_origen / familia_destino.
 // =====================================================================
 function CloneFamiliaModal({ lang, familias, onClose, onDone }) {
   const [origen,  setOrigen]  = useState(familias[0] || "");
@@ -1154,16 +1187,16 @@ function CloneFamiliaModal({ lang, familias, onClose, onDone }) {
           {lang === "es" ? "MOTOR DE TALLAS" : "SIZING ENGINE"}
         </div>
         <div className="heading-md" style={{ margin: "2px 0 4px", color: NAVY }}>
-          {lang === "es" ? "Duplicar corrida de una familia" : "Duplicate a family's size run"}
+          {lang === "es" ? "Duplicar corrida de una puntera" : "Duplicate a toe cap's size run"}
         </div>
         <div className="caption" style={{ color: "#64748B", marginBottom: 14 }}>
           {lang === "es"
-            ? "Crea una copia de cada talla activa de la familia origen, asignada a la familia destino (mismas equivalencias y marcas)."
-            : "Creates a copy of every active size in the source family, assigned to the target family."}
+            ? "Crea una copia de cada talla activa de la puntera origen, asignada a la puntera destino (mismas equivalencias y marcas)."
+            : "Creates a copy of every active size in the source toe cap, assigned to the target toe cap."}
         </div>
         <div style={{ display: "grid", gap: 10 }}>
           <label className="siz-field">
-            <span className="siz-field-label">{lang === "es" ? "Familia origen" : "Source family"}</span>
+            <span className="siz-field-label">{lang === "es" ? "Puntera origen" : "Source toe cap"}</span>
             <select className="siz-input siz-select" value={origen}
                     onChange={e => setOrigen(e.target.value)} disabled={busy}>
               {familias.map(f => <option key={f} value={f}>{f}</option>)}
@@ -1171,10 +1204,10 @@ function CloneFamiliaModal({ lang, familias, onClose, onDone }) {
           </label>
           <label className="siz-field">
             <span className="siz-field-label">
-              {lang === "es" ? "Familia destino (nueva)" : "Target family (new)"}
+              {lang === "es" ? "Puntera destino (nueva)" : "Target toe cap (new)"}
             </span>
             <input className="siz-input mono" value={destino} disabled={busy}
-                   placeholder={lang === "es" ? 'p.ej. "80B10"' : 'e.g. "80B10"'}
+                   placeholder={lang === "es" ? 'p.ej. "Acero 200J"' : 'e.g. "Acero 200J"'}
                    onChange={e => setDestino(e.target.value.toUpperCase())}
                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); run(); } }}/>
           </label>

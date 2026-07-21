@@ -2485,6 +2485,11 @@ export const MOCK_SIZING_OPTIONS = {
     { key: 'peso_g',            label: 'Peso referencial (g)',unit: 'g',  step: 0.5, min: 0, max: 9999.99 },
   ],
   draft_allowed: true,
+  // Sprint 2026-07-21 · clasificadores renombrados: el backend expone
+  // `capellada` (material superior, antes "tipos de calzado") y
+  // `tipo_puntera` (antes "familias de calzado"). Sin valores DALUPO.
+  capellada: ['Cuero Nobuck', 'Microfibra', 'PVC'],
+  tipo_puntera: ['Acero 200J', 'Composite 200J', 'No tiene'],
   version: 'mock-sizing-engine-v1',
 };
 

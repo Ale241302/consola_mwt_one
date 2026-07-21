@@ -269,6 +269,34 @@ class SizingOptionsView(APIView):
         except Exception:
             pass
 
+        # ── Sprint 2026-07-21 · nuevos clasificadores del Motor de Tallas ──
+        # capellada / tipo_puntera: catálogo vivo productos.attr_opcion.
+        # Se excluye cualquier valor que matchee /dalupo/i (marca interna
+        # que no debe ofrecerse como opción en el FE).
+        capellada, tipo_puntera = [], []
+        try:
+            with connection.cursor() as cur:
+                cur.execute("""
+                    SELECT value FROM productos.attr_opcion
+                    WHERE key = 'capellada' AND is_active = TRUE
+                      AND value !~* 'dalupo'
+                    ORDER BY orden, value
+                """)
+                capellada = [r[0] for r in cur.fetchall()]
+        except Exception:
+            pass
+        try:
+            with connection.cursor() as cur:
+                cur.execute("""
+                    SELECT value FROM productos.attr_opcion
+                    WHERE key = 'tipo_puntera' AND is_active = TRUE
+                      AND value !~* 'dalupo'
+                    ORDER BY orden, value
+                """)
+                tipo_puntera = [r[0] for r in cur.fetchall()]
+        except Exception:
+            pass
+
         payload = {
             "tipos_producto":      TipoProductoCatSerializer(tipos, many=True).data,
             "sistemas_medida":     MedidaSistemaCatSerializer(sistemas, many=True).data,
@@ -277,6 +305,8 @@ class SizingOptionsView(APIView):
             "marcas":              marcas,
             "tipos_calzado":       tipos_calzado,
             "familias":            familias,
+            "capellada":           capellada,
+            "tipo_puntera":        tipo_puntera,
             "draft_allowed":       True,
             "version":             "sizing-engine-v2",
         }

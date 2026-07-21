@@ -105,6 +105,18 @@ const TABS = [
 ];
 const CLIENT_VISIBLE_TABS = new Set(['detalles']);
 
+// ── Sprint 2026-07-21 · helpers del Motor de Tallas ──────────────────
+// Nueva semántica de la talla: `talla.tipos` guarda CAPELLADAS
+// (ej. "Cuero Nobuck", "Microfibra") y `talla.familias` guarda TIPOS DE
+// PUNTERA (ej. "Acero 200J", "Composite 200J", "No tiene").
+// · _normTallaVal → comparaciones case-insensitive con trim.
+// · esDalupo / sinDalupo → se omite cualquier valor "DALUPO".
+const _normTallaVal = (v) => String(v ?? '').trim().toLowerCase();
+const esDalupo = (v) => /dalupo/i.test(String(v ?? ''));
+const sinDalupo = (arr) => (Array.isArray(arr) ? arr : []).filter(v => !esDalupo(v));
+// true si algún valor del array (sin DALUPO) equivale al seleccionado.
+const matchTallaVal = (arr, sel) => sinDalupo(arr).some(v => _normTallaVal(v) === sel);
+
 export default function ScreenProductFormView() {
   const navigate = useNavigate();
   // Fable5-QA 2026-06-12: si el producto se abrio desde el Portal B2B
@@ -922,6 +934,8 @@ export default function ScreenProductFormView() {
   }, [realBrands, brandId, isEdit]);
 
   // ── Sprint 2026-07-16 · detección de FAMILIA por el nombre ─────────
+  // (Sprint 2026-07-21: queda como FALLBACK legacy — solo aplica cuando
+  // ni capellada ni tipo de puntera tienen valor; ver filtro más abajo.)
   // La familia (ej. 50B22) es un prefijo del nombre del producto. Si el
   // nombre contiene una familia conocida (la más larga gana: 50B22M
   // matchea 50B22), la Sección C muestra solo las tallas relacionadas.
@@ -929,7 +943,7 @@ export default function ScreenProductFormView() {
     const name = String(nombre || "").toUpperCase().trim();
     if (!name) return null;
     const fams = new Set();
-    realSizes.forEach(t => (Array.isArray(t.familias) ? t.familias : [])
+    realSizes.forEach(t => sinDalupo(t.familias)
       .forEach(f => {
         const s = String(f).toUpperCase().trim();
         if (s.length >= 3) fams.add(s);
@@ -941,16 +955,36 @@ export default function ScreenProductFormView() {
     return best;
   }, [nombre, realSizes]);
 
+  // ── Sprint 2026-07-21 · relación por CAPELLADA + TIPO DE PUNTERA ───
+  // Criterio principal: una talla está relacionada con el producto
+  // cuando coincide con los selects de la Sección B —
+  //   · capellada (especificaciones.capellada)   ↔ algún valor de talla.tipos
+  //   · tipo de puntera (especificaciones.tipo_puntera) ↔ talla.familias
+  // Si ambos selects tienen valor se exigen AMBAS coincidencias (AND);
+  // si solo uno tiene valor filtra ese; si ninguno tiene valor se
+  // conserva el fallback legacy de familia detectada en el nombre.
+  const capelladaSel = esDalupo(attrs.capellada) ? '' : _normTallaVal(attrs.capellada);
+  const punteraSel   = esDalupo(attrs.tipo_puntera) ? '' : _normTallaVal(attrs.tipo_puntera);
+  const filtroPorAtributos = Boolean(capelladaSel || punteraSel);
+
   // Tallas visibles en Sección C:
-  //   · lo YA seleccionado nunca se oculta (aunque sea de otra familia)
+  //   · lo YA seleccionado nunca se oculta (aunque no coincida el criterio)
   //   · tallas con marcas asignadas deben incluir la marca del producto
-  //   · con familia detectada → solo tallas de esa familia
+  //   · con capellada/puntera seleccionada → solo tallas que coinciden
+  //   · sin criterio en los selects → familia detectada en el nombre
   //   · el resto se elige desde el modal "Más tallas".
   const visibleSizes = useMemo(() => {
     return realSizes.filter(t => {
       if (selectedSizes.includes(t.id)) return true;
       const marcas = Array.isArray(t.marca_ids) ? t.marca_ids : [];
       if (brandId && marcas.length > 0 && !marcas.includes(brandId)) return false;
+      // Sprint 2026-07-21 · criterio principal: capellada (tipos) y/o
+      // tipo de puntera (familias) — AND cuando ambos tienen valor.
+      if (filtroPorAtributos) {
+        if (capelladaSel && !matchTallaVal(t.tipos, capelladaSel)) return false;
+        if (punteraSel   && !matchTallaVal(t.familias, punteraSel)) return false;
+        return true;
+      }
       if (detectedFamilia) {
         const fams = Array.isArray(t.familias)
           ? t.familias.map(f => String(f).toUpperCase()) : [];
@@ -958,10 +992,11 @@ export default function ScreenProductFormView() {
       }
       return true;
     });
-  }, [realSizes, selectedSizes, detectedFamilia, brandId]);
+  }, [realSizes, selectedSizes, detectedFamilia, brandId,
+      filtroPorAtributos, capelladaSel, punteraSel]);
   const hiddenSizesCount = realSizes.length - visibleSizes.length;
 
-  // Modal "Más tallas" — permite traer tallas de OTRAS familias.
+  // Modal "Más tallas" — permite traer tallas fuera del criterio activo.
   const [moreTallasOpen, setMoreTallasOpen] = useState(false);
 
   // Agrupa tallas por sistema (`tipo_producto` o `sistema_medida`) para
@@ -1272,13 +1307,15 @@ export default function ScreenProductFormView() {
                     value={attrs.tipo_calzado} onChange={v=>setAttrs({...attrs, tipo_calzado: v})}/>
         <AttrSelect label={lang==='es'?'Cubre puntera':'Toe cap cover'} opts={attrOptions.cubrepuntera} lang={lang} onAddOption={!isClient ? addAttrOption('cubrepuntera') : undefined} onEditOption={!isClient ? editAttrOption('cubrepuntera') : undefined} onDeleteOption={!isClient ? deleteAttrOption('cubrepuntera') : undefined}
                     value={attrs.cubrepuntera} onChange={v=>setAttrs({...attrs, cubrepuntera: v})}/>
-        <AttrSelect label={lang==='es'?'Tipo de puntera':'Toe cap type'} opts={attrOptions.tipo_puntera} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_puntera') : undefined} onEditOption={!isClient ? editAttrOption('tipo_puntera') : undefined} onDeleteOption={!isClient ? deleteAttrOption('tipo_puntera') : undefined}
+        {/* Sprint 2026-07-21 · capellada y tipo de puntera alimentan el
+            filtro del Motor de Tallas (Sección C); se omiten opciones DALUPO. */}
+        <AttrSelect label={lang==='es'?'Tipo de puntera':'Toe cap type'} opts={sinDalupo(attrOptions.tipo_puntera)} lang={lang} onAddOption={!isClient ? addAttrOption('tipo_puntera') : undefined} onEditOption={!isClient ? editAttrOption('tipo_puntera') : undefined} onDeleteOption={!isClient ? deleteAttrOption('tipo_puntera') : undefined}
                     value={attrs.tipo_puntera} onChange={v=>setAttrs({...attrs, tipo_puntera: v})}/>
         <AttrSelect label={lang==='es'?'Antiperforante':'Anti-perforation'} opts={attrOptions.antiperforante} lang={lang} onAddOption={!isClient ? addAttrOption('antiperforante') : undefined} onEditOption={!isClient ? editAttrOption('antiperforante') : undefined} onDeleteOption={!isClient ? deleteAttrOption('antiperforante') : undefined}
                     value={attrs.antiperforante} onChange={v=>setAttrs({...attrs, antiperforante: v})}/>
         <AttrSelect label={lang==='es'?'Protector metatarsal':'Metatarsal protector'} opts={attrOptions.protector_metatarsal} lang={lang} onAddOption={!isClient ? addAttrOption('protector_metatarsal') : undefined} onEditOption={!isClient ? editAttrOption('protector_metatarsal') : undefined} onDeleteOption={!isClient ? deleteAttrOption('protector_metatarsal') : undefined}
                     value={attrs.protector_metatarsal} onChange={v=>setAttrs({...attrs, protector_metatarsal: v})}/>
-        <AttrSelect label={lang==='es'?'Capellada':'Upper'} opts={attrOptions.capellada} lang={lang} onAddOption={!isClient ? addAttrOption('capellada') : undefined} onEditOption={!isClient ? editAttrOption('capellada') : undefined} onDeleteOption={!isClient ? deleteAttrOption('capellada') : undefined}
+        <AttrSelect label={lang==='es'?'Capellada':'Upper'} opts={sinDalupo(attrOptions.capellada)} lang={lang} onAddOption={!isClient ? addAttrOption('capellada') : undefined} onEditOption={!isClient ? editAttrOption('capellada') : undefined} onDeleteOption={!isClient ? deleteAttrOption('capellada') : undefined}
                     value={attrs.capellada} onChange={v=>setAttrs({...attrs, capellada: v})}/>
         <AttrSelect label="Suela" opts={attrOptions.suela} lang={lang} onAddOption={!isClient ? addAttrOption('suela') : undefined} onEditOption={!isClient ? editAttrOption('suela') : undefined} onDeleteOption={!isClient ? deleteAttrOption('suela') : undefined}
                     value={attrs.suela} onChange={v=>setAttrs({...attrs, suela: v})}/>
@@ -1499,15 +1536,30 @@ export default function ScreenProductFormView() {
               {selectedSizes.length} {lang==='es'?'seleccionadas':'selected'}
             </span>
           </div>
-          {/* Sprint 2026-07-16 · familia detectada en el nombre → tallas filtradas */}
-          {(detectedFamilia || hiddenSizesCount > 0) && realSizes.length > 0 && (
+          {/* Sprint 2026-07-21 · el banner informa el criterio activo:
+              capellada/puntera de la Sección B (principal) o familia
+              detectada en el nombre (fallback legacy). */}
+          {(filtroPorAtributos || detectedFamilia || hiddenSizesCount > 0) && realSizes.length > 0 && (
             <div style={{
               display:'flex', alignItems:'center', gap:8, flexWrap:'wrap',
               margin:'6px 0 10px', padding:'7px 10px', borderRadius:8,
               background:'rgba(0,178,134,0.07)',
               border:'1px solid rgba(0,178,134,0.20)',
             }}>
-              {detectedFamilia ? (
+              {filtroPorAtributos ? (
+                <span className="caption" style={{color:'#008B69', fontWeight:600}}>
+                  <span className="mono" style={{fontWeight:800}}>
+                    {[
+                      capelladaSel ? `${lang==='es' ? 'Capellada' : 'Upper'}: ${String(attrs.capellada).trim()}` : null,
+                      punteraSel   ? `${lang==='es' ? 'Puntera' : 'Toe cap'}: ${String(attrs.tipo_puntera).trim()}` : null,
+                    ].filter(Boolean).join(' · ')}
+                  </span>
+                  {' — '}
+                  {lang==='es'
+                    ? `mostrando ${visibleSizes.length} talla(s) relacionadas`
+                    : `showing ${visibleSizes.length} related size(s)`}
+                </span>
+              ) : detectedFamilia ? (
                 <span className="caption" style={{color:'#008B69', fontWeight:600}}>
                   {lang==='es' ? 'Familia detectada en el nombre:' : 'Family detected in name:'}{' '}
                   <span className="mono" style={{fontWeight:800}}>{detectedFamilia}</span>
@@ -1533,8 +1585,8 @@ export default function ScreenProductFormView() {
                           fontWeight:700, fontSize:11, lineHeight:1.3,
                         }}>
                   ⊞ {lang==='es'
-                      ? `Más tallas (${hiddenSizesCount} de otras familias)`
-                      : `More sizes (${hiddenSizesCount} from other families)`}
+                      ? `Más tallas (${hiddenSizesCount} ${filtroPorAtributos ? 'no relacionadas' : 'de otras familias'})`
+                      : `More sizes (${hiddenSizesCount} ${filtroPorAtributos ? 'not related' : 'from other families'})`}
                 </button>
               )}
             </div>
@@ -1584,8 +1636,9 @@ export default function ScreenProductFormView() {
           )}
         </AnimatePresence>
 
-        {/* Sprint 2026-07-16 · modal "Más tallas" — trae tallas de otras
-            familias/marcas cuando el filtro por familia detectada no basta. */}
+        {/* Sprint 2026-07-21 · modal "Más tallas" — trae tallas fuera del
+            criterio activo (capellada/puntera de la Sección B o, en su
+            defecto, la familia legacy detectada en el nombre). */}
         {moreTallasOpen && createPortal(
           <MoreTallasModal
             lang={lang}
@@ -2547,12 +2600,14 @@ export default function ScreenProductFormView() {
 }
 
 // ────────────────────────────────────────────────
-// MoreTallasModal — selector de tallas de TODAS las familias
+// MoreTallasModal — selector de tallas de TODOS los tipos de puntera
 // ────────────────────────────────────────────────
-// Sprint 2026-07-16 · Cuando la Sección C filtra por la familia detectada
-// en el nombre, este modal permite ver el catálogo completo agrupado por
-// familia y seleccionar tallas adicionales (de otras familias/marcas).
-// Una talla puede pertenecer a varias familias → aparece en cada grupo.
+// Sprint 2026-07-21 · La Sección C filtra por capellada/tipo de puntera
+// de la Sección B (fallback: familia legacy detectada en el nombre);
+// este modal permite ver el catálogo completo agrupado por TIPO DE
+// PUNTERA (`talla.familias`) y seleccionar tallas adicionales.
+// Una talla puede tener varios tipos de puntera → aparece en cada grupo.
+// Se omiten grupos/valores "DALUPO".
 function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamilia, onClose }) {
   const [q, setQ] = useState("");
 
@@ -2561,7 +2616,7 @@ function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamili
     const map = {};
     const sinFam = [];
     tallas.forEach(t => {
-      const fams = (Array.isArray(t.familias) ? t.familias : [])
+      const fams = sinDalupo(t.familias)
         .map(f => String(f).toUpperCase().trim()).filter(Boolean);
       const label = t.talla_base || t.eu || t.us_men || t.nombre || '—';
       const hit = !ql
@@ -2572,13 +2627,13 @@ function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamili
       fams.forEach(f => { (map[f] ||= []).push(t); });
     });
     const ordered = Object.keys(map).sort((a, b) => {
-      // La familia detectada primero; el resto alfabético.
+      // El grupo detectado primero; el resto alfabético.
       if (a === detectedFamilia) return -1;
       if (b === detectedFamilia) return 1;
       return a.localeCompare(b);
     }).map(f => [f, map[f]]);
     if (sinFam.length) {
-      ordered.push([lang === 'es' ? 'SIN FAMILIA' : 'NO FAMILY', sinFam]);
+      ordered.push([lang === 'es' ? 'SIN TIPO DE PUNTERA' : 'NO TOE CAP TYPE', sinFam]);
     }
     return ordered;
   }, [tallas, q, detectedFamilia, lang]);
@@ -2605,12 +2660,12 @@ function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamili
               {lang==='es' ? 'MOTOR DE TALLAS' : 'SIZING ENGINE'}
             </div>
             <div className="heading-md">
-              {lang==='es' ? 'Todas las tallas por familia' : 'All sizes by family'}
+              {lang==='es' ? 'Todas las tallas por tipo de puntera' : 'All sizes by toe cap type'}
             </div>
             <div className="caption" style={{ color:'var(--text-tertiary)' }}>
               {lang==='es'
-                ? 'Marca tallas de cualquier familia para agregarlas a este producto.'
-                : 'Tick sizes from any family to add them to this product.'}
+                ? 'Marca tallas de cualquier tipo de puntera para agregarlas a este producto.'
+                : 'Tick sizes from any toe cap type to add them to this product.'}
             </div>
           </div>
           <button type="button" onClick={onClose}
@@ -2625,8 +2680,8 @@ function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamili
           <input className="input" autoFocus value={q}
                  onChange={e=>setQ(e.target.value)}
                  placeholder={lang==='es'
-                   ? 'Buscar por talla o familia (42, 50B22…)'
-                   : 'Search by size or family (42, 50B22…)'}
+                   ? 'Buscar por talla o puntera (42, Acero 200J…)'
+                   : 'Search by size or toe cap (42, Acero 200J…)'}
                  style={{ width:'100%' }}/>
         </div>
 
