@@ -76,6 +76,19 @@ class TallaViewSet(viewsets.ModelViewSet):
         qs = Talla.objects.all().order_by("tipo_producto", "talla_base", "id")
         params = self.request.query_params
 
+        # ── Sprint 2026-07-22 · ?ids=<uuid,uuid,…> (portal B2B) ──
+        # Batch fetch defensivo: hasta 500 ids; los inválidos se ignoran
+        # silenciosamente (el portal manda especificaciones.sizes crudo).
+        ids_raw = (params.get("ids") or "").strip()
+        if ids_raw:
+            valid_ids = []
+            for chunk in ids_raw.split(","):
+                try:
+                    valid_ids.append(uuid.UUID(chunk.strip()))
+                except (ValueError, AttributeError, TypeError):
+                    continue  # id inválido → se ignora
+            qs = qs.filter(id__in=valid_ids[:500])
+
         tp = params.get("tipo_producto")
         if tp:
             qs = qs.filter(tipo_producto=tp.strip().lower())
@@ -214,9 +227,52 @@ class TallaViewSet(viewsets.ModelViewSet):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Sprint 2026-07-22 · hardening escritura de catálogos sizing
+# Escritura (create/update/partial_update/destroy) = STAFF-ONLY; la
+# lectura (list/retrieve) sigue abierta a cualquier autenticado (el
+# portal B2B lee tallas/tipos/unidades con el JWT del cliente).
+# Espejo de apps.productos.views._is_staff_role (mismo set de roles).
+# ─────────────────────────────────────────────────────────────────────
+_STAFF_WRITE_ROLES = {"admin", "superadmin", "ceo", "manager"}
+
+def _is_staff_role(request) -> bool:
+    """True si el JWT trae un role staff/CEO-like (no cliente B2B)."""
+    role = ""
+    if getattr(request, "auth", None):
+        role = (request.auth.get("role") or "").lower()
+    if not role and getattr(request, "user", None):
+        role = (getattr(request.user, "role", "") or "").lower()
+    return role in _STAFF_WRITE_ROLES
+
+
+class _StaffWriteGuardMixin:
+    """Bloquea los métodos unsafe a roles no-staff (403 con detail)."""
+
+    @staticmethod
+    def _staff_write_denied(request):
+        if _is_staff_role(request):
+            return None
+        return Response(
+            {"detail": "Solo staff puede modificar este catálogo."},
+            status=status.HTTP_403_FORBIDDEN)
+
+    def create(self, request, *args, **kwargs):
+        denied = self._staff_write_denied(request)
+        return denied or super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        denied = self._staff_write_denied(request)
+        return denied or super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        denied = self._staff_write_denied(request)
+        return denied or super().partial_update(request, *args, **kwargs)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Sprint 2026-07-22 · G18 · CRUD de familias de línea por marca
 # ─────────────────────────────────────────────────────────────────────
-class FamiliaViewSet(viewsets.ModelViewSet):
+class FamiliaViewSet(_StaffWriteGuardMixin, viewsets.ModelViewSet):
     """
     CRUD de brands.marca_familia.
 
@@ -255,6 +311,9 @@ class FamiliaViewSet(viewsets.ModelViewSet):
     # ── Delete: por defecto SOFT (is_active=False); ?hard=1 → HARD
     #    delete real. Mismo patrón que TallaViewSet.destroy. ─────────
     def destroy(self, request, *args, **kwargs):
+        denied = self._staff_write_denied(request)
+        if denied:
+            return denied
         instance = self.get_object()
         hard = str(request.query_params.get("hard", "")).lower() in ("1", "true", "yes")
         if hard:
@@ -270,8 +329,9 @@ class FamiliaViewSet(viewsets.ModelViewSet):
 # Sprint 2026-07-22 · G19 · catálogos del motor dinámico: CRUD completo
 # (antes read-only). codigo = PK (auto-slug del label si no viene);
 # DELETE soft por defecto + ?hard=1 real (mismo patrón que tallas).
+# Escritura staff-only (hardening G20) · lectura: autenticado.
 # ─────────────────────────────────────────────────────────────────────
-class _CatalogoCatViewSetMixin:
+class _CatalogoCatViewSetMixin(_StaffWriteGuardMixin):
     """Queryset con default sólo activos + destroy soft/hard."""
     permission_classes = [IsAuthenticated]
     lookup_field       = "codigo"
@@ -287,6 +347,9 @@ class _CatalogoCatViewSetMixin:
 
     # ── Delete: por defecto SOFT (is_active=False); ?hard=1 → HARD ──
     def destroy(self, request, *args, **kwargs):
+        denied = self._staff_write_denied(request)
+        if denied:
+            return denied
         instance = self.get_object()
         hard = str(request.query_params.get("hard", "")).lower() in ("1", "true", "yes")
         if hard:

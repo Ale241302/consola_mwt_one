@@ -39,13 +39,14 @@ import ProductExpedientesTab from "../components/productos/ProductExpedientesTab
 import { useRole } from "../context/RoleContext.jsx";
 import {
   productosApi, marcasApi, tallasApi, nodosApi, clientesApi,
-  productoAliasesApi, ncmApi, sizingApi, sizingFamiliasApi, attrOptionsApi,
+  productoAliasesApi, ncmApi, sizingApi, sizingFamiliasApi, tiposProductoCatApi,
+  attrOptionsApi,
   apiFetch, getToken,
 } from "../lib/api.js";
 // Sprint 2026-07-16 · drawers embebidos para crear/editar NCM y tallas sin
 // salir del formulario de producto (reusa los editores de /ncm y /tallas).
 import { NcmFormDrawer } from "./NcmEngine.jsx";
-import { TallaFormDrawer } from "./SizingEngine.jsx";
+import { TallaFormDrawer, TipoQuickModal } from "./SizingEngine.jsx";
 
 // Backend → shape lista compacta para los grids
 // "Excepciones por cliente" / "Override por cliente".
@@ -261,6 +262,13 @@ export default function ScreenProductFormView() {
   // de guardado (especificaciones.familia).
   const [familiaSel,   setFamiliaSel]   = useState(existing?.especificaciones?.familia || '');
   const [familiaIdSel, setFamiliaIdSel] = useState(existing?.especificaciones?.familia_id || null);
+  // Sprint 2026-07-22 · fase 3 · TIPO DE PRODUCTO del producto (Sección A,
+  // antes de Marca). Código de /sizing/tipos-producto/; rige — junto con
+  // la familia — el filtro de tallas de la Sección C. Fallback legacy:
+  // si el producto tiene tipo_calzado (atributo viejo) se asume 'calzado'.
+  const [tipoSel,      setTipoSel]      = useState(
+    existing?.especificaciones?.tipo_producto
+    || (existing?.especificaciones?.tipo_calzado ? 'calzado' : ''));
 
   // ── Repuebla TODOS los campos cuando llega `existing` del fetch async ──
   // Los useState() iniciales corrieron con existing=null; ahora que tenemos
@@ -297,6 +305,8 @@ export default function ScreenProductFormView() {
     setSegmentos(asMultiArray(existing.segmento));
     setFamiliaSel(existing.especificaciones?.familia || '');
     setFamiliaIdSel(existing.especificaciones?.familia_id || null);
+    setTipoSel(existing.especificaciones?.tipo_producto
+      || (existing.especificaciones?.tipo_calzado ? 'calzado' : ''));
     // Tallas: el backend las guarda en p.tallas (array de UUIDs o codes).
     setSelectedSizes(Array.isArray(existing.tallas)
       ? existing.tallas
@@ -793,14 +803,19 @@ export default function ScreenProductFormView() {
   };
 
   // Cambio de FAMILIA (acción usuario): auto-selecciona TODAS las tallas
-  // de esa familia. En la carga inicial de un producto existente NO se
-  // aplica — ahí mandan las tallas guardadas (existing.tallas).
+  // de esa familia DEL TIPO elegido (fase 3 · doble filtro tipo+familia).
+  // En la carga inicial de un producto existente NO se aplica — ahí
+  // mandan las tallas guardadas (existing.tallas).
   const onFamiliaChange = (id) => {
     const fid = id || null;
     setFamiliaIdSel(fid);
     const fam = familiasMarca.find(f => f.id === fid);
     setFamiliaSel(fam?.nombre || '');
-    setSelectedSizes(fid ? realSizes.filter(t => t.familia_id === fid).map(t => t.id) : []);
+    setSelectedSizes(fid
+      ? realSizes
+          .filter(t => t.familia_id === fid && t.tipo_producto === tipoSel)
+          .map(t => t.id)
+      : []);
   };
 
   // ── Sprint 2026-07-16 · crear/editar NCM y tallas SIN salir del form ──
@@ -826,9 +841,70 @@ export default function ScreenProductFormView() {
     try { setSizingOptions(await sizingApi.options()); }
     catch { /* el form dinámico degrada a campos base */ }
   };
+  // Sprint 2026-07-22 · fase 3 · el catálogo sizing también se carga al
+  // montar: alimenta el select TIPO DE PRODUCTO de la Sección A (antes
+  // solo se cargaba al abrir el drawer de talla).
+  useEffect(() => { reloadSizingOptions(); }, []);
   const openTallaDrawer = async (initial) => {
     setTallaDrawer(initial || {});
     if (!sizingOptions) await reloadSizingOptions();
+  };
+
+  // ── Sprint 2026-07-22 · fase 3 · CRUD inline de TIPO DE PRODUCTO ────
+  // Reutiliza el TipoQuickModal del Motor de Tallas (create/update/remove
+  // contra tiposProductoCatApi; tras mutar se refresca sizingOptions).
+  const [tipoModal, setTipoModal] = useState(null); // null | { mode:'create' } | { mode:'edit', tipo }
+  const [tipoBusy,  setTipoBusy]  = useState(false);
+  const tipoActualSel = useMemo(
+    () => (sizingOptions?.tipos_producto || []).find(t => t.codigo === tipoSel) || null,
+    [sizingOptions, tipoSel],
+  );
+  const saveTipo = async ({ label, talla_base_label, sistemas }) => {
+    if (!label) return;
+    setTipoBusy(true);
+    try {
+      let saved = null;
+      const body = { label, talla_base_label: talla_base_label || null, sistemas };
+      if (tipoModal?.mode === "edit" && tipoModal.tipo?.codigo) {
+        saved = await tiposProductoCatApi.update(tipoModal.tipo.codigo, body);
+      } else {
+        saved = await tiposProductoCatApi.create(body);   // codigo lo genera el backend
+      }
+      const cod = saved?.codigo || tipoModal?.tipo?.codigo || null;
+      setTipoModal(null);
+      await reloadSizingOptions();
+      if (cod) setTipoSel(cod);
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo guardar el tipo: " : "Could not save type: ")
+        + (e?.body?.detail || e?.message || ""));
+    } finally {
+      setTipoBusy(false);
+    }
+  };
+  const deleteTipo = async () => {
+    if (!tipoSel) return;
+    const nombre = tipoActualSel?.label || tipoSel;
+    const ok = window.confirm(lang === "es"
+      ? `¿Desactivar el tipo "${nombre}"? Los productos y tallas que lo usan lo conservan — solo se desactiva (borrado lógico).`
+      : `Deactivate type "${nombre}"? Products and sizes using it keep it — it is only deactivated (soft delete).`);
+    if (!ok) return;
+    try {
+      await tiposProductoCatApi.remove(tipoSel);
+      await reloadSizingOptions();
+      setTipoSel('');
+      setSelectedSizes([]);   // las tallas seleccionadas eran de ese tipo
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo eliminar el tipo: " : "Could not delete type: ")
+        + (e?.body?.detail || e?.message || ""));
+    }
+  };
+
+  // Cambio de TIPO (acción usuario): limpia SOLO las tallas seleccionadas
+  // (eran de otro tipo); la familia se mantiene — es por marca. NO
+  // dispara auto-selección de tallas.
+  const onTipoChange = (cod) => {
+    setTipoSel(cod || '');
+    setSelectedSizes([]);
   };
 
   const handleNcmSave = async (form) => {
@@ -1008,15 +1084,16 @@ export default function ScreenProductFormView() {
     return best;
   }, [nombre, realSizes]);
 
-  // ── Sprint 2026-07-22 · relación por FAMILIA (FK) ──────────────────
-  // Una talla está relacionada con el producto cuando su `familia_id`
-  // coincide con la FAMILIA elegida en la Sección A. Sin familia elegida
-  // no se muestra ninguna talla (hint en su lugar); el resto de tallas
-  // se pueden traer desde el modal "Más tallas".
+  // ── Sprint 2026-07-22 · fase 3 · relación por TIPO + FAMILIA ───────
+  // Una talla está relacionada con el producto cuando su `tipo_producto`
+  // coincide con el TIPO elegido en la Sección A Y su `familia_id` con la
+  // FAMILIA elegida. Sin tipo o sin familia no se muestra ninguna talla
+  // (hint en su lugar); el resto se puede traer desde "Más tallas".
   const visibleSizes = useMemo(() => {
-    if (!familiaIdSel) return [];
-    return realSizes.filter(t => t.familia_id === familiaIdSel);
-  }, [realSizes, familiaIdSel]);
+    if (!tipoSel || !familiaIdSel) return [];
+    return realSizes.filter(t =>
+      t.familia_id === familiaIdSel && t.tipo_producto === tipoSel);
+  }, [realSizes, familiaIdSel, tipoSel]);
   // Nombre de la familia activa (para el banner y el guardado compat).
   const familiaActiva = useMemo(
     () => familiasMarca.find(f => f.id === familiaIdSel) || null,
@@ -1140,6 +1217,10 @@ export default function ScreenProductFormView() {
       // consumidores legacy que leen especificaciones.familia.
       familia:            familiaActiva?.nombre || familiaSel || null,
       familia_id:         familiaIdSel || null,
+      // Sprint 2026-07-22 · fase 3 · tipo de producto del SKU (código de
+      // /sizing/tipos-producto/): rige — con la familia — el filtro de
+      // tallas de la Sección C y el toggle dinámico del portal B2B.
+      tipo_producto:      tipoSel || null,
       // Multi-select fields (sprint 2026-05-02): se persisten como arrays.
       // Los consumidores (BrandDetail, PricingManagerTable) leen ambas
       // formas — string legacy o array — para compat hacia atrás.
@@ -1226,6 +1307,56 @@ export default function ScreenProductFormView() {
           <span>{lang==='es'?'Nombre':'Name'}</span>
           <input className="input" value={nombre} onChange={e=>setNombre(e.target.value)}
                  placeholder={lang==='es'?'Ej. Bota 50S29 Plena Flor Negra':'e.g. 50S29 Full Grain Black Boot'}/>
+        </label>
+        {/* Sprint 2026-07-22 · fase 3 · TIPO DE PRODUCTO (antes de Marca).
+            Código de /sizing/tipos-producto/ — define la matriz de tallas
+            del producto (Sección C filtra por tipo + familia). CRUD
+            inline con el mismo TipoQuickModal del Motor de Tallas. Se
+            guarda en especificaciones.tipo_producto. */}
+        <label className="form-field">
+          <span style={{display:'flex', alignItems:'center', gap:8}}>
+            {lang==='es'?'Tipo de producto':'Product type'}
+            {!isClient && (
+              <span style={{marginLeft:'auto', display:'inline-flex', gap:6}}>
+                <button type="button"
+                        onClick={() => setTipoModal({ mode: 'create' })}
+                        title={lang==='es' ? 'Nuevo tipo de producto' : 'New product type'}
+                        style={{
+                          width:24, height:24, borderRadius:6, cursor:'pointer',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color:'#00B286', fontWeight:800, fontSize:14, lineHeight:1,
+                        }}>＋</button>
+                <button type="button"
+                        disabled={!tipoSel}
+                        onClick={() => setTipoModal({ mode: 'edit', tipo: tipoActualSel })}
+                        title={lang==='es' ? 'Editar tipo seleccionado' : 'Edit selected type'}
+                        style={{
+                          width:24, height:24, borderRadius:6,
+                          cursor: tipoSel ? 'pointer' : 'not-allowed',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color: tipoSel ? 'var(--text-secondary)' : 'var(--border-subtle)',
+                          fontSize:12, lineHeight:1,
+                        }}>✎</button>
+                <button type="button"
+                        disabled={!tipoSel}
+                        onClick={deleteTipo}
+                        title={lang==='es' ? 'Desactivar tipo seleccionado' : 'Deactivate selected type'}
+                        style={{
+                          width:24, height:24, borderRadius:6,
+                          cursor: tipoSel ? 'pointer' : 'not-allowed',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color: tipoSel ? '#DC2626' : 'var(--border-subtle)',
+                          fontWeight:800, fontSize:12, lineHeight:1,
+                        }}>×</button>
+              </span>
+            )}
+          </span>
+          <select className="input" value={tipoSel} onChange={e=>onTipoChange(e.target.value)}>
+            <option value="">{lang==='es'?'— Sin tipo —':'— No type —'}</option>
+            {(sizingOptions?.tipos_producto || []).map(t => (
+              <option key={t.codigo} value={t.codigo}>{t.label}</option>
+            ))}
+          </select>
         </label>
         <label className="form-field">
           <span>{lang==='es'?'Marca':'Brand'}</span>
@@ -1560,9 +1691,9 @@ export default function ScreenProductFormView() {
               <span style={{marginLeft:10, display:'inline-flex', gap:6}}>
                 <button type="button"
                         onClick={() => openTallaDrawer({
+                          tipo_producto:  tipoSel || 'calzado',
                           marca_id:       brandId || null,
                           familia_id:     familiaIdSel || null,
-                          tipo_producto:  'calzado',
                         })}
                         title={lang==='es' ? 'Crear talla nueva' : 'Create new size'}
                         style={{
@@ -1593,10 +1724,10 @@ export default function ScreenProductFormView() {
               {selectedSizes.length} {lang==='es'?'seleccionadas':'selected'}
             </span>
           </div>
-          {/* Sprint 2026-07-22 · banner del criterio activo: FAMILIA (FK)
-              elegida en Sección A. Sin familia no hay banner — el hint
-              de abajo invita a elegirla. */}
-          {familiaIdSel && realSizes.length > 0 && (
+          {/* Sprint 2026-07-22 · fase 3 · banner del criterio activo:
+              TIPO + FAMILIA elegidos en Sección A. Sin ambos no hay
+              banner — el hint de abajo invita a completarlos. */}
+          {tipoSel && familiaIdSel && realSizes.length > 0 && (
             <div style={{
               display:'flex', alignItems:'center', gap:8, flexWrap:'wrap',
               margin:'6px 0 10px', padding:'7px 10px', borderRadius:8,
@@ -1605,7 +1736,7 @@ export default function ScreenProductFormView() {
             }}>
               <span className="caption" style={{color:'#008B69', fontWeight:600}}>
                 <span className="mono" style={{fontWeight:800}}>
-                  {`${lang==='es' ? 'Familia' : 'Family'}: ${(familiaActiva?.nombre || familiaSel || '').trim()}`}
+                  {`${lang==='es' ? 'Tipo' : 'Type'}: ${tipoActualSel?.label || tipoSel} · ${lang==='es' ? 'Familia' : 'Family'}: ${(familiaActiva?.nombre || familiaSel || '').trim()}`}
                 </span>
                 {' — '}
                 {lang==='es'
@@ -1634,6 +1765,12 @@ export default function ScreenProductFormView() {
                 {lang==='es'
                   ? 'No hay tallas en BD. Crea las primeras en /tallas.'
                   : 'No sizes in DB. Create the first ones in /tallas.'}
+              </div>
+            ) : !tipoSel ? (
+              <div className="caption" style={{padding:'12px 0', color:'var(--text-tertiary)'}}>
+                {lang==='es'
+                  ? 'Selecciona un tipo de producto para ver sus tallas.'
+                  : 'Select a product type to see its sizes.'}
               </div>
             ) : !familiaIdSel ? (
               <div className="caption" style={{padding:'12px 0', color:'var(--text-tertiary)'}}>
@@ -1692,6 +1829,23 @@ export default function ScreenProductFormView() {
             onToggle={toggleSize}
             detectedFamilia={detectedFamilia}
             onClose={() => setMoreTallasOpen(false)}
+          />,
+          document.body
+        )}
+
+        {/* Sprint 2026-07-22 · fase 3 · CRUD de TIPO DE PRODUCTO — mismo
+            modal del Motor de Tallas; el catálogo de unidades viene de
+            sizingOptions y cada mutación lo refresca. */}
+        {tipoModal && createPortal(
+          <TipoQuickModal
+            lang={lang}
+            mode={tipoModal.mode}
+            tipo={tipoModal.tipo}
+            sistemasCat={sizingOptions?.sistemas_medida || []}
+            busy={tipoBusy}
+            onClose={() => setTipoModal(null)}
+            onSave={saveTipo}
+            onReloadOptions={reloadSizingOptions}
           />,
           document.body
         )}

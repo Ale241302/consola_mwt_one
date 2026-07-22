@@ -1635,7 +1635,7 @@ function FamiliaQuickModal({ lang, mode, familia, busy, onClose, onSave }) {
 //     label + grupo (select de grupos existentes o texto libre); el
 //     codigo de la unidad también lo auto-genera el backend.
 // =====================================================================
-function TipoQuickModal({ lang, mode, tipo, sistemasCat, busy, onClose, onSave, onReloadOptions }) {
+export function TipoQuickModal({ lang, mode, tipo, sistemasCat, busy, onClose, onSave, onReloadOptions }) {
   const isEdit = mode === "edit";
   const [label,          setLabel]          = useState(tipo?.label || "");
   const [tallaBaseLabel, setTallaBaseLabel] = useState(tipo?.talla_base_label || "");

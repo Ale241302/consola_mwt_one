@@ -27,8 +27,30 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { IconSearch, IconPackage } from "../../lib/icons.jsx";
 import {
-  productosApi, tallasApi, apiFetch, getToken, storageApi,
+  productosApi, tallasApi, tiposProductoCatApi, sistemasMedidaCatApi,
+  apiFetch, getToken, storageApi,
 } from "../../lib/api.js";
+
+
+// ─────────────────────────────────────────────────────────────
+// Sprint 2026-07-22 · fase 3 · catálogos sizing para el TOGGLE
+// DINÁMICO de "Mostrar talla en". Cache a nivel de MÓDULO: se
+// fetchean UNA sola vez por sesión de la app (no por apertura del
+// modal), y se comparten entre los dos consumidores del panel
+// (/portal/nueva-oc y ExpedienteDetail · LinesTab).
+// GETs válidos con JWT de cliente B2B según contrato.
+// ─────────────────────────────────────────────────────────────
+let _sizingCatsPromise = null;
+function loadSizingCats() {
+  if (!_sizingCatsPromise) {
+    const norm = (r) => Array.isArray(r) ? r : (r?.results || []);
+    _sizingCatsPromise = Promise.all([
+      tiposProductoCatApi.list().then(norm).catch(() => []),
+      sistemasMedidaCatApi.list().then(norm).catch(() => []),
+    ]).then(([tipos, unidades]) => ({ tipos, unidades }));
+  }
+  return _sizingCatsPromise;
+}
 
 
 // ─────────────────────────────────────────────────────────────
@@ -66,6 +88,10 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   // Sprint 2026-07-21 · US M / US W habilitados otra vez (inputs activos;
   // la cantidad siempre se registra contra la talla base BRA).
   const [displaySystem, setDisplaySystem] = useState("BR");
+  // Sprint 2026-07-22 · fase 3 · catálogos sizing (tipos + unidades) para
+  // el toggle dinámico — cache de módulo, no se refetchea por apertura.
+  const [sizingCats, setSizingCats] = useState(null);
+  useEffect(() => { loadSizingCats().then(setSizingCats); }, []);
   // Sprint 2026-07-20 · resultados divididos: asignados visibles y, bajo
   // el chevron "Más opciones", los NO asignados que matchean la búsqueda.
   const [showMore, setShowMore] = useState(false);
@@ -136,6 +162,9 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
           map[String(sz.id)] = {
             base,
             tipo: sz.tipo_producto || null,
+            // Sprint 2026-07-22 · fase 3 · talla cruda conservada para el
+            // toggle dinámico (equivalencias {codigo_unidad: valor}).
+            raw: sz,
             // Sprint 2026-07-21 · medidas internas (mm) del PDF Marluvas
             ancho:       sz.ancho_mm       ?? null,
             comprimento: sz.comprimento_mm ?? null,
@@ -191,12 +220,20 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
       is_assigned:   isAssigned,
       loading_sizes: true,
       tallas: [],
+      // Sprint 2026-07-22 · fase 3 · tipo del producto para el toggle
+      // dinámico (fallback legacy: tipo_calzado ⇒ 'calzado').
+      tipoCod: p?.especificaciones?.tipo_producto
+        || (p?.especificaciones?.tipo_calzado ? "calzado" : null),
     };
     setPicked(tempPicked);
 
     try {
       const full = await productosApi.get(p.id);
       tallaIds = Array.isArray(full?.tallas) ? full.tallas : [];
+      // El detalle completo manda: especificaciones.tipo_producto.
+      tempPicked.tipoCod = full?.especificaciones?.tipo_producto
+        || (full?.especificaciones?.tipo_calzado ? "calzado" : null)
+        || tempPicked.tipoCod;
     } catch {
       tallaIds = [];
     }
@@ -210,6 +247,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
         if (base) {
           entry = {
             base,
+            raw: t,
             ancho:       t.ancho_mm       ?? null,
             comprimento: t.comprimento_mm ?? null,
             equiv: {
@@ -234,7 +272,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
         }
       } else {
         const m = sizingMap[String(t)];
-        if (m?.base) entry = { base: m.base, equiv: m.equiv, ancho: m.ancho ?? null, comprimento: m.comprimento ?? null };
+        if (m?.base) entry = { base: m.base, equiv: m.equiv, raw: m.raw || null, ancho: m.ancho ?? null, comprimento: m.comprimento ?? null };
       }
       if (entry && !seen.has(entry.base)) {
         seen.add(entry.base);
@@ -242,7 +280,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
       }
     }
     if (tallas.length === 0) {
-      tallas.push({ base: "ÚNICA", equiv: { BASE: "ÚNICA" }, qty: 0 });
+      tallas.push({ base: "ÚNICA", equiv: { BASE: "ÚNICA" }, raw: null, qty: 0 });
     }
 
     setPicked({
@@ -252,8 +290,60 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
     });
   };
 
+  // ── Sprint 2026-07-22 · fase 3 · sistemas del toggle "Mostrar talla en" ──
+  // Dinámico: unidades configuradas en el TIPO del producto que tengan al
+  // menos un valor entre sus tallas (equivalencias[cod] ?? columna legacy).
+  // Fallback: si falta tipo/config o ninguna unidad tiene datos → los 7
+  // sistemas fijos de siempre (columnas legacy), comportamiento original.
+  // La selección activa se DERIVA en cada render: si el sistema elegido
+  // no existe para el producto actual, cae a br → alfa → primero (esto
+  // resetea la selección al cambiar de producto sin efectos extra).
+  const getSysInfo = () => {
+    const tallas = picked?.tallas || [];
+    const labels = {
+      BASE: "Base", EU: "EU", US_M: "US M", US_W: "US W",
+      UK_M: "UK", BR: "BRA", CM: "CM", INCH: "IN",
+    };
+    const dynValOf = (t, cod) => t?.raw?.equivalencias?.[cod] ?? t?.raw?.[cod] ?? null;
+    const tipoObj = (sizingCats?.tipos || []).find(t => t.codigo === picked?.tipoCod) || null;
+    const dynUnits = (tipoObj?.sistemas || [])
+      .map(cod => (sizingCats?.unidades || []).find(u => u.codigo === cod))
+      .filter(Boolean);
+    const dynWithData = dynUnits.filter(u =>
+      tallas.some(t => {
+        const v = dynValOf(t, u.codigo);
+        return v !== null && v !== undefined && v !== "";
+      }));
+
+    let useDyn = false;
+    let sysList = [];
+    if (dynWithData.length > 0) {
+      useDyn = true;
+      sysList = dynWithData.map(u => ({ id: u.codigo, label: u.label || u.codigo }));
+    } else {
+      const allSystems = ["BR","EU","US_M","US_W","UK_M","CM","INCH"];
+      sysList = allSystems
+        .filter((s) => tallas.some((t) => !!(t.equiv && t.equiv[s])))
+        .map((s) => ({ id: s, label: labels[s] || s }));
+    }
+
+    const ids = sysList.map(s => s.id);
+    const activeSystem = ids.includes(displaySystem)
+      ? displaySystem
+      : (ids.includes("br") ? "br"
+        : ids.includes("alfa") ? "alfa"
+        : ids.includes("BR") ? "BR"
+        : ids[0]);
+
+    const valueOf = (t, sys = activeSystem) =>
+      useDyn ? dynValOf(t, sys) : (t?.equiv?.[sys] ?? null);
+
+    return { useDyn, sysList, activeSystem, valueOf };
+  };
+
   const addToOrder = () => {
     if (!picked) return;
+    const { activeSystem, valueOf } = getSysInfo();
     const rows = picked.tallas
       .filter((t) => Number(t.qty || 0) > 0)
       .map((t) => {
@@ -261,9 +351,9 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
         // del Motor), pero si el usuario ingresó cantidades en OTRO
         // sistema (EU, CM, …) también conservamos la talla ORIGINAL que
         // vio al digitar, para mostrarla en la tabla del Paso 2.
-        const shown = (t.equiv && t.equiv[displaySystem]) || t.base;
-        const isBra = displaySystem === "BR" || displaySystem === "BASE"
-          || shown === t.base;
+        const shown = valueOf(t) || t.base;
+        const isBra = activeSystem === "BR" || activeSystem === "br"
+          || activeSystem === "BASE" || shown === t.base;
         return {
           sku:           picked.sku,
           talla:         t.base === "ÚNICA" ? null : t.base,
@@ -271,7 +361,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
           producto_id:   picked.producto_id,
           product_label: picked.product_label,
           is_assigned:   picked.is_assigned,
-          talla_sistema: isBra ? null : displaySystem,
+          talla_sistema: isBra ? null : activeSystem,
           talla_original: isBra ? null : shown,
         };
       });
@@ -498,22 +588,12 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
               ) : null}
 
               {!picked.loading_sizes && picked.tallas.length >= 1 && (() => {
-                // Sprint 2026-07-20 · BRA primero y por defecto (es la base
-                // del Motor). Sprint 2026-07-21 · todos los sistemas con
-                // datos permiten digitar cantidades (incluidos US M / US W).
-                // Se quita "Letras" (ALFA): el cliente ordena en sistemas
-                // numéricos; las medidas internas van bajo cada talla.
-                // Sprint 2026-07-22 · se agrega IN (pulgadas) tras CM.
-                const allSystems = ["BR","EU","US_M","US_W","UK_M","CM","INCH"];
-                const systemsWithData = allSystems.filter((s) =>
-                  picked.tallas.some((t) => !!(t.equiv && t.equiv[s]))
-                );
-                const labels = {
-                  BASE: lang === "es" ? "Base" : "Base",
-                  EU: "EU", US_M: "US M", US_W: "US W",
-                  UK_M: "UK", BR: "BRA", CM: "CM", INCH: "IN",
-                };
-                if (systemsWithData.length <= 1) return null;
+                // Sprint 2026-07-22 · fase 3 · toggle DINÁMICO: unidades
+                // del tipo del producto con datos (fallback: los 7 fijos
+                // legacy). La selección activa se deriva en getSysInfo
+                // (br → alfa → primero; se resetea al cambiar de SKU).
+                const { sysList, activeSystem } = getSysInfo();
+                if (sysList.length <= 1) return null;
                 return (
                   <div style={{
                     display: "flex", alignItems: "center", gap: 10,
@@ -525,24 +605,24 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                       {lang === "es" ? "Mostrar talla en:" : "Show size as:"}
                     </span>
                     <div style={{
-                      display: "inline-flex",
+                      display: "inline-flex", flexWrap: "wrap", justifyContent: "flex-end",
                       background: "rgba(11,30,58,0.04)",
                       padding: 3, borderRadius: 8, gap: 2,
                     }}>
-                      {systemsWithData.map((s) => (
+                      {sysList.map((s) => (
                         <button
-                          key={s} type="button"
-                          onClick={() => setDisplaySystem(s)}
+                          key={s.id} type="button"
+                          onClick={() => setDisplaySystem(s.id)}
                           style={{
                             padding: "4px 10px", borderRadius: 6,
                             border: 0, cursor: "pointer",
-                            background: displaySystem === s ? "white" : "transparent",
-                            color: displaySystem === s ? "#0B1E3A" : "var(--text-tertiary)",
+                            background: activeSystem === s.id ? "white" : "transparent",
+                            color: activeSystem === s.id ? "#0B1E3A" : "var(--text-tertiary)",
                             fontSize: 11, fontWeight: 700,
-                            boxShadow: displaySystem === s
+                            boxShadow: activeSystem === s.id
                               ? "0 1px 2px rgba(11,30,58,0.10)" : "none",
                           }}
-                        >{labels[s]}</button>
+                        >{s.label}</button>
                       ))}
                     </div>
                   </div>
@@ -557,10 +637,15 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                 gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
                 gap: 10, marginBottom: 14,
               }}>
-                {!picked.loading_sizes && picked.tallas.map((t, idx) => {
-                  const showLabel = (t.equiv && t.equiv[displaySystem]) || t.base || "—";
-                  const isFallback = displaySystem !== "BASE"
-                    && (!t.equiv || !t.equiv[displaySystem])
+                {!picked.loading_sizes && (() => {
+                  const { activeSystem, valueOf } = getSysInfo();
+                  return picked.tallas.map((t, idx) => {
+                  // Sprint 2026-07-22 · fase 3 · valor mostrado: dinámico
+                  // (equivalencias[sel] ?? columna legacy) o equiv legacy.
+                  const val = valueOf(t);
+                  const showLabel = val || t.base || "—";
+                  const isFallback = activeSystem !== "BASE"
+                    && !val
                     && !!t.base;
                   return (
                     <div key={t.base} style={{
@@ -575,11 +660,11 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                       }}
                       title={isFallback
                         ? (lang === "es"
-                            ? `${displaySystem} no definido — mostrando base`
-                            : `${displaySystem} not set — showing base`)
+                            ? `${activeSystem} no definido — mostrando base`
+                            : `${activeSystem} not set — showing base`)
                         : undefined}
                       >{showLabel}</div>
-                      {displaySystem !== "BASE" && t.base !== showLabel && (
+                      {activeSystem !== "BASE" && t.base !== showLabel && (
                         <div className="caption" style={{
                           fontSize: 11, textAlign: "center",
                           color: "#013A57", fontWeight: 700,
@@ -605,7 +690,8 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                              style={{ textAlign: "center" }}/>
                     </div>
                   );
-                })}
+                  });
+                })()}
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <button className="btn btn-ghost" onClick={() => setPicked(null)}>
