@@ -742,17 +742,19 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
       // Sprint 2026-07-21 · medidas internas del calzado (mm, PDF Marluvas)
       ancho_mm: "",
       comprimento_mm: "",
+      // Sprint 2026-07-22 · familia de línea (sólo Calzado) → metadata.familia
+      familia: "",
       ...eqFields,
       ...dimFields,
     };
   }, [options]);
 
-  const [form, setForm] = useState({ ...blank, ...initial });
+  const [form, setForm] = useState({ ...blank, ...initial, familia: initial?.metadata?.familia || "" });
   const [saving, setSaving] = useState(false);
 
   // Cuando cambian las opciones (asíncrono) o el initial → re-merge.
   useEffect(() => {
-    setForm({ ...blank, ...initial });
+    setForm({ ...blank, ...initial, familia: initial?.metadata?.familia || "" });
   }, [blank, initial]);
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
@@ -805,6 +807,15 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     ) || null;
   }, [options, form.tipo_producto]);
 
+  // ── Sprint 2026-07-22 · Familia de línea (sólo Calzado) ─────────
+  // Catálogo desde /sizing/options/ (familias_linea); fallback local
+  // con los valores de la decisión CEO.
+  const familiaOpts = useMemo(() => {
+    const FALLBACK = ["Composite Prime", "EVA", "Social", "PVC All Work", "PVC Vulcaflex"];
+    const src = options?.familias_linea;
+    return (Array.isArray(src) && src.length > 0) ? src : FALLBACK;
+  }, [options]);
+
   const showDimensionales = tipoMeta?.requiere_dimensiones === true;
 
   // ── Submit (sin bloqueos) ──────────────────────────────────
@@ -822,6 +833,15 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
         payload.ancho_mm = null;
         payload.comprimento_mm = null;
       }
+      // Sprint 2026-07-22 · la familia de línea viaja en metadata
+      // (sólo Calzado); fuera de calzado se limpia. `nombre` cae a la
+      // talla base si queda vacío (campo "Nombre comercial" retirado).
+      payload.metadata = {
+        ...(initial?.metadata || {}),
+        familia: form.tipo_producto === "calzado" ? (form.familia || null) : null,
+      };
+      delete payload.familia;
+      if (!payload.nombre) payload.nombre = payload.talla_base || null;
       await onSave(payload);
     } catch (e) {
       // eslint-disable-next-line no-alert
@@ -885,7 +905,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                   ))}
                 </select>
               </Field>
-              <Field label={lang === "es" ? "Talla base" : "Base size"}>
+              <Field label={lang === "es" ? "Talla base (BRA)" : "Base size (BRA)"}>
                 <input
                   className="siz-input mono"
                   placeholder={lang === "es" ? 'p.ej. "42", "S3", "M-WIDE"' : 'e.g. "42", "S3", "M-WIDE"'}
@@ -893,14 +913,9 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                   onChange={e => set("talla_base", e.target.value)}
                 />
               </Field>
-              <Field label={lang === "es" ? "Nombre comercial" : "Commercial name"}>
-                <input
-                  className="siz-input"
-                  placeholder={lang === "es" ? "Bota seguridad EU 42" : "Safety boot EU 42"}
-                  value={form.nombre || ""}
-                  onChange={e => set("nombre", e.target.value)}
-                />
-              </Field>
+              {/* Sprint 2026-07-22 · decisión CEO: fuera "Nombre comercial"
+                  y "Descripción" del drawer (las columnas siguen en la DB;
+                  nombre se auto-rellena con la talla base si queda vacío). */}
               <Field label={lang === "es" ? "Activa" : "Active"}>
                 <label className="siz-toggle">
                   <input
@@ -911,15 +926,24 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                   <span/>
                 </label>
               </Field>
-              <Field label={lang === "es" ? "Descripción" : "Description"} span={2}>
-                <textarea
-                  rows={2}
-                  className="siz-input"
-                  placeholder={lang === "es" ? "Notas internas, contexto, fuente…" : "Internal notes, context, source…"}
-                  value={form.descripcion || ""}
-                  onChange={e => set("descripcion", e.target.value)}
-                />
-              </Field>
+              {/* Sprint 2026-07-22 · Familia de línea (sólo Calzado).
+                  Select simple; opciones desde /sizing/options/
+                  (familias_linea) con fallback local. Se guarda en
+                  metadata.familia. */}
+              {form.tipo_producto === "calzado" && (
+                <Field label={lang === "es" ? "Familia" : "Family"} span={2}>
+                  <select
+                    className="siz-input siz-select"
+                    value={form.familia || ""}
+                    onChange={e => set("familia", e.target.value)}
+                  >
+                    <option value="">{lang === "es" ? "— Sin familia —" : "— No family —"}</option>
+                    {familiaOpts.map(f => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
+                </Field>
+              )}
             </div>
           </Section>
 

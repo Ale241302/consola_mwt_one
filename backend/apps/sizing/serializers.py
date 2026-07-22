@@ -183,6 +183,9 @@ class TallaListSerializer(serializers.ModelSerializer):
             # vacías y al guardar las NULABA (mismo bug que los 9
             # sistemas de equivalencias, ver abajo).
             "descripcion", "ancho_mm", "comprimento_mm",
+            # metadata viaja en la lista: el drawer guarda ahí la
+            # familia de línea (metadata.familia) y la necesita al editar.
+            "metadata",
             # clasificadores multi-valor (marca / tipo / familia)
             "marca_ids", "tipos", "familias",
             # Sprint 2026-07-18 · TODOS los 15 sistemas. Antes sólo 6
