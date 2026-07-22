@@ -105,17 +105,14 @@ const TABS = [
 ];
 const CLIENT_VISIBLE_TABS = new Set(['detalles']);
 
-// ── Sprint 2026-07-21 · helpers del Motor de Tallas ──────────────────
-// Nueva semántica de la talla: `talla.tipos` guarda CAPELLADAS
-// (ej. "Cuero Nobuck", "Microfibra") y `talla.familias` guarda TIPOS DE
-// PUNTERA (ej. "Acero 200J", "Composite 200J", "No tiene").
+// ── Sprint 2026-07-22 · helpers del Motor de Tallas ──────────────────
+// Nueva semántica: la talla se clasifica por `metadata.familia`
+// (Composite, Prime, EVA, Social, PVC All Work, PVC Vulcaflex) + marca.
 // · _normTallaVal → comparaciones case-insensitive con trim.
 // · esDalupo / sinDalupo → se omite cualquier valor "DALUPO".
 const _normTallaVal = (v) => String(v ?? '').trim().toLowerCase();
 const esDalupo = (v) => /dalupo/i.test(String(v ?? ''));
 const sinDalupo = (arr) => (Array.isArray(arr) ? arr : []).filter(v => !esDalupo(v));
-// true si algún valor del array (sin DALUPO) equivale al seleccionado.
-const matchTallaVal = (arr, sel) => sinDalupo(arr).some(v => _normTallaVal(v) === sel);
 
 export default function ScreenProductFormView() {
   const navigate = useNavigate();
@@ -259,6 +256,11 @@ export default function ScreenProductFormView() {
   const [disipativos, setDisipativos] = useState(asMultiArray(existing?.disipativo_energia));
   const [normativas,  setNormativas]  = useState(asMultiArray(existing?.normativa));
   const [segmentos,   setSegmentos]   = useState(asMultiArray(existing?.segmento));
+  // Sprint 2026-07-22 · FAMILIA de línea del producto (Sección A, junto
+  // a Marca). Las tallas de Sección C se filtran automáticamente por
+  // ella (talla.metadata.familia) + la marca. Se guarda en
+  // especificaciones.familia.
+  const [familiaSel,  setFamiliaSel]  = useState(existing?.especificaciones?.familia || '');
 
   // ── Repuebla TODOS los campos cuando llega `existing` del fetch async ──
   // Los useState() iniciales corrieron con existing=null; ahora que tenemos
@@ -293,6 +295,7 @@ export default function ScreenProductFormView() {
     setDisipativos(asMultiArray(existing.disipativo_energia));
     setNormativas(asMultiArray(existing.normativa));
     setSegmentos(asMultiArray(existing.segmento));
+    setFamiliaSel(existing.especificaciones?.familia || '');
     // Tallas: el backend las guarda en p.tallas (array de UUIDs o codes).
     setSelectedSizes(Array.isArray(existing.tallas)
       ? existing.tallas
@@ -955,35 +958,31 @@ export default function ScreenProductFormView() {
     return best;
   }, [nombre, realSizes]);
 
-  // ── Sprint 2026-07-21 · relación por CAPELLADA + TIPO DE PUNTERA ───
-  // Criterio principal: una talla está relacionada con el producto
-  // cuando coincide con los selects de la Sección B —
-  //   · capellada (especificaciones.capellada)   ↔ algún valor de talla.tipos
-  //   · tipo de puntera (especificaciones.tipo_puntera) ↔ talla.familias
-  // Si ambos selects tienen valor se exigen AMBAS coincidencias (AND);
-  // si solo uno tiene valor filtra ese; si ninguno tiene valor se
-  // conserva el fallback legacy de familia detectada en el nombre.
-  const capelladaSel = esDalupo(attrs.capellada) ? '' : _normTallaVal(attrs.capellada);
-  const punteraSel   = esDalupo(attrs.tipo_puntera) ? '' : _normTallaVal(attrs.tipo_puntera);
-  const filtroPorAtributos = Boolean(capelladaSel || punteraSel);
+  // ── Sprint 2026-07-22 · relación por FAMILIA DE LÍNEA + MARCA ──────
+  // Criterio principal (sustituye al de capellada + tipo de puntera de
+  // 2026-07-21): una talla está relacionada con el producto cuando su
+  // `metadata.familia` coincide con la FAMILIA elegida en la Sección A
+  // (especificaciones.familia) y su marca es la del producto. Si no hay
+  // familia elegida, se conserva el fallback legacy de familia
+  // detectada en el nombre.
+  const familiaSelNorm = esDalupo(familiaSel) ? '' : _normTallaVal(familiaSel);
+  const filtroPorFamilia = Boolean(familiaSelNorm);
 
   // Tallas visibles en Sección C:
   //   · lo YA seleccionado nunca se oculta (aunque no coincida el criterio)
   //   · tallas con marcas asignadas deben incluir la marca del producto
-  //   · con capellada/puntera seleccionada → solo tallas que coinciden
-  //   · sin criterio en los selects → familia detectada en el nombre
+  //   · con familia elegida → solo tallas con metadata.familia igual
+  //   · sin familia → familia detectada en el nombre (fallback legacy)
   //   · el resto se elige desde el modal "Más tallas".
   const visibleSizes = useMemo(() => {
     return realSizes.filter(t => {
       if (selectedSizes.includes(t.id)) return true;
       const marcas = Array.isArray(t.marca_ids) ? t.marca_ids : [];
       if (brandId && marcas.length > 0 && !marcas.includes(brandId)) return false;
-      // Sprint 2026-07-21 · criterio principal: capellada (tipos) y/o
-      // tipo de puntera (familias) — AND cuando ambos tienen valor.
-      if (filtroPorAtributos) {
-        if (capelladaSel && !matchTallaVal(t.tipos, capelladaSel)) return false;
-        if (punteraSel   && !matchTallaVal(t.familias, punteraSel)) return false;
-        return true;
+      // Sprint 2026-07-22 · criterio principal: familia de línea
+      // (metadata.familia) — aparece automático al elegirla.
+      if (filtroPorFamilia) {
+        return _normTallaVal(t?.metadata?.familia) === familiaSelNorm;
       }
       if (detectedFamilia) {
         const fams = Array.isArray(t.familias)
@@ -993,7 +992,7 @@ export default function ScreenProductFormView() {
       return true;
     });
   }, [realSizes, selectedSizes, detectedFamilia, brandId,
-      filtroPorAtributos, capelladaSel, punteraSel]);
+      filtroPorFamilia, familiaSelNorm]);
   const hiddenSizesCount = realSizes.length - visibleSizes.length;
 
   // Modal "Más tallas" — permite traer tallas fuera del criterio activo.
@@ -1106,6 +1105,9 @@ export default function ScreenProductFormView() {
     // visibility tampoco tienen columna dedicada → mismo destino JSON.
     const especificaciones = {
       ...attrs,
+      // Sprint 2026-07-22 · familia de línea (Sección A): rige el filtro
+      // automático de tallas en la Sección C (talla.metadata.familia).
+      familia:            familiaSel || null,
       // Multi-select fields (sprint 2026-05-02): se persisten como arrays.
       // Los consumidores (BrandDetail, PricingManagerTable) leen ambas
       // formas — string legacy o array — para compat hacia atrás.
@@ -1205,6 +1207,23 @@ export default function ScreenProductFormView() {
             {realBrands.length === 0 && (
               <option disabled>{lang==='es'?'(sin marcas en BD)':'(no brands in DB)'}</option>
             )}
+          </select>
+        </label>
+        {/* Sprint 2026-07-22 · FAMILIA de línea (junto a Marca, decisión
+            CEO). Las tallas de la Sección C se filtran automáticamente
+            por esta familia (talla.metadata.familia) + la marca. Las
+            opciones vienen de /sizing/options/ (familias_linea). Se
+            guarda en especificaciones.familia. */}
+        <label className="form-field">
+          <span>{lang==='es'?'Familia':'Family'}</span>
+          <select className="input" value={familiaSel} onChange={e=>setFamiliaSel(e.target.value)}>
+            <option value="">{lang==='es'?'— Sin familia —':'— No family —'}</option>
+            {((Array.isArray(sizingOptions?.familias_linea) && sizingOptions.familias_linea.length > 0)
+              ? sizingOptions.familias_linea
+              : ['Composite','Prime','EVA','Social','PVC All Work','PVC Vulcaflex']
+            ).map(f => (
+              <option key={f} value={f}>{f}</option>
+            ))}
           </select>
         </label>
       </div>
@@ -1536,23 +1555,20 @@ export default function ScreenProductFormView() {
               {selectedSizes.length} {lang==='es'?'seleccionadas':'selected'}
             </span>
           </div>
-          {/* Sprint 2026-07-21 · el banner informa el criterio activo:
-              capellada/puntera de la Sección B (principal) o familia
-              detectada en el nombre (fallback legacy). */}
-          {(filtroPorAtributos || detectedFamilia || hiddenSizesCount > 0) && realSizes.length > 0 && (
+          {/* Sprint 2026-07-22 · banner del criterio activo: FAMILIA de
+              línea elegida en Sección A (principal) o familia detectada
+              en el nombre (fallback legacy). */}
+          {(filtroPorFamilia || detectedFamilia || hiddenSizesCount > 0) && realSizes.length > 0 && (
             <div style={{
               display:'flex', alignItems:'center', gap:8, flexWrap:'wrap',
               margin:'6px 0 10px', padding:'7px 10px', borderRadius:8,
               background:'rgba(0,178,134,0.07)',
               border:'1px solid rgba(0,178,134,0.20)',
             }}>
-              {filtroPorAtributos ? (
+              {filtroPorFamilia ? (
                 <span className="caption" style={{color:'#008B69', fontWeight:600}}>
                   <span className="mono" style={{fontWeight:800}}>
-                    {[
-                      capelladaSel ? `${lang==='es' ? 'Capellada' : 'Upper'}: ${String(attrs.capellada).trim()}` : null,
-                      punteraSel   ? `${lang==='es' ? 'Puntera' : 'Toe cap'}: ${String(attrs.tipo_puntera).trim()}` : null,
-                    ].filter(Boolean).join(' · ')}
+                    {`${lang==='es' ? 'Familia' : 'Family'}: ${String(familiaSel).trim()}`}
                   </span>
                   {' — '}
                   {lang==='es'
@@ -1585,8 +1601,8 @@ export default function ScreenProductFormView() {
                           fontWeight:700, fontSize:11, lineHeight:1.3,
                         }}>
                   ⊞ {lang==='es'
-                      ? `Más tallas (${hiddenSizesCount} ${filtroPorAtributos ? 'no relacionadas' : 'de otras familias'})`
-                      : `More sizes (${hiddenSizesCount} ${filtroPorAtributos ? 'not related' : 'from other families'})`}
+                      ? `Más tallas (${hiddenSizesCount} ${filtroPorFamilia ? 'no relacionadas' : 'de otras familias'})`
+                      : `More sizes (${hiddenSizesCount} ${filtroPorFamilia ? 'not related' : 'from other families'})`}
                 </button>
               )}
             </div>
