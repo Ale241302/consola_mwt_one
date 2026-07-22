@@ -762,16 +762,6 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     const cur = Array.isArray(prev[k]) ? prev[k] : [];
     return { ...prev, [k]: cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v] };
   });
-  const addFamilia = (raw) => {
-    // Sprint 2026-07-21 · SIN .toUpperCase(): los tipos de puntera del
-    // catálogo (ej. "Acero 200J") se guardan con su capitalización exacta.
-    const v = String(raw || "").trim();
-    if (!v) return;
-    setForm(prev => {
-      const cur = Array.isArray(prev.familias) ? prev.familias : [];
-      return cur.includes(v) ? prev : { ...prev, familias: [...cur, v] };
-    });
-  };
 
   // ── Sprint 2026-07-18 · auto-sugerir la Matriz de Equivalencias ─────
   // Al escribir la talla base (BR): si ya existe en el catálogo cargado,
@@ -807,31 +797,6 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.talla_base]);
-
-  // Tipo puntera sólo aplica si el tipo NO es exclusivamente Plantilla.
-  const soloPlantilla =
-    form.tipo_producto === "plantilla" ||
-    ((form.tipos || []).length > 0 &&
-     (form.tipos || []).every(t => /plantilla/i.test(t)));
-
-  // ── Sprint 2026-07-21 · catálogos Capellada / Tipo puntera ─────────
-  // /api/sizing/options/ expone las claves NUEVAS `capellada` y
-  // `tipo_puntera`; si vienen vacías o ausentes (backend viejo o mock)
-  // caemos a las claves legacy `tipos_calzado` / `familias`. En ambos
-  // casos se excluye cualquier valor "DALUPO".
-  const capelladaOpts = useMemo(() => {
-    const src = (Array.isArray(options?.capellada) && options.capellada.length > 0)
-      ? options.capellada
-      : (options?.tipos_calzado || []);
-    return src.filter(v => !/dalupo/i.test(String(v)));
-  }, [options]);
-
-  const punteraOpts = useMemo(() => {
-    const src = (Array.isArray(options?.tipo_puntera) && options.tipo_puntera.length > 0)
-      ? options.tipo_puntera
-      : (options?.familias || []);
-    return src.filter(v => !/dalupo/i.test(String(v)));
-  }, [options]);
 
   // ── Determinante de la lógica condicional ──────────────────
   const tipoMeta = useMemo(() => {
@@ -958,18 +923,15 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
             </div>
           </Section>
 
-          {/* SECCIÓN 1B · Marca · Capellada · Tipo puntera
-              (Sprint 2026-07-21 · antes "Marca · Tipo · Familia", 2026-07-16)
-              Cada talla puede pertenecer a UNA O MÁS marcas, capelladas y
-              punteras. La capellada (ej. "Cuero Nobuck") es el material
-              superior del calzado; el tipo puntera (ej. "Acero 200J") es
-              la protección de la punta: el form de producto lo detecta y
-              muestra las tallas relacionadas. */}
+          {/* SECCIÓN 1B · Marca (Sprint 2026-07-21)
+              Decisión CEO: las secciones Capellada y Tipo puntera salen
+              del drawer — la clasificación sigue en la DB (tipos /
+              familias) y se gestiona por SQL; aquí sólo queda Marca. */}
           <Section
-            title={lang === "es" ? "Marca · Capellada · Tipo puntera" : "Brand · Upper · Toe cap"}
+            title={lang === "es" ? "Marca" : "Brand"}
             hint={lang === "es"
-              ? "Multi-selección: una talla puede estar en varias marcas y punteras."
-              : "Multi-select: a size can belong to several brands and toe caps."}
+              ? "Multi-selección: una talla puede estar en varias marcas."
+              : "Multi-select: a size can belong to several brands."}
           >
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <Field label={lang === "es" ? "Marcas" : "Brands"}>
@@ -989,73 +951,6 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                   ))}
                 </div>
               </Field>
-
-              {/* Sprint 2026-07-21 · "Tipos" → Capellada. Las pills salen
-                  de options.capellada (fallback: tipos_calzado); el dato se
-                  sigue guardando en form.tipos — el payload no cambia. */}
-              <Field label={lang === "es" ? "Capellada" : "Upper"}>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {capelladaOpts.map(t => (
-                    <TogglePill
-                      key={t}
-                      on={(form.tipos || []).includes(t)}
-                      label={t}
-                      onClick={() => toggleInList("tipos")(t)}
-                    />
-                  ))}
-                </div>
-              </Field>
-
-              {!soloPlantilla && (
-                <Field
-                  label={lang === "es" ? "Tipo puntera" : "Toe cap type"}
-                  hint={lang === "es" ? "puntera del calzado, ej. Acero 200J" : "shoe toe cap, e.g. Acero 200J"}
-                >
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                    {(form.familias || []).map(f => (
-                      <span key={f} className="mono"
-                            style={{
-                              display: "inline-flex", alignItems: "center", gap: 4,
-                              background: "rgba(0,178,134,0.10)", color: "#008B69",
-                              border: "1px solid rgba(0,178,134,0.30)",
-                              borderRadius: 999, padding: "3px 8px",
-                              fontSize: 12, fontWeight: 700, letterSpacing: 0.3,
-                            }}>
-                        {f}
-                        <button type="button"
-                                onClick={() => set("familias", (form.familias || []).filter(x => x !== f))}
-                                title={lang === "es" ? "Quitar puntera" : "Remove toe cap"}
-                                style={{ border: "none", background: "transparent", cursor: "pointer",
-                                         color: "#008B69", fontWeight: 800, padding: 0, lineHeight: 1 }}>
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                    {/* Sprint 2026-07-18 · select NORMAL (antes un input con
-                        datalist nativo que desplegaba una lista gigante sin
-                        estilo). Sprint 2026-07-21 · se alimenta de
-                        options.tipo_puntera (fallback: options.familias);
-                        el dato se sigue guardando en form.familias. */}
-                    <select
-                      className="siz-input mono"
-                      style={{ height: 30, fontSize: 12, padding: "0 8px", cursor: "pointer" }}
-                      value=""
-                      onChange={(e) => {
-                        if (e.target.value) addFamilia(e.target.value);
-                        e.target.value = "";
-                      }}
-                      title={lang === "es" ? "Agregar puntera" : "Add toe cap"}
-                    >
-                      <option value="" disabled>
-                        {lang === "es" ? "＋ agregar puntera…" : "＋ add toe cap…"}
-                      </option>
-                      {punteraOpts
-                        .filter(f => !(form.familias || []).includes(f))
-                        .map(f => <option key={f} value={f}>{f}</option>)}
-                    </select>
-                  </div>
-                </Field>
-              )}
             </div>
           </Section>
 
@@ -1079,41 +974,6 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
               ))}
             </div>
           </Section>
-
-          {/* SECCIÓN 2B · Medidas internas del calzado (Sprint 2026-07-21)
-              Ancho y comprimento internos en mm, según el PDF oficial
-              Marluvas "Sepa la talla". CM (Mondopoint) = comprimento ÷ 10.
-              Sólo aplica a calzado (en plantillas se oculta, igual que
-              las dimensionales se ocultan en calzado). */}
-          {!showDimensionales && (
-            <Section
-              title={lang === "es" ? "Medidas internas (mm)" : "Internal measurements (mm)"}
-              hint={lang === "es"
-                ? "Ancho y comprimento internos del calzado. Opcionales. CM = comprimento ÷ 10."
-                : "Shoe internal width and length. Optional. CM = length ÷ 10."}
-            >
-              <div className="siz-grid-2">
-                <Field label={lang === "es" ? "Ancho interno" : "Internal width"} hint="mm">
-                  <input
-                    type="number" step="0.1" min="0"
-                    className="siz-input tabular"
-                    placeholder="83,1"
-                    value={form.ancho_mm ?? ""}
-                    onChange={e => set("ancho_mm", e.target.value === "" ? null : e.target.value)}
-                  />
-                </Field>
-                <Field label={lang === "es" ? "Comprimento interno" : "Internal length"} hint="mm">
-                  <input
-                    type="number" step="0.01" min="0"
-                    className="siz-input tabular"
-                    placeholder="226,38"
-                    value={form.comprimento_mm ?? ""}
-                    onChange={e => set("comprimento_mm", e.target.value === "" ? null : e.target.value)}
-                  />
-                </Field>
-              </div>
-            </Section>
-          )}
 
           {/* SECCIÓN 3 · DINÁMICA — sólo plantillas */}
           <AnimatePresence initial={false}>

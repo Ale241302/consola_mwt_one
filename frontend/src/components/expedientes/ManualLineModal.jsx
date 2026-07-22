@@ -583,24 +583,6 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                           fontFamily: "var(--font-mono, monospace)",
                         }}>BRA {t.base}</div>
                       )}
-                      {/* Sprint 2026-07-21 · medidas internas del PDF
-                          Marluvas: ancho × comprimento (mm) bajo la talla. */}
-                      {(t.ancho || t.comprimento) && (
-                        <div className="caption"
-                             title={lang === "es"
-                               ? "Ancho × Comprimento interno (mm) — tabla Marluvas"
-                               : "Internal width × length (mm) — Marluvas chart"}
-                             style={{
-                               fontSize: 10, textAlign: "center",
-                               color: "var(--text-tertiary)",
-                               marginBottom: 4, fontWeight: 600,
-                             }}>
-                          {[t.ancho, t.comprimento]
-                            .filter(Boolean)
-                            .map(v => lang === "es" ? String(v).replace(".", ",") : String(v))
-                            .join(" × ")} mm
-                        </div>
-                      )}
                       <input className="input tabular-nums" type="number" min="0"
                              value={t.qty}
                              onChange={(e) => {

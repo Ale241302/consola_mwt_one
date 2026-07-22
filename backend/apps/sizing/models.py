@@ -101,6 +101,9 @@ class Talla(models.Model):
     cn       = models.CharField(max_length=20, null=True, blank=True)
     kr       = models.CharField(max_length=20, null=True, blank=True)
     cm       = models.CharField(max_length=20, null=True, blank=True)
+    # Sprint 2026-07-21 · sistema IN (pulgadas) = comprimento_mm ÷ 25.4.
+    # Ver G12_tallas_sistema_inch_sin_alfa.sql
+    inch     = models.CharField(max_length=20, null=True, blank=True)
     alfa     = models.CharField(max_length=20, null=True, blank=True)
 
     # ── Especificaciones Dimensionales (sólo plantilla) ────────────
@@ -133,7 +136,7 @@ class Talla(models.Model):
     EQUIVALENCE_FIELDS = (
         "eu", "us_men", "us_women", "us_youth",
         "uk_men", "uk_women", "uk_youth",
-        "br", "mx", "ar", "jp", "cn", "kr", "cm", "alfa",
+        "br", "mx", "ar", "jp", "cn", "kr", "cm", "inch", "alfa",
     )
     DIMENSION_FIELDS = (
         "grosor_antepie_mm", "grosor_talon_mm", "drop_mm", "peso_g",
