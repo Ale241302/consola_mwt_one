@@ -76,7 +76,13 @@ if [[ "$needs_reload" -eq 1 ]]; then
     echo "==> nginx -s reload"
     docker exec "$NGINX_CTR" nginx -s reload
 else
-    echo "==> sin cambios; no se recarga nginx"
+    # Sprint 2026-07-22 · reload SIEMPRE, aunque consola.conf no cambie:
+    # nginx resuelve los upstreams (consola-mwt-one-frontend/django) al
+    # arrancar y cachea su IP; al recrearse los contenedores la IP cambia
+    # y sin reload el upstream queda "connection refused" → 503 público.
+    # El reload es graceful (sin downtime) y fuerza re-resolución DNS.
+    echo "==> consola.conf sin cambios, pero reload igual (re-resolver IPs de upstream)"
+    docker exec "$NGINX_CTR" nginx -s reload
 fi
 
 echo "==> done"

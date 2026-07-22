@@ -159,7 +159,17 @@ jobs:
               echo ">>> Red mwt_default no encontrada, omitiendo."
             fi
 
-            echo "==> [6/6] Estado final"
+            echo "==> [6/6] Estado final + reload mwt-nginx"
+            # Sprint 2026-07-22 · tras recrear contenedores, su IP en la red
+            # Docker cambia; mwt-nginx resuelve los upstreams al arrancar y
+            # sin reload queda apuntando a la IP vieja → 503 público.
+            # El reload es graceful y fuerza re-resolución DNS.
+            if docker ps --format '{{.Names}}' | grep -qx mwt-nginx; then
+              docker exec mwt-nginx nginx -t && docker exec mwt-nginx nginx -s reload || true
+              echo ">>> mwt-nginx recargado (upstreams re-resueltos)."
+            else
+              echo ">>> mwt-nginx no está corriendo, omitiendo reload."
+            fi
             docker compose ps
             docker image prune -f >/dev/null
 
