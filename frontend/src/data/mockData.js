@@ -2491,7 +2491,7 @@ export const MOCK_SIZING_OPTIONS = {
   capellada: ['Cuero Nobuck', 'Microfibra', 'PVC'],
   tipo_puntera: ['Acero 200J', 'Composite 200J', 'No tiene'],
   // Sprint 2026-07-22 · familias de línea (select Familia del drawer, calzado)
-  familias_linea: ['Composite Prime', 'EVA', 'Social', 'PVC All Work', 'PVC Vulcaflex'],
+  familias_linea: ['Composite', 'Prime', 'EVA', 'Social', 'PVC All Work', 'PVC Vulcaflex'],
   version: 'mock-sizing-engine-v1',
 };
 

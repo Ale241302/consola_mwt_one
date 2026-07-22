@@ -811,7 +811,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
   // Catálogo desde /sizing/options/ (familias_linea); fallback local
   // con los valores de la decisión CEO.
   const familiaOpts = useMemo(() => {
-    const FALLBACK = ["Composite Prime", "EVA", "Social", "PVC All Work", "PVC Vulcaflex"];
+    const FALLBACK = ["Composite", "Prime", "EVA", "Social", "PVC All Work", "PVC Vulcaflex"];
     const src = options?.familias_linea;
     return (Array.isArray(src) && src.length > 0) ? src : FALLBACK;
   }, [options]);

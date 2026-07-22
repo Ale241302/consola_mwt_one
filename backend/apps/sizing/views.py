@@ -324,9 +324,9 @@ class SizingOptionsView(APIView):
             "tipo_puntera":        tipo_puntera,
             # Sprint 2026-07-22 · familias de línea Marluvas (select
             # "Familia" del drawer cuando tipo_producto=calzado).
-            # Decisión CEO: Composite Prime · EVA · Social ·
+            # Decisión CEO: Composite · Prime · EVA · Social ·
             # PVC All Work · PVC Vulcaflex. Se guarda en metadata.familia.
-            "familias_linea":      ["Composite Prime", "EVA", "Social",
+            "familias_linea":      ["Composite", "Prime", "EVA", "Social",
                                     "PVC All Work", "PVC Vulcaflex"],
             "draft_allowed":       True,
             "version":             "sizing-engine-v2",
