@@ -106,10 +106,10 @@ export default function ScreenSizingEngine() {
 
   useEffect(() => { loadAll(); }, []);
 
-  // ── Mapa id→nombre de marca + punteras distintas ─────────────
-  // Sprint 2026-07-21 · las "familias" ahora son tipos de puntera:
-  // se muestran tal cual están guardadas (sin forzar MAYÚSCULAS) y
-  // se excluye cualquier valor "DALUPO" del catálogo.
+  // ── Mapa id→nombre de marca + familias de línea distintas ──────
+  // Sprint 2026-07-22 · la clasificación de la talla vive en
+  // `metadata.familia` (Composite, Prime, EVA, Social, PVC All Work,
+  // PVC Vulcaflex): el filtro del toolbar es por FAMILIA.
   const marcaNameById = useMemo(() => {
     const map = {};
     (options?.marcas || []).forEach(m => { map[m.id] = m.nombre; });
@@ -118,8 +118,10 @@ export default function ScreenSizingEngine() {
 
   const familiasDistinct = useMemo(() => {
     const set = new Set();
-    tallas.forEach(t => (Array.isArray(t.familias) ? t.familias : [])
-      .forEach(f => { if (!/dalupo/i.test(String(f))) set.add(String(f)); }));
+    tallas.forEach(t => {
+      const f = t?.metadata?.familia;
+      if (f && !/dalupo/i.test(String(f))) set.add(String(f));
+    });
     return [...set].sort();
   }, [tallas]);
 
@@ -131,16 +133,15 @@ export default function ScreenSizingEngine() {
       out = out.filter(t => (Array.isArray(t.marca_ids) ? t.marca_ids : []).includes(filterMarca));
     }
     if (filterFamilia) {
-      // Sprint 2026-07-21 · comparación exacta: las punteras se guardan
-      // con su capitalización de catálogo (ej. "Acero 200J").
-      out = out.filter(t => (Array.isArray(t.familias) ? t.familias : [])
-        .some(f => String(f) === filterFamilia));
+      // Sprint 2026-07-22 · comparación exacta contra metadata.familia.
+      out = out.filter(t => String(t?.metadata?.familia || "") === filterFamilia);
     }
     const ql = q.trim().toLowerCase();
     if (ql) {
       out = out.filter(t => (
         (t.talla_base || "").toLowerCase().includes(ql) ||
         (t.nombre || "").toLowerCase().includes(ql) ||
+        String(t?.metadata?.familia || "").toLowerCase().includes(ql) ||
         (Array.isArray(t.familias) ? t.familias : []).some(f => String(f).toLowerCase().includes(ql)) ||
         (Array.isArray(t.tipos) ? t.tipos : []).some(x => String(x).toLowerCase().includes(ql)) ||
         (t.eu || "").toLowerCase().includes(ql) ||
@@ -346,7 +347,7 @@ export default function ScreenSizingEngine() {
           onChange={e => setFilterFamilia(e.target.value)}
           style={{ maxWidth: 200 }}
         >
-          <option value="">{lang === "es" ? "Todas las punteras" : "All toe caps"}</option>
+          <option value="">{lang === "es" ? "Todas las familias" : "All families"}</option>
           {familiasDistinct.map(f => (
             <option key={f} value={f}>{f}</option>
           ))}
@@ -497,8 +498,10 @@ export default function ScreenSizingEngine() {
                     >
                       {t.nombre || <span style={{ color: "#CBD5E1" }}>—</span>}
                     </div>
-                    {/* Marca · Capellada · Tipo puntera (Sprint 2026-07-21) */}
+                    {/* Marca · Familia (Sprint 2026-07-22)
+                        La talla se clasifica por metadata.familia + marca. */}
                     {((t.marca_ids || []).length > 0 ||
+                      t?.metadata?.familia ||
                       (t.tipos || []).length > 0 ||
                       (t.familias || []).length > 0) && (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
@@ -512,6 +515,16 @@ export default function ScreenSizingEngine() {
                             {marcaNameById[mid] || mid.slice(0, 8)}
                           </span>
                         ))}
+                        {t?.metadata?.familia && (
+                          <span className="mono" style={{
+                            background: "rgba(0,178,134,0.09)", color: "#008B69",
+                            border: "1px solid rgba(0,178,134,0.25)",
+                            borderRadius: 999, padding: "2px 8px",
+                            fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3,
+                          }}>
+                            {t.metadata.familia}
+                          </span>
+                        )}
                         {(t.tipos || []).map(tp => (
                           <span key={tp} style={{
                             background: "rgba(72,30,227,0.07)", color: "#481EE3",
