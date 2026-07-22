@@ -154,6 +154,8 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
               CN:   sz.cn       || null,
               KR:   sz.kr       || null,
               CM:   sz.cm       || null,
+              // Sprint 2026-07-22 · IN (pulgadas) en el toggle, tras CM
+              INCH: sz.inch     || null,
               ALFA: sz.alfa     || null,
             },
           };
@@ -225,6 +227,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
               CN:   t.cn       || null,
               KR:   t.kr       || null,
               CM:   t.cm       || null,
+              INCH: t.inch     || null,
               ALFA: t.alfa     || null,
             },
           };
@@ -500,14 +503,15 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                 // datos permiten digitar cantidades (incluidos US M / US W).
                 // Se quita "Letras" (ALFA): el cliente ordena en sistemas
                 // numéricos; las medidas internas van bajo cada talla.
-                const allSystems = ["BR","EU","US_M","US_W","UK_M","CM"];
+                // Sprint 2026-07-22 · se agrega IN (pulgadas) tras CM.
+                const allSystems = ["BR","EU","US_M","US_W","UK_M","CM","INCH"];
                 const systemsWithData = allSystems.filter((s) =>
                   picked.tallas.some((t) => !!(t.equiv && t.equiv[s]))
                 );
                 const labels = {
                   BASE: lang === "es" ? "Base" : "Base",
                   EU: "EU", US_M: "US M", US_W: "US W",
-                  UK_M: "UK", BR: "BRA", CM: "CM",
+                  UK_M: "UK", BR: "BRA", CM: "CM", INCH: "IN",
                 };
                 if (systemsWithData.length <= 1) return null;
                 return (
