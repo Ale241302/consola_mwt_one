@@ -1413,6 +1413,10 @@ export const commercialApi = {
 export const tallasApi               = resource("sizing/tallas");
 export const tiposProductoCatApi     = resource("sizing/tipos-producto");
 export const sistemasMedidaCatApi    = resource("sizing/sistemas-medida");
+// Sprint 2026-07-22 · familias de línea por marca (CRUD; DELETE = soft).
+//   GET/POST /api/sizing/familias/ · PATCH/DELETE /api/sizing/familias/<id>/
+//   Filtros: ?marca_id=<uuid> · ?is_active= · ?q=
+export const sizingFamiliasApi       = resource("sizing/familias");
 
 export const sizingApi = {
   options: () => apiFetch(`/sizing/options/`, { token: getToken() }),

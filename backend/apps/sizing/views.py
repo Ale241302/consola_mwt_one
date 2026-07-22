@@ -7,6 +7,7 @@ Sprint: SIZING ENGINE v1
 Endpoints expuestos:
   · /api/sizing/tallas/                 (CRUD Talla)
   · /api/sizing/tallas/<id>/            (retrieve/update/destroy)
+  · /api/sizing/familias/               (CRUD Familia por marca — G18)
   · /api/sizing/tipos-producto/         (read-only catálogo)
   · /api/sizing/sistemas-medida/        (read-only catálogo)
   · /api/sizing/options/                (single payload — alimenta FE)
@@ -16,6 +17,8 @@ Reglas MWT:
   · Soft-delete vía PATCH is_active=False.
 =====================================================================
 """
+import uuid
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.pagination import LimitOffsetPagination
@@ -25,8 +28,9 @@ from rest_framework.views import APIView
 
 from django.db import connection
 
-from .models import Talla, TipoProductoCat, MedidaSistemaCat
+from .models import Familia, Talla, TipoProductoCat, MedidaSistemaCat
 from .serializers import (
+    FamiliaSerializer,
     TallaSerializer, TallaListSerializer,
     TipoProductoCatSerializer, MedidaSistemaCatSerializer,
 )
@@ -80,12 +84,26 @@ class TallaViewSet(viewsets.ModelViewSet):
         if active is not None and active != "":
             qs = qs.filter(is_active=str(active).lower() in ("1", "true", "yes"))
 
-        # ── Sprint 2026-07-16 · filtros por clasificadores multi-valor ──
-        # JSONB containment: la lista debe contener el valor pedido.
+        # ── Sprint 2026-07-22 · G18: marca/familia son COLUMNAS ──
+        # ?marca_id=<uuid>   → match exacto en la columna marca_id
+        #                      (antes: marca_ids__contains — legacy).
+        # ?familia_id=<uuid> → match exacto en la columna familia_id.
         marca = (params.get("marca_id") or "").strip()
         if marca:
-            qs = qs.filter(marca_ids__contains=[marca])
+            try:
+                qs = qs.filter(marca_id=uuid.UUID(marca))
+            except (ValueError, AttributeError, TypeError):
+                pass  # UUID inválido → no se aplica el filtro
 
+        familia_id = (params.get("familia_id") or "").strip()
+        if familia_id:
+            try:
+                qs = qs.filter(familia_id=uuid.UUID(familia_id))
+            except (ValueError, AttributeError, TypeError):
+                pass
+
+        # LEGACY · filtros por clasificadores multi-valor (JSONB
+        # containment). Quedan inertes pero compatibles.
         # Sprint 2026-07-21 · `familias` ahora guarda el TIPO DE PUNTERA
         # del catálogo ("Acero 200J", mix-case): no transformar el caso.
         familia = (params.get("familia") or "").strip()
@@ -138,6 +156,8 @@ class TallaViewSet(viewsets.ModelViewSet):
             talla_base=(original.talla_base or "") + "-COPY",
             nombre=original.nombre,
             descripcion=original.descripcion,
+            marca_id=original.marca_id,
+            familia_id=original.familia_id,
             marca_ids=list(original.marca_ids or []),
             tipos=list(original.tipos or []),
             familias=list(original.familias or []),
@@ -190,6 +210,59 @@ class TallaViewSet(viewsets.ModelViewSet):
             {"created": len(creadas),
              "tallas": TallaListSerializer(creadas, many=True).data},
             status=status.HTTP_201_CREATED)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 2026-07-22 · G18 · CRUD de familias de línea por marca
+# ─────────────────────────────────────────────────────────────────────
+class FamiliaViewSet(viewsets.ModelViewSet):
+    """
+    CRUD de brands.marca_familia.
+
+    Filtros simples vía querystring:
+      · ?marca_id=<uuid>        → sólo familias de esa marca
+      · ?is_active=true|false   → activas (default) / inactivas
+      · ?q=<str>                → coincidencia parcial en nombre
+    """
+    permission_classes = [IsAuthenticated]
+    pagination_class   = TallaPagination
+    serializer_class   = FamiliaSerializer
+    lookup_field       = "id"
+
+    def get_queryset(self):
+        qs = Familia.objects.all().order_by("nombre", "id")
+        params = self.request.query_params
+
+        marca = (params.get("marca_id") or "").strip()
+        if marca:
+            try:
+                qs = qs.filter(marca_id=uuid.UUID(marca))
+            except (ValueError, AttributeError, TypeError):
+                pass  # UUID inválido → no se aplica el filtro
+
+        active = params.get("is_active")
+        if active is not None and active != "":
+            qs = qs.filter(is_active=str(active).lower() in ("1", "true", "yes"))
+        else:
+            qs = qs.filter(is_active=True)  # default: sólo activas
+
+        q = (params.get("q") or "").strip()
+        if q:
+            qs = qs.filter(nombre__icontains=q)
+        return qs
+
+    # ── Delete: por defecto SOFT (is_active=False); ?hard=1 → HARD
+    #    delete real. Mismo patrón que TallaViewSet.destroy. ─────────
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        hard = str(request.query_params.get("hard", "")).lower() in ("1", "true", "yes")
+        if hard:
+            instance.delete()  # HARD — fila eliminada de la tabla
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        # SOFT (default)
+        instance.is_active = False
+        instance.save(update_fields=["is_active", "updated_at"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class TipoProductoCatViewSet(viewsets.ReadOnlyModelViewSet):
@@ -312,6 +385,22 @@ class SizingOptionsView(APIView):
         except Exception:
             pass
 
+        # ── Sprint 2026-07-22 · G18 · familias de línea por marca ──
+        # Antes HARDCODEADO (Composite · Prime · EVA · …). Ahora es el
+        # catálogo vivo brands.marca_familia: nombres DISTINCT de las
+        # familias ACTIVAS, ordenados. Mismo shape: lista de strings.
+        familias_linea = []
+        try:
+            with connection.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT nombre FROM brands.marca_familia
+                    WHERE is_active = TRUE AND btrim(nombre) <> ''
+                    ORDER BY 1
+                """)
+                familias_linea = [r[0] for r in cur.fetchall()]
+        except Exception:
+            pass
+
         payload = {
             "tipos_producto":      TipoProductoCatSerializer(tipos, many=True).data,
             "sistemas_medida":     MedidaSistemaCatSerializer(sistemas, many=True).data,
@@ -322,12 +411,10 @@ class SizingOptionsView(APIView):
             "familias":            familias,
             "capellada":           capellada,
             "tipo_puntera":        tipo_puntera,
-            # Sprint 2026-07-22 · familias de línea Marluvas (select
-            # "Familia" del drawer cuando tipo_producto=calzado).
-            # Decisión CEO: Composite · Prime · EVA · Social ·
-            # PVC All Work · PVC Vulcaflex. Se guarda en metadata.familia.
-            "familias_linea":      ["Composite", "Prime", "EVA", "Social",
-                                    "PVC All Work", "PVC Vulcaflex"],
+            # Sprint 2026-07-22 · G18 · familias de línea (select
+            # "Familia" del drawer cuando tipo_producto=calzado): ya NO
+            # hardcodeado — catálogo vivo brands.marca_familia (activas).
+            "familias_linea":      familias_linea,
             "draft_allowed":       True,
             "version":             "sizing-engine-v2",
         }

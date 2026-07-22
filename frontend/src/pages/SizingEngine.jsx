@@ -26,9 +26,10 @@ import { createPortal } from "react-dom";
 import { useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { tallasApi, sizingApi, apiFetch, getToken } from "../lib/api.js";
+import { tallasApi, sizingApi, sizingFamiliasApi, marcasApi, apiFetch, getToken } from "../lib/api.js";
 import { MOCK_TALLAS, MOCK_SIZING_OPTIONS } from "../data/mockData.js";
 import ConfirmModal from "../components/common/ConfirmModal.jsx";
+import CreateBrandDrawer from "../components/brands/CreateBrandDrawer.jsx";
 import {
   IconPlus, IconRefresh, IconSearch, IconX, IconCheck,
   IconPackage, IconAlert, IconTag, IconLock,
@@ -71,8 +72,11 @@ export default function ScreenSizingEngine() {
   const [editing, setEditing]   = useState(null);    // null | {} (nuevo) | obj (edita)
   // Sprint 2026-07-16 · filtros por clasificadores + duplicar puntera
   const [filterMarca,   setFilterMarca]   = useState("");
-  const [filterFamilia, setFilterFamilia] = useState("");
+  const [filterFamilia, setFilterFamilia] = useState("");   // id de familia
   const [cloneFamOpen,  setCloneFamOpen]  = useState(false);
+  // Sprint 2026-07-22 · catálogo real de familias (/sizing/familias/) —
+  // alimenta el select Familia del toolbar (filtrable por marca).
+  const [familiasCat,   setFamiliasCat]   = useState([]);
 
   // ── Carga inicial: opciones + tallas ──────────────────────────
   // Las opciones (catálogos) sí caen a MOCK_SIZING_OPTIONS si el
@@ -95,6 +99,10 @@ export default function ScreenSizingEngine() {
            : Array.isArray(r)          ? r
            : [];
     } catch (e) { listErr = e; }
+    try {
+      const rf = await sizingFamiliasApi.list();
+      setFamiliasCat(Array.isArray(rf) ? rf : (rf?.results || []));
+    } catch (e) { /* el catálogo de familias es complementario al filtro */ }
 
     const finalOptions = (opt && Object.keys(opt).length > 0) ? opt : MOCK_SIZING_OPTIONS;
     setOptions(finalOptions);
@@ -105,6 +113,27 @@ export default function ScreenSizingEngine() {
   };
 
   useEffect(() => { loadAll(); }, []);
+
+  // Tras un CRUD de marca/familia hecho desde el drawer: refresca los
+  // catálogos sin recargar la lista de tallas (no cambió).
+  const reloadOptions = async () => {
+    try {
+      const opt = await sizingApi.options();
+      if (opt && Object.keys(opt).length > 0) setOptions(opt);
+    } catch (e) { /* conserva las opciones actuales */ }
+    try {
+      const rf = await sizingFamiliasApi.list();
+      setFamiliasCat(Array.isArray(rf) ? rf : (rf?.results || []));
+    } catch (e) { /* conserva el catálogo actual */ }
+  };
+
+  // Si cambia la marca del toolbar y la familia elegida ya no le pertenece,
+  // se limpia para no filtrar por una combinación imposible.
+  useEffect(() => {
+    if (!filterFamilia || !filterMarca) return;
+    const fam = familiasCat.find(f => f.id === filterFamilia);
+    if (fam && fam.marca_id !== filterMarca) setFilterFamilia("");
+  }, [filterMarca, familiasCat, filterFamilia]);
 
   // ── Mapa id→nombre de marca + familias de línea distintas ──────
   // Sprint 2026-07-22 · la clasificación de la talla vive en
@@ -133,15 +162,15 @@ export default function ScreenSizingEngine() {
       out = out.filter(t => (Array.isArray(t.marca_ids) ? t.marca_ids : []).includes(filterMarca));
     }
     if (filterFamilia) {
-      // Sprint 2026-07-22 · comparación exacta contra metadata.familia.
-      out = out.filter(t => String(t?.metadata?.familia || "") === filterFamilia);
+      // Sprint 2026-07-22 · comparación por FK real (talla.familia_id).
+      out = out.filter(t => t.familia_id === filterFamilia);
     }
     const ql = q.trim().toLowerCase();
     if (ql) {
       out = out.filter(t => (
         (t.talla_base || "").toLowerCase().includes(ql) ||
         (t.nombre || "").toLowerCase().includes(ql) ||
-        String(t?.metadata?.familia || "").toLowerCase().includes(ql) ||
+        String(t.familia_nombre ?? t?.metadata?.familia ?? "").toLowerCase().includes(ql) ||
         (Array.isArray(t.familias) ? t.familias : []).some(f => String(f).toLowerCase().includes(ql)) ||
         (Array.isArray(t.tipos) ? t.tipos : []).some(x => String(x).toLowerCase().includes(ql)) ||
         (t.eu || "").toLowerCase().includes(ql) ||
@@ -346,10 +375,11 @@ export default function ScreenSizingEngine() {
           value={filterFamilia}
           onChange={e => setFilterFamilia(e.target.value)}
           style={{ maxWidth: 200 }}
+          title={lang === "es" ? "Familia" : "Family"}
         >
           <option value="">{lang === "es" ? "Todas las familias" : "All families"}</option>
-          {familiasDistinct.map(f => (
-            <option key={f} value={f}>{f}</option>
+          {(filterMarca ? familiasCat.filter(f => f.marca_id === filterMarca) : familiasCat).map(f => (
+            <option key={f.id} value={f.id}>{f.nombre}</option>
           ))}
         </select>
       </div>
@@ -385,6 +415,10 @@ export default function ScreenSizingEngine() {
             {filtered.map(t => {
               const chip = chipForTipo(t.tipo_producto);
               const isPlantilla = t.tipo_producto === "plantilla";
+              // Sprint 2026-07-22 · marca única (FK) con fallback al array
+              // legacy; familia por nombre read-only del backend.
+              const marcaId    = t.marca_id || (Array.isArray(t.marca_ids) ? t.marca_ids[0] : null);
+              const familiaLbl = t.familia_nombre ?? t?.metadata?.familia;
               return (
                 <div
                   key={t.id}
@@ -499,30 +533,30 @@ export default function ScreenSizingEngine() {
                       {t.nombre || <span style={{ color: "#CBD5E1" }}>—</span>}
                     </div>
                     {/* Marca · Familia (Sprint 2026-07-22)
-                        La talla se clasifica por metadata.familia + marca. */}
-                    {((t.marca_ids || []).length > 0 ||
-                      t?.metadata?.familia ||
+                        Marca única por FK; familia vía familia_nombre. */}
+                    {(marcaId ||
+                      familiaLbl ||
                       (t.tipos || []).length > 0 ||
                       (t.familias || []).length > 0) && (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
-                        {(t.marca_ids || []).map(mid => (
-                          <span key={mid} style={{
+                        {marcaId && (
+                          <span style={{
                             background: "rgba(11,30,58,0.06)", color: "#0B1E3A",
                             border: "1px solid rgba(11,30,58,0.15)",
                             borderRadius: 999, padding: "2px 8px",
                             fontSize: 10.5, fontWeight: 700,
                           }}>
-                            {marcaNameById[mid] || mid.slice(0, 8)}
+                            {marcaNameById[marcaId] || String(marcaId).slice(0, 8)}
                           </span>
-                        ))}
-                        {t?.metadata?.familia && (
+                        )}
+                        {familiaLbl && (
                           <span className="mono" style={{
                             background: "rgba(0,178,134,0.09)", color: "#008B69",
                             border: "1px solid rgba(0,178,134,0.25)",
                             borderRadius: 999, padding: "2px 8px",
                             fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3,
                           }}>
-                            {t.metadata.familia}
+                            {familiaLbl}
                           </span>
                         )}
                         {(t.tipos || []).map(tp => (
@@ -672,6 +706,7 @@ export default function ScreenSizingEngine() {
             tallas={tallas}
             onClose={() => setEditing(null)}
             onSave={handleSave}
+            onReloadOptions={reloadOptions}
           />
         )}
       </AnimatePresence>
@@ -732,9 +767,13 @@ function KpiTile({ label, value, hint, accent = MINT }) {
 //       form.tipo_producto === 'plantilla'  → muestra "Especificaciones
 //       Dimensionales".  Cualquier otro valor (incluyendo null/empty
 //       o 'calzado') la oculta.
+//   · Marca es SINGLE-select (FK marca_id) con CRUD inline; Familia es
+//     FK por marca (familia_id) también con CRUD inline. El backend
+//     sincroniza metadata.familia y marca_ids.
 //   · Cero validación required: el botón "Guardar" siempre está activo.
 // =====================================================================
-export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSave }) {
+export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSave,
+                                  onReloadOptions = async () => {} }) {
   const isEdit = !!initial?.id;
 
   // Form state — arranca con un esquema vacío y rellena con `initial`.
@@ -748,35 +787,205 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
       talla_base: "",
       nombre: "",
       descripcion: "",
-      // Sprint 2026-07-16 · clasificadores multi-valor
-      marca_ids: [],
+      // Sprint 2026-07-22 · clasificadores por FK (single marca + familia)
+      marca_id: null,
+      familia_id: null,
       tipos: [],
       familias: [],
       // Sprint 2026-07-21 · medidas internas del calzado (mm, PDF Marluvas)
       ancho_mm: "",
       comprimento_mm: "",
-      // Sprint 2026-07-22 · familia de línea (sólo Calzado) → metadata.familia
-      familia: "",
       ...eqFields,
       ...dimFields,
     };
   }, [options]);
 
-  const [form, setForm] = useState({ ...blank, ...initial, familia: initial?.metadata?.familia || "" });
+  // Merge inicial: marca cae al FK nuevo (o al primero del array legacy);
+  // familia arranca del FK que mande el backend.
+  const initForm = () => ({
+    ...blank,
+    ...initial,
+    marca_id:   initial?.marca_id   || initial?.marca_ids?.[0] || null,
+    familia_id: initial?.familia_id || null,
+  });
+
+  const [form, setForm] = useState(initForm);
   const [saving, setSaving] = useState(false);
 
-  // Cuando cambian las opciones (asíncrono) o el initial → re-merge.
+  // Sprint 2026-07-22 · fix de race: el merge inicial corre UNA sola vez
+  // por apertura del drawer. Antes, cuando `options` llegaba async (blank
+  // cambiaba) el efecto reseteaba el form y borraba lo ya tecleado.
+  const mergedOnceRef = useRef(false);
   useEffect(() => {
-    setForm({ ...blank, ...initial, familia: initial?.metadata?.familia || "" });
+    if (mergedOnceRef.current) return;
+    mergedOnceRef.current = true;
+    setForm(initForm());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blank, initial]);
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
-  // ── Sprint 2026-07-16 · helpers de los clasificadores multi ─
-  const toggleInList = (k) => (v) => setForm(prev => {
-    const cur = Array.isArray(prev[k]) ? prev[k] : [];
-    return { ...prev, [k]: cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v] };
+  // ── Sprint 2026-07-22 · familias de la marca seleccionada ─────────
+  // Fetch interno del drawer: al cambiar form.marca_id se traen las
+  // familias de esa marca (normaliza results | array plano).
+  const [familiasMarca, setFamiliasMarca] = useState([]);
+  const reloadFamilias = async (marcaId) => {
+    if (!marcaId) { setFamiliasMarca([]); return []; }
+    try {
+      const r = await sizingFamiliasApi.list({ marca_id: marcaId });
+      const list = Array.isArray(r) ? r : (r?.results || []);
+      setFamiliasMarca(list);
+      return list;
+    } catch (e) {
+      setFamiliasMarca([]);
+      return [];
+    }
+  };
+  useEffect(() => { reloadFamilias(form.marca_id); }, [form.marca_id]);
+
+  // Si el initial trae metadata.familia pero NO familia_id, al cargar las
+  // familias de la marca se intenta matchear por nombre (case-insensitive)
+  // y preseleccionar el FK correspondiente.
+  useEffect(() => {
+    if (form.familia_id || familiasMarca.length === 0) return;
+    const metaFam = initial?.metadata?.familia;
+    if (!metaFam) return;
+    const hit = familiasMarca.find(f =>
+      String(f.nombre || "").toLowerCase() === String(metaFam).toLowerCase());
+    if (hit) setForm(prev => (prev.familia_id ? prev : { ...prev, familia_id: hit.id }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [familiasMarca]);
+
+  // ── Sprint 2026-07-22 · CRUD inline de MARCA (CreateBrandDrawer) ────
+  const [brandDrawer, setBrandDrawer] = useState(null); // null | { mode:'create' } | { mode:'edit', id, initial }
+  const [brandBusy,   setBrandBusy]   = useState(false);
+
+  const slugify = (s) =>
+    (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+             .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  // UI (CreateBrandDrawer) → backend brands.marca. Mismo mapeo que
+  // Brands.jsx / BrandDetail.jsx (incluye pf_correlativo).
+  const brandBodyFromForm = (p) => ({
+    nombre:              p.name || p.nombre,
+    slug:                p.slug || slugify(p.name || p.nombre),
+    pais_origen_iso2:    p.pais_origen_iso2 || p.country || "MX",
+    categoria_principal: p.categoria_principal || p.categoria || "GENERAL",
+    estado_comercial:    p.estado_comercial || p.status || "PROSPECTO",
+    mercados_activos:    p.mercados_activos || p.territorios || [],
+    tipo:                p.tipo || "TERCEROS",
+    brand_code:          p.brand_id || p.brand_code || null,
+    pf_correlativo:      (p.pf_correlativo != null && p.pf_correlativo !== "")
+                           ? Number(p.pf_correlativo) : null,
   });
+
+  const openEditBrand = async () => {
+    if (!form.marca_id) return;
+    setBrandBusy(true);
+    try {
+      const raw = await marcasApi.get(form.marca_id);
+      setBrandDrawer({
+        mode: "edit",
+        id: form.marca_id,
+        initial: {
+          brand_id:         raw.brand_code || raw.slug || "",
+          name:             raw.nombre || "",
+          tipo:             raw.tipo || "PROPIA",
+          issuing_entity:   raw.issuing_entity_id || raw.issuing_entity || null,
+          mercados_activos: Array.isArray(raw.mercados_activos) ? raw.mercados_activos : [],
+          status:           raw.estado_comercial || "ACTIVO",
+          description:      raw.description || raw.descripcion || "",
+          color:            raw.color || "#00B286",
+          pf_correlativo:   raw.pf_correlativo ?? null,
+        },
+      });
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo cargar la marca: " : "Could not load brand: ") + errDetail(e));
+    } finally {
+      setBrandBusy(false);
+    }
+  };
+
+  const handleBrandCreated = async (p) => {
+    const body = brandBodyFromForm(p);
+    try {
+      if (brandDrawer?.mode === "edit" && brandDrawer.id) {
+        await marcasApi.update(brandDrawer.id, body);
+        setBrandDrawer(null);
+        await onReloadOptions();
+      } else {
+        const created = await marcasApi.create(body);
+        setBrandDrawer(null);
+        await onReloadOptions();
+        // Selecciona la marca recién creada; la familia se limpia
+        // (pertenecía — si acaso — a la marca anterior).
+        setForm(prev => ({ ...prev, marca_id: created?.id || null, familia_id: null }));
+      }
+    } catch (e) {
+      alert((lang === "es" ? "Error al guardar marca: " : "Error saving brand: ") + errDetail(e));
+    }
+  };
+
+  const deleteBrand = async () => {
+    if (!form.marca_id) return;
+    const nombre = (options?.marcas || []).find(m => m.id === form.marca_id)?.nombre || "";
+    const ok = window.confirm(lang === "es"
+      ? `¿Eliminar la marca "${nombre}"? Es un borrado lógico: las tallas que la referencian conservan la referencia.`
+      : `Delete brand "${nombre}"? This is a soft delete: sizes referencing it keep the reference.`);
+    if (!ok) return;
+    try {
+      await marcasApi.remove(form.marca_id);
+      await onReloadOptions();
+      setForm(prev => ({ ...prev, marca_id: null, familia_id: null }));
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo eliminar la marca: " : "Could not delete brand: ") + errDetail(e));
+    }
+  };
+
+  // ── Sprint 2026-07-22 · CRUD inline de FAMILIA (modal pequeño) ──────
+  const [familiaModal, setFamiliaModal] = useState(null); // null | { mode:'create' } | { mode:'edit', familia }
+  const [familiaBusy,  setFamiliaBusy]  = useState(false);
+
+  const saveFamilia = async ({ nombre, descripcion }) => {
+    if (!form.marca_id || !nombre) return;
+    setFamiliaBusy(true);
+    try {
+      let saved = null;
+      if (familiaModal?.mode === "edit" && familiaModal.familia?.id) {
+        saved = await sizingFamiliasApi.update(familiaModal.familia.id,
+                  { nombre, descripcion: descripcion || null });
+      } else {
+        saved = await sizingFamiliasApi.create(
+                  { marca_id: form.marca_id, nombre, descripcion: descripcion || null });
+      }
+      const fid = saved?.id || familiaModal?.familia?.id || null;
+      setFamiliaModal(null);
+      await reloadFamilias(form.marca_id);
+      if (fid) setForm(prev => ({ ...prev, familia_id: fid }));
+      await onReloadOptions();
+    } catch (e) {
+      // 400 del backend (p.ej. duplicado) → alert con el detalle.
+      alert((lang === "es" ? "No se pudo guardar la familia: " : "Could not save family: ") + errDetail(e));
+    } finally {
+      setFamiliaBusy(false);
+    }
+  };
+
+  const deleteFamilia = async () => {
+    if (!form.familia_id) return;
+    const fam = familiasMarca.find(f => f.id === form.familia_id);
+    const ok = window.confirm(lang === "es"
+      ? `¿Eliminar la familia "${fam?.nombre || ""}"? Es un borrado lógico: las tallas que la referencian conservan la referencia.`
+      : `Delete family "${fam?.nombre || ""}"? This is a soft delete: sizes referencing it keep the reference.`);
+    if (!ok) return;
+    try {
+      await sizingFamiliasApi.remove(form.familia_id);
+      setForm(prev => ({ ...prev, familia_id: null }));
+      await reloadFamilias(form.marca_id);
+      await onReloadOptions();
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo eliminar la familia: " : "Could not delete family: ") + errDetail(e));
+    }
+  };
 
   // ── Sprint 2026-07-18 · auto-sugerir la Matriz de Equivalencias ─────
   // Al escribir la talla base (BR): si ya existe en el catálogo cargado,
@@ -820,15 +1029,6 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     ) || null;
   }, [options, form.tipo_producto]);
 
-  // ── Sprint 2026-07-22 · Familia de línea (sólo Calzado) ─────────
-  // Catálogo desde /sizing/options/ (familias_linea); fallback local
-  // con los valores de la decisión CEO.
-  const familiaOpts = useMemo(() => {
-    const FALLBACK = ["Composite", "Prime", "EVA", "Social", "PVC All Work", "PVC Vulcaflex"];
-    const src = options?.familias_linea;
-    return (Array.isArray(src) && src.length > 0) ? src : FALLBACK;
-  }, [options]);
-
   const showDimensionales = tipoMeta?.requiere_dimensiones === true;
 
   // ── Submit (sin bloqueos) ──────────────────────────────────
@@ -846,14 +1046,16 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
         payload.ancho_mm = null;
         payload.comprimento_mm = null;
       }
-      // Sprint 2026-07-22 · la familia de línea viaja en metadata
-      // (sólo Calzado); fuera de calzado se limpia. `nombre` cae a la
-      // talla base si queda vacío (campo "Nombre comercial" retirado).
-      payload.metadata = {
-        ...(initial?.metadata || {}),
-        familia: form.tipo_producto === "calzado" ? (form.familia || null) : null,
-      };
-      delete payload.familia;
+      // Sprint 2026-07-22 · la clasificación viaja por FK: marca_id +
+      // familia_id. El backend sincroniza metadata.familia (por eso aquí
+      // NO se toca la clave) y marca_ids queda espejo de la marca única
+      // por compat con consumidores legacy.
+      payload.metadata  = { ...(initial?.metadata || {}) };
+      payload.marca_id  = form.marca_id || null;
+      payload.familia_id = form.familia_id || null;
+      payload.marca_ids = form.marca_id ? [form.marca_id] : [];
+      // `nombre` cae a la talla base si queda vacío (campo "Nombre
+      // comercial" retirado del drawer).
       if (!payload.nombre) payload.nombre = payload.talla_base || null;
       await onSave(payload);
     } catch (e) {
@@ -918,7 +1120,11 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                   ))}
                 </select>
               </Field>
-              <Field label={lang === "es" ? "Talla base (BRA)" : "Base size (BRA)"}>
+              {/* Sprint 2026-07-22 · label dinámico: (BRA) sólo aplica
+                  a calzado; para plantilla/otros es "Talla base". */}
+              <Field label={form.tipo_producto === "calzado"
+                ? (lang === "es" ? "Talla base (BRA)" : "Base size (BRA)")
+                : (lang === "es" ? "Talla base"        : "Base size")}>
                 <input
                   className="siz-input mono"
                   placeholder={lang === "es" ? 'p.ej. "42", "S3", "M-WIDE"' : 'e.g. "42", "S3", "M-WIDE"'}
@@ -939,59 +1145,120 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                   <span/>
                 </label>
               </Field>
-              {/* Sprint 2026-07-22 · Familia de línea (sólo Calzado).
-                  Select simple; opciones desde /sizing/options/
-                  (familias_linea) con fallback local. Se guarda en
-                  metadata.familia. */}
-              {form.tipo_producto === "calzado" && (
-                <Field label={lang === "es" ? "Familia" : "Family"} span={2}>
-                  <select
-                    className="siz-input siz-select"
-                    value={form.familia || ""}
-                    onChange={e => set("familia", e.target.value)}
-                  >
-                    <option value="">{lang === "es" ? "— Sin familia —" : "— No family —"}</option>
-                    {familiaOpts.map(f => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
-                </Field>
+            </div>
+          </Section>
+
+          {/* SECCIÓN 1B · Marca (Sprint 2026-07-22 · single-select + CRUD)
+              Una talla pertenece a UNA marca (FK marca_id; el backend
+              mantiene marca_ids espejo). Los 3 botones junto al label
+              permiten crear / editar / eliminar sin salir del drawer. */}
+          <Section title={lang === "es" ? "Marca" : "Brand"}>
+            <Field label={
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {lang === "es" ? "Marca" : "Brand"}
+                <span style={{ marginLeft: "auto", display: "inline-flex", gap: 4 }}>
+                  <CrudIconBtn
+                    title={lang === "es" ? "Nueva marca" : "New brand"}
+                    color="#00B286"
+                    onClick={() => setBrandDrawer({ mode: "create" })}
+                  >＋</CrudIconBtn>
+                  <CrudIconBtn
+                    title={lang === "es" ? "Editar marca seleccionada" : "Edit selected brand"}
+                    disabled={!form.marca_id || brandBusy}
+                    onClick={openEditBrand}
+                  >✎</CrudIconBtn>
+                  <CrudIconBtn
+                    title={lang === "es" ? "Eliminar marca seleccionada" : "Delete selected brand"}
+                    color="#DC2626"
+                    disabled={!form.marca_id}
+                    onClick={deleteBrand}
+                  >×</CrudIconBtn>
+                </span>
+              </span>
+            }>
+              <select
+                className="siz-input siz-select"
+                value={form.marca_id || ""}
+                onChange={e => setForm(prev => ({
+                  ...prev,
+                  marca_id:   e.target.value || null,
+                  familia_id: null,   // la familia pertenecía a la marca anterior
+                }))}
+              >
+                <option value="">{lang === "es" ? "— Sin marca —" : "— No brand —"}</option>
+                {(options?.marcas || []).map(m => (
+                  <option key={m.id} value={m.id}>{m.nombre}</option>
+                ))}
+              </select>
+              {(options?.marcas || []).length === 0 && (
+                <span className="caption" style={{ color: "#94A3B8" }}>
+                  {lang === "es" ? "Sin marcas en BD." : "No brands in DB."}
+                </span>
               )}
-            </div>
+            </Field>
           </Section>
 
-          {/* SECCIÓN 1B · Marca (Sprint 2026-07-21)
-              Decisión CEO: las secciones Capellada y Tipo puntera salen
-              del drawer — la clasificación sigue en la DB (tipos /
-              familias) y se gestiona por SQL; aquí sólo queda Marca. */}
+          {/* SECCIÓN 1C · Familia (Sprint 2026-07-22 · FK por marca + CRUD)
+              Siempre visible; se habilita al elegir marca. Las opciones se
+              fetchean dentro del drawer (sizingFamiliasApi por marca). */}
           <Section
-            title={lang === "es" ? "Marca" : "Brand"}
-            hint={lang === "es"
-              ? "Multi-selección: una talla puede estar en varias marcas."
-              : "Multi-select: a size can belong to several brands."}
+            title={lang === "es" ? "Familia" : "Family"}
+            hint={!form.marca_id
+              ? (lang === "es"
+                  ? "Elige una marca para ver y gestionar sus familias."
+                  : "Pick a brand to see and manage its families.")
+              : undefined}
           >
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <Field label={lang === "es" ? "Marcas" : "Brands"}>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {(options?.marcas || []).length === 0 && (
-                    <span className="caption" style={{ color: "#94A3B8" }}>
-                      {lang === "es" ? "Sin marcas en BD." : "No brands in DB."}
-                    </span>
-                  )}
-                  {(options?.marcas || []).map(m => (
-                    <TogglePill
-                      key={m.id}
-                      on={(form.marca_ids || []).includes(m.id)}
-                      label={m.nombre}
-                      onClick={() => toggleInList("marca_ids")(m.id)}
-                    />
-                  ))}
-                </div>
-              </Field>
-            </div>
+            <Field label={
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {lang === "es" ? "Familia" : "Family"}
+                <span style={{ marginLeft: "auto", display: "inline-flex", gap: 4 }}>
+                  <CrudIconBtn
+                    title={lang === "es" ? "Nueva familia" : "New family"}
+                    color="#00B286"
+                    disabled={!form.marca_id}
+                    onClick={() => setFamiliaModal({ mode: "create" })}
+                  >＋</CrudIconBtn>
+                  <CrudIconBtn
+                    title={lang === "es" ? "Editar familia seleccionada" : "Edit selected family"}
+                    disabled={!form.familia_id}
+                    onClick={() => setFamiliaModal({
+                      mode: "edit",
+                      familia: familiasMarca.find(f => f.id === form.familia_id) || null,
+                    })}
+                  >✎</CrudIconBtn>
+                  <CrudIconBtn
+                    title={lang === "es" ? "Eliminar familia seleccionada" : "Delete selected family"}
+                    color="#DC2626"
+                    disabled={!form.familia_id}
+                    onClick={deleteFamilia}
+                  >×</CrudIconBtn>
+                </span>
+              </span>
+            }>
+              <select
+                className="siz-input siz-select"
+                disabled={!form.marca_id}
+                value={form.familia_id || ""}
+                onChange={e => set("familia_id", e.target.value || null)}
+              >
+                <option value="">{lang === "es" ? "— Sin familia —" : "— No family —"}</option>
+                {familiasMarca.map(f => (
+                  <option key={f.id} value={f.id}>{f.nombre}</option>
+                ))}
+              </select>
+              {form.marca_id && familiasMarca.length === 0 && (
+                <span className="caption" style={{ color: "#94A3B8" }}>
+                  {lang === "es"
+                    ? "Esta marca aún no tiene familias — crea la primera con ＋."
+                    : "This brand has no families yet — create the first one with ＋."}
+                </span>
+              )}
+            </Field>
           </Section>
 
-          {/* SECCIÓN 2 · Matriz de Equivalencias */}
+          {/* SECCIÓN 2 · Matriz de Equivalencias — sólo con tipo elegido */}
+          {Boolean(form.tipo_producto) && (
           <Section
             title={lang === "es" ? "Matriz de Equivalencias" : "Equivalence Matrix"}
             hint={lang === "es"
@@ -1011,6 +1278,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
               ))}
             </div>
           </Section>
+          )}
 
           {/* SECCIÓN 3 · DINÁMICA — sólo plantillas */}
           <AnimatePresence initial={false}>
@@ -1067,8 +1335,50 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
           </button>
         </div>
       </motion.aside>
+
+      {/* CRUD de marca — CreateBrandDrawer por ENCIMA de este drawer
+          (wrapper fixed con z-index mayor: .siz-drawer = 91). */}
+      {brandDrawer && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 95 }}>
+          <CreateBrandDrawer
+            lang={lang}
+            initial={brandDrawer.mode === "edit" ? brandDrawer.initial : null}
+            onClose={() => setBrandDrawer(null)}
+            onCreated={handleBrandCreated}
+          />
+        </div>
+      )}
+
+      {/* CRUD de familia — modal pequeño inline (nombre + descripción). */}
+      {familiaModal && createPortal(
+        <FamiliaQuickModal
+          lang={lang}
+          mode={familiaModal.mode}
+          familia={familiaModal.familia}
+          busy={familiaBusy}
+          onClose={() => setFamiliaModal(null)}
+          onSave={saveFamilia}
+        />,
+        document.body
+      )}
     </>
   );
+}
+
+
+// Detalle de error legible: DRF 400 puede traer {detail} o {campo: [msgs]}.
+function errDetail(e) {
+  const b = e?.body;
+  if (b && typeof b === "object") {
+    if (b.detail) return String(b.detail);
+    try {
+      const msg = Object.entries(b)
+        .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
+        .join("  ·  ");
+      if (msg) return msg;
+    } catch (_) { /* cae al message */ }
+  }
+  return e?.message || String(e);
 }
 
 
@@ -1084,6 +1394,88 @@ function Section({ title, hint, children }) {
       </div>
       {children}
     </section>
+  );
+}
+
+// Botón icono del patrón ＋/✎/× (mismo estilo que los CRUD inline de
+// atributos técnicos en ProductFormView).
+function CrudIconBtn({ title, onClick, disabled = false, color = "#475569", children }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        width: 20, height: 20, borderRadius: 5, padding: 0,
+        cursor: disabled ? "not-allowed" : "pointer",
+        border: "1px solid #E2E8F0", background: "#FFFFFF",
+        color: disabled ? "#CBD5E1" : color,
+        fontWeight: 800, fontSize: 12, lineHeight: 1,
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// =====================================================================
+// Modal rápido de FAMILIA (crear / editar) — nombre requerido,
+// descripción opcional. Lo abre el drawer de talla (CRUD inline).
+// =====================================================================
+function FamiliaQuickModal({ lang, mode, familia, busy, onClose, onSave }) {
+  const isEdit = mode === "edit";
+  const [nombre,      setNombre]      = useState(familia?.nombre || "");
+  const [descripcion, setDescripcion] = useState(familia?.descripcion || "");
+  const canSave = nombre.trim().length > 0 && !busy;
+  const run = () => { if (canSave) onSave({ nombre: nombre.trim(), descripcion: descripcion.trim() }); };
+  return (
+    <>
+      <div className="siz-drawer-backdrop" style={{ zIndex: 1000 }} onClick={() => !busy && onClose()}/>
+      <div role="dialog" aria-modal="true"
+           style={{
+             position: "fixed", top: "50%", left: "50%",
+             transform: "translate(-50%, -50%)", zIndex: 1001,
+             width: "min(420px, 92vw)", background: "#FFFFFF",
+             borderRadius: 14, padding: 22,
+             boxShadow: "0 24px 60px rgba(15,23,42,0.25)",
+           }}>
+        <div className="micro" style={{ color: MINT }}>
+          {isEdit ? (lang === "es" ? "EDITAR FAMILIA" : "EDIT FAMILY")
+                  : (lang === "es" ? "NUEVA FAMILIA"  : "NEW FAMILY")}
+        </div>
+        <div className="heading-md" style={{ margin: "2px 0 12px", color: NAVY }}>
+          {isEdit ? (familia?.nombre || "—")
+                  : (lang === "es" ? "Crear familia de línea" : "Create line family")}
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <label className="siz-field">
+            <span className="siz-field-label">{lang === "es" ? "Nombre *" : "Name *"}</span>
+            <input className="siz-input" autoFocus value={nombre} disabled={busy}
+                   onChange={e => setNombre(e.target.value)}
+                   onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); run(); } }}/>
+          </label>
+          <label className="siz-field">
+            <span className="siz-field-label">
+              {lang === "es" ? "Descripción (opcional)" : "Description (optional)"}
+            </span>
+            <input className="siz-input" value={descripcion} disabled={busy}
+                   onChange={e => setDescripcion(e.target.value)}
+                   onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); run(); } }}/>
+          </label>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button className="siz-btn siz-btn-ghost" onClick={onClose} disabled={busy}>
+            {lang === "es" ? "Cancelar" : "Cancel"}
+          </button>
+          <button className="siz-btn siz-btn-primary" onClick={run} disabled={!canSave}>
+            {busy ? (lang === "es" ? "Guardando…" : "Saving…")
+                  : (lang === "es" ? "Guardar" : "Save")}
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -1169,23 +1561,6 @@ function CloneFamiliaModal({ lang, familias, onClose, onDone }) {
         </div>
       </div>
     </>
-  );
-}
-
-// Pill toggleable para los multi-select de Marca/Tipo (Sprint 2026-07-16).
-function TogglePill({ on, label, onClick }) {
-  return (
-    <button type="button" onClick={onClick}
-            style={{
-              borderRadius: 999, padding: "4px 11px", cursor: "pointer",
-              fontSize: 12, fontWeight: 600, lineHeight: 1.3,
-              border: `1px solid ${on ? "rgba(0,178,134,0.45)" : "#E2E8F0"}`,
-              background: on ? "rgba(0,178,134,0.12)" : "#FFFFFF",
-              color: on ? "#008B69" : "#475569",
-              transition: "all 120ms ease",
-            }}>
-      {on ? "✓ " : ""}{label}
-    </button>
   );
 }
 

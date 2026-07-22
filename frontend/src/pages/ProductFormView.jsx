@@ -39,7 +39,7 @@ import ProductExpedientesTab from "../components/productos/ProductExpedientesTab
 import { useRole } from "../context/RoleContext.jsx";
 import {
   productosApi, marcasApi, tallasApi, nodosApi, clientesApi,
-  productoAliasesApi, ncmApi, sizingApi, attrOptionsApi,
+  productoAliasesApi, ncmApi, sizingApi, sizingFamiliasApi, attrOptionsApi,
   apiFetch, getToken,
 } from "../lib/api.js";
 // Sprint 2026-07-16 · drawers embebidos para crear/editar NCM y tallas sin
@@ -106,11 +106,9 @@ const TABS = [
 const CLIENT_VISIBLE_TABS = new Set(['detalles']);
 
 // ── Sprint 2026-07-22 · helpers del Motor de Tallas ──────────────────
-// Nueva semántica: la talla se clasifica por `metadata.familia`
-// (Composite, Prime, EVA, Social, PVC All Work, PVC Vulcaflex) + marca.
-// · _normTallaVal → comparaciones case-insensitive con trim.
+// Nueva semántica: la talla se clasifica por FK (marca_id + familia_id);
+// el nombre legacy vive en metadata.familia (sincronizada por el backend).
 // · esDalupo / sinDalupo → se omite cualquier valor "DALUPO".
-const _normTallaVal = (v) => String(v ?? '').trim().toLowerCase();
 const esDalupo = (v) => /dalupo/i.test(String(v ?? ''));
 const sinDalupo = (arr) => (Array.isArray(arr) ? arr : []).filter(v => !esDalupo(v));
 
@@ -257,10 +255,12 @@ export default function ScreenProductFormView() {
   const [normativas,  setNormativas]  = useState(asMultiArray(existing?.normativa));
   const [segmentos,   setSegmentos]   = useState(asMultiArray(existing?.segmento));
   // Sprint 2026-07-22 · FAMILIA de línea del producto (Sección A, junto
-  // a Marca). Las tallas de Sección C se filtran automáticamente por
-  // ella (talla.metadata.familia) + la marca. Se guarda en
-  // especificaciones.familia.
-  const [familiaSel,  setFamiliaSel]  = useState(existing?.especificaciones?.familia || '');
+  // a Marca). Ahora es FK real: familiaIdSel (uuid) apunta a
+  // /sizing/familias/; las tallas de Sección C se filtran por
+  // talla.familia_id. `familiaSel` (nombre) se conserva sólo para compat
+  // de guardado (especificaciones.familia).
+  const [familiaSel,   setFamiliaSel]   = useState(existing?.especificaciones?.familia || '');
+  const [familiaIdSel, setFamiliaIdSel] = useState(existing?.especificaciones?.familia_id || null);
 
   // ── Repuebla TODOS los campos cuando llega `existing` del fetch async ──
   // Los useState() iniciales corrieron con existing=null; ahora que tenemos
@@ -296,6 +296,7 @@ export default function ScreenProductFormView() {
     setNormativas(asMultiArray(existing.normativa));
     setSegmentos(asMultiArray(existing.segmento));
     setFamiliaSel(existing.especificaciones?.familia || '');
+    setFamiliaIdSel(existing.especificaciones?.familia_id || null);
     // Tallas: el backend las guarda en p.tallas (array de UUIDs o codes).
     setSelectedSizes(Array.isArray(existing.tallas)
       ? existing.tallas
@@ -754,6 +755,54 @@ export default function ScreenProductFormView() {
     ncmApi.list().then(r => setRealNcms(norm(r))).catch(() => setRealNcms([]));
   }, []);
 
+  // ── Sprint 2026-07-22 · FAMILIAS de la marca seleccionada ──
+  // Catálogo real /sizing/familias/?marca_id=<uuid> — alimenta el select
+  // FAMILIA de la Sección A. Se refetchea al cambiar de marca.
+  const [familiasMarca, setFamiliasMarca] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!brandId) { setFamiliasMarca([]); return; }
+    sizingFamiliasApi.list({ marca_id: brandId })
+      .then(r => { if (!cancelled) setFamiliasMarca(Array.isArray(r) ? r : (r?.results || [])); })
+      .catch(() => { if (!cancelled) setFamiliasMarca([]); });
+    return () => { cancelled = true; };
+  }, [brandId]);
+
+  // Productos legacy: especificaciones.familia guarda el NOMBRE (no el
+  // id). Cuando llegan las familias de la marca, se resuelve nombre → id
+  // (case-insensitive) para preseleccionar el FK. No pisa una selección
+  // ya hecha (por el backend o por el usuario).
+  useEffect(() => {
+    if (familiaIdSel || familiasMarca.length === 0) return;
+    const nombreFam = existing?.especificaciones?.familia;
+    if (!nombreFam) return;
+    const hit = familiasMarca.find(f =>
+      String(f.nombre || '').toLowerCase() === String(nombreFam).toLowerCase());
+    if (hit) setFamiliaIdSel(hit.id);
+  }, [familiasMarca, existing, familiaIdSel]);
+
+  // Sprint 2026-07-22 · cambio de MARCA (acción usuario): la familia y
+  // las tallas seleccionadas pertenecen a la marca anterior → se limpian.
+  // (El autoselect inicial de create y la carga de `existing` NO pasan
+  // por aquí — llaman setBrandId directamente.)
+  const onMarcaChange = (id) => {
+    setBrandId(id);
+    setFamiliaIdSel(null);
+    setFamiliaSel('');
+    setSelectedSizes([]);
+  };
+
+  // Cambio de FAMILIA (acción usuario): auto-selecciona TODAS las tallas
+  // de esa familia. En la carga inicial de un producto existente NO se
+  // aplica — ahí mandan las tallas guardadas (existing.tallas).
+  const onFamiliaChange = (id) => {
+    const fid = id || null;
+    setFamiliaIdSel(fid);
+    const fam = familiasMarca.find(f => f.id === fid);
+    setFamiliaSel(fam?.nombre || '');
+    setSelectedSizes(fid ? realSizes.filter(t => t.familia_id === fid).map(t => t.id) : []);
+  };
+
   // ── Sprint 2026-07-16 · crear/editar NCM y tallas SIN salir del form ──
   // Botón junto al select de NCM y en el Motor de Tallas → drawer embebido.
   // Al guardar: recarga la lista en memoria y auto-selecciona el valor —
@@ -773,12 +822,13 @@ export default function ScreenProductFormView() {
       } catch { /* sin catálogo de países las tarifas quedan sin labels */ }
     }
   };
+  const reloadSizingOptions = async () => {
+    try { setSizingOptions(await sizingApi.options()); }
+    catch { /* el form dinámico degrada a campos base */ }
+  };
   const openTallaDrawer = async (initial) => {
     setTallaDrawer(initial || {});
-    if (!sizingOptions) {
-      try { setSizingOptions(await sizingApi.options()); }
-      catch { /* el form dinámico degrada a campos base */ }
-    }
+    if (!sizingOptions) await reloadSizingOptions();
   };
 
   const handleNcmSave = async (form) => {
@@ -958,41 +1008,20 @@ export default function ScreenProductFormView() {
     return best;
   }, [nombre, realSizes]);
 
-  // ── Sprint 2026-07-22 · relación por FAMILIA DE LÍNEA + MARCA ──────
-  // Criterio principal (sustituye al de capellada + tipo de puntera de
-  // 2026-07-21): una talla está relacionada con el producto cuando su
-  // `metadata.familia` coincide con la FAMILIA elegida en la Sección A
-  // (especificaciones.familia) y su marca es la del producto. Si no hay
-  // familia elegida, se conserva el fallback legacy de familia
-  // detectada en el nombre.
-  const familiaSelNorm = esDalupo(familiaSel) ? '' : _normTallaVal(familiaSel);
-  const filtroPorFamilia = Boolean(familiaSelNorm);
-
-  // Tallas visibles en Sección C:
-  //   · lo YA seleccionado nunca se oculta (aunque no coincida el criterio)
-  //   · tallas con marcas asignadas deben incluir la marca del producto
-  //   · con familia elegida → solo tallas con metadata.familia igual
-  //   · sin familia → familia detectada en el nombre (fallback legacy)
-  //   · el resto se elige desde el modal "Más tallas".
+  // ── Sprint 2026-07-22 · relación por FAMILIA (FK) ──────────────────
+  // Una talla está relacionada con el producto cuando su `familia_id`
+  // coincide con la FAMILIA elegida en la Sección A. Sin familia elegida
+  // no se muestra ninguna talla (hint en su lugar); el resto de tallas
+  // se pueden traer desde el modal "Más tallas".
   const visibleSizes = useMemo(() => {
-    return realSizes.filter(t => {
-      if (selectedSizes.includes(t.id)) return true;
-      const marcas = Array.isArray(t.marca_ids) ? t.marca_ids : [];
-      if (brandId && marcas.length > 0 && !marcas.includes(brandId)) return false;
-      // Sprint 2026-07-22 · criterio principal: familia de línea
-      // (metadata.familia) — aparece automático al elegirla.
-      if (filtroPorFamilia) {
-        return _normTallaVal(t?.metadata?.familia) === familiaSelNorm;
-      }
-      if (detectedFamilia) {
-        const fams = Array.isArray(t.familias)
-          ? t.familias.map(f => String(f).toUpperCase()) : [];
-        return fams.includes(detectedFamilia);
-      }
-      return true;
-    });
-  }, [realSizes, selectedSizes, detectedFamilia, brandId,
-      filtroPorFamilia, familiaSelNorm]);
+    if (!familiaIdSel) return [];
+    return realSizes.filter(t => t.familia_id === familiaIdSel);
+  }, [realSizes, familiaIdSel]);
+  // Nombre de la familia activa (para el banner y el guardado compat).
+  const familiaActiva = useMemo(
+    () => familiasMarca.find(f => f.id === familiaIdSel) || null,
+    [familiasMarca, familiaIdSel],
+  );
   const hiddenSizesCount = realSizes.length - visibleSizes.length;
 
   // Modal "Más tallas" — permite traer tallas fuera del criterio activo.
@@ -1105,9 +1134,12 @@ export default function ScreenProductFormView() {
     // visibility tampoco tienen columna dedicada → mismo destino JSON.
     const especificaciones = {
       ...attrs,
-      // Sprint 2026-07-22 · familia de línea (Sección A): rige el filtro
-      // automático de tallas en la Sección C (talla.metadata.familia).
-      familia:            familiaSel || null,
+      // Sprint 2026-07-22 · familia de línea (Sección A): FK real —
+      // rige el filtro automático de tallas en la Sección C
+      // (talla.familia_id). `familia` conserva el NOMBRE por compat con
+      // consumidores legacy que leen especificaciones.familia.
+      familia:            familiaActiva?.nombre || familiaSel || null,
+      familia_id:         familiaIdSel || null,
       // Multi-select fields (sprint 2026-05-02): se persisten como arrays.
       // Los consumidores (BrandDetail, PricingManagerTable) leen ambas
       // formas — string legacy o array — para compat hacia atrás.
@@ -1197,7 +1229,7 @@ export default function ScreenProductFormView() {
         </label>
         <label className="form-field">
           <span>{lang==='es'?'Marca':'Brand'}</span>
-          <select className="input" value={brandId} onChange={e=>setBrandId(e.target.value)}>
+          <select className="input" value={brandId} onChange={e=>onMarcaChange(e.target.value)}>
             <option value="">{lang==='es'?'— Sin marca —':'— No brand —'}</option>
             {realBrands.map(b => (
               <option key={b.id} value={b.id}>
@@ -1210,20 +1242,22 @@ export default function ScreenProductFormView() {
           </select>
         </label>
         {/* Sprint 2026-07-22 · FAMILIA de línea (junto a Marca, decisión
-            CEO). Las tallas de la Sección C se filtran automáticamente
-            por esta familia (talla.metadata.familia) + la marca. Las
-            opciones vienen de /sizing/options/ (familias_linea). Se
-            guarda en especificaciones.familia. */}
+            CEO). Ahora es FK real: las opciones son las familias de la
+            marca elegida (/sizing/familias/?marca_id=) y las tallas de
+            la Sección C se filtran por talla.familia_id. Se guarda en
+            especificaciones.familia_id (+ nombre legacy en .familia). */}
         <label className="form-field">
           <span>{lang==='es'?'Familia':'Family'}</span>
-          <select className="input" value={familiaSel} onChange={e=>setFamiliaSel(e.target.value)}>
+          <select className="input" value={familiaIdSel || ''}
+                  disabled={!brandId}
+                  onChange={e=>onFamiliaChange(e.target.value)}>
             <option value="">{lang==='es'?'— Sin familia —':'— No family —'}</option>
-            {((Array.isArray(sizingOptions?.familias_linea) && sizingOptions.familias_linea.length > 0)
-              ? sizingOptions.familias_linea
-              : ['Composite','Prime','EVA','Social','PVC All Work','PVC Vulcaflex']
-            ).map(f => (
-              <option key={f} value={f}>{f}</option>
+            {familiasMarca.map(f => (
+              <option key={f.id} value={f.id}>{f.nombre}</option>
             ))}
+            {brandId && familiasMarca.length === 0 && (
+              <option disabled>{lang==='es'?'(sin familias para esta marca)':'(no families for this brand)'}</option>
+            )}
           </select>
         </label>
       </div>
@@ -1525,7 +1559,11 @@ export default function ScreenProductFormView() {
             {!isClient && (
               <span style={{marginLeft:10, display:'inline-flex', gap:6}}>
                 <button type="button"
-                        onClick={() => openTallaDrawer({})}
+                        onClick={() => openTallaDrawer({
+                          marca_id:       brandId || null,
+                          familia_id:     familiaIdSel || null,
+                          tipo_producto:  'calzado',
+                        })}
                         title={lang==='es' ? 'Crear talla nueva' : 'Create new size'}
                         style={{
                           padding:'3px 9px', borderRadius:6, cursor:'pointer',
@@ -1555,42 +1593,25 @@ export default function ScreenProductFormView() {
               {selectedSizes.length} {lang==='es'?'seleccionadas':'selected'}
             </span>
           </div>
-          {/* Sprint 2026-07-22 · banner del criterio activo: FAMILIA de
-              línea elegida en Sección A (principal) o familia detectada
-              en el nombre (fallback legacy). */}
-          {(filtroPorFamilia || detectedFamilia || hiddenSizesCount > 0) && realSizes.length > 0 && (
+          {/* Sprint 2026-07-22 · banner del criterio activo: FAMILIA (FK)
+              elegida en Sección A. Sin familia no hay banner — el hint
+              de abajo invita a elegirla. */}
+          {familiaIdSel && realSizes.length > 0 && (
             <div style={{
               display:'flex', alignItems:'center', gap:8, flexWrap:'wrap',
               margin:'6px 0 10px', padding:'7px 10px', borderRadius:8,
               background:'rgba(0,178,134,0.07)',
               border:'1px solid rgba(0,178,134,0.20)',
             }}>
-              {filtroPorFamilia ? (
-                <span className="caption" style={{color:'#008B69', fontWeight:600}}>
-                  <span className="mono" style={{fontWeight:800}}>
-                    {`${lang==='es' ? 'Familia' : 'Family'}: ${String(familiaSel).trim()}`}
-                  </span>
-                  {' — '}
-                  {lang==='es'
-                    ? `mostrando ${visibleSizes.length} talla(s) relacionadas`
-                    : `showing ${visibleSizes.length} related size(s)`}
+              <span className="caption" style={{color:'#008B69', fontWeight:600}}>
+                <span className="mono" style={{fontWeight:800}}>
+                  {`${lang==='es' ? 'Familia' : 'Family'}: ${(familiaActiva?.nombre || familiaSel || '').trim()}`}
                 </span>
-              ) : detectedFamilia ? (
-                <span className="caption" style={{color:'#008B69', fontWeight:600}}>
-                  {lang==='es' ? 'Familia detectada en el nombre:' : 'Family detected in name:'}{' '}
-                  <span className="mono" style={{fontWeight:800}}>{detectedFamilia}</span>
-                  {' · '}
-                  {lang==='es'
-                    ? `mostrando ${visibleSizes.length} talla(s) relacionadas`
-                    : `showing ${visibleSizes.length} related size(s)`}
-                </span>
-              ) : (
-                <span className="caption" style={{color:'var(--text-secondary)'}}>
-                  {lang==='es'
-                    ? `${hiddenSizesCount} talla(s) de otras marcas ocultas.`
-                    : `${hiddenSizesCount} size(s) from other brands hidden.`}
-                </span>
-              )}
+                {' — '}
+                {lang==='es'
+                  ? `mostrando ${visibleSizes.length} talla(s) relacionadas`
+                  : `showing ${visibleSizes.length} related size(s)`}
+              </span>
               {hiddenSizesCount > 0 && (
                 <button type="button"
                         onClick={() => setMoreTallasOpen(true)}
@@ -1601,8 +1622,8 @@ export default function ScreenProductFormView() {
                           fontWeight:700, fontSize:11, lineHeight:1.3,
                         }}>
                   ⊞ {lang==='es'
-                      ? `Más tallas (${hiddenSizesCount} ${filtroPorFamilia ? 'no relacionadas' : 'de otras familias'})`
-                      : `More sizes (${hiddenSizesCount} ${filtroPorFamilia ? 'not related' : 'from other families'})`}
+                      ? `Más tallas (${hiddenSizesCount} no relacionadas)`
+                      : `More sizes (${hiddenSizesCount} not related)`}
                 </button>
               )}
             </div>
@@ -1613,6 +1634,12 @@ export default function ScreenProductFormView() {
                 {lang==='es'
                   ? 'No hay tallas en BD. Crea las primeras en /tallas.'
                   : 'No sizes in DB. Create the first ones in /tallas.'}
+              </div>
+            ) : !familiaIdSel ? (
+              <div className="caption" style={{padding:'12px 0', color:'var(--text-tertiary)'}}>
+                {lang==='es'
+                  ? 'Selecciona una familia para ver sus tallas.'
+                  : 'Select a family to see its sizes.'}
               </div>
             ) : Object.entries(sizesGrouped).map(([sys, sysSizes]) => (
               <div key={sys} className="size-picker-group">
@@ -1646,8 +1673,10 @@ export default function ScreenProductFormView() {
               lang={lang}
               options={sizingOptions}
               initial={tallaDrawer}
+              tallas={realSizes}
               onClose={() => setTallaDrawer(null)}
               onSave={handleTallaSave}
+              onReloadOptions={reloadSizingOptions}
             />
           )}
         </AnimatePresence>

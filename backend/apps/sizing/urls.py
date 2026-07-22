@@ -5,6 +5,7 @@ Agente responsable: [AG-BACKEND]
 
 Routes (montadas en /api/ por config/urls.py):
   · /api/sizing/tallas/                  CRUD + clone
+  · /api/sizing/familias/                CRUD familias por marca (G18)
   · /api/sizing/tipos-producto/          read-only
   · /api/sizing/sistemas-medida/         read-only
   · /api/sizing/options/                 alimenta selects del FE
@@ -15,6 +16,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     TallaViewSet,
+    FamiliaViewSet,
     TipoProductoCatViewSet,
     MedidaSistemaCatViewSet,
     SizingOptionsView,
@@ -24,6 +26,8 @@ from .views import (
 router = DefaultRouter()
 router.register(r"sizing/tallas",
                 TallaViewSet, basename="sizing-tallas")
+router.register(r"sizing/familias",
+                FamiliaViewSet, basename="sizing-familias")
 router.register(r"sizing/tipos-producto",
                 TipoProductoCatViewSet, basename="sizing-tipos-producto")
 router.register(r"sizing/sistemas-medida",

@@ -62,6 +62,34 @@ class MedidaSistemaCat(models.Model):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Familias de línea por marca: brands.marca_familia (Sprint 2026-07-22 · G18)
+# ─────────────────────────────────────────────────────────────────────
+class Familia(models.Model):
+    """
+    Familia de línea de producto dentro de UNA marca.
+
+    Reemplaza al string libre `tallas.metadata.familia` y a la lista
+    hardcodeada `familias_linea` de /api/sizing/options/. Sin FK:
+    `marca_id` es un UUID lógico hacia brands.marca.
+    """
+    id          = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    marca_id    = models.UUIDField()
+    nombre      = models.CharField(max_length=64)
+    descripcion = models.TextField(null=True, blank=True)
+    is_active   = models.BooleanField(default=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'brands"."marca_familia'
+        ordering = ["nombre", "id"]
+
+    def __str__(self) -> str:
+        return self.nombre
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Maestro: ops.tallas
 # ─────────────────────────────────────────────────────────────────────
 class Talla(models.Model):
@@ -118,13 +146,18 @@ class Talla(models.Model):
     ancho_mm       = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
     comprimento_mm = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
 
-    # ── Clasificadores multi-valor (Sprint 2026-07-16) ─────────────
-    # Una talla puede pertenecer a UNA O MÁS marcas, tipos y familias.
-    #   marca_ids → lista de UUIDs (texto) de brands.marca
-    #   tipos     → lista de tipos de calzado (Bota Alta, Tenis, Plantilla…)
-    #   familias  → lista de familias/líneas = prefijo del nombre del
-    #               producto (ej. 50B22 engloba 50B22M-CPAP-PAD, 50B22-V…)
-    # Ver backend/sql/G1_tallas_familias_attr_opciones.sql
+    # ── Clasificadores (Sprint 2026-07-22 · G18) ───────────────────
+    # MODELO VIGENTE: una talla = UNA marca + UNA familia.
+    #   marca_id   → UUID de brands.marca (columna single-valor)
+    #   familia_id → UUID de brands.marca_familia (columna single-valor)
+    # LEGACY (se mantienen por compatibilidad, sincronizados por el
+    # serializer — ver TallaSerializer.validate):
+    #   marca_ids → JSONB con [marca_id] (antes multi-marca, G1)
+    #   tipos     → JSONB legacy (tipos de calzado) — inerte
+    #   familias  → JSONB legacy (prefijos de producto) — inerte
+    # Ver backend/sql/G18_familias_entidad_por_marca.sql
+    marca_id   = models.UUIDField(null=True, blank=True)
+    familia_id = models.UUIDField(null=True, blank=True)
     marca_ids = models.JSONField(default=list, blank=True)
     tipos     = models.JSONField(default=list, blank=True)
     familias  = models.JSONField(default=list, blank=True)
