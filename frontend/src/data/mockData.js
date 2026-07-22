@@ -2465,9 +2465,16 @@ export function findTemplate(key, language='ES', brand='GLOBAL') {
 // vacío o en modo MOCK. Shape idéntico a /api/sizing/tallas/.
 // ═══════════════════════════════════════════════════════════
 export const MOCK_SIZING_OPTIONS = {
+  // Sprint 2026-07-22 · fase 2 · motor dinámico: los tipos traen
+  // `sistemas` (códigos de unidades de su matriz) y `talla_base_label`.
   tipos_producto: [
-    { codigo: 'calzado',   label: 'Calzado',   requiere_dimensiones: false, orden: 1 },
-    { codigo: 'plantilla', label: 'Plantilla', requiere_dimensiones: true,  orden: 2 },
+    { codigo: 'calzado',   label: 'Calzado',   requiere_dimensiones: false, orden: 1,
+      talla_base_label: 'Talla base (BRA)',
+      sistemas: ['eu','us_men','us_women','uk_men','br','cm'] },
+    { codigo: 'plantilla', label: 'Plantilla', requiere_dimensiones: true,  orden: 2,
+      talla_base_label: 'Talla base',
+      sistemas: ['eu','us_men','us_women','uk_men','br','cm',
+                 'grosor_antepie_mm','grosor_talon_mm','drop_mm','peso_g'] },
   ],
   sistemas_medida: [
     { codigo: 'eu',       label: 'EU',       region: 'Europa',          grupo: 'numerica', orden: 1 },
@@ -2476,6 +2483,11 @@ export const MOCK_SIZING_OPTIONS = {
     { codigo: 'uk_men',   label: 'UK',       region: 'Reino Unido',     grupo: 'numerica', orden: 4 },
     { codigo: 'br',       label: 'BR',       region: 'Brasil',          grupo: 'numerica', orden: 5 },
     { codigo: 'cm',       label: 'CM',       region: 'Mondopoint',      grupo: 'numerica', orden: 6 },
+    // Fase 2 · las dimensionales ahora son unidades del catálogo.
+    { codigo: 'grosor_antepie_mm', label: 'Grosor antepié (mm)', grupo: 'DIMENSIONAL', orden: 7 },
+    { codigo: 'grosor_talon_mm',   label: 'Grosor talón (mm)',   grupo: 'DIMENSIONAL', orden: 8 },
+    { codigo: 'drop_mm',           label: 'Drop (mm)',           grupo: 'DIMENSIONAL', orden: 9 },
+    { codigo: 'peso_g',            label: 'Peso referencial (g)',grupo: 'DIMENSIONAL', orden: 10 },
   ],
   equivalence_fields: ['eu','us_men','us_women','uk_men','br','cm'],
   dimension_fields: [

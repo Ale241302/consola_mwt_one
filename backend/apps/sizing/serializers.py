@@ -46,6 +46,17 @@ def _familia_nombre(familia_id):
         return None
 
 
+def _slugify_codigo(label):
+    """Slug lower alfanumérico+guión_bajo a partir del label.
+    'Camiseta Manga Larga' → 'camiseta_manga_larga' (sin acentos)."""
+    import re
+    import unicodedata
+    base = (unicodedata.normalize("NFKD", label or "")
+            .encode("ascii", "ignore").decode("ascii"))
+    return re.sub(r"_+", "_",
+                  re.sub(r"[^a-z0-9]+", "_", base.lower())).strip("_")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Familias de línea por marca (Sprint 2026-07-22 · G18)
 # ─────────────────────────────────────────────────────────────────────
@@ -94,24 +105,82 @@ class FamiliaSerializer(serializers.ModelSerializer):
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Catálogos (read-only — alimentan /api/sizing/options/)
+# Catálogos · CRUD (Sprint 2026-07-22 · G19 · matriz dinámica)
+#   · codigo: si no viene en el POST se genera del label (slug); es
+#     INMUTABLE en update (si viene distinto, se ignora).
+#   · label: único campo obligatorio real.
 # ─────────────────────────────────────────────────────────────────────
 class TipoProductoCatSerializer(serializers.ModelSerializer):
+    codigo     = serializers.CharField(required=False, allow_blank=True,
+                                       max_length=32, validators=[])
+    sistemas   = serializers.JSONField(required=False, default=list)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
+
     class Meta:
         model  = TipoProductoCat
         fields = (
             "codigo", "label", "descripcion", "icon",
-            "requiere_dimensiones", "orden", "is_active",
+            "sistemas", "talla_base_label",
+            # legacy del FE actual (SizingEngine lo usa para el gating de
+            # dimensiones); no hace parte del contrato G19 pero conservarlo
+            # no rompe el item shape.
+            "requiere_dimensiones",
+            "orden", "is_active", "created_at", "updated_at",
         )
+
+    def validate_sistemas(self, v):
+        # Lista de códigos de unidad (strings). NO se valida existencia:
+        # las unidades pueden borrarse después y el FE filtra.
+        if not isinstance(v, (list, tuple)) or \
+                not all(isinstance(x, str) for x in v):
+            raise serializers.ValidationError(
+                "sistemas debe ser una lista de strings (códigos de unidad).")
+        return list(v)
+
+    def validate(self, attrs):
+        if self.instance is None:
+            codigo = (attrs.get("codigo") or "").strip()
+            if not codigo:
+                codigo = _slugify_codigo(attrs.get("label"))
+            if not codigo:
+                raise serializers.ValidationError(
+                    {"codigo": "No se pudo generar el código desde el label."})
+            if TipoProductoCat.objects.filter(pk=codigo).exists():
+                raise serializers.ValidationError(
+                    {"codigo": f"Ya existe un tipo de producto '{codigo}'."})
+            attrs["codigo"] = codigo
+        else:
+            attrs.pop("codigo", None)  # codigo inmutable en update
+        return attrs
 
 
 class MedidaSistemaCatSerializer(serializers.ModelSerializer):
+    codigo = serializers.CharField(required=False, allow_blank=True,
+                                   max_length=24, validators=[])
+
     class Meta:
         model  = MedidaSistemaCat
         fields = (
             "codigo", "label", "region", "descripcion",
             "grupo", "orden", "is_active",
         )
+
+    def validate(self, attrs):
+        if self.instance is None:
+            codigo = (attrs.get("codigo") or "").strip()
+            if not codigo:
+                codigo = _slugify_codigo(attrs.get("label"))
+            if not codigo:
+                raise serializers.ValidationError(
+                    {"codigo": "No se pudo generar el código desde el label."})
+            if MedidaSistemaCat.objects.filter(pk=codigo).exists():
+                raise serializers.ValidationError(
+                    {"codigo": f"Ya existe una unidad de medida '{codigo}'."})
+            attrs["codigo"] = codigo
+        else:
+            attrs.pop("codigo", None)  # codigo inmutable en update
+        return attrs
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -172,6 +241,11 @@ class TallaSerializer(serializers.ModelSerializer):
 
     metadata = serializers.JSONField(required=False, default=dict)
 
+    # ── Matriz dinámica de equivalencias (Sprint 2026-07-22 · G19) ──
+    # Fuente de verdad: {codigo_unidad: valor}. Las 16 columnas char
+    # (EQUIVALENCE_FIELDS) son espejo legacy — se sincronizan en validate().
+    equivalencias = serializers.JSONField(required=False, default=dict)
+
     # ── Clasificadores (Sprint 2026-07-22 · G18) ────────────────────
     # Vigente: marca_id + familia_id (single-valor). marca_ids queda
     # legacy y se sincroniza en validate(); tipos/familias: legacy inertes.
@@ -195,6 +269,8 @@ class TallaSerializer(serializers.ModelSerializer):
             # clasificadores (G18: single-valor + legacy)
             "marca_id", "familia_id", "familia_nombre",
             "marca_ids", "tipos", "familias",
+            # matriz dinámica (G19) — fuente de verdad
+            "equivalencias",
             # 15 sistemas
             *Talla.EQUIVALENCE_FIELDS,
             # dimensiones (sólo plantilla)
@@ -295,6 +371,31 @@ class TallaSerializer(serializers.ModelSerializer):
                 metadata.pop("familia", None)
             attrs["metadata"] = metadata
 
+        # (d) Sync matriz dinámica (G19): `equivalencias` (JSONB) es la
+        #     fuente de verdad; las 16 columnas char son espejo legacy.
+        if "equivalencias" in initial:
+            # El dict completo se reemplaza tal cual vino. Las claves
+            # conocidas se ESPEJAN en su columna (None si no vienen);
+            # las desconocidas viven sólo en el JSONB.
+            eq = attrs.get("equivalencias") or {}
+            for fname in Talla.EQUIVALENCE_FIELDS:
+                v = eq.get(fname)
+                attrs[fname] = str(v) if v not in (None, "") else None
+        elif any(f in initial for f in Talla.EQUIVALENCE_FIELDS):
+            # Cliente legacy: columnas sueltas (eu=..., br=...) → merge
+            # de esas claves dentro del `equivalencias` existente (del
+            # instance en PATCH; del default {} en create). Las columnas
+            # quedan como vinieron (ya están en attrs).
+            eq = dict(getattr(self.instance, "equivalencias", None) or {})
+            for fname in Talla.EQUIVALENCE_FIELDS:
+                if fname in initial:
+                    v = attrs.get(fname)
+                    if v in (None, ""):
+                        eq.pop(fname, None)
+                    else:
+                        eq[fname] = str(v)
+            attrs["equivalencias"] = eq
+
         return attrs
 
 
@@ -324,6 +425,8 @@ class TallaListSerializer(serializers.ModelSerializer):
             # vigentes + legacy multi-valor sincronizado)
             "marca_id", "familia_id", "familia_nombre",
             "marca_ids", "tipos", "familias",
+            # matriz dinámica (G19) — fuente de verdad de equivalencias
+            "equivalencias",
             # Sprint 2026-07-18 · TODOS los 15 sistemas. Antes sólo 6
             # ("equivalencias rápidas") y el drawer de edición recibía la
             # talla INCOMPLETA: al guardar se nulaban los otros 9

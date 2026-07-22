@@ -26,13 +26,13 @@ import { createPortal } from "react-dom";
 import { useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { tallasApi, sizingApi, sizingFamiliasApi, marcasApi, apiFetch, getToken } from "../lib/api.js";
+import { tallasApi, sizingApi, sizingFamiliasApi, tiposProductoCatApi, sistemasMedidaCatApi, marcasApi, apiFetch, getToken } from "../lib/api.js";
 import { MOCK_TALLAS, MOCK_SIZING_OPTIONS } from "../data/mockData.js";
 import ConfirmModal from "../components/common/ConfirmModal.jsx";
 import CreateBrandDrawer from "../components/brands/CreateBrandDrawer.jsx";
 import {
   IconPlus, IconRefresh, IconSearch, IconX, IconCheck,
-  IconPackage, IconAlert, IconTag, IconLock,
+  IconPackage, IconAlert, IconTag,
 } from "../lib/icons.jsx";
 
 
@@ -419,6 +419,33 @@ export default function ScreenSizingEngine() {
               // legacy; familia por nombre read-only del backend.
               const marcaId    = t.marca_id || (Array.isArray(t.marca_ids) ? t.marca_ids[0] : null);
               const familiaLbl = t.familia_nombre ?? t?.metadata?.familia;
+              // Sprint 2026-07-22 · fase 2 · celdas dinámicas de la grilla
+              // de equivalencias (unidades del tipo, máx 6 con valor).
+              const tipoCard = (options?.tipos_producto || []).find(x => x.codigo === t.tipo_producto);
+              const eqCells = (() => {
+                const fixed = [
+                  { cod: "eu",       label: "EU",   value: t.eu },
+                  { cod: "us_men",   label: "US M", value: t.us_men },
+                  { cod: "us_women", label: "US W", value: t.us_women },
+                  { cod: "uk_men",   label: "UK M", value: t.uk_men },
+                  { cod: "br",       label: "BR",   value: t.br },
+                  { cod: "cm",       label: "CM",   value: t.cm },
+                ];
+                const sist = Array.isArray(tipoCard?.sistemas) ? tipoCard.sistemas : [];
+                if (sist.length === 0) return fixed;
+                const cat = options?.sistemas_medida || [];
+                const out = [];
+                for (const cod of sist) {
+                  const v = t.equivalencias?.[cod] ?? t[cod];
+                  if (v === null || v === undefined || v === "") continue;
+                  const unit = cat.find(s => s.codigo === cod);
+                  out.push({ cod, label: unit?.label || String(cod).toUpperCase(), value: v });
+                  if (out.length >= 6) break;
+                }
+                // Sin valores dinámicos (borrador) → las fijas con sus "—",
+                // para que calzado se vea exactamente igual que antes.
+                return out.length > 0 ? out : fixed;
+              })();
               return (
                 <div
                   key={t.id}
@@ -583,7 +610,11 @@ export default function ScreenSizingEngine() {
                     )}
                   </div>
 
-                  {/* Equivalencias */}
+                  {/* Equivalencias (Sprint 2026-07-22 · fase 2 · dinámica):
+                      unidades configuradas en el tipo (en su orden) con
+                      valor en equivalencias (fallback a columna legacy),
+                      máx 6. Si el tipo no tiene config (o ninguna unidad
+                      trae valor) → las 6 fijas de siempre. */}
                   <div
                     style={{
                       display: "grid",
@@ -593,15 +624,8 @@ export default function ScreenSizingEngine() {
                       borderTop: "1px dashed #E5E7EB",
                     }}
                   >
-                    {[
-                      { label: "EU",   value: t.eu },
-                      { label: "US M", value: t.us_men },
-                      { label: "US W", value: t.us_women },
-                      { label: "UK M", value: t.uk_men },
-                      { label: "BR",   value: t.br },
-                      { label: "CM",   value: t.cm },
-                    ].map(eq => (
-                      <div key={eq.label} style={{ display: "flex", flexDirection: "column" }}>
+                    {eqCells.map(eq => (
+                      <div key={eq.cod || eq.label} style={{ display: "flex", flexDirection: "column" }}>
                         <span style={{ fontSize: 10, color: "#94A3B8", fontWeight: 600, letterSpacing: 0.5 }}>
                           {eq.label}
                         </span>
@@ -763,10 +787,12 @@ function KpiTile({ label, value, hint, accent = MINT }) {
 // =====================================================================
 // DRAWER · Form dinámico (creación / edición)
 //
-//   · LÓGICA CONDICIONAL OBSERVER:
-//       form.tipo_producto === 'plantilla'  → muestra "Especificaciones
-//       Dimensionales".  Cualquier otro valor (incluyendo null/empty
-//       o 'calzado') la oculta.
+//   · MOTOR DINÁMICO (Sprint 2026-07-22 · fase 2): la Matriz de
+//     Equivalencias se arma con las unidades configuradas en el TIPO
+//     (tipos_producto.sistemas → códigos de sistemas_medida) y viaja en
+//     `equivalencias` ({codigo_unidad: valor}) — las 16 columnas legacy
+//     quedan espejadas por el backend, no se editan aquí. Tipo y
+//     unidades tienen CRUD inline (＋/✎/×).
 //   · Marca es SINGLE-select (FK marca_id) con CRUD inline; Familia es
 //     FK por marca (familia_id) también con CRUD inline. El backend
 //     sincroniza metadata.familia y marca_ids.
@@ -777,28 +803,44 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
   const isEdit = !!initial?.id;
 
   // Form state — arranca con un esquema vacío y rellena con `initial`.
-  const blank = useMemo(() => {
-    const eqFields  = (options?.equivalence_fields || []).reduce((acc, k) => ({ ...acc, [k]: "" }), {});
-    const dimFields = (options?.dimension_fields   || []).reduce((acc, d) => ({ ...acc, [d.key]: "" }), {});
-    return {
-      id: null,
-      is_active: true,
-      tipo_producto: "",
-      talla_base: "",
-      nombre: "",
-      descripcion: "",
-      // Sprint 2026-07-22 · clasificadores por FK (single marca + familia)
-      marca_id: null,
-      familia_id: null,
-      tipos: [],
-      familias: [],
-      // Sprint 2026-07-21 · medidas internas del calzado (mm, PDF Marluvas)
-      ancho_mm: "",
-      comprimento_mm: "",
-      ...eqFields,
-      ...dimFields,
-    };
-  }, [options]);
+  const blank = useMemo(() => ({
+    id: null,
+    is_active: true,
+    tipo_producto: "",
+    talla_base: "",
+    nombre: "",
+    descripcion: "",
+    // Sprint 2026-07-22 · clasificadores por FK (single marca + familia)
+    marca_id: null,
+    familia_id: null,
+    tipos: [],
+    familias: [],
+    // Sprint 2026-07-22 · fase 2 · matriz dinámica {codigo_unidad: valor}
+    equivalencias: {},
+  }), []);
+
+  // Init de equivalencias: el objeto del backend; si viene vacío
+  // (registro viejo sin backfill) se reconstruye desde las columnas
+  // legacy usando las claves conocidas del catálogo.
+  const rebuildLegacyEquivalencias = () => {
+    const out = {};
+    const keys = new Set([
+      ...(options?.equivalence_fields || []),
+      ...(options?.sistemas_medida || []).map(s => s.codigo),
+    ]);
+    keys.forEach(k => {
+      const v = initial?.[k];
+      if (v !== null && v !== undefined && v !== "") out[k] = String(v);
+    });
+    return out;
+  };
+  const initEquivalencias = () => {
+    const eq = initial?.equivalencias;
+    if (eq && typeof eq === "object" && !Array.isArray(eq) && Object.keys(eq).length > 0) {
+      return { ...eq };
+    }
+    return rebuildLegacyEquivalencias();
+  };
 
   // Merge inicial: marca cae al FK nuevo (o al primero del array legacy);
   // familia arranca del FK que mande el backend.
@@ -807,6 +849,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     ...initial,
     marca_id:   initial?.marca_id   || initial?.marca_ids?.[0] || null,
     familia_id: initial?.familia_id || null,
+    equivalencias: initEquivalencias(),
   });
 
   const [form, setForm] = useState(initForm);
@@ -823,7 +866,27 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blank, initial]);
 
+  // Backfill tardío (fase 2): si `options` llegó DESPUÉS del primer merge
+  // y equivalencias sigue vacío (registro viejo), se reconstruye desde
+  // las columnas legacy — una sola vez y sin pisar valores ya presentes.
+  const backfillEqRef = useRef(false);
+  useEffect(() => {
+    if (backfillEqRef.current || !options) return;
+    if (Object.keys(form.equivalencias || {}).length > 0) { backfillEqRef.current = true; return; }
+    const rebuilt = rebuildLegacyEquivalencias();
+    if (Object.keys(rebuilt).length === 0) return;
+    backfillEqRef.current = true;
+    setForm(prev => (Object.keys(prev.equivalencias || {}).length > 0
+      ? prev
+      : { ...prev, equivalencias: rebuilt }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options]);
+
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+  const setEquivalencia = (k, v) => setForm(prev => ({
+    ...prev,
+    equivalencias: { ...(prev.equivalencias || {}), [k]: v },
+  }));
 
   // ── Sprint 2026-07-22 · familias de la marca seleccionada ─────────
   // Fetch interno del drawer: al cambiar form.marca_id se traen las
@@ -987,23 +1050,77 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     }
   };
 
+  // ── Sprint 2026-07-22 · fase 2 · CRUD inline de TIPO DE PRODUCTO ────
+  const [tipoModal, setTipoModal] = useState(null); // null | { mode:'create' } | { mode:'edit', tipo }
+  const [tipoBusy,  setTipoBusy]  = useState(false);
+
+  const saveTipo = async ({ label, talla_base_label, sistemas }) => {
+    if (!label) return;
+    setTipoBusy(true);
+    try {
+      let saved = null;
+      const body = { label, talla_base_label: talla_base_label || null, sistemas };
+      if (tipoModal?.mode === "edit" && tipoModal.tipo?.codigo) {
+        saved = await tiposProductoCatApi.update(tipoModal.tipo.codigo, body);
+      } else {
+        // POST sin codigo — el backend lo genera del label.
+        saved = await tiposProductoCatApi.create(body);
+      }
+      const cod = saved?.codigo || tipoModal?.tipo?.codigo || null;
+      setTipoModal(null);
+      await onReloadOptions();
+      if (cod) setForm(prev => ({ ...prev, tipo_producto: cod }));
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo guardar el tipo: " : "Could not save type: ") + errDetail(e));
+    } finally {
+      setTipoBusy(false);
+    }
+  };
+
+  const deleteTipo = async () => {
+    if (!form.tipo_producto) return;
+    const nombre = tipoActual?.label || form.tipo_producto;
+    const ok = window.confirm(lang === "es"
+      ? `¿Desactivar el tipo "${nombre}"? Las tallas que lo usan conservan su tipo — solo se desactiva (borrado lógico).`
+      : `Deactivate type "${nombre}"? Sizes using it keep their type — it is only deactivated (soft delete).`);
+    if (!ok) return;
+    try {
+      await tiposProductoCatApi.remove(form.tipo_producto);
+      await onReloadOptions();
+      // Si era el tipo del form, se limpia (ya no está disponible).
+      setForm(prev => ({ ...prev, tipo_producto: "" }));
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo eliminar el tipo: " : "Could not delete type: ") + errDetail(e));
+    }
+  };
+
   // ── Sprint 2026-07-18 · auto-sugerir la Matriz de Equivalencias ─────
-  // Al escribir la talla base (BR): si ya existe en el catálogo cargado,
-  // copiamos su matriz; si no, calculamos eu/br/cm con las reglas
-  // documentadas (eu = BR+2 · cm = 21.97 + (BR−32)·⅔, paso Marluvas).
-  // Solo rellena campos vacíos o con el valor de la sugerencia ANTERIOR
-  // — nunca pisa lo que el usuario escribió a mano.
+  // (fase 2: SÓLO calzado — las reglas eu = BR+2 / cm = 21.97 + (BR−32)·⅔
+  // son específicas de calzado; tipos dinámicos nuevos no sugieren).
+  // Escribe en form.equivalencias. Si la talla base ya existe en el
+  // catálogo cargado, copia su matriz. Solo rellena claves vacías o con
+  // el valor de la sugerencia ANTERIOR — nunca pisa lo escrito a mano.
   const lastSugRef = useRef({});
   useEffect(() => {
+    if (form.tipo_producto !== "calzado") { lastSugRef.current = {}; return; }
     const base = parseInt(form.talla_base, 10);
     if (!Number.isFinite(base)) { lastSugRef.current = {}; return; }
     setForm(prev => {
       const prevSug = lastSugRef.current || {};
-      const keys = (options?.equivalence_fields || []);
-      const existing = (tallas || []).find(t => String(t.br) === String(base));
+      const existing = (tallas || []).find(t =>
+        String(t?.equivalencias?.br ?? t?.br ?? "") === String(base));
       let sug = {};
       if (existing) {
-        for (const k of keys) if (existing[k]) sug[k] = existing[k];
+        const src = (existing.equivalencias && typeof existing.equivalencias === "object"
+                      && Object.keys(existing.equivalencias).length > 0)
+          ? existing.equivalencias : null;
+        if (src) {
+          for (const [k, v] of Object.entries(src)) if (v) sug[k] = String(v);
+        } else {
+          for (const k of (options?.equivalence_fields || [])) {
+            if (existing[k]) sug[k] = String(existing[k]);
+          }
+        }
       } else {
         sug = {
           eu: String(base + 2),
@@ -1011,41 +1128,50 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
           cm: (21.97 + (base - 32) * (2 / 3)).toFixed(2),
         };
       }
+      const curEq = { ...(prev.equivalencias || {}) };
       const patch = {};
       for (const [k, v] of Object.entries(sug)) {
-        const cur = prev[k] ?? "";
+        const cur = curEq[k] ?? "";
         if (cur === "" || cur === prevSug[k]) patch[k] = v;
       }
       lastSugRef.current = sug;
-      return Object.keys(patch).length ? { ...prev, ...patch } : prev;
+      return Object.keys(patch).length
+        ? { ...prev, equivalencias: { ...curEq, ...patch } }
+        : prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.talla_base]);
+  }, [form.talla_base, form.tipo_producto]);
 
-  // ── Determinante de la lógica condicional ──────────────────
-  const tipoMeta = useMemo(() => {
+  // ── Tipo seleccionado + unidades de su matriz (fase 2) ──────────
+  const tipoActual = useMemo(() => {
     return (options?.tipos_producto || []).find(
       t => t.codigo === form.tipo_producto
     ) || null;
   }, [options, form.tipo_producto]);
 
-  const showDimensionales = tipoMeta?.requiere_dimensiones === true;
+  // Unidades de la matriz = códigos configurados en el tipo, resueltos
+  // contra el catálogo (se conserva el orden configurado en el tipo).
+  const unidadesMatriz = useMemo(() => {
+    const cat = options?.sistemas_medida || [];
+    return (tipoActual?.sistemas || [])
+      .map(cod => cat.find(s => s.codigo === cod))
+      .filter(Boolean);
+  }, [tipoActual, options]);
 
   // ── Submit (sin bloqueos) ──────────────────────────────────
   const submit = async () => {
     setSaving(true);
     try {
-      // Si el tipo no requiere dimensiones, los reseteamos a null.
       const payload = { ...form };
-      if (!showDimensionales) {
-        (options?.dimension_fields || []).forEach(d => { payload[d.key] = null; });
-      }
-      // Sprint 2026-07-21 · simétrico: en plantillas las medidas
-      // internas de calzado (ancho/comprimento) no aplican.
-      if (showDimensionales) {
-        payload.ancho_mm = null;
-        payload.comprimento_mm = null;
-      }
+      // Sprint 2026-07-22 · fase 2 · equivalencias viaja como REPLACE
+      // completo; las claves con valor vacío se eliminan del objeto.
+      // Las columnas legacy ya no se editan desde el drawer — el backend
+      // las espeja desde `equivalencias`.
+      const eq = {};
+      Object.entries(form.equivalencias || {}).forEach(([k, v]) => {
+        if (v !== null && v !== undefined && String(v).trim() !== "") eq[k] = String(v);
+      });
+      payload.equivalencias = eq;
       // Sprint 2026-07-22 · la clasificación viaja por FK: marca_id +
       // familia_id. El backend sincroniza metadata.familia (por eso aquí
       // NO se toca la clave) y marca_ids queda espejo de la marca única
@@ -1106,7 +1232,31 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
           {/* SECCIÓN 1 · Clasificación */}
           <Section title={lang === "es" ? "Clasificación" : "Classification"}>
             <div className="siz-grid-2">
-              <Field label={lang === "es" ? "Tipo de producto" : "Product type"}>
+              {/* Sprint 2026-07-22 · fase 2 · tipo con CRUD inline: define
+                  las unidades de la matriz y el label de la talla base. */}
+              <Field label={
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {lang === "es" ? "Tipo de producto" : "Product type"}
+                  <span style={{ marginLeft: "auto", display: "inline-flex", gap: 4 }}>
+                    <CrudIconBtn
+                      title={lang === "es" ? "Nuevo tipo de producto" : "New product type"}
+                      color="#00B286"
+                      onClick={() => setTipoModal({ mode: "create" })}
+                    >＋</CrudIconBtn>
+                    <CrudIconBtn
+                      title={lang === "es" ? "Editar tipo seleccionado" : "Edit selected type"}
+                      disabled={!form.tipo_producto}
+                      onClick={() => setTipoModal({ mode: "edit", tipo: tipoActual })}
+                    >✎</CrudIconBtn>
+                    <CrudIconBtn
+                      title={lang === "es" ? "Desactivar tipo seleccionado" : "Deactivate selected type"}
+                      color="#DC2626"
+                      disabled={!form.tipo_producto}
+                      onClick={deleteTipo}
+                    >×</CrudIconBtn>
+                  </span>
+                </span>
+              }>
                 <select
                   className="siz-input siz-select"
                   value={form.tipo_producto || ""}
@@ -1115,16 +1265,15 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                   <option value="">{lang === "es" ? "— Sin definir —" : "— Unset —"}</option>
                   {(options?.tipos_producto || []).map(t => (
                     <option key={t.codigo} value={t.codigo}>
-                      {t.label}{t.requiere_dimensiones ? "  (mide dimensiones)" : ""}
+                      {t.label}
                     </option>
                   ))}
                 </select>
               </Field>
-              {/* Sprint 2026-07-22 · label dinámico: (BRA) sólo aplica
-                  a calzado; para plantilla/otros es "Talla base". */}
-              <Field label={form.tipo_producto === "calzado"
-                ? (lang === "es" ? "Talla base (BRA)" : "Base size (BRA)")
-                : (lang === "es" ? "Talla base"        : "Base size")}>
+              {/* Sprint 2026-07-22 · fase 2 · el label de la talla base
+                  lo define el tipo (talla_base_label); fallback genérico. */}
+              <Field label={tipoActual?.talla_base_label
+                || (lang === "es" ? "Talla base" : "Base size")}>
                 <input
                   className="siz-input mono"
                   placeholder={lang === "es" ? 'p.ej. "42", "S3", "M-WIDE"' : 'e.g. "42", "S3", "M-WIDE"'}
@@ -1257,70 +1406,52 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
             </Field>
           </Section>
 
-          {/* SECCIÓN 2 · Matriz de Equivalencias — sólo con tipo elegido */}
+          {/* SECCIÓN 2 · Matriz de Equivalencias — sólo con tipo elegido.
+              Fase 2: las unidades las define el TIPO (tipos_producto.
+              sistemas), agrupadas visualmente por `grupo`. Los valores
+              viven en form.equivalencias ({codigo_unidad: valor}). */}
           {Boolean(form.tipo_producto) && (
           <Section
             title={lang === "es" ? "Matriz de Equivalencias" : "Equivalence Matrix"}
             hint={lang === "es"
-              ? `Mapea esta talla a los ${(options?.sistemas_medida || []).length} sistemas internacionales soportados. Todos opcionales.`
-              : `Map this size to the ${(options?.sistemas_medida || []).length} supported international systems. All optional.`}
+              ? `Unidades configuradas para ${tipoActual?.label || "este tipo"} (${unidadesMatriz.length}). Todas opcionales.`
+              : `Units configured for ${tipoActual?.label || "this type"} (${unidadesMatriz.length}). All optional.`}
           >
-            <div className="siz-grid-equiv">
-              {(options?.sistemas_medida || []).map(sis => (
-                <Field key={sis.codigo} label={sis.label} hint={sis.region}>
-                  <input
-                    className="siz-input tabular"
-                    placeholder={sis.grupo === "alfa" ? "S / M / L" : "—"}
-                    value={form[sis.codigo] || ""}
-                    onChange={e => set(sis.codigo, e.target.value)}
-                  />
-                </Field>
-              ))}
-            </div>
+            {unidadesMatriz.length === 0 ? (
+              <div className="caption" style={{ color: "#94A3B8" }}>
+                {lang === "es"
+                  ? "Este tipo no tiene unidades configuradas — edítalo con ✎ para armar su matriz."
+                  : "This type has no units configured — edit it with ✎ to build its matrix."}
+              </div>
+            ) : (
+              Object.entries(
+                unidadesMatriz.reduce((acc, u) => {
+                  const g = u.grupo || "—";
+                  (acc[g] ||= []).push(u);
+                  return acc;
+                }, {})
+              ).map(([grupo, units]) => (
+                <div key={grupo}>
+                  <div className="micro" style={{ color: "#94A3B8", margin: "10px 0 6px" }}>
+                    {grupo}
+                  </div>
+                  <div className="siz-grid-equiv">
+                    {units.map(sis => (
+                      <Field key={sis.codigo} label={sis.label} hint={sis.region}>
+                        <input
+                          className="siz-input tabular"
+                          placeholder={String(sis.grupo || "").toLowerCase() === "alfa" ? "S / M / L" : "—"}
+                          value={(form.equivalencias || {})[sis.codigo] || ""}
+                          onChange={e => setEquivalencia(sis.codigo, e.target.value)}
+                        />
+                      </Field>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
           </Section>
           )}
-
-          {/* SECCIÓN 3 · DINÁMICA — sólo plantillas */}
-          <AnimatePresence initial={false}>
-            {showDimensionales && (
-              <motion.section
-                key="dim"
-                className="siz-section siz-section-dim"
-                initial={{ opacity: 0, height: 0, marginTop: 0 }}
-                animate={{ opacity: 1, height: "auto", marginTop: 16 }}
-                exit={{    opacity: 0, height: 0, marginTop: 0 }}
-                transition={{ duration: 0.22 }}
-              >
-                <div className="siz-section-head">
-                  <div className="siz-section-title">
-                    <IconLock size={12} style={{ marginRight: 6, color: "#481EE3" }}/>
-                    {lang === "es" ? "Especificaciones Dimensionales" : "Dimensional Specifications"}
-                  </div>
-                  <div className="caption" style={{ color: "#64748B" }}>
-                    {lang === "es"
-                      ? "Sólo aplica a plantillas. Todos los valores son opcionales."
-                      : "Applies to insoles only. All values optional."}
-                  </div>
-                </div>
-                <div className="siz-grid-dim">
-                  {(options?.dimension_fields || []).map(d => (
-                    <Field key={d.key} label={d.label} hint={d.unit}>
-                      <input
-                        type="number"
-                        step={d.step ?? 0.1}
-                        min={d.min ?? 0}
-                        max={d.max}
-                        className="siz-input tabular"
-                        placeholder={d.unit}
-                        value={form[d.key] ?? ""}
-                        onChange={e => set(d.key, e.target.value === "" ? null : e.target.value)}
-                      />
-                    </Field>
-                  ))}
-                </div>
-              </motion.section>
-            )}
-          </AnimatePresence>
         </div>
 
         {/* Foot */}
@@ -1358,6 +1489,22 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
           busy={familiaBusy}
           onClose={() => setFamiliaModal(null)}
           onSave={saveFamilia}
+        />,
+        document.body
+      )}
+
+      {/* CRUD de tipo de producto — modal con multi-select de unidades
+          y alta inline de unidad nueva (fase 2). */}
+      {tipoModal && createPortal(
+        <TipoQuickModal
+          lang={lang}
+          mode={tipoModal.mode}
+          tipo={tipoModal.tipo}
+          sistemasCat={options?.sistemas_medida || []}
+          busy={tipoBusy}
+          onClose={() => setTipoModal(null)}
+          onSave={saveTipo}
+          onReloadOptions={onReloadOptions}
         />,
         document.body
       )}
@@ -1464,6 +1611,214 @@ function FamiliaQuickModal({ lang, mode, familia, busy, onClose, onSave }) {
                    onChange={e => setDescripcion(e.target.value)}
                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); run(); } }}/>
           </label>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          <button className="siz-btn siz-btn-ghost" onClick={onClose} disabled={busy}>
+            {lang === "es" ? "Cancelar" : "Cancel"}
+          </button>
+          <button className="siz-btn siz-btn-primary" onClick={run} disabled={!canSave}>
+            {busy ? (lang === "es" ? "Guardando…" : "Saving…")
+                  : (lang === "es" ? "Guardar" : "Save")}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// =====================================================================
+// Modal de TIPO DE PRODUCTO (Sprint 2026-07-22 · fase 2 · motor dinámico)
+//   · create: label requerido; el `codigo` lo genera el backend.
+//   · edit:   llega el objeto tipo completo (con codigo).
+//   · sistemas: multi-select de unidades del catálogo (chips con scroll,
+//     agrupadas por `grupo`) + alta inline de unidad nueva — mini-form
+//     label + grupo (select de grupos existentes o texto libre); el
+//     codigo de la unidad también lo auto-genera el backend.
+// =====================================================================
+function TipoQuickModal({ lang, mode, tipo, sistemasCat, busy, onClose, onSave, onReloadOptions }) {
+  const isEdit = mode === "edit";
+  const [label,          setLabel]          = useState(tipo?.label || "");
+  const [tallaBaseLabel, setTallaBaseLabel] = useState(tipo?.talla_base_label || "");
+  const [sel,            setSel]            = useState(() =>
+    Array.isArray(tipo?.sistemas) ? [...tipo.sistemas] : []);
+  // Alta inline de unidad (codigo auto).
+  const [addingUnit,  setAddingUnit]  = useState(false);
+  const [unitLabel,   setUnitLabel]   = useState("");
+  const [unitGrupo,   setUnitGrupo]   = useState("");
+  const [unitGrupoNew, setUnitGrupoNew] = useState("");
+  const [unitBusy,    setUnitBusy]    = useState(false);
+
+  const canSave = label.trim().length > 0 && !busy;
+
+  // Unidades agrupadas por `grupo` para el multi-select con scroll.
+  const grupos = useMemo(() => {
+    const g = {};
+    (sistemasCat || []).forEach(s => {
+      const k = s.grupo || "—";
+      (g[k] ||= []).push(s);
+    });
+    return g;   // { EU: [...], US: [...], DIMENSIONAL: [...], ... }
+  }, [sistemasCat]);
+  const gruposExistentes = useMemo(() => Object.keys(grupos), [grupos]);
+
+  const toggleUnit = (cod) => setSel(prev =>
+    prev.includes(cod) ? prev.filter(x => x !== cod) : [...prev, cod]);
+
+  const createUnidad = async () => {
+    const lbl = unitLabel.trim();
+    const grp = (unitGrupo === "__new__" ? unitGrupoNew : unitGrupo).trim();
+    if (!lbl || !grp) return;
+    setUnitBusy(true);
+    try {
+      // POST sin codigo — el backend hace auto-slug y lo devuelve.
+      const saved = await sistemasMedidaCatApi.create({ label: lbl, grupo: grp });
+      await onReloadOptions?.();
+      if (saved?.codigo) {
+        setSel(prev => (prev.includes(saved.codigo) ? prev : [...prev, saved.codigo]));
+      }
+      setAddingUnit(false);
+      setUnitLabel("");
+      setUnitGrupoNew("");
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo crear la unidad: " : "Could not create unit: ") + errDetail(e));
+    } finally {
+      setUnitBusy(false);
+    }
+  };
+
+  const run = () => {
+    if (!canSave) return;
+    onSave({
+      label: label.trim(),
+      talla_base_label: tallaBaseLabel.trim(),
+      sistemas: sel,
+    });
+  };
+
+  return (
+    <>
+      <div className="siz-drawer-backdrop" style={{ zIndex: 1000 }} onClick={() => !busy && onClose()}/>
+      <div role="dialog" aria-modal="true"
+           style={{
+             position: "fixed", top: "50%", left: "50%",
+             transform: "translate(-50%, -50%)", zIndex: 1001,
+             width: "min(520px, 94vw)", maxHeight: "88vh", overflowY: "auto",
+             background: "#FFFFFF", borderRadius: 14, padding: 22,
+             boxShadow: "0 24px 60px rgba(15,23,42,0.25)",
+           }}>
+        <div className="micro" style={{ color: MINT }}>
+          {isEdit ? (lang === "es" ? "EDITAR TIPO DE PRODUCTO" : "EDIT PRODUCT TYPE")
+                  : (lang === "es" ? "NUEVO TIPO DE PRODUCTO"  : "NEW PRODUCT TYPE")}
+        </div>
+        <div className="heading-md" style={{ margin: "2px 0 12px", color: NAVY }}>
+          {isEdit ? (tipo?.label || "—")
+                  : (lang === "es" ? "Crear tipo de producto" : "Create product type")}
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <label className="siz-field">
+            <span className="siz-field-label">{lang === "es" ? "Label *" : "Label *"}</span>
+            <input className="siz-input" autoFocus value={label} disabled={busy}
+                   placeholder={lang === "es" ? 'p.ej. "Calzado", "Camisa"' : 'e.g. "Footwear", "Shirt"'}
+                   onChange={e => setLabel(e.target.value)}/>
+            {isEdit && (
+              <span className="siz-field-hint">
+                {lang === "es" ? `código: ${tipo?.codigo}` : `code: ${tipo?.codigo}`}
+              </span>
+            )}
+          </label>
+          <label className="siz-field">
+            <span className="siz-field-label">
+              {lang === "es" ? "Label de la talla base (opcional)" : "Base size label (optional)"}
+            </span>
+            <input className="siz-input" value={tallaBaseLabel} disabled={busy}
+                   placeholder={lang === "es" ? "Talla base" : "Base size"}
+                   onChange={e => setTallaBaseLabel(e.target.value)}/>
+          </label>
+
+          {/* Multi-select de unidades (chips con scroll, por grupo) */}
+          <div className="siz-field">
+            <span className="siz-field-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {lang === "es" ? "Unidades de la matriz" : "Matrix units"}
+              <span style={{ color: "#94A3B8", fontWeight: 400 }}>
+                ({sel.length} {lang === "es" ? "seleccionadas" : "selected"})
+              </span>
+              <span style={{ marginLeft: "auto" }}>
+                <CrudIconBtn
+                  title={lang === "es" ? "Nueva unidad" : "New unit"}
+                  color="#00B286"
+                  onClick={() => setAddingUnit(a => !a)}
+                >{addingUnit ? "×" : "＋"}</CrudIconBtn>
+              </span>
+            </span>
+
+            {addingUnit && (
+              <div style={{
+                display: "grid", gap: 6, padding: 10, margin: "6px 0",
+                border: "1px dashed #CBD5E1", borderRadius: 8,
+                background: "rgba(0,178,134,0.04)",
+              }}>
+                <input className="siz-input" autoFocus value={unitLabel} disabled={unitBusy}
+                       placeholder={lang === "es" ? 'Label de la unidad (p.ej. "Pecho (cm)")' : 'Unit label (e.g. "Chest (cm)")'}
+                       onChange={e => setUnitLabel(e.target.value)}/>
+                <select className="siz-input siz-select" value={unitGrupo} disabled={unitBusy}
+                        onChange={e => setUnitGrupo(e.target.value)}>
+                  <option value="">{lang === "es" ? "— Grupo —" : "— Group —"}</option>
+                  {gruposExistentes.map(g => <option key={g} value={g}>{g}</option>)}
+                  <option value="__new__">{lang === "es" ? "＋ Nuevo grupo…" : "＋ New group…"}</option>
+                </select>
+                {unitGrupo === "__new__" && (
+                  <input className="siz-input mono" value={unitGrupoNew} disabled={unitBusy}
+                         placeholder={lang === "es" ? 'p.ej. "CORPORAL"' : 'e.g. "BODY"'}
+                         onChange={e => setUnitGrupoNew(e.target.value.toUpperCase())}/>
+                )}
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+                  <button type="button" className="siz-btn siz-btn-ghost"
+                          onClick={() => { setAddingUnit(false); setUnitLabel(""); setUnitGrupoNew(""); }}
+                          disabled={unitBusy}>
+                    {lang === "es" ? "Cancelar" : "Cancel"}
+                  </button>
+                  <button type="button" className="siz-btn siz-btn-primary" onClick={createUnidad}
+                          disabled={unitBusy || !unitLabel.trim() ||
+                                    !(unitGrupo === "__new__" ? unitGrupoNew.trim() : unitGrupo)}>
+                    {unitBusy ? (lang === "es" ? "Creando…" : "Creating…")
+                              : (lang === "es" ? "Crear unidad" : "Create unit")}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div style={{ maxHeight: 220, overflowY: "auto", marginTop: 6, paddingRight: 2 }}>
+              {gruposExistentes.length === 0 && (
+                <span className="caption" style={{ color: "#94A3B8" }}>
+                  {lang === "es" ? "Sin unidades en el catálogo." : "No units in catalog."}
+                </span>
+              )}
+              {Object.entries(grupos).map(([grupo, units]) => (
+                <div key={grupo} style={{ marginBottom: 8 }}>
+                  <div className="micro" style={{ color: "#94A3B8", margin: "6px 0 4px" }}>{grupo}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {units.map(u => {
+                      const on = sel.includes(u.codigo);
+                      return (
+                        <button type="button" key={u.codigo} onClick={() => toggleUnit(u.codigo)}
+                                disabled={busy}
+                                style={{
+                                  borderRadius: 999, padding: "4px 11px", cursor: "pointer",
+                                  fontSize: 12, fontWeight: 600, lineHeight: 1.3,
+                                  border: `1px solid ${on ? "rgba(0,178,134,0.45)" : "#E2E8F0"}`,
+                                  background: on ? "rgba(0,178,134,0.12)" : "#FFFFFF",
+                                  color: on ? "#008B69" : "#475569",
+                                  transition: "all 120ms ease",
+                                }}>
+                          {on ? "✓ " : ""}{u.label || u.codigo}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
           <button className="siz-btn siz-btn-ghost" onClick={onClose} disabled={busy}>

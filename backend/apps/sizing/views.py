@@ -161,6 +161,7 @@ class TallaViewSet(viewsets.ModelViewSet):
             marca_ids=list(original.marca_ids or []),
             tipos=list(original.tipos or []),
             familias=list(original.familias or []),
+            equivalencias=dict(original.equivalencias or {}),
             **{f: getattr(original, f) for f in Talla.EQUIVALENCE_FIELDS},
             **{f: getattr(original, f) for f in Talla.DIMENSION_FIELDS},
             metadata=dict(original.metadata or {}),
@@ -265,18 +266,46 @@ class FamiliaViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class TipoProductoCatViewSet(viewsets.ReadOnlyModelViewSet):
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 2026-07-22 · G19 · catálogos del motor dinámico: CRUD completo
+# (antes read-only). codigo = PK (auto-slug del label si no viene);
+# DELETE soft por defecto + ?hard=1 real (mismo patrón que tallas).
+# ─────────────────────────────────────────────────────────────────────
+class _CatalogoCatViewSetMixin:
+    """Queryset con default sólo activos + destroy soft/hard."""
     permission_classes = [IsAuthenticated]
-    queryset           = TipoProductoCat.objects.filter(is_active=True).order_by("orden", "codigo")
-    serializer_class   = TipoProductoCatSerializer
     lookup_field       = "codigo"
 
+    def get_queryset(self):
+        qs = self._model.objects.all().order_by("orden", "codigo")
+        active = self.request.query_params.get("is_active")
+        if active is not None and active != "":
+            qs = qs.filter(is_active=str(active).lower() in ("1", "true", "yes"))
+        else:
+            qs = qs.filter(is_active=True)
+        return qs
 
-class MedidaSistemaCatViewSet(viewsets.ReadOnlyModelViewSet):
-    permission_classes = [IsAuthenticated]
-    queryset           = MedidaSistemaCat.objects.filter(is_active=True).order_by("orden", "codigo")
-    serializer_class   = MedidaSistemaCatSerializer
-    lookup_field       = "codigo"
+    # ── Delete: por defecto SOFT (is_active=False); ?hard=1 → HARD ──
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        hard = str(request.query_params.get("hard", "")).lower() in ("1", "true", "yes")
+        if hard:
+            instance.delete()  # HARD — fila eliminada de la tabla
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        # SOFT (default)
+        instance.is_active = False
+        instance.save(update_fields=["is_active", "updated_at"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TipoProductoCatViewSet(_CatalogoCatViewSetMixin, viewsets.ModelViewSet):
+    serializer_class = TipoProductoCatSerializer
+    _model           = TipoProductoCat
+
+
+class MedidaSistemaCatViewSet(_CatalogoCatViewSetMixin, viewsets.ModelViewSet):
+    serializer_class = MedidaSistemaCatSerializer
+    _model           = MedidaSistemaCat
 
 
 # ─────────────────────────────────────────────────────────────────────

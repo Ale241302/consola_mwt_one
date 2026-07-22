@@ -26,6 +26,11 @@ class TipoProductoCat(models.Model):
     descripcion          = models.TextField(null=True, blank=True)
     icon                 = models.CharField(max_length=40, null=True, blank=True)
     requiere_dimensiones = models.BooleanField(default=False)
+    # Sprint 2026-07-22 · G19 · matriz dinámica: unidades que usa el tipo
+    # (códigos de ops.medida_sistema_cat, en orden) + etiqueta del campo
+    # talla_base en el FE. Ver G19_matriz_dinamica_equivalencias.sql
+    sistemas         = models.JSONField(default=list, blank=True)
+    talla_base_label = models.CharField(max_length=60, null=True, blank=True)
     orden                = models.IntegerField(default=100)
     is_active            = models.BooleanField(default=True)
     created_at           = models.DateTimeField(auto_now_add=True)
@@ -114,7 +119,15 @@ class Talla(models.Model):
     nombre        = models.CharField(max_length=120, null=True, blank=True)
     descripcion   = models.TextField(null=True, blank=True)
 
-    # ── Matriz de Equivalencias (15 sistemas) ──────────────────────
+    # ── Matriz de Equivalencias (Sprint 2026-07-22 · G19) ──────────
+    # FUENTE DE VERDAD: `equivalencias` (JSONB) — objeto
+    # {codigo_unidad: valor} cuyas claves son unidades administrables
+    # de ops.medida_sistema_cat (dinámico por tipo de producto).
+    # Las 16 columnas char de abajo son ESPEJO LEGACY para consumidores
+    # SQL directos (matchmaker, proforma_extractor, wizard, portal);
+    # TallaSerializer.validate() las mantiene sincronizadas.
+    # Ver G19_matriz_dinamica_equivalencias.sql
+    equivalencias = models.JSONField(default=dict, blank=True)
     eu       = models.CharField(max_length=20, null=True, blank=True)
     us_men   = models.CharField(max_length=20, null=True, blank=True)
     us_women = models.CharField(max_length=20, null=True, blank=True)

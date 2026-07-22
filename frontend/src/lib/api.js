@@ -1403,12 +1403,15 @@ export const commercialApi = {
 };
 
 // ---------------------------------------------------------------------
-// SIZING ENGINE — Sprint Sizing v1
+// SIZING ENGINE — Sprint Sizing v1 (+ motor dinámico 2026-07-22 fase 2)
 // ---------------------------------------------------------------------
 //   GET    /api/sizing/options/                catálogos para selects FE
-//   GET    /api/sizing/tipos-producto/         (read-only)
-//   GET    /api/sizing/sistemas-medida/        (read-only)
+//   CRUD   /api/sizing/tipos-producto/         (lookup por `codigo`; DELETE soft)
+//   CRUD   /api/sizing/sistemas-medida/        (lookup por `codigo`; DELETE soft)
 //   CRUD   /api/sizing/tallas/                 (incluye action "clone")
+//   CRUD   /api/sizing/familias/               (por marca; DELETE soft)
+//   resource() ya provee create/update/remove — remove(codigo) hace
+//   DELETE /<base>/<codigo>/ tal como pide el contrato.
 // ---------------------------------------------------------------------
 export const tallasApi               = resource("sizing/tallas");
 export const tiposProductoCatApi     = resource("sizing/tipos-producto");
