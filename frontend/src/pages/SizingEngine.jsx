@@ -1093,7 +1093,6 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
             marca_id: matriz.marca_id || null,
             familia_id: matriz.familia_id || null,
             sistemas: matriz.sistemas || [],
-            defaults: matriz.defaults || null,
           });
         } catch (e) {
           alert((lang === "es" ? "Tipo guardado, pero no se pudo guardar la matriz específica: " : "Type saved, but could not save specific matrix: ") + errDetail(e));
@@ -1734,7 +1733,6 @@ export function TipoQuickModal({
   const [marcaSel,         setMarcaSel]         = useState(marcaId || "");
   const [familiaSel,       setFamiliaSel]       = useState(familiaId || "");
   const [familiasMarca,    setFamiliasMarca]    = useState([]);
-  const [defaults,         setDefaults]         = useState({});
   // Alta inline de unidad (codigo auto).
   const [addingUnit,  setAddingUnit]  = useState(false);
   const [unitLabel,   setUnitLabel]   = useState("");
@@ -1756,7 +1754,7 @@ export function TipoQuickModal({
   }, [marcaSel]);
 
   // Sprint 2026-07-23 · G23 · si al abrir el modal ya hay una matriz para
-  // la marca+grupo pre-seleccionados, autocheck y cargar sus unidades/defaults.
+  // la marca+grupo pre-seleccionados, autocheck y cargar sus unidades.
   const lastMatrizKeyRef = useRef(null);
   useEffect(() => {
     if (!marcaId || !familiaId) return;
@@ -1774,7 +1772,6 @@ export function TipoQuickModal({
       setMarcaSel(marcaId);
       setFamiliaSel(familiaId);
       setSel(Array.isArray(match.sistemas) ? [...match.sistemas] : []);
-      setDefaults(match.defaults || {});
       lastMatrizKeyRef.current = key;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1795,7 +1792,6 @@ export function TipoQuickModal({
       const key = `${isEdit ? tipo?.codigo : '*'}|${marcaSel}|${familiaSel}`;
       if (lastMatrizKeyRef.current === key) return;
       setSel(Array.isArray(match.sistemas) ? [...match.sistemas] : []);
-      setDefaults(match.defaults || {});
       lastMatrizKeyRef.current = key;
     }
   }, [matrizEspecifica, marcaSel, familiaSel, tipo, options, isEdit]);
@@ -1846,7 +1842,6 @@ export function TipoQuickModal({
         marca_id: marcaSel || null,
         familia_id: familiaSel || null,
         sistemas: sel,
-        defaults: defaults || {},
       } : null,
     });
   };
@@ -1932,25 +1927,6 @@ export function TipoQuickModal({
                       <option disabled value="">{lang === "es" ? "Sin grupos" : "No groups"}</option>
                     )}
                   </select>
-                  <label className="siz-field">
-                    <span className="siz-field-label">
-                      {lang === "es" ? "Defaults de equivalencias (JSON opcional)" : "Equivalence defaults (optional JSON)"}
-                    </span>
-                    <textarea
-                      className="siz-input"
-                      rows={3}
-                      value={typeof defaults === "object" ? JSON.stringify(defaults) : defaults}
-                      onChange={e => {
-                        try {
-                          setDefaults(JSON.parse(e.target.value || "{}"));
-                        } catch {
-                          setDefaults(e.target.value);
-                        }
-                      }}
-                      placeholder={lang === "es" ? '{"eu": "42", "cm": "26.67"}' : '{"eu": "42", "cm": "26.67"}'}
-                      disabled={busy}
-                    />
-                  </label>
                 </div>
               )}
             </div>
