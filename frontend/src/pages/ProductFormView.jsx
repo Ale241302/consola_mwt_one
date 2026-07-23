@@ -39,7 +39,7 @@ import ProductExpedientesTab from "../components/productos/ProductExpedientesTab
 import { useRole } from "../context/RoleContext.jsx";
 import {
   productosApi, marcasApi, tallasApi, nodosApi, clientesApi,
-  productoAliasesApi, ncmApi, sizingApi, sizingFamiliasApi, tiposProductoCatApi,
+  productoAliasesApi, ncmApi, sizingApi, sizingFamiliasApi, tiposProductoCatApi, tiposProductoMatrizApi,
   attrOptionsApi,
   apiFetch, getToken,
 } from "../lib/api.js";
@@ -800,6 +800,23 @@ export default function ScreenProductFormView() {
     setFamiliaIdSel(null);
     setFamiliaSel('');
     setSelectedSizes([]);
+    // Sprint 2026-07-23 · si la marca tiene una sola familia, seleccionarla
+    // automáticamente y, si hay tipo de producto, traer sus tallas.
+    if (id) {
+      sizingFamiliasApi.list({ marca_id: id }).then(r => {
+        const list = Array.isArray(r) ? r : (r?.results || []);
+        if (list.length === 1) {
+          const fid = list[0].id;
+          setFamiliaIdSel(fid);
+          setFamiliaSel(list[0].nombre || '');
+          if (tipoSel) {
+            setSelectedSizes(realSizes
+              .filter(t => t.familia_id === fid && t.tipo_producto === tipoSel)
+              .map(t => t.id));
+          }
+        }
+      }).catch(() => {});
+    }
   };
 
   // Cambio de FAMILIA (acción usuario): auto-selecciona TODAS las tallas
@@ -859,7 +876,7 @@ export default function ScreenProductFormView() {
     () => (sizingOptions?.tipos_producto || []).find(t => t.codigo === tipoSel) || null,
     [sizingOptions, tipoSel],
   );
-  const saveTipo = async ({ label, talla_base_label, sistemas }) => {
+  const saveTipo = async ({ label, talla_base_label, sistemas, matriz }) => {
     if (!label) return;
     setTipoBusy(true);
     try {
@@ -871,6 +888,20 @@ export default function ScreenProductFormView() {
         saved = await tiposProductoCatApi.create(body);   // codigo lo genera el backend
       }
       const cod = saved?.codigo || tipoModal?.tipo?.codigo || null;
+      // Sprint 2026-07-23 · G23 · guardar matriz específica si aplica
+      if (matriz && cod) {
+        try {
+          await tiposProductoMatrizApi.create({
+            tipo_producto: cod,
+            marca_id: matriz.marca_id || null,
+            familia_id: matriz.familia_id || null,
+            sistemas: matriz.sistemas || [],
+            defaults: matriz.defaults || null,
+          });
+        } catch (e) {
+          alert((lang === "es" ? "Tipo guardado, pero no se pudo guardar la matriz específica: " : "Type saved, but could not save specific matrix: ") + (e?.body?.detail || e?.message || ""));
+        }
+      }
       setTipoModal(null);
       await reloadSizingOptions();
       if (cod) setTipoSel(cod);
@@ -903,8 +934,17 @@ export default function ScreenProductFormView() {
   // (eran de otro tipo); la familia se mantiene — es por marca. NO
   // dispara auto-selección de tallas.
   const onTipoChange = (cod) => {
-    setTipoSel(cod || '');
-    setSelectedSizes([]);
+    const next = cod || '';
+    setTipoSel(next);
+    // Sprint 2026-07-23 · si hay familia elegida, traer automáticamente
+    // las tallas de esa combinación.
+    if (familiaIdSel && next) {
+      setSelectedSizes(realSizes
+        .filter(t => t.familia_id === familiaIdSel && t.tipo_producto === next)
+        .map(t => t.id));
+    } else {
+      setSelectedSizes([]);
+    }
   };
 
   const handleNcmSave = async (form) => {
@@ -1061,6 +1101,16 @@ export default function ScreenProductFormView() {
       setBrandId(realBrands[0].id);
     }
   }, [realBrands, brandId, isEdit]);
+
+  // Sprint 2026-07-23 · si tenemos tipo + familia y aún no hay tallas
+  // seleccionadas, autoseleccionar las tallas de esa combinación.
+  useEffect(() => {
+    if (!tipoSel || !familiaIdSel || selectedSizes.length > 0) return;
+    const auto = realSizes
+      .filter(t => t.familia_id === familiaIdSel && t.tipo_producto === tipoSel)
+      .map(t => t.id);
+    if (auto.length) setSelectedSizes(auto);
+  }, [realSizes, tipoSel, familiaIdSel, selectedSizes.length]);
 
   // ── Sprint 2026-07-16 · detección de FAMILIA por el nombre ─────────
   // (Sprint 2026-07-21: queda como FALLBACK legacy — solo aplica cuando
@@ -1842,6 +1892,9 @@ export default function ScreenProductFormView() {
             mode={tipoModal.mode}
             tipo={tipoModal.tipo}
             sistemasCat={sizingOptions?.sistemas_medida || []}
+            options={sizingOptions}
+            marcaId={brandId}
+            familiaId={familiaIdSel}
             busy={tipoBusy}
             onClose={() => setTipoModal(null)}
             onSave={saveTipo}

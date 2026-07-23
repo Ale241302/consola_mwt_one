@@ -1420,6 +1420,11 @@ export const sistemasMedidaCatApi    = resource("sizing/sistemas-medida");
 //   GET/POST /api/sizing/familias/ · PATCH/DELETE /api/sizing/familias/<id>/
 //   Filtros: ?marca_id=<uuid> · ?is_active= · ?q=
 export const sizingFamiliasApi       = resource("sizing/familias");
+// Sprint 2026-07-23 · G23 · matriz de equivalencias por tipo + marca + grupo.
+//   GET/POST /api/sizing/tipos-producto-matriz/
+//   PATCH/DELETE /api/sizing/tipos-producto-matriz/<id>/
+//   Filtros: ?tipo_producto= · ?marca_id= · ?familia_id=
+export const tiposProductoMatrizApi  = resource("sizing/tipos-producto-matriz");
 
 export const sizingApi = {
   options: () => apiFetch(`/sizing/options/`, { token: getToken() }),

@@ -41,8 +41,32 @@ class TipoProductoCat(models.Model):
         db_table = 'ops"."tipo_producto_cat'
         ordering = ["orden", "codigo"]
 
+class TipoProductoMatriz(models.Model):
+    """
+    Sprint 2026-07-23 · G23 · Matriz de equivalencias por
+    (tipo_producto, marca_id, familia_id).
+
+    Cuando marca_id/familia_id son NULL representa el default del tipo.
+    La combinación específica (tipo + marca + familia) tiene prioridad sobre
+    el default del tipo al renderizar la matriz de equivalencias.
+    """
+    id          = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tipo_producto = models.CharField(max_length=32)
+    marca_id    = models.UUIDField(null=True, blank=True)
+    familia_id  = models.UUIDField(null=True, blank=True)
+    sistemas    = models.JSONField(default=list, blank=True)
+    defaults    = models.JSONField(default=dict, blank=True, null=True)
+    is_active   = models.BooleanField(default=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'ops"."tipo_producto_matriz'
+        ordering = ["tipo_producto", "marca_id", "familia_id", "id"]
+
     def __str__(self) -> str:
-        return f"{self.codigo} · {self.label}"
+        return f"{self.tipo_producto} · {self.marca_id or 'default'} · {self.familia_id or 'default'}"
 
 
 class MedidaSistemaCat(models.Model):

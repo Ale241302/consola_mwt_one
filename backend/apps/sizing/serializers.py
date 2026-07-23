@@ -15,7 +15,7 @@ import uuid
 
 from rest_framework import serializers
 
-from .models import Familia, Talla, TipoProductoCat, MedidaSistemaCat
+from .models import Familia, Talla, TipoProductoCat, MedidaSistemaCat, TipoProductoMatriz
 
 
 # ── Cache simple en memoria para evitar N+1 al resolver marca_id → nombre.
@@ -180,6 +180,88 @@ class MedidaSistemaCatSerializer(serializers.ModelSerializer):
             attrs["codigo"] = codigo
         else:
             attrs.pop("codigo", None)  # codigo inmutable en update
+        return attrs
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 2026-07-23 · G23 · Matriz de equivalencias por
+# (tipo_producto, marca_id, familia_id)
+# ─────────────────────────────────────────────────────────────────────
+class TipoProductoMatrizSerializer(serializers.ModelSerializer):
+    id         = serializers.UUIDField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
+
+    tipo_producto = serializers.CharField(max_length=32)
+    marca_id    = serializers.UUIDField(required=False, allow_null=True)
+    familia_id  = serializers.UUIDField(required=False, allow_null=True)
+    sistemas    = serializers.JSONField(required=False, default=list)
+    defaults    = serializers.JSONField(required=False, default=dict, allow_null=True)
+    is_active   = serializers.BooleanField(required=False, default=True)
+
+    # Read-only: nombres derivados
+    marca_nombre   = serializers.SerializerMethodField()
+    familia_nombre = serializers.SerializerMethodField()
+
+    def get_marca_nombre(self, obj):
+        return _marca_nombre(getattr(obj, "marca_id", None))
+
+    def get_familia_nombre(self, obj):
+        return _familia_nombre(getattr(obj, "familia_id", None))
+
+    class Meta:
+        model  = TipoProductoMatriz
+        fields = (
+            "id", "tipo_producto", "marca_id", "familia_id",
+            "sistemas", "defaults", "is_active",
+            "created_at", "updated_at", "marca_nombre", "familia_nombre",
+        )
+
+    def validate_tipo_producto(self, v):
+        if not v:
+            raise serializers.ValidationError("El tipo de producto es obligatorio.")
+        v = str(v).strip().lower()
+        if not TipoProductoCat.objects.filter(pk=v).exists():
+            raise serializers.ValidationError(
+                f"No existe el tipo de producto '{v}'.")
+        return v
+
+    def validate_sistemas(self, v):
+        if not isinstance(v, (list, tuple)) or \
+                not all(isinstance(x, str) for x in v):
+            raise serializers.ValidationError(
+                "sistemas debe ser una lista de strings (códigos de unidad).")
+        return list(v)
+
+    def validate_defaults(self, v):
+        if v is None:
+            return None
+        if not isinstance(v, dict):
+            raise serializers.ValidationError("defaults debe ser un objeto JSON.")
+        return v
+
+    def validate(self, attrs):
+        # El constraint único de G23 se deja a la DB ( índice parcial ).
+        # Django no puede expresar el COALESCE del índice, así que lo
+        # validamos manualmente aquí para dar un mensaje claro.
+        tipo = attrs.get("tipo_producto")
+        marca = attrs.get("marca_id") or None
+        familia = attrs.get("familia_id") or None
+        if self.instance is not None:
+            # En update, usar valores actuales para los campos no enviados.
+            tipo = tipo or self.instance.tipo_producto
+            marca = marca if "marca_id" in attrs else self.instance.marca_id
+            familia = familia if "familia_id" in attrs else self.instance.familia_id
+        qs = TipoProductoMatriz.objects.filter(
+            tipo_producto=tipo,
+            marca_id=marca,
+            familia_id=familia,
+        )
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(
+                "Ya existe una matriz para esta combinación de tipo, marca y grupo.")
         return attrs
 
 

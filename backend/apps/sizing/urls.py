@@ -19,6 +19,7 @@ from .views import (
     FamiliaViewSet,
     TipoProductoCatViewSet,
     MedidaSistemaCatViewSet,
+    TipoProductoMatrizViewSet,
     SizingOptionsView,
 )
 
@@ -32,6 +33,8 @@ router.register(r"sizing/tipos-producto",
                 TipoProductoCatViewSet, basename="sizing-tipos-producto")
 router.register(r"sizing/sistemas-medida",
                 MedidaSistemaCatViewSet, basename="sizing-sistemas-medida")
+router.register(r"sizing/tipos-producto-matriz",
+                TipoProductoMatrizViewSet, basename="sizing-tipos-producto-matriz")
 
 urlpatterns = [
     path("", include(router.urls)),

@@ -26,7 +26,7 @@ import { createPortal } from "react-dom";
 import { useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { tallasApi, sizingApi, sizingFamiliasApi, tiposProductoCatApi, sistemasMedidaCatApi, marcasApi, apiFetch, getToken } from "../lib/api.js";
+import { tallasApi, sizingApi, sizingFamiliasApi, tiposProductoCatApi, tiposProductoMatrizApi, sistemasMedidaCatApi, marcasApi, apiFetch, getToken } from "../lib/api.js";
 import { MOCK_TALLAS, MOCK_SIZING_OPTIONS } from "../data/mockData.js";
 import ConfirmModal from "../components/common/ConfirmModal.jsx";
 import CreateBrandDrawer from "../components/brands/CreateBrandDrawer.jsx";
@@ -1072,7 +1072,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
   const [tipoModal, setTipoModal] = useState(null); // null | { mode:'create' } | { mode:'edit', tipo }
   const [tipoBusy,  setTipoBusy]  = useState(false);
 
-  const saveTipo = async ({ label, talla_base_label, sistemas }) => {
+  const saveTipo = async ({ label, talla_base_label, sistemas, matriz }) => {
     if (!label) return;
     setTipoBusy(true);
     try {
@@ -1085,6 +1085,20 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
         saved = await tiposProductoCatApi.create(body);
       }
       const cod = saved?.codigo || tipoModal?.tipo?.codigo || null;
+      // Sprint 2026-07-23 · G23 · guardar matriz específica si aplica
+      if (matriz && cod) {
+        try {
+          await tiposProductoMatrizApi.create({
+            tipo_producto: cod,
+            marca_id: matriz.marca_id || null,
+            familia_id: matriz.familia_id || null,
+            sistemas: matriz.sistemas || [],
+            defaults: matriz.defaults || null,
+          });
+        } catch (e) {
+          alert((lang === "es" ? "Tipo guardado, pero no se pudo guardar la matriz específica: " : "Type saved, but could not save specific matrix: ") + errDetail(e));
+        }
+      }
       setTipoModal(null);
       await onReloadOptions();
       if (cod) setForm(prev => ({ ...prev, tipo_producto: cod }));
@@ -1115,7 +1129,8 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
   // ── Sprint 2026-07-18/22/23 · auto-sugerir la Matriz de Equivalencias
   // Busca tallas previas de la MISMA combinación (tipo + marca + familia).
   // Si encuentra una con la misma talla base, copia su matriz completa.
-  // Si no, aplica reglas de fallback por tipo:
+  // Si no, aplica defaults de la matriz configurada (G23) y luego reglas de
+  // fallback por tipo:
   //   · calzado: eu = BRA+2; cm = 21.97 + (BRA−32)·⅔;
   //              cr/gt/cop = BRA+1 cuando están en la matriz del tipo.
   // Nunca pisa campos que el usuario editó a mano.
@@ -1124,7 +1139,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     const base = String(form.talla_base || "").trim();
     if (!base) { lastSugRef.current = {}; return; }
     const tipo = (options?.tipos_producto || []).find(t => t.codigo === form.tipo_producto) || null;
-    const units = new Set((tipo?.sistemas || []));
+    const units = new Set((matrizActual?.sistemas || tipo?.sistemas || []));
     setForm(prev => {
       const prevSug = lastSugRef.current || {};
       const existing = (tallas || []).find(t => {
@@ -1146,14 +1161,23 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
             if (existing[k] != null && String(existing[k]) !== "") sug[k] = String(existing[k]);
           }
         }
-      } else if (form.tipo_producto === "calzado") {
-        const baseNum = parseInt(base, 10);
-        if (Number.isFinite(baseNum)) {
-          if (units.has("eu"))   sug.eu = String(baseNum + 2);
-          if (units.has("cm"))   sug.cm = (21.97 + (baseNum - 32) * (2 / 3)).toFixed(2);
-          ["cr", "gt", "cop"].forEach(cod => {
-            if (units.has(cod)) sug[cod] = String(baseNum + 1);
-          });
+      } else {
+        // Sprint 2026-07-23 · G23 · defaults configurados en la matriz.
+        const defaults = matrizActual?.defaults;
+        if (defaults && typeof defaults === "object") {
+          for (const [k, v] of Object.entries(defaults)) {
+            if (v != null && String(v) !== "") sug[k] = String(v);
+          }
+        }
+        if (form.tipo_producto === "calzado") {
+          const baseNum = parseInt(base, 10);
+          if (Number.isFinite(baseNum)) {
+            if (units.has("eu") && !sug.eu)   sug.eu = String(baseNum + 2);
+            if (units.has("cm") && !sug.cm)   sug.cm = (21.97 + (baseNum - 32) * (2 / 3)).toFixed(2);
+            ["cr", "gt", "cop"].forEach(cod => {
+              if (units.has(cod) && !sug[cod]) sug[cod] = String(baseNum + 1);
+            });
+          }
         }
       }
       const curEq = { ...(prev.equivalencias || {}) };
@@ -1169,7 +1193,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
         : prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.talla_base, form.tipo_producto, form.marca_id, form.familia_id, tallas, options]);
+  }, [form.talla_base, form.tipo_producto, form.marca_id, form.familia_id, tallas, options, matrizActual]);
 
   // ── Tipo seleccionado + unidades de su matriz (fase 2) ──────────
   const tipoActual = useMemo(() => {
@@ -1178,14 +1202,37 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     ) || null;
   }, [options, form.tipo_producto]);
 
-  // Unidades de la matriz = códigos configurados en el tipo, resueltos
-  // contra el catálogo (se conserva el orden configurado en el tipo).
+  // Sprint 2026-07-23 · G23 · la matriz de equivalencias se resuelve con
+  // fallback: (tipo + marca + familia) → (tipo + marca) → (tipo default).
+  const matrizActual = useMemo(() => {
+    const matrices = options?.tipos_producto_matriz || [];
+    const tipo = form.tipo_producto;
+    const marca = form.marca_id || null;
+    const familia = form.familia_id || null;
+    if (!tipo) return null;
+    // Buscar más específica primero.
+    let hit = matrices.find(m =>
+      m.tipo_producto === tipo && m.marca_id === marca && m.familia_id === familia);
+    if (!hit && marca) {
+      hit = matrices.find(m =>
+        m.tipo_producto === tipo && m.marca_id === marca && !m.familia_id);
+    }
+    if (!hit) {
+      hit = matrices.find(m =>
+        m.tipo_producto === tipo && !m.marca_id && !m.familia_id);
+    }
+    return hit || null;
+  }, [options, form.tipo_producto, form.marca_id, form.familia_id]);
+
+  // Unidades de la matriz: usa la matriz resuelta; si no hay, fallback al
+  // tipo base (comportamiento previo a G23).
   const unidadesMatriz = useMemo(() => {
     const cat = options?.sistemas_medida || [];
-    return (tipoActual?.sistemas || [])
+    const sist = matrizActual?.sistemas || tipoActual?.sistemas || [];
+    return sist
       .map(cod => cat.find(s => s.codigo === cod))
       .filter(Boolean);
-  }, [tipoActual, options]);
+  }, [matrizActual, tipoActual, options]);
 
   // ── Submit (sin bloqueos) ──────────────────────────────────
   const submit = async () => {
@@ -1535,6 +1582,9 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
           mode={tipoModal.mode}
           tipo={tipoModal.tipo}
           sistemasCat={options?.sistemas_medida || []}
+          options={options}
+          marcaId={form.marca_id}
+          familiaId={form.familia_id}
           busy={tipoBusy}
           onClose={() => setTipoModal(null)}
           onSave={saveTipo}
@@ -1661,20 +1711,30 @@ function FamiliaQuickModal({ lang, mode, familia, busy, onClose, onSave }) {
 }
 
 // =====================================================================
-// Modal de TIPO DE PRODUCTO (Sprint 2026-07-22 · fase 2 · motor dinámico)
+// Modal de TIPO DE PRODUCTO (Sprint 2026-07-22 · fase 2/3 · motor dinámico)
 //   · create: label requerido; el `codigo` lo genera el backend.
 //   · edit:   llega el objeto tipo completo (con codigo).
 //   · sistemas: multi-select de unidades del catálogo (chips con scroll,
 //     agrupadas por `grupo`) + alta inline de unidad nueva — mini-form
 //     label + grupo (select de grupos existentes o texto libre); el
 //     codigo de la unidad también lo auto-genera el backend.
+//   · Sprint 2026-07-23 · G23: en modo create permite guardar una
+//     configuración específica de matriz para (marca + grupo de tallas).
 // =====================================================================
-export function TipoQuickModal({ lang, mode, tipo, sistemasCat, busy, onClose, onSave, onReloadOptions }) {
+export function TipoQuickModal({
+  lang, mode, tipo, sistemasCat, options, marcaId, familiaId, busy, onClose, onSave, onReloadOptions,
+}) {
   const isEdit = mode === "edit";
   const [label,          setLabel]          = useState(tipo?.label || "");
   const [tallaBaseLabel, setTallaBaseLabel] = useState(tipo?.talla_base_label || "");
   const [sel,            setSel]            = useState(() =>
     Array.isArray(tipo?.sistemas) ? [...tipo.sistemas] : []);
+  // Sprint 2026-07-23 · G23 · configuración específica por marca/grupo
+  const [matrizEspecifica, setMatrizEspecifica] = useState(false);
+  const [marcaSel,         setMarcaSel]         = useState(marcaId || "");
+  const [familiaSel,       setFamiliaSel]       = useState(familiaId || "");
+  const [familiasMarca,    setFamiliasMarca]    = useState([]);
+  const [defaults,         setDefaults]         = useState({});
   // Alta inline de unidad (codigo auto).
   const [addingUnit,  setAddingUnit]  = useState(false);
   const [unitLabel,   setUnitLabel]   = useState("");
@@ -1682,7 +1742,18 @@ export function TipoQuickModal({ lang, mode, tipo, sistemasCat, busy, onClose, o
   const [unitGrupoNew, setUnitGrupoNew] = useState("");
   const [unitBusy,    setUnitBusy]    = useState(false);
 
-  const canSave = label.trim().length > 0 && !busy;
+  const canSave = label.trim().length > 0 && !busy &&
+    (!matrizEspecifica || (marcaSel && familiaSel));
+
+  // Cargar familias de la marca seleccionada en el modal.
+  useEffect(() => {
+    let cancelled = false;
+    if (!marcaSel) { setFamiliasMarca([]); return; }
+    sizingFamiliasApi.list({ marca_id: marcaSel })
+      .then(r => { if (!cancelled) setFamiliasMarca(Array.isArray(r) ? r : (r?.results || [])); })
+      .catch(() => { if (!cancelled) setFamiliasMarca([]); });
+    return () => { cancelled = true; };
+  }, [marcaSel]);
 
   // Unidades agrupadas por `grupo` para el multi-select con scroll.
   const grupos = useMemo(() => {
@@ -1726,6 +1797,12 @@ export function TipoQuickModal({ lang, mode, tipo, sistemasCat, busy, onClose, o
       label: label.trim(),
       talla_base_label: tallaBaseLabel.trim(),
       sistemas: sel,
+      matriz: matrizEspecifica && !isEdit ? {
+        marca_id: marcaSel || null,
+        familia_id: familiaSel || null,
+        sistemas: sel,
+        defaults: defaults || {},
+      } : null,
     });
   };
 
@@ -1768,6 +1845,71 @@ export function TipoQuickModal({ lang, mode, tipo, sistemasCat, busy, onClose, o
                    placeholder={lang === "es" ? "Talla base" : "Base size"}
                    onChange={e => setTallaBaseLabel(e.target.value)}/>
           </label>
+
+          {/* Sprint 2026-07-23 · G23 · matriz específica por marca/grupo */}
+          {!isEdit && (
+            <div className="siz-field">
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={matrizEspecifica}
+                  onChange={e => setMatrizEspecifica(e.target.checked)}
+                  disabled={busy}
+                />
+                <span className="siz-field-label">
+                  {lang === "es" ? "Configuración específica para marca + grupo de tallas" : "Specific setup for brand + size group"}
+                </span>
+              </label>
+              {matrizEspecifica && (
+                <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                  <select
+                    className="siz-input siz-select"
+                    value={marcaSel || ""}
+                    onChange={e => { setMarcaSel(e.target.value || ""); setFamiliaSel(""); }}
+                    disabled={busy}
+                  >
+                    <option value="">{lang === "es" ? "— Marca —" : "— Brand —"}</option>
+                    {(options?.marcas || []).map(m => (
+                      <option key={m.id} value={m.id}>{m.nombre}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="siz-input siz-select"
+                    value={familiaSel || ""}
+                    onChange={e => setFamiliaSel(e.target.value || "")}
+                    disabled={busy || !marcaSel}
+                  >
+                    <option value="">{lang === "es" ? "— Grupo de tallas —" : "— Size group —"}</option>
+                    {familiasMarca.map(f => (
+                      <option key={f.id} value={f.id}>{f.nombre}</option>
+                    ))}
+                    {marcaSel && familiasMarca.length === 0 && (
+                      <option disabled value="">{lang === "es" ? "Sin grupos" : "No groups"}</option>
+                    )}
+                  </select>
+                  <label className="siz-field">
+                    <span className="siz-field-label">
+                      {lang === "es" ? "Defaults de equivalencias (JSON opcional)" : "Equivalence defaults (optional JSON)"}
+                    </span>
+                    <textarea
+                      className="siz-input"
+                      rows={3}
+                      value={typeof defaults === "object" ? JSON.stringify(defaults) : defaults}
+                      onChange={e => {
+                        try {
+                          setDefaults(JSON.parse(e.target.value || "{}"));
+                        } catch {
+                          setDefaults(e.target.value);
+                        }
+                      }}
+                      placeholder={lang === "es" ? '{"eu": "42", "cm": "26.67"}' : '{"eu": "42", "cm": "26.67"}'}
+                      disabled={busy}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Multi-select de unidades (chips con scroll, por grupo) */}
           <div className="siz-field">

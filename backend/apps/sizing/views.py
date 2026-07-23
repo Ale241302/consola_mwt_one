@@ -28,11 +28,12 @@ from rest_framework.views import APIView
 
 from django.db import connection
 
-from .models import Familia, Talla, TipoProductoCat, MedidaSistemaCat
+from .models import Familia, Talla, TipoProductoCat, MedidaSistemaCat, TipoProductoMatriz
 from .serializers import (
     FamiliaSerializer,
     TallaSerializer, TallaListSerializer,
     TipoProductoCatSerializer, MedidaSistemaCatSerializer,
+    TipoProductoMatrizSerializer,
 )
 
 
@@ -372,7 +373,68 @@ class MedidaSistemaCatViewSet(_CatalogoCatViewSetMixin, viewsets.ModelViewSet):
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Endpoint compuesto: /api/sizing/options/
+# Sprint 2026-07-23 · G23 · Matriz de equivalencias por
+# (tipo_producto, marca_id, familia_id)
+# ─────────────────────────────────────────────────────────────────────
+class TipoProductoMatrizViewSet(_StaffWriteGuardMixin, viewsets.ModelViewSet):
+    """
+    CRUD de ops.tipo_producto_matriz.
+
+    Filtros:
+      · ?tipo_producto=calzado
+      · ?marca_id=<uuid>
+      · ?familia_id=<uuid>
+      · ?is_active=true|false
+    """
+    permission_classes = [IsAuthenticated]
+    pagination_class   = TallaPagination
+    serializer_class   = TipoProductoMatrizSerializer
+    lookup_field       = "id"
+
+    def get_queryset(self):
+        qs = TipoProductoMatriz.objects.all().order_by(
+            "tipo_producto", "marca_id", "familia_id", "id")
+        params = self.request.query_params
+
+        tp = (params.get("tipo_producto") or "").strip()
+        if tp:
+            qs = qs.filter(tipo_producto=tp.lower())
+
+        marca = (params.get("marca_id") or "").strip()
+        if marca:
+            try:
+                qs = qs.filter(marca_id=uuid.UUID(marca))
+            except (ValueError, AttributeError, TypeError):
+                pass
+
+        familia_id = (params.get("familia_id") or "").strip()
+        if familia_id:
+            try:
+                qs = qs.filter(familia_id=uuid.UUID(familia_id))
+            except (ValueError, AttributeError, TypeError):
+                pass
+
+        active = params.get("is_active")
+        if active is not None and active != "":
+            qs = qs.filter(is_active=str(active).lower() in ("1", "true", "yes"))
+        else:
+            qs = qs.filter(is_active=True)
+
+        return qs
+
+    # Delete soft por defecto; ?hard=1 → hard delete
+    def destroy(self, request, *args, **kwargs):
+        denied = self._staff_write_denied(request)
+        if denied:
+            return denied
+        instance = self.get_object()
+        hard = str(request.query_params.get("hard", "")).lower() in ("1", "true", "yes")
+        if hard:
+            instance.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        instance.is_active = False
+        instance.save(update_fields=["is_active", "updated_at"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 # Devuelve TODO lo que el FE necesita para pintar los selects sin
 # datos hardcoded.
 # ─────────────────────────────────────────────────────────────────────
@@ -493,9 +555,21 @@ class SizingOptionsView(APIView):
         except Exception:
             pass
 
+        # ── Sprint 2026-07-23 · G23 · matrices de equivalencias por
+        # tipo + marca + grupo. Se envían en caché para evitar un fetch
+        # adicional al abrir el drawer de talla.
+        tipos_producto_matriz = []
+        try:
+            matrices = TipoProductoMatriz.objects.filter(is_active=True).order_by(
+                "tipo_producto", "marca_id", "familia_id")
+            tipos_producto_matriz = TipoProductoMatrizSerializer(matrices, many=True).data
+        except Exception:
+            pass
+
         payload = {
             "tipos_producto":      TipoProductoCatSerializer(tipos, many=True).data,
             "sistemas_medida":     MedidaSistemaCatSerializer(sistemas, many=True).data,
+            "tipos_producto_matriz": tipos_producto_matriz,
             "equivalence_fields":  list(Talla.EQUIVALENCE_FIELDS),
             "dimension_fields":    list(self.DIMENSION_META),
             "marcas":              marcas,
