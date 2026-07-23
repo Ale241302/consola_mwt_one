@@ -1112,15 +1112,19 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     }
   };
 
-  // ── Sprint 2026-07-18/22 · auto-sugerir la Matriz de Equivalencias ──
+  // ── Sprint 2026-07-18/22/23 · auto-sugerir la Matriz de Equivalencias
   // Busca tallas previas de la MISMA combinación (tipo + marca + familia).
   // Si encuentra una con la misma talla base, copia su matriz completa.
-  // Si no, aplica la fórmula de calzado legado: eu = BR+2,
-  // cm = 21.97 + (BR−32)·⅔. Nunca pisa campos que el usuario editó a mano.
+  // Si no, aplica reglas de fallback por tipo:
+  //   · calzado: eu = BRA+2; cm = 21.97 + (BRA−32)·⅔;
+  //              cr/gt/cop = BRA+1 cuando están en la matriz del tipo.
+  // Nunca pisa campos que el usuario editó a mano.
   const lastSugRef = useRef({});
   useEffect(() => {
     const base = String(form.talla_base || "").trim();
     if (!base) { lastSugRef.current = {}; return; }
+    const tipo = (options?.tipos_producto || []).find(t => t.codigo === form.tipo_producto) || null;
+    const units = new Set((tipo?.sistemas || []));
     setForm(prev => {
       const prevSug = lastSugRef.current || {};
       const existing = (tallas || []).find(t => {
@@ -1145,11 +1149,11 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
       } else if (form.tipo_producto === "calzado") {
         const baseNum = parseInt(base, 10);
         if (Number.isFinite(baseNum)) {
-          sug = {
-            eu: String(baseNum + 2),
-            br: String(baseNum),
-            cm: (21.97 + (baseNum - 32) * (2 / 3)).toFixed(2),
-          };
+          if (units.has("eu"))   sug.eu = String(baseNum + 2);
+          if (units.has("cm"))   sug.cm = (21.97 + (baseNum - 32) * (2 / 3)).toFixed(2);
+          ["cr", "gt", "cop"].forEach(cod => {
+            if (units.has(cod)) sug[cod] = String(baseNum + 1);
+          });
         }
       }
       const curEq = { ...(prev.equivalencias || {}) };
@@ -1165,7 +1169,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
         : prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.talla_base, form.tipo_producto, form.marca_id, form.familia_id, tallas]);
+  }, [form.talla_base, form.tipo_producto, form.marca_id, form.familia_id, tallas, options]);
 
   // ── Tipo seleccionado + unidades de su matriz (fase 2) ──────────
   const tipoActual = useMemo(() => {
