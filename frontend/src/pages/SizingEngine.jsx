@@ -1126,6 +1126,35 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     }
   };
 
+  // ── Tipo seleccionado + unidades de su matriz (fase 2) ──────────
+  const tipoActual = useMemo(() => {
+    return (options?.tipos_producto || []).find(
+      t => t.codigo === form.tipo_producto
+    ) || null;
+  }, [options, form.tipo_producto]);
+
+  // Sprint 2026-07-23 · G23 · la matriz de equivalencias se resuelve con
+  // fallback: (tipo + marca + familia) → (tipo + marca) → (tipo default).
+  const matrizActual = useMemo(() => {
+    const matrices = options?.tipos_producto_matriz || [];
+    const tipo = form.tipo_producto;
+    const marca = form.marca_id || null;
+    const familia = form.familia_id || null;
+    if (!tipo) return null;
+    // Buscar más específica primero.
+    let hit = matrices.find(m =>
+      m.tipo_producto === tipo && m.marca_id === marca && m.familia_id === familia);
+    if (!hit && marca) {
+      hit = matrices.find(m =>
+        m.tipo_producto === tipo && m.marca_id === marca && !m.familia_id);
+    }
+    if (!hit) {
+      hit = matrices.find(m =>
+        m.tipo_producto === tipo && !m.marca_id && !m.familia_id);
+    }
+    return hit || null;
+  }, [options, form.tipo_producto, form.marca_id, form.familia_id]);
+
   // ── Sprint 2026-07-18/22/23 · auto-sugerir la Matriz de Equivalencias
   // Busca tallas previas de la MISMA combinación (tipo + marca + familia).
   // Si encuentra una con la misma talla base, copia su matriz completa.
@@ -1194,35 +1223,6 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.talla_base, form.tipo_producto, form.marca_id, form.familia_id, tallas, options, matrizActual]);
-
-  // ── Tipo seleccionado + unidades de su matriz (fase 2) ──────────
-  const tipoActual = useMemo(() => {
-    return (options?.tipos_producto || []).find(
-      t => t.codigo === form.tipo_producto
-    ) || null;
-  }, [options, form.tipo_producto]);
-
-  // Sprint 2026-07-23 · G23 · la matriz de equivalencias se resuelve con
-  // fallback: (tipo + marca + familia) → (tipo + marca) → (tipo default).
-  const matrizActual = useMemo(() => {
-    const matrices = options?.tipos_producto_matriz || [];
-    const tipo = form.tipo_producto;
-    const marca = form.marca_id || null;
-    const familia = form.familia_id || null;
-    if (!tipo) return null;
-    // Buscar más específica primero.
-    let hit = matrices.find(m =>
-      m.tipo_producto === tipo && m.marca_id === marca && m.familia_id === familia);
-    if (!hit && marca) {
-      hit = matrices.find(m =>
-        m.tipo_producto === tipo && m.marca_id === marca && !m.familia_id);
-    }
-    if (!hit) {
-      hit = matrices.find(m =>
-        m.tipo_producto === tipo && !m.marca_id && !m.familia_id);
-    }
-    return hit || null;
-  }, [options, form.tipo_producto, form.marca_id, form.familia_id]);
 
   // Unidades de la matriz: usa la matriz resuelta; si no hay, fallback al
   // tipo base (comportamiento previo a G23).
