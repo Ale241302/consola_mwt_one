@@ -1378,16 +1378,16 @@ export default function ScreenProductFormView() {
             la Sección C se filtran por talla.familia_id. Se guarda en
             especificaciones.familia_id (+ nombre legacy en .familia). */}
         <label className="form-field">
-          <span>{lang==='es'?'Familia':'Family'}</span>
+          <span>{lang==='es'?'Grupo de tallas':'Size group'}</span>
           <select className="input" value={familiaIdSel || ''}
                   disabled={!brandId}
                   onChange={e=>onFamiliaChange(e.target.value)}>
-            <option value="">{lang==='es'?'— Sin familia —':'— No family —'}</option>
+            <option value="">{lang==='es'?'— Sin grupo —':'— No group —'}</option>
             {familiasMarca.map(f => (
               <option key={f.id} value={f.id}>{f.nombre}</option>
             ))}
             {brandId && familiasMarca.length === 0 && (
-              <option disabled>{lang==='es'?'(sin familias para esta marca)':'(no families for this brand)'}</option>
+              <option disabled>{lang==='es'?'(sin grupos para esta marca)':'(no groups for this brand)'}</option>
             )}
           </select>
         </label>
@@ -1736,7 +1736,7 @@ export default function ScreenProductFormView() {
             }}>
               <span className="caption" style={{color:'#008B69', fontWeight:600}}>
                 <span className="mono" style={{fontWeight:800}}>
-                  {`${lang==='es' ? 'Tipo' : 'Type'}: ${tipoActualSel?.label || tipoSel} · ${lang==='es' ? 'Familia' : 'Family'}: ${(familiaActiva?.nombre || familiaSel || '').trim()}`}
+                  {`${lang==='es' ? 'Tipo' : 'Type'}: ${tipoActualSel?.label || tipoSel} · ${lang==='es' ? 'Grupo' : 'Group'}: ${(familiaActiva?.nombre || familiaSel || '').trim()}`}
                 </span>
                 {' — '}
                 {lang==='es'

@@ -375,9 +375,9 @@ export default function ScreenSizingEngine() {
           value={filterFamilia}
           onChange={e => setFilterFamilia(e.target.value)}
           style={{ maxWidth: 200 }}
-          title={lang === "es" ? "Familia" : "Family"}
+          title={lang === "es" ? "Grupo de tallas" : "Size group"}
         >
-          <option value="">{lang === "es" ? "Todas las familias" : "All families"}</option>
+          <option value="">{lang === "es" ? "Todos los grupos" : "All groups"}</option>
           {(filterMarca ? familiasCat.filter(f => f.marca_id === filterMarca) : familiasCat).map(f => (
             <option key={f.id} value={f.id}>{f.nombre}</option>
           ))}
@@ -855,13 +855,25 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
   const [form, setForm] = useState(initForm);
   const [saving, setSaving] = useState(false);
 
+  // Ref para no pisar equivalencias editadas manualmente. Se inicializa
+  // junto con el form en el efecto de apertura del drawer.
+  const touchedEqRef = useRef(new Set());
+
   // Sprint 2026-07-22 · fix de race: el merge inicial corre UNA sola vez
   // por apertura del drawer. Antes, cuando `options` llegaba async (blank
   // cambiaba) el efecto reseteaba el form y borraba lo ya tecleado.
+  // También se inicializa el set de equivalencias "tocadas" para no
+  // sobreescribir valores ya guardados al cambiar la talla base.
   const mergedOnceRef = useRef(false);
   useEffect(() => {
     if (mergedOnceRef.current) return;
     mergedOnceRef.current = true;
+    const eq = initEquivalencias();
+    const init = new Set();
+    Object.entries(eq || {}).forEach(([k, v]) => {
+      if (v !== null && v !== undefined && String(v).trim() !== "") init.add(k);
+    });
+    touchedEqRef.current = init;
     setForm(initForm());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blank, initial]);
@@ -869,6 +881,8 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
   // Backfill tardío (fase 2): si `options` llegó DESPUÉS del primer merge
   // y equivalencias sigue vacío (registro viejo), se reconstruye desde
   // las columnas legacy — una sola vez y sin pisar valores ya presentes.
+  // Las claves reconstruidas se marcan como tocadas para que el auto-fill
+  // no las borre al cambiar la talla base.
   const backfillEqRef = useRef(false);
   useEffect(() => {
     if (backfillEqRef.current || !options) return;
@@ -876,6 +890,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     const rebuilt = rebuildLegacyEquivalencias();
     if (Object.keys(rebuilt).length === 0) return;
     backfillEqRef.current = true;
+    Object.keys(rebuilt).forEach(k => touchedEqRef.current.add(k));
     setForm(prev => (Object.keys(prev.equivalencias || {}).length > 0
       ? prev
       : { ...prev, equivalencias: rebuilt }));
@@ -883,10 +898,13 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
   }, [options]);
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
-  const setEquivalencia = (k, v) => setForm(prev => ({
-    ...prev,
-    equivalencias: { ...(prev.equivalencias || {}), [k]: v },
-  }));
+  const setEquivalencia = (k, v) => {
+    touchedEqRef.current.add(k);
+    setForm(prev => ({
+      ...prev,
+      equivalencias: { ...(prev.equivalencias || {}), [k]: v },
+    }));
+  };
 
   // ── Sprint 2026-07-22 · familias de la marca seleccionada ─────────
   // Fetch interno del drawer: al cambiar form.marca_id se traen las
@@ -1027,7 +1045,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
       await onReloadOptions();
     } catch (e) {
       // 400 del backend (p.ej. duplicado) → alert con el detalle.
-      alert((lang === "es" ? "No se pudo guardar la familia: " : "Could not save family: ") + errDetail(e));
+      alert((lang === "es" ? "No se pudo guardar el grupo: " : "Could not save group: ") + errDetail(e));
     } finally {
       setFamiliaBusy(false);
     }
@@ -1037,8 +1055,8 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     if (!form.familia_id) return;
     const fam = familiasMarca.find(f => f.id === form.familia_id);
     const ok = window.confirm(lang === "es"
-      ? `¿Eliminar la familia "${fam?.nombre || ""}"? Es un borrado lógico: las tallas que la referencian conservan la referencia.`
-      : `Delete family "${fam?.nombre || ""}"? This is a soft delete: sizes referencing it keep the reference.`);
+      ? `¿Eliminar el grupo "${fam?.nombre || ""}"? Es un borrado lógico: las tallas que lo referencian conservan la referencia.`
+      : `Delete group "${fam?.nombre || ""}"? This is a soft delete: sizes referencing it keep the reference.`);
     if (!ok) return;
     try {
       await sizingFamiliasApi.remove(form.familia_id);
@@ -1046,7 +1064,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
       await reloadFamilias(form.marca_id);
       await onReloadOptions();
     } catch (e) {
-      alert((lang === "es" ? "No se pudo eliminar la familia: " : "Could not delete family: ") + errDetail(e));
+      alert((lang === "es" ? "No se pudo eliminar el grupo: " : "Could not delete group: ") + errDetail(e));
     }
   };
 
@@ -1094,43 +1112,50 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     }
   };
 
-  // ── Sprint 2026-07-18 · auto-sugerir la Matriz de Equivalencias ─────
-  // (fase 2: SÓLO calzado — las reglas eu = BR+2 / cm = 21.97 + (BR−32)·⅔
-  // son específicas de calzado; tipos dinámicos nuevos no sugieren).
-  // Escribe en form.equivalencias. Si la talla base ya existe en el
-  // catálogo cargado, copia su matriz. Solo rellena claves vacías o con
-  // el valor de la sugerencia ANTERIOR — nunca pisa lo escrito a mano.
+  // ── Sprint 2026-07-18/22 · auto-sugerir la Matriz de Equivalencias ──
+  // Busca tallas previas de la MISMA combinación (tipo + marca + familia).
+  // Si encuentra una con la misma talla base, copia su matriz completa.
+  // Si no, aplica la fórmula de calzado legado: eu = BR+2,
+  // cm = 21.97 + (BR−32)·⅔. Nunca pisa campos que el usuario editó a mano.
   const lastSugRef = useRef({});
   useEffect(() => {
-    if (form.tipo_producto !== "calzado") { lastSugRef.current = {}; return; }
-    const base = parseInt(form.talla_base, 10);
-    if (!Number.isFinite(base)) { lastSugRef.current = {}; return; }
+    const base = String(form.talla_base || "").trim();
+    if (!base) { lastSugRef.current = {}; return; }
     setForm(prev => {
       const prevSug = lastSugRef.current || {};
-      const existing = (tallas || []).find(t =>
-        String(t?.equivalencias?.br ?? t?.br ?? "") === String(base));
+      const existing = (tallas || []).find(t => {
+        const tBase = String(t?.equivalencias?.br ?? t?.br ?? t?.talla_base ?? "").trim();
+        return tBase === base
+          && String(t?.tipo_producto || "") === String(form.tipo_producto || "")
+          && String(t?.marca_id || "") === String(form.marca_id || "")
+          && String(t?.familia_id || "") === String(form.familia_id || "");
+      });
       let sug = {};
       if (existing) {
         const src = (existing.equivalencias && typeof existing.equivalencias === "object"
                       && Object.keys(existing.equivalencias).length > 0)
           ? existing.equivalencias : null;
         if (src) {
-          for (const [k, v] of Object.entries(src)) if (v) sug[k] = String(v);
+          for (const [k, v] of Object.entries(src)) if (v != null && String(v) !== "") sug[k] = String(v);
         } else {
           for (const k of (options?.equivalence_fields || [])) {
-            if (existing[k]) sug[k] = String(existing[k]);
+            if (existing[k] != null && String(existing[k]) !== "") sug[k] = String(existing[k]);
           }
         }
-      } else {
-        sug = {
-          eu: String(base + 2),
-          br: String(base),
-          cm: (21.97 + (base - 32) * (2 / 3)).toFixed(2),
-        };
+      } else if (form.tipo_producto === "calzado") {
+        const baseNum = parseInt(base, 10);
+        if (Number.isFinite(baseNum)) {
+          sug = {
+            eu: String(baseNum + 2),
+            br: String(baseNum),
+            cm: (21.97 + (baseNum - 32) * (2 / 3)).toFixed(2),
+          };
+        }
       }
       const curEq = { ...(prev.equivalencias || {}) };
       const patch = {};
       for (const [k, v] of Object.entries(sug)) {
+        if (touchedEqRef.current.has(k)) continue;
         const cur = curEq[k] ?? "";
         if (cur === "" || cur === prevSug[k]) patch[k] = v;
       }
@@ -1140,7 +1165,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
         : prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.talla_base, form.tipo_producto]);
+  }, [form.talla_base, form.tipo_producto, form.marca_id, form.familia_id, tallas]);
 
   // ── Tipo seleccionado + unidades de su matriz (fase 2) ──────────
   const tipoActual = useMemo(() => {
@@ -1347,29 +1372,29 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
             </Field>
           </Section>
 
-          {/* SECCIÓN 1C · Familia (Sprint 2026-07-22 · FK por marca + CRUD)
+          {/* SECCIÓN 1C · Grupo de tallas (Sprint 2026-07-22 · FK por marca + CRUD)
               Siempre visible; se habilita al elegir marca. Las opciones se
               fetchean dentro del drawer (sizingFamiliasApi por marca). */}
           <Section
-            title={lang === "es" ? "Familia" : "Family"}
+            title={lang === "es" ? "Grupo de tallas" : "Size group"}
             hint={!form.marca_id
               ? (lang === "es"
-                  ? "Elige una marca para ver y gestionar sus familias."
-                  : "Pick a brand to see and manage its families.")
+                  ? "Elige una marca para ver y gestionar sus grupos de tallas."
+                  : "Pick a brand to see and manage its size groups.")
               : undefined}
           >
             <Field label={
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                {lang === "es" ? "Familia" : "Family"}
+                {lang === "es" ? "Grupo de tallas" : "Size group"}
                 <span style={{ marginLeft: "auto", display: "inline-flex", gap: 4 }}>
                   <CrudIconBtn
-                    title={lang === "es" ? "Nueva familia" : "New family"}
+                    title={lang === "es" ? "Nuevo grupo" : "New group"}
                     color="#00B286"
                     disabled={!form.marca_id}
                     onClick={() => setFamiliaModal({ mode: "create" })}
                   >＋</CrudIconBtn>
                   <CrudIconBtn
-                    title={lang === "es" ? "Editar familia seleccionada" : "Edit selected family"}
+                    title={lang === "es" ? "Editar grupo seleccionado" : "Edit selected group"}
                     disabled={!form.familia_id}
                     onClick={() => setFamiliaModal({
                       mode: "edit",
@@ -1377,7 +1402,7 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                     })}
                   >✎</CrudIconBtn>
                   <CrudIconBtn
-                    title={lang === "es" ? "Eliminar familia seleccionada" : "Delete selected family"}
+                    title={lang === "es" ? "Eliminar grupo seleccionado" : "Delete selected group"}
                     color="#DC2626"
                     disabled={!form.familia_id}
                     onClick={deleteFamilia}
@@ -1391,16 +1416,21 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
                 value={form.familia_id || ""}
                 onChange={e => set("familia_id", e.target.value || null)}
               >
-                <option value="">{lang === "es" ? "— Sin familia —" : "— No family —"}</option>
+                <option value="">{lang === "es" ? "— Sin grupo —" : "— No group —"}</option>
                 {familiasMarca.map(f => (
                   <option key={f.id} value={f.id}>{f.nombre}</option>
                 ))}
+                {familiasMarca.length === 0 && form.marca_id && (
+                  <option disabled value="">
+                    {lang === "es" ? "Sin grupos para esta marca" : "No groups for this brand"}
+                  </option>
+                )}
               </select>
               {form.marca_id && familiasMarca.length === 0 && (
                 <span className="caption" style={{ color: "#94A3B8" }}>
                   {lang === "es"
-                    ? "Esta marca aún no tiene familias — crea la primera con ＋."
-                    : "This brand has no families yet — create the first one with ＋."}
+                    ? "Esta marca aún no tiene grupos — crea el primero con ＋."
+                    : "This brand has no groups yet — create the first one with ＋."}
                 </span>
               )}
             </Field>
@@ -1568,7 +1598,7 @@ function CrudIconBtn({ title, onClick, disabled = false, color = "#475569", chil
 }
 
 // =====================================================================
-// Modal rápido de FAMILIA (crear / editar) — nombre requerido,
+// Modal rápido de GRUPO DE TALLAS (crear / editar) — nombre requerido,
 // descripción opcional. Lo abre el drawer de talla (CRUD inline).
 // =====================================================================
 function FamiliaQuickModal({ lang, mode, familia, busy, onClose, onSave }) {
@@ -1589,12 +1619,12 @@ function FamiliaQuickModal({ lang, mode, familia, busy, onClose, onSave }) {
              boxShadow: "0 24px 60px rgba(15,23,42,0.25)",
            }}>
         <div className="micro" style={{ color: MINT }}>
-          {isEdit ? (lang === "es" ? "EDITAR FAMILIA" : "EDIT FAMILY")
-                  : (lang === "es" ? "NUEVA FAMILIA"  : "NEW FAMILY")}
+          {isEdit ? (lang === "es" ? "EDITAR GRUPO" : "EDIT GROUP")
+                  : (lang === "es" ? "NUEVO GRUPO"  : "NEW GROUP")}
         </div>
         <div className="heading-md" style={{ margin: "2px 0 12px", color: NAVY }}>
           {isEdit ? (familia?.nombre || "—")
-                  : (lang === "es" ? "Crear familia de línea" : "Create line family")}
+                  : (lang === "es" ? "Crear grupo de tallas" : "Create size group")}
         </div>
         <div style={{ display: "grid", gap: 10 }}>
           <label className="siz-field">
