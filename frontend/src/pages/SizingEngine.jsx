@@ -1755,6 +1755,51 @@ export function TipoQuickModal({
     return () => { cancelled = true; };
   }, [marcaSel]);
 
+  // Sprint 2026-07-23 · G23 · si al abrir el modal ya hay una matriz para
+  // la marca+grupo pre-seleccionados, autocheck y cargar sus unidades/defaults.
+  const lastMatrizKeyRef = useRef(null);
+  useEffect(() => {
+    if (!marcaId || !familiaId) return;
+    const matrices = options?.tipos_producto_matriz || [];
+    const match = matrices.find(m => {
+      const sameMarca = String(m.marca_id) === String(marcaId);
+      const sameFamilia = String(m.familia_id) === String(familiaId);
+      const sameTipo = isEdit ? String(m.tipo_producto) === String(tipo?.codigo) : true;
+      return sameMarca && sameFamilia && sameTipo;
+    });
+    if (match) {
+      const key = `${isEdit ? tipo?.codigo : '*'}|${marcaId}|${familiaId}`;
+      if (lastMatrizKeyRef.current === key) return;
+      setMatrizEspecifica(true);
+      setMarcaSel(marcaId);
+      setFamiliaSel(familiaId);
+      setSel(Array.isArray(match.sistemas) ? [...match.sistemas] : []);
+      setDefaults(match.defaults || {});
+      lastMatrizKeyRef.current = key;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // G23 · cuando el usuario cambia marca/grupo dentro del modal, cargar la
+  // matriz existente (si hay) para no perder la configuración previa.
+  useEffect(() => {
+    if (!matrizEspecifica || !marcaSel || !familiaSel) return;
+    const matrices = options?.tipos_producto_matriz || [];
+    const match = matrices.find(m => {
+      const sameMarca = String(m.marca_id) === String(marcaSel);
+      const sameFamilia = String(m.familia_id) === String(familiaSel);
+      const sameTipo = isEdit ? String(m.tipo_producto) === String(tipo?.codigo) : true;
+      return sameMarca && sameFamilia && sameTipo;
+    });
+    if (match) {
+      const key = `${isEdit ? tipo?.codigo : '*'}|${marcaSel}|${familiaSel}`;
+      if (lastMatrizKeyRef.current === key) return;
+      setSel(Array.isArray(match.sistemas) ? [...match.sistemas] : []);
+      setDefaults(match.defaults || {});
+      lastMatrizKeyRef.current = key;
+    }
+  }, [matrizEspecifica, marcaSel, familiaSel, tipo, options, isEdit]);
+
   // Unidades agrupadas por `grupo` para el multi-select con scroll.
   const grupos = useMemo(() => {
     const g = {};
