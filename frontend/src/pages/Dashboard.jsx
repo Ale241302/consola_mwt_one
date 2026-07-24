@@ -345,15 +345,13 @@ export default function ScreenDashboard() {
           </div>
         </div>
         <div className="flex gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
-          {can("create_expediente") && (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => navigate("/wizard")}
-            >
-              <IconPlus size={14} /> {tr(lang, "new_expediente")}
-            </button>
-          )}
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => navigate("/wizard")}
+          >
+            <IconPlus size={14} /> {tr(lang, "new_expediente")}
+          </button>
           <FxToggle
             currency={displayCcy}
             onChange={setDisplayCcy}
