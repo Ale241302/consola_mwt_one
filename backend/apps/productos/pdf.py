@@ -211,8 +211,21 @@ def _section_title(txt: str) -> Any:
 
 
 def _image_for_reportlab(img: Any) -> Optional[Any]:
-    """Devuelve el PIL.Image directamente (ReportLab lo acepta)."""
-    return img
+    """Convierte PIL.Image a ImageReader a través de un buffer PNG."""
+    if img is None:
+        return None
+    try:
+        from reportlab.lib.utils import ImageReader
+        buf = io.BytesIO()
+        # Convertir siempre a RGB y PNG para evitar problemas con WebP/alpha
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return ImageReader(buf)
+    except Exception as e:
+        log.warning("_image_for_reportlab falló: %s", e)
+        return None
 
 
 def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
