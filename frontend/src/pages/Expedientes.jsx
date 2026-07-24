@@ -729,10 +729,9 @@ export default function ScreenExpedientes() {
           ) : (
             /* Fable5-QA 2026-06-12 · Cliente B2B / usuario normal tambien
                puede iniciar una orden: va al wizard role-aware de
-               /portal/nueva-oc (CLIENT -> 3 pasos via create-from-oc;
-               nunca decimos "Crear expediente", jerga interna MWT). */
+               /portal/nueva-oc (CLIENT -> 3 pasos via create-from-oc. */
             <button className="btn btn-primary" onClick={() => setOcChoiceOpen(true)}>
-              <IconPlus size={14}/>{lang==='es' ? 'Subir Orden de Compra' : 'Upload Purchase Order'}
+              <IconPlus size={14}/>{tr(lang,'new_expediente')}
             </button>
           )}
           <OcChoiceModal
