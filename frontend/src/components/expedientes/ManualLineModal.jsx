@@ -1244,7 +1244,7 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
                             padding: "10px 12px", textAlign: "left", fontWeight: 700,
                             borderBottom: "1px solid #E5E7EB", minWidth: 110,
                           }}>
-                            {L("Sistema", "System")}
+                            {L("Sistema BRA", "BRA System")}
                           </th>
                           {sortedTallas.map((t) => (
                             <th key={t.id} style={{
@@ -1253,7 +1253,7 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
                               borderBottom: "1px solid #E5E7EB", minWidth: 58,
                               whiteSpace: "nowrap",
                             }}>
-                              Sistema BRA {t.talla_base || "—"}
+                              {t.talla_base || "—"}
                             </th>
                           ))}
                         </tr>
