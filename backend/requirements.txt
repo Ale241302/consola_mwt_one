@@ -33,7 +33,7 @@ openai==1.66.0
 pymupdf==1.24.10
 pypdf==5.1.0
 pillow==10.4.0
-# Ficha técnica PDF de producto (Sprint 2026-07-24)
-weasyprint==62.3
+# Ficha técnica PDF de producto (Sprint 2026-07-24 · ReportLab)
+reportlab==4.2.2
 # Motor de Precios COMEX — parseo Excel (Tabela de preços v6+)
 openpyxl==3.1.5
