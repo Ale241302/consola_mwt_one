@@ -1296,21 +1296,52 @@ export default function ScreenProductFormView() {
     () => familiasMarca.find(f => f.id === familiaIdSel) || null,
     [familiasMarca, familiaIdSel],
   );
-  const hiddenSizesCount = realSizes.length - visibleSizes.length;
+
+  // Sprint 2026-07-24 · Motor de Tallas muestra TODAS las tallas
+  // seleccionadas agrupadas por (tipo + marca + familia), no solo las del
+  // grupo activo. Las tallas de otros grupos aparecen en su propia sección.
+  const selectedSizesObj = useMemo(
+    () => realSizes.filter(t => selectedSizes.includes(t.id)),
+    [realSizes, selectedSizes],
+  );
+  const hiddenSizesCount = realSizes.length - selectedSizes.length;
 
   // Modal "Más tallas" — permite traer tallas fuera del criterio activo.
   const [moreTallasOpen, setMoreTallasOpen] = useState(false);
 
-  // Agrupa tallas por sistema (`tipo_producto` o `sistema_medida`) para
-  // el render. Si solo hay tallas "calzado", todas caen en un grupo.
+  // Agrupa las tallas seleccionadas por (tipo_producto + marca_id + familia_id).
   const sizesGrouped = useMemo(() => {
     const groups = {};
-    visibleSizes.forEach(t => {
-      const sys = (t.tipo_producto || 'otro').toLowerCase();
-      (groups[sys] ||= []).push(t);
+    selectedSizesObj.forEach(t => {
+      const tipo = String(t.tipo_producto || 'otro').toLowerCase().trim();
+      const marca = String(t.marca_id || '');
+      const familia = String(t.familia_id || '');
+      const tipoNombre = (sizingOptions?.tipos_producto || [])
+        .find(tp => (tp.codigo || '').toLowerCase() === tipo)?.label || tipo;
+      const marcaNombre = realBrands.find(m => m.id === marca)?.nombre
+        || t.marca_nombre || '';
+      const familiaNombre = familiasMarca.find(f => f.id === familia)?.nombre
+        || t.familia_nombre || '';
+      const key = `${tipo}||${marca}||${familia}`;
+      const label = `${tipoNombre} · ${marcaNombre} · ${familiaNombre}`;
+      if (!groups[key]) {
+        groups[key] = { label, tipo, marca, familia, tallas: [] };
+      }
+      groups[key].tallas.push(t);
     });
-    return groups;   // {calzado: [...], plantilla: [...]}
-  }, [visibleSizes]);
+    // Orden: grupo activo primero, luego alfabético.
+    return Object.values(groups).sort((a, b) => {
+      const aCurrent = a.tipo === (tipoSel || '').toLowerCase()
+        && a.marca === (brandId || '')
+        && a.familia === (familiaIdSel || '');
+      const bCurrent = b.tipo === (tipoSel || '').toLowerCase()
+        && b.marca === (brandId || '')
+        && b.familia === (familiaIdSel || '');
+      if (aCurrent && !bCurrent) return -1;
+      if (!aCurrent && bCurrent) return 1;
+      return a.label.localeCompare(b.label);
+    });
+  }, [selectedSizesObj, sizingOptions, realBrands, familiasMarca, tipoSel, brandId, familiaIdSel]);
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
@@ -1997,9 +2028,9 @@ export default function ScreenProductFormView() {
               {selectedSizes.length} {lang==='es'?'seleccionadas':'selected'}
             </span>
           </div>
-          {/* Sprint 2026-07-22 · fase 3 · banner del criterio activo:
-              TIPO + FAMILIA elegidos en Sección A. Sin ambos no hay
-              banner — el hint de abajo invita a completarlos. */}
+          {/* Sprint 2026-07-24 · banner del criterio activo: muestra el
+              TIPO + GRUPO elegidos y la cantidad de grupos de tallas
+              seleccionados. El botón abre el catálogo completo. */}
           {tipoSel && familiaIdSel && realSizes.length > 0 && (
             <div style={{
               display:'flex', alignItems:'center', gap:8, flexWrap:'wrap',
@@ -2013,23 +2044,21 @@ export default function ScreenProductFormView() {
                 </span>
                 {' — '}
                 {lang==='es'
-                  ? `mostrando ${visibleSizes.length} talla(s) relacionadas`
-                  : `showing ${visibleSizes.length} related size(s)`}
+                  ? `${sizesGrouped.length} grupo(s) de tallas · ${selectedSizes.length} seleccionada(s)`
+                  : `${sizesGrouped.length} size group(s) · ${selectedSizes.length} selected`}
               </span>
-              {hiddenSizesCount > 0 && (
-                <button type="button"
-                        onClick={() => setMoreTallasOpen(true)}
-                        style={{
-                          marginLeft:'auto', padding:'3px 10px', borderRadius:6,
-                          cursor:'pointer', border:'1px solid rgba(0,178,134,0.40)',
-                          background:'var(--surface)', color:'#008B69',
-                          fontWeight:700, fontSize:11, lineHeight:1.3,
-                        }}>
-                  ⊞ {lang==='es'
-                      ? `Más tallas (${hiddenSizesCount} no relacionadas)`
-                      : `More sizes (${hiddenSizesCount} not related)`}
-                </button>
-              )}
+              <button type="button"
+                      onClick={() => setMoreTallasOpen(true)}
+                      style={{
+                        marginLeft:'auto', padding:'3px 10px', borderRadius:6,
+                        cursor:'pointer', border:'1px solid rgba(0,178,134,0.40)',
+                        background:'var(--surface)', color:'#008B69',
+                        fontWeight:700, fontSize:11, lineHeight:1.3,
+                      }}>
+                ⊞ {lang==='es'
+                    ? `Más tallas (${hiddenSizesCount} no seleccionadas)`
+                    : `More sizes (${hiddenSizesCount} not selected)`}
+              </button>
             </div>
           )}
           <div className="size-picker">
@@ -2051,14 +2080,14 @@ export default function ScreenProductFormView() {
                   ? 'Selecciona una familia para ver sus tallas.'
                   : 'Select a family to see its sizes.'}
               </div>
-            ) : Object.entries(sizesGrouped).map(([sys, sysSizes]) => (
-              <div key={sys} className="size-picker-group">
+            ) : sizesGrouped.map((group) => (
+              <div key={group.label} className="size-picker-group">
                 <div className="size-picker-head" style={{'--sys-color':'#481EE3'}}>
                   <span className="size-dot" style={{background:'#481EE3'}}/>
-                  {sys.toUpperCase()}
+                  {group.label}
                 </div>
                 <div className="size-picker-row">
-                  {sysSizes.map(sz => {
+                  {group.tallas.map(sz => {
                     const on = selectedSizes.includes(sz.id);
                     const label = sz.talla_base || sz.eu || sz.us_men || sz.nombre || '—';
                     return (
@@ -2155,47 +2184,6 @@ export default function ScreenProductFormView() {
             onSave={saveFamilia}
           />,
           document.body
-        )}
-
-        {/* Nodos Logísticos: OCULTO para CLIENT B2B (POL_VISIBILIDAD).
-            Solo staff (admin/CEO/manager) ve qué nodos operan el SKU. */}
-        {!isClient && (
-          <div>
-            <div className="form-sub-title">
-              <IconFolder size={13}/> {lang==='es'?'Nodos logísticos':'Logistics nodes'}
-              <span className="caption" style={{marginLeft:'auto', color:'var(--text-tertiary)'}}>
-                {selectedNodes.length} {lang==='es'?'seleccionados':'selected'}
-              </span>
-            </div>
-            <div className="node-picker">
-              {realNodes.length === 0 ? (
-                <div className="caption" style={{padding:'12px 0', color:'var(--text-tertiary)'}}>
-                  {lang==='es'
-                    ? 'No hay nodos logísticos en BD. Crea el primero en /nodos.'
-                    : 'No logistics nodes in DB. Create the first one in /nodos.'}
-                </div>
-              ) : realNodes.map(n => {
-                const on = selectedNodes.includes(n.id);
-                const code  = n.codigo || n.node_id || n.id?.slice(0, 8) || '—';
-                const name  = n.nombre || n.name   || '—';
-                const flag  = n.flag   || (n.pais_iso2 ? `[${n.pais_iso2}]` : '🌐');
-                return (
-                  <button type="button" key={n.id}
-                          className={`node-pick ${on ? 'node-pick-on' : ''}`}
-                          onClick={()=>toggleNode(n.id)}>
-                    <span className="node-pick-flag">{flag}</span>
-                    <span className="node-pick-body">
-                      <span className="mono-sm">{code}</span>
-                      <span className="caption">{name}</span>
-                    </span>
-                    <span className="node-pick-check">
-                      {on ? <IconCheck size={12}/> : <IconPlus size={12} style={{opacity:0.4}}/>}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         )}
       </div>
     </div>
