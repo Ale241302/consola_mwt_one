@@ -24,7 +24,7 @@
 //   · onClose     — callback al cerrar
 //   · onAdd(rows) — callback con array de líneas a agregar al pedido
 // ─────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { IconSearch, IconPackage } from "../../lib/icons.jsx";
 import {
   productosApi, tallasApi, tiposProductoCatApi, sistemasMedidaCatApi,
@@ -98,6 +98,25 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   // Sprint 2026-07-20 · modal anidado "Ver especificaciones" (no cierra
   // este modal de búsqueda).
   const [specsProduct, setSpecsProduct] = useState(null);
+
+  // Sprint 2026-07-24 · carrusel horizontal para las tarjetas de talla.
+  const sizeCarouselRef = useRef(null);
+  const [canScroll, setCanScroll] = useState({ left: false, right: false });
+  const checkCarouselScroll = () => {
+    const el = sizeCarouselRef.current;
+    if (!el) return;
+    setCanScroll({
+      left: el.scrollLeft > 0,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+    });
+  };
+  useEffect(() => { checkCarouselScroll(); }, [picked]);
+  const scrollCarousel = (dir) => {
+    const el = sizeCarouselRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * 280, behavior: "smooth" });
+    setTimeout(checkCarouselScroll, 300);
+  };
 
   // Cargar CPA del cliente (legacy /commercial/client-assignments).
   // Sprint 2026-05-03 v3: opcional. Fuente principal de "asignado" es
@@ -179,6 +198,9 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
               BR:   sz.br       || null,
               MX:   sz.mx       || null,
               AR:   sz.ar       || null,
+              CR:   null,
+              GT:   null,
+              CO:   null,
               JP:   sz.jp       || null,
               CN:   sz.cn       || null,
               KR:   sz.kr       || null,
@@ -261,6 +283,9 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
               BR:   t.br       || null,
               MX:   t.mx       || null,
               AR:   t.ar       || null,
+              CR:   null,
+              GT:   null,
+              CO:   null,
               JP:   t.jp       || null,
               CN:   t.cn       || null,
               KR:   t.kr       || null,
@@ -301,8 +326,10 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   const getSysInfo = () => {
     const tallas = picked?.tallas || [];
     const labels = {
-      BASE: "Base", EU: "EU", US_M: "US M", US_W: "US W",
-      UK_M: "UK", BR: "BRA", CM: "CM", INCH: "IN",
+      BASE: "Base", EU: "EU", US_M: "US Men", US_W: "US Women", US_Y: "US Youth",
+      UK_M: "UK Men", UK_W: "UK Women", UK_Y: "UK Youth",
+      BR: "BRA", MX: "MX", AR: "AR", CR: "Costa Rica", GT: "Guatemala", CO: "Colombia",
+      JP: "JP", CN: "CN", KR: "KR", CM: "CM (Mondopoint)", INCH: "IN (pulgadas)", ALFA: "Alfa",
     };
     const dynValOf = (t, cod) => t?.raw?.equivalencias?.[cod] ?? t?.raw?.[cod] ?? null;
     const tipoObj = (sizingCats?.tipos || []).find(t => t.codigo === picked?.tipoCod) || null;
@@ -321,7 +348,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
       useDyn = true;
       sysList = dynWithData.map(u => ({ id: u.codigo, label: u.label || u.codigo }));
     } else {
-      const allSystems = ["BR","EU","US_M","US_W","UK_M","CM","INCH"];
+      const allSystems = ["BR","EU","US_M","US_W","US_Y","UK_M","UK_W","UK_Y","MX","AR","CR","GT","CO","JP","CN","KR","CM","INCH","ALFA"];
       sysList = allSystems
         .filter((s) => tallas.some((t) => !!(t.equiv && t.equiv[s])))
         .map((s) => ({ id: s, label: labels[s] || s }));
@@ -629,19 +656,11 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                 );
               })()}
 
-              {/* Sprint 2026-07-21 · US M / US W habilitados otra vez:
-                  el cliente puede digitar cantidades en cualquier sistema
-                  (la talla se guarda siempre contra la base BRA). */}
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
-                gap: 10, marginBottom: 14,
-              }}>
-                {!picked.loading_sizes && (() => {
-                  const { activeSystem, valueOf } = getSysInfo();
-                  return picked.tallas.map((t, idx) => {
-                  // Sprint 2026-07-22 · fase 3 · valor mostrado: dinámico
-                  // (equivalencias[sel] ?? columna legacy) o equiv legacy.
+              {/* Sprint 2026-07-24 · carrusel horizontal de tallas: una sola
+                  fila con flechas a los lados para desplazarse. */}
+              {!picked.loading_sizes && (() => {
+                const { activeSystem, valueOf } = getSysInfo();
+                const cards = picked.tallas.map((t, idx) => {
                   const val = valueOf(t);
                   const showLabel = val || t.base || "—";
                   const isFallback = activeSystem !== "BASE"
@@ -649,6 +668,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                     && !!t.base;
                   return (
                     <div key={t.base} style={{
+                      flex: "0 0 120px",
                       border: "1px solid var(--border)", borderRadius: 8,
                       padding: "10px 12px", background: "#fff",
                     }}>
@@ -676,10 +696,6 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                              value={t.qty}
                              onChange={(e) => {
                                const v = Math.max(0, Number(e.target.value) || 0);
-                               // Sprint 2026-07-18 · forzamos el texto del DOM al
-                               // número canónico: sin esto, teclear "05" sobre un
-                               // state que ya valía 5 no disparaba re-render y el
-                               // input se quedaba mostrando "05".
                                e.target.value = String(v);
                                setPicked((p) => {
                                  const tallas = p.tallas.slice();
@@ -690,9 +706,49 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                              style={{ textAlign: "center" }}/>
                     </div>
                   );
-                  });
-                })()}
-              </div>
+                });
+                return (
+                  <div style={{
+                    position: "relative", display: "flex", alignItems: "center",
+                    marginBottom: 14,
+                  }}>
+                    {canScroll.left && (
+                      <button type="button" onClick={() => scrollCarousel(-1)}
+                              style={{
+                                position: "absolute", left: -10, zIndex: 2,
+                                width: 32, height: 32, borderRadius: 999,
+                                border: "1px solid var(--border)",
+                                background: "#fff", color: "#0B1E3A",
+                                boxShadow: "0 2px 8px rgba(11,30,58,0.12)",
+                                cursor: "pointer", fontWeight: 800, fontSize: 16,
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                              }}>←</button>
+                    )}
+                    <div ref={sizeCarouselRef}
+                         onScroll={checkCarouselScroll}
+                         style={{
+                           display: "flex", gap: 10, overflowX: "auto",
+                           scrollBehavior: "smooth", width: "100%",
+                           padding: "4px 30px",
+                           scrollbarWidth: "none", msOverflowStyle: "none",
+                         }}>
+                      {cards}
+                    </div>
+                    {canScroll.right && (
+                      <button type="button" onClick={() => scrollCarousel(1)}
+                              style={{
+                                position: "absolute", right: -10, zIndex: 2,
+                                width: 32, height: 32, borderRadius: 999,
+                                border: "1px solid var(--border)",
+                                background: "#fff", color: "#0B1E3A",
+                                boxShadow: "0 2px 8px rgba(11,30,58,0.12)",
+                                cursor: "pointer", fontWeight: 800, fontSize: 16,
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                              }}>→</button>
+                    )}
+                  </div>
+                );
+              })()}
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <button className="btn btn-ghost" onClick={() => setPicked(null)}>
                   ← {lang === "es" ? "Cambiar SKU" : "Pick another"}
