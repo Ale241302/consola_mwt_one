@@ -18,6 +18,7 @@
 // =====================================================================
 import React, { useMemo, useCallback, useState, useEffect } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
+import OcChoiceModal from "../components/portal/OcChoiceModal.jsx";
 import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
 import { Badge } from "../components/ui/primitives.jsx";
 import { IconDownload, IconPlus, IconRefresh } from "../lib/icons.jsx";
@@ -155,6 +156,7 @@ export default function ScreenDashboard() {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
   const { can, isAdmin } = useRole();
+  const [ocChoiceOpen, setOcChoiceOpen] = useState(false);
 
   // ── Display currency (persistido en LS) ─────
   const [displayCcy, setDisplayCcy] = useState(() => {
@@ -348,7 +350,7 @@ export default function ScreenDashboard() {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => navigate("/wizard")}
+            onClick={() => setOcChoiceOpen(true)}
           >
             <IconPlus size={14} /> {tr(lang, "new_expediente")}
           </button>
@@ -375,6 +377,14 @@ export default function ScreenDashboard() {
           </button>
         </div>
       </div>
+
+      <OcChoiceModal
+        open={ocChoiceOpen}
+        lang={lang}
+        onClose={() => setOcChoiceOpen(false)}
+        onYes={() => { setOcChoiceOpen(false); navigate('/portal/nueva-oc'); }}
+        onNo={() => { setOcChoiceOpen(false); navigate('/portal/nueva-oc', { state: { jumpToStep: 'products' } }); }}
+      />
 
       {/* Filtros globales · CEO-ONLY (marca/mercado/periodo son
           dimensiones internas que el cliente B2B no necesita) */}
