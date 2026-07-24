@@ -1253,7 +1253,7 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
                               borderBottom: "1px solid #E5E7EB", minWidth: 58,
                               whiteSpace: "nowrap",
                             }}>
-                              BRA {t.talla_base || "—"}
+                              Sistema BRA {t.talla_base || "—"}
                             </th>
                           ))}
                         </tr>
