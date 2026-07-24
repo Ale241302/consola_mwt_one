@@ -1634,7 +1634,7 @@ function CrudIconBtn({ title, onClick, disabled = false, color = "#475569", chil
 // Modal rápido de GRUPO DE TALLAS (crear / editar) — nombre requerido,
 // descripción opcional. Lo abre el drawer de talla (CRUD inline).
 // =====================================================================
-function FamiliaQuickModal({ lang, mode, familia, busy, onClose, onSave }) {
+export function FamiliaQuickModal({ lang, mode, familia, busy, onClose, onSave }) {
   const isEdit = mode === "edit";
   const [nombre,      setNombre]      = useState(familia?.nombre || "");
   const [descripcion, setDescripcion] = useState(familia?.descripcion || "");

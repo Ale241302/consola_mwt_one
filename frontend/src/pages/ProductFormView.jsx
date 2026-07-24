@@ -46,7 +46,8 @@ import {
 // Sprint 2026-07-16 · drawers embebidos para crear/editar NCM y tallas sin
 // salir del formulario de producto (reusa los editores de /ncm y /tallas).
 import { NcmFormDrawer } from "./NcmEngine.jsx";
-import { TallaFormDrawer, TipoQuickModal } from "./SizingEngine.jsx";
+import { TallaFormDrawer, TipoQuickModal, FamiliaQuickModal } from "./SizingEngine.jsx";
+import CreateBrandDrawer from "../components/brands/CreateBrandDrawer.jsx";
 
 // Backend → shape lista compacta para los grids
 // "Excepciones por cliente" / "Override por cliente".
@@ -930,6 +931,152 @@ export default function ScreenProductFormView() {
     }
   };
 
+  // ── Sprint 2026-07-24 · CRUD inline de MARCA y GRUPO DE TALLAS ──────
+  // Mismo patrón que en el Motor de Tallas: reutiliza CreateBrandDrawer y
+  // FamiliaQuickModal para dar de alta/editar/eliminar sin salir del form.
+  const [brandDrawer, setBrandDrawer] = useState(null); // null | { mode:'create' } | { mode:'edit', id, initial }
+  const [brandBusy,   setBrandBusy]   = useState(false);
+  const [familiaModal, setFamiliaModal] = useState(null); // null | { mode:'create' } | { mode:'edit', familia }
+  const [familiaBusy,  setFamiliaBusy]  = useState(false);
+
+  const reloadBrands = async () => {
+    try {
+      const r = await marcasApi.list();
+      setRealBrands(Array.isArray(r) ? r : (r?.results || []));
+    } catch { /* ignore */ }
+  };
+
+  const brandBodyFromForm = (p) => ({
+    nombre:              p.name || p.nombre,
+    slug:                p.slug || ((s) =>
+      (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+               .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""))(p.name || p.nombre),
+    pais_origen_iso2:    p.pais_origen_iso2 || p.country || "MX",
+    categoria_principal: p.categoria_principal || p.categoria || "GENERAL",
+    estado_comercial:    p.estado_comercial || p.status || "PROSPECTO",
+    mercados_activos:    p.mercados_activos || p.territorios || [],
+    tipo:                p.tipo || "TERCEROS",
+    brand_code:          p.brand_id || p.brand_code || null,
+    pf_correlativo:      (p.pf_correlativo != null && p.pf_correlativo !== "")
+                         ? Number(p.pf_correlativo) : null,
+  });
+
+  const openEditBrand = async () => {
+    if (!brandId) return;
+    setBrandBusy(true);
+    try {
+      const raw = await marcasApi.get(brandId);
+      setBrandDrawer({
+        mode: "edit",
+        id: brandId,
+        initial: {
+          brand_id:         raw.brand_code || raw.slug || "",
+          name:             raw.nombre || "",
+          tipo:             raw.tipo || "PROPIA",
+          issuing_entity:   raw.issuing_entity_id || raw.issuing_entity || null,
+          mercados_activos: Array.isArray(raw.mercados_activos) ? raw.mercados_activos : [],
+          status:           raw.estado_comercial || "ACTIVO",
+          description:      raw.description || raw.descripcion || "",
+          color:            raw.color || "#00B286",
+          pf_correlativo:   raw.pf_correlativo ?? null,
+        },
+      });
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo cargar la marca: " : "Could not load brand: ")
+        + (e?.body?.detail || e?.message || ""));
+    } finally {
+      setBrandBusy(false);
+    }
+  };
+
+  const handleBrandCreated = async (p) => {
+    const body = brandBodyFromForm(p);
+    try {
+      if (brandDrawer?.mode === "edit" && brandDrawer.id) {
+        await marcasApi.update(brandDrawer.id, body);
+        setBrandDrawer(null);
+        await reloadBrands();
+      } else {
+        const created = await marcasApi.create(body);
+        setBrandDrawer(null);
+        await reloadBrands();
+        setBrandId(created?.id || null);
+        setFamiliaIdSel(null);
+        setFamiliaSel('');
+        setSelectedSizes([]);
+      }
+    } catch (e) {
+      alert((lang === "es" ? "Error al guardar marca: " : "Error saving brand: ")
+        + (e?.body?.detail || e?.message || ""));
+    }
+  };
+
+  const deleteBrand = async () => {
+    if (!brandId) return;
+    const nombre = realBrands.find(m => m.id === brandId)?.nombre || "";
+    const ok = window.confirm(lang === "es"
+      ? `¿Eliminar la marca "${nombre}"? Es un borrado lógico: las tallas que la referencian conservan la referencia.`
+      : `Delete brand "${nombre}"? This is a soft delete: sizes referencing it keep the reference.`);
+    if (!ok) return;
+    try {
+      await marcasApi.remove(brandId);
+      await reloadBrands();
+      setBrandId('');
+      setFamiliaIdSel(null);
+      setFamiliaSel('');
+      setSelectedSizes([]);
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo eliminar la marca: " : "Could not delete brand: ")
+        + (e?.body?.detail || e?.message || ""));
+    }
+  };
+
+  const saveFamilia = async ({ nombre, descripcion }) => {
+    if (!brandId || !nombre) return;
+    setFamiliaBusy(true);
+    try {
+      let saved = null;
+      if (familiaModal?.mode === "edit" && familiaModal.familia?.id) {
+        saved = await sizingFamiliasApi.update(familiaModal.familia.id,
+                  { nombre, descripcion: descripcion || null });
+      } else {
+        saved = await sizingFamiliasApi.create(
+                  { marca_id: brandId, nombre, descripcion: descripcion || null });
+      }
+      const fid = saved?.id || familiaModal?.familia?.id || null;
+      setFamiliaModal(null);
+      if (fid) {
+        setFamiliaIdSel(fid);
+        const r = await sizingFamiliasApi.list({ marca_id: brandId });
+        setFamiliasMarca(Array.isArray(r) ? r : (r?.results || []));
+      }
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo guardar el grupo: " : "Could not save group: ")
+        + (e?.body?.detail || e?.message || ""));
+    } finally {
+      setFamiliaBusy(false);
+    }
+  };
+
+  const deleteFamilia = async () => {
+    if (!familiaIdSel) return;
+    const fam = familiasMarca.find(f => f.id === familiaIdSel);
+    const ok = window.confirm(lang === "es"
+      ? `¿Eliminar el grupo "${fam?.nombre || ""}"? Es un borrado lógico: las tallas que lo referencian conservan la referencia.`
+      : `Delete group "${fam?.nombre || ""}"? This is a soft delete: sizes referencing it keep the reference.`);
+    if (!ok) return;
+    try {
+      await sizingFamiliasApi.remove(familiaIdSel);
+      setFamiliaIdSel(null);
+      setFamiliaSel('');
+      const r = await sizingFamiliasApi.list({ marca_id: brandId });
+      setFamiliasMarca(Array.isArray(r) ? r : (r?.results || []));
+    } catch (e) {
+      alert((lang === "es" ? "No se pudo eliminar el grupo: " : "Could not delete group: ")
+        + (e?.body?.detail || e?.message || ""));
+    }
+  };
+
   // Cambio de TIPO (acción usuario): limpia SOLO las tallas seleccionadas
   // (eran de otro tipo); la familia se mantiene — es por marca. NO
   // dispara auto-selección de tallas.
@@ -1409,7 +1556,44 @@ export default function ScreenProductFormView() {
           </select>
         </label>
         <label className="form-field">
-          <span>{lang==='es'?'Marca':'Brand'}</span>
+          <span style={{display:'flex', alignItems:'center', gap:8}}>
+            {lang==='es'?'Marca':'Brand'}
+            {!isClient && (
+              <span style={{marginLeft:'auto', display:'inline-flex', gap:6}}>
+                <button type="button"
+                        onClick={() => setBrandDrawer({ mode: 'create' })}
+                        title={lang==='es' ? 'Nueva marca' : 'New brand'}
+                        disabled={brandBusy}
+                        style={{
+                          width:24, height:24, borderRadius:6, cursor:'pointer',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color:'#00B286', fontWeight:800, fontSize:14, lineHeight:1,
+                        }}>＋</button>
+                <button type="button"
+                        disabled={!brandId || brandBusy}
+                        onClick={openEditBrand}
+                        title={lang==='es' ? 'Editar marca seleccionada' : 'Edit selected brand'}
+                        style={{
+                          width:24, height:24, borderRadius:6,
+                          cursor: brandId ? 'pointer' : 'not-allowed',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color: brandId ? 'var(--text-secondary)' : 'var(--border-subtle)',
+                          fontSize:12, lineHeight:1,
+                        }}>✎</button>
+                <button type="button"
+                        disabled={!brandId || brandBusy}
+                        onClick={deleteBrand}
+                        title={lang==='es' ? 'Eliminar marca seleccionada' : 'Delete selected brand'}
+                        style={{
+                          width:24, height:24, borderRadius:6,
+                          cursor: brandId ? 'pointer' : 'not-allowed',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color: brandId ? '#DC2626' : 'var(--border-subtle)',
+                          fontWeight:800, fontSize:12, lineHeight:1,
+                        }}>×</button>
+              </span>
+            )}
+          </span>
           <select className="input" value={brandId} onChange={e=>onMarcaChange(e.target.value)}>
             <option value="">{lang==='es'?'— Sin marca —':'— No brand —'}</option>
             {realBrands.map(b => (
@@ -1428,7 +1612,46 @@ export default function ScreenProductFormView() {
             la Sección C se filtran por talla.familia_id. Se guarda en
             especificaciones.familia_id (+ nombre legacy en .familia). */}
         <label className="form-field">
-          <span>{lang==='es'?'Grupo de tallas':'Size group'}</span>
+          <span style={{display:'flex', alignItems:'center', gap:8}}>
+            {lang==='es'?'Grupo de tallas':'Size group'}
+            {!isClient && (
+              <span style={{marginLeft:'auto', display:'inline-flex', gap:6}}>
+                <button type="button"
+                        onClick={() => setFamiliaModal({ mode: 'create' })}
+                        title={lang==='es' ? 'Nuevo grupo de tallas' : 'New size group'}
+                        disabled={!brandId || familiaBusy}
+                        style={{
+                          width:24, height:24, borderRadius:6,
+                          cursor: brandId ? 'pointer' : 'not-allowed',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color: brandId ? '#00B286' : 'var(--border-subtle)',
+                          fontWeight:800, fontSize:14, lineHeight:1,
+                        }}>＋</button>
+                <button type="button"
+                        disabled={!familiaIdSel || familiaBusy}
+                        onClick={() => setFamiliaModal({ mode: 'edit', familia: familiasMarca.find(f => f.id === familiaIdSel) })}
+                        title={lang==='es' ? 'Editar grupo seleccionado' : 'Edit selected group'}
+                        style={{
+                          width:24, height:24, borderRadius:6,
+                          cursor: familiaIdSel ? 'pointer' : 'not-allowed',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color: familiaIdSel ? 'var(--text-secondary)' : 'var(--border-subtle)',
+                          fontSize:12, lineHeight:1,
+                        }}>✎</button>
+                <button type="button"
+                        disabled={!familiaIdSel || familiaBusy}
+                        onClick={deleteFamilia}
+                        title={lang==='es' ? 'Eliminar grupo seleccionado' : 'Delete selected group'}
+                        style={{
+                          width:24, height:24, borderRadius:6,
+                          cursor: familiaIdSel ? 'pointer' : 'not-allowed',
+                          border:'1px solid var(--border-subtle)', background:'var(--surface)',
+                          color: familiaIdSel ? '#DC2626' : 'var(--border-subtle)',
+                          fontWeight:800, fontSize:12, lineHeight:1,
+                        }}>×</button>
+              </span>
+            )}
+          </span>
           <select className="input" value={familiaIdSel || ''}
                   disabled={!brandId}
                   onChange={e=>onFamiliaChange(e.target.value)}>
@@ -1877,7 +2100,12 @@ export default function ScreenProductFormView() {
             tallas={realSizes}
             selected={selectedSizes}
             onToggle={toggleSize}
-            detectedFamilia={detectedFamilia}
+            currentTipo={tipoSel}
+            currentMarca={brandId}
+            currentFamilia={familiaIdSel}
+            tipos={sizingOptions?.tipos_producto || []}
+            marcas={realBrands}
+            familias={familiasMarca}
             onClose={() => setMoreTallasOpen(false)}
           />,
           document.body
@@ -1899,6 +2127,32 @@ export default function ScreenProductFormView() {
             onClose={() => setTipoModal(null)}
             onSave={saveTipo}
             onReloadOptions={reloadSizingOptions}
+          />,
+          document.body
+        )}
+
+        {/* Sprint 2026-07-24 · CRUD de MARCA — CreateBrandDrawer reutilizado
+            de Brands.jsx / Motor de Tallas. */}
+        {brandDrawer && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 95 }}>
+            <CreateBrandDrawer
+              lang={lang}
+              initial={brandDrawer.mode === 'edit' ? brandDrawer.initial : null}
+              onClose={() => setBrandDrawer(null)}
+              onCreated={handleBrandCreated}
+            />
+          </div>
+        )}
+
+        {/* Sprint 2026-07-24 · CRUD de GRUPO DE TALLAS — modal pequeño inline. */}
+        {familiaModal && createPortal(
+          <FamiliaQuickModal
+            lang={lang}
+            mode={familiaModal.mode}
+            familia={familiaModal.familia}
+            busy={familiaBusy}
+            onClose={() => setFamiliaModal(null)}
+            onSave={saveFamilia}
           />,
           document.body
         )}
@@ -2852,43 +3106,95 @@ export default function ScreenProductFormView() {
 }
 
 // ────────────────────────────────────────────────
-// MoreTallasModal — selector de tallas de TODOS los tipos de puntera
+// MoreTallasModal — selector de tallas de TODO el catálogo
 // ────────────────────────────────────────────────
-// Sprint 2026-07-21 · La Sección C filtra por capellada/tipo de puntera
-// de la Sección B (fallback: familia legacy detectada en el nombre);
-// este modal permite ver el catálogo completo agrupado por TIPO DE
-// PUNTERA (`talla.familias`) y seleccionar tallas adicionales.
-// Una talla puede tener varios tipos de puntera → aparece en cada grupo.
-// Se omiten grupos/valores "DALUPO".
-function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamilia, onClose }) {
+// Sprint 2026-07-24 · Agrupa por (tipo de producto + marca + grupo de tallas)
+// usando los FK reales de cada talla. El grupo activo del producto se muestra
+// primero y con un banner de título. Las tallas seleccionadas fuera del grupo
+// activo quedan visibles en su grupo correspondiente.
+function MoreTallasModal({
+  lang='es',
+  tallas,
+  selected,
+  onToggle,
+  onClose,
+  currentTipo,
+  currentMarca,
+  currentFamilia,
+  tipos,
+  marcas,
+  familias,
+}) {
   const [q, setQ] = useState("");
+
+  const tipoLabel = useMemo(() => {
+    return (tipos.find(t => t.codigo === currentTipo)?.label)
+      || currentTipo
+      || (lang === 'es' ? 'Sin tipo' : 'No type');
+  }, [tipos, currentTipo, lang]);
+
+  const marcaLabel = useMemo(() => {
+    return (marcas.find(m => m.id === currentMarca)?.nombre)
+      || (lang === 'es' ? 'Sin marca' : 'No brand');
+  }, [marcas, currentMarca, lang]);
+
+  const familiaLabel = useMemo(() => {
+    return (familias.find(f => f.id === currentFamilia)?.nombre)
+      || (lang === 'es' ? 'Sin grupo' : 'No group');
+  }, [familias, currentFamilia, lang]);
+
+  const selectedLabels = useMemo(() => {
+    return tallas
+      .filter(t => selected.includes(t.id))
+      .map(t => t.talla_base || t.eu || t.us_men || t.nombre || '—')
+      .join(', ');
+  }, [tallas, selected]);
 
   const groups = useMemo(() => {
     const ql = q.trim().toUpperCase();
     const map = {};
-    const sinFam = [];
+    const sinGrupo = [];
     tallas.forEach(t => {
-      const fams = sinDalupo(t.familias)
-        .map(f => String(f).toUpperCase().trim()).filter(Boolean);
+      const tipo = String(t.tipo_producto || '').trim() || '—';
+      const marca = String(t.marca_id || '').trim() || '—';
+      const familia = String(t.familia_id || '').trim() || '—';
+      const tipoNombre = (tipos.find(tp => tp.codigo === tipo)?.label) || tipo;
+      const marcaNombre = (marcas.find(m => m.id === marca)?.nombre)
+        || (t.marca_nombre || marca);
+      const familiaNombre = (familias.find(f => f.id === familia)?.nombre)
+        || (t.familia_nombre || familia);
       const label = t.talla_base || t.eu || t.us_men || t.nombre || '—';
+      const groupKey = `${tipo}||${marca}||${familia}`;
+      const groupLabel = `${tipoNombre} · ${marcaNombre} · ${familiaNombre}`;
       const hit = !ql
         || String(label).toUpperCase().includes(ql)
-        || fams.some(f => f.includes(ql));
+        || groupLabel.toUpperCase().includes(ql);
       if (!hit) return;
-      if (fams.length === 0) { sinFam.push(t); return; }
-      fams.forEach(f => { (map[f] ||= []).push(t); });
+      if (!t.tipo_producto || !t.marca_id || !t.familia_id) {
+        sinGrupo.push(t);
+        return;
+      }
+      if (!map[groupKey]) {
+        map[groupKey] = { label: groupLabel, tipo, marca, familia, tallas: [] };
+      }
+      map[groupKey].tallas.push(t);
     });
-    const ordered = Object.keys(map).sort((a, b) => {
-      // El grupo detectado primero; el resto alfabético.
-      if (a === detectedFamilia) return -1;
-      if (b === detectedFamilia) return 1;
-      return a.localeCompare(b);
-    }).map(f => [f, map[f]]);
-    if (sinFam.length) {
-      ordered.push([lang === 'es' ? 'SIN TIPO DE PUNTERA' : 'NO TOE CAP TYPE', sinFam]);
+    const ordered = Object.values(map).sort((a, b) => {
+      const aCurrent = a.tipo === currentTipo && a.marca === currentMarca && a.familia === currentFamilia;
+      const bCurrent = b.tipo === currentTipo && b.marca === currentMarca && b.familia === currentFamilia;
+      if (aCurrent && !bCurrent) return -1;
+      if (!aCurrent && bCurrent) return 1;
+      return a.label.localeCompare(b.label);
+    });
+    if (sinGrupo.length) {
+      ordered.push({
+        label: lang === 'es' ? 'Sin clasificación completa' : 'Incomplete classification',
+        tipo: '—', marca: '—', familia: '—',
+        tallas: sinGrupo,
+      });
     }
     return ordered;
-  }, [tallas, q, detectedFamilia, lang]);
+  }, [tallas, q, tipos, marcas, familias, currentTipo, currentMarca, currentFamilia, lang]);
 
   return (
     <>
@@ -2899,7 +3205,7 @@ function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamili
            style={{
              position:'fixed', top:'50%', left:'50%',
              transform:'translate(-50%, -50%)', zIndex:1001,
-             width:'min(680px, 94vw)', maxHeight:'82vh',
+             width:'min(760px, 96vw)', maxHeight:'86vh',
              display:'flex', flexDirection:'column',
              background:'var(--surface, #FFFFFF)', borderRadius:14,
              boxShadow:'0 24px 60px rgba(15,23,42,0.30)', overflow:'hidden',
@@ -2912,12 +3218,12 @@ function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamili
               {lang==='es' ? 'MOTOR DE TALLAS' : 'SIZING ENGINE'}
             </div>
             <div className="heading-md">
-              {lang==='es' ? 'Todas las tallas por tipo de puntera' : 'All sizes by toe cap type'}
+              {lang==='es' ? 'Todas las tallas del catálogo' : 'All sizes in catalog'}
             </div>
             <div className="caption" style={{ color:'var(--text-tertiary)' }}>
               {lang==='es'
-                ? 'Marca tallas de cualquier tipo de puntera para agregarlas a este producto.'
-                : 'Tick sizes from any toe cap type to add them to this product.'}
+                ? 'Selecciona tallas de cualquier tipo, marca y grupo para este producto.'
+                : 'Select sizes from any type, brand and group for this product.'}
             </div>
           </div>
           <button type="button" onClick={onClose}
@@ -2927,13 +3233,36 @@ function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamili
                            fontWeight:800, fontSize:14, color:'var(--text-secondary)' }}>×</button>
         </div>
 
+        {/* Current selection banner */}
+        <div style={{ margin:'12px 18px 0', padding:'10px 12px', borderRadius:8,
+                      background:'rgba(0,178,134,0.07)', border:'1px solid rgba(0,178,134,0.20)' }}>
+          <div className="caption" style={{ color:'#008B69', fontWeight:600 }}>
+            <span className="mono" style={{ fontWeight:800 }}>
+              {lang==='es' ? 'Selección activa' : 'Active selection'}:
+            </span>{' '}
+            {lang==='es' ? 'Tipo' : 'Type'}: {tipoLabel} ·
+            {' '}{lang==='es' ? 'Marca' : 'Brand'}: {marcaLabel} ·
+            {' '}{lang==='es' ? 'Grupo' : 'Group'}: {familiaLabel}
+          </div>
+          {selected.length > 0 && (
+            <div className="caption" style={{ marginTop:6, color:'var(--text-secondary)' }}>
+              <span style={{ fontWeight:700 }}>
+                {selected.length}{lang==='es' ? ' tallas seleccionadas' : ' sizes selected'}
+              </span>
+              {selectedLabels && (
+                <span style={{ marginLeft:8 }}>({selectedLabels})</span>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Search */}
-        <div style={{ padding:'10px 18px', borderBottom:'1px solid var(--border-subtle, #E5E7EB)' }}>
+        <div style={{ padding:'12px 18px', borderBottom:'1px solid var(--border-subtle, #E5E7EB)' }}>
           <input className="input" autoFocus value={q}
                  onChange={e=>setQ(e.target.value)}
                  placeholder={lang==='es'
-                   ? 'Buscar por talla o puntera (42, Acero 200J…)'
-                   : 'Search by size or toe cap (42, Acero 200J…)'}
+                   ? 'Buscar por talla, tipo, marca o grupo…'
+                   : 'Search by size, type, brand or group…'}
                  style={{ width:'100%' }}/>
         </div>
 
@@ -2943,33 +3272,34 @@ function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamili
             <div className="caption" style={{ color:'var(--text-tertiary)', padding:'16px 0' }}>
               {lang==='es' ? 'Sin resultados.' : 'No results.'}
             </div>
-          ) : groups.map(([fam, famTallas]) => (
-            <div key={fam} style={{ marginBottom:14 }}>
+          ) : groups.map((g) => (
+            <div key={g.label} style={{ marginBottom:14 }}>
               <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
                 <span className="mono" style={{
                         fontSize:12, fontWeight:800, letterSpacing:0.4,
-                        color: fam === detectedFamilia ? '#008B69' : 'var(--text-secondary)' }}>
-                  {fam}
+                        color: (g.tipo === currentTipo && g.marca === currentMarca && g.familia === currentFamilia)
+                          ? '#008B69' : 'var(--text-secondary)' }}>
+                  {g.label}
                 </span>
-                {fam === detectedFamilia && (
+                {(g.tipo === currentTipo && g.marca === currentMarca && g.familia === currentFamilia) && (
                   <span className="caption" style={{
                           background:'rgba(0,178,134,0.10)', color:'#008B69',
                           border:'1px solid rgba(0,178,134,0.30)',
                           borderRadius:999, padding:'1px 8px', fontSize:10, fontWeight:700 }}>
-                    {lang==='es' ? 'detectada en el nombre' : 'detected in name'}
+                    {lang==='es' ? 'selección actual' : 'current selection'}
                   </span>
                 )}
                 <span className="caption" style={{ marginLeft:'auto', color:'var(--text-tertiary)' }}>
-                  {famTallas.filter(t => selected.includes(t.id)).length}/{famTallas.length}{' '}
+                  {g.tallas.filter(t => selected.includes(t.id)).length}/{g.tallas.length}{' '}
                   {lang==='es' ? 'seleccionadas' : 'selected'}
                 </span>
               </div>
               <div className="size-picker-row" style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
-                {famTallas.map(t => {
+                {g.tallas.map(t => {
                   const on = selected.includes(t.id);
                   const label = t.talla_base || t.eu || t.us_men || t.nombre || '—';
                   return (
-                    <button type="button" key={`${fam}-${t.id}`}
+                    <button type="button" key={`${g.label}-${t.id}`}
                             className={`size-chip ${on ? 'size-chip-on' : ''}`}
                             onClick={() => onToggle(t.id)}>
                       {label}
@@ -2994,7 +3324,6 @@ function MoreTallasModal({ lang='es', tallas, selected, onToggle, detectedFamili
     </>
   );
 }
-
 // ────────────────────────────────────────────────
 // AttrSelect — small select field
 // ────────────────────────────────────────────────
