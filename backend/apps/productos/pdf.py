@@ -346,17 +346,12 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
                 secondary_imgs.append(rl)
 
         if hero_rl:
-            left_cell = [hero_rl]
+            left_cell = hero_rl
         else:
-            left_cell = [Paragraph("Sin imagen", styles["body"])]
+            left_cell = Paragraph("Sin imagen", styles["body"])
 
         # Imágenes secundarias apiladas a la derecha
-        right_cells = []
-        if secondary_imgs:
-            for img in secondary_imgs:
-                right_cells.append([img])
-        if not right_cells:
-            right_cells = [[""]]
+        right_cells = secondary_imgs if secondary_imgs else ""
 
         hero_tbl = Table(
             [[left_cell, right_cells]],
