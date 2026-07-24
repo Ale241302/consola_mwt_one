@@ -1976,18 +1976,15 @@ export default function ScreenProductFormView() {
         <div>
           <div className="heading-md">{lang==='es'?'C · Relaciones logísticas':'C · Logistics relations'}</div>
           <div className="caption" style={{color:'var(--text-tertiary)'}}>
-            {isClient
-              ? (lang==='es'?'Tallas del Motor de Tallas disponibles para este SKU.':'Sizing Engine sizes available for this SKU.')
-              : (lang==='es'?'Tallas del Motor de Tallas + Nodos logísticos que operan el SKU.':'Sizing Engine sizes + logistics nodes operating the SKU.')}
+            {lang==='es'
+              ? 'Tallas del Motor de Tallas disponibles para este SKU.'
+              : 'Sizing Engine sizes available for this SKU.'}
           </div>
         </div>
       </div>
 
-      {/* CLIENT B2B no ve la columna de Nodos Logísticos (información operativa
-          interna de MWT). En portal renderizamos solo Motor de Tallas a
-          ancho completo; staff ve 2 columnas (tallas + nodos). */}
-      <div className={isClient ? '' : 'form-grid-2'}
-           style={isClient ? { display: 'block' } : undefined}>
+      {/* Motor de Tallas a ancho completo (nodos logísticos removidos). */}
+      <div>
         <div>
           <div className="form-sub-title">
             <IconSliders size={13}/> {lang==='es'?'Motor de Tallas':'Sizing Engine'}
