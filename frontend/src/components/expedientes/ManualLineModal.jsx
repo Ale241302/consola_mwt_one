@@ -1128,7 +1128,7 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {fichaKeys.map((k) => (
                       <a key={k}
-                         href={storageApi.downloadUrl(k)}
+                         href={`/api/productos/${product.id}/ficha-tecnica/pdf/`}
                          target="_blank" rel="noreferrer"
                          style={{
                            display: "inline-flex", alignItems: "center", gap: 8,
@@ -1310,7 +1310,7 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
           background: "#fff",
         }}>
           {fichaKeys.length > 0 && (
-            <a href={storageApi.downloadUrl(fichaKeys[0])}
+            <a href={`/api/productos/${product.id}/ficha-tecnica/pdf/`}
                target="_blank" rel="noreferrer"
                style={{
                  display: "inline-flex", alignItems: "center", gap: 7,

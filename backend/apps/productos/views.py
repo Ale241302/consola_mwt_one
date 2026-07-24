@@ -21,6 +21,7 @@ from .serializers import (
     ProductoSerializer, ProductoListSerializer, ProductClientAliasSerializer,
     NcmCodeSerializer,
 )
+from .pdf import pdf_response as _pdf_response
 
 log = logging.getLogger(__name__)
 
@@ -984,6 +985,15 @@ class ProductoViewSet(viewsets.ViewSet):
             "skipped": skipped,
             "errors":  errors,
         })
+
+    # ── Sprint 2026-07-24 · Ficha técnica PDF ────────────────────────
+    # Genera un PDF bonito con WeasyPrint a partir de los datos del
+    # producto (specs, tallas, imágenes de MinIO). Se invoca desde el
+    # modal de especificaciones del wizard /portal/nueva-oc.
+    @action(detail=True, methods=["get"], url_path="ficha-tecnica/pdf")
+    def ficha_tecnica_pdf(self, request, pk=None):
+        from .pdf import pdf_response
+        return pdf_response(pk, filename=f"ficha-tecnica-{pk}.pdf")
 
 
 class NcmCodeViewSet(viewsets.ModelViewSet):

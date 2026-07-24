@@ -20,6 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         netcat-openbsd \
         tzdata \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        libcairo2 \
+        libgdk-pixbuf2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
