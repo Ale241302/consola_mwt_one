@@ -294,23 +294,22 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
         nombre = data.get("nombre") or "Producto"
         descripcion = data.get("descripcion") or ""
 
-        # Header con marca, línea y SKU
-        header_cells = [
-            Paragraph(marca, styles["brand"]),
-            Paragraph(_safe(esp.get("familia") or esp.get("linea") or ""), styles["linea"]),
-            Paragraph(sku, styles["sku"]),
-        ]
-        header_tbl = Table(
-            [[header_cells]],
+        # Header con marca, línea y SKU (tabla anidada para apilar verticalmente)
+        header_inner = Table(
+            [
+                [Paragraph(marca, styles["brand"])],
+                [Paragraph(_safe(esp.get("familia") or esp.get("linea") or ""), styles["linea"])],
+                [Paragraph(sku, styles["sku"])],
+            ],
             colWidths=[180 * mm],
-            style=TableStyle([
-                ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ]),
         )
-        story.append(header_tbl)
+        header_inner.setStyle(TableStyle([
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story.append(header_inner)
         story.append(Spacer(1, 8))
 
         # Subtítulo descriptivo
