@@ -1015,6 +1015,37 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
     </div>
   );
 
+  // Descarga la ficha técnica PDF con fetch autenticado (JWT).
+  const downloadFichaTecnica = async () => {
+    const token = getToken();
+    if (!token) {
+      alert(lang === "es" ? "Sesión expirada. Inicia sesión de nuevo." : "Session expired. Please log in again.");
+      return;
+    }
+    const url = `/api/productos/${product.id}/ficha-tecnica/pdf/`;
+    try {
+      const resp = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        let msg = resp.statusText;
+        try { msg = JSON.parse(text)?.detail || msg; } catch {}
+        throw new Error(msg);
+      }
+      const blob = await resp.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `ficha-tecnica-${product.sku || product.id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    } catch (err) {
+      alert((lang === "es" ? "Error descargando ficha técnica: " : "Error downloading datasheet: ") + (err.message || err));
+    }
+  };
+
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 130,
@@ -1127,14 +1158,15 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
                   {sectionTitle(L("Ficha técnica (PDF)", "Datasheet (PDF)"))}
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {fichaKeys.map((k) => (
-                      <a key={k}
-                         href={`/api/productos/${product.id}/ficha-tecnica/pdf/`}
-                         target="_blank" rel="noreferrer"
+                      <button key={k}
+                         type="button"
+                         onClick={downloadFichaTecnica}
                          style={{
                            display: "inline-flex", alignItems: "center", gap: 8,
                            padding: "10px 14px", borderRadius: 10,
                            background: "#013A57", color: "#fff",
                            fontSize: 12.5, fontWeight: 700, textDecoration: "none",
+                           border: "none", cursor: "pointer", width: "fit-content",
                          }}>
                         <span style={{ fontSize: 15 }}>⬇</span>
                         {L("Descargar ficha técnica", "Download datasheet")}
@@ -1143,7 +1175,7 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
                           overflow: "hidden", textOverflow: "ellipsis",
                           whiteSpace: "nowrap", maxWidth: 340,
                         }}>· {fichaName(k)}</span>
-                      </a>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -1310,17 +1342,18 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
           background: "#fff",
         }}>
           {fichaKeys.length > 0 && (
-            <a href={`/api/productos/${product.id}/ficha-tecnica/pdf/`}
-               target="_blank" rel="noreferrer"
+            <button type="button"
+               onClick={downloadFichaTecnica}
                style={{
                  display: "inline-flex", alignItems: "center", gap: 7,
                  padding: "10px 18px", borderRadius: 10,
                  border: "1.5px solid #013A57",
                  background: "#fff", color: "#013A57",
                  fontSize: 13, fontWeight: 700, textDecoration: "none",
+                 cursor: "pointer",
                }}>
               ⬇ {L("Descargar ficha técnica", "Download datasheet")}
-            </a>
+            </button>
           )}
           <button className="btn btn-ghost" onClick={onClose} style={{ fontWeight: 700 }}>
             {L("Cerrar", "Close")}
