@@ -99,23 +99,23 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   // este modal de búsqueda).
   const [specsProduct, setSpecsProduct] = useState(null);
 
-  // Sprint 2026-07-24 · carrusel horizontal para las tarjetas de talla.
-  const sizeCarouselRef = useRef(null);
-  const [canScroll, setCanScroll] = useState({ left: false, right: false });
-  const checkCarouselScroll = () => {
-    const el = sizeCarouselRef.current;
+  // Sprint 2026-07-24 · carrusel horizontal para el toggle de unidades de medida.
+  const sysCarouselRef = useRef(null);
+  const [canScrollSys, setCanScrollSys] = useState({ left: false, right: false });
+  const checkSysScroll = () => {
+    const el = sysCarouselRef.current;
     if (!el) return;
-    setCanScroll({
+    setCanScrollSys({
       left: el.scrollLeft > 0,
       right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
     });
   };
-  useEffect(() => { checkCarouselScroll(); }, [picked]);
-  const scrollCarousel = (dir) => {
-    const el = sizeCarouselRef.current;
+  useEffect(() => { checkSysScroll(); }, [picked]);
+  const scrollSysCarousel = (dir) => {
+    const el = sysCarouselRef.current;
     if (!el) return;
-    el.scrollBy({ left: dir * 280, behavior: "smooth" });
-    setTimeout(checkCarouselScroll, 300);
+    el.scrollBy({ left: dir * 200, behavior: "smooth" });
+    setTimeout(checkSysScroll, 300);
   };
 
   // Cargar CPA del cliente (legacy /commercial/client-assignments).
@@ -624,23 +624,42 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                 return (
                   <div style={{
                     display: "flex", alignItems: "center", gap: 10,
-                    marginBottom: 10, justifyContent: "flex-end",
+                    marginBottom: 10, justifyContent: "flex-start",
+                    position: "relative",
                   }}>
                     <span className="caption" style={{ fontSize: 11,
                       color: "var(--text-tertiary)", fontWeight: 600,
+                      flexShrink: 0,
                     }}>
                       {lang === "es" ? "Mostrar talla en:" : "Show size as:"}
                     </span>
-                    <div style={{
-                      display: "inline-flex", flexWrap: "wrap", justifyContent: "flex-end",
-                      background: "rgba(11,30,58,0.04)",
-                      padding: 3, borderRadius: 8, gap: 2,
-                    }}>
+                    {canScrollSys.left && (
+                      <button type="button" onClick={() => scrollSysCarousel(-1)}
+                              style={{
+                                position: "absolute", left: 90, zIndex: 2,
+                                width: 26, height: 26, borderRadius: 999,
+                                border: "1px solid var(--border)",
+                                background: "#fff", color: "#0B1E3A",
+                                boxShadow: "0 2px 8px rgba(11,30,58,0.12)",
+                                cursor: "pointer", fontWeight: 800, fontSize: 12,
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                              }}>←</button>
+                    )}
+                    <div ref={sysCarouselRef}
+                         onScroll={checkSysScroll}
+                         style={{
+                           display: "flex", gap: 4, overflowX: "auto",
+                           scrollBehavior: "smooth", flex: 1,
+                           padding: "3px 30px",
+                           background: "rgba(11,30,58,0.04)", borderRadius: 8,
+                           scrollbarWidth: "none", msOverflowStyle: "none",
+                         }}>
                       {sysList.map((s) => (
                         <button
                           key={s.id} type="button"
                           onClick={() => setDisplaySystem(s.id)}
                           style={{
+                            flex: "0 0 auto",
                             padding: "4px 10px", borderRadius: 6,
                             border: 0, cursor: "pointer",
                             background: activeSystem === s.id ? "white" : "transparent",
@@ -648,19 +667,40 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                             fontSize: 11, fontWeight: 700,
                             boxShadow: activeSystem === s.id
                               ? "0 1px 2px rgba(11,30,58,0.10)" : "none",
+                            whiteSpace: "nowrap",
                           }}
                         >{s.label}</button>
                       ))}
                     </div>
+                    {canScrollSys.right && (
+                      <button type="button" onClick={() => scrollSysCarousel(1)}
+                              style={{
+                                position: "absolute", right: 0, zIndex: 2,
+                                width: 26, height: 26, borderRadius: 999,
+                                border: "1px solid var(--border)",
+                                background: "#fff", color: "#0B1E3A",
+                                boxShadow: "0 2px 8px rgba(11,30,58,0.12)",
+                                cursor: "pointer", fontWeight: 800, fontSize: 12,
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                              }}>→</button>
+                    )}
                   </div>
                 );
               })()}
 
-              {/* Sprint 2026-07-24 · carrusel horizontal de tallas: una sola
-                  fila con flechas a los lados para desplazarse. */}
-              {!picked.loading_sizes && (() => {
-                const { activeSystem, valueOf } = getSysInfo();
-                const cards = picked.tallas.map((t, idx) => {
+              {/* Sprint 2026-07-21 · US M / US W habilitados otra vez:
+                  el cliente puede digitar cantidades en cualquier sistema
+                  (la talla se guarda siempre contra la base BRA). */}
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                gap: 10, marginBottom: 14,
+              }}>
+                {!picked.loading_sizes && (() => {
+                  const { activeSystem, valueOf } = getSysInfo();
+                  return picked.tallas.map((t, idx) => {
+                  // Sprint 2026-07-22 · fase 3 · valor mostrado: dinámico
+                  // (equivalencias[sel] ?? columna legacy) o equiv legacy.
                   const val = valueOf(t);
                   const showLabel = val || t.base || "—";
                   const isFallback = activeSystem !== "BASE"
@@ -668,7 +708,6 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                     && !!t.base;
                   return (
                     <div key={t.base} style={{
-                      flex: "0 0 120px",
                       border: "1px solid var(--border)", borderRadius: 8,
                       padding: "10px 12px", background: "#fff",
                     }}>
@@ -696,6 +735,10 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                              value={t.qty}
                              onChange={(e) => {
                                const v = Math.max(0, Number(e.target.value) || 0);
+                               // Sprint 2026-07-18 · forzamos el texto del DOM al
+                               // número canónico: sin esto, teclear "05" sobre un
+                               // state que ya valía 5 no disparaba re-render y el
+                               // input se quedaba mostrando "05".
                                e.target.value = String(v);
                                setPicked((p) => {
                                  const tallas = p.tallas.slice();
@@ -706,49 +749,9 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
                              style={{ textAlign: "center" }}/>
                     </div>
                   );
-                });
-                return (
-                  <div style={{
-                    position: "relative", display: "flex", alignItems: "center",
-                    marginBottom: 14,
-                  }}>
-                    {canScroll.left && (
-                      <button type="button" onClick={() => scrollCarousel(-1)}
-                              style={{
-                                position: "absolute", left: -10, zIndex: 2,
-                                width: 32, height: 32, borderRadius: 999,
-                                border: "1px solid var(--border)",
-                                background: "#fff", color: "#0B1E3A",
-                                boxShadow: "0 2px 8px rgba(11,30,58,0.12)",
-                                cursor: "pointer", fontWeight: 800, fontSize: 16,
-                                display: "flex", alignItems: "center", justifyContent: "center",
-                              }}>←</button>
-                    )}
-                    <div ref={sizeCarouselRef}
-                         onScroll={checkCarouselScroll}
-                         style={{
-                           display: "flex", gap: 10, overflowX: "auto",
-                           scrollBehavior: "smooth", width: "100%",
-                           padding: "4px 30px",
-                           scrollbarWidth: "none", msOverflowStyle: "none",
-                         }}>
-                      {cards}
-                    </div>
-                    {canScroll.right && (
-                      <button type="button" onClick={() => scrollCarousel(1)}
-                              style={{
-                                position: "absolute", right: -10, zIndex: 2,
-                                width: 32, height: 32, borderRadius: 999,
-                                border: "1px solid var(--border)",
-                                background: "#fff", color: "#0B1E3A",
-                                boxShadow: "0 2px 8px rgba(11,30,58,0.12)",
-                                cursor: "pointer", fontWeight: 800, fontSize: 16,
-                                display: "flex", alignItems: "center", justifyContent: "center",
-                              }}>→</button>
-                    )}
-                  </div>
-                );
-              })()}
+                  });
+                })()}
+              </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                 <button className="btn btn-ghost" onClick={() => setPicked(null)}>
                   ← {lang === "es" ? "Cambiar SKU" : "Pick another"}
