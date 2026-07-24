@@ -1429,11 +1429,6 @@ export const tiposProductoMatrizApi  = resource("sizing/tipos-producto-matriz");
 export const sizingApi = {
   options: () => apiFetch(`/sizing/options/`, { token: getToken() }),
   clone:   (tallaId) => tallasApi.action("clone", tallaId, {}),
-  // Sprint 2026-07-16 · duplica la corrida completa de una familia a otra.
-  //   body: { familia_origen, familia_destino, marca_ids?, tipos? }
-  cloneFamilia: (body) =>
-    apiFetch(`/sizing/tallas/clone-familia/`,
-             { method: "POST", body, token: getToken() }),
 };
 
 // ---------------------------------------------------------------------

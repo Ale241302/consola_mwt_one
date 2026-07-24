@@ -70,10 +70,9 @@ export default function ScreenSizingEngine() {
   const [filterTipo, setFilterTipo] = useState("");
   const [q, setQ] = useState("");
   const [editing, setEditing]   = useState(null);    // null | {} (nuevo) | obj (edita)
-  // Sprint 2026-07-16 · filtros por clasificadores + duplicar puntera
+  // Sprint 2026-07-16 · filtros por clasificadores
   const [filterMarca,   setFilterMarca]   = useState("");
   const [filterFamilia, setFilterFamilia] = useState("");   // id de familia
-  const [cloneFamOpen,  setCloneFamOpen]  = useState(false);
   // Sprint 2026-07-22 · catálogo real de familias (/sizing/familias/) —
   // alimenta el select Familia del toolbar (filtrable por marca).
   const [familiasCat,   setFamiliasCat]   = useState([]);
@@ -299,14 +298,6 @@ export default function ScreenSizingEngine() {
           <button onClick={loadAll} className="siz-btn siz-btn-ghost" title="Recargar">
             <IconRefresh size={14}/> {lang === "es" ? "Recargar" : "Refresh"}
           </button>
-          {familiasDistinct.length > 0 && (
-            <button onClick={() => setCloneFamOpen(true)} className="siz-btn siz-btn-ghost"
-                    title={lang === "es"
-                      ? "Duplica la corrida de tallas de una puntera a otra (sin re-digitar equivalencias)"
-                      : "Duplicate a toe cap's size run into another toe cap"}>
-              ⧉ {lang === "es" ? "Duplicar puntera" : "Duplicate toe cap"}
-            </button>
-          )}
           <button onClick={() => setEditing({})} className="siz-btn siz-btn-primary">
             <IconPlus size={14}/> {lang === "es" ? "Nueva talla" : "New size"}
           </button>
@@ -734,17 +725,6 @@ export default function ScreenSizingEngine() {
           />
         )}
       </AnimatePresence>
-
-      {/* Modal duplicar puntera (Sprint 2026-07-21) — vía portal */}
-      {cloneFamOpen && createPortal(
-        <CloneFamiliaModal
-          lang={lang}
-          familias={familiasDistinct}
-          onClose={() => setCloneFamOpen(false)}
-          onDone={async () => { setCloneFamOpen(false); await loadAll(); }}
-        />,
-        document.body
-      )}
 
       {/* Modal de confirmación (Desactivar / Eliminar) — vía portal */}
       {pendingAction && createPortal(
@@ -2031,90 +2011,6 @@ export function TipoQuickModal({
   );
 }
 
-// =====================================================================
-// Modal "Duplicar puntera" (Sprint 2026-07-21 · antes "Duplicar familia")
-// Copia TODAS las tallas activas de un tipo puntera a otro nuevo, para
-// no re-digitar las 15 equivalencias al abrir una línea de productos.
-// Los parámetros del API siguen siendo familia_origen / familia_destino.
-// =====================================================================
-function CloneFamiliaModal({ lang, familias, onClose, onDone }) {
-  const [origen,  setOrigen]  = useState(familias[0] || "");
-  const [destino, setDestino] = useState("");
-  const [busy,    setBusy]    = useState(false);
-  const [error,   setError]   = useState(null);
-
-  const run = async () => {
-    const dst = destino.trim().toUpperCase();
-    if (!origen || !dst) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await sizingApi.cloneFamilia({ familia_origen: origen, familia_destino: dst });
-      await onDone(r);
-    } catch (e) {
-      setError(e?.body?.detail || e?.message || (lang === "es" ? "Falló la duplicación" : "Clone failed"));
-      setBusy(false);
-    }
-  };
-
-  return (
-    <>
-      <div className="siz-drawer-backdrop" onClick={() => !busy && onClose()}/>
-      <div role="dialog" aria-modal="true"
-           style={{
-             position: "fixed", top: "50%", left: "50%",
-             transform: "translate(-50%, -50%)", zIndex: 1001,
-             width: "min(440px, 92vw)", background: "#FFFFFF",
-             borderRadius: 14, padding: 22,
-             boxShadow: "0 24px 60px rgba(15,23,42,0.25)",
-           }}>
-        <div className="micro" style={{ color: MINT }}>
-          {lang === "es" ? "MOTOR DE TALLAS" : "SIZING ENGINE"}
-        </div>
-        <div className="heading-md" style={{ margin: "2px 0 4px", color: NAVY }}>
-          {lang === "es" ? "Duplicar corrida de una puntera" : "Duplicate a toe cap's size run"}
-        </div>
-        <div className="caption" style={{ color: "#64748B", marginBottom: 14 }}>
-          {lang === "es"
-            ? "Crea una copia de cada talla activa de la puntera origen, asignada a la puntera destino (mismas equivalencias y marcas)."
-            : "Creates a copy of every active size in the source toe cap, assigned to the target toe cap."}
-        </div>
-        <div style={{ display: "grid", gap: 10 }}>
-          <label className="siz-field">
-            <span className="siz-field-label">{lang === "es" ? "Puntera origen" : "Source toe cap"}</span>
-            <select className="siz-input siz-select" value={origen}
-                    onChange={e => setOrigen(e.target.value)} disabled={busy}>
-              {familias.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
-          </label>
-          <label className="siz-field">
-            <span className="siz-field-label">
-              {lang === "es" ? "Puntera destino (nueva)" : "Target toe cap (new)"}
-            </span>
-            <input className="siz-input mono" value={destino} disabled={busy}
-                   placeholder={lang === "es" ? 'p.ej. "Acero 200J"' : 'e.g. "Acero 200J"'}
-                   onChange={e => setDestino(e.target.value.toUpperCase())}
-                   onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); run(); } }}/>
-          </label>
-        </div>
-        {error && (
-          <div className="caption" style={{ color: "#DC2626", marginTop: 10 }}>⚠ {error}</div>
-        )}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
-          <button className="siz-btn siz-btn-ghost" onClick={onClose} disabled={busy}>
-            {lang === "es" ? "Cancelar" : "Cancel"}
-          </button>
-          <button className="siz-btn siz-btn-primary" onClick={run}
-                  disabled={busy || !origen || !destino.trim() ||
-                            destino.trim().toUpperCase() === origen}>
-            {busy ? (lang === "es" ? "Duplicando…" : "Cloning…")
-                  : (lang === "es" ? "Duplicar" : "Duplicate")}
-          </button>
-        </div>
-      </div>
-    </>
-  );
-}
 
 function Field({ label, hint, span = 1, children }) {
   return (
