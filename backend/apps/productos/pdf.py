@@ -211,20 +211,36 @@ def _section_title(txt: str) -> Any:
 
 
 def _image_for_reportlab(img: Any) -> Optional[Any]:
-    """Convierte PIL.Image a ImageReader a través de un buffer PNG."""
+    """Convierte PIL.Image a un buffer PNG listo para RLImage."""
     if img is None:
         return None
     try:
-        from reportlab.lib.utils import ImageReader
         buf = io.BytesIO()
         # Convertir siempre a RGB y PNG para evitar problemas con WebP/alpha
         if img.mode != "RGB":
             img = img.convert("RGB")
         img.save(buf, format="PNG")
         buf.seek(0)
-        return ImageReader(buf)
+        return buf
     except Exception as e:
         log.warning("_image_for_reportlab falló: %s", e)
+        return None
+
+
+def _rl_image(img: Any, max_w: float, max_h: float) -> Optional[Any]:
+    """Devuelve un RLImage listo para insertar, con dimensiones escaladas."""
+    if img is None:
+        return None
+    try:
+        from reportlab.platypus import Image as RLImage
+        buf = _image_for_reportlab(img)
+        if buf is None:
+            return None
+        img_w, img_h = img.size
+        scale = min(max_w / img_w, max_h / img_h, 1.0)
+        return RLImage(buf, width=img_w * scale, height=img_h * scale)
+    except Exception as e:
+        log.warning("_rl_image falló: %s", e)
         return None
 
 
@@ -312,7 +328,7 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
             esp.get("gallery") and esp.get("gallery")[0] or None
         )
         hero_img = _minio_image(hero_key, max_w=900, max_h=700) if hero_key else None
-        hero_rl = _image_for_reportlab(hero_img) if hero_img else None
+        hero_rl = _rl_image(hero_img, max_w=80 * mm, max_h=90 * mm) if hero_img else None
 
         info_base = [
             ("Categoría", data.get("categoria")),
@@ -333,11 +349,7 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
 
         left_cell = []
         if hero_rl:
-            img_w, img_h = hero_rl.getSize()
-            max_w = 80 * mm
-            max_h = 90 * mm
-            scale = min(max_w / img_w, max_h / img_h, 1.0)
-            left_cell.append(RLImage(hero_rl, width=img_w * scale, height=img_h * scale))
+            left_cell.append(hero_rl)
         else:
             left_cell.append(Paragraph("Sin imagen", styles))
 
@@ -415,13 +427,9 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
             gallery_imgs = []
             for k in gallery_keys[1:4]:
                 img = _minio_image(k, max_w=600, max_h=450)
-                rl = _image_for_reportlab(img) if img else None
+                rl = _rl_image(img, max_w=55 * mm, max_h=55 * mm) if img else None
                 if rl:
-                    img_w, img_h = rl.getSize()
-                    max_w = 55 * mm
-                    max_h = 55 * mm
-                    scale = min(max_w / img_w, max_h / img_h, 1.0)
-                    gallery_imgs.append(RLImage(rl, width=img_w * scale, height=img_h * scale))
+                    gallery_imgs.append(rl)
             if gallery_imgs:
                 story.append(PageBreak())
                 story.append(_section_title("Galería"))
