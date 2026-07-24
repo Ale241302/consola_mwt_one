@@ -211,15 +211,8 @@ def _section_title(txt: str) -> Any:
 
 
 def _image_for_reportlab(img: Any) -> Optional[Any]:
-    """Convierte PIL.Image a reportlab.lib.utils.ImageReader."""
-    if img is None:
-        return None
-    try:
-        from reportlab.lib.utils import ImageReader
-        return ImageReader(img)
-    except Exception as e:
-        log.warning("_image_for_reportlab falló: %s", e)
-        return None
+    """Devuelve el PIL.Image directamente (ReportLab lo acepta)."""
+    return img
 
 
 def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
