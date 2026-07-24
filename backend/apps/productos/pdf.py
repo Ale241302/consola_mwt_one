@@ -1,6 +1,6 @@
 """
 Generador de PDF de ficha técnica de producto con ReportLab.
-Diseño profesional estilo ficha técnica comercial.
+Diseño profesional estilo ficha técnica comercial (referencia Marluvas New Prime).
 """
 import io
 import logging
@@ -15,11 +15,14 @@ from .serializers import ProductoSerializer
 
 log = logging.getLogger(__name__)
 
-# ── Colores MWT ──────────────────────────────────────────────────────
+# ── Paleta corporativa MWT ───────────────────────────────────────────
 NAVY = "#013A57"
+NAVY_DARK = "#0B1E3A"
 NAVY_LIGHT = "#0a4d6e"
 TEAL = "#00B286"
 TEAL_LIGHT = "#75CBB3"
+ORANGE = "#E85D04"
+ORANGE_LIGHT = "#F4A261"
 TEXT = "#0B1E3A"
 TEXT_SECONDARY = "#64748B"
 TEXT_MUTED = "#94A3B8"
@@ -44,14 +47,16 @@ def _minio_bytes(key: Optional[str]) -> Optional[bytes]:
         return None
 
 
-def _minio_image(key: Optional[str], max_w: int = 1200, max_h: int = 900) -> Optional[Any]:
+def _minio_image(key: Optional[str], max_w: int = 2000, max_h: int = 1600) -> Optional[Any]:
+    """Descarga imagen de MinIO en alta resolución."""
     data = _minio_bytes(key)
     if not data:
         return None
     try:
         from PIL import Image as PILImage
         img = PILImage.open(io.BytesIO(data))
-        img.thumbnail((max_w, max_h))
+        # No comprimir demasiado — mantener calidad para PDF
+        img.thumbnail((max_w, max_h), PILImage.Resampling.LANCZOS)
         return img
     except Exception as e:
         log.warning("_minio_image(%s) falló: %s", key, e)
@@ -81,8 +86,6 @@ def _fetch_tallas(ids: List[str]) -> List[Dict[str, Any]]:
                 "kr": t.kr,
                 "cm": t.cm,
                 "inch": t.inch,
-                "ancho_mm": t.ancho_mm,
-                "comprimento_mm": t.comprimento_mm,
             }
             for t in qs
         ]
@@ -122,72 +125,32 @@ def _rl_image(img: Any, max_w: float, max_h: float) -> Optional[Any]:
         return None
 
 
-def _kv_row(label: str, value: Any, label_style, value_style) -> Any:
+def _kv(label: str, value: Any, styles: Dict[str, Any]) -> Any:
     from reportlab.platypus import Paragraph
-    from reportlab.platypus import Table, TableStyle
     if value is None or value == "":
         value = "—"
     return [
-        Paragraph(label, label_style),
-        Paragraph(_safe(value), value_style),
+        Paragraph(label, styles["kv_label"]),
+        Paragraph(_safe(value), styles["kv_value"]),
     ]
 
 
-def _section_header(text: str, styles: Dict[str, Any]) -> Any:
+def _section_header(text: str, styles: Dict[str, Any], bg_color=ORANGE) -> Any:
     from reportlab.platypus import Paragraph
     from reportlab.platypus import Table, TableStyle
     from reportlab.lib import colors
 
     style = styles["section_header"]
-    bar = Table(
-        [[""]],
-        colWidths=[4],
-        rowHeights=[16],
-        style=TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(TEAL)),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]),
-    )
     title = Paragraph(text, style)
     tbl = Table(
-        [[bar, title]],
-        colWidths=[8, 170],
+        [[title]],
+        colWidths=[180 * 2.835],
         style=TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]),
-    )
-    return tbl
-
-
-def _chip_row(label: str, items: List[str], styles: Dict[str, Any]) -> Any:
-    from reportlab.platypus import Paragraph
-    from reportlab.platypus import Table, TableStyle
-    from reportlab.lib import colors
-
-    if not items:
-        return None
-
-    label_p = Paragraph(f"<b>{label}</b>", styles["chip_label"])
-    chips_text = "  •  ".join(items)
-    chips_p = Paragraph(chips_text, styles["chip_text"])
-
-    tbl = Table(
-        [[label_p, chips_p]],
-        colWidths=[50 * 2.835, 130 * 2.835],
-        style=TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(bg_color)),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 12),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 12),
         ]),
     )
     return tbl
@@ -228,17 +191,17 @@ def _talla_table(tallas: List[Dict[str, Any]]) -> Any:
     tbl.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(NAVY)),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor(TEXT)),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
     ]))
     for i in range(1, len(data)):
         if i % 2 == 0:
@@ -262,60 +225,57 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
         from reportlab.lib.units import mm
         from reportlab.platypus import (
             SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-            PageBreak, KeepTogether,
+            PageBreak, Image as RLImage,
         )
 
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer, pagesize=A4,
-            rightMargin=14 * mm, leftMargin=14 * mm,
-            topMargin=14 * mm, bottomMargin=16 * mm,
+            rightMargin=12 * mm, leftMargin=12 * mm,
+            topMargin=12 * mm, bottomMargin=14 * mm,
             title=f"Ficha técnica · {data.get('sku') or producto_id}",
         )
 
         # ── Estilos ───────────────────────────────────────────────────
         styles = {
+            "brand": ParagraphStyle(
+                "brand", fontName="Helvetica-Bold", fontSize=26,
+                textColor=colors.HexColor(NAVY), leading=30,
+                spaceAfter=0,
+            ),
+            "linea": ParagraphStyle(
+                "linea", fontName="Helvetica-Bold", fontSize=16,
+                textColor=colors.HexColor(NAVY_LIGHT), leading=20,
+                spaceAfter=0,
+            ),
+            "sku": ParagraphStyle(
+                "sku", fontName="Helvetica-Bold", fontSize=20,
+                textColor=colors.HexColor(ORANGE), leading=24,
+                spaceAfter=0,
+            ),
+            "subtitle": ParagraphStyle(
+                "subtitle", fontName="Helvetica", fontSize=10,
+                textColor=colors.HexColor(TEXT_SECONDARY), leading=13,
+            ),
+            "section_header": ParagraphStyle(
+                "section_header", fontName="Helvetica-Bold", fontSize=13,
+                textColor=colors.white, leading=16,
+            ),
             "body": ParagraphStyle(
                 "body", fontName="Helvetica", fontSize=10,
                 textColor=colors.HexColor(TEXT), leading=14,
             ),
-            "body_small": ParagraphStyle(
-                "body_small", fontName="Helvetica", fontSize=9,
-                textColor=colors.HexColor(TEXT_SECONDARY), leading=12,
-            ),
-            "h1": ParagraphStyle(
-                "h1", fontName="Helvetica-Bold", fontSize=24,
-                textColor=colors.white, leading=28,
-            ),
-            "h2": ParagraphStyle(
-                "h2", fontName="Helvetica-Bold", fontSize=11,
-                textColor=colors.HexColor(TEAL_LIGHT), leading=14,
-                spaceAfter=4,
-            ),
-            "sku": ParagraphStyle(
-                "sku", fontName="Courier", fontSize=12,
-                textColor=colors.HexColor("#cfe3ec"), leading=14,
-            ),
-            "section_header": ParagraphStyle(
-                "section_header", fontName="Helvetica-Bold", fontSize=11,
-                textColor=colors.HexColor(NAVY), leading=14,
-                spaceAfter=6,
+            "body_bold": ParagraphStyle(
+                "body_bold", fontName="Helvetica-Bold", fontSize=10,
+                textColor=colors.HexColor(TEXT), leading=14,
             ),
             "kv_label": ParagraphStyle(
-                "kv_label", fontName="Helvetica-Bold", fontSize=9,
-                textColor=colors.HexColor(TEXT_SECONDARY), leading=12,
+                "kv_label", fontName="Helvetica-Bold", fontSize=10,
+                textColor=colors.HexColor(TEXT), leading=13,
             ),
             "kv_value": ParagraphStyle(
-                "kv_value", fontName="Helvetica-Bold", fontSize=9,
-                textColor=colors.HexColor(TEXT), leading=12,
-            ),
-            "chip_label": ParagraphStyle(
-                "chip_label", fontName="Helvetica-Bold", fontSize=9,
-                textColor=colors.HexColor(NAVY), leading=12,
-            ),
-            "chip_text": ParagraphStyle(
-                "chip_text", fontName="Helvetica", fontSize=9,
-                textColor=colors.HexColor(TEXT), leading=12,
+                "kv_value", fontName="Helvetica", fontSize=10,
+                textColor=colors.HexColor(TEXT), leading=13,
             ),
             "footer": ParagraphStyle(
                 "footer", fontName="Helvetica", fontSize=8,
@@ -326,89 +286,82 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
         story = []
 
         # ══════════════════════════════════════════════════════════════
-        # PORTADA
+        # PORTADA — Header + Hero
         # ══════════════════════════════════════════════════════════════
 
-        # ── Header navy ───────────────────────────────────────────────
-        header_cells = []
-        header_cells.append(Paragraph(
-            f'<font color="{TEAL_LIGHT}">{_safe(data.get("marca_nombre") or "Marca")}</font>',
-            styles["h2"],
-        ))
-        header_cells.append(Spacer(1, 4))
-        header_cells.append(Paragraph(
-            _safe(data.get("nombre") or "Producto"), styles["h1"],
-        ))
-        header_cells.append(Spacer(1, 4))
-        header_cells.append(Paragraph(
-            f"SKU: {_safe(data.get('sku') or '—')}", styles["sku"],
-        ))
+        marca = data.get("marca_nombre") or "Marca"
+        sku = data.get("sku") or "—"
+        nombre = data.get("nombre") or "Producto"
+        descripcion = data.get("descripcion") or ""
 
+        # Header con marca, línea y SKU
+        header_cells = [
+            Paragraph(marca, styles["brand"]),
+            Paragraph(_safe(esp.get("familia") or esp.get("linea") or ""), styles["linea"]),
+            Paragraph(sku, styles["sku"]),
+        ]
         header_tbl = Table(
             [[header_cells]],
             colWidths=[180 * mm],
             style=TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(NAVY)),
-                ("BOX", (0, 0), (-1, -1), 1, colors.HexColor(NAVY)),
-                ("TOPPADDING", (0, 0), (-1, -1), 18),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
-                ("LEFTPADDING", (0, 0), (-1, -1), 20),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 20),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
             ]),
         )
         story.append(header_tbl)
-        story.append(Spacer(1, 16))
+        story.append(Spacer(1, 8))
 
-        # ── Hero: imagen + info base ──────────────────────────────────
+        # Subtítulo descriptivo
+        subtitle_parts = []
+        if data.get("categoria"):
+            subtitle_parts.append(data["categoria"])
+        if esp.get("tipo_puntera"):
+            subtitle_parts.append(f"con puntera de {esp['tipo_puntera'].lower()}")
+        if esp.get("capellada"):
+            subtitle_parts.append(f"capellada {esp['capellada'].lower()}")
+        if esp.get("cierre"):
+            subtitle_parts.append(f"cierre {esp['cierre'].lower()}")
+        if subtitle_parts:
+            story.append(Paragraph(
+                ", ".join(subtitle_parts) + ".",
+                styles["subtitle"],
+            ))
+        story.append(Spacer(1, 12))
+
+        # Hero: imagen principal grande + imágenes secundarias
         hero_key = data.get("imagen_url") or (
             esp.get("gallery") and esp.get("gallery")[0] or None
         )
-        hero_img = _minio_image(hero_key, max_w=1200, max_h=900) if hero_key else None
-        hero_rl = _rl_image(hero_img, max_w=85 * mm, max_h=95 * mm) if hero_img else None
+        hero_img = _minio_image(hero_key, max_w=2400, max_h=1800) if hero_key else None
+        hero_rl = _rl_image(hero_img, max_w=120 * mm, max_h=90 * mm) if hero_img else None
 
-        info_base = [
-            ("Categoría", data.get("categoria")),
-            ("Subcategoría", data.get("subcategoria")),
-            ("Color", esp.get("color")),
-            ("País de origen", data.get("pais_origen_iso2")),
-            ("NCM / HS Code", esp.get("ncm") or data.get("hs_code")),
-            ("Unidad", data.get("unidad")),
-            ("Moneda", data.get("moneda")),
-        ]
+        # Imágenes secundarias (vistas alternativas)
+        gallery_keys = _safe_list(esp.get("gallery"))
+        secondary_imgs = []
+        for k in gallery_keys[1:4]:
+            img = _minio_image(k, max_w=1200, max_h=900)
+            rl = _rl_image(img, max_w=55 * mm, max_h=40 * mm) if img else None
+            if rl:
+                secondary_imgs.append(rl)
 
-        # Tabla de info base con estilo
-        info_data = []
-        for label, value in info_base:
-            if value is None or value == "":
-                value = "—"
-            info_data.append([
-                Paragraph(label, styles["kv_label"]),
-                Paragraph(_safe(value), styles["kv_value"]),
-            ])
-
-        info_tbl = Table(info_data, colWidths=[45 * mm, 55 * mm])
-        info_tbl.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ("LINEBELOW", (0, 0), (-1, -2), 0.5, colors.HexColor(BORDER)),
-        ]))
-
-        left_cell = []
         if hero_rl:
-            left_cell.append(hero_rl)
+            left_cell = [hero_rl]
         else:
-            left_cell.append(Paragraph("Sin imagen", styles["body_small"]))
+            left_cell = [Paragraph("Sin imagen", styles["body"])]
 
-        right_cell = []
-        right_cell.append(_section_header("Información base", styles))
-        right_cell.append(info_tbl)
+        # Imágenes secundarias apiladas a la derecha
+        right_cells = []
+        if secondary_imgs:
+            for img in secondary_imgs:
+                right_cells.append([img])
+        if not right_cells:
+            right_cells = [[""]]
 
         hero_tbl = Table(
-            [[left_cell, right_cell]],
-            colWidths=[90 * mm, 100 * mm],
+            [[left_cell, right_cells]],
+            colWidths=[125 * mm, 60 * mm],
             style=TableStyle([
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("ALIGN", (0, 0), (0, 0), "CENTER"),
@@ -417,17 +370,15 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
             ]),
         )
         story.append(hero_tbl)
-        story.append(Spacer(1, 18))
+        story.append(Spacer(1, 16))
 
-        # ── Descripción ───────────────────────────────────────────────
-        descripcion = data.get("descripcion") or "Sin descripción disponible."
-        story.append(_section_header("Descripción", styles))
-        story.append(Paragraph(descripcion, styles["body"]))
-        story.append(Spacer(1, 18))
+        # ══════════════════════════════════════════════════════════════
+        # ESPECIFICACIONES TÉCNICAS
+        # ══════════════════════════════════════════════════════════════
+        story.append(_section_header("Especificaciones Técnicas", styles))
+        story.append(Spacer(1, 8))
 
-        # ── Atributos técnicos ────────────────────────────────────────
-        story.append(_section_header("Atributos técnicos", styles))
-        atributos = [
+        specs = [
             ("Tipo de calzado", esp.get("tipo_calzado")),
             ("Tipo de puntera", esp.get("tipo_puntera")),
             ("Cubre puntera", esp.get("cubrepuntera")),
@@ -438,19 +389,25 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
             ("Cierre", esp.get("cierre")),
             ("Plantilla interna", esp.get("plantilla_interna")),
             ("Materiales circulares", esp.get("materiales_circulares")),
+            ("Categoría", data.get("categoria")),
+            ("Color", esp.get("color")),
+            ("País de origen", data.get("pais_origen_iso2")),
+            ("NCM / HS Code", esp.get("ncm") or data.get("hs_code")),
+            ("Unidad", data.get("unidad")),
+            ("Moneda", data.get("moneda")),
         ]
 
-        attr_data = []
-        for label, value in atributos:
+        specs_data = []
+        for label, value in specs:
             if value is None or value == "":
                 value = "—"
-            attr_data.append([
+            specs_data.append([
                 Paragraph(label, styles["kv_label"]),
                 Paragraph(_safe(value), styles["kv_value"]),
             ])
 
-        attr_tbl = Table(attr_data, colWidths=[55 * mm, 125 * mm])
-        attr_tbl.setStyle(TableStyle([
+        specs_tbl = Table(specs_data, colWidths=[55 * mm, 125 * mm])
+        specs_tbl.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
@@ -458,26 +415,59 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
             ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
             ("LINEBELOW", (0, 0), (-1, -2), 0.5, colors.HexColor(BORDER)),
         ]))
-        story.append(attr_tbl)
-        story.append(Spacer(1, 18))
+        story.append(specs_tbl)
+        story.append(Spacer(1, 14))
 
-        # ── Normativa / Riesgos / Segmentos ───────────────────────────
-        chip_groups = [
-            ("Normativa", _safe_list(esp.get("normativa"))),
-            ("Disipativo de energía", _safe_list(esp.get("disipativo_energia"))),
-            ("Riesgo", _safe_list(esp.get("riesgo"))),
-            ("Segmento", _safe_list(esp.get("segmento"))),
-        ]
+        # ══════════════════════════════════════════════════════════════
+        # NORMATIVA / RIESGOS / SEGMENTOS
+        # ══════════════════════════════════════════════════════════════
+        normativa = _safe_list(esp.get("normativa"))
+        riesgo = _safe_list(esp.get("riesgo"))
+        segmento = _safe_list(esp.get("segmento"))
+        disipativo = _safe_list(esp.get("disipativo_energia"))
 
-        chips_story = []
-        for label, items in chip_groups:
-            if items:
-                chips_story.append(_chip_row(label, items, styles))
-        if chips_story:
-            story.append(_section_header("Normativa · Riesgos · Segmentos", styles))
-            for row in chips_story:
-                story.append(row)
-            story.append(Spacer(1, 12))
+        chips_data = []
+        if normativa:
+            chips_data.append([
+                Paragraph("<b>Normativa</b>", styles["kv_label"]),
+                Paragraph(", ".join(normativa), styles["kv_value"]),
+            ])
+        if disipativo:
+            chips_data.append([
+                Paragraph("<b>Disipativo</b>", styles["kv_label"]),
+                Paragraph(", ".join(disipativo), styles["kv_value"]),
+            ])
+        if riesgo:
+            chips_data.append([
+                Paragraph("<b>Riesgo</b>", styles["kv_label"]),
+                Paragraph(", ".join(riesgo), styles["kv_value"]),
+            ])
+        if segmento:
+            chips_data.append([
+                Paragraph("<b>Segmento</b>", styles["kv_label"]),
+                Paragraph(", ".join(segmento), styles["kv_value"]),
+            ])
+
+        if chips_data:
+            chips_tbl = Table(chips_data, colWidths=[40 * mm, 140 * mm])
+            chips_tbl.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]))
+            story.append(chips_tbl)
+            story.append(Spacer(1, 14))
+
+        # ══════════════════════════════════════════════════════════════
+        # DESCRIPCIÓN
+        # ══════════════════════════════════════════════════════════════
+        if descripcion:
+            story.append(_section_header("Descripción", styles, bg_color=NAVY_LIGHT))
+            story.append(Spacer(1, 8))
+            story.append(Paragraph(descripcion, styles["body"]))
+            story.append(Spacer(1, 14))
 
         # ══════════════════════════════════════════════════════════════
         # TABLA DE TALLAS
@@ -486,34 +476,34 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
         tallas = _fetch_tallas(talla_ids)
         if tallas:
             story.append(PageBreak())
-            story.append(_section_header("Tabla de tallas y equivalencias", styles))
+            story.append(_section_header("Tabla de tallas y equivalencias", styles, bg_color=NAVY))
+            story.append(Spacer(1, 8))
             story.append(_talla_table(tallas))
-            story.append(Spacer(1, 12))
+            story.append(Spacer(1, 14))
 
         # ══════════════════════════════════════════════════════════════
-        # GALERÍA
+        # GALERÍA (si hay más de 1 imagen)
         # ══════════════════════════════════════════════════════════════
-        gallery_keys = _safe_list(esp.get("gallery"))
-        if len(gallery_keys) > 1:
+        if len(gallery_keys) > 1 and len(secondary_imgs) < 3:
             gallery_imgs = []
-            for k in gallery_keys[1:4]:
-                img = _minio_image(k, max_w=900, max_h=700)
+            for k in gallery_keys[1:5]:
+                img = _minio_image(k, max_w=1200, max_h=900)
                 rl = _rl_image(img, max_w=55 * mm, max_h=55 * mm) if img else None
                 if rl:
                     gallery_imgs.append(rl)
             if gallery_imgs:
-                story.append(PageBreak())
-                story.append(_section_header("Galería", styles))
+                story.append(_section_header("Galería", styles, bg_color=TEAL))
+                story.append(Spacer(1, 8))
                 gal_tbl = Table([gallery_imgs], colWidths=[60 * mm] * len(gallery_imgs))
                 gal_tbl.setStyle(TableStyle([
                     ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ]))
                 story.append(gal_tbl)
-                story.append(Spacer(1, 12))
+                story.append(Spacer(1, 14))
 
         # ── Footer ────────────────────────────────────────────────────
-        story.append(Spacer(1, 24))
+        story.append(Spacer(1, 20))
         story.append(Paragraph(
             f"Ficha técnica generada por MWT.ONE · {timezone.now().strftime('%d/%m/%Y %H:%M')}",
             styles["footer"],
