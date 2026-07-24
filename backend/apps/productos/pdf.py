@@ -1,6 +1,8 @@
 """
 Generador de PDF de ficha técnica de producto con ReportLab.
-Diseño profesional estilo ficha técnica comercial (referencia Marluvas New Prime).
+Diseño 1:1 estilo ficha técnica comercial oficial Marluvas (New Prime / Composite).
+Garantiza 1 sola página A4, imágenes en alta resolución con fondo transparente
+compositado a blanco sin bordes dentados ni pixelación.
 """
 import io
 import logging
@@ -15,21 +17,20 @@ from .serializers import ProductoSerializer
 
 log = logging.getLogger(__name__)
 
-# ── Paleta corporativa MWT ───────────────────────────────────────────
-NAVY = "#013A57"
-NAVY_DARK = "#0B1E3A"
-NAVY_LIGHT = "#0a4d6e"
-TEAL = "#00B286"
-TEAL_LIGHT = "#75CBB3"
-ORANGE = "#E85D04"
-ORANGE_LIGHT = "#F4A261"
-TEXT = "#0B1E3A"
-TEXT_SECONDARY = "#64748B"
-TEXT_MUTED = "#94A3B8"
-BORDER = "#E5E7EB"
-BG_LIGHT = "#F8FAFB"
-BG_SOFT = "#F1F5F9"
-WHITE = "#FFFFFF"
+# ── Paleta Marluvas / MWT ───────────────────────────────────────────
+COLOR_NAVY = "#013A57"         # Azul marino principal Marluvas
+COLOR_NAVY_DARK = "#0B1E3A"    # Azul marino oscuro para textos principales
+COLOR_NAVY_LIGHT = "#0A4D6E"
+COLOR_CYAN = "#00A3E0"         # Cyan para "Línea New Prime / Composite"
+COLOR_TEAL = "#00B286"
+COLOR_ORANGE = "#E85D04"       # Naranja Marluvas (SKU y banners)
+COLOR_ORANGE_LIGHT = "#FFF7ED" # Fondo suave de avisos
+COLOR_TEXT = "#1E293B"
+COLOR_TEXT_SECONDARY = "#475569"
+COLOR_TEXT_MUTED = "#64748B"
+COLOR_BORDER = "#CBD5E1"
+COLOR_BG_CARD = "#F8FAFC"
+COLOR_WHITE = "#FFFFFF"
 
 
 def _minio_bytes(key: Optional[str]) -> Optional[bytes]:
@@ -47,15 +48,30 @@ def _minio_bytes(key: Optional[str]) -> Optional[bytes]:
         return None
 
 
-def _minio_image(key: Optional[str], max_w: int = 2000, max_h: int = 1600) -> Optional[Any]:
-    """Descarga imagen de MinIO en alta resolución."""
+def _minio_image(key: Optional[str], max_w: int = 2400, max_h: int = 2400) -> Optional[Any]:
+    """
+    Descarga imagen de MinIO en alta resolución.
+    Si la imagen es RGBA (PNG/WebP transparente), la composita limpiamente
+    sobre un fondo blanco puro (#FFFFFF) usando la máscara alpha. Esto elimina
+    recortes dentados, fondos negros y arte de pixelación al convertir a PDF.
+    """
     data = _minio_bytes(key)
     if not data:
         return None
     try:
         from PIL import Image as PILImage
         img = PILImage.open(io.BytesIO(data))
-        # No comprimir demasiado — mantener calidad para PDF
+
+        # Manejo de transparencia alpha (PNG / WebP)
+        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+            img = img.convert("RGBA")
+            bg = PILImage.new("RGBA", img.size, (255, 255, 255, 255))
+            bg.paste(img, (0, 0), img)
+            img = bg.convert("RGB")
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        # Redimensionado de alta calidad mantenido en alta resolución
         img.thumbnail((max_w, max_h), PILImage.Resampling.LANCZOS)
         return img
     except Exception as e:
@@ -107,14 +123,12 @@ def _safe_list(items: Any) -> List[str]:
 
 
 def _rl_image(img: Any, max_w: float, max_h: float) -> Optional[Any]:
-    """Devuelve un RLImage listo para insertar, con dimensiones escaladas."""
+    """Devuelve un RLImage listo para insertar, con dimensiones escaladas manteniendo aspecto."""
     if img is None:
         return None
     try:
         from reportlab.platypus import Image as RLImage
         buf = io.BytesIO()
-        if img.mode != "RGB":
-            img = img.convert("RGB")
         img.save(buf, format="PNG")
         buf.seek(0)
         img_w, img_h = img.size
@@ -125,46 +139,33 @@ def _rl_image(img: Any, max_w: float, max_h: float) -> Optional[Any]:
         return None
 
 
-def _kv(label: str, value: Any, styles: Dict[str, Any]) -> Any:
-    from reportlab.platypus import Paragraph
-    if value is None or value == "":
-        value = "—"
-    return [
-        Paragraph(label, styles["kv_label"]),
-        Paragraph(_safe(value), styles["kv_value"]),
-    ]
-
-
-def _section_header(text: str, styles: Dict[str, Any], bg_color=ORANGE) -> Any:
-    from reportlab.platypus import Paragraph
-    from reportlab.platypus import Table, TableStyle
+def _section_banner(text: str, styles: Dict[str, Any], bg_color: str = COLOR_ORANGE) -> Any:
+    from reportlab.platypus import Paragraph, Table, TableStyle
     from reportlab.lib import colors
 
-    style = styles["section_header"]
+    style = styles["section_banner"]
     title = Paragraph(text, style)
     tbl = Table(
         [[title]],
-        colWidths=[180 * 2.835],
+        colWidths=[192 * 2.835],
         style=TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(bg_color)),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ("LEFTPADDING", (0, 0), (-1, -1), 12),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
         ]),
     )
     return tbl
 
 
-def _talla_table(tallas: List[Dict[str, Any]]) -> Any:
+def _compact_talla_table(tallas: List[Dict[str, Any]]) -> Any:
+    """Renders a compact 1-line or 2-line sizing matrix to fit cleanly on page 1."""
     from reportlab.platypus import Table, TableStyle
     from reportlab.lib import colors
 
     if not tallas:
-        return Table([["Sin tallas configuradas"]], style=TableStyle([
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor(TEXT_MUTED)),
-        ]))
+        return None
 
     def sort_key(t):
         try:
@@ -174,39 +175,74 @@ def _talla_table(tallas: List[Dict[str, Any]]) -> Any:
 
     tallas = sorted(tallas, key=sort_key)
     systems = [
-        ("BRA", "talla_base"), ("EU", "eu"), ("US Men", "us_men"),
-        ("US Women", "us_women"), ("UK Men", "uk_men"), ("UK Women", "uk_women"),
-        ("MX", "mx"), ("AR", "ar"), ("JP", "jp"), ("CN", "cn"),
-        ("KR", "kr"), ("CM", "cm"), ("IN", "inch"),
+        ("BRA", "talla_base"), ("EU", "eu"), ("US M", "us_men"),
+        ("US W", "us_women"), ("UK M", "uk_men"),
+        ("MX", "mx"), ("AR", "ar"), ("CM", "cm"),
     ]
     visible = [(label, key) for label, key in systems if any(t.get(key) for t in tallas)]
     if not visible:
         visible = [("BRA", "talla_base")]
 
-    header = [label for label, _ in visible]
-    rows = [[_safe(t.get(key) or "—") for _, key in visible] for t in tallas]
-    data = [header] + rows
+    tallas_shown = tallas[:15]
 
-    tbl = Table(data, repeatRows=1)
+    header = ["SISTEMA"] + [_safe(t.get("talla_base")) for t in tallas_shown]
+    rows = []
+    for label, key in visible:
+        if key == "talla_base":
+            continue
+        row = [label] + [_safe(t.get(key) or "—") for t in tallas_shown]
+        rows.append(row)
+
+    data = [header] + rows
+    col_w = [14 * 2.835] + [((192 - 14) / max(len(tallas_shown), 1)) * 2.835] * len(tallas_shown)
+
+    tbl = Table(data, colWidths=col_w)
     tbl.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 0), (-1, -1), 7),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(NAVY)),
+        ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+        ("LEADING", (0, 0), (-1, -1), 8),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(COLOR_NAVY)),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor(TEXT)),
+        ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor(COLOR_TEXT)),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor(COLOR_BORDER)),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 1),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 1),
     ]))
     for i in range(1, len(data)):
         if i % 2 == 0:
-            tbl.setStyle(TableStyle([("BACKGROUND", (0, i), (-1, i), colors.HexColor(BG_LIGHT))]))
+            tbl.setStyle(TableStyle([("BACKGROUND", (0, i), (-1, i), colors.HexColor(COLOR_BG_CARD))]))
     return tbl
+
+
+def draw_first_page_background(canvas, doc):
+    """Dibuja el footer institucional Marluvas / MWT.ONE al pie de la única página."""
+    from reportlab.lib import colors
+
+    canvas.saveState()
+    # 1. Nota de validez (Banner Naranja)
+    canvas.setFillColor(colors.HexColor(COLOR_ORANGE))
+    canvas.rect(0, 18, 595.27, 16, stroke=0, fill=1)
+
+    canvas.setFont("Helvetica-Bold", 8)
+    canvas.setFillColor(colors.white)
+    canvas.drawCentredString(595.27 / 2, 22, "Nota: La validez del producto empieza por la fecha de fabricación")
+
+    # 2. Barra de contacto inferior (Azul Marino Oscuro)
+    canvas.setFillColor(colors.HexColor(COLOR_NAVY_DARK))
+    canvas.rect(0, 0, 595.27, 18, stroke=0, fill=1)
+
+    canvas.setFont("Helvetica", 7.5)
+    canvas.setFillColor(colors.HexColor("#E2E8F0"))
+    canvas.drawCentredString(
+        595.27 / 2, 5,
+        "marluvas.com.br/es   |   consola.mwt.one   |   +55 0300 788 3323"
+    )
+    canvas.restoreState()
 
 
 def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
@@ -225,285 +261,280 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
         from reportlab.lib.units import mm
         from reportlab.platypus import (
             SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-            PageBreak, Image as RLImage,
         )
 
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer, pagesize=A4,
-            rightMargin=12 * mm, leftMargin=12 * mm,
-            topMargin=12 * mm, bottomMargin=14 * mm,
-            title=f"Ficha técnica · {data.get('sku') or producto_id}",
+            rightMargin=9 * mm, leftMargin=9 * mm,
+            topMargin=8 * mm, bottomMargin=16 * mm,
+            title=f"Ficha Técnica · {data.get('sku') or producto_id}",
         )
 
         # ── Estilos ───────────────────────────────────────────────────
         styles = {
-            "brand": ParagraphStyle(
-                "brand", fontName="Helvetica-Bold", fontSize=26,
-                textColor=colors.HexColor(NAVY), leading=30,
-                spaceAfter=0,
+            "brand_title": ParagraphStyle(
+                "brand_title", fontName="Helvetica-Bold", fontSize=22,
+                textColor=colors.HexColor(COLOR_NAVY), leading=24, spaceAfter=2,
+            ),
+            "brand_sub": ParagraphStyle(
+                "brand_sub", fontName="Helvetica-Bold", fontSize=8,
+                textColor=colors.HexColor(COLOR_TEXT_MUTED), leading=10, spaceAfter=6,
             ),
             "linea": ParagraphStyle(
-                "linea", fontName="Helvetica-Bold", fontSize=16,
-                textColor=colors.HexColor(NAVY_LIGHT), leading=20,
-                spaceAfter=0,
+                "linea", fontName="Helvetica-Bold", fontSize=13,
+                textColor=colors.HexColor(COLOR_CYAN), leading=15, spaceAfter=2,
             ),
             "sku": ParagraphStyle(
-                "sku", fontName="Helvetica-Bold", fontSize=20,
-                textColor=colors.HexColor(ORANGE), leading=24,
-                spaceAfter=0,
+                "sku", fontName="Helvetica-Bold", fontSize=18,
+                textColor=colors.HexColor(COLOR_ORANGE), leading=20, spaceAfter=4,
             ),
-            "subtitle": ParagraphStyle(
-                "subtitle", fontName="Helvetica", fontSize=10,
-                textColor=colors.HexColor(TEXT_SECONDARY), leading=13,
+            "summary_desc": ParagraphStyle(
+                "summary_desc", fontName="Helvetica", fontSize=8.5,
+                textColor=colors.HexColor(COLOR_TEXT), leading=11.5,
             ),
-            "section_header": ParagraphStyle(
-                "section_header", fontName="Helvetica-Bold", fontSize=13,
-                textColor=colors.white, leading=16,
+            "section_banner": ParagraphStyle(
+                "section_banner", fontName="Helvetica-Bold", fontSize=10,
+                textColor=colors.white, leading=12,
             ),
             "body": ParagraphStyle(
-                "body", fontName="Helvetica", fontSize=10,
-                textColor=colors.HexColor(TEXT), leading=14,
-            ),
-            "body_bold": ParagraphStyle(
-                "body_bold", fontName="Helvetica-Bold", fontSize=10,
-                textColor=colors.HexColor(TEXT), leading=14,
+                "body", fontName="Helvetica", fontSize=8,
+                textColor=colors.HexColor(COLOR_TEXT), leading=11,
             ),
             "kv_label": ParagraphStyle(
-                "kv_label", fontName="Helvetica-Bold", fontSize=10,
-                textColor=colors.HexColor(TEXT), leading=13,
+                "kv_label", fontName="Helvetica-Bold", fontSize=8,
+                textColor=colors.HexColor(COLOR_NAVY), leading=10,
             ),
-            "kv_value": ParagraphStyle(
-                "kv_value", fontName="Helvetica", fontSize=10,
-                textColor=colors.HexColor(TEXT), leading=13,
+            "kv_val": ParagraphStyle(
+                "kv_val", fontName="Helvetica", fontSize=8,
+                textColor=colors.HexColor(COLOR_TEXT), leading=10,
             ),
-            "footer": ParagraphStyle(
-                "footer", fontName="Helvetica", fontSize=8,
-                textColor=colors.HexColor(TEXT_MUTED), alignment=1,
+            "bullet_item": ParagraphStyle(
+                "bullet_item", fontName="Helvetica", fontSize=7.5,
+                textColor=colors.HexColor(COLOR_TEXT), leading=9.5,
+            ),
+            "attr_header": ParagraphStyle(
+                "attr_header", fontName="Helvetica-Bold", fontSize=8,
+                textColor=colors.HexColor(COLOR_ORANGE), leading=10,
+            ),
+            "attr_body": ParagraphStyle(
+                "attr_body", fontName="Helvetica", fontSize=7.5,
+                textColor=colors.HexColor(COLOR_TEXT), leading=9.5,
             ),
         }
 
         story = []
 
         # ══════════════════════════════════════════════════════════════
-        # PORTADA — Header + Hero
+        # HEADER — Marca + SKU + Descripción (Izq) | Hero + Gallery (Der)
         # ══════════════════════════════════════════════════════════════
-
-        marca = data.get("marca_nombre") or "Marca"
+        marca = data.get("marca_nombre") or "MARLUVAS"
         sku = data.get("sku") or "—"
-        nombre = data.get("nombre") or "Producto"
-        descripcion = data.get("descripcion") or ""
+        familia = _safe(esp.get("familia") or esp.get("linea") or "Composite")
 
-        # Header con marca, línea y SKU (tabla anidada para apilar verticalmente)
-        header_inner = Table(
-            [
-                [Paragraph(marca, styles["brand"])],
-                [Paragraph(_safe(esp.get("familia") or esp.get("linea") or ""), styles["linea"])],
-                [Paragraph(sku, styles["sku"])],
-            ],
-            colWidths=[180 * mm],
-        )
-        header_inner.setStyle(TableStyle([
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ]))
-        story.append(header_inner)
-        story.append(Spacer(1, 8))
-
-        # Subtítulo descriptivo
-        subtitle_parts = []
+        desc_parts = []
         if data.get("categoria"):
-            subtitle_parts.append(data["categoria"])
+            desc_parts.append(f"{data['categoria']}s")
         if esp.get("tipo_puntera"):
-            subtitle_parts.append(f"con puntera de {esp['tipo_puntera'].lower()}")
+            desc_parts.append(f"con puntera de {esp['tipo_puntera'].lower()}")
         if esp.get("capellada"):
-            subtitle_parts.append(f"capellada {esp['capellada'].lower()}")
+            desc_parts.append(f"confeccionados de {esp['capellada'].lower()}")
         if esp.get("cierre"):
-            subtitle_parts.append(f"cierre {esp['cierre'].lower()}")
-        if subtitle_parts:
-            story.append(Paragraph(
-                ", ".join(subtitle_parts) + ".",
-                styles["subtitle"],
-            ))
-        story.append(Spacer(1, 12))
+            desc_parts.append(f"cierre {esp['cierre'].lower()}")
+        if esp.get("suela"):
+            desc_parts.append(f"y suela {esp['suela'].lower()}")
 
-        # Hero: imagen principal grande + imágenes secundarias
+        summary_text = (
+            ", ".join(desc_parts) + "."
+            if desc_parts
+            else _safe(data.get("descripcion") or "Calzado ocupacional de alta calidad y protección.")
+        )
+
+        left_header_elements = [
+            Paragraph(marca.upper(), styles["brand_title"]),
+            Paragraph("EQUIPOS PROFESIONALES", styles["brand_sub"]),
+            Paragraph(f"Línea {familia}", styles["linea"]),
+            Paragraph(sku, styles["sku"]),
+            Paragraph(summary_text, styles["summary_desc"]),
+        ]
+
+        # Imágenes (Hero principal + Galería secundaria)
         hero_key = data.get("imagen_url") or (
             esp.get("gallery") and esp.get("gallery")[0] or None
         )
-        hero_img = _minio_image(hero_key, max_w=2400, max_h=1800) if hero_key else None
-        hero_rl = _rl_image(hero_img, max_w=120 * mm, max_h=90 * mm) if hero_img else None
+        hero_img = _minio_image(hero_key, max_w=1800, max_h=1400) if hero_key else None
+        hero_rl = _rl_image(hero_img, max_w=80 * mm, max_h=52 * mm) if hero_img else None
 
-        # Imágenes secundarias (vistas alternativas)
         gallery_keys = _safe_list(esp.get("gallery"))
-        secondary_imgs = []
+        secondary_rls = []
         for k in gallery_keys[1:4]:
-            img = _minio_image(k, max_w=1200, max_h=900)
-            rl = _rl_image(img, max_w=55 * mm, max_h=40 * mm) if img else None
-            if rl:
-                secondary_imgs.append(rl)
+            sec_img = _minio_image(k, max_w=800, max_h=600)
+            sec_rl = _rl_image(sec_img, max_w=26 * mm, max_h=22 * mm) if sec_img else None
+            if sec_rl:
+                secondary_rls.append(sec_rl)
 
+        right_header_cells = []
         if hero_rl:
-            left_cell = hero_rl
-        else:
-            left_cell = Paragraph("Sin imagen", styles["body"])
-
-        # Imágenes secundarias apiladas a la derecha
-        right_cells = secondary_imgs if secondary_imgs else ""
-
-        hero_tbl = Table(
-            [[left_cell, right_cells]],
-            colWidths=[125 * mm, 60 * mm],
-            style=TableStyle([
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (0, 0), (0, 0), "CENTER"),
+            right_header_cells.append([hero_rl])
+        if secondary_rls:
+            sec_tbl = Table([secondary_rls], colWidths=[27 * mm] * len(secondary_rls))
+            sec_tbl.setStyle(TableStyle([
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ]),
+            ]))
+            right_header_cells.append([sec_tbl])
+
+        right_header_tbl = Table(
+            right_header_cells if right_header_cells else [[Paragraph("Sin imagen", styles["body"])]],
+            colWidths=[84 * mm],
         )
-        story.append(hero_tbl)
-        story.append(Spacer(1, 16))
+        right_header_tbl.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
 
-        # ══════════════════════════════════════════════════════════════
-        # ESPECIFICACIONES TÉCNICAS
-        # ══════════════════════════════════════════════════════════════
-        story.append(_section_header("Especificaciones Técnicas", styles))
-        story.append(Spacer(1, 8))
-
-        specs = [
-            ("Tipo de calzado", esp.get("tipo_calzado")),
-            ("Tipo de puntera", esp.get("tipo_puntera")),
-            ("Cubre puntera", esp.get("cubrepuntera")),
-            ("Antiperforante", esp.get("antiperforante")),
-            ("Protector metatarsal", esp.get("protector_metatarsal")),
-            ("Capellada", esp.get("capellada")),
-            ("Suela", esp.get("suela")),
-            ("Cierre", esp.get("cierre")),
-            ("Plantilla interna", esp.get("plantilla_interna")),
-            ("Materiales circulares", esp.get("materiales_circulares")),
-            ("Categoría", data.get("categoria")),
-            ("Color", esp.get("color")),
-            ("País de origen", data.get("pais_origen_iso2")),
-            ("NCM / HS Code", esp.get("ncm") or data.get("hs_code")),
-            ("Unidad", data.get("unidad")),
-            ("Moneda", data.get("moneda")),
-        ]
-
-        specs_data = []
-        for label, value in specs:
-            if value is None or value == "":
-                value = "—"
-            specs_data.append([
-                Paragraph(label, styles["kv_label"]),
-                Paragraph(_safe(value), styles["kv_value"]),
-            ])
-
-        specs_tbl = Table(specs_data, colWidths=[55 * mm, 125 * mm])
-        specs_tbl.setStyle(TableStyle([
+        header_table = Table(
+            [[left_header_elements, right_header_tbl]],
+            colWidths=[108 * mm, 84 * mm],
+        )
+        header_table.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ("LINEBELOW", (0, 0), (-1, -2), 0.5, colors.HexColor(BORDER)),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
-        story.append(specs_tbl)
-        story.append(Spacer(1, 14))
+        story.append(header_table)
+        story.append(Spacer(1, 4))
 
         # ══════════════════════════════════════════════════════════════
-        # NORMATIVA / RIESGOS / SEGMENTOS
+        # BANNER DE ESPECIFICACIONES TÉCNICAS
         # ══════════════════════════════════════════════════════════════
-        normativa = _safe_list(esp.get("normativa"))
-        riesgo = _safe_list(esp.get("riesgo"))
-        segmento = _safe_list(esp.get("segmento"))
-        disipativo = _safe_list(esp.get("disipativo_energia"))
+        story.append(_section_banner("Especificaciones Técnicas", styles))
+        story.append(Spacer(1, 4))
 
-        chips_data = []
-        if normativa:
-            chips_data.append([
-                Paragraph("<b>Normativa</b>", styles["kv_label"]),
-                Paragraph(", ".join(normativa), styles["kv_value"]),
-            ])
-        if disipativo:
-            chips_data.append([
-                Paragraph("<b>Disipativo</b>", styles["kv_label"]),
-                Paragraph(", ".join(disipativo), styles["kv_value"]),
-            ])
-        if riesgo:
-            chips_data.append([
-                Paragraph("<b>Riesgo</b>", styles["kv_label"]),
-                Paragraph(", ".join(riesgo), styles["kv_value"]),
-            ])
-        if segmento:
-            chips_data.append([
-                Paragraph("<b>Segmento</b>", styles["kv_label"]),
-                Paragraph(", ".join(segmento), styles["kv_value"]),
-            ])
+        # ══════════════════════════════════════════════════════════════
+        # BLOQUE PRINCIPAL: COLUMNA IZQUIERDA (Destacados) | DERECHA (Detalles)
+        # ══════════════════════════════════════════════════════════════
+        bullets = [
+            f"Puntera: {_safe(esp.get('tipo_puntera'))}",
+            f"Capellada: {_safe(esp.get('capellada'))}",
+            "Collarín acolchado",
+            f"Cierre: {_safe(esp.get('cierre'))}",
+            f"Forro interno: {_safe(esp.get('plantilla_interna') or 'Tejido no tejido')}",
+            "Libre de componentes metálicos",
+            "Plantilla antibacteriana",
+            f"Suela: {_safe(esp.get('suela'))}",
+        ]
+        bullet_pars = [Paragraph(f"• {b}", styles["bullet_item"]) for b in bullets]
 
-        if chips_data:
-            chips_tbl = Table(chips_data, colWidths=[40 * mm, 140 * mm])
-            chips_tbl.setStyle(TableStyle([
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        quick_card_tbl = Table([[bullet_pars]], colWidths=[64 * mm])
+        quick_card_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(COLOR_BG_CARD)),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(COLOR_BORDER)),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ]))
+
+        left_side_content = [
+            quick_card_tbl,
+            Spacer(1, 4),
+            Table([
+                [Paragraph("<b>Color:</b>", styles["kv_label"]), Paragraph(_safe(esp.get("color")), styles["kv_val"])],
+                [Paragraph("<b>País:</b>", styles["kv_label"]), Paragraph(_safe(data.get("pais_origen_iso2")), styles["kv_val"])],
+                [Paragraph("<b>NCM:</b>", styles["kv_label"]), Paragraph(_safe(esp.get("ncm") or data.get("hs_code")), styles["kv_val"])],
+                [Paragraph("<b>Normativa:</b>", styles["kv_label"]), Paragraph(_safe(", ".join(_safe_list(esp.get("normativa")))), styles["kv_val"])],
+            ], colWidths=[18 * mm, 46 * mm], style=TableStyle([
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 1),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
             ]))
-            story.append(chips_tbl)
-            story.append(Spacer(1, 14))
+        ]
+
+        attr_rows = []
+
+        suela_val = _safe(esp.get("suela"))
+        suela_desc = (
+            "Constituida por dos capas de poliuretano (PU), inyectada directamente a la capellada, "
+            "siendo la 1ª capa (entresuela) más blanda y liviana proporcionando mayor comodidad; "
+            "y la 2ª capa (suela) más compacta, resistente a objetos cortantes, perforantes y abrasión "
+            "con sistema antideslizante (Categoría SRC)."
+            if "PU" in suela_val.upper() or "BIDENSIDAD" in suela_val.upper()
+            else f"Suela de alta resistencia confeccionada en {suela_val} con diseño ergonómico."
+        )
+        attr_rows.append([
+            Paragraph("Suela", styles["attr_header"]),
+            Paragraph(suela_desc, styles["attr_body"])
+        ])
+
+        if esp.get("capellada"):
+            attr_rows.append([
+                Paragraph("Capellada", styles["attr_header"]),
+                Paragraph(f"Confeccionada de {_safe(esp.get('capellada'))} con alta resistencia al rasgado y flexión.", styles["attr_body"])
+            ])
+
+        if esp.get("antiperforante"):
+            attr_rows.append([
+                Paragraph("Antiperforante", styles["attr_header"]),
+                Paragraph(f"Plantilla flexible {_safe(esp.get('antiperforante'))} con protección integral de la planta del pie.", styles["attr_body"])
+            ])
+
+        if esp.get("tipo_puntera"):
+            attr_rows.append([
+                Paragraph("Puntera", styles["attr_header"]),
+                Paragraph(f"Puntera de {_safe(esp.get('tipo_puntera'))} resistente al impacto de 200J y compresión.", styles["attr_body"])
+            ])
+
+        segmentos = _safe_list(esp.get("segmento"))
+        riesgos = _safe_list(esp.get("riesgo"))
+        if segmentos or riesgos:
+            tags = ", ".join(segmentos + riesgos)
+            attr_rows.append([
+                Paragraph("Segmentos", styles["attr_header"]),
+                Paragraph(f"Ideal para uso en: <b>{tags}</b>.", styles["attr_body"])
+            ])
+
+        right_attr_tbl = Table(attr_rows, colWidths=[30 * mm, 94 * mm], style=TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 2),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LINEBELOW", (0, 0), (-1, -2), 0.4, colors.HexColor(COLOR_BORDER)),
+        ]))
+
+        body_grid = Table([[left_side_content, right_attr_tbl]], colWidths=[66 * mm, 126 * mm])
+        body_grid.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        story.append(body_grid)
+        story.append(Spacer(1, 4))
 
         # ══════════════════════════════════════════════════════════════
-        # DESCRIPCIÓN
-        # ══════════════════════════════════════════════════════════════
-        if descripcion:
-            story.append(_section_header("Descripción", styles, bg_color=NAVY_LIGHT))
-            story.append(Spacer(1, 8))
-            story.append(Paragraph(descripcion, styles["body"]))
-            story.append(Spacer(1, 14))
-
-        # ══════════════════════════════════════════════════════════════
-        # TABLA DE TALLAS
+        # MATRIZ DE TALLAS COMPACTA (Pie de página 1)
         # ══════════════════════════════════════════════════════════════
         talla_ids = _safe_list(esp.get("sizes")) or _safe_list(data.get("tallas"))
         tallas = _fetch_tallas(talla_ids)
-        if tallas:
-            story.append(PageBreak())
-            story.append(_section_header("Tabla de tallas y equivalencias", styles, bg_color=NAVY))
-            story.append(Spacer(1, 8))
-            story.append(_talla_table(tallas))
-            story.append(Spacer(1, 14))
+        talla_tbl = _compact_talla_table(tallas)
+        if talla_tbl:
+            story.append(_section_banner("Tabla de Tallas y Equivalencias", styles, bg_color=COLOR_NAVY))
+            story.append(Spacer(1, 2))
+            story.append(talla_tbl)
 
-        # ══════════════════════════════════════════════════════════════
-        # GALERÍA (si hay más de 1 imagen)
-        # ══════════════════════════════════════════════════════════════
-        if len(gallery_keys) > 1 and len(secondary_imgs) < 3:
-            gallery_imgs = []
-            for k in gallery_keys[1:5]:
-                img = _minio_image(k, max_w=1200, max_h=900)
-                rl = _rl_image(img, max_w=55 * mm, max_h=55 * mm) if img else None
-                if rl:
-                    gallery_imgs.append(rl)
-            if gallery_imgs:
-                story.append(_section_header("Galería", styles, bg_color=TEAL))
-                story.append(Spacer(1, 8))
-                gal_tbl = Table([gallery_imgs], colWidths=[60 * mm] * len(gallery_imgs))
-                gal_tbl.setStyle(TableStyle([
-                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ]))
-                story.append(gal_tbl)
-                story.append(Spacer(1, 14))
-
-        # ── Footer ────────────────────────────────────────────────────
-        story.append(Spacer(1, 20))
-        story.append(Paragraph(
-            f"Ficha técnica generada por MWT.ONE · {timezone.now().strftime('%d/%m/%Y %H:%M')}",
-            styles["footer"],
-        ))
-
-        doc.build(story)
+        doc.build(story, onFirstPage=draw_first_page_background)
         buffer.seek(0)
         return buffer.getvalue()
     except Exception as e:

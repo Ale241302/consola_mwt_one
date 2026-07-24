@@ -917,8 +917,19 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
   const p = full || product || {};
   const esp = p.especificaciones || {};
   const L = (es, en) => (lang === "es" ? es : en);
-  const imgKey = p.imagen_url
-    || (Array.isArray(esp.gallery) && esp.gallery.length ? esp.gallery[0] : null);
+
+  const allImages = useMemo(() => {
+    const arr = [
+      p.imagen_url,
+      ...(Array.isArray(esp.gallery) ? esp.gallery : [])
+    ].filter((k) => k && typeof k === "string");
+    return [...new Set(arr)];
+  }, [p.imagen_url, esp.gallery]);
+
+  const [activeImgKey, setActiveImgKey] = useState(allImages[0] || null);
+  useEffect(() => {
+    setActiveImgKey(allImages[0] || null);
+  }, [allImages]);
 
   // ── Fichas técnicas (PDF) — ficha_url + especificaciones.fichas[]
   const fichaKeys = [...new Set(
@@ -1114,20 +1125,48 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
             {card(
               <div style={{
                 height: "100%", minHeight: 220,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                overflow: "hidden", borderRadius: 8,
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                gap: 12, borderRadius: 8, padding: 4,
               }}>
-                {imgKey ? (
-                  <img
-                    src={storageApi.downloadUrl(imgKey)}
-                    alt={p.nombre || p.sku || "producto"}
-                    style={{ width: "100%", height: "100%", objectFit: "contain", padding: 8 }}
-                    onError={(e) => { e.currentTarget.style.display = "none"; }}
-                  />
-                ) : (
-                  <span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
-                    {L("Sin imagen", "No image")}
-                  </span>
+                <div style={{
+                  width: "100%", height: 200, display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "#fff", borderRadius: 8, overflow: "hidden",
+                }}>
+                  {activeImgKey ? (
+                    <img
+                      src={storageApi.downloadUrl(activeImgKey)}
+                      alt={p.nombre || p.sku || "producto"}
+                      style={{ width: "100%", height: "100%", objectFit: "contain", padding: 6 }}
+                      onError={(e) => { e.currentTarget.style.display = "none"; }}
+                    />
+                  ) : (
+                    <span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
+                      {L("Sin imagen", "No image")}
+                    </span>
+                  )}
+                </div>
+                {allImages.length > 1 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
+                    {allImages.map((k, idx) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setActiveImgKey(k)}
+                        style={{
+                          width: 40, height: 40, borderRadius: 8, overflow: "hidden",
+                          border: activeImgKey === k ? "2px solid #00B286" : "1px solid #E5E7EB",
+                          padding: 2, background: "#fff", cursor: "pointer",
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        <img
+                          src={storageApi.downloadUrl(k)}
+                          alt={`vista ${idx + 1}`}
+                          style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                        />
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
             )}
