@@ -8733,6 +8733,11 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   border: 1px solid #D3DDEC;
   border-radius: 10px;
   padding: 26px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.ppd-tech-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px rgba(11, 30, 58, 0.12);
 }
 .ppd-tech-media {
   position: relative;
@@ -8899,6 +8904,11 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   flex-direction: column;
   gap: 16px;
   min-height: 160px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.ppd-segment-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px rgba(11, 30, 58, 0.12);
 }
 .ppd-segment-icon {
   width: 44px;
@@ -9147,6 +9157,11 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   border: 1px solid rgba(11, 30, 58, 0.08);
   border-radius: 6px;
   min-width: 150px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.ppd-hero-chip:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px rgba(11, 30, 58, 0.12);
 }
 .ppd-hero-chip-icon {
   width: 34px;
@@ -9179,6 +9194,11 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   border: 1px solid #DCE4EF;
   border-radius: 8px;
   min-height: 74px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.ppd-icon-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px rgba(11, 30, 58, 0.12);
 }
 .ppd-icon-card img {
   width: 42px;
@@ -9229,6 +9249,11 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   font-size: 13px;
   font-weight: 600;
   color: #0B1E3A;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.ppd-norm-badge:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px rgba(11, 30, 58, 0.12);
 }
 .ppd-norm-badge img {
   width: 28px;
