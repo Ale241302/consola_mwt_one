@@ -1309,39 +1309,57 @@ export default function ScreenProductFormView() {
   // Modal "Más tallas" — permite traer tallas fuera del criterio activo.
   const [moreTallasOpen, setMoreTallasOpen] = useState(false);
 
-  // Agrupa las tallas seleccionadas por (tipo_producto + marca_id + familia_id).
+  // Agrupa las tallas a mostrar en la sección C.
+  // El grupo activo (tipo + marca + familia del producto) muestra TODAS las
+  // tallas disponibles, no solo las seleccionadas, para que el usuario pueda
+  // marcar/desmarcar sin que desaparezcan del picker. Los demás grupos muestran
+  // solo las tallas seleccionadas.
   const sizesGrouped = useMemo(() => {
     const groups = {};
+    const activeTipo = (tipoSel || '').toLowerCase().trim();
+    const activeMarca = String(brandId || '');
+    const activeFamilia = String(familiaIdSel || '');
+
+    const ensureGroup = (tipo, marca, familia) => {
+      const key = `${tipo}||${marca}||${familia}`;
+      if (!groups[key]) {
+        const tipoNombre = (sizingOptions?.tipos_producto || [])
+          .find(tp => (tp.codigo || '').toLowerCase() === tipo)?.label || tipo;
+        const marcaNombre = realBrands.find(m => m.id === marca)?.nombre || '';
+        const familiaNombre = familiasMarca.find(f => f.id === familia)?.nombre || '';
+        const label = `${tipoNombre} · ${marcaNombre} · ${familiaNombre}`;
+        groups[key] = { label, tipo, marca, familia, tallas: [] };
+      }
+      return groups[key];
+    };
+
+    // Grupo activo: todas las tallas del criterio (visibles).
+    if (activeTipo && activeFamilia) {
+      const g = ensureGroup(activeTipo, activeMarca, activeFamilia);
+      visibleSizes.forEach(t => {
+        if (!g.tallas.find(x => x.id === t.id)) g.tallas.push(t);
+      });
+    }
+
+    // Otros grupos: solo tallas seleccionadas que NO pertenezcan al activo.
     selectedSizesObj.forEach(t => {
       const tipo = String(t.tipo_producto || 'otro').toLowerCase().trim();
       const marca = String(t.marca_id || '');
       const familia = String(t.familia_id || '');
-      const tipoNombre = (sizingOptions?.tipos_producto || [])
-        .find(tp => (tp.codigo || '').toLowerCase() === tipo)?.label || tipo;
-      const marcaNombre = realBrands.find(m => m.id === marca)?.nombre
-        || t.marca_nombre || '';
-      const familiaNombre = familiasMarca.find(f => f.id === familia)?.nombre
-        || t.familia_nombre || '';
-      const key = `${tipo}||${marca}||${familia}`;
-      const label = `${tipoNombre} · ${marcaNombre} · ${familiaNombre}`;
-      if (!groups[key]) {
-        groups[key] = { label, tipo, marca, familia, tallas: [] };
-      }
-      groups[key].tallas.push(t);
+      if (tipo === activeTipo && marca === activeMarca && familia === activeFamilia) return;
+      const g = ensureGroup(tipo, marca, familia);
+      if (!g.tallas.find(x => x.id === t.id)) g.tallas.push(t);
     });
+
     // Orden: grupo activo primero, luego alfabético.
     return Object.values(groups).sort((a, b) => {
-      const aCurrent = a.tipo === (tipoSel || '').toLowerCase()
-        && a.marca === (brandId || '')
-        && a.familia === (familiaIdSel || '');
-      const bCurrent = b.tipo === (tipoSel || '').toLowerCase()
-        && b.marca === (brandId || '')
-        && b.familia === (familiaIdSel || '');
+      const aCurrent = a.tipo === activeTipo && a.marca === activeMarca && a.familia === activeFamilia;
+      const bCurrent = b.tipo === activeTipo && b.marca === activeMarca && b.familia === activeFamilia;
       if (aCurrent && !bCurrent) return -1;
       if (!aCurrent && bCurrent) return 1;
       return a.label.localeCompare(b.label);
     });
-  }, [selectedSizesObj, sizingOptions, realBrands, familiasMarca, tipoSel, brandId, familiaIdSel]);
+  }, [visibleSizes, selectedSizesObj, sizingOptions, realBrands, familiasMarca, tipoSel, brandId, familiaIdSel]);
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
