@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useOutletContext, useParams } from "react-router-dom";
-import { productosApi } from "../lib/api.js";
+import { productosApi, getToken } from "../lib/api.js";
 import { fmtMoney } from "../lib/i18n.js";
 import {
   IconChevLeft, IconDownload, IconImage, IconShield,
@@ -465,11 +465,39 @@ export default function PortalProductDetail() {
         </section>
       )}
 
-      {/* Fichas técnicas */}
+      {/* Ficha técnica generada */}
+      {product?.id && (
+        <section className="ppd-section ppd-docs">
+          <div className="ppd-section-head">
+            <h2>{lang === "es" ? "Ficha técnica" : "Technical datasheet"}</h2>
+          </div>
+          <div className="ppd-docs-list">
+            <div className="ppd-doc-actions">
+              <button
+                type="button"
+                className="ppd-doc-btn ppd-doc-btn-primary"
+                onClick={() => downloadGeneratedPdf(product.id, `ficha-tecnica-${sku || product.id}.pdf`)}
+              >
+                <IconDownload size={18} />
+                {lang === "es" ? "Descargar ficha técnica" : "Download datasheet"}
+              </button>
+              <button
+                type="button"
+                className="ppd-doc-btn ppd-doc-btn-secondary"
+                onClick={() => printGeneratedPdf(product.id)}
+              >
+                {lang === "es" ? "Imprimir" : "Print"}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Fichas técnicas adjuntas (originales) */}
       {fichas.length > 0 && (
         <section className="ppd-section ppd-docs">
           <div className="ppd-section-head">
-            <h2>{lang === "es" ? "Fichas técnicas" : "Technical datasheets"}</h2>
+            <h2>{lang === "es" ? "Documentos adjuntos" : "Attached documents"}</h2>
           </div>
           <div className="ppd-docs-list">
             {fichas.map((f, i) => {
@@ -480,21 +508,11 @@ export default function PortalProductDetail() {
                   <a
                     href={url}
                     download={filename}
-                    className="ppd-doc-btn ppd-doc-btn-primary"
-                  >
-                    <IconDownload size={18} />
-                    {lang === "es" ? "Descargar ficha técnica" : "Download datasheet"}
-                  </a>
-                  <button
-                    type="button"
                     className="ppd-doc-btn ppd-doc-btn-secondary"
-                    onClick={() => {
-                      const printWindow = window.open(url, "_blank", "noopener,noreferrer");
-                      if (printWindow) printWindow.focus();
-                    }}
                   >
-                    {lang === "es" ? "Imprimir" : "Print"}
-                  </button>
+                    <IconFileText size={18} />
+                    {filename}
+                  </a>
                 </div>
               );
             })}
@@ -543,4 +561,37 @@ function storageUrl(key) {
   if (!key) return null;
   if (/^https?:\/\//i.test(key)) return key;
   return `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(key)}`;
+}
+
+const API_BASE = import.meta.env.VITE_API_BASE || "/api";
+
+async function fetchGeneratedPdfBlobUrl(productId) {
+  const token = getToken();
+  const resp = await fetch(`${window.location.origin}${API_BASE}/productos/${encodeURIComponent(productId)}/ficha-tecnica/pdf/`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`No se pudo generar la ficha técnica (${resp.status})`);
+  }
+  const blob = await resp.blob();
+  return URL.createObjectURL(blob);
+}
+
+async function downloadGeneratedPdf(productId, filename) {
+  const url = await fetchGeneratedPdfBlobUrl(productId);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function printGeneratedPdf(productId) {
+  const url = await fetchGeneratedPdfBlobUrl(productId);
+  const w = window.open(url, "_blank", "noopener,noreferrer");
+  if (w) w.focus();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
