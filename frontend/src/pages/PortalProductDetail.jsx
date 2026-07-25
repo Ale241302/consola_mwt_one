@@ -4,28 +4,160 @@
 // Ruta /portal/productos/:productId
 // Reemplaza ProductFormView para clientes B2B con un layout tipo landing
 // basado en detalleproducto/Propuesta Botas Composite.dc.html, pero sin
-// el header de descargar / imprimir.
+// el header de descargar / imprimir y sin secciones genéricas.
 //
 // Consume GET /api/productos/:productId/ (mismo endpoint interno).
+// Todos los datos visibles vienen del producto; secciones sin datos se ocultan.
 // ─────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useOutletContext, useParams } from "react-router-dom";
-import { motion } from "framer-motion";
 import { productosApi } from "../lib/api.js";
 import { fmtMoney } from "../lib/i18n.js";
 import {
   IconChevLeft, IconDownload, IconImage, IconShield,
-  IconCheck, IconArrow, IconFileText, IconGlobe,
+  IconArrow, IconFileText, IconGlobe, IconAlert,
 } from "../lib/icons.jsx";
 
-const COLORS = {
-  navy: "#0B1E3A",
-  mint: "#00B286",
-  lightGreen: "#1DE394",
-  purple: "#481EE3",
-  blue: "#3083FE",
-  cyan: "#1EE3D7",
+const ICON_BASE = "/Iconos/";
+
+function normalize(v) {
+  return String(v || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+// Mapa de valores del producto → ruta relativa de icono en frontend/public/Iconos
+const ICONS = {
+  riesgo: {
+    "alta temperatura": "Riesgos/Riesgos-_Alta Temperatura.png",
+    "ambiente frio": "Riesgos/Riesgos-_Ambiente Frio.png",
+    "caida objetos": "Riesgos/Riesgos-_Caida Objetos.png",
+    "esguince": "Riesgos/Riesgos-_Esguince.png",
+    "estatica": "Riesgos/Riesgos-_Estatica.png",
+    "humedad": "Riesgos/Riesgos-_Humedad.png",
+    "ocupacional": "Riesgos/Riesgos-_Ocupacional.png",
+    "piso resbaladizo": "Riesgos/Riesgos-_Piso Resbaladizo.png",
+    "polimerico": "Riesgos/Riesgos-_Polimerico.png",
+    "puncion plantar": "Riesgos/Riesgos-_Puncion Plantar.png",
+    "quimicos": "Riesgos/Riesgos-_Quimicos.png",
+    "seguridad": "Riesgos/Riesgos-_Seguridad.png",
+    "shock": "Riesgos/Riesgos-_Shock.png",
+  },
+  segmento: {
+    "administrativo": "Segmentos/ES/Segmentos-_Administracion.png",
+    "agricola": "Segmentos/ES/Segmentos-_Agricultura.png",
+    "agroindustria": "Segmentos/ES/Segmentos-_Agroindustria.png",
+    "alimentaria": "Segmentos/ES/Segmentos-_Alimentacion.png",
+    "alimentacion": "Segmentos/ES/Segmentos-_Alimentacion.png",
+    "astillero": "Segmentos/ES/Segmentos-_Astillero.png",
+    "construccion": "Segmentos/ES/Segmentos-_Construccion.png",
+    "electricista": "Segmentos/ES/Segmentos-_Electricidad.png",
+    "ensambladora": "Segmentos/ES/Segmentos-_Ensambladora.png",
+    "fabricacion": "Segmentos/ES/Segmentos-_Fabricacion.png",
+    "produccion": "Segmentos/ES/Segmentos-_Fabricacion.png",
+    "limpieza": "Segmentos/ES/Segmentos-_Limpieza.png",
+    "maderas": "Segmentos/ES/Segmentos-_Madera.png",
+    "mensajeria": "Segmentos/ES/Segmentos-_Mensajeria.png",
+    "metalurgia": "Segmentos/ES/Segmentos-_Metalurgia.png",
+    "militares": "Segmentos/ES/Segmentos-_Militar.png",
+    "mineria": "Segmentos/ES/Segmentos-_Mineria.png",
+    "montadoras": "Segmentos/ES/Segmentos-_Ensambladora.png",
+    "multiservicios": "Segmentos/ES/Segmentos-_Servicios.png",
+    "petroquimicos": "Segmentos/ES/Segmentos-_Petroquimica.png",
+    "rescate": "Segmentos/ES/Segmentos-_Rescate.png",
+    "salud": "Segmentos/ES/Segmentos-_Salud.png",
+    "senderismo": "Segmentos/ES/Segmentos-_Senderismo.png",
+    "servicios": "Segmentos/ES/Segmentos-_Servicios.png",
+    "siderurgia": "Segmentos/ES/Segmentos-_Siderurgia.png",
+    "trekking": "Segmentos/ES/Segmentos-_Senderismo.png",
+  },
+  normativa: {
+    "iso 20345": "Normativa/Normativa-_ISO 20345.png",
+    "iso 20347": "Normativa/Normativa-_ISO 20347.png",
+    "astm f2413": "Normativa/Normativa-_ASTM F2413.png",
+    "abnt nbr 16.603:2017 500v - seco": "Normativa/Normativa-_ABNT NBR 16.603-2017 500V - SECO.png",
+    "abnt nbr 16603-2017 500v": "Normativa/Normativa-_ABNT NBR 16.603-2017 500V - SECO.png",
+  },
+  tipo_puntera: {
+    "composite 200j": "Tipo Puntera/Tipo puntera-_Composite 200J.png",
+    "acero 200j": "Tipo Puntera/Tipo puntera-_Acero 200J.png",
+    "no tiene": "Tipo Puntera/Tipo puntera-_No tiene.png",
+    "no": "Tipo Puntera/Tipo puntera-_No tiene.png",
+  },
+  antiperforante: {
+    "textil 1100 n": "Anti perforante/Anti perforante-_Textil 1100 N.png",
+    "acero 1100 n": "Anti perforante/Anti perforante-_Acero 1100 N.png",
+    "no": "Anti perforante/Anti perforante-_NO.png",
+  },
+  suela: {
+    "bidensidad pu": "Suela/suela-_Bidensidad PU.png",
+    "monodensidad caucho": "Suela/suela-_Monodensidad Caucho.png",
+  },
+  cierre: {
+    "con cordones": "Cierre/Cierre-_Con Cordones.png",
+    "sin cordones": "Cierre/Cierre-_Sin Cordones.png",
+    "de meter": "Cierre/Cierre-_De meter.png",
+    "cierre velcro": "Cierre/Cierre-_Cierre Velcro.png",
+    "zipper": "Cierre/Cierre-_Zipper.png",
+  },
+  capellada: {
+    "cuero plena flor": "Capellada/Capellada-_Plena Flor.png",
+    "plena flor": "Capellada/Capellada-_Plena Flor.png",
+    "microfibra": "Capellada/Capellada-_Microfibra.png",
+    "nobuck": "Capellada/Capellada-_Nobuck.png",
+    "nobuck hidro": "Capellada/Capellada-_Nobuck_Hidro.png",
+    "flor hidro": "Capellada/Capellada-_Flor HIDRO.png",
+    "carnaza": "Capellada/Capellada-_Carnaza.png",
+    "eva": "Capellada/Capellada-_EVA.png",
+    "rodock": "Capellada/Capellada-_Rodock.png",
+    "vaqueta lisa": "Capellada/Capellada-_Vaqueta Lisa.png",
+    "vaqueta lisa agua": "Capellada/Capellada-_Vaqueta Lisa agua.png",
+    "vaqueta lisa fuego": "Capellada/Capellada-_Vaqueta Lisa fuego.png",
+    "pvc": "Capellada/Capellada-_pvc.png",
+  },
+  plantilla_interna: {
+    "poliuretano": "Plantilla Interna/Plantilla Interna-_pu.png",
+    "pu": "Plantilla Interna/Plantilla Interna-_pu.png",
+    "pu sofbed": "Plantilla Interna/Plantilla Interna-_PU Sofbed.png",
+    "sofbed": "Plantilla Interna/Plantilla Interna-_PU Sofbed.png",
+    "eva": "Plantilla Interna/Plantilla Interna-_EVA-171.png",
+    "no": "Plantilla Interna/Plantilla Interna-_NO-173.png",
+  },
+  protector_metatarsal: {
+    "externo": "Protector Meta tarsal/Protector Meta tarsal-_Externo.png",
+    "interno": "Protector Meta tarsal/Protector Meta tarsal-_Interno.png",
+    "no": "Protector Meta tarsal/Protector Meta tarsal-_NO-141.png",
+  },
+  cubrepuntera: {
+    "no": "Cubrepuntera/Cubrepuntera-_Cubrepuntera no.png",
+    "si": "Cubrepuntera/Cubrepuntera-_Cubrepuntera si.png",
+  },
+  materiales_circulares: {
+    "no": "Economia Circular/Materiales Economias Circulares-_Materiales Economias Circulares no.png",
+    "si": "Economia Circular/Materiales Economias Circulares-_Materiales Economias Circulares si.png",
+  },
+  disipativo_energia: {
+    "antiestatico": "Manejo de Energia/Manejo de Energia-_Antiestatico.png",
+    "conductivo": "Manejo de Energia/Manejo de Energia-_Conductivo.png",
+    "dielectrico 14.000v": "Manejo de Energia/Manejo de Energia-_Dielectrico 14.000V.png",
+    "dielectrico 18.000v": "Manejo de Energia/Manejo de Energia-_Dielectrico 18.000V.png",
+    "no conductivo": "Manejo de Energia/Manejo de Energia-_No Conductivo.png",
+    "abnt nbr 16603-2017 500v": "Manejo de Energia/Manejo de Energia-_Norma Electricista 16603.png",
+  },
+  tipo_calzado: {
+    "bota alta": "Tipo de Calzado/Tipo de calzado-_Bota Alta.png",
+    "bota al tobillo": "Tipo de Calzado/Tipo de calzado-_Bota al Tobillo.png",
+    "zapato o tenis": "Tipo de Calzado/Tipo de calzado-_Zapato o Tenis.png",
+  },
 };
+
+function iconFor(category, value) {
+  const key = normalize(value);
+  const rel = ICONS[category]?.[key];
+  return rel ? `${ICON_BASE}${encodeURIComponent(rel)}` : null;
+}
 
 export default function PortalProductDetail() {
   const { productId } = useParams();
@@ -58,21 +190,15 @@ export default function PortalProductDetail() {
     };
   }, [productId, lang]);
 
-  const imageUrl = useCallback((key) => {
-    if (!key) return null;
-    if (/^https?:\/\//i.test(key)) return key;
-    return `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(key)}`;
-  }, []);
-
   const specs = useMemo(() => product?.especificaciones || {}, [product]);
 
   const {
     sku, nombre, descripcion, categoria, subcategoria, marca_nombre, marca_label,
-    moneda, precio_venta, precio_mwt, estado, imagen_url, ficha_url, pais_origen_iso2,
+    moneda, precio_venta, estado, imagen_url, ficha_url, pais_origen_iso2,
   } = product || {};
 
   const familia = specs.familia || categoria || "";
-  const normativa = Array.isArray(specs.normativa) ? specs.normativa.join(", ") : (specs.normativa || "NBR ISO 20345:2015");
+  const normativaArr = Array.isArray(specs.normativa) ? specs.normativa : (specs.normativa ? [specs.normativa] : []);
   const riesgos = Array.isArray(specs.riesgo) ? specs.riesgo : [];
   const segmentos = Array.isArray(specs.segmento) ? specs.segmento : [];
   const gallery = Array.isArray(specs.gallery) ? specs.gallery : [];
@@ -80,89 +206,43 @@ export default function PortalProductDetail() {
 
   const heroChips = useMemo(() => {
     const chips = [];
-    if (specs.tipo_puntera && specs.tipo_puntera !== "No") chips.push({ label: "PUNTERA", value: specs.tipo_puntera });
-    if (specs.suela) chips.push({ label: "SUELA", value: specs.suela });
-    if (specs.cierre) chips.push({ label: "CIERRE", value: specs.cierre });
+    if (specs.tipo_puntera) chips.push({ label: "PUNTERA", value: specs.tipo_puntera, icon: iconFor("tipo_puntera", specs.tipo_puntera) });
+    if (specs.suela) chips.push({ label: "SUELA", value: specs.suela, icon: iconFor("suela", specs.suela) });
+    if (specs.cierre) chips.push({ label: "CIERRE", value: specs.cierre, icon: iconFor("cierre", specs.cierre) });
     if (specs.color) chips.push({ label: "COLOR", value: specs.color });
-    if (specs.tipo_calzado) chips.push({ label: "TIPO", value: specs.tipo_calzado });
-    if (pais_origen_iso2) chips.push({ label: "ORIGEN", value: pais_origen_iso2 });
+    if (specs.tipo_calzado) chips.push({ label: "TIPO", value: specs.tipo_calzado, icon: iconFor("tipo_calzado", specs.tipo_calzado) });
     return chips.slice(0, 4);
-  }, [specs, pais_origen_iso2]);
+  }, [specs]);
 
-  const benefits = useMemo(() => {
+  const featureCards = useMemo(() => {
     const list = [];
-    const add = (tag, title, text, color) => list.push({ tag, title, text, color });
-    const puntera = String(specs.tipo_puntera || "").toLowerCase();
-    if (puntera.includes("composite") || puntera.includes("acero") || puntera.includes("metal")) {
-      add("PUN", "Puntera más ligera", "Puntera de composite o metal que protege contra impactos y compresión, más ligera que el acero tradicional.", COLORS.mint);
-    }
-    if (String(specs.antiperforante || "").toLowerCase() !== "no" && specs.antiperforante) {
-      add("ANT", "Antiperforación total", "Plantilla no metálica que protege la planta del pie contra objetos punzantes.", COLORS.blue);
-    }
-    const suela = String(specs.suela || "").toLowerCase();
-    if (suela.includes("antideslizante") || suela.includes("src") || suela.includes("bidensidad")) {
-      add("SRC", "Suela antideslizante", "Suela bidensidad con diseño que mejora la adherencia en superficies resbaladizas.", COLORS.purple);
-    }
-    if (riesgos.some((r) => String(r).toLowerCase().includes("shock")) || specs.disipativo_energia?.length) {
-      add("DIÉ", "Disipación de energía", "Diseño que ayuda a disipar cargas electrostáticas y reduce el impacto en la marcha.", COLORS.cyan);
-    }
-    if (String(specs.protector_metatarsal || "").toLowerCase() !== "no" && specs.protector_metatarsal) {
-      add("MET", "Protector metatarsal", "Protección adicional para la zona del empeine contra impactos.", COLORS.mint);
-    }
-    if (String(specs.materiales_circulares || "").toLowerCase() === "sí") {
-      add("SUS", "Materiales circulares", "Construcción con materiales seleccionados pensando en sostenibilidad.", COLORS.lightGreen);
-    }
-    // Fallbacks si quedan muy pocos
-    if (list.length < 3) {
-      add("COM", "Confort de jornada", "Diseño ergonómico para uso prolongado durante la jornada laboral.", COLORS.blue);
-    }
-    if (list.length < 3) {
-      add("NOR", "Normativa certificada", `Certificado conforme a ${normativa}.`, COLORS.mint);
-    }
-    return list.slice(0, 6);
-  }, [specs, riesgos, normativa]);
-
-  const technologies = useMemo(() => {
-    const list = [];
-    if (specs.tipo_puntera) {
-      list.push({
-        index: "T1",
-        title: `Puntera ${specs.tipo_puntera}`,
-        text: punteraText(specs.tipo_puntera),
-        color: COLORS.mint,
-      });
-    }
-    if (specs.plantilla_interna) {
-      list.push({
-        index: "T2",
-        title: `Plantilla ${specs.plantilla_interna}`,
-        text: plantillaText(specs.plantilla_interna, specs.antiperforante),
-        color: COLORS.blue,
-      });
-    }
-    if (specs.suela) {
-      list.push({
-        index: "T3",
-        title: `Suela ${specs.suela}`,
-        text: suelaText(specs.suela),
-        color: COLORS.purple,
-      });
+    const add = (icon, title, value, subtitle) => list.push({ icon, title, value, subtitle });
+    if (specs.tipo_puntera) add(iconFor("tipo_puntera", specs.tipo_puntera), "Puntera", specs.tipo_puntera);
+    if (specs.antiperforante) add(iconFor("antiperforante", specs.antiperforante), "Antiperforante", specs.antiperforante);
+    if (specs.suela) add(iconFor("suela", specs.suela), "Suela", specs.suela);
+    if (specs.cierre) add(iconFor("cierre", specs.cierre), "Cierre", specs.cierre);
+    if (specs.plantilla_interna) add(iconFor("plantilla_interna", specs.plantilla_interna), "Plantilla interna", specs.plantilla_interna);
+    if (specs.capellada) add(iconFor("capellada", specs.capellada), "Capellada", specs.capellada);
+    if (specs.protector_metatarsal && specs.protector_metatarsal !== "No") add(iconFor("protector_metatarsal", specs.protector_metatarsal), "Protector metatarsal", specs.protector_metatarsal);
+    if (specs.cubrepuntera && specs.cubrepuntera !== "No") add(iconFor("cubrepuntera", specs.cubrepuntera), "Cubrepuntera", specs.cubrepuntera);
+    if (specs.materiales_circulares && specs.materiales_circulares !== "No") add(iconFor("materiales_circulares", specs.materiales_circulares), "Materiales circulares", specs.materiales_circulares);
+    if (specs.disipativo_energia?.length) {
+      specs.disipativo_energia.forEach((d) => add(iconFor("disipativo_energia", d), "Manejo de energía", d));
     }
     return list;
   }, [specs]);
 
-  const normaStats = useMemo(() => {
-    const norma = String(normativa).toLowerCase();
-    if (norma.includes("20345") || norma.includes("iso")) {
-      return [
-        { value: "200J", label: "Impacto", note: "Resistencia de puntera" },
-        { value: "1500N", label: "Compresión", note: "Carga máxima de puntera" },
-        { value: "1100N", label: "Antiperforación", note: "Plantilla no metálica" },
-        { value: "SRC", label: "Antideslizante", note: "Cerámica + acero" },
-      ];
-    }
-    return [];
-  }, [normativa]);
+  const riskCards = useMemo(() => {
+    return riesgos.map((r) => ({ name: r, icon: iconFor("riesgo", r) }));
+  }, [riesgos]);
+
+  const segmentCards = useMemo(() => {
+    return segmentos.map((s) => ({ name: s, icon: iconFor("segmento", s) }));
+  }, [segmentos]);
+
+  const normBadges = useMemo(() => {
+    return normativaArr.map((n) => ({ name: n, icon: iconFor("normativa", n) }));
+  }, [normativaArr]);
 
   const specGroups = useMemo(() => {
     const build = [];
@@ -171,9 +251,10 @@ export default function PortalProductDetail() {
     if (specs.cierre) tech.push({ label: "Cierre", value: specs.cierre });
     if (specs.tipo_puntera) tech.push({ label: "Puntera", value: specs.tipo_puntera });
     if (specs.plantilla_interna) tech.push({ label: "Plantilla interna", value: specs.plantilla_interna });
-    if (specs.antiperforante && specs.antiperforante !== "No") tech.push({ label: "Antiperforante", value: specs.antiperforante });
+    if (specs.antiperforante) tech.push({ label: "Antiperforante", value: specs.antiperforante });
     if (specs.suela) tech.push({ label: "Suela", value: specs.suela });
-    if (specs.protector_metatarsal && specs.protector_metatarsal !== "No") tech.push({ label: "Protector metatarsal", value: specs.protector_metatarsal });
+    if (specs.protector_metatarsal) tech.push({ label: "Protector metatarsal", value: specs.protector_metatarsal });
+    if (specs.cubrepuntera) tech.push({ label: "Cubrepuntera", value: specs.cubrepuntera });
     if (specs.disipativo_energia?.length) tech.push({ label: "Disipativo de energía", value: specs.disipativo_energia.join(", ") });
     if (tech.length) build.push({ title: "CONSTRUCCIÓN DEL CALZADO", items: tech });
 
@@ -184,20 +265,10 @@ export default function PortalProductDetail() {
     if (product?.peso_kg) data.push({ label: "Peso por pie", value: `${product.peso_kg} kg` });
     if (product?.volumen_m3) data.push({ label: "Volumen", value: `${product.volumen_m3} m³` });
     if (pais_origen_iso2) data.push({ label: "País de origen", value: pais_origen_iso2 });
-    if (normativa) data.push({ label: "Norma", value: normativa });
+    if (normativaArr.length) data.push({ label: "Norma", value: normativaArr.join(", ") });
     if (data.length) build.push({ title: "DATOS TÉCNICOS", items: data });
     return build;
-  }, [specs, product, pais_origen_iso2, normativa]);
-
-  const segmentCards = useMemo(() => {
-    const all = segmentos.length ? segmentos : ["Industrial"];
-    const palette = [COLORS.mint, COLORS.blue, COLORS.purple, COLORS.cyan];
-    return all.slice(0, 4).map((name, i) => ({
-      name,
-      note: sectorNote(name),
-      color: palette[i % palette.length],
-    }));
-  }, [segmentos]);
+  }, [specs, product, pais_origen_iso2, normativaArr]);
 
   if (loading) {
     return <PortalProductDetailSkeleton lang={lang} />;
@@ -233,8 +304,12 @@ export default function PortalProductDetail() {
           <div className="ppd-hero-info">
             <div className="ppd-eyebrow">
               <span>LÍNEA {familia.toUpperCase()}</span>
-              <span className="ppd-eyebrow-line" />
-              <span>{normativa}</span>
+              {normativaArr.length > 0 && (
+                <>
+                  <span className="ppd-eyebrow-line" />
+                  <span>{normativaArr.join(" · ")}</span>
+                </>
+              )}
             </div>
             <h1 className="ppd-title">{nombre}</h1>
             <div className="ppd-subtitle">SKU: {sku} · {categoria}{subcategoria ? ` / ${subcategoria}` : ""}</div>
@@ -243,27 +318,26 @@ export default function PortalProductDetail() {
             <div className="ppd-hero-chips">
               {heroChips.map((chip) => (
                 <div key={chip.label} className="ppd-hero-chip">
-                  <span className="ppd-chip-label">{chip.label}</span>
-                  <span className="ppd-chip-value">{chip.value}</span>
+                  {chip.icon && <img src={chip.icon} alt={chip.label} className="ppd-hero-chip-icon" />}
+                  <div>
+                    <span className="ppd-chip-label">{chip.label}</span>
+                    <span className="ppd-chip-value">{chip.value}</span>
+                  </div>
                 </div>
               ))}
             </div>
 
-            <div className="ppd-hero-price">
-              {Number(precio_venta) > 0 ? (
-                <>
-                  <span className="ppd-price">{fmtMoney(precio_venta, moneda || "USD")}</span>
-                  <span className="ppd-price-note">{lang === "es" ? "precio base por par" : "base price per pair"}</span>
-                </>
-              ) : (
-                <span className="ppd-price-na">{lang === "es" ? "Consultar precio" : "Quote on request"}</span>
-              )}
-            </div>
+            {Number(precio_venta) > 0 && (
+              <div className="ppd-hero-price">
+                <span className="ppd-price">{fmtMoney(precio_venta, moneda || "USD")}</span>
+                <span className="ppd-price-note">{lang === "es" ? "precio base por par" : "base price per pair"}</span>
+              </div>
+            )}
           </div>
 
           <div className="ppd-hero-image">
             {imagen_url ? (
-              <img src={imageUrl(imagen_url)} alt={nombre} loading="eager" />
+              <img src={storageUrl(imagen_url)} alt={nombre} loading="eager" />
             ) : (
               <div className="ppd-hero-image-placeholder">
                 <IconImage size={48} />
@@ -274,41 +348,38 @@ export default function PortalProductDetail() {
         </div>
       </section>
 
-      {/* Benefits */}
-      <section className="ppd-section ppd-benefits">
-        <div className="ppd-section-head">
-          <h2>{lang === "es" ? "Beneficios y diferenciales" : "Benefits & differentiators"}</h2>
-          <span className="ppd-section-kicker">{lang === "es" ? "POR QUÉ ELEGIRLA" : "WHY CHOOSE IT"}</span>
-        </div>
-        <div className="ppd-benefits-grid">
-          {benefits.map((b) => (
-            <div key={b.title} className="ppd-benefit-card">
-              <div className="ppd-benefit-tag" style={{ background: b.color }}>{b.tag}</div>
-              <h3>{b.title}</h3>
-              <p>{b.text}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Technologies */}
-      {technologies.length > 0 && (
-        <section className="ppd-section ppd-tech">
+      {/* Protección contra riesgos */}
+      {riskCards.length > 0 && (
+        <section className="ppd-section ppd-risks">
           <div className="ppd-section-head">
-            <h2>{lang === "es" ? "Tecnologías" : "Technologies"}</h2>
+            <h2>{lang === "es" ? "Protección contra riesgos" : "Risk protection"}</h2>
+            <span className="ppd-section-kicker">{lang === "es" ? "RIESGOS PROTEGIDOS" : "PROTECTED RISKS"}</span>
+          </div>
+          <div className="ppd-icons-grid">
+            {riskCards.map((r) => (
+              <div key={r.name} className="ppd-icon-card">
+                {r.icon ? <img src={r.icon} alt={r.name} /> : <IconShield size={28} />}
+                <span>{r.name}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Materiales y tecnologías */}
+      {featureCards.length > 0 && (
+        <section className="ppd-section ppd-features">
+          <div className="ppd-section-head">
+            <h2>{lang === "es" ? "Materiales y tecnologías" : "Materials & technologies"}</h2>
             <span className="ppd-section-kicker">{lang === "es" ? "INGENIERÍA DEL CALZADO" : "SHOE ENGINEERING"}</span>
           </div>
-          <div className="ppd-tech-list">
-            {technologies.map((t) => (
-              <div key={t.title} className="ppd-tech-card">
-                <div className="ppd-tech-media">
-                  <IconImage size={32} />
-                  <span>DETALLE · 900 × 675 px</span>
-                </div>
-                <div className="ppd-tech-body">
-                  <div className="ppd-tech-index" style={{ color: "#fff", background: t.color }}>{t.index}</div>
-                  <h3>{t.title}</h3>
-                  <p>{t.text}</p>
+          <div className="ppd-icons-grid ppd-features-grid">
+            {featureCards.map((f) => (
+              <div key={`${f.title}-${f.value}`} className="ppd-icon-card">
+                {f.icon ? <img src={f.icon} alt={f.title} /> : <IconImage size={28} />}
+                <div className="ppd-icon-card-text">
+                  <span className="ppd-icon-card-label">{f.title}</span>
+                  <span className="ppd-icon-card-value">{f.value}</span>
                 </div>
               </div>
             ))}
@@ -316,31 +387,25 @@ export default function PortalProductDetail() {
         </section>
       )}
 
-      {/* Norms */}
-      {normaStats.length > 0 && (
+      {/* Cumplimiento de normas */}
+      {normBadges.length > 0 && (
         <section className="ppd-section ppd-norms">
           <div className="ppd-section-head">
             <h2>{lang === "es" ? "Cumplimiento de normas" : "Standards compliance"}</h2>
-            <span className="ppd-section-kicker">{normativa}</span>
+            <span className="ppd-section-kicker">{normativaArr.join(" · ")}</span>
           </div>
-          <p className="ppd-norms-intro">
-            {lang === "es"
-              ? "Desempeño certificado conforme a la norma brasileña NBR ISO, referencia internacional en calzado de seguridad ocupacional."
-              : "Certified performance according to the Brazilian NBR ISO standard, an international reference in occupational safety footwear."}
-          </p>
-          <div className="ppd-norms-grid">
-            {normaStats.map((s) => (
-              <div key={s.label} className="ppd-norm-card">
-                <span className="ppd-norm-value">{s.value}</span>
-                <span className="ppd-norm-label">{s.label}</span>
-                <span className="ppd-norm-note">{s.note}</span>
+          <div className="ppd-norms-badges">
+            {normBadges.map((n) => (
+              <div key={n.name} className="ppd-norm-badge">
+                {n.icon && <img src={n.icon} alt={n.name} />}
+                <span>{n.name}</span>
               </div>
             ))}
           </div>
         </section>
       )}
 
-      {/* Specifications */}
+      {/* Especificaciones técnicas */}
       {specGroups.length > 0 && (
         <section className="ppd-section ppd-specs">
           <div className="ppd-section-head">
@@ -365,30 +430,25 @@ export default function PortalProductDetail() {
         </section>
       )}
 
-      {/* Segments */}
+      {/* Aplicaciones y sectores */}
       {segmentCards.length > 0 && (
         <section className="ppd-section ppd-segments">
           <div className="ppd-section-head">
             <h2>{lang === "es" ? "Aplicaciones y sectores" : "Applications & sectors"}</h2>
             <span className="ppd-section-kicker">{lang === "es" ? "DÓNDE SE USA" : "WHERE IT IS USED"}</span>
           </div>
-          <div className="ppd-segments-grid">
-            {segmentCards.map((seg) => (
-              <div key={seg.name} className="ppd-segment-card">
-                <div className="ppd-segment-icon" style={{ background: seg.color }}>
-                  <IconGlobe size={22} />
-                </div>
-                <div>
-                  <h3>{seg.name}</h3>
-                  <p>{seg.note}</p>
-                </div>
+          <div className="ppd-icons-grid">
+            {segmentCards.map((s) => (
+              <div key={s.name} className="ppd-icon-card">
+                {s.icon ? <img src={s.icon} alt={s.name} /> : <IconGlobe size={28} />}
+                <span>{s.name}</span>
               </div>
             ))}
           </div>
         </section>
       )}
 
-      {/* Gallery */}
+      {/* Galería */}
       {(gallery.length > 0 || imagen_url) && (
         <section className="ppd-section ppd-gallery">
           <div className="ppd-section-head">
@@ -397,14 +457,14 @@ export default function PortalProductDetail() {
           <div className="ppd-gallery-grid">
             {(gallery.length ? gallery : [imagen_url]).filter(Boolean).map((src, i) => (
               <div key={i} className="ppd-gallery-item">
-                <img src={imageUrl(src)} alt={`${nombre} ${i + 1}`} loading="lazy" />
+                <img src={storageUrl(src)} alt={`${nombre} ${i + 1}`} loading="lazy" />
               </div>
             ))}
           </div>
         </section>
       )}
 
-      {/* Technical docs */}
+      {/* Fichas técnicas */}
       {fichas.length > 0 && (
         <section className="ppd-section ppd-docs">
           <div className="ppd-section-head">
@@ -416,7 +476,7 @@ export default function PortalProductDetail() {
               return (
                 <a
                   key={i}
-                  href={imageUrl(f)}
+                  href={storageUrl(f)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="ppd-doc-link"
@@ -431,29 +491,8 @@ export default function PortalProductDetail() {
         </section>
       )}
 
-      {/* CTA */}
-      <section className="ppd-cta">
-        <div className="ppd-cta-inner">
-          <div>
-            <h2>{lang === "es" ? "¿Necesita esta línea para su equipo?" : "Need this line for your team?"}</h2>
-            <p>
-              {lang === "es"
-                ? "Solicite cotización, disponibilidad de tallas y volúmenes. Asesoría técnica en selección de EPP para su operación."
-                : "Request a quote, size availability and volumes. Technical advice on PPE selection for your operation."}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="ppd-cta-btn"
-            onClick={() => navigate("/portal/nueva-oc", { state: { entrySource: "portal_product_detail", jumpToStep: "products" } })}
-          >
-            {lang === "es" ? "Solicitar cotización" : "Request quote"} <IconArrow size={16} />
-          </button>
-        </div>
-      </section>
-
       <footer className="ppd-footer">
-        {marca_nombre || marca_label || "MWT"} · {lang === "es" ? "FICHA TÉCNICA" : "TECHNICAL SHEET"} {sku} · {normativa}
+        {marca_nombre || marca_label || "MWT"} · {lang === "es" ? "FICHA TÉCNICA" : "TECHNICAL SHEET"} {sku} · {normativaArr.join(" · ")}
       </footer>
     </div>
   );
@@ -483,48 +522,14 @@ function PortalProductDetailSkeleton({ lang }) {
   );
 }
 
-function IconAlert({ size }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 3 1 21h22L12 3z" />
-      <path d="M12 10v4M12 17v.5" />
-    </svg>
-  );
-}
-
 function defaultDescription(nombre, familia, lang) {
   return lang === "es"
     ? `Calzado de seguridad ${familia ? `de línea ${familia}` : ""} diseñado para entornos industriales exigentes. Modelo ${nombre || ""}.`
     : `Safety footwear ${familia ? `from the ${familia} line` : ""} designed for demanding industrial environments. Model ${nombre || ""}.`;
 }
 
-function punteraText(tipo) {
-  const t = String(tipo).toLowerCase();
-  if (t.includes("composite")) return "Puntera de composite que protege contra impactos de 200 J y compresión de 1500 N. Más ligera que el acero, no conduce calor/frío y no dispara detectores de metal.";
-  if (t.includes("acero") || t.includes("metal")) return "Puntera de acero que resiste impactos de 200 J y compresión de 1500 N para máxima protección en entornos pesados.";
-  return `Puntera ${tipo} para protección contra impactos y compresión.`;
-}
-
-function plantillaText(plantilla, antiperforante) {
-  if (String(antiperforante || "").toLowerCase() !== "no" && antiperforante) {
-    return `Plantilla ${plantilla} con resistencia antiperforante para proteger la planta del pie de objetos punzantes.`;
-  }
-  return `Plantilla ${plantilla} diseñada para confort durante la jornada y absorción de impactos.`;
-}
-
-function suelaText(suela) {
-  return `Suela ${suela} con diseño antideslizante y bidensidad que combina confort y resistencia a la abrasión.`;
-}
-
-function sectorNote(name) {
-  const map = {
-    "Construcción Civil": "Obra, terreno y estructura",
-    "Servicios Generales": "Mantenimiento y logística",
-    "Eléctrica": "Instalaciones y redes",
-    "Mecánica": "Talleres e industria",
-    "Alimentaria": "Procesamiento de alimentos",
-    "Salud": "Hospitales y clínicas",
-    "Industrial": "Entornos industriales",
-  };
-  return map[name] || "Entornos industriales";
+function storageUrl(key) {
+  if (!key) return null;
+  if (/^https?:\/\//i.test(key)) return key;
+  return `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(key)}`;
 }

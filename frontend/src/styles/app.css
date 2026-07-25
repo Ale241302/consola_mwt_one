@@ -9134,3 +9134,118 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
     flex: 1 1 calc(50% - 8px);
   }
 }
+
+/* =====================================================================
+   PortalProductDetail v2 — iconos y layout con datos reales del producto
+   ===================================================================== */
+.ppd-hero-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px 11px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  min-width: 150px;
+}
+.ppd-hero-chip-icon {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.ppd-hero-chip > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Grids de iconos */
+.ppd-icons-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px;
+}
+.ppd-features-grid {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+.ppd-icon-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid #DCE4EF;
+  border-radius: 8px;
+  min-height: 74px;
+}
+.ppd-icon-card img {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.ppd-icon-card > span {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0B1E3A;
+  line-height: 1.25;
+}
+.ppd-icon-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ppd-icon-card-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748B;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ppd-icon-card-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0B1E3A;
+  line-height: 1.25;
+}
+
+/* Normas como badges con icono */
+.ppd-norms-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.ppd-norm-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #fff;
+  border: 1px solid #DCE4EF;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0B1E3A;
+}
+.ppd-norm-badge img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+@media (max-width: 640px) {
+  .ppd-icons-grid,
+  .ppd-features-grid {
+    grid-template-columns: 1fr;
+  }
+  .ppd-icon-card {
+    min-height: auto;
+  }
+  .ppd-hero-chip {
+    flex: 1 1 calc(50% - 8px);
+    min-width: auto;
+  }
+}
