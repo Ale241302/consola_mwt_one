@@ -1147,7 +1147,10 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     const base = String(form.talla_base || "").trim();
     if (!base) { lastSugRef.current = {}; return; }
     const tipo = (options?.tipos_producto || []).find(t => t.codigo === form.tipo_producto) || null;
-    const units = new Set((matrizActual?.sistemas || tipo?.sistemas || []));
+    const isMatrizEspecifica = matrizActual && (matrizActual.marca_id || matrizActual.familia_id);
+    const units = new Set(isMatrizEspecifica
+      ? (matrizActual.sistemas || [])
+      : (tipo?.sistemas || []));
     setForm(prev => {
       const prevSug = lastSugRef.current || {};
       const existing = (tallas || []).find(t => {
@@ -1170,8 +1173,9 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
           }
         }
       } else {
-        // Sprint 2026-07-23 · G23 · defaults configurados en la matriz.
-        const defaults = matrizActual?.defaults;
+        // Sprint 2026-07-23 · G23 · defaults configurados en la matriz
+        // (solo si es una matriz específica; la default sigue al tipo).
+        const defaults = isMatrizEspecifica ? matrizActual?.defaults : null;
         if (defaults && typeof defaults === "object") {
           for (const [k, v] of Object.entries(defaults)) {
             if (v != null && String(v) !== "") sug[k] = String(v);
@@ -1203,11 +1207,14 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.talla_base, form.tipo_producto, form.marca_id, form.familia_id, tallas, options, matrizActual]);
 
-  // Unidades de la matriz: usa la matriz resuelta; si no hay, fallback al
-  // tipo base (comportamiento previo a G23).
+  // Unidades de la matriz: si hay una matriz ESPECÍFICA (marca/familia)
+  // la usa; si no, toma las unidades del tipo de producto. La matriz
+  // default sin marca/familia debe reflejar el tipo, no vivir desfasada.
   const unidadesMatriz = useMemo(() => {
     const cat = options?.sistemas_medida || [];
-    const sist = matrizActual?.sistemas || tipoActual?.sistemas || [];
+    const sist = (matrizActual && (matrizActual.marca_id || matrizActual.familia_id))
+      ? matrizActual.sistemas
+      : (tipoActual?.sistemas || []);
     return sist
       .map(cod => cat.find(s => s.codigo === cod))
       .filter(Boolean);
