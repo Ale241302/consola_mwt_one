@@ -1147,10 +1147,10 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     const base = String(form.talla_base || "").trim();
     if (!base) { lastSugRef.current = {}; return; }
     const tipo = (options?.tipos_producto || []).find(t => t.codigo === form.tipo_producto) || null;
+    // Sprint 2026-07-25 · las unidades visibles las decide el tipo de producto,
+    // no la matriz específica, para que edición y creación sean consistentes.
+    const units = new Set(tipo?.sistemas || []);
     const isMatrizEspecifica = matrizActual && (matrizActual.marca_id || matrizActual.familia_id);
-    const units = new Set(isMatrizEspecifica
-      ? (matrizActual.sistemas || [])
-      : (tipo?.sistemas || []));
     setForm(prev => {
       const prevSug = lastSugRef.current || {};
       const existing = (tallas || []).find(t => {
@@ -1207,18 +1207,15 @@ export function TallaFormDrawer({ lang, options, initial, tallas, onClose, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.talla_base, form.tipo_producto, form.marca_id, form.familia_id, tallas, options, matrizActual]);
 
-  // Unidades de la matriz: si hay una matriz ESPECÍFICA (marca/familia)
-  // la usa; si no, toma las unidades del tipo de producto. La matriz
-  // default sin marca/familia debe reflejar el tipo, no vivir desfasada.
+  // Unidades de la matriz: el tipo de producto es la fuente de verdad.
+  // La matriz específica solo sugiere defaults al crear; no decide qué
+  // campos se muestran, para que edición y creación sean consistentes.
   const unidadesMatriz = useMemo(() => {
     const cat = options?.sistemas_medida || [];
-    const sist = (matrizActual && (matrizActual.marca_id || matrizActual.familia_id))
-      ? matrizActual.sistemas
-      : (tipoActual?.sistemas || []);
-    return sist
+    return (tipoActual?.sistemas || [])
       .map(cod => cat.find(s => s.codigo === cod))
       .filter(Boolean);
-  }, [matrizActual, tipoActual, options]);
+  }, [tipoActual, options]);
 
   // ── Submit (sin bloqueos) ──────────────────────────────────
   const submit = async () => {
