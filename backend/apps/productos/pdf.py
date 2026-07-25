@@ -176,19 +176,36 @@ def _extract_specs(data: Dict[str, Any]) -> Dict[str, Any]:
     out["linea"] = _safe(esp.get("familia") or "COMPOSITE")
     out["code"] = _safe(data.get("sku") or data.get("nombre"))
     out["name"] = _safe(data.get("nombre") or data.get("sku"))
-    out["ca"] = _safe(esp.get("ca") or "—")
+    ca = esp.get("ca")
+    out["ca"] = _safe(ca) if ca else None
     out["description"] = _safe(data.get("descripcion") or esp.get("descripcion_tecnica") or _build_default_description(data, esp))
 
-    # Chips técnicos hero
+    out["validez"] = _safe(esp.get("validez")) if esp.get("validez") else None
+    out["altura_cania"] = _safe(esp.get("altura_cania")) if esp.get("altura_cania") else None
+
+    # Chips técnicos hero: solo datos reales
     chips = []
-    chips.append(("CA", out["ca"]))
+    if out["ca"] and out["ca"] != "—":
+        chips.append(("CA", out["ca"]))
     peso = data.get("peso_kg")
     if peso:
         chips.append(("PESO / PIE", f"{_num(peso, 3)} kg"))
-    else:
+    elif esp.get("peso_pie"):
         chips.append(("PESO / PIE", _safe(esp.get("peso_pie"))))
-    chips.append(("ALTURA CAÑA", _safe(esp.get("altura_cania") or "—")))
-    chips.append(("VALIDEZ", _safe(esp.get("validez") or "36 meses")))
+    if esp.get("altura_cania"):
+        chips.append(("ALTURA CAÑA", _safe(esp.get("altura_cania"))))
+    if esp.get("validez"):
+        chips.append(("VALIDEZ", _safe(esp.get("validez"))))
+    # Si faltan chips técnicos, rellenar con datos reales del producto
+    if len(chips) < 2:
+        if data.get("pais_origen_iso2"):
+            chips.append(("PAÍS DE ORIGEN", _safe(data.get("pais_origen_iso2"))))
+        ncm = esp.get("ncm") or data.get("hs_code")
+        if ncm:
+            chips.append(("NCM / HS", _safe(ncm)))
+        norms = _safe_list(esp.get("normativa"))
+        if norms:
+            chips.append(("NORMA", norms[0]))
     out["chips"] = chips
 
     # Construcción del calzado
@@ -228,9 +245,16 @@ def _extract_specs(data: Dict[str, Any]) -> Dict[str, Any]:
         technical_items.append(("Peso por pie", _safe(esp.get("peso_pie"))))
     if esp.get("altura_cania"):
         technical_items.append(("Altura de caña", _safe(esp.get("altura_cania"))))
-    technical_items.append(("Validez", _safe(esp.get("validez") or "36 meses desde fabricación")))
+    if esp.get("validez"):
+        technical_items.append(("Validez", _safe(esp.get("validez"))))
+    if data.get("pais_origen_iso2"):
+        technical_items.append(("País de origen", _safe(data.get("pais_origen_iso2"))))
+    ncm = esp.get("ncm") or data.get("hs_code")
+    if ncm:
+        technical_items.append(("NCM / HS", _safe(ncm)))
     norms = _safe_list(esp.get("normativa"))
-    technical_items.append(("Norma", _join(norms)))
+    if norms:
+        technical_items.append(("Norma", _join(norms)))
     if not technical_items:
         technical_items.append(("Norma", "—"))
     out["technical_items"] = technical_items
@@ -245,22 +269,16 @@ def _extract_specs(data: Dict[str, Any]) -> Dict[str, Any]:
     ]
     if antiperforante:
         stats.append(("1100N", "Antiperforación", "Plantilla no metálica"))
-    else:
-        stats.append(("1100N", "Antiperforación", "—"))
     if "src" in suela or "bidensidad" in suela:
         stats.append(("SRC", "Antideslizante", "Cerámica + acero"))
-    else:
-        stats.append(("SRC", "Antideslizante", "—"))
     out["norma_stats"] = stats
 
     # Segmentos
     out["segments"] = _safe_list(esp.get("segmento")) or _safe_list(esp.get("segmentos")) or []
 
-    # Embalaje
-    out["packaging"] = _safe(
-        esp.get("embalaje")
-        or "Bolsa plástica individual en caja colectiva. Consulte disponibilidad de empaque para volúmenes."
-    )
+    # Embalaje: solo si hay dato real
+    packaging = esp.get("embalaje")
+    out["packaging"] = _safe(packaging) if packaging else None
 
     return out
 
@@ -325,7 +343,7 @@ def _build_image_cell(image_key: Optional[str]) -> Any:
 
 
 def _build_header(styles: Dict[str, Any], specs: Dict[str, Any]) -> Any:
-    """Header institucional: marca a la izquierda, línea/código/CA a la derecha."""
+    """Header institucional: marca a la izquierda, línea/código/CA(optional) a la derecha."""
     from reportlab.platypus import Table, TableStyle, Paragraph
     from reportlab.lib.units import mm
 
@@ -339,30 +357,30 @@ def _build_header(styles: Dict[str, Any], specs: Dict[str, Any]) -> Any:
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
     ]))
 
-    ca_tbl = Table([[Paragraph(f"CA <b>{specs['ca']}</b>", styles["header_ca"])]], colWidths=[28 * mm])
-    ca_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), _hex(COLOR_NAVY_DARK)),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("TOPPADDING", (0, 0), (-1, -1), 1 * mm),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1 * mm),
-        ("LEFTPADDING", (0, 0), (-1, -1), 1.5 * mm),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 1.5 * mm),
-    ]))
-
-    right = [
+    right_rows = [
         [Paragraph(f"FICHA TÉCNICA · LÍNEA <b>{specs['linea'].upper()}</b>", styles["header_meta"])],
         [Paragraph(f"<b>{specs['code']}</b>", styles["header_code"])],
-        [ca_tbl],
     ]
-    right_tbl = Table(right, colWidths=[85 * mm])
+    if specs.get("ca") and specs["ca"] != "—":
+        ca_tbl = Table([[Paragraph(f"CA <b>{specs['ca']}</b>", styles["header_ca"])]], colWidths=[28 * mm])
+        ca_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), _hex(COLOR_NAVY_DARK)),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("TOPPADDING", (0, 0), (-1, -1), 1 * mm),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1 * mm),
+            ("LEFTPADDING", (0, 0), (-1, -1), 1.5 * mm),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 1.5 * mm),
+        ]))
+        right_rows.append([ca_tbl])
+
+    right_tbl = Table(right_rows, colWidths=[85 * mm])
     right_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING", (0, 1), (0, 1), 1 * mm),
-        ("BOTTOMPADDING", (0, 2), (0, 2), 0),
     ]))
 
     header = Table([[left_tbl, right_tbl]], colWidths=[95 * mm, 95 * mm])
@@ -376,10 +394,13 @@ def _build_header(styles: Dict[str, Any], specs: Dict[str, Any]) -> Any:
     return header
 
 
-def _build_chips(chips: List[Tuple[str, str]], styles: Dict[str, Any]) -> Any:
-    """4 chips técnicos en grid: CA, PESO/PIE, ALTURA CAÑA, VALIDEZ."""
-    from reportlab.platypus import Table, TableStyle, Paragraph
+def _build_chips(chips: List[Tuple[str, str]], styles: Dict[str, Any]) -> Optional[Any]:
+    """Grid de chips técnicos; solo datos reales, sin placeholders."""
+    from reportlab.platypus import Table, TableStyle, Paragraph, Spacer
     from reportlab.lib.units import mm
+
+    if not chips:
+        return None
 
     cells = []
     for label, value in chips:
@@ -388,9 +409,9 @@ def _build_chips(chips: List[Tuple[str, str]], styles: Dict[str, Any]) -> Any:
             Paragraph(f"<b>{value}</b>", styles["chip_value"]),
         ]
         cells.append(cell)
-    # Asegurar 4 celdas, completando con vacíos si faltan
+    # Completar hasta 4 celdas con espacios vacíos (sin guiones)
     while len(cells) < 4:
-        cells.append([Paragraph("", styles["chip_label"]), Paragraph("—", styles["chip_value"])])
+        cells.append([Spacer(1, 1 * mm), Spacer(1, 1 * mm)])
 
     row = [[c[0], c[1]] for c in cells]
     chip_tbl = Table(row, colWidths=[(38 * mm) for _ in range(4)])
@@ -442,19 +463,25 @@ def _build_specs_table(title: str, items: List[Tuple[str, str]], styles: Dict[st
     return tbl
 
 
-def _build_norma_stats(stats: List[Tuple[str, str, str]], styles: Dict[str, Any]) -> Any:
-    """Strip de 4 celdas de norma en una fila: valor grande, label, note."""
+def _build_norma_stats(stats: List[Tuple[str, str, str]], styles: Dict[str, Any]) -> Optional[Any]:
+    """Strip de celdas de norma en una fila: valor grande, label, note."""
     from reportlab.platypus import Table, TableStyle, Paragraph
     from reportlab.lib.units import mm
 
-    # Cada celda es una mini-columna interna con 3 párrafos.
+    if not stats:
+        return None
+
+    # Ancho total del strip ~182 mm (4 celdas de 45.5 mm)
+    total_width = 182 * mm
+    cell_width = total_width / len(stats)
+
     cells = []
     for value, label, note in stats:
         inner = Table([
             [Paragraph(f"<b>{value}</b>", styles["stat_value"])],
             [Paragraph(f"<b>{label}</b>", styles["stat_label"])],
             [Paragraph(note, styles["stat_note"])],
-        ], colWidths=[40 * mm])
+        ], colWidths=[cell_width - 5 * mm])
         inner.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -463,30 +490,37 @@ def _build_norma_stats(stats: List[Tuple[str, str, str]], styles: Dict[str, Any]
             ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
         ]))
         cells.append([inner])
-    while len(cells) < 4:
-        cells.append([Paragraph("", styles["stat_value"])])
 
-    tbl = Table([cells], colWidths=[(45.5 * mm) for _ in range(4)])
-    tbl.setStyle(TableStyle([
+    tbl = Table([cells], colWidths=[cell_width for _ in stats])
+    style_cmds = [
         ("BOX", (0, 0), (-1, -1), 0.75, _hex(COLOR_NAVY_DARK)),
-        ("LINERIGHT", (0, 0), (-2, -1), 0.5, _hex(COLOR_CHIP_BORDER)),
         ("LEFTPADDING", (0, 0), (-1, -1), 2.5 * mm),
         ("RIGHTPADDING", (0, 0), (-1, -1), 2.5 * mm),
         ("TOPPADDING", (0, 0), (-1, -1), 2 * mm),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-    ]))
+    ]
+    if len(stats) > 1:
+        style_cmds.append(("LINERIGHT", (0, 0), (-2, -1), 0.5, _hex(COLOR_CHIP_BORDER)))
+    tbl.setStyle(TableStyle(style_cmds))
     return tbl
 
 
-def _build_segments_packaging(segments: List[str], packaging: str, styles: Dict[str, Any]) -> Any:
-    """Dos columnas: segmentos como pills + embalaje."""
+def _build_segments_packaging(segments: List[str], packaging: Optional[str], styles: Dict[str, Any]) -> Optional[Any]:
+    """Dos columnas: segmentos como pills + embalaje. Si no hay embalaje real,
+    usa solo la columna de segmentos a ancho completo."""
     from reportlab.platypus import Table, TableStyle, Paragraph
     from reportlab.lib.units import mm
 
-    seg_label = Paragraph("SEGMENTOS / APLICACIONES", styles["section_label"])
-    if segments:
-        # Pills como pequeñas celdas con borde redondeado (simulado con box).
+    has_segments = bool(segments)
+    has_packaging = bool(packaging)
+
+    if not has_segments and not has_packaging:
+        return None
+
+    left_cells = []
+    if has_segments:
+        seg_label = Paragraph("SEGMENTOS / APLICACIONES", styles["section_label"])
         pills = []
         for s in segments[:8]:
             pill = Table([[Paragraph(s, styles["pills"])]], colWidths=[None])
@@ -510,14 +544,40 @@ def _build_segments_packaging(segments: List[str], packaging: str, styles: Dict[
             ("TOPPADDING", (0, 0), (-1, -1), 0),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5 * mm),
         ]))
+        left_cells = [[seg_label], [pill_table]]
     else:
-        pill_table = Paragraph("—", styles["pills"])
+        left_cells = []
 
-    left = [
-        [seg_label],
-        [pill_table],
-    ]
-    left_tbl = Table(left, colWidths=[90 * mm])
+    if has_packaging:
+        pack_label = Paragraph("EMBALAJE", styles["section_label"])
+        pack_content = Paragraph(packaging, styles["packaging_text"])
+        right_cells = [[pack_label], [pack_content]]
+    else:
+        right_cells = []
+
+    if not left_cells:
+        # Solo embalaje
+        right_tbl = Table(right_cells, colWidths=[190 * mm])
+        right_tbl.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (0, 0), 2 * mm),
+        ]))
+        return right_tbl
+
+    if not right_cells:
+        # Solo segmentos
+        left_tbl = Table(left_cells, colWidths=[190 * mm])
+        left_tbl.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (0, 0), 2 * mm),
+        ]))
+        return left_tbl
+
+    left_tbl = Table(left_cells, colWidths=[90 * mm])
     left_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -525,10 +585,7 @@ def _build_segments_packaging(segments: List[str], packaging: str, styles: Dict[
         ("BOTTOMPADDING", (0, 0), (0, 0), 2 * mm),
     ]))
 
-    pack_label = Paragraph("EMBALAJE", styles["section_label"])
-    pack_content = Paragraph(packaging, styles["packaging_text"])
-    right = [[pack_label], [pack_content]]
-    right_tbl = Table(right, colWidths=[90 * mm])
+    right_tbl = Table(right_cells, colWidths=[90 * mm])
     right_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -545,23 +602,38 @@ def _build_segments_packaging(segments: List[str], packaging: str, styles: Dict[
     return tbl
 
 
-def _draw_footer(canvas, doc):
-    """Dibuja el footer institucional en la primera/única página."""
-    canvas.saveState()
-    from reportlab.lib.units import mm
-    width = 210 * mm
-    y = 12 * mm
-    canvas.setStrokeColor(_hex(COLOR_NAVY_DARK))
-    canvas.setLineWidth(1.5)
-    canvas.line(14 * mm, y, 196 * mm, y)
+def _make_footer(specs: Dict[str, Any]):
+    """Devuelve el callback onFirstPage con datos reales inyectados."""
+    def _draw_footer(canvas, doc):
+        """Dibuja el footer institucional en la primera/única página."""
+        canvas.saveState()
+        from reportlab.lib.units import mm
+        width = 210 * mm
+        y = 12 * mm
+        canvas.setStrokeColor(_hex(COLOR_NAVY_DARK))
+        canvas.setLineWidth(1.5)
+        canvas.line(14 * mm, y, 196 * mm, y)
 
-    canvas.setFont("Helvetica", 6.5)
-    canvas.setFillColor(_hex(COLOR_LABEL))
-    canvas.drawString(14 * mm, y - 5 * mm, "VALIDEZ 36 MESES DESDE FECHA DE FABRICACIÓN · ALTURA DE CAÑA BASADA EN TALLA 40 (±3,33 mm/talla)")
-    canvas.setFont("Helvetica-Bold", 6.5)
-    canvas.setFillColor(_hex(COLOR_NAVY_DARK))
-    canvas.drawRightString(196 * mm, y - 5 * mm, "EPP SEGURA")
-    canvas.restoreState()
+        canvas.setFont("Helvetica", 6.5)
+        canvas.setFillColor(_hex(COLOR_LABEL))
+
+        validez = specs.get("validez")
+        altura = specs.get("altura_cania")
+        parts = []
+        if validez:
+            parts.append(f"VALIDEZ {validez} DESDE FECHA DE FABRICACIÓN")
+        if altura:
+            parts.append(f"ALTURA DE CAÑA BASADA EN TALLA 40 (±3,33 mm/talla)")
+        if parts:
+            footer_text = " · ".join(parts)
+        else:
+            footer_text = "EPP SEGURA · EQUIPO DE PROTECCIÓN PERSONAL"
+        canvas.drawString(14 * mm, y - 5 * mm, footer_text)
+        canvas.setFont("Helvetica-Bold", 6.5)
+        canvas.setFillColor(_hex(COLOR_NAVY_DARK))
+        canvas.drawRightString(196 * mm, y - 5 * mm, "EPP SEGURA")
+        canvas.restoreState()
+    return _draw_footer
 
 
 # ── Función pública ──────────────────────────────────────────────────
@@ -618,14 +690,16 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
         story.append(_build_header(styles, specs))
         story.append(Spacer(1, 3 * mm))
 
-        # Hero: imagen | título + desc + chips
+        # Hero: imagen | título + desc + chips (opcional)
         image_cell = _build_image_cell(data.get("imagen_url"))
+        chips_tbl = _build_chips(specs["chips"], styles)
         right_hero = [
             [Paragraph(specs["name"], styles["title"])],
             [Paragraph(specs["description"], styles["description"])],
-            [Spacer(1, 2 * mm)],
-            [_build_chips(specs["chips"], styles)],
         ]
+        if chips_tbl:
+            right_hero.append([Spacer(1, 2 * mm)])
+            right_hero.append([chips_tbl])
         right_hero_tbl = Table(right_hero, colWidths=[108 * mm])
         right_hero_tbl.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -659,13 +733,17 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
         story.append(specs_row)
 
         # Strip de normas
-        story.append(_build_norma_stats(specs["norma_stats"], styles))
-        story.append(Spacer(1, 3 * mm))
+        stats_tbl = _build_norma_stats(specs["norma_stats"], styles)
+        if stats_tbl:
+            story.append(stats_tbl)
+            story.append(Spacer(1, 3 * mm))
 
         # Segmentos + embalaje
-        story.append(_build_segments_packaging(specs["segments"], specs["packaging"], styles))
+        seg_pack_tbl = _build_segments_packaging(specs["segments"], specs["packaging"], styles)
+        if seg_pack_tbl:
+            story.append(seg_pack_tbl)
 
-        doc.build(story, onFirstPage=_draw_footer)
+        doc.build(story, onFirstPage=_make_footer(specs))
         buffer.seek(0)
         return buffer.getvalue()
     except Exception as e:
