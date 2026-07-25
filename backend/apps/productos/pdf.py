@@ -271,7 +271,7 @@ def _build_default_description(data: Dict[str, Any], esp: Dict[str, Any]) -> str
     if data.get("categoria"):
         parts.append(f"{data['categoria']}")
     if esp.get("tipo_puntera"):
-        parts.append(f"con puntera de {esp['tipo_puntera'].lower()}")
+        parts.append(f"con puntera de {esp['tipo_puntera']}")
     if esp.get("capellada"):
         parts.append(f"confeccionada en {esp['capellada'].lower()}")
     if esp.get("cierre"):
@@ -315,7 +315,7 @@ def _build_image_cell(image_key: Optional[str]) -> Any:
         from reportlab.platypus import Table, TableStyle
         t = Table([[rl]], colWidths=[50 * mm], rowHeights=[50 * mm])
         t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), _hex(COLOR_PLACEHOLDER_BG)),
+            ("BACKGROUND", (0, 0), (-1, -1), _hex(COLOR_WHITE)),
             ("BOX", (0, 0), (-1, -1), 0.75, _hex(COLOR_PLACEHOLDER_BORDER)),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
