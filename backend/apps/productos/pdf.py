@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from django.http import HttpResponse
 
 from apps.storage.services import get_object_stream
+from apps.sizing.models import Talla, TipoProductoCat, TipoProductoMatriz, MedidaSistemaCat
 from .models import Producto
 from .serializers import ProductoSerializer
 
@@ -299,6 +300,161 @@ def _build_default_description(data: Dict[str, Any], esp: Dict[str, Any]) -> str
     if parts:
         return ", ".join(parts) + "."
     return "Calzado de seguridad ocupacional de alto desempeño."
+
+
+# ── Matriz de tallas ─────────────────────────────────────────────────
+
+def _build_size_matrix(producto: Producto) -> Optional[Dict[str, Any]]:
+    """Resuelve la matriz de equivalencias de tallas del producto."""
+    specs = producto.especificaciones or {}
+    tipo = str(specs.get("tipo_producto") or "calzado").strip().lower()
+    marca_id = producto.marca_id
+    familia_id = specs.get("familia_id")
+
+    matriz = None
+    if marca_id and familia_id:
+        matriz = TipoProductoMatriz.objects.filter(
+            tipo_producto=tipo, marca_id=marca_id,
+            familia_id=familia_id, is_active=True,
+        ).first()
+    if not matriz and marca_id:
+        matriz = TipoProductoMatriz.objects.filter(
+            tipo_producto=tipo, marca_id=marca_id,
+            familia_id=None, is_active=True,
+        ).first()
+    if not matriz:
+        matriz = TipoProductoMatriz.objects.filter(
+            tipo_producto=tipo, marca_id=None,
+            familia_id=None, is_active=True,
+        ).first()
+
+    if matriz and matriz.sistemas:
+        sistemas = list(matriz.sistemas)
+    else:
+        tipo_cat = TipoProductoCat.objects.filter(pk=tipo).first()
+        sistemas = list(tipo_cat.sistemas or []) if tipo_cat else []
+
+    if not sistemas:
+        return None
+
+    medidas = {
+        m.codigo: m
+        for m in MedidaSistemaCat.objects.filter(
+            codigo__in=sistemas, is_active=True,
+        )
+    }
+
+    base_code = sistemas[0]
+    base_label = medidas[base_code].label if base_code in medidas else base_code.upper()
+
+    headers = [{
+        "code": base_code,
+        "label": base_label,
+        "is_base": True,
+    }]
+    for code in sistemas[1:]:
+        m = medidas.get(code)
+        headers.append({
+            "code": code,
+            "label": m.label if m else code.upper(),
+            "is_base": False,
+        })
+
+    size_ids = list(producto.tallas or []) or list(specs.get("sizes") or [])
+    if not size_ids:
+        return None
+
+    tallas = Talla.objects.filter(
+        id__in=size_ids, tipo_producto=tipo, is_active=True,
+    ).order_by("talla_base")
+
+    def _value(talla, code):
+        if code == base_code:
+            return talla.talla_base
+        val = (talla.equivalencias or {}).get(code)
+        if val is None or val == "":
+            val = getattr(talla, code, None)
+        return val
+
+    rows = []
+    for t in tallas:
+        rows.append({
+            "base": t.talla_base,
+            "values": [_value(t, code) for code in sistemas[1:]],
+        })
+
+    def _sort_key(row):
+        try:
+            return (0, int(row["base"]))
+        except (ValueError, TypeError):
+            return (1, str(row["base"] or ""))
+    rows.sort(key=_sort_key)
+
+    return {
+        "base_label": base_label,
+        "headers": headers,
+        "rows": rows,
+    }
+
+
+def _build_size_table(matrix: Dict[str, Any], styles: Dict[str, Any]) -> Any:
+    """Tabla de equivalencias de tallas: sistema base en columnas, equivalencias en filas."""
+    from reportlab.platypus import Table, TableStyle, Paragraph
+    from reportlab.lib.units import mm
+
+    rows = matrix.get("rows") or []
+    if not rows:
+        return None
+
+    headers = matrix["headers"]
+    n_cols = len(headers)
+    # Ancho total disponible ~182 mm; primera columna (etiqueta del sistema) más ancha.
+    total_width = 182 * mm
+    label_width = 22 * mm
+    col_width = (total_width - label_width) / max(n_cols - 1, 1)
+
+    # Primera fila: etiqueta del sistema base + valores base de cada talla
+    data = [[Paragraph(headers[0]["label"], styles["size_header_base"])]]
+    for r in rows:
+        data[0].append(Paragraph(_safe(r["base"]), styles["size_header_base"]))
+
+    # Filas de equivalencias
+    for i, h in enumerate(headers[1:], start=1):
+        row = [Paragraph(h["label"], styles["size_row_label"])]
+        for r in rows:
+            val = r["values"][i - 1] if i - 1 < len(r["values"]) else None
+            row.append(Paragraph(_safe(val) if val else "", styles["size_row_value"]))
+        data.append(row)
+
+    col_widths = [label_width] + [col_width] * (n_cols - 1)
+    tbl = Table(data, colWidths=col_widths, repeatRows=1)
+
+    style_cmds = [
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 6.5),
+        ("LEADING", (0, 0), (-1, 0), 8),
+        ("BACKGROUND", (0, 0), (-1, 0), _hex(COLOR_ACCENT)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), _hex(COLOR_ACCENT_INK)),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 1.5 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 1.5 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.5 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5 * mm),
+        ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 1), (-1, -1), 6),
+        ("LEADING", (0, 1), (-1, -1), 7),
+        ("BACKGROUND", (0, 1), (0, -1), _hex(COLOR_LIGHT_BG)),
+        ("TEXTCOLOR", (0, 1), (0, -1), _hex(COLOR_NAVY_DARK)),
+        ("BOX", (0, 0), (-1, -1), 0.75, _hex(COLOR_CHIP_BORDER)),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.75, _hex(COLOR_NAVY_DARK)),
+    ]
+    # Rayas alternadas en el cuerpo
+    for row_idx in range(1, len(data)):
+        if row_idx % 2 == 0:
+            style_cmds.append(("BACKGROUND", (1, row_idx), (-1, row_idx), _hex(COLOR_LIGHT_BG)))
+    tbl.setStyle(TableStyle(style_cmds))
+    return tbl
 
 
 # ── Renderizado del PDF ──────────────────────────────────────────────
@@ -682,6 +838,9 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
             "section_label": _style("section_label", fontName="Helvetica", fontSize=7, leading=9, textColor=_hex(COLOR_LABEL)),
             "pills": _style("pills", fontName="Helvetica-Bold", fontSize=8, leading=12, textColor=_hex(COLOR_NAVY_DARK)),
             "packaging_text": _style("packaging_text", fontName="Helvetica", fontSize=8, leading=12, textColor=_hex(COLOR_DESC)),
+            "size_header_base": _style("size_header_base", fontName="Helvetica-Bold", fontSize=6.5, leading=8, textColor=_hex(COLOR_ACCENT_INK), alignment=1),
+            "size_row_label": _style("size_row_label", fontName="Helvetica-Bold", fontSize=6, leading=7, textColor=_hex(COLOR_NAVY_DARK), alignment=1),
+            "size_row_value": _style("size_row_value", fontName="Helvetica", fontSize=6, leading=7, textColor=_hex(COLOR_NAVY_DARK), alignment=1),
         }
 
         story = []
@@ -744,6 +903,14 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
         seg_pack_tbl = _build_segments_packaging(specs["segments"], specs["packaging"], styles)
         if seg_pack_tbl:
             story.append(seg_pack_tbl)
+
+        # Matriz de tallas
+        size_matrix = _build_size_matrix(producto)
+        if size_matrix:
+            story.append(Spacer(1, 3 * mm))
+            size_tbl = _build_size_table(size_matrix, styles)
+            if size_tbl:
+                story.append(size_tbl)
 
         doc.build(story, onFirstPage=_make_footer(specs))
         buffer.seek(0)

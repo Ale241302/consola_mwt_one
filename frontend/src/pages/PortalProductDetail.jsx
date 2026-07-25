@@ -168,6 +168,7 @@ export default function PortalProductDetail() {
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [sizeMatrix, setSizeMatrix] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -190,6 +191,23 @@ export default function PortalProductDetail() {
       cancelled = true;
     };
   }, [productId, lang]);
+
+  useEffect(() => {
+    if (!product?.id) return;
+    let cancelled = false;
+    fetchSizeMatrix(product.id)
+      .then((m) => {
+        if (!cancelled) setSizeMatrix(m);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("[portal-product-detail] size matrix failed:", err);
+        setSizeMatrix({ rows: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [product?.id]);
 
   const specs = useMemo(() => product?.especificaciones || {}, [product]);
 
@@ -431,6 +449,39 @@ export default function PortalProductDetail() {
         </section>
       )}
 
+      {/* Tallas / equivalencias */}
+      {sizeMatrix?.rows?.length > 0 && (
+        <section className="ppd-section ppd-sizes">
+          <div className="ppd-section-head">
+            <h2>{lang === "es" ? "Tallas" : "Sizes"}</h2>
+            <span className="ppd-section-kicker">{sizeMatrix.base_label}</span>
+          </div>
+          <div className="ppd-size-table-wrap">
+            <table className="ppd-size-table">
+              <thead>
+                <tr>
+                  {sizeMatrix.headers.map((h) => (
+                    <th key={h.code} className={h.is_base ? "ppd-size-base-header" : ""}>
+                      {h.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sizeMatrix.rows.map((row, idx) => (
+                  <tr key={idx}>
+                    <td className="ppd-size-base">{row.base}</td>
+                    {row.values.map((v, i) => (
+                      <td key={i}>{v ?? "—"}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {/* Aplicaciones y sectores */}
       {segmentCards.length > 0 && (
         <section className="ppd-section ppd-segments">
@@ -564,6 +615,21 @@ function storageUrl(key) {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
+
+async function fetchSizeMatrix(productId) {
+  const token = getToken();
+  const resp = await fetch(
+    `${window.location.origin}${API_BASE}/productos/${encodeURIComponent(productId)}/talla-matrix/`,
+    {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    },
+  );
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`No se pudo cargar la matriz de tallas (${resp.status}) ${text}`);
+  }
+  return await resp.json();
+}
 
 async function fetchGeneratedPdfBlobUrl(productId) {
   const token = getToken();

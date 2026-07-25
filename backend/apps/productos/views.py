@@ -13,6 +13,8 @@ from rest_framework.response import Response
 
 from apps.storage.services import delete_object as _storage_delete
 
+from apps.sizing.models import Talla, TipoProductoCat, TipoProductoMatriz, MedidaSistemaCat
+
 from .models import (
     Producto, CategoriaCat, SubcategoriaCat, UnidadCat, EstadoCat,
     ProductClientAlias, NcmCode,
@@ -984,6 +986,119 @@ class ProductoViewSet(viewsets.ViewSet):
             "updated": updated,
             "skipped": skipped,
             "errors":  errors,
+        })
+
+    # ── Sprint 2026-07-25 · Matriz de tallas para portal y PDF ─────────
+    # Devuelve la matriz de equivalencias de tallas del producto,
+    # respetando la configuración de ops.tipo_producto_matriz y
+    # ops.medida_sistema_cat. Fuente de verdad: Talla.equivalencias.
+    @action(detail=True, methods=["get"], url_path="talla-matrix")
+    def talla_matrix(self, request, pk=None):
+        try:
+            producto = Producto.objects.get(pk=pk, is_active=True)
+        except Producto.DoesNotExist:
+            return Response({"detail": "Producto no encontrado"}, status=404)
+
+        specs = producto.especificaciones or {}
+        tipo = str(specs.get("tipo_producto") or "calzado").strip().lower()
+        marca_id = producto.marca_id
+        familia_id = specs.get("familia_id")
+
+        # Resolver matriz más específica activa
+        matriz = None
+        if marca_id and familia_id:
+            matriz = TipoProductoMatriz.objects.filter(
+                tipo_producto=tipo, marca_id=marca_id,
+                familia_id=familia_id, is_active=True,
+            ).first()
+        if not matriz and marca_id:
+            matriz = TipoProductoMatriz.objects.filter(
+                tipo_producto=tipo, marca_id=marca_id,
+                familia_id=None, is_active=True,
+            ).first()
+        if not matriz:
+            matriz = TipoProductoMatriz.objects.filter(
+                tipo_producto=tipo, marca_id=None,
+                familia_id=None, is_active=True,
+            ).first()
+
+        if matriz and matriz.sistemas:
+            sistemas = list(matriz.sistemas)
+        else:
+            tipo_cat = TipoProductoCat.objects.filter(pk=tipo).first()
+            sistemas = list(tipo_cat.sistemas or []) if tipo_cat else []
+
+        if not sistemas:
+            return Response({
+                "base_label": "Talla base",
+                "headers": [],
+                "rows": [],
+            })
+
+        medidas = {
+            m.codigo: m
+            for m in MedidaSistemaCat.objects.filter(
+                codigo__in=sistemas, is_active=True,
+            )
+        }
+
+        base_code = sistemas[0]
+        base_label = medidas[base_code].label if base_code in medidas else base_code.upper()
+
+        headers = [{
+            "code": base_code,
+            "label": base_label,
+            "is_base": True,
+        }]
+        for code in sistemas[1:]:
+            m = medidas.get(code)
+            headers.append({
+                "code": code,
+                "label": m.label if m else code.upper(),
+                "is_base": False,
+            })
+
+        # IDs de tallas asociadas al producto
+        size_ids = list(producto.tallas or []) or list(specs.get("sizes") or [])
+        if not size_ids:
+            return Response({
+                "base_label": base_label,
+                "headers": headers,
+                "rows": [],
+            })
+
+        tallas = Talla.objects.filter(
+            id__in=size_ids, tipo_producto=tipo, is_active=True,
+        ).order_by("talla_base")
+
+        def _value(talla, code):
+            if code == base_code:
+                return talla.talla_base
+            val = (talla.equivalencias or {}).get(code)
+            if val is None or val == "":
+                val = getattr(talla, code, None)
+            return val
+
+        rows = []
+        for t in tallas:
+            rows.append({
+                "base": t.talla_base,
+                "values": [_value(t, code) for code in sistemas[1:]],
+            })
+
+        # Ordenar numéricamente cuando la talla base sea un número entero
+        def _sort_key(row):
+            base = row["base"]
+            try:
+                return (0, int(base))
+            except (ValueError, TypeError):
+                return (1, str(base or ""))
+        rows.sort(key=_sort_key)
+
+        return Response({
+            "base_label": base_label,
+            "headers": headers,
+            "rows": rows,
         })
 
     # ── Sprint 2026-07-24 · Ficha técnica PDF ────────────────────────
