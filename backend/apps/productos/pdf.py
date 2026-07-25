@@ -416,7 +416,7 @@ def _build_size_table(matrix: Dict[str, Any], styles: Dict[str, Any]) -> Any:
         ("FONTSIZE", (0, 0), (-1, 0), 6.5),
         ("LEADING", (0, 0), (-1, 0), 8),
         ("BACKGROUND", (0, 0), (0, 0), _hex(COLOR_ACCENT)),
-        ("TEXTCOLOR", (0, 0), (0, 0), _hex(COLOR_ACCENT_INK)),
+        ("TEXTCOLOR", (0, 0), (0, 0), _hex(COLOR_WHITE)),
         ("BACKGROUND", (1, 0), (-1, 0), _hex(COLOR_NAVY_DARK)),
         ("TEXTCOLOR", (1, 0), (-1, 0), _hex(COLOR_WHITE)),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
@@ -822,7 +822,7 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
             "section_label": _style("section_label", fontName="Helvetica", fontSize=7, leading=9, textColor=_hex(COLOR_LABEL)),
             "pills": _style("pills", fontName="Helvetica-Bold", fontSize=8, leading=12, textColor=_hex(COLOR_NAVY_DARK)),
             "packaging_text": _style("packaging_text", fontName="Helvetica", fontSize=8, leading=12, textColor=_hex(COLOR_DESC)),
-            "size_header_base": _style("size_header_base", fontName="Helvetica-Bold", fontSize=6.5, leading=8, textColor=_hex(COLOR_ACCENT_INK), alignment=1),
+            "size_header_base": _style("size_header_base", fontName="Helvetica-Bold", fontSize=6.5, leading=8, textColor=_hex(COLOR_WHITE), alignment=1),
             "size_row_label": _style("size_row_label", fontName="Helvetica-Bold", fontSize=6, leading=7, textColor=_hex(COLOR_NAVY_DARK), alignment=1),
             "size_row_value": _style("size_row_value", fontName="Helvetica", fontSize=6, leading=7, textColor=_hex(COLOR_NAVY_DARK), alignment=1),
         }
