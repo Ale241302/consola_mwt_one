@@ -15,6 +15,7 @@ import ScreenFusionDetail from "./pages/FusionDetail.jsx";
 import ScreenExpedienteDetail from "./pages/ExpedienteDetail.jsx";
 import ScreenPipeline from "./pages/Pipeline.jsx";
 import ScreenPortal from "./pages/Portal.jsx";
+import ScreenPortalProductDetail from "./pages/PortalProductDetail.jsx";
 import PortalDiag from "./pages/PortalDiag.jsx";
 import ScreenPagos from "./pages/Pagos.jsx";
 // Sprint 2026-05-24 · Modulo Finanzas CEO-ONLY (comisiones, margen, devengo).
@@ -160,9 +161,8 @@ export default function App() {
         <Route path="/productos" element={<InternalOnlyRoute><ScreenProductos /></InternalOnlyRoute>} />
         <Route path="/productos/nuevo" element={<InternalOnlyRoute><ScreenProductFormView /></InternalOnlyRoute>} />
         <Route path="/productos/:productId" element={<InternalOnlyRoute><ScreenProductFormView /></InternalOnlyRoute>} />
-        {/* Ruta del Portal B2B: mismo componente, pero useRole() detecta
-            CLIENT y aplica el strip-down (fieldset disabled + tabs filtradas). */}
-        <Route path="/portal/productos/:productId" element={<ScreenProductFormView />} />
+        {/* Ruta del Portal B2B: ficha técnica comercial en lugar del formulario de edición. */}
+        <Route path="/portal/productos/:productId" element={<ScreenPortalProductDetail />} />
         <Route path="/tallas" element={<InternalOnlyRoute><ScreenSizingEngine /></InternalOnlyRoute>} />
         <Route path="/ncm" element={<InternalOnlyRoute><ScreenNcmEngine /></InternalOnlyRoute>} />
         <Route path="/proveedores" element={<InternalOnlyRoute><ScreenProveedores /></InternalOnlyRoute>} />
