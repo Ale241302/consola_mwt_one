@@ -19,6 +19,7 @@ import {
 } from "../lib/icons.jsx";
 
 const ICON_BASE = "/Iconos/";
+const ICON_CACHE_BUST = "v=2";
 
 function normalize(v) {
   return String(v || "")
@@ -156,7 +157,7 @@ const ICONS = {
 function iconFor(category, value) {
   const key = normalize(value);
   const rel = ICONS[category]?.[key];
-  return rel ? `${ICON_BASE}${rel}` : null;
+  return rel ? `${ICON_BASE}${rel}?${ICON_CACHE_BUST}` : null;
 }
 
 export default function PortalProductDetail() {
