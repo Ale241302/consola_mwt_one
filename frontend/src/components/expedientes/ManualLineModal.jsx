@@ -83,11 +83,11 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   const [requestSent,    setRequestSent]    = useState(new Set());
   const [requestErr,     setRequestErr]     = useState({});
   const [sizingMap, setSizingMap] = useState({});
-  // Sprint 2026-07-20 · sistema de talla por defecto: BRA (la base del
-  // Motor de Tallas para calzado Marluvas). El toggle muestra BRA primero.
+  // Sprint 2026-07-25 · sistema de talla por defecto: BASE (la talla base
+  // BRA del Motor de Tallas). El toggle muestra BRA primero.
   // Sprint 2026-07-21 · US M / US W habilitados otra vez (inputs activos;
   // la cantidad siempre se registra contra la talla base BRA).
-  const [displaySystem, setDisplaySystem] = useState("BR");
+  const [displaySystem, setDisplaySystem] = useState("BASE");
   // Sprint 2026-07-22 · fase 3 · catálogos sizing (tipos + unidades) para
   // el toggle dinámico — cache de módulo, no se refetchea por apertura.
   const [sizingCats, setSizingCats] = useState(null);
@@ -233,8 +233,8 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   const pick = async (p) => {
     const sku = (p.sku || "").toUpperCase();
     const isAssigned = isProductAssigned(p);
-    // Reset a BRA cada vez que se abre un producto nuevo.
-    setDisplaySystem("BR");
+    // Reset a BASE (BRA) cada vez que se abre un producto nuevo.
+    setDisplaySystem("BASE");
 
     let tallaIds = [];
     let tempPicked = {
@@ -356,23 +356,26 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
         .map((s) => ({ id: s, label: labels[s] || s }));
     }
 
-    // Sprint 2026-07-25 · BRA siempre primero en el toggle y seleccionada
-    // por defecto cuando el producto la tenga disponible.
-    const braIdx = sysList.findIndex(s => String(s.id).toUpperCase() === "BR");
-    if (braIdx > 0) {
-      const bra = sysList[braIdx];
-      sysList = [bra, ...sysList.slice(0, braIdx), ...sysList.slice(braIdx + 1)];
+    // Sprint 2026-07-25 · BASE (talla base BRA) siempre primera opción
+    // del toggle y seleccionada por defecto.
+    const hasBase = tallas.some(t => t.base && t.base !== "ÚNICA");
+    if (hasBase && !sysList.some(s => String(s.id).toUpperCase() === "BASE")) {
+      const baseLabel = tipoObj?.talla_base_label || "BRA";
+      sysList.unshift({ id: "BASE", label: baseLabel });
     }
 
     const ids = sysList.map(s => String(s.id).toUpperCase());
     const activeSystem = ids.includes(String(displaySystem).toUpperCase())
       ? displaySystem
-      : (ids.includes("BR") ? sysList.find(s => String(s.id).toUpperCase() === "BR").id
+      : (ids.includes("BASE") ? "BASE"
+        : ids.includes("BR") ? sysList.find(s => String(s.id).toUpperCase() === "BR").id
         : ids.includes("ALFA") ? sysList.find(s => String(s.id).toUpperCase() === "ALFA").id
         : sysList[0]?.id);
 
-    const valueOf = (t, sys = activeSystem) =>
-      useDyn ? dynValOf(t, sys) : (t?.equiv?.[sys] ?? null);
+    const valueOf = (t, sys = activeSystem) => {
+      if (String(sys).toUpperCase() === "BASE") return t?.base ?? null;
+      return useDyn ? dynValOf(t, sys) : (t?.equiv?.[sys] ?? null);
+    };
 
     return { useDyn, sysList, activeSystem, valueOf };
   };
