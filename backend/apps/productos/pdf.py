@@ -20,7 +20,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from django.http import HttpResponse
 
 from apps.storage.services import get_object_stream
-from apps.sizing.models import Talla, TipoProductoCat, TipoProductoMatriz, MedidaSistemaCat
+from apps.sizing.models import Talla, TipoProductoCat, MedidaSistemaCat
+from apps.sizing.utils import resolve_size_systems
 from .models import Producto
 from .serializers import ProductoSerializer
 
@@ -311,28 +312,10 @@ def _build_size_matrix(producto: Producto) -> Optional[Dict[str, Any]]:
     marca_id = producto.marca_id
     familia_id = specs.get("familia_id")
 
-    matriz = None
-    if marca_id and familia_id:
-        matriz = TipoProductoMatriz.objects.filter(
-            tipo_producto=tipo, marca_id=marca_id,
-            familia_id=familia_id, is_active=True,
-        ).first()
-    if not matriz and marca_id:
-        matriz = TipoProductoMatriz.objects.filter(
-            tipo_producto=tipo, marca_id=marca_id,
-            familia_id=None, is_active=True,
-        ).first()
-    if not matriz:
-        matriz = TipoProductoMatriz.objects.filter(
-            tipo_producto=tipo, marca_id=None,
-            familia_id=None, is_active=True,
-        ).first()
-
-    if matriz and matriz.sistemas:
-        sistemas = list(matriz.sistemas)
-    else:
-        tipo_cat = TipoProductoCat.objects.filter(pk=tipo).first()
-        sistemas = list(tipo_cat.sistemas or []) if tipo_cat else []
+    # Resolver unidades habilitadas: el TIPO de producto es la autoridad.
+    # La matriz específica (ops.tipo_producto_matriz) no puede agregar
+    # unidades que el tipo no tenga habilitadas; solo sugiere defaults.
+    sistemas = resolve_size_systems(tipo, marca_id, familia_id)
 
     if not sistemas:
         return None
