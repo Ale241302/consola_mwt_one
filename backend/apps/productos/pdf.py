@@ -229,7 +229,7 @@ def _extract_specs(data: Dict[str, Any]) -> Dict[str, Any]:
     if esp.get("cierre"):
         construction_items.append(("Cierre", _safe(esp.get("cierre"))))
     if not construction_items:
-        construction_items.append(("Capellada", "—"))
+        construction_items = []
     out["construction_items"] = construction_items
 
     # Datos técnicos
@@ -256,7 +256,7 @@ def _extract_specs(data: Dict[str, Any]) -> Dict[str, Any]:
     if norms:
         technical_items.append(("Norma", _join(norms)))
     if not technical_items:
-        technical_items.append(("Norma", "—"))
+        technical_items = []
     out["technical_items"] = technical_items
 
     # Norma stats strip
@@ -720,17 +720,19 @@ def render_ficha_tecnica_pdf(producto_id: str) -> Optional[bytes]:
         story.append(hero)
 
         # Dos tablas de especificaciones
-        left_table = _build_specs_table("CONSTRUCCIÓN DEL CALZADO", specs["construction_items"], styles)
-        right_table = _build_specs_table("DATOS TÉCNICOS", specs["technical_items"], styles)
-        specs_row = Table([[left_table, right_table]], colWidths=[87 * mm, 87 * mm])
-        specs_row.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
-        ]))
-        story.append(specs_row)
+        left_table = _build_specs_table("CONSTRUCCIÓN DEL CALZADO", specs["construction_items"], styles) if specs["construction_items"] else None
+        right_table = _build_specs_table("DATOS TÉCNICOS", specs["technical_items"], styles) if specs["technical_items"] else None
+        if left_table or right_table:
+            spec_cells = [left_table or "", right_table or ""]
+            specs_row = Table([spec_cells], colWidths=[87 * mm, 87 * mm])
+            specs_row.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
+            ]))
+            story.append(specs_row)
 
         # Strip de normas
         stats_tbl = _build_norma_stats(specs["norma_stats"], styles)
