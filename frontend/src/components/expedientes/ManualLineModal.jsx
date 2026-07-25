@@ -360,8 +360,7 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
     // del toggle y seleccionada por defecto.
     const hasBase = tallas.some(t => t.base && t.base !== "ÚNICA");
     if (hasBase && !sysList.some(s => String(s.id).toUpperCase() === "BASE")) {
-      const baseLabel = tipoObj?.talla_base_label || "BRA";
-      sysList.unshift({ id: "BASE", label: baseLabel });
+      sysList.unshift({ id: "BASE", label: "BRA" });
     }
 
     const ids = sysList.map(s => String(s.id).toUpperCase());
