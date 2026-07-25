@@ -233,6 +233,8 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
   const pick = async (p) => {
     const sku = (p.sku || "").toUpperCase();
     const isAssigned = isProductAssigned(p);
+    // Reset a BRA cada vez que se abre un producto nuevo.
+    setDisplaySystem("BR");
 
     let tallaIds = [];
     let tempPicked = {
@@ -354,13 +356,20 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
         .map((s) => ({ id: s, label: labels[s] || s }));
     }
 
-    const ids = sysList.map(s => s.id);
-    const activeSystem = ids.includes(displaySystem)
+    // Sprint 2026-07-25 · BRA siempre primero en el toggle y seleccionada
+    // por defecto cuando el producto la tenga disponible.
+    const braIdx = sysList.findIndex(s => String(s.id).toUpperCase() === "BR");
+    if (braIdx > 0) {
+      const bra = sysList[braIdx];
+      sysList = [bra, ...sysList.slice(0, braIdx), ...sysList.slice(braIdx + 1)];
+    }
+
+    const ids = sysList.map(s => String(s.id).toUpperCase());
+    const activeSystem = ids.includes(String(displaySystem).toUpperCase())
       ? displaySystem
-      : (ids.includes("br") ? "br"
-        : ids.includes("alfa") ? "alfa"
-        : ids.includes("BR") ? "BR"
-        : ids[0]);
+      : (ids.includes("BR") ? sysList.find(s => String(s.id).toUpperCase() === "BR").id
+        : ids.includes("ALFA") ? sysList.find(s => String(s.id).toUpperCase() === "ALFA").id
+        : sysList[0]?.id);
 
     const valueOf = (t, sys = activeSystem) =>
       useDyn ? dynValOf(t, sys) : (t?.equiv?.[sys] ?? null);
