@@ -457,22 +457,21 @@ export default function PortalProductDetail() {
             <span className="ppd-section-kicker">{sizeMatrix.base_label}</span>
           </div>
           <div className="ppd-size-table-wrap">
-            <table className="ppd-size-table">
+            <table className="ppd-size-table ppd-size-table-inverted">
               <thead>
                 <tr>
-                  {sizeMatrix.headers.map((h) => (
-                    <th key={h.code} className={h.is_base ? "ppd-size-base-header" : ""}>
-                      {h.label}
-                    </th>
+                  <th className="ppd-size-base-header">{sizeMatrix.base_label}</th>
+                  {sizeMatrix.rows.map((row, idx) => (
+                    <th key={idx}>{row.base}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {sizeMatrix.rows.map((row, idx) => (
-                  <tr key={idx}>
-                    <td className="ppd-size-base">{row.base}</td>
-                    {row.values.map((v, i) => (
-                      <td key={i}>{v ?? "—"}</td>
+                {sizeMatrix.headers.slice(1).map((h, i) => (
+                  <tr key={h.code}>
+                    <td className="ppd-size-row-label">{h.label}</td>
+                    {sizeMatrix.rows.map((row, idx) => (
+                      <td key={idx}>{row.values[i] ?? "—"}</td>
                     ))}
                   </tr>
                 ))}

@@ -398,7 +398,7 @@ def _build_size_matrix(producto: Producto) -> Optional[Dict[str, Any]]:
 
 
 def _build_size_table(matrix: Dict[str, Any], styles: Dict[str, Any]) -> Any:
-    """Tabla de equivalencias de tallas: sistema base en columnas, equivalencias en filas."""
+    """Tabla de equivalencias de tallas: tallas base en cabecera, sistemas en filas."""
     from reportlab.platypus import Table, TableStyle, Paragraph
     from reportlab.lib.units import mm
 
@@ -407,14 +407,13 @@ def _build_size_table(matrix: Dict[str, Any], styles: Dict[str, Any]) -> Any:
         return None
 
     headers = matrix["headers"]
-    n_cols = len(headers)
-    # Ancho total disponible ~182 mm; primera columna (etiqueta del sistema) más ancha.
+    n_cols = len(rows) + 1  # primera columna = label sistema, resto = tallas
     total_width = 182 * mm
-    label_width = 22 * mm
-    col_width = (total_width - label_width) / max(n_cols - 1, 1)
+    label_width = 28 * mm
+    col_width = (total_width - label_width) / max(len(rows), 1)
 
-    # Primera fila: etiqueta del sistema base + valores base de cada talla
-    data = [[Paragraph(headers[0]["label"], styles["size_header_base"])]]
+    # Cabecera: etiqueta del sistema base + valores base de cada talla
+    data = [[Paragraph(matrix["base_label"], styles["size_header_base"])]]
     for r in rows:
         data[0].append(Paragraph(_safe(r["base"]), styles["size_header_base"]))
 
@@ -426,15 +425,17 @@ def _build_size_table(matrix: Dict[str, Any], styles: Dict[str, Any]) -> Any:
             row.append(Paragraph(_safe(val) if val else "", styles["size_row_value"]))
         data.append(row)
 
-    col_widths = [label_width] + [col_width] * (n_cols - 1)
+    col_widths = [label_width] + [col_width] * len(rows)
     tbl = Table(data, colWidths=col_widths, repeatRows=1)
 
     style_cmds = [
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 6.5),
         ("LEADING", (0, 0), (-1, 0), 8),
-        ("BACKGROUND", (0, 0), (-1, 0), _hex(COLOR_ACCENT)),
-        ("TEXTCOLOR", (0, 0), (-1, 0), _hex(COLOR_ACCENT_INK)),
+        ("BACKGROUND", (0, 0), (0, 0), _hex(COLOR_ACCENT)),
+        ("TEXTCOLOR", (0, 0), (0, 0), _hex(COLOR_ACCENT_INK)),
+        ("BACKGROUND", (1, 0), (-1, 0), _hex(COLOR_NAVY_DARK)),
+        ("TEXTCOLOR", (1, 0), (-1, 0), _hex(COLOR_WHITE)),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 1.5 * mm),
@@ -449,7 +450,7 @@ def _build_size_table(matrix: Dict[str, Any], styles: Dict[str, Any]) -> Any:
         ("BOX", (0, 0), (-1, -1), 0.75, _hex(COLOR_CHIP_BORDER)),
         ("LINEBELOW", (0, 0), (-1, 0), 0.75, _hex(COLOR_NAVY_DARK)),
     ]
-    # Rayas alternadas en el cuerpo
+    # Rayas alternadas en el cuerpo (excluyendo primera columna)
     for row_idx in range(1, len(data)):
         if row_idx % 2 == 0:
             style_cmds.append(("BACKGROUND", (1, row_idx), (-1, row_idx), _hex(COLOR_LIGHT_BG)))
