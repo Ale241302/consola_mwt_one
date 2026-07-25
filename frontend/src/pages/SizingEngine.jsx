@@ -1733,20 +1733,21 @@ export function TipoQuickModal({
     return () => { cancelled = true; };
   }, [marcaSel]);
 
-  // Sprint 2026-07-23 · G23 · si al abrir el modal ya hay una matriz para
-  // la marca+grupo pre-seleccionados, autocheck y cargar sus unidades.
+  // Sprint 2026-07-23 · G23 · si al abrir el modal en modo CREATE ya hay
+  // una matriz para la marca+grupo pre-seleccionados, autocheck y cargar
+  // sus unidades. En modo EDIT se edita el tipo de producto global, no la
+  // matriz específica, así que NO se toca `sel`.
   const lastMatrizKeyRef = useRef(null);
   useEffect(() => {
-    if (!marcaId || !familiaId) return;
+    if (isEdit || !marcaId || !familiaId) return;
     const matrices = options?.tipos_producto_matriz || [];
     const match = matrices.find(m => {
       const sameMarca = String(m.marca_id) === String(marcaId);
       const sameFamilia = String(m.familia_id) === String(familiaId);
-      const sameTipo = isEdit ? String(m.tipo_producto) === String(tipo?.codigo) : true;
-      return sameMarca && sameFamilia && sameTipo;
+      return sameMarca && sameFamilia;
     });
     if (match) {
-      const key = `${isEdit ? tipo?.codigo : '*'}|${marcaId}|${familiaId}`;
+      const key = `*|${marcaId}|${familiaId}`;
       if (lastMatrizKeyRef.current === key) return;
       setMatrizEspecifica(true);
       setMarcaSel(marcaId);
