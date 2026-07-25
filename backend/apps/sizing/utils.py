@@ -4,12 +4,13 @@ Utilidades de resolución de matrices de tallas.
 Reglas de negocio (alineadas con el Motor de Tallas / SizingEngine):
   · El TIPO de producto (ops.tipo_producto_cat.sistemas) decide qué
     unidades de medida están habilitadas y en qué orden.
+  · Solo se muestran unidades activas en ops.medida_sistema_cat.
   · ops.tipo_producto_matriz se usa para valores por defecto u otras
     reglas por marca/familia, pero NUNCA amplía la lista de unidades por
     encima de lo que el tipo de producto permite.
 """
 from typing import List
-from apps.sizing.models import TipoProductoCat, TipoProductoMatriz
+from apps.sizing.models import TipoProductoCat, TipoProductoMatriz, MedidaSistemaCat
 
 
 def resolve_size_systems(tipo: str, marca_id=None, familia_id=None) -> List[str]:
@@ -23,23 +24,30 @@ def resolve_size_systems(tipo: str, marca_id=None, familia_id=None) -> List[str]
         familia_id: UUID de la familia (reservado; aún no afecta la lista).
 
     Returns:
-        Lista de códigos de ops.medida_sistema_cat, en el orden definido por
-        ops.tipo_producto_cat.sistemas. Si el tipo no tiene sistemas, se usa
-        la matriz default como fallback legacy.
+        Lista de códigos de ops.medida_sistema_cat activos, en el orden
+        definido por ops.tipo_producto_cat.sistemas. Si el tipo no tiene
+        sistemas, se usa la matriz default como fallback legacy.
     """
     tipo_cat = TipoProductoCat.objects.filter(pk=tipo).first()
-    if tipo_cat and tipo_cat.sistemas:
-        return list(tipo_cat.sistemas)
+    sistemas = list(tipo_cat.sistemas or []) if tipo_cat and tipo_cat.sistemas else []
 
-    # Fallback legacy: tipos migrados desde G23 que aún no tienen
-    # sistemas en el catálogo. Se usa la matriz default del tipo.
-    matriz = TipoProductoMatriz.objects.filter(
-        tipo_producto=tipo,
-        marca_id=None,
-        familia_id=None,
-        is_active=True,
-    ).first()
-    if matriz and matriz.sistemas:
-        return list(matriz.sistemas)
+    if not sistemas:
+        # Fallback legacy: tipos migrados desde G23 que aún no tienen
+        # sistemas en el catálogo. Se usa la matriz default del tipo.
+        matriz = TipoProductoMatriz.objects.filter(
+            tipo_producto=tipo,
+            marca_id=None,
+            familia_id=None,
+            is_active=True,
+        ).first()
+        sistemas = list(matriz.sistemas or []) if matriz and matriz.sistemas else []
 
-    return []
+    if not sistemas:
+        return []
+
+    active = set(
+        MedidaSistemaCat.objects.filter(
+            codigo__in=sistemas, is_active=True,
+        ).values_list("codigo", flat=True)
+    )
+    return [code for code in sistemas if code in active]
