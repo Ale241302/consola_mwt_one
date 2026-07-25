@@ -156,7 +156,7 @@ const ICONS = {
 function iconFor(category, value) {
   const key = normalize(value);
   const rel = ICONS[category]?.[key];
-  return rel ? `${ICON_BASE}${encodeURIComponent(rel)}` : null;
+  return rel ? `${ICON_BASE}${rel}` : null;
 }
 
 export default function PortalProductDetail() {
