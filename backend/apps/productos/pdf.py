@@ -443,22 +443,30 @@ def _build_specs_table(title: str, items: List[Tuple[str, str]], styles: Dict[st
 
 
 def _build_norma_stats(stats: List[Tuple[str, str, str]], styles: Dict[str, Any]) -> Any:
-    """Strip de 4 celdas de norma: valor grande, label, note."""
+    """Strip de 4 celdas de norma en una fila: valor grande, label, note."""
     from reportlab.platypus import Table, TableStyle, Paragraph
     from reportlab.lib.units import mm
 
+    # Cada celda es una mini-columna interna con 3 párrafos.
     cells = []
     for value, label, note in stats:
-        cells.append([
-            Paragraph(f"<b>{value}</b>", styles["stat_value"]),
-            Paragraph(f"<b>{label}</b>", styles["stat_label"]),
-            Paragraph(note, styles["stat_note"]),
-        ])
+        inner = Table([
+            [Paragraph(f"<b>{value}</b>", styles["stat_value"])],
+            [Paragraph(f"<b>{label}</b>", styles["stat_label"])],
+            [Paragraph(note, styles["stat_note"])],
+        ], colWidths=[40 * mm])
+        inner.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+        ]))
+        cells.append([inner])
     while len(cells) < 4:
-        cells.append([Paragraph("", styles["stat_value"]), Paragraph("", styles["stat_label"]), Paragraph("", styles["stat_note"])])
+        cells.append([Paragraph("", styles["stat_value"])])
 
-    row = [[c[0], c[1], c[2]] for c in cells]
-    tbl = Table(row, colWidths=[(45.5 * mm) for _ in range(4)])
+    tbl = Table([cells], colWidths=[(45.5 * mm) for _ in range(4)])
     tbl.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.75, _hex(COLOR_NAVY_DARK)),
         ("LINERIGHT", (0, 0), (-2, -1), 0.5, _hex(COLOR_CHIP_BORDER)),
