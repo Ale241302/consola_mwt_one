@@ -473,19 +473,29 @@ export default function PortalProductDetail() {
           </div>
           <div className="ppd-docs-list">
             {fichas.map((f, i) => {
+              const url = storageUrl(f);
               const filename = String(f).split("/").pop();
               return (
-                <a
-                  key={i}
-                  href={storageUrl(f)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ppd-doc-link"
-                >
-                  <IconFileText size={20} />
-                  <span className="ppd-doc-name">{filename}</span>
-                  <IconDownload size={18} />
-                </a>
+                <div key={i} className="ppd-doc-actions">
+                  <a
+                    href={url}
+                    download={filename}
+                    className="ppd-doc-btn ppd-doc-btn-primary"
+                  >
+                    <IconDownload size={18} />
+                    {lang === "es" ? "Descargar ficha técnica" : "Download datasheet"}
+                  </a>
+                  <button
+                    type="button"
+                    className="ppd-doc-btn ppd-doc-btn-secondary"
+                    onClick={() => {
+                      const printWindow = window.open(url, "_blank", "noopener,noreferrer");
+                      if (printWindow) printWindow.focus();
+                    }}
+                  >
+                    {lang === "es" ? "Imprimir" : "Print"}
+                  </button>
+                </div>
               );
             })}
           </div>
