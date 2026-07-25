@@ -46,7 +46,7 @@ export default function ProductCatalogGrid({ lang = "es", onBuy, clientId }) {
   const [items,   setItems]   = useState([]);
   const [count,   setCount]   = useState(0);
   const [offset,  setOffset]  = useState(0);
-  const [limit]   = useState(24);
+  const [limit]   = useState(20);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
   const [q,       setQ]       = useState("");
@@ -398,44 +398,46 @@ function ProductCard({
         )}
       </div>
 
-      {/* Cuerpo */}
-      <div className="catalog-card-body">
-        {marca_label && (
-          <span className="catalog-card-brand-badge">{marca_label}</span>
-        )}
-        <h3 className="catalog-card-name">{nombre || "(Sin nombre)"}</h3>
-        <div className="catalog-card-sku" style={{ fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, monospace)" }}>
-          SKU: <code>{sku}</code>
+      <div className="catalog-card-content">
+        {/* Cuerpo */}
+        <div className="catalog-card-body">
+          {marca_label && (
+            <span className="catalog-card-brand-badge">{marca_label}</span>
+          )}
+          <h3 className="catalog-card-name">{nombre || "(Sin nombre)"}</h3>
+          <div className="catalog-card-sku" style={{ fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, monospace)" }}>
+            SKU: <code>{sku}</code>
+          </div>
+          {descripcion && (
+            <p className="catalog-card-desc">{descripcion}</p>
+          )}
+          {categoria && (
+            <span className="catalog-card-cat">{categoria}</span>
+          )}
         </div>
-        {descripcion && (
-          <p className="catalog-card-desc">{descripcion}</p>
-        )}
-        {categoria && (
-          <span className="catalog-card-cat">{categoria}</span>
-        )}
-      </div>
 
-      {/* Footer con precio + CTA (o stepper si está en carrito) */}
-      <footer className="catalog-card-foot">
-        <div className="catalog-card-price tabular-nums">
-          {precioUsdBase > 0 ? (
-            <>
-              <span>{fmtMoney(precioUsdBase, "USD")}</span>
-              {tieneBanda && (
-                <span style={{
-                  display: "block", fontSize: 10, fontWeight: 500,
-                  color: "var(--text-tertiary)", marginTop: 2,
-                  letterSpacing: 0.3,
-                }}>
-                  {(lang === "es" ? "Banda " : "Band ") + (banda?.rango || "") +
-                    " · 90d"}
-                </span>
-              )}
-            </>
-          ) : (lang === "es" ? "Consultar precio" : "Quote on request")}
-        </div>
-        {/* CTA de compra removido — catálogo del Portal solo-lectura. */}
-      </footer>
+        {/* Footer con precio + CTA (o stepper si está en carrito) */}
+        <footer className="catalog-card-foot">
+          <div className="catalog-card-price tabular-nums">
+            {precioUsdBase > 0 ? (
+              <>
+                <span>{fmtMoney(precioUsdBase, "USD")}</span>
+                {tieneBanda && (
+                  <span style={{
+                    display: "block", fontSize: 10, fontWeight: 500,
+                    color: "var(--text-tertiary)", marginTop: 2,
+                    letterSpacing: 0.3,
+                  }}>
+                    {(lang === "es" ? "Banda " : "Band ") + (banda?.rango || "") +
+                      " · 90d"}
+                  </span>
+                )}
+              </>
+            ) : (lang === "es" ? "Consultar precio" : "Quote on request")}
+          </div>
+          {/* CTA de compra removido — catálogo del Portal solo-lectura. */}
+        </footer>
+      </div>
     </motion.article>
   );
 }
@@ -452,14 +454,16 @@ function SkeletonCards({ n = 8 }) {
       aria-hidden="true"
     >
       <div className="catalog-card-thumb catalog-card-thumb-placeholder" />
-      <div className="catalog-card-body">
-        <div className="skel-line skel-line-60" />
-        <div className="skel-line skel-line-90" />
-        <div className="skel-line skel-line-40" />
-      </div>
-      <div className="catalog-card-foot">
-        <div className="skel-line skel-line-40" />
-        <div className="skel-pill" />
+      <div className="catalog-card-content">
+        <div className="catalog-card-body">
+          <div className="skel-line skel-line-60" />
+          <div className="skel-line skel-line-90" />
+          <div className="skel-line skel-line-40" />
+        </div>
+        <div className="catalog-card-foot">
+          <div className="skel-line skel-line-40" />
+          <div className="skel-pill" />
+        </div>
       </div>
     </div>
   ));
