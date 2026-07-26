@@ -19,6 +19,7 @@ class Cliente(models.Model):
     id               = models.UUIDField(primary_key=True)
     razon_social     = models.CharField(max_length=200, null=True, blank=True)
     nombre_comercial = models.CharField(max_length=160, null=True, blank=True)
+    logo_url         = models.TextField(null=True, blank=True)
     tax_id           = models.CharField(max_length=32,  null=True, blank=True)
     tipo             = models.CharField(max_length=16,  null=True, blank=True)
     segmento         = models.CharField(max_length=1, default="C")

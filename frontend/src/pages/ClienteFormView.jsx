@@ -30,7 +30,9 @@ import {
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { CLIENTS } from "../data/mockData.js";
-import { clientesApi } from "../lib/api.js";
+import { clientesApi, apiFetch, getToken } from "../lib/api.js";
+import FileUploader from "../components/common/FileUploader.jsx";
+import FilePreview  from "../components/common/FilePreview.jsx";
 
 // ─── Design tokens ───────────────────────────────────────────
 const NAVY  = "var(--text-primary)";
@@ -264,7 +266,7 @@ export default function ScreenClienteFormView() {
         <span style={{ color: MUTED, fontSize: 12 }}>/</span>
         <span style={{ fontSize: 12, fontWeight: 600, color: NAVY }}>
           {isEdit
-            ? (form.razon_social || (lang === "es" ? "Editar" : "Edit"))
+            ? (form.nombre_comercial || form.razon_social || (lang === "es" ? "Editar" : "Edit"))
             : (lang === "es" ? "Nuevo cliente" : "New client")}
         </span>
       </div>
@@ -280,10 +282,20 @@ export default function ScreenClienteFormView() {
           width: 56, height: 56, borderRadius: 12,
           background: `${MINT}26`, color: LIGHT,
           display: "grid", placeItems: "center",
-          font: "700 22px/1 var(--font-body)",
           flexShrink: 0,
+          overflow: "hidden",
         }}>
-          {(form.razon_social || "?").trim().charAt(0).toUpperCase()}
+          {form.logo_url ? (
+            <img
+              src={`${window.location.origin}/api/storage/download/?key=${encodeURIComponent(form.logo_url)}`}
+              alt="logo"
+              style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            />
+          ) : (
+            <span style={{ font: "700 22px/1 var(--font-body)" }}>
+              {(form.nombre_comercial || form.razon_social || "?").trim().charAt(0).toUpperCase()}
+            </span>
+          )}
         </div>
         <div style={{ flex: 1, minWidth: 240 }}>
           <div style={{ font: "500 10.5px/1 var(--font-body)", opacity: 0.65,
@@ -296,8 +308,16 @@ export default function ScreenClienteFormView() {
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             maxWidth: 520,
           }}>
-            {form.razon_social || (lang === "es" ? "Sin nombre" : "Untitled")}
+            {form.nombre_comercial || form.razon_social || (lang === "es" ? "Sin nombre" : "Untitled")}
           </div>
+          {form.nombre_comercial && form.razon_social && (
+            <div style={{
+              font: "500 12px/1.3 var(--font-body)", opacity: 0.75,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 520,
+            }}>
+              {form.razon_social}
+            </div>
+          )}
 
           <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
             {ESTADOS.map(s => {
@@ -364,15 +384,23 @@ export default function ScreenClienteFormView() {
           icon={<IconShield size={14}/>}
           title={lang === "es" ? "Datos Base & SAP" : "Base Data & SAP"}
           subtitle={lang === "es"
-            ? "Identificación legal y códigos del ERP origen."
-            : "Legal identification and upstream ERP codes."}
+            ? "Identificación legal, imagen corporativa y códigos del ERP origen."
+            : "Legal identification, corporate image and upstream ERP codes."}
         >
           <Grid cols={2}>
+            <Field label={lang === "es" ? "Nombre de la empresa" : "Company name"}
+                   hint={lang === "es" ? "Nombre comercial o marca pública del cliente." : "Commercial name or public brand."}>
+              <Input value={form.nombre_comercial || ""}
+                     onChange={v => update("nombre_comercial", v)}
+                     placeholder={lang === "es" ? "Ej. Sondel" : "e.g. Sondel"}/>
+            </Field>
+
             <Field label={lang === "es" ? "Razón social" : "Legal name"} required
                    error={showError("razon_social") ? liveErrors.razon_social : null}>
               <Input value={form.razon_social || ""}
                      onChange={v => update("razon_social", v)}
-                     onBlur={() => blur("razon_social")}/>
+                     onBlur={() => blur("razon_social")}
+                     placeholder={lang === "es" ? "Ej. Sondel S.A." : "e.g. Sondel Inc."}/>
             </Field>
 
             <Field label="Código Marluvas (SAP)"
@@ -406,6 +434,39 @@ export default function ScreenClienteFormView() {
                      mono/>
             </Field>
           </Grid>
+
+          {/* Logo corporativo · subida a MinIO igual que productos */}
+          <div style={{ marginTop: 18 }}>
+            <Field label={lang === "es" ? "Logo del cliente" : "Customer logo"}
+                   hint={lang === "es" ? "Imagen .png/.jpg/.webp · máx 10 MB." : "Image .png/.jpg/.webp · max 10 MB."}>
+              <FileUploader
+                scope={`cliente/${clienteId || "nuevo"}`}
+                accept="image/*"
+                maxSizeMb={10}
+                label={lang === "es" ? "Arrastra el logo o haz clic para seleccionar" : "Drop logo or click to select"}
+                onUploaded={(key) => update("logo_url", key)}
+                onError={(msg) => console.warn("[upload logo]", msg)}
+              />
+              {form.logo_url && (
+                <div style={{ marginTop: 10, maxWidth: 320 }}>
+                  <FilePreview
+                    keyOrUrl={form.logo_url}
+                    height={160}
+                    onDelete={async () => {
+                      try {
+                        if (form.logo_url && !form.logo_url.startsWith("http://") && !form.logo_url.startsWith("https://")) {
+                          await apiFetch(`/storage/delete/?key=${encodeURIComponent(form.logo_url)}`, {
+                            method: "DELETE", token: getToken(),
+                          });
+                        }
+                      } catch (_) { /* idempotente — seguimos */ }
+                      update("logo_url", "");
+                    }}
+                  />
+                </div>
+              )}
+            </Field>
+          </div>
         </Section>
 
         {/* ─── Sección 2 · Ubicación y Entrega (LAYOUT EXPANDIDO) ─── */}
@@ -798,6 +859,8 @@ function defaultsFrom(initial) {
   const i = initial || {};
   return {
     razon_social:      i.razon_social      || i.name            || "",
+    nombre_comercial:  i.nombre_comercial  || i.nombre_empresa  || i.commercial_name || "",
+    logo_url:          i.logo_url          || i.logo            || "",
     codigo_marluvas:   i.codigo_marluvas   || "",
     cedula_juridica:   i.cedula_juridica   || "",
     tax_id:            i.tax_id            || "",

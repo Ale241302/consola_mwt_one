@@ -89,12 +89,14 @@ class ClienteSerializer(serializers.ModelSerializer):
     # Filosofía MWT: "si el form no se lo pide al humano, BD/API no lo exigen".
     # El form `/clientes/nuevo` NO obliga a ningún campo de identidad/clasificación,
     # por eso aquí los marcamos required=False / allow_blank=True / allow_null=True.
-    razon_social = serializers.CharField(max_length=200, required=False, allow_blank=True, allow_null=True)
-    tax_id       = serializers.CharField(max_length=32,  required=False, allow_blank=True, allow_null=True)
-    tipo         = serializers.CharField(max_length=16,  required=False, allow_blank=True, allow_null=True)
-    pais_iso2    = serializers.CharField(max_length=2,   required=False, allow_blank=True, allow_null=True)
-    ciudad       = serializers.CharField(max_length=96,  required=False, allow_blank=True, allow_null=True)
-    direccion    = serializers.CharField(                 required=False, allow_blank=True, allow_null=True)
+    razon_social     = serializers.CharField(max_length=200, required=False, allow_blank=True, allow_null=True)
+    nombre_comercial = serializers.CharField(max_length=160, required=False, allow_blank=True, allow_null=True)
+    logo_url         = serializers.CharField(                 required=False, allow_blank=True, allow_null=True)
+    tax_id           = serializers.CharField(max_length=32,  required=False, allow_blank=True, allow_null=True)
+    tipo             = serializers.CharField(max_length=16,  required=False, allow_blank=True, allow_null=True)
+    pais_iso2        = serializers.CharField(max_length=2,   required=False, allow_blank=True, allow_null=True)
+    ciudad           = serializers.CharField(max_length=96,  required=False, allow_blank=True, allow_null=True)
+    direccion        = serializers.CharField(                 required=False, allow_blank=True, allow_null=True)
 
     # Sprint 2026-05-03 · CONSUMO DINÁMICO:
     # `credito_usado` ya no se lee del campo persistido (se queda obsoleto
@@ -120,7 +122,7 @@ class ClienteSerializer(serializers.ModelSerializer):
         model  = Cliente
         fields = (
             # Identidad
-            "id", "razon_social", "nombre_comercial", "tax_id",
+            "id", "razon_social", "nombre_comercial", "logo_url", "tax_id",
             "codigo_marluvas", "cedula_juridica",
             # Clasificación
             "tipo", "segmento",
@@ -356,7 +358,7 @@ class ClienteListSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Cliente
         fields = (
-            "id", "razon_social", "nombre_comercial", "tax_id",
+            "id", "razon_social", "nombre_comercial", "logo_url", "tax_id",
             "codigo_marluvas", "cedula_juridica",
             "tipo", "segmento", "pais_iso2", "ciudad",
             "estado",
