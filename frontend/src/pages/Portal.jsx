@@ -448,10 +448,6 @@ export default function ScreenPortal() {
     <div style={{ background:'var(--bg)', minHeight:'100%' }} data-screen-label="Client Portal">
       {/* Portal chrome */}
       <div className="portal-chrome">
-        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-          <div className="portal-chrome-logo">M</div>
-          <span className="portal-chrome-brand">MWT · <small>PORTAL</small></span>
-        </div>
         {can('view_portal_preview_badge') && (
           <Badge kind="mint" style={{ marginLeft: 8 }}>{lang==='es'?'VISTA CLIENTE':'CLIENT VIEW'}</Badge>
         )}
