@@ -386,6 +386,7 @@ export default function ScreenPortal() {
     id: activeEmpresa.id,
     name: activeEmpresa.nombre || 'Cliente',
     razon_social: activeEmpresa.razon_social || activeEmpresa.nombre || '',
+    logo_url: activeEmpresa.logo_url || '',
     tax_id: activeEmpresa.tax_id || '',
     country: activeEmpresa.pais_iso2 || '',
     address: activeEmpresa.direccion || '',
@@ -458,9 +459,17 @@ export default function ScreenPortal() {
           <span style={{ opacity:0.7 }}>
             {client?.name || (noEmpresas ? (lang==='en'?'No company':'Sin empresa') : '')}
           </span>
-          {client?.contact && (
-            <div className="avatar" style={{ width:28, height:28, fontSize:11 }}>
-              {client.contact.split(' ').map(s=>s[0]).join('')}
+          {client && (
+            <div className="avatar" style={{ width:28, height:28, fontSize:11, overflow:'hidden', padding:0 }}>
+              {client.logo_url ? (
+                <img
+                  src={`/api/storage/download/?key=${encodeURIComponent(client.logo_url)}`}
+                  alt="logo"
+                  style={{ width:'100%', height:'100%', objectFit:'contain' }}
+                />
+              ) : (
+                (client.name || '').trim().charAt(0).toUpperCase() || '—'
+              )}
             </div>
           )}
         </div>
@@ -968,7 +977,8 @@ function PortalPayments({ lang, ocs }) {
 // cae al mock (--) como placeholder visual.
 function MyCompanyCard({ lang, client, creditLimit, creditUsed }) {
   const fiscalId       = client.tax_id || '—';
-  const fiscalName     = client.razon_social || client.name || '—';
+  const companyName    = client.name || client.razon_social || '—';
+  const fiscalName     = client.razon_social || '—';
   const fiscalAddress  = client.address || '—';
   const accountManager = client.contact || '—';
   const country        = client.country || '—';
@@ -980,18 +990,27 @@ function MyCompanyCard({ lang, client, creditLimit, creditUsed }) {
       <div className="flex ai-center gap-3 mb-4" style={{borderBottom:'1px solid var(--divider)', paddingBottom:14}}>
         <div style={{
           width:48, height:48, borderRadius:12,
-          background: 'linear-gradient(135deg, var(--brand-primary), var(--brand-ice, #3083FE))',
-          color:'#fff', display:'grid', placeItems:'center',
+          background: client.logo_url ? 'var(--surface-raised)' : 'linear-gradient(135deg, var(--brand-primary), var(--brand-ice, #3083FE))',
+          color: client.logo_url ? 'inherit' : '#fff', display:'grid', placeItems:'center',
+          overflow:'hidden',
         }}>
-          <IconBuilding size={22}/>
+          {client.logo_url ? (
+            <img
+              src={`/api/storage/download/?key=${encodeURIComponent(client.logo_url)}`}
+              alt="logo"
+              style={{ width:'100%', height:'100%', objectFit:'contain' }}
+            />
+          ) : (
+            <IconBuilding size={22}/>
+          )}
         </div>
         <div style={{flex:1, minWidth:0}}>
           <div className="micro" style={{color:'var(--text-tertiary)', marginBottom:4}}>
             {lang==='es' ? 'MI EMPRESA' : 'MY COMPANY'}
           </div>
-          <div className="heading-lg truncate">{fiscalName}</div>
+          <div className="heading-lg truncate">{companyName}</div>
           <div className="caption" style={{marginTop:2}}>
-            {country} · {lang==='es' ? 'Ficha read-only' : 'Read-only profile'}
+            {fiscalName !== companyName ? `${fiscalName} · ` : ''}{country} · {lang==='es' ? 'Ficha read-only' : 'Read-only profile'}
           </div>
         </div>
         <span

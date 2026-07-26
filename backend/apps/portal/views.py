@@ -450,6 +450,7 @@ class PortalViewSet(viewsets.ViewSet):
                 "id":                 str(c.id),
                 "nombre":             c.nombre_comercial or c.razon_social or "",
                 "razon_social":       c.razon_social or "",
+                "logo_url":           c.logo_url or "",
                 "tax_id":             c.tax_id or getattr(c, "cedula_juridica", "") or "",
                 "ciudad":             c.ciudad or "",
                 "pais_iso2":          c.pais_iso2 or "",
