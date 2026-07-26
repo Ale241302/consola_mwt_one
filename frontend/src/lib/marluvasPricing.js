@@ -289,8 +289,31 @@ export function computeMatrixFromInputs(sku, customPlazos = null) {
 }
 
 /**
- * Aplica cascade jerárquico al editar UNA celda de UN row de banda.
+ * Calcula la matriz de precios BASE (sin ajuste ni sobreprecio) para
+ * mostrar la columna gemela de solo lectura en la matriz. Usa los mismos
+ * plazos efectivos que `computeMatrixFromInputs`.
  *
+ * @param {SkuInput} sku
+ * @param {Object} [customPlazos]
+ * @returns {Object<string, Object<string, number>>}
+ */
+export function computeBaseMatrixFromInputs(sku, customPlazos = null) {
+  const out = {};
+  for (const b of BANDAS_MARLUVAS) {
+    const baseBanda = precioBaseUSD(sku.brl, b.div, sku.com);
+    const row = {};
+    const bandPlazos = getBandPlazos(b.id, customPlazos);
+    for (const p of bandPlazos) {
+      row[String(p.dias)] = round4(baseBanda * p.factor);
+    }
+    out[String(b.id)] = row;
+  }
+  return out;
+}
+
+/**
+ * Aplica cascade jerárquico al editar UNA celda de UN row de banda.
+ * 
  * Jerarquía de plazos (descendente). Para defaults [90, 60, 30, 8]:
  *   · Editar 90d  → recalcula 60d, 30d y 8d con factores originales.
  *   · Editar 60d  → recalcula 30d y 8d con ratios relativos a 60d.

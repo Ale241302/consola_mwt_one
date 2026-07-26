@@ -38,6 +38,7 @@ import {
 import {
   calcSKU, parseExcelMarluvas, defaultSkuState,
   computeMatrixFromInputs, cascadeRow, anchorPrice, precioBaseUSD,
+  computeBaseMatrixFromInputs,
 } from "../lib/marluvasPricing.js";
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 import SkuSizesPanel from "../components/marluvas/SkuSizesPanel.jsx";
@@ -1918,14 +1919,14 @@ export default function ScreenBrandClientPricingForm() {
                             </div>
                           </th>),
                           // Sprint 2026-07-18 · encabezado gemelo de la columna
-                          // de precio ORIGINAL (solo lectura, nunca editable).
+                          // de precio BASE (sin ajuste ni sobreprecio, solo lectura).
                           (<th key={`${b.id}-${p.dias}-orig`}
                               style={{ ...plazoHeaderStyle(b, isCurrent, false), color: MUTED }}>
                             <div style={{ font: "600 9.5px/1 var(--font-body)", color: MUTED }}>
-                              {p.dias}d<span style={{ opacity: 0.6, marginLeft: 3 }}>orig</span>
+                              {p.dias}d<span style={{ opacity: 0.6, marginLeft: 3 }}>base</span>
                             </div>
                             <div style={{ font: "500 8.5px/1 var(--font-body)", opacity: 0.55, marginTop: 2 }}>
-                              {lang === "es" ? "solo lectura" : "read-only"}
+                              {lang === "es" ? "sin ajuste" : "no markup"}
                             </div>
                           </th>),
                         ];
@@ -1966,13 +1967,10 @@ export default function ScreenBrandClientPricingForm() {
                           const basePrice = baseEntry
                             ? Number(row[String(baseEntry.dias)] ?? 0)
                             : Number(row["90"] ?? 0);
-                          // Sprint 2026-07-18 · fila de precios ORIGINALES
-                          // (snapshot tomado al cargar; las ediciones no lo tocan).
-                          const origMatrix = s.origMatrix || matrix;
-                          const origRow = origMatrix[String(b.id)] || {};
-                          const origBasePrice = baseEntry
-                            ? Number(origRow[String(baseEntry.dias)] ?? 0)
-                            : Number(origRow["90"] ?? 0);
+                          // Sprint 2026-07-18 · matriz BASE sin ajuste ni sobreprecio
+                          // para la columna gemela de solo lectura.
+                          const baseMatrix = computeBaseMatrixFromInputs(s, customPlazos);
+                          const baseRow = baseMatrix[String(b.id)] || {};
                           return bandPlazos.flatMap((p) => {
                             const isBase = Math.abs(p.factor - 1) < 0.0001;
                             // Si la celda no existe en matrix (plazo custom recién
@@ -1981,10 +1979,10 @@ export default function ScreenBrandClientPricingForm() {
                             const price = stored != null
                               ? Number(stored)
                               : Number((basePrice * Number(p.factor)).toFixed(4));
-                            const origStored = origRow[String(p.dias)];
-                            const origPrice = origStored != null
-                              ? Number(origStored)
-                              : Number((origBasePrice * Number(p.factor)).toFixed(4));
+                            const baseStored = baseRow[String(p.dias)];
+                            const basePriceCell = baseStored != null
+                              ? Number(baseStored)
+                              : Number((precioBaseUSD(s.brl, b.div, s.com) * Number(p.factor)).toFixed(4));
                             return [
                               (<td key={`${b.id}-${p.dias}`}
                                   style={plazoCellStyle(b, isCurrent, isBase)}>
@@ -1999,7 +1997,7 @@ export default function ScreenBrandClientPricingForm() {
                                     : ""}
                                 />
                               </td>),
-                              // Columna gemela DESACTIVADA · precio original.
+                              // Columna gemela de solo lectura · precio base sin ajuste.
                               (<td key={`${b.id}-${p.dias}-orig`}
                                   style={{ ...plazoCellStyle(b, isCurrent, false),
                                     color: MUTED, background: "var(--bg-alt)",
@@ -2008,9 +2006,9 @@ export default function ScreenBrandClientPricingForm() {
                                     cursor: "default",
                                   }}
                                   title={lang === "es"
-                                    ? `Original ${b.id} · ${p.dias}d (solo lectura)`
-                                    : `Original ${b.id} · ${p.dias}d (read-only)`}>
-                                {Number(origPrice).toFixed(2)}
+                                    ? `Base ${b.id} · ${p.dias}d (sin ajuste ni sobreprecio)`
+                                    : `Base ${b.id} · ${p.dias}d (no adj. or markup)`}>
+                                {Number(basePriceCell).toFixed(2)}
                               </td>),
                             ];
                           });
