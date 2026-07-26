@@ -8,6 +8,9 @@
 //
 // Consume GET /api/productos/:productId/ (mismo endpoint interno).
 // Todos los datos visibles vienen del producto; secciones sin datos se ocultan.
+//
+// Exporta también <PortalProductDetailView> para reutilizar la ficha
+// dentro de modales (ej. modal "Ver especificaciones" del wizard).
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useOutletContext, useParams } from "react-router-dom";
@@ -160,40 +163,15 @@ function iconFor(category, value) {
   return rel ? `${ICON_BASE}${rel}?${ICON_CACHE_BUST}` : null;
 }
 
-export default function PortalProductDetail() {
-  const { productId } = useParams();
-  const navigate = useNavigate();
-  const { lang } = useOutletContext();
 
-  const [product, setProduct] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+// ═════════════════════════════════════════════════════════════
+// PortalProductDetailView — contenido reusable de la ficha
+// ═════════════════════════════════════════════════════════════
+export function PortalProductDetailView({ product, lang = "es" }) {
   const [sizeMatrix, setSizeMatrix] = useState(null);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    productosApi
-      .get(productId)
-      .then((p) => {
-        if (cancelled) return;
-        setProduct(p);
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("[portal-product-detail] fetch failed:", err);
-        setError(lang === "es" ? "No se pudo cargar la ficha del producto." : "Could not load product sheet.");
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [productId, lang]);
-
-  useEffect(() => {
-    if (!product?.id) return;
+    if (!product?.id) return undefined;
     let cancelled = false;
     fetchSizeMatrix(product.id)
       .then((m) => {
@@ -201,7 +179,7 @@ export default function PortalProductDetail() {
       })
       .catch((err) => {
         if (cancelled) return;
-        console.error("[portal-product-detail] size matrix failed:", err);
+        console.error("[portal-product-detail-view] size matrix failed:", err);
         setSizeMatrix({ rows: [] });
       });
     return () => {
@@ -284,39 +262,13 @@ export default function PortalProductDetail() {
     if (product?.peso_kg) data.push({ label: "Peso por pie", value: `${product.peso_kg} kg` });
     if (product?.volumen_m3) data.push({ label: "Volumen", value: `${product.volumen_m3} m³` });
     if (pais_origen_iso2) data.push({ label: "País de origen", value: pais_origen_iso2 });
-    if (normativaArr.length) data.push({ label: "Norma", value: normativaArr.join(", ") });
+    if (normativaArr.length) data.push({ label: "Norma", value: normativaArr.join(" · ") });
     if (data.length) build.push({ title: "DATOS TÉCNICOS", items: data });
     return build;
   }, [specs, product, pais_origen_iso2, normativaArr]);
 
-  if (loading) {
-    return <PortalProductDetailSkeleton lang={lang} />;
-  }
-
-  if (error || !product) {
-    return (
-      <div className="ppd-root">
-        <div className="ppd-error">
-          <IconAlert size={40} />
-          <h2>{error || (lang === "es" ? "Producto no encontrado" : "Product not found")}</h2>
-          <button className="btn btn-primary" onClick={() => navigate("/portal")}>
-            <IconChevLeft size={16} /> {lang === "es" ? "Volver al catálogo" : "Back to catalog"}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="ppd-root">
-      {/* Header */}
-      <header className="ppd-header">
-        <button type="button" className="ppd-back" onClick={() => navigate("/portal")}>
-          <IconChevLeft size={18} /> {lang === "es" ? "Volver al catálogo" : "Back to catalog"}
-        </button>
-        <span className="ppd-header-brand">MWT · PORTAL</span>
-      </header>
-
+    <>
       {/* Hero */}
       <section className="ppd-hero">
         <div className="ppd-hero-inner">
@@ -573,9 +525,78 @@ export default function PortalProductDetail() {
       <footer className="ppd-footer">
         {marca_nombre || marca_label || "MWT"} · {lang === "es" ? "FICHA TÉCNICA" : "TECHNICAL SHEET"} {sku} · {normativaArr.join(" · ")}
       </footer>
+    </>
+  );
+}
+
+
+// ═════════════════════════════════════════════════════════════
+// PortalProductDetail — página completa (header + ficha)
+// ═════════════════════════════════════════════════════════════
+export default function PortalProductDetail() {
+  const { productId } = useParams();
+  const navigate = useNavigate();
+  const { lang } = useOutletContext();
+
+  const [product, setProduct] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    productosApi
+      .get(productId)
+      .then((p) => {
+        if (cancelled) return;
+        setProduct(p);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("[portal-product-detail] fetch failed:", err);
+        setError(lang === "es" ? "No se pudo cargar la ficha del producto." : "Could not load product sheet.");
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [productId, lang]);
+
+  if (loading) {
+    return <PortalProductDetailSkeleton lang={lang} />;
+  }
+
+  if (error || !product) {
+    return (
+      <div className="ppd-root">
+        <div className="ppd-error">
+          <IconAlert size={40} />
+          <h2>{error || (lang === "es" ? "Producto no encontrado" : "Product not found")}</h2>
+          <button className="btn btn-primary" onClick={() => navigate("/portal")}>
+            <IconChevLeft size={16} /> {lang === "es" ? "Volver al catálogo" : "Back to catalog"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ppd-root">
+      {/* Header */}
+      <header className="ppd-header">
+        <button type="button" className="ppd-back" onClick={() => navigate("/portal")}>
+          <IconChevLeft size={18} /> {lang === "es" ? "Volver al catálogo" : "Back to catalog"}
+        </button>
+        <span className="ppd-header-brand">MWT · PORTAL</span>
+      </header>
+
+      <PortalProductDetailView product={product} lang={lang} />
     </div>
   );
 }
+
 
 // Skeleton mientras carga
 function PortalProductDetailSkeleton({ lang }) {

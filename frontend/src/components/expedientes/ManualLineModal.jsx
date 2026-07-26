@@ -28,8 +28,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { IconSearch, IconPackage } from "../../lib/icons.jsx";
 import {
   productosApi, tallasApi, tiposProductoCatApi, sistemasMedidaCatApi,
-  apiFetch, getToken, storageApi,
+  apiFetch, getToken,
 } from "../../lib/api.js";
+import { PortalProductDetailView } from "../../pages/PortalProductDetail.jsx";
 
 
 // ─────────────────────────────────────────────────────────────
@@ -878,17 +879,13 @@ export function RequestAssignmentDialog({ lang, sku, clientId, clientEmail, onCl
 
 
 // ═════════════════════════════════════════════════════════════
-// PRODUCT SPECS MODAL — Sprint 2026-07-24 (rev3 · matriz de tallas)
-// Ficha read-only del producto (como /portal/productos/:id pero en
-// modal): imagen grande, datos base, atributos técnicos, chips de
-// normativa/riesgos/segmentos, matriz de equivalencias de tallas y
-// botón de descarga de ficha técnica (PDF). Se abre anidado desde el
-// buscador de línea manual SIN cerrarlo.
+// PRODUCT SPECS MODAL — Sprint 2026-07-25 (rev4 · usa PortalProductDetailView)
+// Ficha completa del producto (igual que /portal/productos/:id) embebida
+// dentro del modal de búsqueda de línea manual. Se abre anidado SIN cerrar
+// el modal de búsqueda.
 // ═════════════════════════════════════════════════════════════
 export function ProductSpecsModal({ lang = "es", product, onClose }) {
   const [full, setFull] = useState(null);
-  const [tallas, setTallas] = useState([]);
-  const [loadingTallas, setLoadingTallas] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -899,174 +896,7 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
     return () => { alive = false; };
   }, [product?.id]);
 
-  // Cargar las tallas vinculadas al producto para la matriz de equivalencias
-  useEffect(() => {
-    let alive = true;
-    const p = full || product || {};
-    const ids = Array.isArray(p.tallas) && p.tallas.length
-      ? p.tallas
-      : (Array.isArray(p.especificaciones?.sizes) ? p.especificaciones.sizes : []);
-    const uuids = ids
-      .map((t) => (typeof t === "object" && t ? String(t.id || "") : String(t || "")))
-      .filter(Boolean);
-    if (!uuids.length) {
-      setTallas([]);
-      return undefined;
-    }
-    setLoadingTallas(true);
-    tallasApi.list({ ids: uuids.join(","), limit: 500 })
-      .then((d) => {
-        if (!alive) return;
-        const arr = Array.isArray(d) ? d : (d?.results || []);
-        setTallas(arr);
-      })
-      .catch(() => setTallas([]))
-      .finally(() => { if (alive) setLoadingTallas(false); });
-    return () => { alive = false; };
-  }, [full, product?.id]);
-
   const p = full || product || {};
-  const esp = p.especificaciones || {};
-  const L = (es, en) => (lang === "es" ? es : en);
-
-  const allImages = useMemo(() => {
-    const arr = [
-      p.imagen_url,
-      ...(Array.isArray(esp.gallery) ? esp.gallery : [])
-    ].filter((k) => k && typeof k === "string");
-    return [...new Set(arr)];
-  }, [p.imagen_url, esp.gallery]);
-
-  const [activeImgKey, setActiveImgKey] = useState(allImages[0] || null);
-  useEffect(() => {
-    setActiveImgKey(allImages[0] || null);
-  }, [allImages]);
-
-  // ── Fichas técnicas (PDF) — ficha_url + especificaciones.fichas[]
-  const fichaKeys = [...new Set(
-    [p.ficha_url, ...(Array.isArray(esp.fichas) ? esp.fichas : [])]
-      .filter((k) => k && typeof k === "string")
-  )];
-  const fichaName = (key) => {
-    const base = String(key).split("/").pop() || "ficha.pdf";
-    return base.replace(/^[0-9a-f]{8}-/i, "");
-  };
-
-  const quickFacts = [
-    [L("Categoría", "Category"), p.categoria],
-    [L("Color", "Color"), esp.color],
-    [L("País de origen", "Country of origin"), p.pais_origen_iso2],
-    ["NCM", esp.ncm || p.hs_code],
-  ].filter(([, v]) => v);
-
-  const specRows = [
-    [L("Tipo de calzado", "Footwear type"), esp.tipo_calzado],
-    [L("Tipo de puntera", "Toe cap type"), esp.tipo_puntera],
-    [L("Cubre puntera", "Toe cover"), esp.cubrepuntera],
-    [L("Antiperforante", "Puncture resistant"), esp.antiperforante],
-    [L("Protector metatarsal", "Metatarsal guard"), esp.protector_metatarsal],
-    [L("Capellada", "Upper"), esp.capellada],
-    [L("Suela", "Sole"), esp.suela],
-    [L("Cierre", "Closure"), esp.cierre],
-    [L("Plantilla interna", "Insole"), esp.plantilla_interna],
-    [L("Materiales circulares", "Circular materials"), esp.materiales_circulares],
-    [L("Unidad", "Unit"), p.unidad],
-    [L("Moneda", "Currency"), p.moneda],
-  ].filter(([, v]) => v);
-
-  const chipGroups = [
-    ["Normativa", esp.normativa],
-    [L("Disipativo de energía", "Energy dissipative"), esp.disipativo_energia],
-    [L("Riesgo", "Risk"), esp.riesgo],
-    [L("Segmento", "Segment"), esp.segmento],
-  ].filter(([, arr]) => Array.isArray(arr) && arr.length > 0);
-
-  // ── Matriz de equivalencias de tallas ───────────────────────────
-  const SIZE_SYSTEMS = [
-    { key: "bra", label: "BRA", getter: (t) => t.talla_base },
-    { key: "eu", label: "EU", getter: (t) => t.eu },
-    { key: "us_men", label: L("US Men", "US Men"), getter: (t) => t.us_men },
-    { key: "us_women", label: L("US Women", "US Women"), getter: (t) => t.us_women },
-    { key: "us_youth", label: L("US Youth", "US Youth"), getter: (t) => t.us_youth },
-    { key: "uk_men", label: L("UK Men", "UK Men"), getter: (t) => t.uk_men },
-    { key: "uk_women", label: L("UK Women", "UK Women"), getter: (t) => t.uk_women },
-    { key: "uk_youth", label: L("UK Youth", "UK Youth"), getter: (t) => t.uk_youth },
-    { key: "mx", label: "MX", getter: (t) => t.mx },
-    { key: "ar", label: "AR", getter: (t) => t.ar },
-    { key: "cr", label: L("Costa Rica", "Costa Rica"), getter: (t) => t.equivalencias?.cr },
-    { key: "gt", label: L("Guatemala", "Guatemala"), getter: (t) => t.equivalencias?.gt },
-    { key: "cop", label: L("Colombia", "Colombia"), getter: (t) => t.equivalencias?.cop },
-    { key: "jp", label: "JP", getter: (t) => t.jp },
-    { key: "cn", label: "CN", getter: (t) => t.cn },
-    { key: "kr", label: "KR", getter: (t) => t.kr },
-    { key: "cm", label: L("CM (Mondopoint)", "CM (Mondopoint)"), getter: (t) => t.cm },
-    { key: "inch", label: L("IN (pulgadas)", "IN (inches)"), getter: (t) => t.inch },
-  ];
-
-  const sortedTallas = useMemo(() => {
-    return [...tallas].sort((a, b) => {
-      const na = parseFloat(a.talla_base);
-      const nb = parseFloat(b.talla_base);
-      if (!isNaN(na) && !isNaN(nb)) return na - nb;
-      return String(a.talla_base || "").localeCompare(String(b.talla_base || ""));
-    });
-  }, [tallas]);
-
-  const hasSizeMatrix = sortedTallas.length > 0;
-
-  const sectionTitle = (txt) => (
-    <div style={{
-      fontSize: 11, fontWeight: 800, letterSpacing: 0.8,
-      color: "#013A57", textTransform: "uppercase",
-      marginBottom: 10, marginTop: 4,
-      display: "flex", alignItems: "center", gap: 8,
-    }}>
-      <span style={{ width: 4, height: 14, borderRadius: 2, background: "#00B286" }} />
-      {txt}
-    </div>
-  );
-
-  const card = (children, { accent = false, fullWidth = false } = {}) => (
-    <div style={{
-      border: "1px solid var(--border, #E5E7EB)", borderRadius: 12,
-      background: accent ? "rgba(1,58,87,0.03)" : "#fff",
-      padding: 14, boxShadow: accent ? "inset 0 0 0 1px rgba(1,58,87,0.06)" : "none",
-      ...(fullWidth ? { gridColumn: "1 / -1" } : {}),
-    }}>
-      {children}
-    </div>
-  );
-
-  // Descarga la ficha técnica PDF con fetch autenticado (JWT).
-  const downloadFichaTecnica = async () => {
-    const token = getToken();
-    if (!token) {
-      alert(lang === "es" ? "Sesión expirada. Inicia sesión de nuevo." : "Session expired. Please log in again.");
-      return;
-    }
-    const url = `/api/productos/${product.id}/ficha-tecnica/pdf/`;
-    try {
-      const resp = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!resp.ok) {
-        const text = await resp.text();
-        let msg = resp.statusText;
-        try { msg = JSON.parse(text)?.detail || msg; } catch {}
-        throw new Error(msg);
-      }
-      const blob = await resp.blob();
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `ficha-tecnica-${product.sku || product.id}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      URL.revokeObjectURL(a.href);
-      a.remove();
-    } catch (err) {
-      alert((lang === "es" ? "Error descargando ficha técnica: " : "Error downloading datasheet: ") + (err.message || err));
-    }
-  };
 
   return (
     <div style={{
@@ -1076,339 +906,26 @@ export function ProductSpecsModal({ lang = "es", product, onClose }) {
     }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()}
            style={{
+             position: "relative",
              background: "#fff", borderRadius: 18, width: "min(1080px, 98vw)",
              height: "min(92vh, 900px)", overflow: "hidden",
              display: "flex", flexDirection: "column",
              boxShadow: "0 40px 80px -24px rgba(15,27,61,0.60)",
            }}>
-        {/* ── Header navy ─────────────────────────────────── */}
-        <header style={{
-          padding: "20px 28px",
-          background: "linear-gradient(120deg, #013A57 0%, #0a4d6e 100%)",
-          display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14,
-          flexShrink: 0,
-        }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{
-              fontSize: 10.5, fontWeight: 800, letterSpacing: 1.2,
-              color: "#75CBB3", textTransform: "uppercase", marginBottom: 6,
-            }}>
-              {L("Especificaciones del producto", "Product specs")}
-            </div>
-            <div style={{
-              fontSize: 22, fontWeight: 800, color: "#fff", lineHeight: 1.25,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }}>
-              <span style={{ fontFamily: "var(--font-mono, monospace)" }}>
-                {(p.sku || "").toUpperCase()}
-              </span>
-              <span style={{ opacity: 0.55, fontWeight: 600 }}> · </span>
-              {p.nombre || p.product_label || "—"}
-            </div>
-            {p.marca_nombre && (
-              <span style={{
-                display: "inline-block", marginTop: 8, padding: "4px 12px",
-                borderRadius: 999, fontSize: 11, fontWeight: 700,
-                background: "rgba(255,255,255,0.14)", color: "#E8F5F0",
-              }}>{p.marca_nombre}</span>
-            )}
-          </div>
-          <button onClick={onClose}
-                  style={{
-                    flexShrink: 0, width: 36, height: 36, borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.25)",
-                    background: "rgba(255,255,255,0.10)", color: "#fff",
-                    fontSize: 16, cursor: "pointer", lineHeight: 1,
-                    transition: "background 0.15s",
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.20)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.10)"}>
-            ✕
-          </button>
-        </header>
-
-        {/* ── Body ────────────────────────────────────────── */}
-        <div style={{ padding: "24px 28px", overflowY: "auto", flex: 1, background: "#FAFBFC" }}>
-          {/* Hero: imagen + quick facts + ficha */}
-          <div style={{
-            display: "grid", gridTemplateColumns: "240px 1fr", gap: 20, alignItems: "stretch",
-          }}>
-            {card(
-              <div style={{
-                height: "100%", minHeight: 220,
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                gap: 12, borderRadius: 8, padding: 4,
-              }}>
-                <div style={{
-                  width: "100%", height: 200, display: "flex", alignItems: "center", justifyContent: "center",
-                  background: "#fff", borderRadius: 8, overflow: "hidden",
+        <button type="button" onClick={onClose}
+                style={{
+                  position: "absolute", top: 14, right: 14, zIndex: 20,
+                  width: 36, height: 36, borderRadius: 10,
+                  border: "1px solid rgba(255,255,255,0.25)",
+                  background: "rgba(11,30,58,0.35)", color: "#fff",
+                  fontSize: 16, cursor: "pointer", lineHeight: 1,
+                  display: "flex", alignItems: "center", justifyContent: "center",
                 }}>
-                  {activeImgKey ? (
-                    <img
-                      src={storageApi.downloadUrl(activeImgKey)}
-                      alt={p.nombre || p.sku || "producto"}
-                      style={{ width: "100%", height: "100%", objectFit: "contain", padding: 6 }}
-                      onError={(e) => { e.currentTarget.style.display = "none"; }}
-                    />
-                  ) : (
-                    <span style={{ color: "var(--text-tertiary)", fontSize: 12 }}>
-                      {L("Sin imagen", "No image")}
-                    </span>
-                  )}
-                </div>
-                {allImages.length > 1 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
-                    {allImages.map((k, idx) => (
-                      <button
-                        key={k}
-                        type="button"
-                        onClick={() => setActiveImgKey(k)}
-                        style={{
-                          width: 40, height: 40, borderRadius: 8, overflow: "hidden",
-                          border: activeImgKey === k ? "2px solid #00B286" : "1px solid #E5E7EB",
-                          padding: 2, background: "#fff", cursor: "pointer",
-                          transition: "all 0.15s",
-                        }}
-                      >
-                        <img
-                          src={storageApi.downloadUrl(k)}
-                          alt={`vista ${idx + 1}`}
-                          style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                        />
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {card(
-                <div>
-                  {sectionTitle(L("Información base", "Base info"))}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    {quickFacts.map(([k, v]) => (
-                      <div key={k} style={{
-                        border: "1px solid var(--border)", borderRadius: 10,
-                        padding: "10px 12px", background: "#fff",
-                      }}>
-                        <div style={{
-                          fontSize: 10, color: "var(--text-tertiary)", fontWeight: 700,
-                          textTransform: "uppercase", letterSpacing: 0.5,
-                        }}>{k}</div>
-                        <div style={{ fontSize: 14, fontWeight: 800, color: "#0B1E3A", marginTop: 3 }}>
-                          {String(v)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {fichaKeys.length > 0 && card(
-                <div>
-                  {sectionTitle(L("Ficha técnica (PDF)", "Datasheet (PDF)"))}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {fichaKeys.map((k) => (
-                      <button key={k}
-                         type="button"
-                         onClick={downloadFichaTecnica}
-                         style={{
-                           display: "inline-flex", alignItems: "center", gap: 8,
-                           padding: "10px 14px", borderRadius: 10,
-                           background: "#013A57", color: "#fff",
-                           fontSize: 12.5, fontWeight: 700, textDecoration: "none",
-                           border: "none", cursor: "pointer", width: "fit-content",
-                         }}>
-                        <span style={{ fontSize: 15 }}>⬇</span>
-                        {L("Descargar ficha técnica", "Download datasheet")}
-                        <span style={{
-                          fontWeight: 500, fontSize: 11, opacity: 0.75,
-                          overflow: "hidden", textOverflow: "ellipsis",
-                          whiteSpace: "nowrap", maxWidth: 340,
-                        }}>· {fichaName(k)}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Atributos */}
-          <div style={{ marginTop: 18 }}>
-            {card(
-              <div>
-                {sectionTitle(L("Atributos del calzado", "Footwear attributes"))}
-                <div style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-                  gap: "0 28px",
-                }}>
-                  {specRows.map(([k, v]) => (
-                    <div key={k} style={{
-                      display: "flex", justifyContent: "space-between", gap: 14,
-                      padding: "8px 0", borderBottom: "1px solid #F1F5F9", fontSize: 13,
-                    }}>
-                      <span style={{ color: "var(--text-tertiary)" }}>{k}</span>
-                      <span style={{ fontWeight: 700, color: "#0B1E3A", textAlign: "right" }}>
-                        {String(v)}
-                      </span>
-                    </div>
-                  ))}
-                  {specRows.length === 0 && (
-                    <div className="caption" style={{ color: "var(--text-tertiary)" }}>
-                      {L("Cargando especificaciones…", "Loading specs…")}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Chips */}
-          {chipGroups.length > 0 && (
-            <div style={{ marginTop: 18 }}>
-              {card(
-                <div>
-                  {sectionTitle(L("Normativa · Riesgos · Segmentos", "Standards · Risks · Segments"))}
-                  <div style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16,
-                  }}>
-                    {chipGroups.map(([k, arr]) => (
-                      <div key={k}>
-                        <div style={{
-                          fontSize: 11, fontWeight: 700, color: "#013A57", marginBottom: 6,
-                        }}>{k}</div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                          {arr.map((x) => (
-                            <span key={String(x)} style={{
-                              padding: "5px 11px", borderRadius: 999, fontSize: 11,
-                              border: "1px solid rgba(1,58,87,0.18)",
-                              background: "rgba(1,58,87,0.05)",
-                              color: "#013A57", fontWeight: 600,
-                            }}>{String(x)}</span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Matriz de tallas */}
-          {hasSizeMatrix && (
-            <div style={{ marginTop: 18 }}>
-              {card(
-                <div>
-                  {sectionTitle(L("Matriz de equivalencias de tallas", "Size equivalence matrix"))}
-                  <div className="caption" style={{
-                    color: "var(--text-tertiary)", fontSize: 11, marginBottom: 12, marginTop: -4,
-                  }}>
-                    {L(
-                      "Talla base BRA en la primera fila. Pasa sobre una celda para ver la equivalencia.",
-                      "Base size BRA in the first row. Hover a cell to see the equivalence."
-                    )}
-                  </div>
-                  <div style={{
-                    overflowX: "auto", border: "1px solid #E5E7EB", borderRadius: 12,
-                    background: "#fff",
-                  }}>
-                    <table style={{
-                      width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 600,
-                    }}>
-                      <thead>
-                        <tr>
-                          <th style={{
-                            position: "sticky", left: 0, zIndex: 2,
-                            background: "#013A57", color: "#fff",
-                            padding: "10px 12px", textAlign: "left", fontWeight: 700,
-                            borderBottom: "1px solid #E5E7EB", minWidth: 110,
-                          }}>
-                            {L("Sistema BRA", "BRA System")}
-                          </th>
-                          {sortedTallas.map((t) => (
-                            <th key={t.id} style={{
-                              background: "#013A57", color: "#fff",
-                              padding: "10px 8px", textAlign: "center", fontWeight: 700,
-                              borderBottom: "1px solid #E5E7EB", minWidth: 58,
-                              whiteSpace: "nowrap",
-                            }}>
-                              {t.talla_base || "—"}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {SIZE_SYSTEMS.filter((s) => s.key !== "bra").map((s, idx) => {
-                          const hasAny = sortedTallas.some((t) => s.getter(t));
-                          if (!hasAny) return null;
-                          return (
-                            <tr key={s.key} style={{
-                              background: idx % 2 === 0 ? "#fff" : "#F8FAFB",
-                            }}>
-                              <td style={{
-                                position: "sticky", left: 0, zIndex: 1,
-                                background: idx % 2 === 0 ? "#fff" : "#F8FAFB",
-                                padding: "9px 12px", fontWeight: 700, color: "#013A57",
-                                borderRight: "1px solid #E5E7EB", borderBottom: "1px solid #E5E7EB",
-                                whiteSpace: "nowrap",
-                              }}>
-                                {s.label}
-                              </td>
-                              {sortedTallas.map((t) => (
-                                <td key={`${s.key}-${t.id}`} style={{
-                                  padding: "9px 8px", textAlign: "center",
-                                  borderBottom: "1px solid #E5E7EB",
-                                  color: "#0B1E3A", fontWeight: 600,
-                                  whiteSpace: "nowrap",
-                                }}>
-                                  {s.getter(t) || "—"}
-                                </td>
-                              ))}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {loadingTallas && (
-            <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 12, textAlign: "center" }}>
-              {L("Cargando matriz de tallas…", "Loading size matrix…")}
-            </div>
-          )}
+          ✕
+        </button>
+        <div style={{ overflowY: "auto", flex: 1 }}>
+          <PortalProductDetailView product={p} lang={lang} />
         </div>
-
-        {/* ── Footer ──────────────────────────────────────── */}
-        <footer style={{
-          padding: "14px 28px", borderTop: "1px solid #F1F4F9",
-          display: "flex", justifyContent: "flex-end", gap: 10, flexShrink: 0,
-          background: "#fff",
-        }}>
-          {fichaKeys.length > 0 && (
-            <button type="button"
-               onClick={downloadFichaTecnica}
-               style={{
-                 display: "inline-flex", alignItems: "center", gap: 7,
-                 padding: "10px 18px", borderRadius: 10,
-                 border: "1.5px solid #013A57",
-                 background: "#fff", color: "#013A57",
-                 fontSize: 13, fontWeight: 700, textDecoration: "none",
-                 cursor: "pointer",
-               }}>
-              ⬇ {L("Descargar ficha técnica", "Download datasheet")}
-            </button>
-          )}
-          <button className="btn btn-ghost" onClick={onClose} style={{ fontWeight: 700 }}>
-            {L("Cerrar", "Close")}
-          </button>
-        </footer>
       </div>
     </div>
   );
