@@ -387,7 +387,7 @@ export default function ScreenPipeline() {
                   <div className="k-col-money">{fmtMoney(totalMoney)}</div>
                 )}
               </div>
-              <div style={{ flex: 1, overflowY: 'auto', padding: '2px 2px 12px' }}>
+              <div className="k-col-body">
                 {cards.map(e => (
                   <PipelineCard
                     key={e.id}
@@ -504,7 +504,7 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, 
         </div>
         <div className="k-card-field-value k-card-field-value--strong" title={exp.client || ''}>
           {exp.client_country && <CountryFlag country={exp.client_country}/>}
-          <span className="truncate">
+          <span className="k-card-text-wrap">
             {exp.client || (
               <span style={{color:'var(--text-tertiary)', fontWeight:400}}>
                 {lang==='es' ? 'Sin cliente' : 'No client'}
@@ -523,7 +523,7 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, 
             {lang==='es' ? 'Operador' : 'Operator'}
           </div>
           <div className="k-card-field-value" title={exp.operator}>
-            <span className="truncate">{exp.operator}</span>
+            <span className="k-card-text-wrap">{exp.operator}</span>
           </div>
         </div>
       )}

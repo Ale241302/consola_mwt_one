@@ -775,28 +775,35 @@ a { color: inherit; text-decoration: none; }
 
 /* ── Pipeline kanban ──────────────────────────────────── */
 .kanban {
-  /* Responsivo: si no caben las 6 columnas, wrap a segunda fila.
-     Sprint 2026-05-17: bump min-width 220 → 260 para acomodar las
-     tarjetas más altas/anchas (CEO refactor del pipeline card). */
+  /* Sprint 2026-07-27: 7 columnas fijas en una sola fila, más angostas.
+     Si no cabe en el viewport, scroll horizontal; nunca wrap a segunda fila. */
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(7, minmax(180px, 1fr));
+  gap: 10px;
   padding-bottom: 6px;
+  overflow-x: auto;
+  align-items: start;
 }
 .k-col {
   background: var(--bg-alt);
   border-radius: var(--radius-xl);
-  padding: 12px;
-  min-height: 420px;
+  padding: 8px;
+  min-height: 120px;
   display: flex; flex-direction: column;
+}
+.k-col-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 2px 8px;
 }
 .k-col-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 4px 6px 10px;
-  gap: 8px;
+  padding: 2px 4px 8px;
+  gap: 6px;
   flex-wrap: nowrap;
   border-bottom: 1px dashed color-mix(in oklab, var(--border-strong), transparent 40%);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .k-col-head > * { min-width: 0; }
 .k-col-title {
@@ -8338,9 +8345,9 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
    Hereda de .k-card-pro pero sobreescribe padding y gap.
    ===================================================================== */
 .k-card-pipeline-v2 {
-  padding: 14px 14px 14px;
-  gap: 10px;
-  min-height: 140px;
+  padding: 10px 10px 12px;
+  gap: 8px;
+  min-height: auto;
 }
 .k-card-pipeline-v2 .k-card-row1 {
   align-items: center;
@@ -8371,12 +8378,19 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   font: var(--body-sm);
   color: var(--text-primary);
   min-width: 0;
+  line-height: 1.25;
 }
 .k-card-field-value .truncate {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+/* Cliente / operador: mostrar completo, permitir múltiples líneas, nunca truncar. */
+.k-card-text-wrap {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 /* Cliente recibe más jerarquía visual — es la entidad clave de la card. */
 .k-card-field-value--strong {
