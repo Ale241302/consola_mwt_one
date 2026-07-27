@@ -41,7 +41,7 @@ UPDATE ops.tallas
 
 -- ─────────────────────────────────────────────────────────────────────
 -- B · Talla BR 48 (EU 50) — extrapolación con las reglas de G2:
---     BR = EU−2 · paso CM ≈ 0.67 (31.96→32.63) · mx/jp = 31.5 · ar = EU
+--     BR = EU−2 · paso CM ≈ 0.67 (31.96→32.63) · mx/jp = 32.5 · ar = EU
 --     cn ≈ 2×cm−10 (53) · kr = mm (315) · us_men/women +0.5–1 · uk 15
 --     youth NULL (fuera de rango junior) · alfa: banda tras XXL → 3XL
 -- ─────────────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ SELECT
   'calzado', '48', '48',
   'Corrida alta COMEX (EU 50) — extrapolada con las reglas de G2',
   '50', '15.5-16', '17.5-18', NULL, '15', '15', NULL,
-  '48', '31.5', '50', '31.5', '53', '315', '32.63', '3XL',
+  '48', '32.5', '50', '32.5', '53', '315', '32.63', '3XL',
   (SELECT jsonb_build_array(id::text) FROM brands.marca
     WHERE lower(nombre) = 'marluvas' LIMIT 1),
   '["Bota Alta","Bota al Tobillo","Plantilla","Tenis","Zapato tipo crocs"]'::jsonb,

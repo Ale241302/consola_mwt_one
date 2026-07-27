@@ -478,6 +478,28 @@ class TallaSerializer(serializers.ModelSerializer):
                         eq[fname] = str(v)
             attrs["equivalencias"] = eq
 
+        # (e) Regla de negocio MX (México): siempre deriva de CM
+        #     redondeado al 0.5 más cercano.  Se aplica tras el sync de
+        #     equivalencias para que la fuente de verdad JSON y el espejo
+        #     legacy coincidan (G24).
+        cm_val = attrs.get("cm") or (attrs.get("equivalencias") or {}).get("cm")
+        if cm_val not in (None, ""):
+            try:
+                cm_num = float(cm_val)
+                mx_new = str(round(cm_num * 2) / 2).replace(".0", "")
+                attrs["mx"] = mx_new
+                eq = dict(attrs.get("equivalencias") or {})
+                eq["mx"] = mx_new
+                attrs["equivalencias"] = eq
+            except (ValueError, TypeError):
+                pass
+        elif "cm" in initial or ("equivalencias" in initial and "cm" in (attrs.get("equivalencias") or {})):
+            # CM fue enviado explícitamente vacío → limpiar MX derivado.
+            attrs["mx"] = None
+            eq = dict(attrs.get("equivalencias") or {})
+            eq.pop("mx", None)
+            attrs["equivalencias"] = eq
+
         return attrs
 
 
