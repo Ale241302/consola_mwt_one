@@ -62,7 +62,7 @@ WITH prime AS (
            trim(to_char(ROUND(d.compr / 10, 2), 'FM999990.00')) AS cm,
            trim(to_char(ROUND(d.compr / 25.4, 2), 'FM999990.00')) AS inch,
            -- MX (México) = CM redondeado a 0.5 más cercano (G24).
-           regexp_replace((round((ROUND(d.compr / 10, 2))::numeric * 2) / 2)::text, '\.0$', '') AS mx
+           trim_scale(round((ROUND(d.compr / 10, 2))::numeric * 2) / 2)::text AS mx
       FROM _g21_data d
 )
 INSERT INTO ops.tallas (

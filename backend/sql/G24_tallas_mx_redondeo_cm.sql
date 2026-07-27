@@ -21,14 +21,14 @@ BEGIN;
 -- cuyo cm sea un número y cuyo mx (legacy o JSON) esté desactualizado.
 WITH fix AS (
     SELECT id,
-           regexp_replace((round(cm::numeric * 2) / 2)::text, '\.0$', '') AS mx_new
+           trim_scale(round(cm::numeric * 2) / 2)::text AS mx_new
       FROM ops.tallas
      WHERE tipo_producto = 'calzado'
        AND is_active = TRUE
        AND cm IS NOT NULL
        AND cm <> ''
-       AND (   mx IS DISTINCT FROM regexp_replace((round(cm::numeric * 2) / 2)::text, '\.0$', '')
-            OR equivalencias ->> 'mx' IS DISTINCT FROM regexp_replace((round(cm::numeric * 2) / 2)::text, '\.0$', '')
+       AND (   mx IS DISTINCT FROM trim_scale(round(cm::numeric * 2) / 2)::text
+            OR equivalencias ->> 'mx' IS DISTINCT FROM trim_scale(round(cm::numeric * 2) / 2)::text
            )
 )
 UPDATE ops.tallas t
