@@ -474,7 +474,7 @@ export default function ScreenPortal() {
       {noEmpresas ? (
         <NoEmpresasState lang={lang} userEmail={me?.email} />
       ) : (
-      <div className="page" style={{ maxWidth: 1280 }}>
+      <div className="page">
         {/* Greeting */}
         <div className="mb-6">
           <div className="micro" style={{marginBottom:6, color:'var(--brand-accent-dark,#0E8A6D)'}}>
