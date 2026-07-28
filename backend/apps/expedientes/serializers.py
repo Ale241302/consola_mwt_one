@@ -148,6 +148,34 @@ def build_expediente_ref_batches(expedientes, *, is_client=False):
         if cod not in lst:
             lst.append(cod)
 
+    # Código principal de la OC asociada a cada expediente (usado para
+    # priorizar el PO canónico sobre códigos alternativos/ruidos).
+    exp_oc_ids = {str(e.id): str(e.oc_id) for e in expedientes if e.oc_id}
+    oc_principal = {}
+    if exp_oc_ids:
+        oc_principal = {
+            str(eid): cod for eid, cod in
+            Oc.objects.filter(id__in=set(exp_oc_ids.values()), is_active=True)
+            .exclude(codigo__isnull=True).exclude(codigo__exact="")
+            .values_list("id", "codigo")
+        }
+
+    # Reordenar/filtrar: el código que coincida con la OC principal del
+    # expediente va primero (PO canónico). Para clientes B2B, si hay
+    # coincidencia descartamos códigos alternativos (evita que un segundo
+    # documento/parseo con número distinto tape el PO correcto).
+    for eid, ocid in exp_oc_ids.items():
+        lst = ocs_docs.get(eid)
+        if not lst:
+            continue
+        principal = oc_principal.get(ocid)
+        if principal and principal in lst:
+            if is_client:
+                ocs_docs[eid] = [principal]
+            else:
+                lst.remove(principal)
+                lst.insert(0, principal)
+
     # Fallback del código interno (commercial.oc) SOLO para expedientes
     # sin documento OC subido — misma política que el getter por-fila.
     missing = {str(e.id): e.oc_id for e in expedientes
@@ -318,6 +346,7 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
                 .exclude(codigo__exact="")
                 .values_list("codigo", flat=True)
             ) if obj.oc_id else []
+            principal_code = principal_codes[0] if principal_codes else None
 
             # Sprint 2026-05-26 (CEO) - cuando el cliente SI subio un
             # documento OC, el codigo auto-generado por el wizard
@@ -325,6 +354,17 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             # los codigos del cliente. Solo cuando no hay doc subido
             # caemos al codigo principal interno como fallback.
             codes_to_use = doc_codes if doc_codes else principal_codes
+
+            # Fix 2026-07-28: si entre los docs hay uno que coincida con el
+            # código canónico de la OC, va primero. Para clientes, si hay
+            # coincidencia descartamos códigos alternativos y dejamos solo
+            # el PO canónico.
+            if principal_code and principal_code in codes_to_use:
+                if self._is_client():
+                    codes_to_use = [principal_code]
+                else:
+                    codes_to_use = [principal_code] + [c for c in codes_to_use if c != principal_code]
+
             seen, out = set(), []
             for c in codes_to_use:
                 if c and c not in seen:
