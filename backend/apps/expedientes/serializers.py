@@ -1,9 +1,22 @@
 from rest_framework import serializers
+import re
+from datetime import datetime
+
 from .models import (
     Oc, Expediente, Linea, Documento,
     TransicionCat, EventLog, OcrParsingLog,
     BuilderArtifactInstance,
 )
+
+
+def _normalize_po_code(codigo):
+    """Extrae el número/canónico de un código de OC/PO para comparación."""
+    if not codigo:
+        return ""
+    s = str(codigo).strip().upper()
+    s = re.sub(r"^(PO|OC|OC\s+CLIENTE|OC_CLIENTE|PROFORMA|PF)\s*[\-\.]?\s*", "", s)
+    s = re.sub(r"[^\w]", "", s)
+    return s
 
 
 class OcListSerializer(serializers.ModelSerializer):
@@ -134,9 +147,10 @@ def build_expediente_ref_batches(expedientes, *, is_client=False):
         if cod not in lst:
             lst.append(cod)
 
-    # Listado / kanban: mostrar UNA sola OC por expediente — la primera
-    # que se subió (más antigua). Las OCs adicionales se ven en el
-    # detalle del expediente. Fix 2026-07-28.
+    # Listado / kanban: mostrar UNA sola OC por expediente. Preferimos el
+    # documento OC cuyo código normalizado coincida con el código principal
+    # de la OC (PO canónico). Si hay varios con la misma fecha, caemos al
+    # más antiguo y luego al más largo. Fix 2026-07-28.
     oc_qs = (Documento.objects
              .filter(expediente_id__in=exp_ids, is_active=True)
              .filter(kind__iregex=r"^OC(\s|_|$)")
@@ -144,14 +158,37 @@ def build_expediente_ref_batches(expedientes, *, is_client=False):
     # R3 · clientes solo ven documentos OC con audience=CLIENT.
     if is_client:
         oc_qs = oc_qs.filter(audience="CLIENT")
-    oc_rows = oc_qs.order_by("expediente_id", "created_at").values_list("expediente_id", "codigo")
-    seen_eid = set()
-    for eid, cod in oc_rows:
-        eid_str = str(eid)
-        if eid_str in seen_eid:
+    oc_rows = oc_qs.order_by("expediente_id", "created_at").values_list("expediente_id", "codigo", "created_at")
+    docs_by_eid = {}
+    for eid, cod, created_at in oc_rows:
+        docs_by_eid.setdefault(str(eid), []).append((cod, created_at))
+
+    exp_oc_ids = {str(e.id): str(e.oc_id) for e in expedientes if e.oc_id}
+    oc_principal = {}
+    if exp_oc_ids:
+        oc_principal = {
+            str(eid): c for eid, c in
+            Oc.objects.filter(id__in=set(exp_oc_ids.values()), is_active=True)
+            .exclude(codigo__isnull=True).exclude(codigo__exact="")
+            .values_list("id", "codigo")
+        }
+
+    for eid, docs in docs_by_eid.items():
+        if not docs:
             continue
-        ocs_docs[eid_str] = [cod]
-        seen_eid.add(eid_str)
+        ocid = exp_oc_ids.get(eid)
+        principal = oc_principal.get(ocid) if ocid else None
+        principal_norm = _normalize_po_code(principal)
+
+        def _sort_key(item):
+            cod, created_at = item
+            norm = _normalize_po_code(cod)
+            matches = (norm == principal_norm) if principal_norm else False
+            # Coincidencia con principal primero, luego más antiguo, luego más largo
+            return (-int(matches), created_at or datetime.min, -len(cod))
+
+        chosen = sorted(docs, key=_sort_key)[0][0]
+        ocs_docs[eid] = [chosen]
 
     # Fallback del código interno (commercial.oc) SOLO para expedientes
     # sin documento OC subido — misma política que el getter por-fila.
@@ -301,8 +338,10 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
         if pre is not None:
             return pre.get(str(obj.id), [])
         try:
-            # Listado / kanban: una sola OC por expediente — la primera que
-            # se subió (más antigua). Las demás se ven en el detalle.
+            # Listado / kanban: una sola OC por expediente. Preferimos el
+            # documento OC cuyo código normalizado coincida con el código
+            # principal de la OC; si no, el más antiguo; si empatan, el más
+            # largo. Fix 2026-07-28.
             doc_qs = (
                 Documento.objects
                 .filter(expediente_id=obj.id, is_active=True)
@@ -312,7 +351,7 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             )
             if self._is_client():
                 doc_qs = doc_qs.filter(audience="CLIENT")
-            doc_code = doc_qs.order_by("created_at").values_list("codigo", flat=True).first()
+            doc_rows = list(doc_qs.order_by("created_at").values_list("codigo", "created_at"))
 
             # OC principal (FK directa al expediente) — codigo auto-
             # generado por el wizard. Solo como fallback.
@@ -322,6 +361,18 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
                 .exclude(codigo__exact="")
                 .values_list("codigo", flat=True)
             ) if obj.oc_id else []
+            principal_code = principal_codes[0] if principal_codes else None
+            principal_norm = _normalize_po_code(principal_code)
+
+            if doc_rows:
+                def _sort_key(item):
+                    cod, created_at = item
+                    norm = _normalize_po_code(cod)
+                    matches = (norm == principal_norm) if principal_norm else False
+                    return (-int(matches), created_at or datetime.min, -len(cod))
+                doc_code = sorted(doc_rows, key=_sort_key)[0][0]
+            else:
+                doc_code = None
 
             codes_to_use = [doc_code] if doc_code else principal_codes
             return [c for c in codes_to_use if c]
