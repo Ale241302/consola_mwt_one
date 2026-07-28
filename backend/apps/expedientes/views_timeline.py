@@ -30,7 +30,11 @@ from apps.core.constants import MWT_OPERATING_CLIENT_ID
 from apps.core.scoped_querysets import filter_by_user_clients
 
 from .models import Expediente
-from .serializers import ExpedienteListSerializer, build_expediente_ref_batches
+from .serializers import (
+    ExpedienteListSerializer,
+    build_expediente_ref_batches,
+    _viewer_is_client,
+)
 
 log = logging.getLogger(__name__)
 
@@ -85,7 +89,7 @@ class ExpedienteTimelineBundleView(APIView):
             return Response({"expedientes": []}, status=200)
 
         ctx = {"request": request}
-        ctx.update(build_expediente_ref_batches(rows))
+        ctx.update(build_expediente_ref_batches(rows, is_client=_viewer_is_client(request.user)))
         row_data = ExpedienteListSerializer(rows, many=True, context=ctx).data
 
         exp_ids = [str(r.id) for r in rows]

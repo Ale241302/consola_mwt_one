@@ -357,10 +357,10 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # Sprint 2026-06-11 · Auditoría Fable5 (N+1): precomputar las
         # referencias (proformas/OCs/SAPs) en 3-4 queries TOTALES en vez
         # de 4-5 por fila dentro del serializer.
-        from .serializers import build_expediente_ref_batches
+        from .serializers import build_expediente_ref_batches, _viewer_is_client
         rows = list(qs)
         ctx = {"request": request}
-        ctx.update(build_expediente_ref_batches(rows))
+        ctx.update(build_expediente_ref_batches(rows, is_client=_viewer_is_client(request.user)))
         return Response(ExpedienteListSerializer(rows, many=True, context=ctx).data)
 
     def retrieve(self, request, pk=None):

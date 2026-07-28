@@ -105,7 +105,17 @@ class OcSerializer(serializers.ModelSerializer):
 # getters los usan con fallback al query por-fila (compatibilidad con
 # usos del serializer fuera del list).
 # ─────────────────────────────────────────────────────────────────────
-def build_expediente_ref_batches(expedientes):
+def _viewer_is_client(user):
+    """True si el usuario autenticado tiene rol cliente (CLIENT_* / CLIENT_B2B)."""
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    role = (getattr(user, "role_default", "") or
+            getattr(user, "role", "") or "")
+    r = str(role).upper()
+    return r.startswith("CLIENT_") or r in ("CLIENT", "CLIENTE", "CLIENT_B2B")
+
+
+def build_expediente_ref_batches(expedientes, *, is_client=False):
     exp_ids = [e.id for e in expedientes]
     out = {"batch_proformas": {}, "batch_ocs": {}, "batch_saps": {}}
     if not exp_ids:
@@ -124,12 +134,15 @@ def build_expediente_ref_batches(expedientes):
         if cod not in lst:
             lst.append(cod)
 
-    oc_rows = (Documento.objects
-               .filter(expediente_id__in=exp_ids, is_active=True)
-               .filter(kind__iregex=r"^OC(\s|_|$)")
-               .exclude(codigo__isnull=True).exclude(codigo__exact="")
-               .order_by("audience", "-created_at")
-               .values_list("expediente_id", "codigo"))
+    oc_qs = (Documento.objects
+             .filter(expediente_id__in=exp_ids, is_active=True)
+             .filter(kind__iregex=r"^OC(\s|_|$)")
+             .exclude(codigo__isnull=True).exclude(codigo__exact=""))
+    # R3 · clientes solo ven documentos OC con audience=CLIENT.
+    # MWT_INTERNAL / ADMIN_ONLY quedan ocultos en el listado B2B.
+    if is_client:
+        oc_qs = oc_qs.filter(audience="CLIENT")
+    oc_rows = oc_qs.order_by("audience", "-created_at").values_list("expediente_id", "codigo")
     for eid, cod in oc_rows:
         lst = ocs_docs.setdefault(str(eid), [])
         if cod not in lst:
@@ -265,7 +278,7 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
 
     # ── ocs[] ──────────────────────────────────────────────────
     def get_oc_codigos(self, obj):
-        """OCs del cliente. Visible a todos los roles.
+        """OCs del expediente. Audience-aware: clientes solo ven docs CLIENT.
 
         Política (Sprint 2026-05-25): el código del documento PDF que
         el cliente subió (kind ∈ {OC, OC Cliente}) es la fuente de
@@ -273,6 +286,9 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
         El código auto-generado por el wizard (tabla commercial.oc,
         ej. 'PO-2026-00004') queda como fallback al final para
         reconciliación interna, no como label primario.
+
+        Fix 2026-07-28: en rol CLIENT_* se filtran documentos con
+        audience='CLIENT'; MWT_INTERNAL/ADMIN_ONLY no se exponen en B2B.
         """
         # Fable5 · atajo batch (incluye el fallback de OC principal,
         # resuelto en lote por build_expediente_ref_batches).
@@ -280,23 +296,19 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
         if pre is not None:
             return pre.get(str(obj.id), [])
         try:
-            # OCs subidas como documentos — preferimos audience=CLIENT,
-            # caemos a ADMIN_ONLY si no hay versión cliente. Aceptamos
-            # cualquier variante de kind que empiece por 'OC' para
-            # tolerar 'OC', 'OC Cliente', 'OC_CLIENTE', etc.
+            # OCs subidas como documentos. Aceptamos cualquier variante
+            # de kind que empiece por 'OC' para tolerar 'OC',
+            # 'OC Cliente', 'OC_CLIENTE', etc.
             doc_qs = (
                 Documento.objects
                 .filter(expediente_id=obj.id, is_active=True)
                 .filter(kind__iregex=r"^OC(\s|_|$)")
                 .exclude(codigo__isnull=True)
                 .exclude(codigo__exact="")
-                .order_by(
-                    # CLIENT primero, luego ADMIN_ONLY, luego otros
-                    "audience", "-created_at",
-                )
-                .values_list("codigo", flat=True)
             )
-            doc_codes = list(doc_qs)
+            if self._is_client():
+                doc_qs = doc_qs.filter(audience="CLIENT")
+            doc_codes = list(doc_qs.order_by("audience", "-created_at").values_list("codigo", flat=True))
 
             # OC principal (FK directa al expediente) — codigo auto-
             # generado por el wizard. Solo como fallback.
