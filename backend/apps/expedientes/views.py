@@ -3446,15 +3446,12 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         cur_op = str(getattr(exp, "operating_company_id", "") or "") or None
                         cur_client = str(getattr(exp, "client_id", "") or "") or None
 
-                        # El split por operador solo aplica cuando el operador FINAL
-                        # es diferente del CLIENTE actual del expediente. Si el
-                        # operador pasa a ser (o ya es) el mismo cliente, NO se
-                        # parte, incluso cuando viene de NULL a client_id.
-                        op_changed = (
-                            bool(new_op)
-                            and cur_client is not None
-                            and str(new_op) != cur_client
-                        )
+                        # El split se dispara ÚNICAMENTE cuando cambia el
+                        # cliente, cuando se mueve solo un subconjunto de líneas
+                        # o cuando se parte alguna cantidad. Un cambio de
+                        # operador con TODAS las líneas y las mismas cantidades
+                        # es una actualización in-place del expediente original,
+                        # no un split.
                         client_changed = bool(new_client_id) and str(new_client_id) != cur_client
                         subset_split = split_id_set != active_line_ids
                         partial_qty_split = any(
@@ -3463,14 +3460,14 @@ class ExpedienteViewSet(viewsets.ViewSet):
                             for lid in split_id_set
                         )
 
-                        is_real_split = op_changed or client_changed or subset_split or partial_qty_split
+                        is_real_split = client_changed or subset_split or partial_qty_split
 
                         # Log de diagnóstico para que el soporte vea por qué se
                         # disparó (o no) el split en producción.
                         log.info(
-                            "[edit_full] split decision: op_changed=%s client_changed=%s "
+                            "[edit_full] split decision: client_changed=%s "
                             "subset_split=%s partial_qty_split=%s cur_op=%s cur_client=%s new_op=%s",
-                            op_changed, client_changed, subset_split, partial_qty_split,
+                            client_changed, subset_split, partial_qty_split,
                             cur_op, cur_client, new_op,
                         )
 
