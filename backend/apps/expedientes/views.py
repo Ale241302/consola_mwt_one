@@ -3422,29 +3422,60 @@ class ExpedienteViewSet(viewsets.ViewSet):
         try:
             with transaction.atomic():
                 with connection.cursor() as c:
-                    # 0) SPLIT — si hay líneas seleccionadas, se MUEVEN a un
-                    #    expediente nuevo con el nuevo operador/cliente; el
-                    #    ORIGINAL queda intacto (no se le cambian operador ni
-                    #    cliente) y conserva las líneas no seleccionadas.
+                    # 0) SPLIT — solo se ejecuta cuando hay un cambio REAL que lo
+                    #    justifique: cambio de operador, cambio de cliente, algunas
+                    #    líneas seleccionadas quedan en el original, o alguna línea
+                    #    se parte con cantidad menor a la actual. Si el frontend
+                    #    envía split_line_ids con todas las líneas y cantidades
+                    #    iguales solo por hidratación, NO debe generar un nuevo
+                    #    expediente.
                     if split_ids:
-                        _qty_by_id = {}
-                        for _u in (lines_updated or []):
-                            if isinstance(_u, dict) and _u.get("id"):
-                                _qty_by_id[str(_u["id"])] = _u.get("qty")
-                        split_res = self._split_lines_to_new_expediente(
-                            cursor=c, exp=exp, line_ids=split_ids,
-                            new_op=new_op, new_client_id=new_client_id,
-                            forma_pago=new_fp, payment_days=new_pd_val,
-                            qty_by_id=_qty_by_id, split_qty_by_id=_split_qty_by_id,
+                        c.execute(
+                            """
+                            SELECT id::text, qty
+                              FROM expedientes.linea
+                             WHERE expediente_id = %s::uuid
+                               AND is_active = TRUE
+                            """,
+                            [str(exp.id)],
                         )
-                        # El original NO cambia operador/cliente/forma_pago al
-                        # partir; y las líneas movidas se excluyen de las ops.
-                        new_op = None; new_fp = None; new_pd_val = None; new_client_id = None
-                        eff_op = str(getattr(exp, "operating_company_id", "") or "") or None
-                        _sset = {str(x) for x in split_ids}
-                        lines_removed = [r for r in lines_removed if str(r) not in _sset]
-                        lines_updated = [u for u in lines_updated
-                                         if not (isinstance(u, dict) and str(u.get("id")) in _sset)]
+                        active_qty_by_id = {str(r[0]): int(r[1] or 0) for r in c.fetchall()}
+                        active_line_ids = set(active_qty_by_id.keys())
+                        split_id_set = set(split_ids)
+
+                        cur_op = str(getattr(exp, "operating_company_id", "") or "") or None
+                        cur_client = str(getattr(exp, "client_id", "") or "") or None
+
+                        op_changed = bool(new_op) and str(new_op) != cur_op
+                        client_changed = bool(new_client_id) and str(new_client_id) != cur_client
+                        subset_split = split_id_set != active_line_ids
+                        partial_qty_split = any(
+                            active_qty_by_id.get(lid) is not None
+                            and _split_qty_by_id.get(lid, active_qty_by_id[lid]) < active_qty_by_id[lid]
+                            for lid in split_id_set
+                        )
+
+                        is_real_split = op_changed or client_changed or subset_split or partial_qty_split
+
+                        if is_real_split:
+                            _qty_by_id = {}
+                            for _u in (lines_updated or []):
+                                if isinstance(_u, dict) and _u.get("id"):
+                                    _qty_by_id[str(_u["id"])] = _u.get("qty")
+                            split_res = self._split_lines_to_new_expediente(
+                                cursor=c, exp=exp, line_ids=split_ids,
+                                new_op=new_op, new_client_id=new_client_id,
+                                forma_pago=new_fp, payment_days=new_pd_val,
+                                qty_by_id=_qty_by_id, split_qty_by_id=_split_qty_by_id,
+                            )
+                            # El original NO cambia operador/cliente/forma_pago al
+                            # partir; y las líneas movidas se excluyen de las ops.
+                            new_op = None; new_fp = None; new_pd_val = None; new_client_id = None
+                            eff_op = str(getattr(exp, "operating_company_id", "") or "") or None
+                            _sset = {str(x) for x in split_ids}
+                            lines_removed = [r for r in lines_removed if str(r) not in _sset]
+                            lines_updated = [u for u in lines_updated
+                                             if not (isinstance(u, dict) and str(u.get("id")) in _sset)]
 
                     # 1) Metadatos a nivel expediente.
                     sets, args = [], []
