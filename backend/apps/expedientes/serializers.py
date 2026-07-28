@@ -134,47 +134,24 @@ def build_expediente_ref_batches(expedientes, *, is_client=False):
         if cod not in lst:
             lst.append(cod)
 
+    # Listado / kanban: mostrar UNA sola OC por expediente — la primera
+    # que se subió (más antigua). Las OCs adicionales se ven en el
+    # detalle del expediente. Fix 2026-07-28.
     oc_qs = (Documento.objects
              .filter(expediente_id__in=exp_ids, is_active=True)
              .filter(kind__iregex=r"^OC(\s|_|$)")
              .exclude(codigo__isnull=True).exclude(codigo__exact=""))
     # R3 · clientes solo ven documentos OC con audience=CLIENT.
-    # MWT_INTERNAL / ADMIN_ONLY quedan ocultos en el listado B2B.
     if is_client:
         oc_qs = oc_qs.filter(audience="CLIENT")
-    oc_rows = oc_qs.order_by("audience", "-created_at").values_list("expediente_id", "codigo")
+    oc_rows = oc_qs.order_by("expediente_id", "created_at").values_list("expediente_id", "codigo")
+    seen_eid = set()
     for eid, cod in oc_rows:
-        lst = ocs_docs.setdefault(str(eid), [])
-        if cod not in lst:
-            lst.append(cod)
-
-    # Código principal de la OC asociada a cada expediente (usado para
-    # priorizar el PO canónico sobre códigos alternativos/ruidos).
-    exp_oc_ids = {str(e.id): str(e.oc_id) for e in expedientes if e.oc_id}
-    oc_principal = {}
-    if exp_oc_ids:
-        oc_principal = {
-            str(eid): cod for eid, cod in
-            Oc.objects.filter(id__in=set(exp_oc_ids.values()), is_active=True)
-            .exclude(codigo__isnull=True).exclude(codigo__exact="")
-            .values_list("id", "codigo")
-        }
-
-    # Reordenar/filtrar: el código que coincida con la OC principal del
-    # expediente va primero (PO canónico). Para clientes B2B, si hay
-    # coincidencia descartamos códigos alternativos (evita que un segundo
-    # documento/parseo con número distinto tape el PO correcto).
-    for eid, ocid in exp_oc_ids.items():
-        lst = ocs_docs.get(eid)
-        if not lst:
+        eid_str = str(eid)
+        if eid_str in seen_eid:
             continue
-        principal = oc_principal.get(ocid)
-        if principal and principal in lst:
-            if is_client:
-                ocs_docs[eid] = [principal]
-            else:
-                lst.remove(principal)
-                lst.insert(0, principal)
+        ocs_docs[eid_str] = [cod]
+        seen_eid.add(eid_str)
 
     # Fallback del código interno (commercial.oc) SOLO para expedientes
     # sin documento OC subido — misma política que el getter por-fila.
@@ -324,9 +301,8 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
         if pre is not None:
             return pre.get(str(obj.id), [])
         try:
-            # OCs subidas como documentos. Aceptamos cualquier variante
-            # de kind que empiece por 'OC' para tolerar 'OC',
-            # 'OC Cliente', 'OC_CLIENTE', etc.
+            # Listado / kanban: una sola OC por expediente — la primera que
+            # se subió (más antigua). Las demás se ven en el detalle.
             doc_qs = (
                 Documento.objects
                 .filter(expediente_id=obj.id, is_active=True)
@@ -336,7 +312,7 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             )
             if self._is_client():
                 doc_qs = doc_qs.filter(audience="CLIENT")
-            doc_codes = list(doc_qs.order_by("audience", "-created_at").values_list("codigo", flat=True))
+            doc_code = doc_qs.order_by("created_at").values_list("codigo", flat=True).first()
 
             # OC principal (FK directa al expediente) — codigo auto-
             # generado por el wizard. Solo como fallback.
@@ -346,30 +322,9 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
                 .exclude(codigo__exact="")
                 .values_list("codigo", flat=True)
             ) if obj.oc_id else []
-            principal_code = principal_codes[0] if principal_codes else None
 
-            # Sprint 2026-05-26 (CEO) - cuando el cliente SI subio un
-            # documento OC, el codigo auto-generado por el wizard
-            # ('PO-2026-XXXXX') es ruido visual. Mostramos UNICAMENTE
-            # los codigos del cliente. Solo cuando no hay doc subido
-            # caemos al codigo principal interno como fallback.
-            codes_to_use = doc_codes if doc_codes else principal_codes
-
-            # Fix 2026-07-28: si entre los docs hay uno que coincida con el
-            # código canónico de la OC, va primero. Para clientes, si hay
-            # coincidencia descartamos códigos alternativos y dejamos solo
-            # el PO canónico.
-            if principal_code and principal_code in codes_to_use:
-                if self._is_client():
-                    codes_to_use = [principal_code]
-                else:
-                    codes_to_use = [principal_code] + [c for c in codes_to_use if c != principal_code]
-
-            seen, out = set(), []
-            for c in codes_to_use:
-                if c and c not in seen:
-                    out.append(c); seen.add(c)
-            return out
+            codes_to_use = [doc_code] if doc_code else principal_codes
+            return [c for c in codes_to_use if c]
         except Exception:  # noqa: BLE001
             return []
 
