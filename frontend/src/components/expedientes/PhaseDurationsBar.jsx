@@ -175,22 +175,32 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
   }, [mStart, mEnd]);
 
   // Sprint 2026-07-30 · progreso de la fase Tránsito.
-  // El icono se posiciona según los días que faltan para la fecha fin:
-  // cada día restante resta 10% (máx 10 días). Si falta 1 día → 90%,
-  // si faltan 9 → 10%, si llega → 100%.
+  // El rango va desde el fin de PREPARACION hasta el fin de TRANSITO.
+  // La posición del icono refleja cuánto ha avanzado la fecha actual
+  // dentro de ese rango.
   const transitProgress = useMemo(() => {
     if (currentStatus !== "TRANSITO") return null;
-    const info = phaseInfo.TRANSITO || {};
-    const ov = info.override || {};
-    const end = ov.end || info.exit || (eta ? new Date(eta).toISOString().slice(0, 10) : null);
-    if (!end) return null;
-    const b = new Date(end + "T12:00:00");
-    if (isNaN(b.getTime())) return null;
     const today = new Date();
     today.setHours(12, 0, 0, 0);
-    const daysToEnd = Math.max(0, (b - today) / DAY_MS);
-    return Math.max(0, Math.min(100, 100 - (daysToEnd * 10)));
-  }, [phaseInfo, currentStatus, eta]);
+
+    // Inicio: fin de PREPARACION (override o derivado), fallback a DESPACHO.
+    const prepOv = overrides.PREPARACION || {};
+    const despOv = overrides.DESPACHO || {};
+    const prepEnd = prepOv.end || despOv.end || phaseInfo.PREPARACION_DESPACHO?.exit;
+
+    // Fin: fin de TRANSITO (override o derivado), fallback a ETA.
+    const transOv = overrides.TRANSITO || {};
+    const transEnd = transOv.end || phaseInfo.TRANSITO?.exit || (eta ? new Date(eta).toISOString().slice(0, 10) : null);
+
+    if (!prepEnd || !transEnd) return null;
+    const a = new Date(prepEnd + "T12:00:00");
+    const b = new Date(transEnd + "T12:00:00");
+    if (isNaN(a.getTime()) || isNaN(b.getTime()) || b <= a) return null;
+
+    const elapsed = today - a;
+    const total = b - a;
+    return Math.max(0, Math.min(100, (elapsed / total) * 100));
+  }, [overrides, phaseInfo, currentStatus, eta]);
 
   if (!events) return null;
   const L = LABELS[lang] || LABELS.es;
