@@ -21,8 +21,9 @@ Reglas (autoritativas):
   commission_amount = delta_total * commission_rate  (NULL si rate NULL)
   margen_pct       = delta_unit / unit_price_client  (proteccion div/0)
 
-Visibilidad: solo expedientes con operating_company_id = MWT_OPERATING_CLIENT_ID
-entran al calculo de comisiones (otros se omiten o van a tabla "sin comision").
+Visibilidad: TODOS los expedientes activos entran al calculo, sin importar
+el operating_company_id (decision CEO 2026-07-29: la consola es de MWT y
+debe ver el negocio completo, no solo lo operado directamente por MWT).
 """
 from __future__ import annotations
 
@@ -32,8 +33,6 @@ from decimal import Decimal, InvalidOperation
 from django.db import connection
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-
-from apps.core.constants import MWT_OPERATING_CLIENT_ID
 
 from .permissions import IsCeoOrAdmin
 
@@ -138,9 +137,10 @@ def _next_month_business_window(d: date | None, n_days: int = 10) -> tuple[date 
     return (inicio, cur, label)
 
 
-def _fetch_expedientes_mwt() -> list[dict]:
-    """Lee expedientes operados por MWT con agregados de lineas.
+def _fetch_expedientes() -> list[dict]:
+    """Lee TODOS los expedientes activos con agregados de lineas.
     Una sola query JOIN — evita N+1. Solo lineas activas.
+    Sin filtro por operating_company_id (decision CEO 2026-07-29).
     """
     with connection.cursor() as c:
         c.execute(
@@ -213,12 +213,10 @@ def _fetch_expedientes_mwt() -> list[dict]:
                 LIMIT 1
             ) a05 ON TRUE
             WHERE e.is_active = TRUE
-              AND e.operating_company_id = %s
             GROUP BY e.id, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct,
                      a05.shipment_date_artifact, a05.eta_artifact
             ORDER BY e.created_at DESC
-            """,
-            [str(MWT_OPERATING_CLIENT_ID)],
+            """
         )
         cols = [c0[0] for c0 in c.description]
         return [dict(zip(cols, row)) for row in c.fetchall()]
@@ -338,7 +336,7 @@ def overview(request):
       }
     """
     today = date.today()
-    rows = _fetch_expedientes_mwt()
+    rows = _fetch_expedientes()
     items = [_build_item(r, today) for r in rows]
 
     tot_devengable = Decimal("0")
@@ -392,12 +390,12 @@ def overview(request):
 @api_view(["GET"])
 @permission_classes([IsCeoOrAdmin])
 def comisiones_list(request):
-    """Lista paginada simple de expedientes MWT con calculos.
+    """Lista paginada simple de expedientes con calculos.
 
     Query params soportados: ?client_id=...&estado_devengo=...
     """
     today = date.today()
-    rows = _fetch_expedientes_mwt()
+    rows = _fetch_expedientes()
     items = [_build_item(r, today) for r in rows]
 
     # Filtros simples
@@ -433,7 +431,7 @@ def commission_by_month(request):
     Util para BarChart "Comision esperada por mes" en /finanzas.
     """
     today = date.today()
-    rows = _fetch_expedientes_mwt()
+    rows = _fetch_expedientes()
     items = [_build_item(r, today) for r in rows]
     agg: dict[str, dict] = {}
     for it in items:
@@ -495,7 +493,7 @@ def margin_scatter(request):
     con la diferencia projected vs real.
     """
     today = date.today()
-    rows = _fetch_expedientes_mwt()
+    rows = _fetch_expedientes()
     items = [_build_item(r, today) for r in rows]
     points = []
     for it in items:
@@ -522,7 +520,7 @@ def margin_scatter(request):
 def cliente_profile(request, client_id):
     """Perfil financiero de un cliente — comision agregada + sus expedientes."""
     today = date.today()
-    rows = _fetch_expedientes_mwt()
+    rows = _fetch_expedientes()
     mine = [r for r in rows if str(r["client_id"]) == str(client_id)]
     items = [_build_item(r, today) for r in mine]
 
