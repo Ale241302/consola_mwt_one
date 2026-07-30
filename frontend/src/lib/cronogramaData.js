@@ -14,9 +14,9 @@
 //   · sin método de envío definido → se asume Aéreo (etiquetado "sup.").
 // =====================================================================
 import { getToken } from "./api.js";
-import { DISPLAY_STAGES as _DISPLAY_STAGES, displayStage } from "./phaseDisplay.js";
+import { DISPLAY_STAGES, displayStage } from "./phaseDisplay.js";
 
-export { _DISPLAY_STAGES as DISPLAY_STAGES, displayStage };
+export { DISPLAY_STAGES, displayStage };
 
 const API_BASE =
   (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || "/api";
