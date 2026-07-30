@@ -27,7 +27,7 @@ import { tr, fmtMoney } from "../lib/i18n.js";
 import { StatusBadge, CreditDot } from "../components/ui/primitives.jsx";
 import {
   IconChevLeft, IconChevDown, IconChevRight, IconFolder, IconPlane,
-  IconShip, IconAlert, IconEye, IconPlus, IconPencil,
+  IconShip, IconAlert, IconEye, IconPlus, IconPencil, IconTrash,
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 // Sprint 2026-06-11 · acciones sobre la fusión: el drawer C5 en modo
@@ -338,6 +338,10 @@ export default function ScreenFusionDetail() {
   // Sprint 2026-06-11 (rev4) · edición de Productos OC en la fusión.
   const [lineDel, setLineDel] = useState(null);            // línea a eliminar
   const [lineDelBusy, setLineDelBusy] = useState(false);
+  // Sprint 2026-07-30 · borrado de documentos también en la fusión
+  // (mismo flujo que OCDetail: confirmación + documentosApi.remove).
+  const [docDel, setDocDel] = useState(null);              // documento a eliminar
+  const [docDelBusy, setDocDelBusy] = useState(false);
   const [addTargetOpen, setAddTargetOpen] = useState(false); // paso 1: ¿a qué proforma?
   const [addTargetIdx, setAddTargetIdx] = useState(0);
   const [productOpen, setProductOpen] = useState(false);     // paso 2: catálogo
@@ -669,6 +673,31 @@ export default function ScreenFusionDetail() {
       console.error("[FusionDetail] eliminar línea falló", err);
     } finally {
       setLineDelBusy(false);
+    }
+  };
+  // Sprint 2026-07-30 · eliminar documento comercial desde la fusión.
+  // El backend hace soft-delete + borra el objeto del bucket (on_commit).
+  const confirmDeleteDoc = async () => {
+    if (!docDel?.id || docDelBusy) return;
+    setDocDelBusy(true);
+    setDocError(null);
+    try {
+      await documentosApi.remove(docDel.id);
+      setMembers((prev) => prev.map((m) => ({
+        ...m,
+        docs: m.docs.filter((x) => x.id !== docDel.id),
+      })));
+      setDocDel(null);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[FusionDetail] eliminar documento falló", err);
+      setDocError(
+        es
+          ? `No se pudo eliminar el documento: ${err?.message || "error"}`
+          : `Couldn't delete document: ${err?.message || "error"}`
+      );
+    } finally {
+      setDocDelBusy(false);
     }
   };
   // Crea las líneas del modal contra la proforma/OC elegida (paso 1).
@@ -1262,6 +1291,19 @@ export default function ScreenFusionDetail() {
                   >
                     <IconEye size={13}/>
                   </button>
+                  {/* Sprint 2026-07-30 · eliminar documento (misma regla que
+                      OCDetail: staff con permiso upload_document). */}
+                  {!isClient && can("upload_document") && (
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      title={es ? "Eliminar documento" : "Delete document"}
+                      onClick={(ev) => { ev.stopPropagation(); setDocDel(d); }}
+                      style={{ color: "var(--danger, #DC2626)" }}
+                    >
+                      <IconTrash size={13}/>
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -1350,6 +1392,37 @@ export default function ScreenFusionDetail() {
             setTimeout(() => setReloadKey((k) => k + 1), 700);
           }}
         />
+      )}
+
+      {/* ── Confirmación de borrado de documento (2026-07-30) ───── */}
+      {docDel && (
+        <div onClick={() => !docDelBusy && setDocDel(null)}
+             style={{ position: "fixed", inset: 0, zIndex: 1300, background: "rgba(11,30,58,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={(ev) => ev.stopPropagation()}
+               style={{ background: "var(--surface, #fff)", borderRadius: 12, padding: 20, width: "min(440px, 92vw)", boxShadow: "0 24px 60px rgba(11,30,58,0.35)" }}>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>
+              {es ? "Eliminar documento" : "Delete document"}
+            </div>
+            <div className="caption" style={{ marginTop: 8 }}>
+              <span style={{ fontWeight: 700 }}>{docDel.kind || "—"}</span>
+              {" · "}<span className="mono">{docDel.codigo || docDel.filename || "—"}</span>
+            </div>
+            <div className="caption" style={{ marginTop: 6, color: "var(--text-tertiary)" }}>
+              {es
+                ? "Se borra del expediente al que pertenece y del almacenamiento. Esta acción no se puede deshacer."
+                : "It will be removed from its expediente and from storage. This action cannot be undone."}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button className="btn btn-secondary" disabled={docDelBusy} onClick={() => setDocDel(null)}>
+                {es ? "Cancelar" : "Cancel"}
+              </button>
+              <button className="btn" disabled={docDelBusy} onClick={confirmDeleteDoc}
+                      style={{ background: "var(--critical, #DC2626)", color: "#fff", fontWeight: 700 }}>
+                {docDelBusy ? (es ? "Eliminando…" : "Deleting…") : (es ? "Eliminar" : "Delete")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Confirmación de borrado de línea (rev4) ────────────── */}
