@@ -827,9 +827,9 @@ export default function ScreenExpedientes() {
       {/* ── Fin bloque CEO-ONLY (Row 1) ─────────────────────────────────── */}
 
       {/* ── Row 2: Tiempos operativos (TODOS los roles · Sprint 2026-06-11)
-          + Calidad del proceso (CEO-ONLY). El cliente ve los promedios de
-          SUS clientes asignados (phase-stats?client=…). */}
-      <div className="grid gap-3 mb-4" style={{gridTemplateColumns: isAdmin ? '2.5fr 1fr' : '1fr'}}>
+          El cliente ve los promedios de SUS clientes asignados
+          (phase-stats?client=…). */}
+      <div className="grid gap-3 mb-4" style={{gridTemplateColumns: '1fr'}}>
         <div className="card">
           <div className="card-head">
             <div>
@@ -838,7 +838,7 @@ export default function ScreenExpedientes() {
             </div>
           </div>
           <div style={{padding:'18px 22px'}}>
-            <div style={{display:'grid', gridTemplateColumns:`repeat(${DISPLAY_STAGES.length}, 1fr)`, gap: 16}}>
+            <div style={{display:'grid', gridTemplateColumns:`repeat(${DISPLAY_STAGES.length}, minmax(140px, 1fr))`, gap: 24}}>
               {DISPLAY_STAGES.map(s => {
                 // Sprint 2026-06-11 · promedio REAL del endpoint
                 // phase-stats (general); el cálculo local queda como
@@ -854,7 +854,7 @@ export default function ScreenExpedientes() {
                   : psLocal;
                 if (!ps) return (
                   <div key={s}>
-                    <div className="micro" style={{marginBottom:6}}>{tr(lang,s)}</div>
+                    <div className="micro" style={{marginBottom:6, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{tr(lang,s)}</div>
                     <div className="caption">—</div>
                   </div>
                 );
@@ -863,7 +863,7 @@ export default function ScreenExpedientes() {
                 const color = signal === 'green' ? 'var(--success)' : signal === 'amber' ? 'var(--warning)' : 'var(--critical)';
                 return (
                   <div key={s}>
-                    <div className="micro" style={{marginBottom:8}}>{tr(lang,s)}</div>
+                    <div className="micro" style={{marginBottom:8, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{tr(lang,s)}</div>
                     <div style={{display:'flex',alignItems:'baseline',gap:4}}>
                       <span style={{font:'800 22px/1 var(--font-display)', color, fontVariantNumeric:'tabular-nums'}}>{ps.avg.toFixed(0)}</span>
                       <span className="caption">{lang==='es'?'d':'d'}</span>
@@ -881,42 +881,6 @@ export default function ScreenExpedientes() {
             </div>
           </div>
         </div>
-
-        {/* Calidad del proceso — métricas internas, CEO-ONLY (R3). */}
-        {isAdmin && (
-        <div className="card">
-          <div className="card-head">
-            <div>
-              <div className="card-title">{tr(lang,'process_quality')}</div>
-              <div className="card-subtitle">{EXPEDIENTES.length} {lang==='es'?'expedientes':'files'} · {lang==='es'?'últimos 90 días':'last 90 days'}</div>
-            </div>
-          </div>
-          <div style={{padding:'18px 22px'}}>
-            <div className="metric-row">
-              <span className="ml">{tr(lang,'proformas_clean')}</span>
-              <span className="mv" style={{color:'var(--success)'}}>{(kpi.clean_pct*100).toFixed(0)}%</span>
-            </div>
-            <div className="metric-row">
-              <span className="ml">{tr(lang,'proformas_reviewed')}</span>
-              <span className="mv">{kpi.pf_reviewed} / {EXPEDIENTES.length}</span>
-            </div>
-            <div className="metric-row">
-              <span className="ml">{tr(lang,'with_cost_correction')}</span>
-              <span className="mv" style={{color: kpi.corrected_pct > 0.25 ? 'var(--warning)' : 'var(--text-primary)'}}>
-                {(kpi.corrected_pct*100).toFixed(0)}% ({kpi.corrected})
-              </span>
-            </div>
-            <div className="metric-row">
-              <span className="ml">{tr(lang,'docs_missing')}</span>
-              <span className="mv" style={{color: kpi.docs_missing > 0 ? 'var(--critical)' : 'var(--text-primary)'}}>{kpi.docs_missing}</span>
-            </div>
-            <div className="metric-row">
-              <span className="ml">{tr(lang,'factory_delay')}</span>
-              <span className="mv" style={{color: kpi.factory_delayed > 0 ? 'var(--warning)' : 'var(--text-primary)'}}>{kpi.factory_delayed}</span>
-            </div>
-          </div>
-        </div>
-        )}
       </div>
 
       {/* ── Toolbar ───── */}
