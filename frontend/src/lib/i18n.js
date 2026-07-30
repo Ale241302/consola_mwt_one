@@ -25,7 +25,8 @@ export const STRINGS = {
     critical: 'Crítico', warning: 'Advertencia',
     // States
     REGISTRO: 'Registro', PRODUCCION: 'Producción', PREPARACION: 'Preparación',
-    DESPACHO: 'Despacho', TRANSITO: 'Tránsito', EN_DESTINO: 'En destino',
+    DESPACHO: 'Despacho', PREPARACION_DESPACHO: 'Preparación de despacho',
+    TRANSITO: 'Tránsito', EN_DESTINO: 'En destino',
     CERRADO: 'Cerrado', CANCELADO: 'Cancelado',
     advance_state: 'Avanzar estado', advance_to: 'Avanzar a', state: 'Estado',
     // Tabs
@@ -221,7 +222,8 @@ export const STRINGS = {
     all_brands: 'All brands', blocked: 'Blocked', risk: 'Risk', on_time: 'On time',
     critical: 'Critical', warning: 'Warning',
     REGISTRO: 'Record', PRODUCCION: 'Production', PREPARACION: 'Preparation',
-    DESPACHO: 'Dispatch', TRANSITO: 'Transit', EN_DESTINO: 'At destination',
+    DESPACHO: 'Dispatch', PREPARACION_DESPACHO: 'Dispatch preparation',
+    TRANSITO: 'Transit', EN_DESTINO: 'At destination',
     CERRADO: 'Closed', CANCELADO: 'Canceled',
     advance_state: 'Advance state', advance_to: 'Advance to', state: 'State',
     tab_overview: 'Overview', tab_artifacts: 'Documents', tab_costs: 'Costs',

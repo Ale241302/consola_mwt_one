@@ -11,8 +11,9 @@
 import React, { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  STAGES, STAGE_LABELS, STAGE_COLORS, fmtShort, today,
+  DISPLAY_STAGES, DISPLAY_STAGE_LABELS, DISPLAY_STAGE_COLORS, fmtShort, today,
 } from "../../lib/cronogramaData.js";
+import { displayStage } from "../../lib/phaseDisplay.js";
 
 const fInt = (n) => Number(n || 0).toLocaleString("es-CR");
 const usd = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -107,24 +108,28 @@ export function UpcomingDeliveries({ enriched, lang = "es", labelOf, onOpen }) {
 
 /* ── Pipeline por estado (kanban) ──────────────────────────── */
 export function PipelineBoard({ enriched, lang = "es", labelOf, onOpen }) {
-  const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
+  const L = DISPLAY_STAGE_LABELS[lang] || DISPLAY_STAGE_LABELS.es;
+  const byTech = {};
+  enriched.forEach((e) => { (byTech[e.it.estado] || (byTech[e.it.estado] = [])).push(e); });
+  // Agrupar por fase visual (PREPARACION + DESPACHO en una sola columna).
   const by = {};
-  STAGES.forEach((s) => { by[s] = []; });
-  enriched.forEach((e) => { (by[e.it.estado] || (by[e.it.estado] = [])).push(e); });
+  DISPLAY_STAGES.forEach((s) => { by[s] = []; });
+  Object.entries(byTech).forEach(([techSt, arr]) => {
+    by[displayStage(techSt)].push(...arr);
+  });
   // Sprint 2026-07-20 · dentro de cada columna, las cards MÁS NUEVAS
-  // primero (created_at DESC) — antes heredaban el orden del fetch y
-  // los expedientes recién creados caían al FONDO de la columna.
+  // primero (created_at DESC).
   Object.values(by).forEach((arr) => arr.sort((a, b) => {
     const ta = Date.parse(a.it?._row?.created_at || "") || 0;
     const tb = Date.parse(b.it?._row?.created_at || "") || 0;
     return tb - ta;
   }));
   return (
-    <div style={{ display: "grid", gridTemplateColumns: `repeat(${STAGES.length}, minmax(130px, 1fr))`, gap: 8, overflowX: "auto" }}>
-      {STAGES.map((s) => (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${DISPLAY_STAGES.length}, minmax(130px, 1fr))`, gap: 8, overflowX: "auto" }}>
+      {DISPLAY_STAGES.map((s) => (
         <div key={s} style={{ background: "var(--surface-alt, #F6F8FB)", borderRadius: 12, padding: 8, minHeight: 120 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "2px 4px" }}>
-            <span style={{ width: 8, height: 8, borderRadius: 3, background: STAGE_COLORS[s] }}/>
+            <span style={{ width: 8, height: 8, borderRadius: 3, background: DISPLAY_STAGE_COLORS[s] }}/>
             <span style={{ ...lblStyle, color: "var(--text-secondary, #475569)" }}>{L[s]}</span>
             <span className="tabular-nums" style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 700, background: "#fff", borderRadius: 99, padding: "1px 7px", color: "var(--text-tertiary)" }}>
               {(by[s] || []).length}
@@ -155,7 +160,7 @@ export function PipelineBoard({ enriched, lang = "es", labelOf, onOpen }) {
 
 /* ── Entrada de pares (tabla plana modelo × talla) ─────────── */
 export function PairsTable({ enriched, lang = "es", labelOf }) {
-  const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
+  const L = DISPLAY_STAGE_LABELS[lang] || DISPLAY_STAGE_LABELS.es;
   const [modelo, setModelo] = useState("ALL");
   const [orden, setOrden] = useState("modelo");
 
@@ -168,7 +173,7 @@ export function PairsTable({ enriched, lang = "es", labelOf }) {
           talla: l.size || "—",
           qty: qtyOf(l),
           delivery,
-          estado: L[it.estado] || it.estado,
+          estado: L[displayStage(it.estado)] || it.estado,
           ref: `${labelOf(it)}${it.ocCodigo && labelOf(it).indexOf(it.ocCodigo) < 0 ? " / PO " + it.ocCodigo : ""}`,
         });
       });
@@ -290,7 +295,7 @@ function SizeMatrix({ lineas, lang }) {
 }
 
 export function ReceptionSheet({ enriched, lang = "es", labelOf, onOpen }) {
-  const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
+  const L = DISPLAY_STAGE_LABELS[lang] || DISPLAY_STAGE_LABELS.es;
   const [show, setShow] = useState("all");
   const [modelo, setModelo] = useState("ALL");
   const modelos = useMemo(() => Array.from(new Set(
@@ -436,7 +441,7 @@ function LineasDetail({ it, isClient, lang }) {
 }
 
 export function ExpedientesTable({ enriched, lang = "es", labelOf, onOpen, isClient = false }) {
-  const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
+  const L = DISPLAY_STAGE_LABELS[lang] || DISPLAY_STAGE_LABELS.es;
   const [grp, setGrp] = useState("none");
   const [open, setOpen] = useState(() => new Set());
   const toggle = (id) => setOpen((p) => {
@@ -449,7 +454,7 @@ export function ExpedientesTable({ enriched, lang = "es", labelOf, onOpen, isCli
     if (grp === "none") return [["", enriched]];
     const keyOf = (e) => grp === "oc" ? (e.it.ocCodigo || "(sin OC)")
       : grp === "operador" ? (e.it.operadoPorMwt ? "MWT" : (lang === "es" ? "Cliente" : "Client"))
-      : (L[e.it.estado] || e.it.estado);
+      : (L[displayStage(e.it.estado)] || e.it.estado);
     const m = new Map();
     enriched.forEach((e) => { (m.get(keyOf(e)) || m.set(keyOf(e), []).get(keyOf(e))).push(e); });
     return Array.from(m.entries()).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
@@ -521,8 +526,8 @@ export function ExpedientesTable({ enriched, lang = "es", labelOf, onOpen, isCli
                         <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>{fInt(it.volumen)}</td>
                         <td>
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700 }}>
-                            <span style={{ width: 7, height: 7, borderRadius: 99, background: STAGE_COLORS[it.estado] || "#94A7B8" }}/>
-                            {L[it.estado] || it.estado}
+                            <span style={{ width: 7, height: 7, borderRadius: 99, background: DISPLAY_STAGE_COLORS[displayStage(it.estado)] || "#94A7B8" }}/>
+                            {L[displayStage(it.estado)] || it.estado}
                           </span>
                         </td>
                         <td className="tabular-nums">{it.embarque || "—"}</td>

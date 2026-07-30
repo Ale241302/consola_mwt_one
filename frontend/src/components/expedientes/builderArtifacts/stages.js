@@ -2,6 +2,7 @@
 // MWT.ONE · stages.js — orden canónico de etapas del expediente.
 // Debe coincidir con backend/apps/expedientes/views_builder_artifacts.py
 // =====================================================================
+import { displayStage } from "../../../lib/phaseDisplay.js";
 
 export const STAGE_ORDER = [
   "REGISTRO",
@@ -19,6 +20,7 @@ export const STAGE_LABELS = {
     PRODUCCION:  "Producción",
     PREPARACION: "Preparación",
     DESPACHO:    "Despacho",
+    PREPARACION_DESPACHO: "Preparación de despacho",
     TRANSITO:    "Tránsito",
     EN_DESTINO:  "En destino",
     CERRADO:     "Cerrado",
@@ -28,6 +30,7 @@ export const STAGE_LABELS = {
     PRODUCCION:  "Production",
     PREPARACION: "Preparation",
     DESPACHO:    "Dispatch",
+    PREPARACION_DESPACHO: "Dispatch preparation",
     TRANSITO:    "In transit",
     EN_DESTINO:  "At destination",
     CERRADO:     "Closed",
@@ -64,5 +67,5 @@ export function canAddArtifactToStage(currentStage, targetStage) {
 }
 
 export function stageLabel(lang, stage) {
-  return (STAGE_LABELS[lang] || STAGE_LABELS.es)[stage] || stage;
+  return (STAGE_LABELS[lang] || STAGE_LABELS.es)[displayStage(stage)] || stage;
 }

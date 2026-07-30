@@ -22,12 +22,12 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney } from "../lib/i18n.js";
+import { DISPLAY_STAGES, displayStage } from "../lib/phaseDisplay.js";
 import { CountryFlag } from "../components/ui/primitives.jsx";
 import {
   IconRefresh, IconPlus, IconAlert, IconLock, IconClock, IconArrow, IconKanban,
 } from "../lib/icons.jsx";
 import {
-  STATES,
   EXPEDIENTES as MOCK_EXPEDIENTES,
   BRANDS,
   OCS as MOCK_OCS,
@@ -254,9 +254,9 @@ export default function ScreenPipeline() {
   const [draggingId, setDraggingId] = useState(null);
   const [dropTargetCol, setDropTargetCol] = useState(null);
 
-  const cols = STATES.slice(0, 7); // REGISTRO → CERRADO
+  const cols = DISPLAY_STAGES; // 6 fases visuales
 
-  const effectiveStatus = (e) => stateOverrides[e.id] || e.status;
+  const effectiveStatus = (e) => displayStage(stateOverrides[e.id] || e.status);
 
   const baseCards = EXPEDIENTES.filter(e => {
     if (brandFilter !== 'ALL' && e.brand_id !== brandFilter) return false;
@@ -282,7 +282,10 @@ export default function ScreenPipeline() {
   const handleDrop = (e, state) => {
     e.preventDefault();
     if (draggingId) {
-      setStateOverrides(prev => ({ ...prev, [draggingId]: state }));
+      // El pipeline visual fusiona PREPARACION+DESPACHO; internamente el
+      // drag cae en PREPARACION (la primera fase técnica del grupo).
+      const techState = state === 'PREPARACION_DESPACHO' ? 'PREPARACION' : state;
+      setStateOverrides(prev => ({ ...prev, [draggingId]: techState }));
     }
     setDraggingId(null);
     setDropTargetCol(null);

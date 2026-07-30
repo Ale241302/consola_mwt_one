@@ -9,14 +9,16 @@
 //     que lo contienen.
 // ─────────────────────────────────────────────────────────────
 import React, { useState } from "react";
-import { STAGES, STAGE_LABELS, STAGE_COLORS, avgFor } from "../../lib/cronogramaData.js";
+import {
+  DISPLAY_STAGES, DISPLAY_STAGE_LABELS, DISPLAY_STAGE_COLORS, avgFor,
+} from "../../lib/cronogramaData.js";
 
 const fmt1 = (n) => (Math.round(Number(n) * 10) / 10).toLocaleString("en-US");
 
 export default function PhaseStatsCards({ avgs, skuStats = [], lang = "es", clienteLabel = "" }) {
   const [tab, setTab] = useState("METODO");
-  const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
-  const fases = STAGES.slice(0, 6);
+  const L = DISPLAY_STAGE_LABELS[lang] || DISPLAY_STAGE_LABELS.es;
+  const fases = DISPLAY_STAGES.slice(0, 5);
 
   return (
     <div className="card card-pad-md">
@@ -70,7 +72,7 @@ export default function PhaseStatsCards({ avgs, skuStats = [], lang = "es", clie
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
                   {cards.map((c) => (
-                    <div key={c.s} style={{ border: "1px solid var(--border-subtle, #E1E6ED)", borderTop: `3px solid ${STAGE_COLORS[c.s]}`, borderRadius: 10, padding: "8px 10px", background: "var(--surface-alt, #FBFCFE)" }}>
+                    <div key={c.s} style={{ border: "1px solid var(--border-subtle, #E1E6ED)", borderTop: `3px solid ${DISPLAY_STAGE_COLORS[c.s]}`, borderRadius: 10, padding: "8px 10px", background: "var(--surface-alt, #FBFCFE)" }}>
                       <div className="tabular-nums" style={{ fontSize: 17, fontWeight: 800, color: "#0B1E3A", display: "flex", alignItems: "baseline", gap: 4 }}>
                         {fmt1(c.avg)}<span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-tertiary)" }}>d</span>
                         <span style={{ marginLeft: "auto", fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "rgba(148,163,184,0.15)", color: "var(--text-tertiary, #64748B)" }}>

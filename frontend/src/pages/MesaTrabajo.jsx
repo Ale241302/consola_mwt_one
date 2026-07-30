@@ -13,13 +13,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch, getToken } from "../lib/api.js";
+import { DISPLAY_STAGE_LABELS } from "../lib/cronogramaData.js";
+import { displayStage } from "../lib/phaseDisplay.js";
 import { IconAlert, IconFileText, IconClock, IconTag, IconFolder } from "../lib/icons.jsx";
 
-const ESTADO_LABEL = {
-  REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION: "Preparación",
-  DESPACHO: "Despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino",
-  CERRADO: "Cerrado",
-};
+const ESTADO_LABEL = DISPLAY_STAGE_LABELS.es;
 
 function KpiCard({ icon, label, count, color, bg }) {
   return (
@@ -184,7 +182,7 @@ export default function MesaTrabajo({ lang = "es" }) {
                   padding: "4px 11px", borderRadius: 999, fontSize: 11, fontWeight: 700,
                   background: "rgba(1,58,87,0.07)", color: "#013A57", whiteSpace: "nowrap",
                 }}>
-                  {ESTADO_LABEL[it.estado] || it.estado}
+                  {ESTADO_LABEL[displayStage(it.estado)] || it.estado}
                 </span>
 
                 {/* Días en estado vs promedio (barra de severidad) */}

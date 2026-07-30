@@ -29,8 +29,9 @@ import { runExpedienteExport } from "../lib/expedienteExport.js";
 import {
   loadCronograma, loadClientStats, buildAvgs, buildSkuStats,
   computeSegments, itemPhaseDur, projectedDelivery, dayDiff, fmtShort,
-  STAGES, STAGE_LABELS,
+  DISPLAY_STAGES, DISPLAY_STAGE_LABELS,
 } from "../lib/cronogramaData.js";
+import { displayStage } from "../lib/phaseDisplay.js";
 
 const fInt = (n) => Number(n || 0).toLocaleString("es-CR");
 
@@ -123,7 +124,7 @@ export default function Cronograma() {
     () => scopedItems.filter((it) =>
       (qpExp ? it.id === qpExp : true)
       && (clienteId === "ALL" || it.clienteId === clienteId)
-      && (estado === "ALL" || it.estado === estado)
+      && (estado === "ALL" || displayStage(it.estado) === estado)
       && (selProformas.size === 0 || selProformas.has(it.id))
       && (selSkus.size === 0 || (it.skus || []).some((k) => selSkus.has(k)))
     ),
@@ -184,7 +185,7 @@ export default function Cronograma() {
     };
     return [...visibles].sort((a, b) => startTs(a) - startTs(b));
   }, [visibles, avgs]);
-  const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
+  const L = DISPLAY_STAGE_LABELS[lang] || DISPLAY_STAGE_LABELS.es;
 
   const labelOf = useCallback((it) => {
     if (!isClient) return it.proforma || it.expCodigo;
@@ -363,7 +364,7 @@ export default function Cronograma() {
                 onChange={(e) => setEstado(e.target.value)}
                 style={{ padding: "5px 10px", fontSize: 12.5, width: "auto", minWidth: 150 }}>
           <option value="ALL">{lang === "es" ? "Todos los estados" : "All states"}</option>
-          {STAGES.map((s) => <option key={s} value={s}>{L[s]}</option>)}
+          {DISPLAY_STAGES.map((s) => <option key={s} value={s}>{L[s]}</option>)}
         </select>
         {/* Cliente — admin ve todos; usuario normal SOLO sus entidades
             asignadas (legal_entity_ids); con una sola, no hay selector. */}
@@ -672,7 +673,7 @@ export default function Cronograma() {
         lang={lang}
         isAdmin={!roleIsClient}
         clients={clientes.map((c) => ({ id: c.id, name: c.label }))}
-        estados={STAGES.map((s) => ({ code: s, label: L[s] }))}
+        estados={DISPLAY_STAGES.map((s) => ({ code: s, label: L[s] }))}
         expedientes={exportRows}
         loading={exporting}
         error={exportErr || ""}

@@ -16,11 +16,14 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { expedientesApi } from "../../lib/api.js";
+import {
+  DISPLAY_STAGES, displayStage, techStagesFor, mergePhaseDurations, expandPhaseDuration,
+} from "../../lib/phaseDisplay.js";
 
-const STAGES = ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO", "TRANSITO", "EN_DESTINO", "CERRADO"];
+const STAGES = DISPLAY_STAGES;
 const LABELS = {
-  es: { REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION: "Preparación", DESPACHO: "Despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino", CERRADO: "Cerrado" },
-  en: { REGISTRO: "Registry", PRODUCCION: "Production", PREPARACION: "Preparation", DESPACHO: "Dispatch", TRANSITO: "Transit", EN_DESTINO: "At destination", CERRADO: "Closed" },
+  es: { REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION_DESPACHO: "Preparación de despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino", CERRADO: "Cerrado" },
+  en: { REGISTRO: "Registry", PRODUCCION: "Production", PREPARACION_DESPACHO: "Dispatch preparation", TRANSITO: "Transit", EN_DESTINO: "At destination", CERRADO: "Closed" },
 };
 const DAY_MS = 86400000;
 
@@ -72,9 +75,10 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
     return () => { alive = false; };
   }, [expedienteId]);
 
-  // Entrada a cada fase (primer evento con phase_to = fase). REGISTRO cae
+  // Entrada a cada fase TÉCNICA (primer evento con phase_to = fase). REGISTRO cae
   // al evento más antiguo si no hay phase_to explícito (creación).
   const phaseInfo = useMemo(() => {
+    const techStages = ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO", "TRANSITO", "EN_DESTINO", "CERRADO"];
     const entry = {};
     let minEv = null;
     (events || []).forEach((ev) => {
@@ -82,13 +86,13 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
       const d = String(ev.created_at).slice(0, 10);
       if (!minEv || d < minEv) minEv = d;
       const st = String(ev.phase_to || "").toUpperCase();
-      if (STAGES.indexOf(st) >= 0 && (!entry[st] || d < entry[st])) entry[st] = d;
+      if (techStages.indexOf(st) >= 0 && (!entry[st] || d < entry[st])) entry[st] = d;
     });
     if (!entry.REGISTRO && minEv) entry.REGISTRO = minEv;
     const today = new Date(); today.setHours(12, 0, 0, 0);
-    const present = STAGES.filter((s) => entry[s]);
-    const out = {};
-    STAGES.forEach((s) => {
+    const present = techStages.filter((s) => entry[s]);
+    const techInfo = {};
+    techStages.forEach((s) => {
       const i = present.indexOf(s);
       let real = null, open = false, exit = null;
       if (i >= 0) {
@@ -102,7 +106,24 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
           open = s === currentStatus && s !== "CERRADO";
         }
       }
-      out[s] = { entry: entry[s] || null, exit, real, open, override: parseOverride(overrides[s]) };
+      techInfo[s] = { entry: entry[s] || null, exit, real, open, override: parseOverride(overrides[s]) };
+    });
+
+    // Mergear PREPARACION + DESPACHO en la fase visual PREPARACION_DESPACHO.
+    const out = {};
+    STAGES.forEach((ds) => {
+      const tStages = techStagesFor(ds);
+      if (tStages.length === 1) {
+        out[ds] = techInfo[tStages[0]];
+        return;
+      }
+      const infos = tStages.map((t) => techInfo[t]).filter(Boolean);
+      const realSum = infos.reduce((a, i) => a + (i.real || 0), 0);
+      const firstEntry = infos.map((i) => i.entry).find((d) => d) || null;
+      const lastExit = [...infos].reverse().map((i) => i.exit).find((d) => d) || null;
+      const open = infos.some((i) => i.open);
+      const mergedOverride = mergePhaseDurations(overrides)[ds] || null;
+      out[ds] = { entry: firstEntry, exit: lastExit, real: realSum || null, open, override: mergedOverride };
     });
     return out;
   }, [events, overrides, currentStatus]);
@@ -112,7 +133,7 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
     savingRef.current = true;
     setSaving(true); setError("");
     try {
-      const body = {}; body[stage] = value;
+      const body = expandPhaseDuration(stage, value);
       const r = await expedientesApi.action("phase-durations", expedienteId, body);
       setOverrides((r && r.phase_durations) || {});
       setModal(null);

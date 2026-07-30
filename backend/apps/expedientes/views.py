@@ -1089,6 +1089,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
     #     Resumen de Exportación.
     _PHASE_KEYS = {
         "REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO",
+        "PREPARACION_DESPACHO",
         "TRANSITO", "EN_DESTINO", "CERRADO",
     }
 

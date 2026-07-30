@@ -88,14 +88,14 @@ function mapApiExpedienteToPortalExp(r) {
 const CLIENT_STATUS_MAP = {
   REGISTRO:  { es:'Confirmado',      en:'Confirmed',        step: 0 },
   PRODUCCION:{ es:'En fabricación',  en:'Manufacturing',    step: 1 },
-  PREPARACION:{es:'Preparación',     en:'Preparing',        step: 2 },
-  DESPACHO:  { es:'Despachado',      en:'Dispatched',       step: 3 },
+  PREPARACION:{es:'Preparación de despacho', en:'Dispatch preparation', step: 2 },
+  DESPACHO:  { es:'Preparación de despacho', en:'Dispatch preparation', step: 2 },
   TRANSITO:  { es:'En tránsito',     en:'In transit',       step: 3 },
   EN_DESTINO:{ es:'En aduana',       en:'In customs',       step: 4 },
   CERRADO:   { es:'Listo',           en:'Ready',            step: 5 },
 };
-const CLIENT_STEPS_ES = ['Confirmado','En fabricación','En tránsito','En aduana','Listo'];
-const CLIENT_STEPS_EN = ['Confirmed','Manufacturing','In transit','In customs','Ready'];
+const CLIENT_STEPS_ES = ['Confirmado','En fabricación','Preparación de despacho','En tránsito','En aduana','Listo'];
+const CLIENT_STEPS_EN = ['Confirmed','Manufacturing','Dispatch preparation','In transit','In customs','Ready'];
 
 // ── Client-friendly status pill ─────
 function ClientStatusPill({ status, lang }) {

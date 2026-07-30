@@ -16,7 +16,8 @@
 // admin/CEO → proforma y precio MWT. R5: tabular-nums en toda métrica.
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { STAGES, STAGE_LABELS, itemPhaseDur } from "../../lib/cronogramaData.js";
+import { DISPLAY_STAGES, DISPLAY_STAGE_LABELS, itemPhaseDur } from "../../lib/cronogramaData.js";
+import { techStagesFor } from "../../lib/phaseDisplay.js";
 import { fxApi } from "../../lib/api.js";
 
 const NAVY = "var(--brand-primary)";
@@ -439,8 +440,8 @@ function SkuMethodChart({ items, lang }) {
   const [selSkus, setSelSkus] = useState(() => new Set());
   const activeSet = useMemo(() => (selSkus.size ? selSkus : new Set(skuList)), [selSkus, skuList]);
 
-  const fases = STAGES.slice(0, 6);
-  const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
+  const fases = DISPLAY_STAGES.slice(0, 5);
+  const L = DISPLAY_STAGE_LABELS[lang] || DISPLAY_STAGE_LABELS.es;
 
   const byMode = useMemo(() => {
     const out = {};
@@ -452,7 +453,12 @@ function SkuMethodChart({ items, lang }) {
       const b = out[mk];
       b.items.push(it);
       b.pares += (it.lineas || []).filter((l) => activeSet.has(l.sku)).reduce((a, l) => a + qtyOf(l), 0);
-      fases.forEach((s) => { const d = itemPhaseDur(it, s); if (d) (b.phases[s] || (b.phases[s] = [])).push(d.days); });
+      fases.forEach((s) => {
+        techStagesFor(s).forEach((ts) => {
+          const d = itemPhaseDur(it, ts);
+          if (d) (b.phases[s] || (b.phases[s] = [])).push(d.days);
+        });
+      });
     });
     MODES.forEach((m) => {
       const b = out[m.key]; b.avg = {};

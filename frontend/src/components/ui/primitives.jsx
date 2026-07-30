@@ -2,6 +2,7 @@
 import React from "react";
 import { tr, fmtMoney, fmtShortDate } from "../../lib/i18n.js";
 import { IconCheck } from "../../lib/icons.jsx";
+import { DISPLAY_STAGES, displayStage } from "../../lib/phaseDisplay.js";
 
 export function Badge({ kind='neutral', children, dot=false, style }) {
   return <span className={`badge badge-${kind}`} style={style}>{dot && <span className="dot" />}{children}</span>;
@@ -18,7 +19,7 @@ export function StatusBadge({ status, lang='es' }) {
     CERRADO:     'success',
     CANCELADO:   'critical',
   };
-  return <Badge kind={map[status] || 'neutral'} dot>{tr(lang, status)}</Badge>;
+  return <Badge kind={map[status] || 'neutral'} dot>{tr(lang, displayStage(status))}</Badge>;
 }
 
 export function CreditDot({ band }) {
@@ -99,9 +100,20 @@ export function DualBar({ data, accessorA, accessorB, labelAccessor, labelA, lab
 
 // Canonical-state timeline
 export function StateTimeline({ currentStatus, lang='es', dates={} }) {
-  const order = ['REGISTRO','PRODUCCION','PREPARACION','DESPACHO','TRANSITO','EN_DESTINO','CERRADO'];
-  const currentIdx = order.indexOf(currentStatus);
+  const order = DISPLAY_STAGES;
+  const currentDisplay = displayStage(currentStatus);
+  const currentIdx = order.indexOf(currentDisplay);
   const progressPct = currentIdx >= 0 ? (currentIdx / (order.length - 1)) * 100 : 0;
+  // Fechas de fases técnicas fusionadas: mostrar la entrada a la primera
+  // fase técnica del grupo (PREPARACION) como fecha de la fase visual.
+  const displayDates = {};
+  order.forEach((ds) => {
+    if (ds === 'PREPARACION_DESPACHO') {
+      displayDates[ds] = dates.PREPARACION || dates.DESPACHO || '';
+    } else {
+      displayDates[ds] = dates[ds] || '';
+    }
+  });
   return (
     <div className="state-timeline">
       <div className="state-line"><div className="fill" style={{ width: progressPct + '%' }} /></div>
@@ -111,7 +123,7 @@ export function StateTimeline({ currentStatus, lang='es', dates={} }) {
           <div key={s} className="state-step" data-status={status}>
             <div className="state-dot">{status === 'done' && <IconCheck size={10} />}</div>
             <div className="state-label">{tr(lang, s)}</div>
-            <div className="state-sub">{dates[s] ? fmtShortDate(dates[s], lang) : ''}</div>
+            <div className="state-sub">{displayDates[s] ? fmtShortDate(displayDates[s], lang) : ''}</div>
           </div>
         );
       })}

@@ -14,20 +14,33 @@
 //   · sin método de envío definido → se asume Aéreo (etiquetado "sup.").
 // =====================================================================
 import { getToken } from "./api.js";
+import { DISPLAY_STAGES as _DISPLAY_STAGES, displayStage } from "./phaseDisplay.js";
+
+export { _DISPLAY_STAGES as DISPLAY_STAGES, displayStage };
 
 const API_BASE =
   (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || "/api";
 const DAY = 86400000;
 
+// Fases TÉCNICAS de la máquina de estados (7). Los cálculos internos
+// siguen usando estas claves.
 export const STAGES = ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO", "TRANSITO", "EN_DESTINO", "CERRADO"];
-export const STAGE_LABELS = {
-  es: { REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION: "Preparación", DESPACHO: "Despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino", CERRADO: "Cerrado" },
-  en: { REGISTRO: "Registry", PRODUCCION: "Production", PREPARACION: "Preparation", DESPACHO: "Dispatch", TRANSITO: "Transit", EN_DESTINO: "At destination", CERRADO: "Closed" },
+
+// Fases VISUALES (6): PREPARACION + DESPACHO se muestran como una sola.
+export const DISPLAY_STAGE_LABELS = {
+  es: { REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION_DESPACHO: "Preparación de despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino", CERRADO: "Cerrado" },
+  en: { REGISTRO: "Registry", PRODUCCION: "Production", PREPARACION_DESPACHO: "Dispatch preparation", TRANSITO: "Transit", EN_DESTINO: "At destination", CERRADO: "Closed" },
 };
+export const STAGE_LABELS = DISPLAY_STAGE_LABELS; // backward-compat para consumidores actuales
+
 // Paleta de marca navy → mint según avanza el pipeline (igual que el .html).
 export const STAGE_COLORS = {
   REGISTRO: "#94A7B8", PRODUCCION: "#013A57", PREPARACION: "#075A78",
   DESPACHO: "#0B7E8F", TRANSITO: "#0FA3A0", EN_DESTINO: "#13B98A", CERRADO: "#334155",
+};
+export const DISPLAY_STAGE_COLORS = {
+  REGISTRO: "#94A7B8", PRODUCCION: "#013A57", PREPARACION_DESPACHO: "#087C84",
+  TRANSITO: "#0FA3A0", EN_DESTINO: "#13B98A", CERRADO: "#334155",
 };
 export const DEF_DUR = {
   Aereo:    { REGISTRO: 3, PRODUCCION: 15, PREPARACION: 5, DESPACHO: 2, TRANSITO: 10, EN_DESTINO: 5 },
@@ -226,7 +239,16 @@ export function buildAvgs(cliStats, gloStats) {
     return null;
   };
   const out = { Aereo: {}, Maritimo: {} };
-  ["Aereo", "Maritimo"].forEach((m) => STAGES.forEach((s) => { out[m][s] = pick(m, s); }));
+  ["Aereo", "Maritimo"].forEach((m) => {
+    STAGES.forEach((s) => { out[m][s] = pick(m, s); });
+    // Promedio visual fusionado: suma de promedios técnicos.
+    const prep = out[m].PREPARACION, desp = out[m].DESPACHO;
+    if (prep || desp) {
+      const avg = ((prep ? prep.avg : 0) + (desp ? desp.avg : 0));
+      const n = (prep ? prep.n : 0) + (desp ? desp.n : 0);
+      out[m].PREPARACION_DESPACHO = { avg, n, est: (prep?.est !== false && desp?.est !== false) };
+    }
+  });
   return out;
 }
 
@@ -322,7 +344,30 @@ export function computeSegments(item, avgs) {
       cur = nb;
     }
   }
-  return { real, est };
+  return { real: mergeDisplaySegments(real), est: mergeDisplaySegments(est) };
+}
+
+/**
+ * Fusiona segmentos consecutivos que pertenezcan a la misma fase visual
+ * (p. ej. PREPARACION + DESPACHO → PREPARACION_DESPACHO).
+ */
+function mergeDisplaySegments(segs) {
+  if (!segs || !segs.length) return segs;
+  const out = [];
+  segs.forEach((sg) => {
+    const ds = displayStage(sg.s);
+    if (out.length) {
+      const last = out[out.length - 1];
+      if (displayStage(last.s) === ds) {
+        last.s = ds;
+        last.b = sg.b;
+        last.open = sg.open || last.open;
+        return;
+      }
+    }
+    out.push({ ...sg, s: ds });
+  });
+  return out;
 }
 
 /** Duración conocida de una fase del item: override ?? transición cerrada. */
@@ -368,7 +413,10 @@ export function buildSkuStats(items) {
       g.n++;
       STAGES.slice(0, 6).forEach((s) => {
         const d = itemPhaseDur(it, s);
-        if (d) (g.phases[s] || (g.phases[s] = [])).push(d.days);
+        if (d) {
+          const ds = displayStage(s);
+          (g.phases[ds] || (g.phases[ds] = [])).push(d.days);
+        }
       });
       map.set(sku, g);
     });
@@ -379,7 +427,7 @@ export function buildSkuStats(items) {
       sku: g.sku,
       product: g.product,
       n: g.n,
-      phases: Object.fromEntries(STAGES.slice(0, 6).map((s) => {
+      phases: Object.fromEntries(DISPLAY_STAGES.slice(0, 5).map((s) => {
         const arr = g.phases[s] || [];
         return [s, arr.length
           ? { avg: arr.reduce((x, y) => x + y, 0) / arr.length, n: arr.length }

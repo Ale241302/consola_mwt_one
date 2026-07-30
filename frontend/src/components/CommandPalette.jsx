@@ -15,7 +15,8 @@ import {
 import { KEY_TO_PATH } from "./layout/Sidebar.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { expedientesApi, clientesApi } from "../lib/api.js";
-import { STAGE_LABELS } from "../lib/cronogramaData.js";
+import { DISPLAY_STAGE_LABELS } from "../lib/cronogramaData.js";
+import { displayStage } from "../lib/phaseDisplay.js";
 
 const arr = (a) => (Array.isArray(a) ? a : []);
 const poLabel = (oc) => (oc ? (/^po[\s_-]/i.test(String(oc)) ? oc : `PO ${oc}`) : "");
@@ -69,7 +70,7 @@ export function CommandPalette({ lang, onClose }) {
       : [...arr(e.proforma_codigos), ...arr(e.oc_codigos), ...arr(e.sap_codigos)];
     return [...codes, cli].join(" ").toLowerCase();
   };
-  const L = STAGE_LABELS[lang] || STAGE_LABELS.es;
+  const L = DISPLAY_STAGE_LABELS[lang] || DISPLAY_STAGE_LABELS.es;
 
   const navActions = useMemo(() => [
     { id: "nav-dashboard", label: tr(lang, "dashboard"), icon: <IconHome size={14} />, kind: "nav", run: () => goScreen("dashboard") },
@@ -86,7 +87,7 @@ export function CommandPalette({ lang, onClose }) {
     return {
       id: e.id, kind: "exp", icon: <IconFolder size={14} />,
       label: codeLabel(e) + (cli ? " · " + cli : ""),
-      meta: L[String(e.estado || "").toUpperCase()] || e.estado || "",
+      meta: L[displayStage(String(e.estado || "").toUpperCase())] || e.estado || "",
       search: searchOf(e),
       run: () => openExpediente(e),
     };

@@ -12,14 +12,15 @@
 import React, { useMemo, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  STAGE_COLORS, addDays, today, fmtShort,
+  STAGE_COLORS, DISPLAY_STAGE_COLORS, DISPLAY_STAGE_LABELS, addDays, today, fmtShort,
 } from "../../lib/cronogramaData.js";
+import { displayStage } from "../../lib/phaseDisplay.js";
 
 const DAY = 86400000;
 const LABEL_W = 280;
 
 function barStyle(b, h) {
-  const color = b.color || STAGE_COLORS[b.s] || "var(--brand-primary, #0B1E3A)";
+  const color = b.color || DISPLAY_STAGE_COLORS[displayStage(b.s)] || STAGE_COLORS[b.s] || "var(--brand-primary, #0B1E3A)";
   const base = {
     position: "absolute", top: "50%", transform: "translateY(-50%)",
     height: h, borderRadius: h / 2, background: color,
@@ -252,7 +253,7 @@ export default function GanttChart({ rows = [], lang = "es" }) {
                         <span key={i} {...tipHandlers(tipText)} style={{
                           position: "absolute", left: l, top: "50%", transform: "translate(-50%, -50%)",
                           width: 11, height: 11, borderRadius: "50%",
-                          background: b.color || STAGE_COLORS[b.s] || "#0B1E3A",
+                          background: b.color || DISPLAY_STAGE_COLORS[displayStage(b.s)] || STAGE_COLORS[b.s] || "#0B1E3A",
                           boxShadow: "0 0 0 2.5px #fff, 0 1px 4px rgba(1,58,87,0.3)",
                           opacity: b.est ? 0.55 : 1,
                           transition: "filter .15s ease",
@@ -320,12 +321,10 @@ export default function GanttChart({ rows = [], lang = "es" }) {
 
       {/* Leyenda */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 10, alignItems: "center" }}>
-        {Object.entries(STAGE_COLORS).slice(0, 6).map(([s, c]) => (
+        {Object.entries(DISPLAY_STAGE_COLORS).map(([s, c]) => (
           <span key={s} className="caption" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--text-secondary, #475569)" }}>
             <i style={{ width: 10, height: 10, borderRadius: 3, background: c, display: "inline-block" }}/>
-            {(lang === "es"
-              ? { REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION: "Preparación", DESPACHO: "Despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino" }
-              : { REGISTRO: "Registry", PRODUCCION: "Production", PREPARACION: "Preparation", DESPACHO: "Dispatch", TRANSITO: "Transit", EN_DESTINO: "At destination" })[s]}
+            {(DISPLAY_STAGE_LABELS[lang] || DISPLAY_STAGE_LABELS.es)[s]}
           </span>
         ))}
         <span className="caption" style={{ color: "var(--text-tertiary)" }}>

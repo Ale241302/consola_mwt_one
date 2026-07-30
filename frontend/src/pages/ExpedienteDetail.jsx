@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtMoneyDetail, fmtDate, relativeTime } from "../lib/i18n.js";
+import { displayStage, nextTechAndVisual } from "../lib/phaseDisplay.js";
 import {
   expedientesApi, clientesApi, marcasApi, lineasApi, productosApi,
   financePaymentsApi, storageApi, apiFetch, getToken,
@@ -443,8 +444,7 @@ export default function ScreenExpedienteDetail() {
 
   const dates = isHero ? {
     REGISTRO: '2026-01-14', PRODUCCION: '2026-02-08',
-    PREPARACION: '2026-03-01', DESPACHO: '2026-03-18',
-    TRANSITO: '2026-03-28',
+    PREPARACION: '2026-03-01', TRANSITO: '2026-03-28',
   } : {};
 
   return (
@@ -2177,10 +2177,11 @@ function MiniMetric({ label, value, sub }) {
 }
 
 function NextActionCard({ exp, lang, onAdvance }) {
-  const next = {
+  const nextTech = {
     REGISTRO: 'PRODUCCION', PRODUCCION: 'PREPARACION', PREPARACION: 'DESPACHO',
     DESPACHO: 'TRANSITO', TRANSITO: 'EN_DESTINO', EN_DESTINO: 'CERRADO',
   }[exp.status];
+  const nextLabel = tr(lang, displayStage(nextTech || 'CERRADO'));
   return (
     <div className="card card-pad-lg" style={{ background: 'linear-gradient(135deg, var(--brand-accent-soft), var(--brand-ice-soft))', border: '1px solid color-mix(in oklab, var(--brand-accent), transparent 70%)' }}>
       <div className="flex ai-center gap-2 mb-3">
@@ -2192,12 +2193,12 @@ function NextActionCard({ exp, lang, onAdvance }) {
       </div>
       <div className="body-sm text-sec mb-4">
         {lang==='es'
-          ? `Cuando la nave arribe a ${exp.destination}, actualiza el expediente a "${tr(lang,next||'CERRADO')}" para iniciar la secuencia de facturación final.`
-          : `When the vessel arrives at ${exp.destination}, advance to "${tr(lang,next||'CERRADO')}" to trigger final invoicing.`}
+          ? `Cuando la nave arribe a ${exp.destination}, actualiza el expediente a "${nextLabel}" para iniciar la secuencia de facturación final.`
+          : `When the vessel arrives at ${exp.destination}, advance to "${nextLabel}" to trigger final invoicing.`}
       </div>
-      {next && (
+      {nextTech && (
         <button className="btn btn-accent w-full" onClick={onAdvance}>
-          <IconArrow size={14}/> {tr(lang,'advance_to')} {tr(lang,next)}
+          <IconArrow size={14}/> {tr(lang,'advance_to')} {nextLabel}
         </button>
       )}
     </div>
@@ -2218,9 +2219,11 @@ function NextActionCard({ exp, lang, onAdvance }) {
 // está oculto para CLIENT_* (R3). Aun así, el backend deniega vía
 // _deny_client_mutation; un click directo no rompería invariantes.
 function AdvanceStateModal({ exp, lang, onClose, onTransitioned }) {
-  const order = ['REGISTRO','PRODUCCION','PREPARACION','DESPACHO','TRANSITO','EN_DESTINO','CERRADO'];
-  const idx   = order.indexOf(exp.status);
-  const next  = order[idx+1];
+  const techOrder = ['REGISTRO','PRODUCCION','PREPARACION','DESPACHO','TRANSITO','EN_DESTINO','CERRADO'];
+  const idx   = techOrder.indexOf(exp.status);
+  const next  = techOrder[idx+1];
+  const currentDisplay = displayStage(exp.status);
+  const nextDisplay    = next ? displayStage(next) : null;
 
   const [note,    setNote]    = useState("");
   const [loading, setLoading] = useState(false);
