@@ -186,8 +186,8 @@ def _create_notification_log(
 )
 def check_en_destino_eta_task(self):
     """
-    Diariamente revisa expedientes EN_DESTINO con fecha fin vencida y
-    genera alerta in-app + email.
+    Diariamente revisa expedientes EN_DESTINO cuya fecha fin sea EXACTAMENTE
+    hoy. No alerta fechas pasadas ni futuras: solo el día que se cumple.
     """
     today = date.today()
     log.info("check_en_destino_eta START · today=%s", today)
@@ -197,7 +197,7 @@ def check_en_destino_eta_task(self):
 
     for exp in qs:
         end_date = _resolve_end_date(exp)
-        if not end_date or end_date > today:
+        if end_date != today:
             continue
 
         alertas += 1
