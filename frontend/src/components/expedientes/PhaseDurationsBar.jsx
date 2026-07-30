@@ -174,24 +174,22 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
     return Math.round((b - a) / DAY_MS);
   }, [mStart, mEnd]);
 
-  // Sprint 2026-07-30 · progreso temporal de la fase Tránsito.
-  // Usa las fechas del override manual si existen; si no, cae a las
-  // fechas derivadas del EventLog. Si falta end pero hay ETA, la usa.
+  // Sprint 2026-07-30 · progreso de la fase Tránsito.
+  // El icono se posiciona según los días que faltan para la fecha fin:
+  // cada día restante resta 10% (máx 10 días). Si falta 1 día → 90%,
+  // si faltan 9 → 10%, si llega → 100%.
   const transitProgress = useMemo(() => {
     if (currentStatus !== "TRANSITO") return null;
     const info = phaseInfo.TRANSITO || {};
     const ov = info.override || {};
-    const start = ov.start || info.entry;
     const end = ov.end || info.exit || (eta ? new Date(eta).toISOString().slice(0, 10) : null);
-    if (!start || !end) return null;
-    const a = new Date(start + "T12:00:00");
+    if (!end) return null;
     const b = new Date(end + "T12:00:00");
-    if (isNaN(a.getTime()) || isNaN(b.getTime()) || b <= a) return null;
+    if (isNaN(b.getTime())) return null;
     const today = new Date();
     today.setHours(12, 0, 0, 0);
-    const elapsed = today - a;
-    const total = b - a;
-    return Math.max(0, Math.min(100, (elapsed / total) * 100));
+    const daysToEnd = Math.max(0, (b - today) / DAY_MS);
+    return Math.max(0, Math.min(100, 100 - (daysToEnd * 10)));
   }, [phaseInfo, currentStatus, eta]);
 
   if (!events) return null;
