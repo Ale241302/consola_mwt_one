@@ -76,8 +76,10 @@ commission_rate = COALESCE(expediente.commission_pct, cliente.comision_pct)
 
 ```
 delta_unit  = unit_price_client - unit_price_mwt
-delta_total = SUM(qty × delta_unit)      -- por expediente, sobre líneas is_active
-commission_amount = delta_total × commission_rate
+delta_total = SUM(qty × delta_unit)      -- por expediente, sobre líneas is_active (informativo)
+commission_amount = total_client × commission_rate
+                 -- decisión CEO 2026-07-29: comisión sobre el TOTAL de la operación,
+                 -- no sobre el delta. Aplica a todos los expedientes, operados por MWT o no.
 margen_pct  = delta_total / total_client  -- ponderado del expediente, NULL si total_client=0
 ```
 

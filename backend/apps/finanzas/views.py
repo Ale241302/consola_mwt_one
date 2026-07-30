@@ -18,7 +18,10 @@ Reglas (autoritativas):
                      -- decimal 0..1 (ej 0.12 = 12%)
   delta_unit       = unit_price_client - unit_price_mwt
   delta_total      = sum(qty * delta_unit)
-  commission_amount = delta_total * commission_rate  (NULL si rate NULL)
+  commission_amount = total_client * commission_rate  (NULL si rate NULL)
+                     -- decision CEO 2026-07-29: la comision es la tasa sobre
+                     -- el TOTAL de la operacion, no sobre el delta. Aplica a
+                     -- todos los expedientes, operados por MWT o no.
   margen_pct       = delta_unit / unit_price_client  (proteccion div/0)
 
 Visibilidad: TODOS los expedientes activos entran al calculo, sin importar
@@ -230,7 +233,9 @@ def _build_item(row: dict, today: date) -> dict:
     total_mwt = _dec(row["total_mwt"])
 
     if commission_rate is not None:
-        commission_amount = (delta_total * _dec(commission_rate)).quantize(Decimal("0.01"))
+        # Decision CEO 2026-07-29: comision = tasa x total_client (no x delta).
+        # El delta queda solo para margen_pct y columnas informativas.
+        commission_amount = (total_client * _dec(commission_rate)).quantize(Decimal("0.01"))
     else:
         commission_amount = None
 
