@@ -8,7 +8,8 @@
 
 BEGIN;
 
--- 1. Crear función para mantener actualizado el conteo de SKUs/líneas activas en el expediente
+-- 1. Crear función para mantener actualizado el conteo de SKUs distintos
+--    (NO filas: líneas con el mismo SKU en distintas tallas cuentan 1)
 CREATE OR REPLACE FUNCTION expedientes.tg_update_expediente_product_count()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -16,10 +17,10 @@ BEGIN
         IF NEW.expediente_id IS NOT NULL THEN
             UPDATE expedientes.expediente
             SET product_count = (
-                SELECT COALESCE(COUNT(*), 0)
-                FROM expedientes.linea
-                WHERE expediente_id = NEW.expediente_id
-                  AND is_active = TRUE
+                SELECT COALESCE(COUNT(DISTINCT COALESCE(NULLIF(l.sku, ''), l.producto_id::text, l.id::text)), 0)
+                FROM expedientes.linea l
+                WHERE l.expediente_id = NEW.expediente_id
+                  AND l.is_active = TRUE
             )
             WHERE id = NEW.expediente_id;
         END IF;
@@ -29,10 +30,10 @@ BEGIN
         IF OLD.expediente_id IS NOT NULL AND (TG_OP = 'DELETE' OR OLD.expediente_id <> COALESCE(NEW.expediente_id, '00000000-0000-0000-0000-000000000000'::uuid)) THEN
             UPDATE expedientes.expediente
             SET product_count = (
-                SELECT COALESCE(COUNT(*), 0)
-                FROM expedientes.linea
-                WHERE expediente_id = OLD.expediente_id
-                  AND is_active = TRUE
+                SELECT COALESCE(COUNT(DISTINCT COALESCE(NULLIF(l.sku, ''), l.producto_id::text, l.id::text)), 0)
+                FROM expedientes.linea l
+                WHERE l.expediente_id = OLD.expediente_id
+                  AND l.is_active = TRUE
             )
             WHERE id = OLD.expediente_id;
         END IF;
@@ -52,7 +53,7 @@ EXECUTE FUNCTION expedientes.tg_update_expediente_product_count();
 -- 3. Backfill inicial para corregir los expedientes actuales
 UPDATE expedientes.expediente e
 SET product_count = (
-    SELECT COALESCE(COUNT(*), 0)
+    SELECT COALESCE(COUNT(DISTINCT COALESCE(NULLIF(l.sku, ''), l.producto_id::text, l.id::text)), 0)
     FROM expedientes.linea l
     WHERE l.expediente_id = e.id
       AND l.is_active = TRUE

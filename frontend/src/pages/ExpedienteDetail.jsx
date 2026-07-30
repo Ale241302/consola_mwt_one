@@ -697,7 +697,11 @@ export default function ScreenExpedienteDetail() {
           <div className="tabs" style={{ marginBottom: 16 }}>
             {[
               ['overview',  tr(lang,'tab_overview'), null,           true],
-              ['lines',     tr(lang,'tab_lines'),    lines.length,   true],
+              ['lines',     tr(lang,'tab_lines'),
+               // Sprint 2026-07-30 (CEO) · el badge cuenta SKUs distintos,
+               // no filas (varias tallas del mismo SKU = 1).
+               new Set(lines.map(l => String(l.sku || l.producto_id || l.id))).size,
+               true],
               ['payments',  tr(lang,'tab_payments'), pagos.length,   true],
               ['activity',  tr(lang,'tab_activity'), activity.length,!isClient],
               // Sprint 2026-05-11 fase 6 · tab Artefactos (lista los
@@ -986,7 +990,8 @@ function OverviewTab({ exp, lang, lines, activity, isHeroOrMock, cpaPriceMap, pr
       <div className="card">
         <div className="card-head">
           <div className="card-title">{lang==='es' ? 'Productos' : 'Products'}</div>
-          <span className="caption">{lines.length} {lang==='es' ? 'líneas' : 'lines'}</span>
+          {/* Sprint 2026-07-30 (CEO) · SKUs distintos, no filas. */}
+          <span className="caption">{new Set(lines.map(l => String(l.sku || l.producto_id || l.id))).size} {lang==='es' ? 'líneas' : 'lines'}</span>
         </div>
         <table className="table">
           <thead><tr>

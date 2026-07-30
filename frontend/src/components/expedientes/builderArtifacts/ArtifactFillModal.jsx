@@ -535,7 +535,9 @@ export default function ArtifactFillModal({
             )}
             {Array.isArray(linesScope) && linesScope.length > 0 && (
               <>
-                {" · "}{linesScope.length}{" "}
+                {/* Sprint 2026-07-30 (CEO) · contar SKUs distintos, no
+                    filas (varias tallas del mismo SKU = 1 línea). */}
+                {" · "}{new Set(linesScope.map((l) => String(l.sku || l.nombre || ""))).size}{" "}
                 {lang === "es" ? "línea(s) vinculadas" : "linked line(s)"}
               </>
             )}

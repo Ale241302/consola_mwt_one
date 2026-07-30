@@ -94,7 +94,9 @@ class NodoBuilderArtifactsListCreateView(APIView):
             sql = """
                 SELECT
                     bal.builder_artifact_instance_id::text AS iid,
-                    COUNT(*)::int                          AS lines_count,
+                    -- Sprint 2026-07-30 (CEO) - contar SKUs distintos, no
+                    -- filas: varias tallas del mismo SKU cuentan 1 línea.
+                    COUNT(DISTINCT bal.producto_id)::int   AS lines_count,
                     COALESCE(SUM(bal.qty)::int, 0)         AS total_qty
                 FROM nodos.builder_artifact_line bal
                 WHERE bal.builder_artifact_instance_id = ANY(%(ids)s::uuid[])
