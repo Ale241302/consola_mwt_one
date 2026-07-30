@@ -844,7 +844,7 @@ export default function ScreenExpedientes() {
                 // phase-stats (general); el cálculo local queda como
                 // fallback mientras carga o si el endpoint falla.
                 const psLocal = kpi.phase_stats[s];
-                const real = opStats ? (opStats._ALL && opStats._ALL[s]) : null;
+                const real = opStats ? opStats[s] : null;
                 const ps = real
                   ? {
                       avg: real.avg,
