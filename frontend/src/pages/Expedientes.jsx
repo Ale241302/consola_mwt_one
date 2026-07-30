@@ -829,7 +829,7 @@ export default function ScreenExpedientes() {
       {/* ── Row 2: Tiempos operativos (TODOS los roles · Sprint 2026-06-11)
           + Calidad del proceso (CEO-ONLY). El cliente ve los promedios de
           SUS clientes asignados (phase-stats?client=…). */}
-      <div className="grid gap-3 mb-4" style={{gridTemplateColumns: isAdmin ? '1.5fr 1fr' : '1fr'}}>
+      <div className="grid gap-3 mb-4" style={{gridTemplateColumns: isAdmin ? '2.5fr 1fr' : '1fr'}}>
         <div className="card">
           <div className="card-head">
             <div>
