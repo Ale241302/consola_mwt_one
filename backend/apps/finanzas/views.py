@@ -18,10 +18,10 @@ Reglas (autoritativas):
                      -- decimal 0..1 (ej 0.12 = 12%)
   delta_unit       = unit_price_client - unit_price_mwt
   delta_total      = sum(qty * delta_unit)
-  commission_amount = total_client * commission_rate  (NULL si rate NULL)
-                     -- decision CEO 2026-07-29: la comision es la tasa sobre
-                     -- el TOTAL de la operacion, no sobre el delta. Aplica a
-                     -- todos los expedientes, operados por MWT o no.
+  commission_amount = base * commission_rate  (NULL si rate NULL)
+                     -- decision CEO 2026-07-29: regla DUAL segun operador.
+                     --   operado por MWT     -> base = delta_total (reventa)
+                     --   operado por cliente -> base = total_client (operacion)
   margen_pct       = delta_unit / unit_price_client  (proteccion div/0)
 
 Visibilidad: TODOS los expedientes activos entran al calculo, sin importar
@@ -36,6 +36,8 @@ from decimal import Decimal, InvalidOperation
 from django.db import connection
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+
+from apps.core.constants import MWT_OPERATING_CLIENT_ID
 
 from .permissions import IsCeoOrAdmin
 
@@ -233,9 +235,14 @@ def _build_item(row: dict, today: date) -> dict:
     total_mwt = _dec(row["total_mwt"])
 
     if commission_rate is not None:
-        # Decision CEO 2026-07-29: comision = tasa x total_client (no x delta).
-        # El delta queda solo para margen_pct y columnas informativas.
-        commission_amount = (total_client * _dec(commission_rate)).quantize(Decimal("0.01"))
+        # Decision CEO 2026-07-29: regla DUAL de comision segun operador.
+        #   - Operado por MWT:     tasa x delta_total (margen de reventa).
+        #   - Operado por cliente: tasa x total_client (comision por operacion;
+        #     ahi unit_price_client == unit_price_mwt y el delta es 0).
+        base = (delta_total
+                if row["operating_company_id"] == MWT_OPERATING_CLIENT_ID
+                else total_client)
+        commission_amount = (base * _dec(commission_rate)).quantize(Decimal("0.01"))
     else:
         commission_amount = None
 
