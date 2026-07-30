@@ -297,6 +297,13 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": _crontab(hour=1, minute=0),
         "options":  {"queue": "default", "expires": 3600},
     },
+    # Sprint 2026-07-30 · alerta cuando expediente EN_DESTINO alcanza
+    # su fecha fin. Corre a las 7 AM hora de México (timezona de Celery).
+    "check_en_destino_eta": {
+        "task":     "expedientes.check_en_destino_eta",
+        "schedule": _crontab(hour=7, minute=0),
+        "options":  {"queue": "default", "expires": 3600},
+    },
     # Archival a S3 Glacier — Fase 5C (placeholder; el task se crea
     # en una sub-fase posterior. Comentado hasta que esté implementado).
     # "archive_old_payments": {

@@ -1,0 +1,13 @@
+[MWT] Expediente {{ expediente.codigo }} · llegó a fecha destino
+
+El expediente {{ expediente.codigo }} se encuentra en estado "En destino" y alcanzó su fecha de término programada.
+
+OC:          {{ oc_codigo }}
+Fecha fin:   {{ end_date }}
+Cliente:     {{ cliente_nombre }}
+
+Ver expediente: {{ consola_url }}
+
+Si necesitas ayuda, escríbenos a {{ support_email }}.
+
+© {{ year }} MWT ONE. Todos los derechos reservados.
