@@ -635,7 +635,8 @@ export default function ScreenExpedienteDetail() {
         <div style={{ padding: '8px 24px 14px', background: 'var(--surface)', borderBottom: '1px solid var(--divider)' }}>
           <PhaseDurationsBar expedienteId={exp.id} currentStatus={exp.status}
                              lang={lang} canEdit={!isClient}
-                             freightMode={resolvedFreightMode}/>
+                             freightMode={resolvedFreightMode}
+                             eta={exp.eta}/>
         </div>
 
         {/* Action bar — SOLO ADMIN. CLIENT B2B es read-only:

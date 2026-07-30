@@ -46,7 +46,7 @@ function parseOverride(ov) {
  * @param {boolean} [props.canEdit]    true sólo para ADMIN/CEO
  * @param {string} [props.freightMode] AIR / SEA para icono de progreso de tránsito
  */
-export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = "es", canEdit = false, freightMode = null }) {
+export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = "es", canEdit = false, freightMode = null, eta = null }) {
   const [events, setEvents] = useState(null);
   const [overrides, setOverrides] = useState({});
   const [modal, setModal] = useState(null);   // fase en edición o null
@@ -175,14 +175,14 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
   }, [mStart, mEnd]);
 
   // Sprint 2026-07-30 · progreso temporal de la fase Tránsito.
-  // Si el estado actual es TRANSITO y tiene fechas (override o derivadas),
-  // calcula el % transcurrido entre inicio y fin.
+  // Usa las fechas del override manual si existen; si no, cae a las
+  // fechas derivadas del EventLog. Si falta end pero hay ETA, la usa.
   const transitProgress = useMemo(() => {
     if (currentStatus !== "TRANSITO") return null;
     const info = phaseInfo.TRANSITO || {};
     const ov = info.override || {};
     const start = ov.start || info.entry;
-    const end = ov.end || info.exit;
+    const end = ov.end || info.exit || (eta ? new Date(eta).toISOString().slice(0, 10) : null);
     if (!start || !end) return null;
     const a = new Date(start + "T12:00:00");
     const b = new Date(end + "T12:00:00");
@@ -192,7 +192,7 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
     const elapsed = today - a;
     const total = b - a;
     return Math.max(0, Math.min(100, (elapsed / total) * 100));
-  }, [phaseInfo, currentStatus]);
+  }, [phaseInfo, currentStatus, eta]);
 
   if (!events) return null;
   const L = LABELS[lang] || LABELS.es;
