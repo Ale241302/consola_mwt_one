@@ -1090,9 +1090,11 @@ function Step2Reconcile({
           + {lang === "es" ? "Agregar línea manual" : "Add manual line"}
         </button>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+          {/* Sprint 2026-07-30 (CEO) · SKUs distintos, no filas
+              (varias tallas del mismo SKU = 1 línea). */}
           {lang === "es"
-            ? `${lines.length} líneas`
-            : `${lines.length} lines`}
+            ? `${new Set(lines.map((l) => String(l.product_sku || l.producto_id || l._key))).size} líneas`
+            : `${new Set(lines.map((l) => String(l.product_sku || l.producto_id || l._key))).size} lines`}
         </div>
       </div>
     </Card>
@@ -1284,15 +1286,18 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
       const prev = map.get(key) || {
         expediente_id:     it.expediente_id,
         expediente_codigo: it._expediente_codigo || "—",
-        lines_count: 0,
+        // Sprint 2026-07-30 (CEO) · contar SKUs distintos, no filas.
+        _skus: new Set(),
         total_qty: 0,
       };
-      prev.lines_count += 1;
+      prev._skus.add(String(it._sku || it.producto_id || ""));
       prev.total_qty += Number(it.qty_asignada || 0);
       map.set(key, prev);
     }
-    return Array.from(map.values()).sort((a, b) =>
-      String(a.expediente_codigo).localeCompare(String(b.expediente_codigo)));
+    return Array.from(map.values())
+      .map(({ _skus, ...rest }) => ({ ...rest, lines_count: _skus.size }))
+      .sort((a, b) =>
+        String(a.expediente_codigo).localeCompare(String(b.expediente_codigo)));
   }, [isExpedienteAssign, assignItems]);
 
   // Totales para los Tiles cuando estamos en EXPEDIENTE_ASSIGN.
@@ -1313,7 +1318,10 @@ function Step3Confirm({ lang, destinationNode, sourceType, reference, lines,
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 18,
       }}>
         <Tile label={lang === "es" ? "Líneas" : "Lines"}
-              value={isExpedienteAssign ? (assignItems?.length || 0) : lines.length}/>
+              // Sprint 2026-07-30 (CEO) · SKUs distintos, no filas.
+              value={isExpedienteAssign
+                ? new Set((assignItems || []).map((it) => String(it._sku || it.producto_id))).size
+                : new Set(lines.map((l) => String(l.product_sku || l.producto_id || l._key))).size}/>
         <Tile label={lang === "es" ? "Productos" : "Products"} value={byProduct.length}/>
         <Tile label={lang === "es" ? "Unidades totales" : "Total units"}
               value={(totalsForTiles?.received || 0).toLocaleString()}
@@ -2041,7 +2049,7 @@ function Step3ArtifactsBlock({
                     <span className="caption" style={{
                       color: "var(--text-tertiary)", fontSize: 11,
                     }}>
-                      #{a.template_id} · {(a.lines || []).length}{" "}
+                      #{a.template_id} · {new Set((a.lines || []).map((l) => String(l.producto_id || l._sku || l.sku))).size}{" "}
                       {lang === "es" ? "línea(s) · " : "line(s) · "}
                       {totalQty.toLocaleString()} u
                     </span>

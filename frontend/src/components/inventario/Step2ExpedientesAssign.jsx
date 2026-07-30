@@ -410,7 +410,9 @@ function ExpedienteBlock({ grupo, rowState, setInclude, setQty,
             {grupo.expediente_codigo}
           </span>
           <span className="caption" style={{ color: "var(--text-tertiary)" }}>
-            · {grupo.rows.length} {lang === "es" ? "líneas" : "lines"}
+            {/* Sprint 2026-07-30 (CEO) · SKUs distintos, no filas
+                (varias tallas del mismo SKU = 1 línea). */}
+            · {new Set(grupo.rows.map((r) => String(r.sku || r.producto_id || keyOf(r)))).size} {lang === "es" ? "líneas" : "lines"}
           </span>
         </div>
       </div>
