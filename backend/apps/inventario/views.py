@@ -958,7 +958,9 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             WITH lines_agg AS (
                 SELECT
                     bal.builder_artifact_instance_id                       AS iid,
-                    COUNT(*)::int                                          AS lines_count,
+                    -- Sprint 2026-07-30 (CEO) - SKUs distintos, no filas:
+                    -- varias tallas del mismo SKU cuentan 1 línea.
+                    COUNT(DISTINCT bal.producto_id)::int                   AS lines_count,
                     COALESCE(SUM(bal.qty)::int, 0)                         AS total_qty
                 FROM nodos.builder_artifact_line bal
                 WHERE bal.expediente_id = %(exp_id)s::uuid
@@ -1262,9 +1264,9 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                 SELECT
                     a.expediente_id,
                     SUM(a.qty_asignada)::int AS qty_total_asignada,
-                    COUNT(DISTINCT
-                          a.producto_id::text || '::' || COALESCE(a.talla, '')
-                    )::int AS lines_count
+                    -- Sprint 2026-07-30 (CEO) - SKUs distintos, no
+                    -- producto+talla: varias tallas del mismo SKU = 1.
+                    COUNT(DISTINCT a.producto_id)::int AS lines_count
                 FROM inventario.expediente_nodo_assignment a
                 WHERE a.nodo_id = %(nodo_id)s::uuid
                   AND a.is_active = TRUE

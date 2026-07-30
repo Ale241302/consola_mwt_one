@@ -455,7 +455,9 @@ export default function ScreenNodoDetail() {
             <KpiTile
               label={lang==='es'?'Inventario':'Inventory'}
               value={totalUnits.toLocaleString()}
-              sub={`${distinctSkus} ${lang==='es'?'SKUs':'SKUs'} · ${allocatedInv.length} ${lang==='es'?'lineas':'lines'}`}
+              // Sprint 2026-07-30 (CEO) · líneas = SKUs distintos; como ya
+              // se muestran los SKUs, no se repite el conteo de filas.
+              sub={`${distinctSkus} ${lang==='es'?'SKUs':'SKUs'}`}
             />
           );
         })()}
@@ -843,7 +845,8 @@ function InventoryTab({ inventory, lang, onProductClick, nodeId,
               {lang === 'es' ? 'Inventario asignado por expediente' : 'Inventory allocated by expediente'}
             </div>
             <div className="card-subtitle">
-              {allocated.length} {lang === 'es' ? 'líneas' : 'lines'} · {totalUnits.toLocaleString()} u.
+              {/* Sprint 2026-07-30 (CEO) · líneas = SKUs distintos. */}
+              {new Set(allocated.map((r) => String(r.sku || r.producto_id || keyOf(r)))).size} {lang === 'es' ? 'líneas' : 'lines'} · {totalUnits.toLocaleString()} u.
               {' · '}
               {lang === 'es'
                 ? 'Edita la cantidad o elimina la línea directamente.'
@@ -1491,7 +1494,9 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
                     {cost.byExp.map((exp) => {
                       const key   = `${cost.cost_line_id}::${exp.expediente_id}`;
                       const open  = !!expanded[key];
-                      const nProd = exp.lines.length;
+                      // Sprint 2026-07-30 (CEO) · productos = SKUs distintos,
+                      // no filas (varias tallas del mismo SKU = 1).
+                      const nProd = new Set(exp.lines.map((ln) => String(ln.sku || ln.producto_id))).size;
                       const qTot  = exp.lines.reduce((a, ln) => a + Number(ln.qty || 0), 0);
                       return (
                         <div key={exp.expediente_id}
