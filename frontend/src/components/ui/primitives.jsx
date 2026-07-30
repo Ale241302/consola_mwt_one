@@ -103,7 +103,8 @@ export function DualBar({ data, accessorA, accessorB, labelAccessor, labelA, lab
 // label de cada fase, alineados con el estado. El click abre el editor de
 // fechas cuando canEdit es true o hay datos para ver.
 export function StateTimeline({ currentStatus, lang='es', dates={},
-                                phaseInfo, canEdit=false, onOpenPhase }) {
+                                phaseInfo, canEdit=false, onOpenPhase,
+                                transitProgress=null, freightMode=null }) {
   const order = DISPLAY_STAGES;
   const currentDisplay = displayStage(currentStatus);
   const currentIdx = order.indexOf(currentDisplay);
@@ -118,9 +119,59 @@ export function StateTimeline({ currentStatus, lang='es', dates={},
       displayDates[ds] = dates[ds] || '';
     }
   });
+
+  // Barra de progreso temporal de Tránsito (entre Preparación de despacho
+  // y Tránsito). Solo visible cuando el estado actual es TRANSITO.
+  const transitIdx = order.indexOf('TRANSITO');
+  const showTransitProgress = currentStatus === 'TRANSITO' && transitProgress != null && transitIdx >= 0;
+  const transitIcon = freightMode === 'SEA' ? '🚢' : freightMode === 'AIR' ? '✈️' : '📦';
+
   return (
     <div className="state-timeline">
       <div className="state-line"><div className="fill" style={{ width: progressPct + '%' }} /></div>
+
+      {/* Progreso intra-fase de Tránsito */}
+      {showTransitProgress && (
+        <div style={{
+          position: 'absolute',
+          top: 25,
+          left: `${((transitIdx - 0.5) / order.length) * 100}%`,
+          width: `${(1 / order.length) * 100}%`,
+          height: 2,
+          zIndex: 1,
+          pointerEvents: 'none',
+        }}>
+          {/* Fondo gris del segmento */}
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: 'var(--border)',
+            borderRadius: 1,
+          }} />
+          {/* Fill verde proporcional al tiempo transcurrido */}
+          <div style={{
+            position: 'absolute', left: 0, top: 0, height: '100%',
+            width: `${transitProgress}%`,
+            background: 'var(--brand-accent)',
+            borderRadius: 1,
+            transition: 'width 300ms ease',
+          }} />
+          {/* Ícono de transporte en la posición actual */}
+          <div style={{
+            position: 'absolute',
+            left: `${transitProgress}%`,
+            top: '50%',
+            transform: 'translate(-50%, -50%)',
+            fontSize: 16,
+            background: 'var(--surface)',
+            borderRadius: '50%',
+            padding: '0 3px',
+            lineHeight: 1,
+          }}>
+            {transitIcon}
+          </div>
+        </div>
+      )}
+
       {order.map((s, i) => {
         const status = i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'future';
         const info = phaseInfo ? (phaseInfo[s] || {}) : {};

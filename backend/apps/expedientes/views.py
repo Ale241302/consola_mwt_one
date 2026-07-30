@@ -1118,6 +1118,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
         import datetime as _dt
 
         current = dict(exp.phase_durations_json or {})
+        new_transito_end = None
         for k, v in data.items():
             key = str(k).strip().upper()
             if key not in self._PHASE_KEYS:
@@ -1140,6 +1141,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 if days > 365:
                     return Response({"detail": f"rango fuera de límite (365d) en {key}"}, status=400)
                 current[key] = {"start": d0.isoformat(), "end": d1.isoformat(), "days": days}
+                # Sprint 2026-07-30 · la fecha fin de Tránsito se usa como ETA.
+                if key == "TRANSITO":
+                    new_transito_end = d1
                 continue
             # Legacy: número de días directo.
             try:
@@ -1151,7 +1155,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
             current[key] = round(days, 1)
 
         exp.phase_durations_json = current
-        exp.save(update_fields=["phase_durations_json", "updated_at"])
+        if new_transito_end is not None:
+            exp.eta = new_transito_end
+        exp.save(update_fields=["phase_durations_json", "eta", "updated_at"])
         return Response({"phase_durations": current})
 
     # ── Fusión visual de expedientes (Sprint 2026-06-11 · E3) ────────
