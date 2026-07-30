@@ -125,6 +125,9 @@ export function StateTimeline({ currentStatus, lang='es', dates={},
   const transitIdx = order.indexOf('TRANSITO');
   const showTransitProgress = currentStatus === 'TRANSITO' && transitProgress != null && transitIdx >= 0;
   const transitIcon = freightMode === 'SEA' ? '🚢' : freightMode === 'AIR' ? '✈️' : '📦';
+  // Mantener el icono alejado de los bordes del segmento para que no se
+  // confunda con el punto de la fase anterior/siguiente.
+  const iconPct = Math.max(8, Math.min(92, transitProgress || 0));
 
   return (
     <div className="state-timeline">
@@ -158,14 +161,15 @@ export function StateTimeline({ currentStatus, lang='es', dates={},
           {/* Ícono de transporte en la posición actual */}
           <div style={{
             position: 'absolute',
-            left: `${transitProgress}%`,
+            left: `${iconPct}%`,
             top: '50%',
             transform: 'translate(-50%, -50%)',
-            fontSize: 16,
+            fontSize: 18,
             background: 'var(--surface)',
             borderRadius: '50%',
-            padding: '0 3px',
+            padding: '0 4px',
             lineHeight: 1,
+            boxShadow: '0 0 0 2px var(--surface), 0 1px 3px rgba(11,30,58,0.18)',
           }}>
             {transitIcon}
           </div>

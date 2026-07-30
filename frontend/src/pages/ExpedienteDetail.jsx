@@ -195,6 +195,16 @@ export default function ScreenExpedienteDetail() {
     return () => { cancel = true; };
   }, [apiExp?.id, isHeroOrMock]);
 
+  // Sprint 2026-07-30 · modo de transporte resuelto para la timeline.
+  // Prioriza el artefacto ART-05 (transport_mode) sobre el campo freight_mode.
+  const resolvedFreightMode = useMemo(() => {
+    const si = shippingInfo;
+    const transportRaw = String(si?.transport_mode || '').toLowerCase();
+    if (transportRaw.startsWith('mar') || apiExp?.freight_mode === 'SEA') return 'SEA';
+    if (transportRaw.startsWith('aer') || transportRaw.startsWith('aér') || apiExp?.freight_mode === 'AIR') return 'AIR';
+    return apiExp?.freight_mode || null;
+  }, [shippingInfo, apiExp?.freight_mode]);
+
   // Sprint 2026-05-11 fase 6 · fetch del mapa (producto_id::talla) → nodos.
   // Se dispara cuando apiExp.id está disponible (no antes — necesitamos
   // el UUID canónico del expediente). Alimenta la columna "Nodo" en
@@ -610,10 +620,12 @@ export default function ScreenExpedienteDetail() {
                 {Number(exp.container_count) <= 0 && Number(exp.product_count) > 0 && (
                   <span className="flex ai-center gap-2"><IconPackage size={13}/>{exp.product_count} {lang==='es' ? 'SKUs' : 'SKUs'}</span>
                 )}
-                {/* Sprint 2026-05-26 (CEO) - ETA viene de el movimiento
-                    asociada al expediente (shippingInfo.eta). Fallback al
-                    campo legacy exp.eta. Si ninguno existe, render "ETA —". */}
-                <span className="flex ai-center gap-2"><IconClock size={13}/>ETA {fmtDate(si?.eta || exp.eta, lang)}</span>
+                {/* Sprint 2026-05-26 (CEO) - ETA: fecha fin de Tránsito si está
+                    definida en phase_durations_json, luego shippingInfo.eta,
+                    luego el campo legacy exp.eta. */}
+                <span className="flex ai-center gap-2"><IconClock size={13}/>ETA {fmtDate(
+                  apiExp?.phase_durations_json?.TRANSITO?.end || si?.eta || exp.eta, lang
+                )}</span>
               </div>
             );
           })()}
@@ -623,7 +635,7 @@ export default function ScreenExpedienteDetail() {
         <div style={{ padding: '8px 24px 14px', background: 'var(--surface)', borderBottom: '1px solid var(--divider)' }}>
           <PhaseDurationsBar expedienteId={exp.id} currentStatus={exp.status}
                              lang={lang} canEdit={!isClient}
-                             freightMode={exp.freight_mode}/>
+                             freightMode={resolvedFreightMode}/>
         </div>
 
         {/* Action bar — SOLO ADMIN. CLIENT B2B es read-only:
