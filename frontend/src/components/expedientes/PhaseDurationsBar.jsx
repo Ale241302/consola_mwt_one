@@ -118,12 +118,19 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
         return;
       }
       const infos = tStages.map((t) => techInfo[t]).filter(Boolean);
-      const realSum = infos.reduce((a, i) => a + (i.real || 0), 0);
       const firstEntry = infos.map((i) => i.entry).find((d) => d) || null;
       const lastExit = [...infos].reverse().map((i) => i.exit).find((d) => d) || null;
+      let realDays = null;
+      if (firstEntry && lastExit) {
+        const a = new Date(firstEntry + "T12:00:00");
+        const b = new Date(lastExit + "T12:00:00");
+        if (!isNaN(a.getTime()) && !isNaN(b.getTime()) && b >= a) {
+          realDays = Math.round((b - a) / DAY_MS);
+        }
+      }
       const open = infos.some((i) => i.open);
       const mergedOverride = mergePhaseDurations(overrides)[ds] || null;
-      out[ds] = { entry: firstEntry, exit: lastExit, real: realSum || null, open, override: mergedOverride };
+      out[ds] = { entry: firstEntry, exit: lastExit, real: realDays, open, override: mergedOverride };
     });
     return out;
   }, [events, overrides, currentStatus]);

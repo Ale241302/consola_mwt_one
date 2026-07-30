@@ -71,14 +71,19 @@ export function mergePhaseDurations(durations) {
       continue;
     }
     const cur = out[visualKey];
-    if (parsed.days != null) cur.days = (cur.days || 0) + parsed.days;
     if (parsed.start && (!cur.start || parsed.start < cur.start)) cur.start = parsed.start;
     if (parsed.end && (!cur.end || parsed.end > cur.end)) cur.end = parsed.end;
+    // Solo acumulamos días sueltos cuando no tengamos un rango completo
+    // para la fase fusionada; si hay rango, recalculamos days al final.
+    if ((cur.start == null || cur.end == null) && parsed.days != null) {
+      cur.days = (cur.days || 0) + parsed.days;
+    }
     cur._fromTech.push(techKey);
   }
-  // Si la fase fusionada solo tiene start y end pero no days, calcularlos.
+  // La fase fusionada se representa con el rango más amplio disponible.
+  // Siempre que haya start+end, recalculamos days desde ese rango.
   const merged = out[MERGED_VISUAL_STAGE];
-  if (merged && merged.start && merged.end && (merged.days == null || merged.days === 0)) {
+  if (merged && merged.start && merged.end) {
     const a = new Date(merged.start + "T12:00:00");
     const b = new Date(merged.end + "T12:00:00");
     if (!isNaN(a.getTime()) && !isNaN(b.getTime()) && b >= a) {
