@@ -1373,6 +1373,15 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 delta = fases[seq[i + 1]] - fases[fase]
                 _push(fase, max(0.0, delta.total_seconds() / 86400.0))
 
+        # Sprint 2026-07-30 · Fusión visual PREPARACION + DESPACHO.
+        # El bucket _ALL expone la fase combinada para dashboards.
+        for m in acc:
+            prep = acc[m].get("PREPARACION", [])
+            desp = acc[m].get("DESPACHO", [])
+            if prep or desp:
+                merged = prep + desp
+                acc[m]["PREPARACION_DESPACHO"] = merged
+
         out = {
             m: {f: {"avg": round(sum(v) / len(v), 2), "n": len(v)}
                 for f, v in acc[m].items() if v}

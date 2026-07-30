@@ -18,7 +18,7 @@ import { createPortal } from "react-dom";
 import { expedientesApi } from "../../lib/api.js";
 import { StateTimeline } from "../../components/ui/primitives.jsx";
 import {
-  displayStage, techStagesFor, mergePhaseDurations, expandPhaseDuration,
+  DISPLAY_STAGES, displayStage, techStagesFor, mergePhaseDurations, expandPhaseDuration,
 } from "../../lib/phaseDisplay.js";
 
 const LABELS = {
@@ -111,7 +111,7 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
 
     // Mergear PREPARACION + DESPACHO en la fase visual PREPARACION_DESPACHO.
     const out = {};
-    STAGES.forEach((ds) => {
+    DISPLAY_STAGES.forEach((ds) => {
       const tStages = techStagesFor(ds);
       if (tStages.length === 1) {
         out[ds] = techInfo[tStages[0]];

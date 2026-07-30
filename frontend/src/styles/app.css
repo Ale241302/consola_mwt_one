@@ -791,10 +791,10 @@ a { color: inherit; text-decoration: none; }
 
 /* ── Pipeline kanban ──────────────────────────────────── */
 .kanban {
-  /* Sprint 2026-07-27: 7 columnas fijas en una sola fila, más angostas.
+  /* Sprint 2026-07-30: 6 columnas visuales en una sola fila.
      Si no cabe en el viewport, scroll horizontal; nunca wrap a segunda fila. */
   display: grid;
-  grid-template-columns: repeat(7, minmax(180px, 1fr));
+  grid-template-columns: repeat(6, minmax(160px, 1fr));
   gap: 10px;
   padding-bottom: 6px;
   overflow-x: auto;
