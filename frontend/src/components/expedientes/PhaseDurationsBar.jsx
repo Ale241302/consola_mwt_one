@@ -199,14 +199,15 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
             canEdit ? (lang === "es" ? "(click para fijar fechas)" : "(click to set dates)") : null,
           ].filter(Boolean).join(" · ");
           return (
-            <div key={s} style={{ textAlign: "center" }}>
+            <div key={s} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
               <button
                 type="button"
                 className="tabular-nums"
                 title={tip}
                 onClick={(has || info.entry || canEdit) ? () => openModal(s) : undefined}
                 style={{
-                  padding: "1px 9px", fontSize: 10.5, fontWeight: 700, borderRadius: 999,
+                  minWidth: 36, minHeight: 20,
+                  padding: "2px 10px", fontSize: 10.5, fontWeight: 700, borderRadius: 999,
                   border: ov
                     ? "1.5px solid var(--brand-accent, #00B286)"
                     : "1px solid var(--border-subtle, #E1E6ED)",

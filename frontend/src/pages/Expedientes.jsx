@@ -38,6 +38,8 @@ import {
   STATES, PHASE_BASELINE,
   OCS as MOCK_OCS,
 } from "../data/mockData.js";
+// Sprint 2026-07-30 · Fases visuales: Preparación + Despacho → Preparación de despacho.
+import { DISPLAY_STAGES, displayStage, displayStageIndex } from "../lib/phaseDisplay.js";
 import { expedientesApi, ocsApi, clientesApi, marcasApi, lineasApi, productosApi } from "../lib/api.js";
 import { readCache, writeCache } from "../lib/swrCache.js";
 import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
@@ -550,7 +552,7 @@ export default function ScreenExpedientes() {
   // ── Global dataset: all expedientes ─────
   const filtered = useMemo(() => {
     return EXPEDIENTES.filter(e => {
-      if (statusFilter !== 'ALL' && e.status !== statusFilter) return false;
+      if (statusFilter !== 'ALL' && displayStage(e.status) !== statusFilter) return false;
       if (brandFilter !== 'ALL'  && e.brand_id !== brandFilter) return false;
       if (clientFilter !== 'ALL' && e.client_id !== clientFilter) return false;
       if (signalFilter !== 'ALL' && e.phase_signal !== signalFilter) return false;
@@ -676,11 +678,14 @@ export default function ScreenExpedientes() {
     const corrected_pct = corrected / N;
     // Avg time per phase vs baseline
     const phase_stats = {};
-    for (const s of STATES.slice(0, 6)) {
-      const exps = EXPEDIENTES.filter(e => e.status === s);
+    for (const s of DISPLAY_STAGES) {
+      const exps = EXPEDIENTES.filter(e => displayStage(e.status) === s);
       if (!exps.length) continue;
       const avg = exps.reduce((a,e)=>a+e.time_in_phase,0)/exps.length;
-      phase_stats[s] = { avg, baseline: PHASE_BASELINE[s], count: exps.length };
+      const baseline = s === 'PREPARACION_DESPACHO'
+        ? ((PHASE_BASELINE.PREPARACION || 0) + (PHASE_BASELINE.DESPACHO || 0))
+        : PHASE_BASELINE[s];
+      phase_stats[s] = { avg, baseline, count: exps.length };
     }
     return { total_invoiced, total_cost, total_paid, receivables, payables,
       weighted_real_margin, weighted_proj_margin, drift,
@@ -833,8 +838,8 @@ export default function ScreenExpedientes() {
             </div>
           </div>
           <div style={{padding:'18px 22px'}}>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(6, 1fr)', gap: 16}}>
-              {STATES.slice(0,6).map(s => {
+            <div style={{display:'grid', gridTemplateColumns:`repeat(${DISPLAY_STAGES.length}, 1fr)`, gap: 16}}>
+              {DISPLAY_STAGES.map(s => {
                 // Sprint 2026-06-11 · promedio REAL del endpoint
                 // phase-stats (general); el cálculo local queda como
                 // fallback mientras carga o si el endpoint falla.
@@ -923,9 +928,9 @@ export default function ScreenExpedientes() {
 
         <div className="sep"/>
 
-        <select className="select" style={{ width: 150 }} value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}>
+        <select className="select" style={{ width: 170 }} value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}>
           <option value="ALL">{lang==='es' ? 'Todos los estados' : 'All states'}</option>
-          {STATES.slice(0,6).map(s => <option key={s} value={s}>{tr(lang,s)}</option>)}
+          {DISPLAY_STAGES.map(s => <option key={s} value={s}>{tr(lang,s)}</option>)}
         </select>
 
         {/* Sprint 2026-06-22 · Filtro de MARCAS (desde /api/marcas) visible
@@ -1268,7 +1273,7 @@ export default function ScreenExpedientes() {
                 );
               }
               const driftE = e.real_margin - e.projected_margin;
-              const stIdx = STATES.indexOf(e.status);
+              const stIdx = displayStageIndex(e.status);
               return (
                 <Fragment key={e.id}>
                   <tr data-selected={!!(e.uuid && selected.has(e.uuid))} style={{ cursor:'pointer' }}
@@ -1363,7 +1368,7 @@ export default function ScreenExpedientes() {
                     {effectiveView === 'ops' && <>
                       <td>
                         <div className="mini-timeline">
-                          {STATES.slice(0,6).map((s, i) => {
+                          {DISPLAY_STAGES.map((s, i) => {
                             const cls = i < stIdx ? 'done' : i === stIdx ? 'cur ' + e.phase_signal : 'future';
                             return <div key={s} className={`seg ${cls}`} title={tr(lang,s)}/>;
                           })}
