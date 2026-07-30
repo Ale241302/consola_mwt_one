@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS nodos.builder_artifact_instance (
     updated_by_name      VARCHAR(128),
 
     is_active            BOOLEAN      NOT NULL DEFAULT TRUE,
+    publicado            BOOLEAN      NOT NULL DEFAULT FALSE,
+
     created_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
@@ -71,6 +73,17 @@ DROP TRIGGER IF EXISTS tg_nbai_upd ON nodos.builder_artifact_instance;
 CREATE TRIGGER tg_nbai_upd
     BEFORE UPDATE ON nodos.builder_artifact_instance
     FOR EACH ROW EXECUTE FUNCTION public.tg_set_updated_at();
+
+-- ── Migración idempotente: visibilidad cliente ────────────
+-- Sprint 2026-07-30 · Los artefactos de nodo pueden marcarse como
+-- publicados para que los clientes B2B los vean en el detalle de
+-- expediente. Staff interno (admin/manager/operator/...) los ve todos.
+ALTER TABLE nodos.builder_artifact_instance
+    ADD COLUMN IF NOT EXISTS publicado BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE INDEX IF NOT EXISTS nbai_publicado_idx
+    ON nodos.builder_artifact_instance (nodo_id, publicado)
+    WHERE is_active = TRUE;
 
 COMMENT ON TABLE nodos.builder_artifact_instance IS
     'Instancias de templates del Builder externo (builder.muito.work) '

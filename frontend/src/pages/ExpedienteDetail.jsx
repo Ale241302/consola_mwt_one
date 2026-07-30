@@ -1606,7 +1606,7 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
         if (cancel) return;
         const arr = Array.isArray(data) ? data : (data?.results || []);
         const visible = _isClientSim
-          ? arr.filter((a) => Number(a?.template_id) !== 13)
+          ? arr.filter((a) => Number(a?.template_id) !== 13 && a.publicado === true)
           : arr;
         setItems(visible);
       })

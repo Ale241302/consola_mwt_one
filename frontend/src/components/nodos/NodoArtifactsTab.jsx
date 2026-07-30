@@ -294,6 +294,7 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
           {items.map((it) => (
             <ArtifactCard
               key={it.id}
+              nodeId={nodeId}
               instance={it}
               readOnly={isClient}
               lang={lang}
@@ -426,10 +427,27 @@ export default function NodoArtifactsTab({ nodeId, lang = "es" }) {
 // ────────────────────────────────────────────────────────
 // Card individual
 // ────────────────────────────────────────────────────────
-function ArtifactCard({ instance, readOnly, lang, onEdit, onEditScope, onDelete }) {
+function ArtifactCard({ nodeId, instance, readOnly, lang, onEdit, onEditScope, onDelete }) {
   const dataKeys = Object.keys(instance.data || {});
   const linesCount = Number(instance.lines_count || 0);
   const totalQty   = Number(instance.total_qty   || 0);
+  const [pub, setPub] = useState(!!instance.publicado);
+  const [pubSaving, setPubSaving] = useState(false);
+
+  const togglePub = async (next) => {
+    setPub(next);
+    setPubSaving(true);
+    try {
+      await nodoBuilderArtifactsApi.update(nodeId, instance.id, { publicado: next });
+    } catch (e) {
+      setPub(!next);
+      alert((lang === "es" ? "Error al cambiar visibilidad: " : "Visibility error: ")
+            + (e?.body?.detail || e?.message || ""));
+    } finally {
+      setPubSaving(false);
+    }
+  };
+
   const fmt = (iso) => {
     if (!iso) return "—";
     try {
@@ -522,15 +540,43 @@ function ArtifactCard({ instance, readOnly, lang, onEdit, onEditScope, onDelete 
         color: "var(--text-tertiary)", fontSize: 11,
         borderTop: "1px solid var(--divider, var(--border-subtle))",
         paddingTop: 8, marginTop: 4,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        gap: 8,
       }}>
-        {instance.created_by_name || "—"} · {fmt(instance.created_at)}
-        {instance.updated_at !== instance.created_at && (
-          <>
-            {" · "}
-            <span style={{ color: "var(--text-secondary)" }}>
-              {lang === "es" ? "editado" : "edited"} {fmt(instance.updated_at)}
+        <span>
+          {instance.created_by_name || "—"} · {fmt(instance.created_at)}
+          {instance.updated_at !== instance.created_at && (
+            <>
+              {" · "}
+              <span style={{ color: "var(--text-secondary)" }}>
+                {lang === "es" ? "editado" : "edited"} {fmt(instance.updated_at)}
+              </span>
+            </>
+          )}
+        </span>
+        {!readOnly && (
+          <label
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              cursor: pubSaving ? "not-allowed" : "pointer",
+              opacity: pubSaving ? 0.6 : 1, flexShrink: 0,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+              {lang === "es" ? "Publicar" : "Publish"}
             </span>
-          </>
+            <span className={`mini-switch ${pub ? "mini-on" : ""}`}>
+              <input
+                type="checkbox"
+                checked={pub}
+                disabled={pubSaving}
+                onChange={(e) => togglePub(e.target.checked)}
+                style={{ position: "absolute", inset: 0, opacity: 0, cursor: pubSaving ? "not-allowed" : "pointer" }}
+              />
+              <span className="mini-thumb" />
+            </span>
+          </label>
         )}
       </div>
     </div>

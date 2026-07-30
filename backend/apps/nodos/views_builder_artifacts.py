@@ -55,6 +55,12 @@ class NodoBuilderArtifactsListCreateView(APIView):
             nodo_id=nodo_id, is_active=True,
         ).order_by("-created_at")
 
+        # Sprint 2026-07-30 · Visibilidad cliente: los usuarios con rol
+        # client_b2b solo ven artefactos marcados como publicados. Staff
+        # interno (admin/manager/operator/...) los ve todos.
+        if getattr(request.user, "is_client", False):
+            qs = qs.filter(publicado=True)
+
         template_id = request.query_params.get("template_id")
         if template_id:
             try:

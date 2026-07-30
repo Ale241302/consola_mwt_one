@@ -87,13 +87,14 @@ class NodoBuilderArtifactInstanceSerializer(serializers.ModelSerializer):
 
 
 class NodoBuilderArtifactInstanceUpdateSerializer(serializers.ModelSerializer):
-    """Serializer para PATCH — sólo permite cambiar `data` y, opcionalmente,
-    el snapshot de estructura. El template no se puede 're-elegir' una vez
-    creada la instancia."""
+    """Serializer para PATCH — sólo permite cambiar `data`, el snapshot de
+    estructura y el flag de visibilidad cliente. El template no se puede
+    're-elegir' una vez creada la instancia."""
 
     data               = serializers.JSONField(required=False)
     structure_snapshot = serializers.JSONField(required=False)
+    publicado          = serializers.BooleanField(required=False)
 
     class Meta:
         model  = NodoBuilderArtifactInstance
-        fields = ("data", "structure_snapshot")
+        fields = ("data", "structure_snapshot", "publicado")

@@ -971,6 +971,7 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                 bai.id::text                                AS id,
                 bai.template_id,
                 bai.template_title,
+                bai.publicado,
                 bai.created_at,
                 bai.updated_at,
                 bai.created_by_name,
@@ -1034,6 +1035,12 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
         except Exception as _vis_exc:  # noqa: BLE001
             log.warning("artifacts_por_expediente visibility filter failed: %s",
                         _vis_exc)
+
+        # Sprint 2026-07-30 · Visibilidad cliente: los usuarios con rol
+        # client_b2b solo ven artefactos marcados como publicados.
+        if getattr(request.user, "is_client", False):
+            rows = [r for r in rows if r.get("publicado") is True]
+
         return Response(rows)
 
     # ── 7) Set de expedientes con al menos una línea pendiente ──
