@@ -99,7 +99,11 @@ export function DualBar({ data, accessorA, accessorB, labelAccessor, labelA, lab
 }
 
 // Canonical-state timeline
-export function StateTimeline({ currentStatus, lang='es', dates={} }) {
+// Sprint 2026-07-30 · Si se pasa phaseInfo, renderiza los días debajo del
+// label de cada fase, alineados con el estado. El click abre el editor de
+// fechas cuando canEdit es true o hay datos para ver.
+export function StateTimeline({ currentStatus, lang='es', dates={},
+                                phaseInfo, canEdit=false, onOpenPhase }) {
   const order = DISPLAY_STAGES;
   const currentDisplay = displayStage(currentStatus);
   const currentIdx = order.indexOf(currentDisplay);
@@ -119,11 +123,35 @@ export function StateTimeline({ currentStatus, lang='es', dates={} }) {
       <div className="state-line"><div className="fill" style={{ width: progressPct + '%' }} /></div>
       {order.map((s, i) => {
         const status = i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'future';
+        const info = phaseInfo ? (phaseInfo[s] || {}) : {};
+        const ov = info.override;
+        const has = info.real != null || (ov && ov.days != null);
+        const shown = ov && ov.days != null ? ov.days : info.real;
+        const clickable = onOpenPhase && (has || info.entry || canEdit);
         return (
           <div key={s} className="state-step" data-status={status}>
             <div className="state-dot">{status === 'done' && <IconCheck size={10} />}</div>
             <div className="state-label">{tr(lang, s)}</div>
             <div className="state-sub">{displayDates[s] ? fmtShortDate(displayDates[s], lang) : ''}</div>
+            {phaseInfo && (
+              <button
+                type="button"
+                className={[
+                  'state-days', 'tabular-nums',
+                  ov ? 'state-days--manual' : '',
+                  info.open ? 'state-days--open' : '',
+                ].filter(Boolean).join(' ')}
+                disabled={!clickable}
+                onClick={() => clickable && onOpenPhase(s)}
+                title={clickable
+                  ? (lang === 'es' ? 'Click para fijar fechas' : 'Click to set dates')
+                  : undefined}
+              >
+                {has ? `${shown}d` : '—'}
+                {info.open && <span className="state-days-open">{lang === 'es' ? ' · en curso' : ' · ongoing'}</span>}
+                {canEdit && ov && <span className="state-days-edit"> ✎</span>}
+              </button>
+            )}
           </div>
         );
       })}

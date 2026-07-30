@@ -16,11 +16,11 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { expedientesApi } from "../../lib/api.js";
+import { StateTimeline } from "../../components/ui/primitives.jsx";
 import {
-  DISPLAY_STAGES, displayStage, techStagesFor, mergePhaseDurations, expandPhaseDuration,
+  displayStage, techStagesFor, mergePhaseDurations, expandPhaseDuration,
 } from "../../lib/phaseDisplay.js";
 
-const STAGES = DISPLAY_STAGES;
 const LABELS = {
   es: { REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION_DESPACHO: "Preparación de despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino", CERRADO: "Cerrado" },
   en: { REGISTRO: "Registry", PRODUCCION: "Production", PREPARACION_DESPACHO: "Dispatch preparation", TRANSITO: "Transit", EN_DESTINO: "At destination", CERRADO: "Closed" },
@@ -179,63 +179,15 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`, gap: 4, marginTop: 4 }}>
-        {STAGES.map((s) => {
-          const info = phaseInfo[s] || {};
-          const ov = info.override;
-          const has = info.real != null || (ov && ov.days != null);
-          const shown = ov && ov.days != null ? ov.days : info.real;
-          const rangeTxt = ov && ov.start
-            ? ((lang === "es" ? "del " : "from ") + ov.start + (lang === "es" ? " al " : " to ") + ov.end)
-            : (info.entry
-                ? ((lang === "es" ? "del " : "from ") + info.entry
-                   + (info.exit ? ((lang === "es" ? " al " : " to ") + info.exit) : (lang === "es" ? " a hoy" : " to today")))
-                : null);
-          const tip = [
-            L[s],
-            rangeTxt,
-            info.real != null ? ((lang === "es" ? "real: " : "actual: ") + info.real + "d") : null,
-            ov && ov.days != null ? ((lang === "es" ? "manual: " : "manual: ") + ov.days + "d") : null,
-            canEdit ? (lang === "es" ? "(click para fijar fechas)" : "(click to set dates)") : null,
-          ].filter(Boolean).join(" · ");
-          return (
-            <div key={s} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-              <button
-                type="button"
-                className="tabular-nums"
-                title={tip}
-                onClick={(has || info.entry || canEdit) ? () => openModal(s) : undefined}
-                style={{
-                  minWidth: 36, minHeight: 20,
-                  padding: "2px 10px", fontSize: 10.5, fontWeight: 700, borderRadius: 999,
-                  border: ov
-                    ? "1.5px solid var(--brand-accent, #00B286)"
-                    : "1px solid var(--border-subtle, #E1E6ED)",
-                  background: info.open ? "rgba(0,178,134,0.08)" : "transparent",
-                  color: has ? "var(--text-secondary, #475569)" : "var(--text-tertiary, #94A3B8)",
-                  cursor: (has || info.entry || canEdit) ? "pointer" : "default", lineHeight: "16px",
-                }}>
-                {has ? `${shown}d` : "—"}
-                {info.open && <span style={{ color: "var(--brand-accent, #00B286)", fontWeight: 600 }}>{lang === "es" ? " · en curso" : " · ongoing"}</span>}
-                {/* ADMIN/CEO: lápiz cuando hay valor manual (editable). */}
-                {canEdit && ov && (
-                  <span title={lang === "es" ? "Valor manual (editar)" : "Manual value (edit)"}> ✎</span>
-                )}
-                {/* Cliente/normal (R3): icono OJO → modal de SOLO LECTURA. */}
-                {!canEdit && (has || info.entry) && (
-                  <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden="true"
-                       style={{ marginLeft: 3, verticalAlign: "-1px" }}
-                       fill="none" stroke="currentColor" strokeWidth="2"
-                       strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                )}
-              </button>
-            </div>
-          );
-        })}
-      </div>
+      {/* Sprint 2026-07-30 · Los días se renderizan DENTRO del StateTimeline
+          para garantizar que queden perfectamente alineados con cada fase. */}
+      <StateTimeline
+        currentStatus={currentStatus}
+        lang={lang}
+        phaseInfo={phaseInfo}
+        canEdit={canEdit}
+        onOpenPhase={openModal}
+      />
 
       {/* Modal: fechas de inicio/fin de la fase → días equivalentes */}
       {modal && createPortal(

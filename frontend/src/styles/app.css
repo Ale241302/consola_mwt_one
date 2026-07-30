@@ -741,12 +741,12 @@ a { color: inherit; text-decoration: none; }
 /* ── Timeline (canonical states) ──────────────────────── */
 .state-timeline {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 0;
   padding: 18px 8px;
   position: relative;
 }
-.state-step { display: flex; flex-direction: column; align-items: center; gap: 8px; position: relative; z-index: 1; text-align: center; }
+.state-step { display: flex; flex-direction: column; align-items: center; gap: 4px; position: relative; z-index: 1; text-align: center; }
 .state-dot {
   width: 14px; height: 14px; border-radius: 50%;
   display: grid; place-items: center;
@@ -759,7 +759,24 @@ a { color: inherit; text-decoration: none; }
 .state-label { font: 600 11px/1.2 var(--font-body); color: var(--text-tertiary); }
 .state-step[data-status="active"] .state-label,
 .state-step[data-status="done"] .state-label { color: var(--text-primary); }
-.state-sub { font: 500 10px/1.1 var(--font-body); color: var(--text-tertiary); }
+.state-sub { font: 500 10px/1.1 var(--font-body); color: var(--text-tertiary); min-height: 11px; }
+.state-days {
+  margin-top: 4px;
+  min-width: 32px;
+  padding: 2px 9px;
+  font: 700 10.5px/16px var(--font-mono);
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: default;
+}
+.state-days:not(:disabled) { cursor: pointer; }
+.state-days:not(:disabled):hover { border-color: var(--brand-accent); }
+.state-days.state-days--manual { border-color: var(--brand-accent); color: var(--text-secondary); }
+.state-days.state-days--open { background: rgba(0,178,134,0.08); }
+.state-days-open { color: var(--brand-accent); font-weight: 600; }
+.state-days-edit { margin-left: 2px; }
 
 .state-line {
   position: absolute; top: 25px; left: 0; right: 0;

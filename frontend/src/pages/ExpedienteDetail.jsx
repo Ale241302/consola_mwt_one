@@ -18,7 +18,7 @@ import ArtifactFillModal from "../components/expedientes/builderArtifacts/Artifa
 // Sprint 2026-06-10 · días por fase (EventLog + override manual admin).
 import PhaseDurationsBar from "../components/expedientes/PhaseDurationsBar.jsx";
 import {
-  Badge, StatusBadge, Progress, StateTimeline, CreditBar, CountryFlag,
+  Badge, StatusBadge, Progress, CreditBar, CountryFlag,
 } from "../components/ui/primitives.jsx";
 // Sprint 2026-05-11 · CEO desconectó la tab "Documentos" del expediente:
 // los artefactos (Proforma, BL, etc.) se gestionan ahora desde el Builder
@@ -619,11 +619,8 @@ export default function ScreenExpedienteDetail() {
           })()}
         </div>
 
-        {/* State timeline strip */}
+        {/* State timeline strip (con días por fase integrados) */}
         <div style={{ padding: '8px 24px 14px', background: 'var(--surface)', borderBottom: '1px solid var(--divider)' }}>
-          <StateTimeline currentStatus={exp.status} lang={lang} dates={dates}/>
-          {/* Sprint 2026-06-10 · días por fase (real del EventLog; click
-              admin para fijar valor manual — alimenta el Cronograma). */}
           <PhaseDurationsBar expedienteId={exp.id} currentStatus={exp.status}
                              lang={lang} canEdit={!isClient}/>
         </div>
