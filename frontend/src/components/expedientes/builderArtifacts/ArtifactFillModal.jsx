@@ -8,6 +8,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { IconCheck, IconX, IconUpload, IconSparkle } from "../../../lib/icons.jsx";
 import DynamicField from "./DynamicField.jsx";
 import { stageLabel } from "./stages.js";
+import { useRole } from "../../../context/RoleContext.jsx";
 // Sprint 2026-05-11 · Fase 7 · IA · dropzone autorrellena los campos
 // del template a partir de un documento (PDF/Excel/Word/txt).
 import { aiDocumentExtractApi } from "../../../lib/api.js";
@@ -30,6 +31,27 @@ export default function ArtifactFillModal({
   const isView = mode === "view";
   const [data, setData] = useState(initialData || {});
   const [touched, setTouched] = useState({});
+
+  // Sprint 2026-07-31 (CEO) · la columna "Expediente" de la tabla de
+  // líneas es ROLE-AWARE (POL_VISIBILIDAD R3, mismo criterio que
+  // RefCell): admin/CEO/staff ven la proforma, CLIENT_* (B2B) ve su OC.
+  // El backend anota cada línea con proforma_codigos[]/oc_codigos[];
+  // el código EXP interno queda como último fallback.
+  const { isClient: isClientRole } = useRole();
+  const _fmtPf = (c) => (/^pf[\s_-]/i.test(String(c)) ? c : `PF ${c}`);
+  const lineExpLabel = (l) => {
+    const pfs = Array.isArray(l?.proforma_codigos) ? l.proforma_codigos : [];
+    const ocs = Array.isArray(l?.oc_codigos)       ? l.oc_codigos       : [];
+    if (isClientRole) {
+      if (ocs.length) return ocs.join(" · ");
+    } else {
+      if (pfs.length) return pfs.map(_fmtPf).join(" · ");
+      if (ocs.length) return ocs.join(" · ");
+    }
+    return l?.expediente_codigo || "—";
+  };
+  const showExpCol = Array.isArray(linesScope)
+    && linesScope.some((l) => l && (l.expediente_id || l.expediente_codigo));
 
   const allFields = useMemo(() => {
     const out = [];
@@ -452,7 +474,7 @@ export default function ArtifactFillModal({
                   <table className="table" style={{ width: "100%" }}>
                     <thead>
                       <tr>
-                        {linesScope.some((l) => l.expediente_codigo) && (
+                        {showExpCol && (
                           <th style={{ width: 140 }}>
                             {lang === "es" ? "Expediente" : "Expediente"}
                           </th>
@@ -470,12 +492,12 @@ export default function ArtifactFillModal({
                     <tbody>
                       {linesScope.map((l, i) => (
                         <tr key={l.id || `${l.expediente_id || ""}-${l.producto_id || ""}-${l.talla || ""}-${i}`}>
-                          {linesScope.some((x) => x.expediente_codigo) && (
+                          {showExpCol && (
                             <td>
                               <span className="mono-sm" style={{
                                 fontWeight: 700, color: "var(--brand-primary)",
                               }}>
-                                {l.expediente_codigo || "—"}
+                                {lineExpLabel(l)}
                               </span>
                             </td>
                           )}
@@ -499,7 +521,7 @@ export default function ArtifactFillModal({
                     </tbody>
                     <tfoot>
                       <tr>
-                        <td colSpan={linesScope.some((x) => x.expediente_codigo) ? 4 : 3}
+                        <td colSpan={showExpCol ? 4 : 3}
                             style={{
                               textAlign: "right", fontWeight: 700,
                               color: "var(--text-secondary)",

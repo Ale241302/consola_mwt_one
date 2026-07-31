@@ -161,7 +161,7 @@ class NodoBuilderArtifactsListCreateView(APIView):
             _save_lines_for(instance, lines_payload, creator_id=created_by_id)
 
         payload = NodoBuilderArtifactInstanceSerializer(instance).data
-        payload["lines"] = _lines_payload_for(instance)
+        payload["lines"] = _lines_payload_for(instance, user=request.user)
         return Response(payload, status=drf_status.HTTP_201_CREATED)
 
 
@@ -186,7 +186,7 @@ class NodoBuilderArtifactDetailView(APIView):
         payload = NodoBuilderArtifactInstanceSerializer(obj).data
         # Sprint 2026-05-11 fase 5 · incluimos las líneas asociadas para
         # que el FE pueda renderizar el modal de edición pre-llenado.
-        payload["lines"] = _lines_payload_for(obj)
+        payload["lines"] = _lines_payload_for(obj, user=request.user)
         return Response(payload)
 
     def patch(self, request, nodo_id, artifact_id):
@@ -218,7 +218,7 @@ class NodoBuilderArtifactDetailView(APIView):
         # el FE pueda refrescar el modal con los timestamps actualizados.
         obj.refresh_from_db()
         payload = NodoBuilderArtifactInstanceSerializer(obj).data
-        payload["lines"] = _lines_payload_for(obj)
+        payload["lines"] = _lines_payload_for(obj, user=request.user)
         return Response(payload)
 
     def delete(self, request, nodo_id, artifact_id):
@@ -245,7 +245,7 @@ class NodoBuilderArtifactDetailView(APIView):
 # 3) Hook que persiste `lines` cuando el cliente las manda en POST/PATCH.
 # ════════════════════════════════════════════════════════════
 
-def _lines_payload_for(instance):
+def _lines_payload_for(instance, user=None):
     """Devuelve el array `lines` que se incluye en la respuesta de una
     instancia de artefacto, enriquecido con sku/nombre/codigo de
     expediente para que el FE pueda renderizar el modal de edición sin
@@ -281,7 +281,41 @@ def _lines_payload_for(instance):
     with connection.cursor() as c:
         c.execute(sql, {"iid": str(instance.id)})
         cols = [d[0] for d in c.description]
-        return [dict(zip(cols, r)) for r in c.fetchall()]
+        rows = [dict(zip(cols, r)) for r in c.fetchall()]
+    _annotate_line_refs(rows, user=user)
+    return rows
+
+
+def _annotate_line_refs(rows, user=None):
+    """Sprint 2026-07-31 (CEO) · refs role-aware por línea.
+
+    La columna "Expediente" del modal de artefacto no debe mostrar el
+    código interno EXP-YYYY-NNNN: admin/CEO/staff ven la proforma
+    (proforma_codigos[]) y CLIENT_* ve su OC (oc_codigos[]), misma
+    política R3 que el listado de expedientes (POL_VISIBILIDAD).
+    El FE elige cuál renderizar; aquí solo anotamos ambos arrays.
+    """
+    from apps.expedientes.models import Expediente
+    from apps.expedientes.serializers import (
+        build_expediente_ref_batches, _viewer_is_client,
+    )
+    is_client = _viewer_is_client(user)
+    exp_ids = [r["expediente_id"] for r in rows if r.get("expediente_id")]
+    if not exp_ids:
+        for r in rows:
+            r["proforma_codigos"] = []
+            r["oc_codigos"] = []
+        return
+    try:
+        exps = list(Expediente.objects.filter(id__in=exp_ids, is_active=True))
+        batches = build_expediente_ref_batches(exps, is_client=is_client)
+    except Exception:  # noqa: BLE001 — defensivo: la línea sigue usable
+        batches = {"batch_proformas": {}, "batch_ocs": {}}
+    for r in rows:
+        eid = str(r.get("expediente_id") or "")
+        r["proforma_codigos"] = ([] if is_client
+                                 else batches["batch_proformas"].get(eid, []))
+        r["oc_codigos"] = batches["batch_ocs"].get(eid, [])
 
 
 def _save_lines_for(instance, lines_payload, creator_id):

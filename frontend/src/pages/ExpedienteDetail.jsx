@@ -452,6 +452,20 @@ export default function ScreenExpedienteDetail() {
     );
   }
 
+  // Sprint 2026-07-31 (CEO) · título del header ROLE-AWARE (POL_VISIBILIDAD
+  // R3, mismo criterio que RefCell del listado):
+  //   ADMIN/CEO/staff → proforma_codigos[] (PF del expediente)
+  //   CLIENT_* (B2B)  → oc_codigos[] (su PO)
+  // Fallbacks: PF → OC → código EXP interno. El UUID de la OC y el SAP
+  // ya no se muestran en el header (directriz CEO 2026-07-31).
+  const _pfCodes = Array.isArray(apiExp?.proforma_codigos) ? apiExp.proforma_codigos : [];
+  const _ocCodes = Array.isArray(apiExp?.oc_codigos)       ? apiExp.oc_codigos       : [];
+  const _fmtPf   = (c) => (/^pf[\s_-]/i.test(String(c)) ? c : `PF ${c}`);
+  const headerRef = isClient
+    ? (_ocCodes.length ? _ocCodes.join(" · ") : exp.ref)
+    : (_pfCodes.length ? _pfCodes.map(_fmtPf).join(" · ")
+       : (_ocCodes.length ? _ocCodes.join(" · ") : exp.ref));
+
   const dates = isHero ? {
     REGISTRO: '2026-01-14', PRODUCCION: '2026-02-08',
     PREPARACION: '2026-03-01', TRANSITO: '2026-03-28',
@@ -472,15 +486,7 @@ export default function ScreenExpedienteDetail() {
           color: '#fff',
         }}>
           <div className="flex ai-center gap-3" style={{ marginBottom: 10 }}>
-            <span className="mono" style={{ color: 'var(--brand-accent)', fontWeight: 700, fontSize: 13 }}>{exp.ref}</span>
-            <span style={{ opacity: 0.5 }}>·</span>
-            <span style={{ opacity: 0.75, fontSize: 13 }}>{exp.oc_client}</span>
-            {exp.sap && <>
-              <span style={{ opacity: 0.5 }}>·</span>
-              <span style={{ opacity: 0.75, fontSize: 13 }}>{exp.sap}</span>
-            </>}
-            <span style={{ opacity: 0.5 }}>·</span>
-            <span style={{ opacity: 0.75, fontSize: 13 }}>{exp.proforma}</span>
+            <span className="mono" style={{ color: 'var(--brand-accent)', fontWeight: 700, fontSize: 13 }}>{headerRef}</span>
             {/* Sprint 2026-05-06 · Badge "Operado por MWT" — visible solo
                 a Admin/MWT cuando el operador del expediente es Muito Work
                 Limitada y el cliente final es OTRO (es decir, MWT opera

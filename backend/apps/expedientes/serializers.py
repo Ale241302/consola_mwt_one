@@ -505,6 +505,50 @@ class ExpedienteSerializer(serializers.ModelSerializer):
     total_paid      = serializers.SerializerMethodField()
     balance         = serializers.SerializerMethodField()
 
+    # Sprint 2026-07-31 (CEO) · refs role-aware en el DETALLE (retrieve).
+    # El header del ExpedienteDetail debe titularse con la proforma
+    # (admin/CEO/staff) o la OC (CLIENT_*), no con el código EXP interno.
+    # Misma política R3 que ExpedienteListSerializer: proformas/SAPs son
+    # CEO-only (CLIENT_* recibe []), OCs filtradas por audience=CLIENT.
+    # Se computan UNA vez por instancia vía build_expediente_ref_batches
+    # y se cachean en el serializer para no repetir queries por campo.
+    proforma_codigos = serializers.SerializerMethodField()
+    oc_codigos       = serializers.SerializerMethodField()
+    sap_codigos      = serializers.SerializerMethodField()
+
+    def _is_client_viewer(self):
+        request = self.context.get("request") if hasattr(self, "context") else None
+        return _viewer_is_client(getattr(request, "user", None) if request else None)
+
+    def _ref_batches(self, obj):
+        cache = getattr(self, "_ref_batches_cache", None)
+        if cache is None:
+            cache = build_expediente_ref_batches(
+                [obj], is_client=self._is_client_viewer(),
+            )
+            self._ref_batches_cache = cache
+        return cache
+
+    def get_proforma_codigos(self, obj):
+        """Todas las proformas (kind=PROFORMA). CLIENT_* → []."""
+        if self._is_client_viewer():
+            return []
+        return self._ref_batches(obj)["batch_proformas"].get(str(obj.id), [])
+
+    def get_oc_codigos(self, obj):
+        """OC principal del expediente (audience-aware para CLIENT_*)."""
+        return self._ref_batches(obj)["batch_ocs"].get(str(obj.id), [])
+
+    def get_sap_codigos(self, obj):
+        """SAPs distintos de las líneas. CEO-ONLY (R3)."""
+        if self._is_client_viewer():
+            return []
+        saps = self._ref_batches(obj)["batch_saps"].get(str(obj.id), [])
+        # Fallback al campo legacy `sap` si no hay SAP por línea.
+        if not saps and getattr(obj, "sap", None):
+            return [obj.sap]
+        return saps
+
     # id es PK pero el view lo inyecta vía s.save(id=uuid.uuid4()).
     # Marcarlo read_only impide que DRF lo exija en el body.
     id              = serializers.UUIDField(read_only=True)
