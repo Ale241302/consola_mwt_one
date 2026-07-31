@@ -1,7 +1,7 @@
 // Shared UI primitives
 import React from "react";
 import { tr, fmtMoney, fmtShortDate } from "../../lib/i18n.js";
-import { IconCheck } from "../../lib/icons.jsx";
+import { IconCheck, IconPlane, IconShip, IconPackage } from "../../lib/icons.jsx";
 import { DISPLAY_STAGES, displayStage } from "../../lib/phaseDisplay.js";
 
 export function Badge({ kind='neutral', children, dot=false, style }) {
@@ -124,7 +124,12 @@ export function StateTimeline({ currentStatus, lang='es', dates={},
   // y Tránsito). Solo visible cuando el estado actual es TRANSITO.
   const transitIdx = order.indexOf('TRANSITO');
   const showTransitProgress = currentStatus === 'TRANSITO' && transitProgress != null && transitIdx >= 0;
-  const transitIcon = freightMode === 'SEA' ? '🚢' : freightMode === 'AIR' ? '✈️' : '📦';
+  // Sprint 2026-07-31 (CEO) · icono SVG (mismo estilo lucide del sistema)
+  // sobre badge circular con el gradient azul de marca — el emoji anterior
+  // (🚢/✈️) se veía inconsistente y en blanco no se distinguía.
+  const TransitIconCmp = freightMode === 'SEA' ? IconShip
+                       : freightMode === 'AIR' ? IconPlane
+                       : IconPackage;
   // Mantener el icono alejado de los bordes del segmento para que no se
   // confunda con el punto de la fase anterior/siguiente.
   const iconPct = Math.max(8, Math.min(92, transitProgress || 0));
@@ -164,14 +169,17 @@ export function StateTimeline({ currentStatus, lang='es', dates={},
             left: `${iconPct}%`,
             top: '50%',
             transform: 'translate(-50%, -50%)',
-            fontSize: 18,
-            background: 'var(--surface)',
+            width: 22,
+            height: 22,
             borderRadius: '50%',
-            padding: '0 4px',
-            lineHeight: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#fff',
+            background: 'linear-gradient(180deg, var(--brand-primary) 0%, var(--brand-primary-dark) 100%)',
             boxShadow: '0 0 0 2px var(--surface), 0 1px 3px rgba(11,30,58,0.18)',
           }}>
-            {transitIcon}
+            <TransitIconCmp size={13} />
           </div>
         </div>
       )}
