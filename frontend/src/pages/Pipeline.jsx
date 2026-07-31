@@ -240,10 +240,16 @@ export default function ScreenPipeline() {
     const map = { wizard: '/wizard' };
     if (map[key]) navigate(map[key]);
   };
+  const onOpenOC = (ocId) => navigate(`/expedientes/${ocId}`);
   const onOpenExpediente = (id) => {
-    const oc = OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(id));
-    if (oc) navigate(`/expedientes/${oc.id}/exp/${id}`);
-    else navigate('/expedientes');
+    const exp = EXPEDIENTES.find(e => e.id === id);
+    const ocId = exp?.oc_id
+              || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(id))?.id;
+    if (ocId) {
+      navigate(`/expedientes/${ocId}/exp/${id}`);
+      return;
+    }
+    navigate(`/expedientes/none/exp/${id}`);
   };
 
   const [brandFilter, setBrandFilter] = useState('ALL');
@@ -399,6 +405,7 @@ export default function ScreenPipeline() {
                     lang={lang}
                     dragging={draggingId === e.id}
                     onOpen={() => onOpenExpediente(e.id)}
+                    onOpenOC={() => onOpenOC(e.oc_id)}
                     onDragStart={handleDragStart}
                     onDragEnd={handleDragEnd}
                     isClient={isClient}
@@ -428,7 +435,7 @@ export default function ScreenPipeline() {
 }
 
 // ─── Rich pipeline card (Sprint 2026-05-17 · CEO refactor) ─────────
-function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, onDragEnd, isClient, canDrag, showMoney }) {
+function PipelineCard({ exp, currentState, lang, dragging, onOpen, onOpenOC, onDragStart, onDragEnd, isClient, canDrag, showMoney }) {
   // Monto efectivo: prefiere total_invoiced; cae a order_value cuando
   // todavía no hay facturación (mismo criterio que Expedientes.jsx).
   const effectiveAmount = exp.total_invoiced > 0
@@ -488,7 +495,20 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onDragStart, 
 
       {/* Header: REF + lock (si bloqueado). Sin badge "C" ni "90d". */}
       <div className="k-card-row1">
-        <span className="k-card-ref-mono" onClick={(e)=>{ e.stopPropagation(); onOpen(); }}>
+        <span
+          className="k-card-ref-mono"
+          style={{ cursor: 'pointer' }}
+          title={lang==='es' ? 'Ver detalle' : 'View detail'}
+          onClick={(e) => {
+            e.stopPropagation();
+            // Sprint 2026-07-31 (CEO) · click en el código principal (PF/PO)
+            // abre la vista OC/común (mismo comportamiento que la fila de
+            // la tabla), no la subpágina de expediente individual. Si el
+            // expediente no tiene OC vinculada, caemos al detalle del exp.
+            if (exp.oc_id && onOpenOC) onOpenOC(exp.oc_id);
+            else onOpen();
+          }}
+        >
           {headRef}
         </span>
         {exp.is_blocked && (
