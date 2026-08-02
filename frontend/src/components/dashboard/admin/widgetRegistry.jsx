@@ -110,68 +110,159 @@ const derivedTag = (src, lang) =>
 
 // ─────────────────────────────────────────────────────────────────────
 // ScopeChip — selector de scope en el header de cada widget.
+// Sprint 2026-08-02 rev2 · rediseño: pill compacta + dropdown propio
+// (el <select> nativo se montaba sobre el título de las KPI cards y se
+// veía roto). Misma API de props — los callers no cambian.
 // ─────────────────────────────────────────────────────────────────────
-const chipStyle = {
-  font: "500 11.5px/1 var(--font-body)",
+const pillBase = {
+  display: "inline-flex", alignItems: "center", gap: 4,
+  font: "600 10.5px/1 var(--font-body)",
   color: "var(--text-secondary)",
-  background: "var(--surface)",
-  border: "1px solid var(--border-strong)",
-  borderRadius: "var(--radius-sm)",
-  padding: "4px 6px",
-  maxWidth: 180,
-  outline: "none",
+  background: "var(--surface-raised)",
+  border: "1px solid var(--border-subtle, #E1E6ED)",
+  borderRadius: 999,
+  padding: "4px 9px",
+  cursor: "pointer",
+  maxWidth: 132,
+  whiteSpace: "nowrap",
+  userSelect: "none",
 };
+
+// Texto corto de la pill: solo el nombre (sin prefijo "Cliente:"), el
+// contexto completo va en el title.
+function scopeShortLabel(scope, clients, brands, es) {
+  const cid = scopeClientId(scope);
+  if (cid) {
+    const c = clients.find((x) => sameId(x.id, cid));
+    return c?.name || (es ? "Cliente" : "Client");
+  }
+  const bid = scopeBrandId(scope);
+  if (bid) {
+    const b = brands.find((x) => sameId(x.id, bid));
+    return b?.name || (es ? "Marca" : "Brand");
+  }
+  return es ? "General" : "General";
+}
+
+function scopeFullLabel(scope, clients, brands, es) {
+  const cid = scopeClientId(scope);
+  if (cid) return (es ? "Cliente: " : "Client: ") + scopeShortLabel(scope, clients, brands, es);
+  const bid = scopeBrandId(scope);
+  if (bid) return (es ? "Marca: " : "Brand: ") + scopeShortLabel(scope, clients, brands, es);
+  return es ? "General (toda la operación)" : "General (whole operation)";
+}
 
 export function ScopeChip({ scope = "general", scopeable = {}, clients = [], brands = [], lang = "es", onChange }) {
   const es = lang === "es";
   const canClient = !!scopeable.client;
   const canBrand = !!scopeable.brand;
+  const [open, setOpen] = React.useState(false);
+  const rootRef = React.useRef(null);
+
+  // Cierra el dropdown al click fuera / Escape.
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
   if (!canClient && !canBrand) {
     return (
       <span
         title={es
           ? "Este widget no tiene dimensión cliente/marca en el backend."
           : "This widget has no client/brand dimension in the backend."}
-        style={{
-          font: "600 10px/1 var(--font-body)",
-          color: "var(--text-tertiary)",
-          border: "1px dashed var(--border-strong)",
-          borderRadius: "var(--radius-sm)",
-          padding: "4px 8px",
-          whiteSpace: "nowrap",
-        }}
+        style={{ ...pillBase, cursor: "default", borderStyle: "dashed",
+                 color: "var(--text-tertiary)", fontSize: 10 }}
       >
         {es ? "Solo general" : "General only"}
       </span>
     );
   }
+
+  const pick = (value) => { setOpen(false); onChange(value); };
+  const itemStyle = (active) => ({
+    display: "block", width: "100%", textAlign: "left",
+    padding: "7px 12px", border: 0, cursor: "pointer",
+    background: active ? "var(--surface-hover)" : "transparent",
+    color: "var(--text-primary)",
+    font: `${active ? 700 : 500} 12px/1.3 var(--font-body)`,
+    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+  });
+  const groupStyle = {
+    font: "800 9.5px/1 var(--font-body)", letterSpacing: 0.8,
+    textTransform: "uppercase", color: "var(--text-tertiary)",
+    padding: "8px 12px 3px",
+  };
+
   return (
-    <select
-      value={scope}
-      onChange={(e) => onChange(e.target.value)}
-      aria-label={es ? "Scope del widget" : "Widget scope"}
-      style={chipStyle}
-    >
-      <option value="general">{es ? "General" : "General"}</option>
-      {canClient && clients.length > 0 && (
-        <optgroup label={es ? "Cliente" : "Client"}>
-          {clients.map((c) => (
-            <option key={c.id} value={`cliente:${c.id}`}>
-              {(es ? "Cliente: " : "Client: ") + (c.name || c.id)}
-            </option>
-          ))}
-        </optgroup>
+    <span ref={rootRef} style={{ position: "relative", display: "inline-block" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={scopeFullLabel(scope, clients, brands, es)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        style={pillBase}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+          {scopeShortLabel(scope, clients, brands, es)}
+        </span>
+        <span style={{ fontSize: 8, opacity: 0.7 }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            position: "absolute", top: "calc(100% + 5px)", right: 0, zIndex: 60,
+            minWidth: 190, maxWidth: 260, maxHeight: 280, overflowY: "auto",
+            background: "var(--surface)",
+            border: "1px solid var(--border-subtle, #E1E6ED)",
+            borderRadius: 10, boxShadow: "var(--shadow-lg, 0 10px 30px rgba(8,16,24,.16))",
+            padding: "4px 0",
+          }}
+        >
+          <button type="button" style={itemStyle(scope === "general")}
+                  onClick={() => pick("general")}>
+            {es ? "General" : "General"}
+          </button>
+          {canClient && clients.length > 0 && (
+            <>
+              <div style={groupStyle}>{es ? "Cliente" : "Client"}</div>
+              {clients.map((c) => (
+                <button key={c.id} type="button"
+                        style={itemStyle(scope === `cliente:${c.id}`)}
+                        title={c.name || c.id}
+                        onClick={() => pick(`cliente:${c.id}`)}>
+                  {c.name || c.id}
+                </button>
+              ))}
+            </>
+          )}
+          {canBrand && brands.length > 0 && (
+            <>
+              <div style={groupStyle}>{es ? "Marca" : "Brand"}</div>
+              {brands.map((b) => (
+                <button key={b.id} type="button"
+                        style={itemStyle(scope === `marca:${b.id}`)}
+                        title={b.name || b.id}
+                        onClick={() => pick(`marca:${b.id}`)}>
+                  {b.name || b.id}
+                </button>
+              ))}
+            </>
+          )}
+        </div>
       )}
-      {canBrand && brands.length > 0 && (
-        <optgroup label={es ? "Marca" : "Brand"}>
-          {brands.map((b) => (
-            <option key={b.id} value={`marca:${b.id}`}>
-              {(es ? "Marca: " : "Brand: ") + (b.name || b.id)}
-            </option>
-          ))}
-        </optgroup>
-      )}
-    </select>
+    </span>
   );
 }
 
