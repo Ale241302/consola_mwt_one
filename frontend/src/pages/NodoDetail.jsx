@@ -1491,7 +1491,9 @@ function AddNodeCostModal({ open, onClose, onSaved, nodeId, lang, existingRows =
 
     if (!trfId) {
       try {
+        const trfCode = `REC-${new Date().toISOString().slice(0,10).replace(/-/g,"")}-${Math.random().toString(36).slice(2,6).toUpperCase()}`;
         const newTrf = await transferenciasApi.create({
+          codigo: trfCode,
           destino_id: nodeId,
           tipo: "RECEPCION",
           estado: "EN_DESTINO",
@@ -1518,15 +1520,12 @@ function AddNodeCostModal({ open, onClose, onSaved, nodeId, lang, existingRows =
     try {
       for (const line of validLines) {
         await transferenciasApi.action("cost-lines", trfId, {
-          method: "POST",
-          body: {
-            kind: line.kind,
-            label: line.label || NODE_COST_KINDS.find(k => k.codigo === line.kind)?.label || line.kind,
-            amount: Number(line.amount),
-            currency: line.currency,
-            fx_to_usd: Number(line.fx_to_usd || 1),
-            scope_json: line.scope_json,
-          },
+          kind: line.kind,
+          label: line.label || NODE_COST_KINDS.find(k => k.codigo === line.kind)?.label || line.kind,
+          amount: Number(line.amount),
+          currency: line.currency,
+          fx_to_usd: Number(line.fx_to_usd || 1),
+          scope_json: line.scope_json,
         });
       }
       onSaved();
