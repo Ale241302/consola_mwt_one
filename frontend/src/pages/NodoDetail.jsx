@@ -15,7 +15,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   IconChevLeft, IconMapPin, IconPackage, IconTruck, IconRefresh,
   IconCheck, IconX, IconClock, IconDollar, IconBoxes, IconTrend,
-  IconArrow, IconSparkle,
+  IconArrow, IconSparkle, IconPlus, IconTrash,
 } from "../lib/icons.jsx";
 
 // ── Definiciones compartidas con CreateNodeModal (mismas cards + iconos)
@@ -1288,32 +1288,394 @@ function TransferStatus({ status, lang }) {
    (como destino), desglosados por expediente · producto · talla.
    Cada fila es clickable y navega al detalle de el movimiento.
    ───────────────────────────────────────────────────────────── */
+
+const COST_KINDS_CATALOG = [
+  { codigo: "DAI", label: "Aranceles (DAI)", is_fiscal: true },
+  { codigo: "IVA", label: "Impuestos (IVA)", is_fiscal: true },
+  { codigo: "ALMACENAJE", label: "Almacenaje aduanal", is_fiscal: false },
+  { codigo: "AGENCIAMIENTO", label: "Agenciamiento", is_fiscal: false },
+  { codigo: "MANIPULEO", label: "Manipuleo / handling", is_fiscal: false },
+  { codigo: "FLETE", label: "Flete", is_fiscal: false },
+  { codigo: "SEGURO", label: "Seguro", is_fiscal: false },
+  { codigo: "CONSOLIDACION", label: "Consolidación", is_fiscal: false },
+  { codigo: "OTRO", label: "Otro", is_fiscal: false },
+];
+
+const COST_CURRENCIES_LIST = ["USD", "CRC", "BRL", "EUR", "PEN", "MXN", "COP", "CLP", "ARS"];
+
+// ── Modal para Agregar Costo a Movimientos del Nodo ──────────────
+function AddNodeCostModal({ open, onClose, onSaved, nodeId, lang, existingRows = [] }) {
+  const [selectedTrfId, setSelectedTrfId] = useState("");
+  const [kind, setKind] = useState("FLETE");
+  const [label, setLabel] = useState("");
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("USD");
+  const [fxToUsd, setFxToUsd] = useState(1);
+  const [scopeMode, setScopeMode] = useState("all"); // 'all' | 'specific'
+  const [selExpIds, setSelExpIds] = useState([]);
+  const [selLines, setSelLines] = useState([]); // [{ expediente_id, producto_id, talla }]
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const trfOptions = useMemo(() => {
+    const map = new Map();
+    for (const r of existingRows) {
+      if (!r.transferencia_id) continue;
+      if (!map.has(r.transferencia_id)) {
+        map.set(r.transferencia_id, {
+          id: r.transferencia_id,
+          codigo: r.transferencia_codigo || (r.is_reception ? 'Recepción' : 'Movimiento'),
+          fecha: r.transferencia_fecha,
+          is_reception: !!r.is_reception,
+          expsMap: new Map(),
+        });
+      }
+      const trf = map.get(r.transferencia_id);
+      if (r.expediente_id) {
+        if (!trf.expsMap.has(r.expediente_id)) {
+          trf.expsMap.set(r.expediente_id, {
+            id: r.expediente_id,
+            codigo: r.expediente_codigo || 'EXP',
+            proforma: r.proforma_codigo || '',
+            prodsMap: new Map(),
+          });
+        }
+        const exp = trf.expsMap.get(r.expediente_id);
+        const pk = `${r.producto_id}::${r.talla || ''}`;
+        if (!exp.prodsMap.has(pk)) {
+          exp.prodsMap.set(pk, {
+            producto_id: r.producto_id,
+            sku: r.sku || '',
+            nombre: r.nombre || '',
+            talla: r.talla || '',
+            qty: r.qty || 0,
+          });
+        }
+      }
+    }
+    return Array.from(map.values()).map(t => ({
+      ...t,
+      expedientes: Array.from(t.expsMap.values()).map(e => ({
+        ...e,
+        lines: Array.from(e.prodsMap.values()),
+      })),
+    }));
+  }, [existingRows]);
+
+  useEffect(() => {
+    if (open) {
+      if (trfOptions.length > 0 && !selectedTrfId) {
+        setSelectedTrfId(trfOptions[0].id);
+      }
+      setError(null);
+      setSaving(false);
+    }
+  }, [open, trfOptions]);
+
+  const activeTrf = useMemo(() => {
+    return trfOptions.find(t => t.id === selectedTrfId) || trfOptions[0] || null;
+  }, [trfOptions, selectedTrfId]);
+
+  if (!open) return null;
+
+  const toggleExp = (expId) => {
+    if (selExpIds.includes(expId)) {
+      setSelExpIds(p => p.filter(id => id !== expId));
+      setSelLines(p => p.filter(l => l.expediente_id !== expId));
+    } else {
+      setSelExpIds(p => [...p, expId]);
+      const expObj = activeTrf?.expedientes?.find(e => e.id === expId);
+      if (expObj) {
+        const newLines = expObj.lines.map(l => ({
+          expediente_id: expId,
+          producto_id: l.producto_id,
+          talla: l.talla,
+        }));
+        setSelLines(p => [...p, ...newLines]);
+      }
+    }
+  };
+
+  const toggleLine = (expId, prodId, talla) => {
+    const exists = selLines.some(l => l.expediente_id === expId && l.producto_id === prodId && (l.talla || '') === (talla || ''));
+    if (exists) {
+      setSelLines(p => p.filter(l => !(l.expediente_id === expId && l.producto_id === prodId && (l.talla || '') === (talla || ''))));
+    } else {
+      setSelLines(p => [...p, { expediente_id: expId, producto_id: prodId, talla }]);
+    }
+  };
+
+  const handleSave = async () => {
+    const trfId = selectedTrfId || activeTrf?.id;
+    if (!trfId) {
+      setError(lang === 'es' ? 'Selecciona un movimiento' : 'Select a movement');
+      return;
+    }
+    const numAmount = Number(amount);
+    if (!numAmount || numAmount <= 0) {
+      setError(lang === 'es' ? 'Ingresa un monto mayor a 0' : 'Enter an amount greater than 0');
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
+    let scope_json = null;
+    if (scopeMode === 'specific' && selExpIds.length > 0) {
+      scope_json = {
+        applies_to_all: false,
+        expediente_ids: selExpIds,
+        lines: selLines.length > 0 ? selLines : undefined,
+      };
+    }
+
+    try {
+      await transferenciasApi.action("cost-lines", trfId, {
+        method: "POST",
+        body: {
+          kind: kind,
+          label: label || COST_KINDS_CATALOG.find(k => k.codigo === kind)?.label || kind,
+          amount: numAmount,
+          currency: currency,
+          fx_to_usd: Number(fxToUsd || 1),
+          scope_json: scope_json,
+        },
+      });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e?.message || 'Error al guardar costo');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return createPortal(
+    <div className="modal-backdrop" style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:9999,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:16,
+    }}>
+      <div className="card card-pad-lg" style={{
+        maxWidth: 620, width: '100%', maxHeight: '90vh', overflowY: 'auto',
+        background: 'var(--surface, #fff)', borderRadius: 12, boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+      }}>
+        <div className="flex ai-center jc-between mb-4 pb-2" style={{ borderBottom:'1px solid var(--border-subtle)' }}>
+          <div className="heading-md">{lang === 'es' ? 'Agregar costo a movimiento del nodo' : 'Add cost to node movement'}</div>
+          <button type="button" className="btn-icon" onClick={onClose}><IconX size={18} /></button>
+        </div>
+
+        {error && (
+          <div className="body-sm mb-3" style={{ color: 'var(--critical)', background: 'rgba(239,68,68,0.1)', padding: '8px 12px', borderRadius: 6 }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+          <div>
+            <label className="label-sm mb-1" style={{ fontWeight: 600 }}>
+              {lang === 'es' ? '1. Movimiento / Recepción:' : '1. Movement / Reception:'}
+            </label>
+            {trfOptions.length === 0 ? (
+              <div className="caption text-tertiary">
+                {lang === 'es' ? 'Sin movimientos registrados en este nodo.' : 'No movements recorded at this node.'}
+              </div>
+            ) : (
+              <select
+                className="input"
+                value={selectedTrfId}
+                onChange={(e) => setSelectedTrfId(e.target.value)}
+              >
+                {trfOptions.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.codigo} {t.fecha ? `(${new Date(t.fecha).toLocaleDateString()})` : ''} · {t.expedientes.map(e => e.proforma || e.codigo).join(', ')}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {activeTrf && activeTrf.expedientes.length > 0 && (
+            <div>
+              <label className="label-sm mb-1" style={{ fontWeight: 600 }}>
+                {lang === 'es' ? '2. ¿A qué expediente(s) y producto(s) aplica este costo?' : '2. Which expediente(s) and product(s) does this cost apply to?'}
+              </label>
+              <div style={{ display: 'flex', gap: 16, marginTop: 6, marginBottom: 10 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
+                  <input
+                    type="radio"
+                    name="scopeMode"
+                    value="all"
+                    checked={scopeMode === 'all'}
+                    onChange={() => setScopeMode('all')}
+                  />
+                  {lang === 'es' ? 'Aplica a TODO el movimiento' : 'Applies to ALL movement'}
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
+                  <input
+                    type="radio"
+                    name="scopeMode"
+                    value="specific"
+                    checked={scopeMode === 'specific'}
+                    onChange={() => setScopeMode('specific')}
+                  />
+                  {lang === 'es' ? 'Seleccionar Expedientes / Productos' : 'Select Expedientes / Products'}
+                </label>
+              </div>
+
+              {scopeMode === 'specific' && (
+                <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 12, background: 'var(--surface-alt, #fafafa)' }}>
+                  <div className="caption text-secondary mb-2" style={{ fontWeight: 600 }}>
+                    {lang === 'es' ? 'Selecciona los expedientes:' : 'Select expedientes:'}
+                  </div>
+                  {activeTrf.expedientes.map(exp => {
+                    const isExpChecked = selExpIds.includes(exp.id);
+                    return (
+                      <div key={exp.id} style={{ marginBottom: 10 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, cursor: 'pointer', fontSize: 13 }}>
+                          <input
+                            type="checkbox"
+                            checked={isExpChecked}
+                            onChange={() => toggleExp(exp.id)}
+                          />
+                          {exp.proforma ? `${exp.proforma} (${exp.codigo})` : exp.codigo}
+                        </label>
+                        {isExpChecked && exp.lines.length > 0 && (
+                          <div style={{ marginLeft: 24, marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <div className="micro text-tertiary">{lang === 'es' ? 'Productos:' : 'Products:'}</div>
+                            {exp.lines.map(l => {
+                              const isLineChecked = selLines.some(sl => sl.expediente_id === exp.id && sl.producto_id === l.producto_id && (sl.talla || '') === (l.talla || ''));
+                              return (
+                                <label key={`${l.producto_id}::${l.talla}`} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isLineChecked}
+                                    onChange={() => toggleLine(exp.id, l.producto_id, l.talla)}
+                                  />
+                                  <span><strong className="mono-sm">{l.sku}</strong> — {l.nombre} {l.talla ? `(Talla ${l.talla})` : ''} — <span className="tabular-nums">{l.qty} u.</span></span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid col-2 gap-3">
+            <div>
+              <label className="label-sm mb-1">{lang === 'es' ? 'Tipo de costo:' : 'Cost type:'}</label>
+              <select className="input" value={kind} onChange={e => setKind(e.target.value)}>
+                {COST_KINDS_CATALOG.map(k => (
+                  <option key={k.codigo} value={k.codigo}>{k.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label-sm mb-1">{lang === 'es' ? 'Concepto / Etiqueta:' : 'Concept / Label:'}</label>
+              <input
+                className="input"
+                type="text"
+                placeholder={COST_KINDS_CATALOG.find(k => k.codigo === kind)?.label}
+                value={label}
+                onChange={e => setLabel(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="grid col-3 gap-3">
+            <div>
+              <label className="label-sm mb-1">{lang === 'es' ? 'Monto:' : 'Amount:'}</label>
+              <input
+                className="input"
+                type="number"
+                step="0.01"
+                placeholder="0.00"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="label-sm mb-1">{lang === 'es' ? 'Moneda:' : 'Currency:'}</label>
+              <select className="input" value={currency} onChange={e => setCurrency(e.target.value)}>
+                {COST_CURRENCIES_LIST.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label-sm mb-1">{lang === 'es' ? 'TC a USD:' : 'FX to USD:'}</label>
+              <input
+                className="input"
+                type="number"
+                step="0.0001"
+                value={fxToUsd}
+                onChange={e => setFxToUsd(e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex ai-center jc-end gap-3 mt-5 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
+            {lang === 'es' ? 'Cancelar' : 'Cancel'}
+          </button>
+          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? (lang === 'es' ? 'Guardando…' : 'Saving…') : (lang === 'es' ? 'Guardar costo' : 'Save cost')}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
-  // Sprint 2026-05-14 · Fase 13.1 — colapsable por (cost_line, expediente).
-  // Key = `${cost_line_id}::${expediente_id}`. Default: todos colapsados.
   const [expanded, setExpanded] = useState({});
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [deleteCostTarget, setDeleteCostTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
   const toggleExp = (k) => setExpanded((p) => ({ ...p, [k]: !p[k] }));
 
-  useEffect(() => {
+  const fetchCosts = useCallback(() => {
     if (!nodeId) return;
-    let cancel = false;
     setLoading(true); setError(null);
     nodoAssignmentsApi.transferenciaCostosPorNodo(nodeId)
       .then((data) => {
-        if (cancel) return;
         const arr = Array.isArray(data) ? data : (data?.results || []);
         setRows(arr);
       })
-      .catch((e) => { if (!cancel) setError(e?.message || 'Error'); })
-      .finally(() => { if (!cancel) setLoading(false); });
-    return () => { cancel = true; };
+      .catch((e) => setError(e?.message || 'Error'))
+      .finally(() => setLoading(false));
   }, [nodeId]);
 
-  // Agrupar por transferencia → expediente → líneas, para un render
-  // más legible. Una sola pasada O(n).
+  useEffect(() => {
+    fetchCosts();
+  }, [fetchCosts]);
+
+  const confirmDeleteCost = async () => {
+    if (!deleteCostTarget) return;
+    setDeleting(true);
+    try {
+      await transferenciasApi.action(
+        `cost-lines/${deleteCostTarget.cost_line_id}`,
+        deleteCostTarget.transferencia_id,
+        { method: "DELETE" }
+      );
+      setDeleteCostTarget(null);
+      fetchCosts();
+    } catch (e) {
+      alert(e?.message || 'Error al eliminar la línea de costo');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const grouped = useMemo(() => {
     const byTrf = new Map();
     for (const r of rows) {
@@ -1323,10 +1685,8 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
           transferencia_id:      r.transferencia_id,
           transferencia_codigo:  r.transferencia_codigo,
           transferencia_fecha:   r.transferencia_fecha,
-          // Sprint 2026-06-02 · costos de recepción (no transferencia) →
-          // no enlazan a un detalle de transferencia.
           is_reception:          !!r.is_reception,
-          costs:                 new Map(),     // cost_line_id → { meta, byExp:Map }
+          costs:                 new Map(),
         });
       }
       const trf = byTrf.get(tk);
@@ -1342,7 +1702,7 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
           fx_to_usd:      r.fx_to_usd,
           amount_usd:     r.amount_usd,
           source:         r.source,
-          byExp:          new Map(),    // expediente_id → { codigo, lines:[] }
+          byExp:          new Map(),
         });
       }
       const cost = trf.costs.get(ck);
@@ -1351,9 +1711,6 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
         cost.byExp.set(ek, {
           expediente_id:     r.expediente_id,
           expediente_codigo: r.expediente_codigo,
-          // Sprint 2026-05-17 · proforma_codigo agregado por el backend
-          // (LEFT JOIN LATERAL a expedientes.documento kind=PROFORMA).
-          // Se muestra con fallback al EXP code en el render.
           proforma_codigo:   r.proforma_codigo,
           lines:             [],
         });
@@ -1375,12 +1732,6 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
     }));
   }, [rows]);
 
-  // Sprint 2026-05-17 fix · El backend devuelve UNA fila por
-  // (cost_line × expediente × producto × talla), por lo que un mismo
-  // cost_line de $1 aplicado a 10 lineas aparece 10 veces. Sumar crudo
-  // multiplica el costo (1 × 10 = $10 fantasma). Dedupar por
-  // cost_line_id antes de sumar — el monto real de un cost_line es
-  // unico, independiente de cuantas lineas toque su scope.
   const totalUsd = useMemo(() => {
     const seen = new Set();
     let total = 0;
@@ -1405,15 +1756,28 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
               : 'Costs recorded in transfers that arrived at this node, broken down by expediente and product.'}
           </div>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div className="micro" style={{ color: 'var(--text-tertiary)', letterSpacing: 0.5 }}>
-            {lang === 'es' ? 'TOTAL USD' : 'TOTAL USD'}
-          </div>
-          <div className="tabular-nums" style={{
-            fontSize: 20, fontWeight: 700,
-            color: 'var(--brand-accent, #0E8A6D)',
-          }}>
-            ${totalUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+        <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: 16 }}>
+          {!isClient && (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => setShowAddModal(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <IconPlus size={14} />
+              {lang === 'es' ? 'Agregar costo' : 'Add cost'}
+            </button>
+          )}
+          <div>
+            <div className="micro" style={{ color: 'var(--text-tertiary)', letterSpacing: 0.5 }}>
+              {lang === 'es' ? 'TOTAL USD' : 'TOTAL USD'}
+            </div>
+            <div className="tabular-nums" style={{
+              fontSize: 20, fontWeight: 700,
+              color: 'var(--brand-accent, #0E8A6D)',
+            }}>
+              ${totalUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+            </div>
           </div>
         </div>
       </div>
@@ -1438,7 +1802,6 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
                    border: '1px solid var(--border-subtle)',
                    borderRadius: 10, overflow: 'hidden',
                  }}>
-              {/* Header del grupo · clickable solo si es transferencia */}
               <button type="button"
                       onClick={() => { if (!trf.is_reception) navigate(`/transferencias/${trf.transferencia_id}`); }}
                       style={{
@@ -1479,11 +1842,9 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
                 )}
               </button>
 
-              {/* Por cada cost-line de el movimiento */}
               {trf.costs.map((cost) => (
                 <div key={cost.cost_line_id}
                      style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                  {/* Sub-header del costo */}
                   <div style={{
                     padding: '8px 14px',
                     background: 'var(--surface, white)',
@@ -1522,7 +1883,6 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
                             { maximumFractionDigits: 2 })} {cost.currency})
                         </span>
                       </div>
-                      {/* Sprint Pagos Transfers — botón "Pagar este costo" (solo staff) */}
                       {!isClient && onPayCost && (
                         <button
                           type="button"
@@ -1543,24 +1903,36 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
                           {lang === 'es' ? 'Pagar este costo' : 'Pay this cost'}
                         </button>
                       )}
+                      {!isClient && (
+                        <button
+                          type="button"
+                          className="btn btn-outline-danger btn-sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteCostTarget({
+                              cost_line_id: cost.cost_line_id,
+                              transferencia_id: trf.transferencia_id,
+                              label: cost.label || cost.kind_label || cost.kind,
+                            });
+                          }}
+                          style={{ padding: '4px 8px', flexShrink: 0 }}
+                          title={lang === 'es' ? 'Eliminar costo' : 'Delete cost'}
+                        >
+                          <IconTrash size={13} />
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  {/* Sprint 2026-05-14 · Fase 13.1 — Lista colapsable por
-                      expediente. Por defecto solo se ve el código; click
-                      en la fila despliega los productos. */}
                   <div>
                     {cost.byExp.map((exp) => {
                       const key   = `${cost.cost_line_id}::${exp.expediente_id}`;
                       const open  = !!expanded[key];
-                      // Sprint 2026-07-30 (CEO) · productos = SKUs distintos,
-                      // no filas (varias tallas del mismo SKU = 1).
                       const nProd = new Set(exp.lines.map((ln) => String(ln.sku || ln.producto_id))).size;
                       const qTot  = exp.lines.reduce((a, ln) => a + Number(ln.qty || 0), 0);
                       return (
                         <div key={exp.expediente_id}
                              style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                          {/* Fila plegable */}
                           <button type="button"
                                   onClick={() => toggleExp(key)}
                                   style={{
@@ -1596,7 +1968,6 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
                             <span className="mono-sm" style={{
                               fontWeight: 700, color: 'var(--brand-primary)',
                             }}>
-                              {/* Sprint 2026-05-17 · proforma con fallback al EXP code. */}
                               {exp.proforma_codigo || exp.expediente_codigo || '—'}
                             </span>
                             <span className="caption" style={{
@@ -1614,7 +1985,6 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
                             </span>
                           </button>
 
-                          {/* Contenido desplegado */}
                           {open && (
                             <div style={{
                               borderTop: '1px solid var(--border-subtle)',
@@ -1660,6 +2030,31 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
             </div>
           ))}
         </div>
+      )}
+
+      {showAddModal && (
+        <AddNodeCostModal
+          open={showAddModal}
+          onClose={() => setShowAddModal(false)}
+          onSaved={fetchCosts}
+          nodeId={nodeId}
+          lang={lang}
+          existingRows={rows}
+        />
+      )}
+
+      {deleteCostTarget && (
+        <ConfirmModal
+          open={true}
+          title={lang === 'es' ? 'Eliminar costo' : 'Delete cost'}
+          message={lang === 'es'
+            ? `¿Estás seguro de eliminar el costo "${deleteCostTarget.label}" de esta recepción?`
+            : `Are you sure you want to delete the cost "${deleteCostTarget.label}"?`}
+          confirmLabel={deleting ? (lang === 'es' ? 'Eliminando…' : 'Deleting…') : (lang === 'es' ? 'Sí, eliminar' : 'Yes, delete')}
+          confirmVariant="danger"
+          onConfirm={confirmDeleteCost}
+          onCancel={() => setDeleteCostTarget(null)}
+        />
       )}
     </div>
   );
