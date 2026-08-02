@@ -171,7 +171,10 @@ export default function ClientDashboard({ lang = "es" }) {
           const def = widgetById(entry.id);
           const isCustom = entry.id.startsWith("custom:");
           if (!def && !isCustom) return null; // layout viejo con id desconocido
-          if (!entry.visible && !customizing) return null;
+          // Sprint 2026-08-02 rev2 · los ocultos NO se renderizan (ni
+          // atenuados en modo editar): salen de la vista y vuelven al
+          // catálogo del modal "Agregar gráfica".
+          if (!entry.visible) return null;
           const span = SPAN[isCustom ? "md" : def.size] || 12;
           const body = isCustom
             ? <CustomChart config={entry.config} enriched={enriched} lang={lang}/>
@@ -180,7 +183,6 @@ export default function ClientDashboard({ lang = "es" }) {
           return (
             <div key={entry.id} style={{
               gridColumn: `span ${span}`, position: "relative", minWidth: 0,
-              opacity: entry.visible ? 1 : 0.45,
               outline: customizing ? "1.5px dashed var(--border-strong, #CBD5E1)" : "none",
               outlineOffset: 3, borderRadius: 12,
             }}>
