@@ -497,7 +497,10 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onOpenOC, onD
   // Sprint 2026-08-02 (CEO) · logo en la esquina superior derecha:
   // prioriza el logo del OPERADOR del pedido; si no tiene, cae al del
   // cliente final. Ambos se hidratan en load() desde /api/clientes/<id>.
-  const cardLogo = logoSrc(exp.operator_logo) || logoSrc(exp.client_logo);
+  // rev2: solo staff (ADMIN/CEO) — el cliente B2B no ve logos en la card.
+  const cardLogo = !isClient
+    ? (logoSrc(exp.operator_logo) || logoSrc(exp.client_logo))
+    : null;
 
   return (
     <div

@@ -1078,9 +1078,9 @@ export default function ScreenExpedientes() {
               <th>{tr(lang,'client')}</th>
               {/* Sprint 2026-08-02 · OPERADOR: operating_company_id
                   hidratado desde /api/clientes/<id> (mismo batch que el
-                  cliente). Visible para todos los roles — el kanban ya
-                  muestra esta fila sin restricción. */}
-              <th>{tr(lang,'operator')}</th>
+                  cliente). rev2: SOLO staff — el cliente B2B no ve esta
+                  columna (ni en la tabla ni los logos del kanban). */}
+              {!isClient && <th>{tr(lang,'operator')}</th>}
               {/* Columna MARCA quitada — el wizard simplificado no asigna
                   marca en el create, y para el listado el cliente tiene
                   más prioridad informativa que la marca por expediente. */}
@@ -1207,15 +1207,18 @@ export default function ScreenExpedientes() {
                       <span style={{ fontWeight: 500 }}>{members[0].client || '—'}</span>
                     </td>
                     {/* Columna OPERADOR (fusión): solo si todos los miembros
-                        comparten el mismo operador; si difieren, "—". */}
-                    <td>
-                      <span style={{ fontWeight: 400 }}>
-                        {(() => {
-                          const ops = Array.from(new Set(members.map(m => m.operator || '')));
-                          return ops.length === 1 && ops[0] ? ops[0] : '—';
-                        })()}
-                      </span>
-                    </td>
+                        comparten el mismo operador; si difieren, "—".
+                        Solo staff (rev2). */}
+                    {!isClient && (
+                      <td>
+                        <span style={{ fontWeight: 400 }}>
+                          {(() => {
+                            const ops = Array.from(new Set(members.map(m => m.operator || '')));
+                            return ops.length === 1 && ops[0] ? ops[0] : '—';
+                          })()}
+                        </span>
+                      </td>
+                    )}
                     <td>
                       <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap' }}>
                         {sts.map(s => <StatusBadge key={s} status={s} lang={lang}/>)}
@@ -1355,10 +1358,12 @@ export default function ScreenExpedientes() {
                         <div className="caption" style={{ marginTop: 2 }}>{e.destination}</div>
                       )}
                     </td>
-                    {/* Columna OPERADOR (Sprint 2026-08-02). */}
-                    <td>
-                      <span style={{fontWeight: 400}}>{e.operator || '—'}</span>
-                    </td>
+                    {/* Columna OPERADOR (Sprint 2026-08-02) — solo staff. */}
+                    {!isClient && (
+                      <td>
+                        <span style={{fontWeight: 400}}>{e.operator || '—'}</span>
+                      </td>
+                    )}
                     {/* Columna MARCA eliminada (header y body). */}
                     <td><StatusBadge status={e.status} lang={lang}/></td>
 
