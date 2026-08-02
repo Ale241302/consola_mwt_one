@@ -509,7 +509,15 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onOpenOC, onD
       data-dragging={dragging}
       data-readonly={!canDrag}
       {...dragProps}
-      onClick={(e) => { if (!dragStartedRef.current && !dragging) onOpen(); }}
+      onClick={(e) => {
+        if (dragStartedRef.current || dragging) return;
+        // Sprint 2026-08-02 (CEO) · el click en CUALQUIER parte de la card
+        // abre la vista de la OC (/expedientes/:ocId), igual que la fila de
+        // la tabla y el click en el código PF/PO. Solo si el expediente no
+        // tiene OC vinculada caemos al detalle individual del expediente.
+        if (exp.oc_id && onOpenOC) onOpenOC(exp.oc_id);
+        else onOpen();
+      }}
     >
       {/* Drag handle hint — solo visible en ADMIN */}
       {canDrag && (
