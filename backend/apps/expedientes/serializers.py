@@ -627,21 +627,50 @@ class ExpedienteSerializer(serializers.ModelSerializer):
             with _conn.cursor() as c:
                 c.execute("""
                     SELECT COALESCE(SUM(
-                        COALESCE(NULLIF(bai.data->>'field-0118','')::numeric, 0)
+                        CASE 
+                            WHEN art_total.total_art_val > 0 THEN
+                                ROUND((exp_art.exp_art_val / art_total.total_art_val) * art_total.field_0118, 2)
+                            ELSE exp_art.exp_art_val
+                        END
                     ), 0)
-                    FROM nodos.builder_artifact_instance bai
-                    WHERE bai.template_id = 13
-                      AND bai.is_active   = TRUE
-                      AND EXISTS (
-                          SELECT 1
-                          FROM nodos.builder_artifact_line bal
-                          WHERE bal.builder_artifact_instance_id = bai.id
-                            AND bal.expediente_id = %s::uuid
-                            AND bal.is_active = TRUE
-                      )
+                    FROM (
+                        SELECT bai.id AS instance_id,
+                               COALESCE(NULLIF(bai.data->>'field-0118','')::numeric, 0) AS field_0118,
+                               COALESCE(SUM(bal.qty * COALESCE(l.unit_price_client, l.unit_price, 0)), 0) AS total_art_val
+                        FROM nodos.builder_artifact_instance bai
+                        JOIN nodos.builder_artifact_line bal ON bal.builder_artifact_instance_id = bai.id AND bal.is_active = TRUE
+                        LEFT JOIN expedientes.linea l ON l.expediente_id = bal.expediente_id 
+                                                     AND l.producto_id = bal.producto_id 
+                                                     AND l.size = bal.talla 
+                                                     AND l.is_active = TRUE
+                        WHERE bai.template_id = 13 AND bai.is_active = TRUE
+                        GROUP BY bai.id, bai.data
+                    ) art_total
+                    JOIN (
+                        SELECT bai.id AS instance_id,
+                               COALESCE(SUM(bal.qty * COALESCE(l.unit_price_client, l.unit_price, 0)), 0) AS exp_art_val
+                        FROM nodos.builder_artifact_instance bai
+                        JOIN nodos.builder_artifact_line bal ON bal.builder_artifact_instance_id = bai.id AND bal.is_active = TRUE
+                        LEFT JOIN expedientes.linea l ON l.expediente_id = bal.expediente_id 
+                                                     AND l.producto_id = bal.producto_id 
+                                                     AND l.size = bal.talla 
+                                                     AND l.is_active = TRUE
+                        WHERE bai.template_id = 13 AND bai.is_active = TRUE AND bal.expediente_id = %s::uuid
+                        GROUP BY bai.id
+                    ) exp_art ON exp_art.instance_id = art_total.instance_id;
                 """, [eid])
                 r = c.fetchone()
-                return float(r[0] or 0) if r else 0
+                val = float(r[0] or 0) if r else 0
+                if val > 0:
+                    return val
+
+                c.execute("""
+                    SELECT COALESCE(SUM(qty * COALESCE(unit_price_client, unit_price, 0)), 0)
+                    FROM expedientes.linea
+                    WHERE expediente_id = %s::uuid AND is_active = TRUE;
+                """, [eid])
+                r2 = c.fetchone()
+                return float(r2[0] or 0) if r2 else 0
         except Exception:  # noqa: BLE001
             return float(getattr(obj, "total_invoiced", 0) or 0)
 

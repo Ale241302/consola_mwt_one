@@ -1821,20 +1821,30 @@ function PaymentsTab({
   // metodo, referencia, monto_usd, moneda}. El hero mock conserva
   // {date, method, ref, applied_to, amount, status} para no romper la demo.
   const isReal = !isHero;
-  // Sprint 2026-05-26 (CEO) - vista cliente: el "Total facturado" NO
-  // debe mostrar el valor del ART-13 (factura interna MWT, $10,224).
-  // En cambio, calcular SUM(qty * unit_price_client) de las lineas
-  // ($12,071) que es el monto real que el cliente B2B ve facturado.
-  // Admin sigue viendo el valor del ART-13 (exp.total_invoiced).
-  const clientInvoiced = (Array.isArray(lines) ? lines : []).reduce(
-    (acc, l) => acc + Number(l?.qty || 0) * Number(l?.unit_price_client || 0),
+
+  const clientInvoicedFromLines = (Array.isArray(lines) ? lines : []).reduce(
+    (acc, l) => acc + Number(l?.qty || 0) * Number(l?.unit_price_client || l?.unit_price || 0),
     0,
   );
-  const effectiveInvoiced = isClient ? clientInvoiced : Number(exp?.total_invoiced || 0);
+  const mwtInvoicedFromLines = (Array.isArray(lines) ? lines : []).reduce(
+    (acc, l) => acc + Number(l?.qty || 0) * Number(l?.unit_price_mwt || l?.unit_price_client || l?.unit_price || 0),
+    0,
+  );
+
+  const effectiveClientInvoiced = clientInvoicedFromLines > 0
+    ? clientInvoicedFromLines
+    : Number(exp?.total_invoiced || 0);
+
+  const effectiveMwtInvoiced = mwtInvoicedFromLines > 0
+    ? mwtInvoicedFromLines
+    : (Number(exp?.total_invoiced || 0) || clientInvoicedFromLines);
+
+  const isMwt = isMwtOperated(exp?.operating_company_id);
+  const showMwtTotal = isMwt && !isClient;
+
+  const effectiveInvoiced = isClient ? effectiveClientInvoiced : effectiveClientInvoiced;
   const effectivePaid     = Number(exp?.total_paid || 0);
-  const effectiveBalance  = isClient
-    ? Math.max(0, clientInvoiced - effectivePaid)
-    : Number(exp?.balance || 0);
+  const effectiveBalance  = Math.max(0, effectiveInvoiced - effectivePaid);
   const effectivePct = effectiveInvoiced > 0
     ? (effectivePaid / effectiveInvoiced) * 100
     : 0;
@@ -1849,8 +1859,17 @@ function PaymentsTab({
           </span>
         </div>
         <Progress value={effectivePct} variant="success"/>
-        <div className="grid col-3 gap-4 mt-6">
-          <KV label={tr(lang,'total_invoiced_lbl')} value={fmtMoney(effectiveInvoiced)}/>
+        <div className={`grid ${showMwtTotal ? 'col-4' : 'col-3'} gap-4 mt-6`}>
+          <KV
+            label={lang === 'es' ? (showMwtTotal ? 'TOTAL FACTURADO (CLIENTE)' : 'TOTAL FACTURADO') : (showMwtTotal ? 'TOTAL INVOICED (CLIENT)' : 'TOTAL INVOICED')}
+            value={fmtMoney(effectiveClientInvoiced)}
+          />
+          {showMwtTotal && (
+            <KV
+              label={lang === 'es' ? 'TOTAL MUITO WORK LIMITADA' : 'TOTAL MUITO WORK LIMITADA'}
+              value={fmtMoney(effectiveMwtInvoiced)}
+            />
+          )}
           <KV label={tr(lang,'paid_lbl')} value={fmtMoney(effectivePaid)} good/>
           <KV label={tr(lang,'balance')} value={fmtMoney(effectiveBalance)} warning/>
         </div>
