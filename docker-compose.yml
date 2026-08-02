@@ -132,6 +132,8 @@ services:
       - "8100:8000"
     networks:
       - consola-net
+      - mwt_default   # red del stack `mwt` (MinIO, Paperless…). Sin ella,
+                      # MINIO_ENDPOINT=http://mwt-minio:9000 no resuelve (502 en /api/storage/*).
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/auth/login/", "-X", "OPTIONS"]
       interval: 20s
@@ -175,6 +177,7 @@ services:
         --hostname=worker@%h
     networks:
       - consola-net
+      - mwt_default   # el worker descarga adjuntos de MinIO (emails, OCR)
     healthcheck:
       # `celery inspect ping` devuelve "pong" si el worker está vivo.
       test: ["CMD-SHELL", "celery -A config inspect ping -d worker@$$HOSTNAME || exit 1"]
@@ -279,3 +282,7 @@ networks:
   consola-net:
     name: consola-mwt-one-net
     driver: bridge
+  # Red externa del stack `mwt` (mwt-minio, mwt-paperless…). Debe existir
+  # antes del `up` (en el VPS ya existe; en dev: docker network create mwt_default).
+  mwt_default:
+    external: true
