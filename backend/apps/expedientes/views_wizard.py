@@ -473,7 +473,11 @@ def _idempotence_replay(token: str) -> Optional[dict]:
 # ═════════════════════════════════════════════════════════════════════
 def _fetch_products_info(producto_ids: list) -> dict:
     """Por producto_id: sku, nombre, marca_id y visibilidad (visible_to_all +
-    client_overrides). Una sola query (sin N+1)."""
+    client_overrides). Una sola query (sin N+1).
+
+    Sprint 2026-08-02: también `client_prices` (overrides manuales del
+    form de producto) — fallback de precio cuando el SKU no tiene fila en
+    pricing.marluvas_client_sku_pricing."""
     out = {}
     pids = [str(p) for p in producto_ids if p]
     if not pids:
@@ -485,28 +489,57 @@ def _fetch_products_info(producto_ids: list) -> dict:
                 SELECT id::text, sku, COALESCE(nombre, ''),
                        marca_id::text,
                        COALESCE(especificaciones->'visibility'->>'visible_to_all','false'),
-                       COALESCE(especificaciones->'visibility'->'client_overrides','{}'::jsonb)
+                       COALESCE(especificaciones->'visibility'->'client_overrides','{}'::jsonb),
+                       COALESCE(especificaciones->'client_prices','{}'::jsonb)
                   FROM productos.producto
                  WHERE id = ANY(%s::uuid[]) AND COALESCE(is_active, TRUE) = TRUE
                 """,
                 [pids],
             )
-            for pid, sku, nombre, marca_id, vta, overrides in c.fetchall():
+            for pid, sku, nombre, marca_id, vta, overrides, client_prices in c.fetchall():
                 if isinstance(overrides, str):
                     try:
                         overrides = json.loads(overrides)
                     except (ValueError, TypeError):
                         overrides = {}
+                if isinstance(client_prices, str):
+                    try:
+                        client_prices = json.loads(client_prices)
+                    except (ValueError, TypeError):
+                        client_prices = {}
                 out[pid] = {
                     "sku":            sku,
                     "nombre":         nombre,
                     "marca_id":       marca_id,
                     "visible_to_all": str(vta).lower() == "true",
                     "overrides":      overrides or {},
+                    "client_prices":  client_prices or {},
                 }
     except Exception as e:  # noqa: BLE001
         log.warning("_fetch_products_info best-effort falló: %s", e)
     return out
+
+
+def _price_from_client_prices(client_prices: dict, client_id) -> Optional[float]:
+    """Precio manual por cliente (especificaciones.client_prices del
+    producto). Keys case-insensitive; devuelve None si no hay o es <= 0.
+
+    Sprint 2026-08-02 · fallback cuando el motor canónico
+    (pricing.marluvas_client_sku_pricing) no tiene fila para el SKU:
+    sin esto, un producto con precio asignado SOLO vía override del form
+    de producto aparecía en el wizard B2B como "Solicitar asignación"."""
+    if not client_prices or not client_id:
+        return None
+    cid = str(client_id).lower()
+    for k, v in client_prices.items():
+        if str(k).lower() != cid:
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if f > 0 else None
+    return None
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -573,6 +606,14 @@ def resolve_oc_preview(request):
                         matrix_cache[sku] = None
                 price = pick_plazo_price(matrix_cache.get(sku), 90)
                 unit_price = float(price) if price else None
+            # Sprint 2026-08-02 · fallback: precio manual por cliente
+            # (especificaciones.client_prices) cuando el SKU no tiene fila
+            # en la matriz Marluvas. Sin esto la línea salía como
+            # "Solicitar asignación" aunque el producto SÍ tenía precio
+            # asignado para el cliente (badge "ASIGNADO" del buscador).
+            if assigned and unit_price is None:
+                unit_price = _price_from_client_prices(
+                    info.get("client_prices"), client_id)
 
         try:
             qty = float(l.get("qty") if l.get("qty") is not None else l.get("cantidad") or 0)
@@ -1216,6 +1257,26 @@ def create_from_oc(request):
                 # (matrix_client por sku, matrix_mwt por sku) para evitar N+1.
                 _sku_cache_client = {}
                 _sku_cache_mwt    = {}
+                # Sprint 2026-08-02 · cache de client_prices por producto
+                # (fallback cuando el SKU no tiene fila en la matriz).
+                _cp_cache = {}
+                def _client_prices_of(pid):
+                    key = str(pid)
+                    if key not in _cp_cache:
+                        _cp_cache[key] = {}
+                        try:
+                            with connection.cursor() as _c:
+                                _c.execute(
+                                    "SELECT COALESCE(especificaciones->'client_prices','{}'::jsonb) "
+                                    "FROM productos.producto WHERE id = %s::uuid",
+                                    [key],
+                                )
+                                _r = _c.fetchone()
+                            if _r:
+                                _cp_cache[key] = _r[0] if isinstance(_r[0], dict) else json.loads(_r[0] or "{}")
+                        except Exception as _e:
+                            log.warning("[wizard.create] client_prices lookup falló pid=%s: %s", key, _e)
+                    return _cp_cache[key]
                 for ln in ocr_lines:
                     _sku = (ln.get("sku") or "").strip()
                     _pid = ln.get("producto_id")
@@ -1252,6 +1313,12 @@ def create_from_oc(request):
                             log.warning("[wizard.create] matrix cliente falló sku=%s: %s", _sku, _e)
                             _sku_cache_client[_sku] = None
                     _price_client = _pick_plazo_price(_sku_cache_client.get(_sku), _cd_client)
+                    # Sprint 2026-08-02 · fallback al precio manual por
+                    # cliente (especificaciones.client_prices) si la
+                    # matriz Marluvas no tiene fila para este SKU.
+                    if _price_client is None:
+                        _price_client = _price_from_client_prices(
+                            _client_prices_of(_pid), client_id)
                     if _price_client is not None:
                         ln["unit_price_client"] = str(_price_client)
 
@@ -1267,6 +1334,11 @@ def create_from_oc(request):
                                 log.warning("[wizard.create] matrix MWT falló sku=%s: %s", _sku, _e)
                                 _sku_cache_mwt[_sku] = None
                         _price_mwt = _pick_plazo_price(_sku_cache_mwt.get(_sku), _cd_mwt)
+                        # Sprint 2026-08-02 · mismo fallback para el precio
+                        # del operador (override manual del producto).
+                        if _price_mwt is None:
+                            _price_mwt = _price_from_client_prices(
+                                _client_prices_of(_pid), MWT_OPERATING_CLIENT_ID)
                         if _price_mwt is not None:
                             ln["unit_price_mwt"] = str(_price_mwt)
                     else:
