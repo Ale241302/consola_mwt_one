@@ -1326,13 +1326,13 @@ function ScopeCell({ scope, lang, onOpen }) {
   }
   return (
     <button type="button" onClick={onOpen}
-            title={lang === "es" ? "Configurar alcance del costo" : "Set cost scope"}
+            title={lang === "es" ? "Haz clic para seleccionar a qué expedientes y productos aplica este costo" : "Click to select target expedientes and products"}
             style={{
               padding: "4px 10px", borderRadius: 999,
               border: restricted
                 ? "1.5px solid var(--brand-accent, #0E8A6D)"
                 : "1px solid var(--border-subtle)",
-              background: restricted ? "rgba(14,138,109,0.10)" : "var(--surface, white)",
+              background: restricted ? "rgba(14,138,109,0.12)" : "var(--surface, white)",
               color: restricted ? "var(--brand-accent, #0E8A6D)" : "var(--text-secondary)",
               fontSize: 11, fontWeight: 700, cursor: "pointer",
             }}>
@@ -1391,39 +1391,39 @@ function AddNodeCostModal({ open, onClose, onSaved, nodeId, lang, existingRows =
       setSelectedTrfId(trfOptions[0].id);
     }
 
-    nodoAssignmentsApi.lineasEnNodo({ nodoId: nodeId })
-      .then((data) => {
-        if (cancel) return;
-        const arr = Array.isArray(data) ? data : (data?.results || []);
-        if (arr.length > 0) {
-          const norm = arr.map(it => ({
-            expediente_id: it.expediente_id || "",
-            expediente_codigo: it.proforma_codigo
-              ? `${it.proforma_codigo} (${it.expediente_codigo || 'EXP'})`
-              : (it.expediente_codigo || '—'),
-            producto_id: it.producto_id,
-            sku: it.sku || '—',
-            nombre: it.nombre || '—',
-            talla: it.talla || '',
-            qty: Number(it.qty_disponible || it.qty || 0),
-          }));
-          setItemsAtNode(norm);
-        } else {
-          const norm = existingRows.map(r => ({
-            expediente_id: r.expediente_id || "",
-            expediente_codigo: r.proforma_codigo || r.expediente_codigo || '—',
-            producto_id: r.producto_id,
-            sku: r.sku || '—',
-            nombre: r.nombre || '—',
-            talla: r.talla || '',
-            qty: Number(r.qty || 0),
-          }));
-          setItemsAtNode(norm);
-        }
-      })
-      .catch(() => {
-        if (cancel) return;
-        const norm = existingRows.map(r => ({
+    const pLines = nodoAssignmentsApi.lineasEnNodo({ nodoId: nodeId }).catch(() => []);
+    const pExp = nodoAssignmentsApi.expedientesAsignados(nodeId).catch(() => []);
+
+    Promise.all([pLines, pExp]).then(([dataLines, dataExp]) => {
+      if (cancel) return;
+      const arrLines = Array.isArray(dataLines) ? dataLines : (dataLines?.results || []);
+      const arrExp = Array.isArray(dataExp) ? dataExp : (dataExp?.results || []);
+
+      let norm = [];
+      if (arrLines.length > 0) {
+        norm = arrLines.map(it => ({
+          expediente_id: it.expediente_id || "",
+          expediente_codigo: it.proforma_codigo
+            ? `${it.proforma_codigo} (${it.expediente_codigo || 'EXP'})`
+            : (it.expediente_codigo || '—'),
+          producto_id: it.producto_id,
+          sku: it.sku || '—',
+          nombre: it.nombre || '—',
+          talla: it.talla || '',
+          qty: Number(it.qty_disponible || it.qty || 0),
+        }));
+      } else if (arrExp.length > 0) {
+        norm = arrExp.map(e => ({
+          expediente_id: e.expediente_id || e.id || "",
+          expediente_codigo: e.proforma_codigo || e.expediente_codigo || 'EXP',
+          producto_id: e.producto_id || `prod-${e.expediente_id || e.id}`,
+          sku: e.expediente_sap || e.sku || '—',
+          nombre: e.client_nombre || e.nombre || 'Expediente',
+          talla: '',
+          qty: Number(e.qty_total_asignada || 1),
+        }));
+      } else if (existingRows.length > 0) {
+        norm = existingRows.map(r => ({
           expediente_id: r.expediente_id || "",
           expediente_codigo: r.proforma_codigo || r.expediente_codigo || '—',
           producto_id: r.producto_id,
@@ -1432,8 +1432,10 @@ function AddNodeCostModal({ open, onClose, onSaved, nodeId, lang, existingRows =
           talla: r.talla || '',
           qty: Number(r.qty || 0),
         }));
-        setItemsAtNode(norm);
-      });
+      }
+
+      setItemsAtNode(norm);
+    });
 
     return () => { cancel = true; };
   }, [open, nodeId, trfOptions, existingRows]);
@@ -1476,11 +1478,7 @@ function AddNodeCostModal({ open, onClose, onSaved, nodeId, lang, existingRows =
   const activeCostLineForModal = costLines.find(c => c.tmpId === scopeOpenFor);
 
   const handleSaveAll = async () => {
-    const trfId = selectedTrfId || trfOptions[0]?.id;
-    if (!trfId) {
-      setError(lang === 'es' ? 'No hay movimiento asignado a este nodo' : 'No movement assigned to this node');
-      return;
-    }
+    let trfId = selectedTrfId || trfOptions[0]?.id;
 
     const validLines = costLines.filter(c => Number(c.amount) > 0);
     if (validLines.length === 0) {
@@ -1490,6 +1488,32 @@ function AddNodeCostModal({ open, onClose, onSaved, nodeId, lang, existingRows =
 
     setSaving(true);
     setError(null);
+
+    if (!trfId) {
+      try {
+        const newTrf = await transferenciasApi.create({
+          destino_id: nodeId,
+          tipo: "RECEPCION",
+          estado: "EN_DESTINO",
+          notas: "Recepción de costos operativos en nodo",
+        });
+        trfId = newTrf?.id;
+      } catch (createErr) {
+        try {
+          const trfList = await transferenciasApi.list({ destino_id: nodeId });
+          const results = Array.isArray(trfList) ? trfList : (trfList?.results || []);
+          if (results.length > 0) {
+            trfId = results[0].id;
+          }
+        } catch {}
+      }
+    }
+
+    if (!trfId) {
+      setError(lang === 'es' ? 'No se pudo vincular la recepción en este nodo' : 'Could not link reception at this node');
+      setSaving(false);
+      return;
+    }
 
     try {
       for (const line of validLines) {
@@ -1547,6 +1571,12 @@ function AddNodeCostModal({ open, onClose, onSaved, nodeId, lang, existingRows =
             {error}
           </div>
         )}
+
+        <div className="caption mb-3" style={{ background: '#F0F9FF', color: '#0369A1', padding: '8px 12px', borderRadius: 8, border: '1px solid #BAE6FD', fontSize: 12 }}>
+          {lang === 'es'
+            ? '💡 Haz clic en la columna APLICAR A (botón "Todo" / "N exp.") para seleccionar a qué expedientes y productos aplica cada costo.'
+            : '💡 Click on the APLICAR A column ("Todo" / "N exp.") to select which expedientes and products each cost applies to.'}
+        </div>
 
         {trfOptions.length > 1 && (
           <div className="mb-4">
