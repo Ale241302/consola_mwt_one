@@ -222,6 +222,7 @@ export default function AdminDashboard({
           return (
             <div key={entry.id} style={{
               gridColumn: `span ${span}`, position: "relative", minWidth: 0,
+              display: "flex", flexDirection: "column", height: "100%",
               outline: customizing ? "1.5px dashed var(--border-strong, #CBD5E1)" : "none",
               outlineOffset: 3, borderRadius: 12,
             }}>

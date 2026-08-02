@@ -183,67 +183,75 @@ export function KpiCard({
         // Reset de algunos resets de <button>
         font: "inherit",
         color: "inherit",
+        height: "100%",
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        boxSizing: "border-box",
       }}
       aria-label={label}
     >
-      <div className="stat-label">{label}</div>
-      {isEmpty ? (
-        <div style={{ marginTop: 8 }}>
-          <EmptyState
-            compact
-            lang={lang}
-            title={lang === "es" ? "Sin datos" : "No data"}
-            hint={emptyHint || (lang === "es"
-              ? "El backend aún no entrega esta métrica."
-              : "Backend does not deliver this metric yet.")}
-            endpoint={emptyEndpoint}
-          />
-        </div>
-      ) : (
-        <>
-          <div className="stat-row">
-            <div className="stat-value tabular">{valueFmt(value)}</div>
-            {delta && delta.dir && delta.dir !== "flat" && (
-              <span className={`stat-delta ${delta.dir === "up" ? "up" : "down"}`}>
-                {delta.label
-                  ? delta.label
-                  : (delta.pct != null
-                      ? `${delta.pct > 0 ? "+" : ""}${delta.pct.toFixed(1)}%`
-                      : delta.abs != null
-                        ? `${delta.abs > 0 ? "+" : ""}${delta.abs}`
-                        : "")}
-              </span>
-            )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+        <div className="stat-label">{label}</div>
+        {isEmpty ? (
+          <div style={{ marginTop: 4 }}>
+            <EmptyState
+              compact
+              lang={lang}
+              title={lang === "es" ? "Sin datos" : "No data"}
+              hint={emptyHint || (lang === "es"
+                ? "El backend aún no entrega esta métrica."
+                : "Backend does not deliver this metric yet.")}
+              endpoint={emptyEndpoint}
+            />
           </div>
-          {sub && <div className="stat-sub">{sub}</div>}
-          {/* Equivalente en moneda local (regla #4 del prompt CEO).
-              Solo se renderiza si hay tasa FX viva — nunca inventa. */}
-          {secondary && secondary.value != null && (
-            <div
-              className="tabular"
-              title={secondary.source && secondary.fetchedAt
-                ? `${secondary.source} · ${new Date(secondary.fetchedAt).toLocaleString(lang === "es" ? "es-PE" : "en-US")}`
-                : ""}
-              style={{
-                font: "500 12px/1.4 var(--font-mono)",
-                color: "var(--text-tertiary)",
-                marginTop: 2,
-              }}
-            >
-              ≈ {new Intl.NumberFormat(lang === "es" ? "es-PE" : "en-US", {
-                  style: "currency", currency: secondary.currency, maximumFractionDigits: 0,
-                }).format(secondary.value)}
+        ) : (
+          <>
+            <div className="stat-row">
+              <div className="stat-value tabular">{valueFmt(value)}</div>
+              {delta && delta.dir && delta.dir !== "flat" && (
+                <span className={`stat-delta ${delta.dir === "up" ? "up" : "down"}`}>
+                  {delta.label
+                    ? delta.label
+                    : (delta.pct != null
+                        ? `${delta.pct > 0 ? "+" : ""}${delta.pct.toFixed(1)}%`
+                        : delta.abs != null
+                          ? `${delta.abs > 0 ? "+" : ""}${delta.abs}`
+                          : "")}
+                </span>
+              )}
             </div>
-          )}
-          <div className="stat-spark" style={{ marginTop: 6 }}>
-            {Array.isArray(spark) && spark.length > 1
-              ? <Sparkline values={spark} color={sparkColor} width={260} height={32} />
-              : <span style={{ font: "var(--caption)", color: "var(--text-tertiary)" }}>
-                  {lang === "es" ? "Sin serie histórica" : "No historical series"}
-                </span>}
-          </div>
-        </>
-      )}
+            {sub && <div className="stat-sub">{sub}</div>}
+            {/* Equivalente en moneda local (regla #4 del prompt CEO).
+                Solo se renderiza si hay tasa FX viva — nunca inventa. */}
+            {secondary && secondary.value != null && (
+              <div
+                className="tabular"
+                title={secondary.source && secondary.fetchedAt
+                  ? `${secondary.source} · ${new Date(secondary.fetchedAt).toLocaleString(lang === "es" ? "es-PE" : "en-US")}`
+                  : ""}
+                style={{
+                  font: "500 12px/1.4 var(--font-mono)",
+                  color: "var(--text-tertiary)",
+                  marginTop: 2,
+                }}
+              >
+                ≈ {new Intl.NumberFormat(lang === "es" ? "es-PE" : "en-US", {
+                    style: "currency", currency: secondary.currency, maximumFractionDigits: 0,
+                  }).format(secondary.value)}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <div className="stat-spark" style={{ marginTop: "auto", paddingTop: 8, width: "100%" }}>
+        {Array.isArray(spark) && spark.length > 1
+          ? <Sparkline values={spark} color={sparkColor} width={260} height={32} />
+          : <span style={{ font: "var(--caption)", color: "var(--text-tertiary)" }}>
+              {lang === "es" ? "Sin serie histórica" : "No historical series"}
+            </span>}
+      </div>
     </button>
   );
 }
