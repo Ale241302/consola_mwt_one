@@ -194,6 +194,10 @@ export default function ScreenNodoDetail() {
   const [nodeRefreshKey, setNodeRefreshKey] = useState(0);
   const bumpRefresh = useCallback(() => setNodeRefreshKey((k) => k + 1), []);
   const [showEdit, setShowEdit] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletingNode, setDeletingNode]       = useState(false);
+  const [deleteNodeErr, setDeleteNodeErr]     = useState(null);
+
   // Sprint Pagos Transfers — wizard de pago para tab Pagos + botones "Pagar".
   const [wizardOpen,          setWizardOpen]          = useState(false);
   const [wizardScope,         setWizardScope]          = useState(null);
@@ -201,6 +205,21 @@ export default function ScreenNodoDetail() {
   const openWizard = (scope) => {
     setWizardScope(scope);
     setWizardOpen(true);
+  };
+
+  const handleDeleteNode = async () => {
+    if (!rawNode?.id || deletingNode) return;
+    setDeletingNode(true);
+    setDeleteNodeErr(null);
+    try {
+      await nodosApi.remove(rawNode.id);
+      setShowDeleteModal(false);
+      navigate("/nodos");
+    } catch (ex) {
+      setDeleteNodeErr(ex?.message || (lang === "es" ? "Error al eliminar el nodo" : "Failed to delete node"));
+    } finally {
+      setDeletingNode(false);
+    }
   };
 
   // ── Fetch real al backend (antes leía NODES de mockData.js,
@@ -404,12 +423,25 @@ export default function ScreenNodoDetail() {
         <span className="caption">/</span>
         <span className="caption">{node.node_id}</span>
         <span style={{flex:1}}/>
-        {/* "Editar" sólo aparece para nodos reales (con _raw del backend);
-            los mock-only no se pueden persistir. */}
+        {/* "Editar" y "Eliminar" sólo aparecen para nodos reales (con _raw del backend) */}
         {node._raw && (
-          <button className="btn btn-secondary btn-sm" onClick={()=>setShowEdit(true)}>
-            {lang==='es'?'Editar':'Edit'}
-          </button>
+          <div className="flex gap-2">
+            <button className="btn btn-secondary btn-sm" onClick={()=>setShowEdit(true)}>
+              {lang==='es'?'Editar':'Edit'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={()=>setShowDeleteModal(true)}
+              style={{
+                background: 'var(--critical-bg, #FEF2F2)',
+                color: 'var(--critical, #DC2626)',
+                border: '1px solid var(--critical-border, #FCA5A5)',
+              }}
+            >
+              {lang==='es'?'Eliminar':'Delete'}
+            </button>
+          </div>
         )}
       </div>
 
@@ -548,6 +580,10 @@ export default function ScreenNodoDetail() {
             raw={node._raw}
             lang={lang}
             onClose={()=>setShowEdit(false)}
+            onDelete={() => {
+              setShowEdit(false);
+              setShowDeleteModal(true);
+            }}
             onSaved={async () => {
               setShowEdit(false);
               await reload();
@@ -555,6 +591,29 @@ export default function ScreenNodoDetail() {
           />
         )}
       </AnimatePresence>
+
+      {/* ── Modal de confirmación para eliminar nodo ───────────── */}
+      {showDeleteModal && createPortal(
+        <ConfirmModal
+          eyebrow={lang === 'es' ? 'ACCIÓN DESTRUCTIVA' : 'DESTRUCTIVE ACTION'}
+          title={lang === 'es' ? '¿Eliminar este nodo?' : 'Delete this node?'}
+          body={
+            lang === 'es' ? (
+              <>¿Estás seguro de que deseas eliminar el nodo <strong>{node.node_id} — {node.name}</strong>? El nodo cambiará a estado inactivo.</>
+            ) : (
+              <>Are you sure you want to delete node <strong>{node.node_id} — {node.name}</strong>? The node will be marked as inactive.</>
+            )
+          }
+          actionLabel={lang === 'es' ? 'Sí, eliminar' : 'Yes, delete'}
+          actionColor="#DC2626"
+          cancelLabel={lang === 'es' ? 'Cancelar' : 'Cancel'}
+          busy={deletingNode}
+          error={deleteNodeErr}
+          onCancel={() => { if (!deletingNode) { setShowDeleteModal(false); setDeleteNodeErr(null); } }}
+          onConfirm={handleDeleteNode}
+        />,
+        document.body
+      )}
     </div>
   );
 }
@@ -1806,7 +1865,7 @@ function AutomationsTab({ autos, lang }) {
 // Edita el nodo via PATCH /api/nodos/{id}/. Usa los catálogos del
 // backend (select_tipos / select_status / select_paises / select_capabilities)
 // para que los <select> reflejen exactamente lo que el BE acepta.
-function EditNodeDrawer({ raw, lang, onClose, onSaved }) {
+function EditNodeDrawer({ raw, lang, onClose, onSaved, onDelete }) {
   // Mantenemos `type_ui` (clave UI: warehouse/factory/...) en el form
   // para alimentar el TYPE_CARDS picker. En submit lo mapeamos al
   // canónico backend (HQ/OFICINA/ALMACEN/HUB).
@@ -2079,16 +2138,33 @@ function EditNodeDrawer({ raw, lang, onClose, onSaved }) {
 
         <div style={{
           padding:'14px 22px', borderTop:'1px solid #EAEEF5',
-          display:'flex', gap:10, justifyContent:'flex-end',
+          display:'flex', gap:10, justifyContent:'space-between', alignItems:'center',
         }}>
-          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
-            {lang==='es'?'Cancelar':'Cancel'}
-          </button>
-          <button
-            type="button" className="btn btn-primary" onClick={submit} disabled={busy}
-          >
-            {busy ? (lang==='es'?'Guardando…':'Saving…') : (lang==='es'?'Guardar cambios':'Save changes')}
-          </button>
+          {onDelete ? (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={onDelete}
+              disabled={busy}
+              style={{
+                background: '#FEF2F2',
+                color: '#DC2626',
+                border: '1px solid #FCA5A5',
+              }}
+            >
+              {lang==='es'?'Eliminar nodo':'Delete node'}
+            </button>
+          ) : <div />}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
+              {lang==='es'?'Cancelar':'Cancel'}
+            </button>
+            <button
+              type="button" className="btn btn-primary" onClick={submit} disabled={busy}
+            >
+              {busy ? (lang==='es'?'Guardando…':'Saving…') : (lang==='es'?'Guardar cambios':'Save changes')}
+            </button>
+          </div>
         </div>
       </motion.aside>
     </>
