@@ -1391,7 +1391,7 @@ function AddNodeCostModal({ open, onClose, onSaved, nodeId, lang, existingRows =
       setSelectedTrfId(trfOptions[0].id);
     }
 
-    nodoAssignmentsApi.lineasEnNodo({ nodoId })
+    nodoAssignmentsApi.lineasEnNodo({ nodoId: nodeId })
       .then((data) => {
         if (cancel) return;
         const arr = Array.isArray(data) ? data : (data?.results || []);
