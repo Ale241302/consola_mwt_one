@@ -407,14 +407,24 @@ TEMPLATES = [
 # --------------------------------------------------------------------
 # Email / SMTP
 # --------------------------------------------------------------------
+# Kill-switch global de correo saliente. EMAIL_ENABLED=false → ningún
+# email sale del sistema (backend dummy de Django, descarta silencioso).
+# Aplica a TODOS los envíos — notificaciones a admins (info@mwt.one),
+# avisos a clientes B2B, password reset, wizards — porque todos pasan
+# por el EMAIL_BACKEND por defecto de Django (EmailMultiAlternatives).
+EMAIL_ENABLED      = os.environ.get("EMAIL_ENABLED", "True").lower() in ("1", "true", "yes")
+
 # Backend canónico (usa SMTP real si EMAIL_HOST_PASSWORD está seteado;
 # si no, cae a console y los mensajes salen en stdout para debug).
-EMAIL_BACKEND      = os.environ.get(
-    "EMAIL_BACKEND",
-    "django.core.mail.backends.smtp.EmailBackend"
-    if os.environ.get("EMAIL_HOST_PASSWORD")
-    else "django.core.mail.backends.console.EmailBackend"
-)
+if not EMAIL_ENABLED:
+    EMAIL_BACKEND  = "django.core.mail.backends.dummy.EmailBackend"
+else:
+    EMAIL_BACKEND  = os.environ.get(
+        "EMAIL_BACKEND",
+        "django.core.mail.backends.smtp.EmailBackend"
+        if os.environ.get("EMAIL_HOST_PASSWORD")
+        else "django.core.mail.backends.console.EmailBackend"
+    )
 EMAIL_HOST         = os.environ.get("EMAIL_HOST",         "mail.mwt.one")
 EMAIL_PORT         = int(os.environ.get("EMAIL_PORT",      "465"))
 EMAIL_USE_SSL      = os.environ.get("EMAIL_USE_SSL", "True").lower() in ("1", "true", "yes")
