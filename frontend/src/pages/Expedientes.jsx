@@ -81,6 +81,10 @@ function mapExpedienteFromApi(r) {
     oc_codigos:       Array.isArray(r.oc_codigos)       ? r.oc_codigos       : [],
     sap_codigos:      Array.isArray(r.sap_codigos)      ? r.sap_codigos      : [],
     client: '', client_country: '', client_id: r.client_id || null,
+    // Sprint 2026-08-02 · Operador (operating_company_id apunta a un
+    // cliente). El nombre se hidrata en load() con el mismo batch de
+    // /api/clientes/<id>; alimenta la columna OPERADOR de la tabla.
+    operator: '', operating_company_id: r.operating_company_id || null,
     brand:  '', brand_id:  r.brand_id  || null,
     status: r.estado || 'REGISTRO',
     credit_days:  Number(r.credit_days) || 0,
@@ -205,9 +209,12 @@ export default function ScreenExpedientes() {
       // Sin esto el listado mostraba "🌐" (CountryFlag con país vacío)
       // y "0d" para los días de crédito porque expedientes.expediente
       // no guarda esos campos — viven en clientes.cliente.
-      const uniqueClientIds = Array.from(new Set(
-        mapped.map(e => e.client_id).filter(Boolean)
-      ));
+      // Sprint 2026-08-02: también operating_company_id (el operador es
+      // un cliente) para alimentar la columna OPERADOR.
+      const uniqueClientIds = Array.from(new Set([
+        ...mapped.map(e => e.client_id).filter(Boolean),
+        ...mapped.map(e => e.operating_company_id).filter(Boolean),
+      ]));
       let clientMap = {};
       if (uniqueClientIds.length > 0) {
         try {
@@ -247,6 +254,13 @@ export default function ScreenExpedientes() {
         const enrichedExp = {
           ...e,
           order_value: orderValue,
+          // Sprint 2026-08-02 · nombre del operador (operating_company_id
+          // es un cliente; se hidrata con el mismo clientMap). Se resuelve
+          // ANTES del early-return de `cli` para no depender del cliente.
+          operator: (() => {
+            const op = e.operating_company_id ? clientMap[e.operating_company_id] : null;
+            return op ? (op.razon_social || op.nombre_comercial || op.nombre || op.codigo || '') : '';
+          })(),
         };
         if (!cli) return enrichedExp;
         return {
@@ -1062,6 +1076,11 @@ export default function ScreenExpedientes() {
               )}
               <th>{tr(lang,'ref')}</th>
               <th>{tr(lang,'client')}</th>
+              {/* Sprint 2026-08-02 · OPERADOR: operating_company_id
+                  hidratado desde /api/clientes/<id> (mismo batch que el
+                  cliente). Visible para todos los roles — el kanban ya
+                  muestra esta fila sin restricción. */}
+              <th>{tr(lang,'operator')}</th>
               {/* Columna MARCA quitada — el wizard simplificado no asigna
                   marca en el create, y para el listado el cliente tiene
                   más prioridad informativa que la marca por expediente. */}
@@ -1186,6 +1205,16 @@ export default function ScreenExpedientes() {
                     </td>
                     <td>
                       <span style={{ fontWeight: 500 }}>{members[0].client || '—'}</span>
+                    </td>
+                    {/* Columna OPERADOR (fusión): solo si todos los miembros
+                        comparten el mismo operador; si difieren, "—". */}
+                    <td>
+                      <span style={{ fontWeight: 400 }}>
+                        {(() => {
+                          const ops = Array.from(new Set(members.map(m => m.operator || '')));
+                          return ops.length === 1 && ops[0] ? ops[0] : '—';
+                        })()}
+                      </span>
                     </td>
                     <td>
                       <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap' }}>
@@ -1325,6 +1354,10 @@ export default function ScreenExpedientes() {
                       {e.destination && (
                         <div className="caption" style={{ marginTop: 2 }}>{e.destination}</div>
                       )}
+                    </td>
+                    {/* Columna OPERADOR (Sprint 2026-08-02). */}
+                    <td>
+                      <span style={{fontWeight: 400}}>{e.operator || '—'}</span>
                     </td>
                     {/* Columna MARCA eliminada (header y body). */}
                     <td><StatusBadge status={e.status} lang={lang}/></td>

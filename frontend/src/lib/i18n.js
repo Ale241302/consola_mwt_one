@@ -20,6 +20,7 @@ export const STRINGS = {
     cash_flow: 'Flujo de caja · últimos 90 días', recent_activity: 'Actividad reciente',
     // Expediente
     ref: 'Ref', client: 'Cliente', brand: 'Marca', status: 'Estado', credit_days: 'Días crédito',
+    operator: 'Operador',
     amount: 'Monto', activity: 'Actividad', blocked_only: 'Solo bloqueados',
     all_brands: 'Todas las marcas', blocked: 'Bloqueado', risk: 'Riesgo', on_time: 'Al día',
     critical: 'Crítico', warning: 'Advertencia',
@@ -218,6 +219,7 @@ export const STRINGS = {
     urgent_actions: 'Urgent actions', brand_breakdown: 'Brand breakdown',
     cash_flow: 'Cash flow · last 90 days', recent_activity: 'Recent activity',
     ref: 'Ref', client: 'Client', brand: 'Brand', status: 'Status', credit_days: 'Credit days',
+    operator: 'Operator',
     amount: 'Amount', activity: 'Activity', blocked_only: 'Blocked only',
     all_brands: 'All brands', blocked: 'Blocked', risk: 'Risk', on_time: 'On time',
     critical: 'Critical', warning: 'Warning',
