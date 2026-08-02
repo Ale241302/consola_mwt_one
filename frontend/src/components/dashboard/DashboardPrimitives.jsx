@@ -113,6 +113,39 @@ export function EmptyState({
 //   { value: number, currency: 'BRL'|'CRC', source: string, fetchedAt: ISO }
 // Si la tasa FX no está disponible, NO se renderiza nada (mandato R1).
 // ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
+// SafeWidget — error boundary funcional por widget.
+// Un widget caído NO debe tumbar la página.
+// Sprint 2026-08-02 · movido desde pages/Dashboard.jsx para compartirlo
+// entre el dashboard CLIENT y el nuevo grid personalizable ADMIN/CEO.
+// ─────────────────────────────────────────────────────────────────────
+export class SafeWidget extends React.Component {
+  constructor(p) { super(p); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) {
+    if (typeof window !== "undefined" && window.MWT_DEBUG) {
+      // eslint-disable-next-line no-console
+      console.error("[Dashboard SafeWidget]", err, info);
+    }
+  }
+  render() {
+    if (this.state.err) {
+      return (
+        <EmptyState
+          lang={this.props.lang}
+          title={this.props.lang === "en" ? "Widget error" : "Error en widget"}
+          hint={String(this.state.err?.message || this.state.err || "")}
+          endpoint={this.props.endpoint}
+        />
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// KpiCard — tarjeta KPI con sparkline, delta y semáforo.
+// ─────────────────────────────────────────────────────────────────────
 export function KpiCard({
   label,
   value,

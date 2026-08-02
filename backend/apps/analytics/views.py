@@ -73,6 +73,33 @@ def _scope_hash(payload) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+def _parse_widget_scope(request):
+    """Sprint 2026-08-02 · scope por widget del dashboard ADMIN/CEO.
+
+    Parsea `?client_id=<uuid>` y `?brand_id=<uuid>`. Son filtros
+    ADICIONALES que solo ESTRECHAN lo que el rol ya puede ver (nunca
+    amplían): se concatenan al WHERE igual que el scope multitenant.
+    Si el caller no es bypass, el scope multitenant existente sigue
+    aplicando (intersección — defense in depth).
+
+    Devuelve (client_id, brand_id, error_response):
+      · client_id / brand_id: str UUID validado o None.
+      · error_response: Response 400 si algún param no es UUID válido.
+    """
+    client_id = (request.query_params.get("client_id") or "").strip() or None
+    brand_id = (request.query_params.get("brand_id") or "").strip() or None
+    for name, val in (("client_id", client_id), ("brand_id", brand_id)):
+        if val is not None:
+            try:
+                uuid.UUID(val)
+            except (ValueError, AttributeError, TypeError):
+                return None, None, Response(
+                    {"detail": f"{name} inválido: se esperaba un UUID"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+    return client_id, brand_id, None
+
+
 def _fetchone(sql, params=None):
     """Ejecuta SELECT que devuelve una fila; si falla, loguea y retorna None.
 
@@ -175,6 +202,25 @@ class AnalyticsViewSet(viewsets.ViewSet):
             return Response(out)
         exp_where = " AND (" + scope_sql + ")" if scope_sql else ""
 
+        # Sprint 2026-08-02 · scope por widget (?client_id / ?brand_id).
+        # Se aplica al query principal de KPIs; brand_id matchea la marca
+        # del expediente o la heredada de su OC (misma regla que
+        # by_status_by_brand, sprint 2026-05-26).
+        client_id, brand_id, scope_err = _parse_widget_scope(request)
+        if scope_err is not None:
+            return scope_err
+        widget_where = ""
+        widget_params = []
+        if client_id:
+            widget_where += " AND client_id = %s"
+            widget_params.append(client_id)
+        if brand_id:
+            widget_where += (
+                " AND (brand_id = %s OR oc_id IN ("
+                "SELECT id FROM expedientes.oc WHERE brand_id = %s))"
+            )
+            widget_params.extend([brand_id, brand_id])
+
         # — KPIs base con CASCADA DE FALLBACKS para margin_pct —
         # Orden de preferencia:
         #   (a) primary:                 projected_margin × total_cost (ponderado)
@@ -189,7 +235,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
               SELECT id, client_id, operating_company_id, total_cost,
                      total_invoiced, total_paid, balance, projected_margin, estado
                 FROM expedientes.expediente
-               WHERE is_active = TRUE{exp_where}
+               WHERE is_active = TRUE{exp_where}{widget_where}
             ),
             agg AS (
               SELECT
@@ -246,7 +292,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
                    END AS margin_source
               FROM agg a CROSS JOIN lineas_agg la
         """
-        r = _fetchone(sql_kpis, scope_params)
+        r = _fetchone(sql_kpis, scope_params + widget_params)
         if r:
             margin_raw = float(r[5] or 0)
             # Clamp: evita -8000% por outliers o factura mal cargada.
@@ -325,8 +371,21 @@ class AnalyticsViewSet(viewsets.ViewSet):
     # ── Cash-flow proyectado vs real por semana ───────────────
     @action(detail=False, methods=["get"])
     def cashflow(self, request):
-        """Últimas 12 semanas: proyectado (vencimientos) vs real (pagos)."""
-        rows = _fetchall("""
+        """Últimas 12 semanas: proyectado (vencimientos) vs real (pagos).
+
+        Sprint 2026-08-02 · `?client_id=` (scope por widget). cobros no
+        tiene dimensión marca: brand_id se valida pero no filtra aquí.
+        """
+        client_id, _brand_id, scope_err = _parse_widget_scope(request)
+        if scope_err is not None:
+            return scope_err
+        proy_where = " AND client_id = %s" if client_id else ""
+        real_where = (
+            " AND cobro_id IN (SELECT id FROM cobros.cobro WHERE client_id = %s)"
+            if client_id else ""
+        )
+        params = [client_id, client_id] if client_id else []
+        rows = _fetchall(f"""
             WITH semanas AS (
               SELECT generate_series(
                 date_trunc('week', CURRENT_DATE) - INTERVAL '11 weeks',
@@ -338,7 +397,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
               SELECT date_trunc('week', fecha_vencimiento) AS semana,
                      COALESCE(SUM(monto_pendiente),0) AS monto
               FROM cobros.cobro
-              WHERE is_active = TRUE
+              WHERE is_active = TRUE{proy_where}
               GROUP BY 1
             ),
             real AS (
@@ -348,7 +407,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
               WHERE is_active = TRUE
                 AND estado IN ('VERIFICADO','LIBERADO','CONCILIADO')
                 AND direccion = 'INGRESO'
-                AND fecha_acreditacion IS NOT NULL
+                AND fecha_acreditacion IS NOT NULL{real_where}
               GROUP BY 1
             )
             SELECT
@@ -359,14 +418,23 @@ class AnalyticsViewSet(viewsets.ViewSet):
             LEFT JOIN proy ON proy.semana = s.semana
             LEFT JOIN real ON real.semana = s.semana
             ORDER BY s.semana
-        """)
+        """, params)
         return Response(rows)
 
     # ── Aging buckets de cuentas por cobrar ───────────────────
     @action(detail=False, methods=["get"])
     def aging(self, request):
-        """Buckets: 0-30, 31-60, 61-90, 90+ en monto_pendiente."""
-        r = _fetchone("""
+        """Buckets: 0-30, 31-60, 61-90, 90+ en monto_pendiente.
+
+        Sprint 2026-08-02 · `?client_id=` (scope por widget). cobros no
+        tiene dimensión marca: brand_id se valida pero no filtra aquí.
+        """
+        client_id, _brand_id, scope_err = _parse_widget_scope(request)
+        if scope_err is not None:
+            return scope_err
+        client_where = " AND client_id = %s" if client_id else ""
+        params = [client_id] if client_id else []
+        r = _fetchone(f"""
             SELECT
               COALESCE(SUM(CASE WHEN (CURRENT_DATE - fecha_vencimiento) <= 30 THEN monto_pendiente END),0),
               COALESCE(SUM(CASE WHEN (CURRENT_DATE - fecha_vencimiento) BETWEEN 31 AND 60 THEN monto_pendiente END),0),
@@ -374,8 +442,8 @@ class AnalyticsViewSet(viewsets.ViewSet):
               COALESCE(SUM(CASE WHEN (CURRENT_DATE - fecha_vencimiento) > 90 THEN monto_pendiente END),0),
               COALESCE(SUM(monto_pendiente),0)
             FROM cobros.cobro
-            WHERE is_active = TRUE AND monto_pendiente > 0
-        """)
+            WHERE is_active = TRUE AND monto_pendiente > 0{client_where}
+        """, params)
         if not r:
             return Response({
                 "bucket_0_30": 0, "bucket_31_60": 0,
@@ -642,6 +710,21 @@ class AnalyticsViewSet(viewsets.ViewSet):
         scope_cc_where = " AND (" + scope_cc_sql + ")" if scope_cc_sql else ""
         scope_e_where  = " AND (" + scope_e_sql  + ")" if scope_e_sql  else ""
 
+        # Sprint 2026-08-02 · scope por widget (?client_id). Se aplica a
+        # los 5 buckets (cobros y expedientes). brand_id se valida pero
+        # no filtra: la dimensión marca no existe en cobros y aplicarla
+        # solo a los buckets fallback de expediente sería inconsistente.
+        client_id, _brand_id, scope_err = _parse_widget_scope(request)
+        if scope_err is not None:
+            return scope_err
+        widget_c_where  = " AND c.client_id = %s" if client_id else ""
+        widget_cc_where = " AND client_id = %s" if client_id else ""
+        widget_e_where  = " AND client_id = %s" if client_id else ""
+        widget_params = (
+            [client_id, client_id, client_id, client_id, client_id]
+            if client_id else []
+        )
+
         # Cascada (en orden de honestidad):
         #   (a) primary:                   90d de pagos verificados, cobros cerrados
         #   (b) derived_180d:              misma logica con ventana ampliada
@@ -662,7 +745,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
                  AND p.estado IN ('VERIFICADO','LIBERADO','CONCILIADO')
                  AND p.fecha_acreditacion IS NOT NULL
                  AND p.fecha_acreditacion >= CURRENT_DATE - INTERVAL '90 days'
-                 AND c.expediente_id IS NOT NULL{scope_c_where}
+                 AND c.expediente_id IS NOT NULL{scope_c_where}{widget_c_where}
                GROUP BY c.expediente_id
               HAVING SUM(c.monto_pendiente) <= 0
             ),
@@ -680,7 +763,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
                  AND p.estado IN ('VERIFICADO','LIBERADO','CONCILIADO')
                  AND p.fecha_acreditacion IS NOT NULL
                  AND p.fecha_acreditacion >= CURRENT_DATE - INTERVAL '180 days'
-                 AND c.expediente_id IS NOT NULL{scope_c_where}
+                 AND c.expediente_id IS NOT NULL{scope_c_where}{widget_c_where}
                GROUP BY c.expediente_id
               HAVING SUM(c.monto_pendiente) <= 0
             ),
@@ -693,7 +776,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
                WHERE is_active = TRUE
                  AND monto_pendiente > 0
                  AND fecha_vencimiento IS NOT NULL
-                 AND fecha_vencimiento < CURRENT_DATE{scope_cc_where}
+                 AND fecha_vencimiento < CURRENT_DATE{scope_cc_where}{widget_cc_where}
             ),
             exp_cerrados AS (
               SELECT credit_days::numeric AS dias
@@ -701,7 +784,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
                WHERE is_active = TRUE
                  AND estado = 'CERRADO'
                  AND credit_days IS NOT NULL AND credit_days > 0
-                 AND updated_at >= CURRENT_DATE - INTERVAL '180 days'{scope_e_where}
+                 AND updated_at >= CURRENT_DATE - INTERVAL '180 days'{scope_e_where}{widget_e_where}
             ),
             exp_activos AS (
               -- Sprint 2026-05-22 · bucket (e) ultimo recurso: cualquier
@@ -711,7 +794,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
               SELECT credit_days::numeric AS dias
                 FROM expedientes.expediente
                WHERE is_active = TRUE
-                 AND credit_days IS NOT NULL AND credit_days > 0{scope_e_where}
+                 AND credit_days IS NOT NULL AND credit_days > 0{scope_e_where}{widget_e_where}
             )
             SELECT
               (SELECT COUNT(*) FROM paid_90)                                           AS n_a,
@@ -734,6 +817,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
         params = (
             scope_c_params + scope_c_params
             + scope_cc_params + scope_e_params + scope_e_params
+            + widget_params
         )
         r = _fetchone(sql_cc, params)
         if not r:
@@ -783,25 +867,41 @@ class AnalyticsViewSet(viewsets.ViewSet):
             "total":            0,
             "period_days":      period_days,
         }
+        # Sprint 2026-08-02 · scope por widget (?client_id / ?brand_id).
+        # brand_id matchea la marca del expediente o la heredada de su OC.
+        client_id, brand_id, scope_err = _parse_widget_scope(request)
+        if scope_err is not None:
+            return scope_err
+        widget_where = ""
+        widget_params = []
+        if client_id:
+            widget_where += " AND client_id = %s"
+            widget_params.append(client_id)
+        if brand_id:
+            widget_where += (
+                " AND (brand_id = %s OR oc_id IN ("
+                "SELECT id FROM expedientes.oc WHERE brand_id = %s))"
+            )
+            widget_params.extend([brand_id, brand_id])
         # Primer intento: nueva columna corrections_count
-        r = _fetchone("""
+        r = _fetchone(f"""
             SELECT
               COUNT(*)                                              AS total,
               COUNT(*) FILTER (WHERE corrections_count >= 1)        AS with_corr
             FROM expedientes.expediente
             WHERE is_active = TRUE
-              AND created_at >= CURRENT_DATE - INTERVAL '90 days'
-        """)
+              AND created_at >= CURRENT_DATE - INTERVAL '90 days'{widget_where}
+        """, widget_params)
         if r is None:
             # Fallback al boolean cost_corrections (pre-D2)
-            r = _fetchone("""
+            r = _fetchone(f"""
                 SELECT
                   COUNT(*)                                          AS total,
                   COUNT(*) FILTER (WHERE cost_corrections = TRUE)   AS with_corr
                 FROM expedientes.expediente
                 WHERE is_active = TRUE
-                  AND created_at >= CURRENT_DATE - INTERVAL '90 days'
-            """)
+                  AND created_at >= CURRENT_DATE - INTERVAL '90 days'{widget_where}
+            """, widget_params)
             if r is None:
                 out["_pending"] = (
                     "missing column expedientes.expediente.corrections_count "
@@ -1250,6 +1350,22 @@ class AnalyticsViewSet(viewsets.ViewSet):
         market_param = (request.query_params.get("market") or "").strip().upper()
         is_aggregate = market_param in ("", "ALL", "TODOS", "GLOBAL")
 
+        # Sprint 2026-08-02 · scope por widget (?client_id / ?brand_id).
+        client_id, brand_id, scope_err = _parse_widget_scope(request)
+        if scope_err is not None:
+            return scope_err
+        widget_where = ""
+        widget_params = []
+        if client_id:
+            widget_where += " AND e.client_id = %s"
+            widget_params.append(client_id)
+        if brand_id:
+            widget_where += (
+                " AND (e.brand_id = %s OR e.oc_id IN ("
+                "SELECT id FROM expedientes.oc WHERE brand_id = %s))"
+            )
+            widget_params.extend([brand_id, brand_id])
+
         market_names = {
             "CR": "Costa Rica", "BR": "Brasil",    "US": "USA",
             "MX": "México",     "CO": "Colombia",  "PE": "Perú",
@@ -1260,7 +1376,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
 
         if is_aggregate:
             # Sumar todas las unidades por talla (sin separar por país)
-            rows = _fetchall("""
+            rows = _fetchall(f"""
                 SELECT
                   l.size                AS size,
                   'GLOBAL'              AS market,
@@ -1273,16 +1389,16 @@ class AnalyticsViewSet(viewsets.ViewSet):
                   AND l.size IS NOT NULL
                   AND l.size <> ''
                   AND l.qty > 0
-                  AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
+                  AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'{widget_where}
                 GROUP BY l.size
                 ORDER BY l.size
-            """)
+            """, widget_params)
             size_set = sorted({r["size"] for r in rows if r.get("size")},
                               key=lambda s: (len(s), s))
             markets = [{"code": "GLOBAL", "name": "Global"}] if rows else []
         else:
             # Filtrar a un mercado específico
-            rows = _fetchall("""
+            rows = _fetchall(f"""
                 SELECT
                   l.size                                       AS size,
                   COALESCE(cli.pais_iso2, 'ZZ')                AS market,
@@ -1296,10 +1412,10 @@ class AnalyticsViewSet(viewsets.ViewSet):
                   AND l.size <> ''
                   AND l.qty > 0
                   AND e.updated_at >= CURRENT_DATE - INTERVAL '365 days'
-                  AND COALESCE(cli.pais_iso2, 'ZZ') = %s
+                  AND COALESCE(cli.pais_iso2, 'ZZ') = %s{widget_where}
                 GROUP BY l.size, COALESCE(cli.pais_iso2, 'ZZ')
                 ORDER BY l.size
-            """, [market_param])
+            """, [market_param] + widget_params)
             size_set = sorted({r["size"] for r in rows if r.get("size")},
                               key=lambda s: (len(s), s))
             markets = [{

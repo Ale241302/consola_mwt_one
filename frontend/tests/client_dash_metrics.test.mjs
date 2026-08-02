@@ -144,3 +144,51 @@ test("buildCustomSeries: input vacío → series vacías sin explotar", () => {
   const r = M.buildCustomSeries(null, { dim: "fase", metric: "pedidos" });
   assert.deepEqual(r.values, [0, 0, 0, 0, 0, 0]);
 });
+
+// ── dims ADMIN (Sprint 2026-08-02): cliente / marca ──────────────────
+test("buildCustomSeries: dim=cliente agrega por nombre de cliente (nivel expediente)", () => {
+  const enriched = [
+    { ...mk({ lineas: [L("A", 10, "40", 50)] }), it: { ...mk({ lineas: [L("A", 10, "40", 50)] }).it, cliente: "ACME", clienteId: "c1" } },
+    { ...mk({ lineas: [L("B", 4, "41", 100)] }), it: { ...mk({ lineas: [L("B", 4, "41", 100)] }).it, cliente: "ACME", clienteId: "c1" } },
+    { ...mk({ lineas: [L("C", 6, "40", 25)] }), it: { ...mk({ lineas: [L("C", 6, "40", 25)] }).it, cliente: "Beta SA", clienteId: "c2" } },
+  ];
+  const r = M.buildCustomSeries(enriched, { metric: "usd", dim: "cliente" });
+  assert.deepEqual(r.labels, ["ACME", "Beta SA"]);
+  assert.deepEqual(r.values, [900, 150]);
+});
+
+test("buildCustomSeries: dim=cliente cae a clienteId si no hay nombre; filas sin cliente se ignoran", () => {
+  const base = mk({ lineas: [L("A", 5)] });
+  const enriched = [
+    { ...base, it: { ...base.it, cliente: "", clienteId: "c9" } },
+    mk({ lineas: [L("B", 99)] }), // sin cliente ni clienteId → fuera
+  ];
+  const r = M.buildCustomSeries(enriched, { metric: "pares", dim: "cliente" });
+  assert.deepEqual(r.labels, ["c9"]);
+  assert.deepEqual(r.values, [5]);
+});
+
+test("buildCustomSeries: dim=marca usa _row.brand_id y brandNameOf para el label", () => {
+  const a = mk({ lineas: [L("A", 12)] });
+  const b = mk({ lineas: [L("B", 8)] });
+  const sinMarca = mk({ lineas: [L("C", 999)] }); // _row sin brand_id → fuera
+  const enriched = [
+    { ...a, it: { ...a.it, _row: { ...a.it._row, brand_id: "m1" } } },
+    { ...b, it: { ...b.it, _row: { ...b.it._row, brand_id: "m2" } } },
+    sinMarca,
+  ];
+  const r = M.buildCustomSeries(enriched, {
+    metric: "pares", dim: "marca",
+    brandNameOf: (id) => ({ m1: "Marca Uno", m2: "Marca Dos" })[id],
+  });
+  assert.deepEqual(r.labels, ["Marca Uno", "Marca Dos"]);
+  assert.deepEqual(r.values, [12, 8]);
+});
+
+test("buildCustomSeries: dim=marca sin brandNameOf usa el brand_id crudo", () => {
+  const a = mk({ lineas: [L("A", 3)] });
+  const enriched = [{ ...a, it: { ...a.it, _row: { ...a.it._row, brand_id: "m1" } } }];
+  const r = M.buildCustomSeries(enriched, { metric: "pares", dim: "marca" });
+  assert.deepEqual(r.labels, ["m1"]);
+  assert.deepEqual(r.values, [3]);
+});

@@ -34,6 +34,10 @@ const lblStyle = {
 
 export default function CustomWidgetBuilder({
   lang = "es", enriched, layout, onAddBuiltin, onAddCustom, onClose,
+  // Sprint 2026-08-02 (ADMIN) · el dashboard ADMIN reutiliza este modal
+  // con su propio catálogo y dims extra (cliente/marca). Defaults =
+  // comportamiento CLIENT intacto.
+  widgets = WIDGETS, extraDims = [],
 }) {
   const es = lang === "es";
   const [metric, setMetric] = useState("pares");
@@ -42,7 +46,20 @@ export default function CustomWidgetBuilder({
   const [title, setTitle] = useState("");
   const [titleTouched, setTitleTouched] = useState(false);
 
-  const auto = useMemo(() => autoTitle({ metric, dim }, lang), [metric, dim, lang]);
+  const dims = useMemo(
+    () => [...BUILDER_OPTS.dims, ...extraDims],
+    [extraDims]
+  );
+  const auto = useMemo(() => {
+    // autoTitle solo conoce las dims CLIENT; con extraDims se resuelve aquí.
+    const d = dims.find((x) => x.id === dim);
+    if (d && !BUILDER_OPTS.dims.some((x) => x.id === dim)) {
+      const m = BUILDER_OPTS.metrics.find((x) => x.id === metric);
+      const ml = m ? (es ? m.es : m.en) : metric;
+      return `${ml} ${es ? "por" : "by"} ${es ? d.es : d.en}`;
+    }
+    return autoTitle({ metric, dim }, lang);
+  }, [metric, dim, dims, lang, es]);
   const effectiveTitle = (titleTouched ? title : "") || auto;
   const previewConfig = { metric, dim, chart, title: effectiveTitle };
 
@@ -50,8 +67,8 @@ export default function CustomWidgetBuilder({
   const hiddenBuiltins = useMemo(() => {
     const vis = new Set((layout?.widgets || [])
       .filter((w) => w.visible).map((w) => w.id));
-    return WIDGETS.filter((w) => !vis.has(w.id));
-  }, [layout]);
+    return widgets.filter((w) => !vis.has(w.id));
+  }, [layout, widgets]);
 
   const addCustom = () => {
     onAddCustom({
@@ -127,7 +144,7 @@ export default function CustomWidgetBuilder({
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
           {select(metric, (v) => { setMetric(v); }, BUILDER_OPTS.metrics, es ? "Métrica" : "Metric")}
-          {select(dim, (v) => { setDim(v); }, BUILDER_OPTS.dims, es ? "Dimensión" : "Dimension")}
+          {select(dim, (v) => { setDim(v); }, dims, es ? "Dimensión" : "Dimension")}
           {select(chart, setChart, BUILDER_OPTS.charts, es ? "Tipo" : "Type")}
           <input value={titleTouched ? title : auto}
                  onChange={(e) => { setTitleTouched(true); setTitle(e.target.value); }}

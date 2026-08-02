@@ -150,6 +150,35 @@ export function buildCustomSeries(enriched, config = {}) {
   }
 
   // sku | talla — agregado a nivel línea, top N por valor.
+  // Sprint 2026-08-02 (ADMIN) · dims extra a nivel expediente:
+  //   cliente → it.cliente (nombre) o it.clienteId
+  //   marca   → it._row.brand_id, con label opcional vía config.brandNameOf
+  if (dim === "cliente" || dim === "marca") {
+    const brandNameOf = typeof config.brandNameOf === "function"
+      ? config.brandNameOf : null;
+    list.forEach((e) => {
+      const it = e?.it;
+      if (!it) return;
+      let key = null;
+      if (dim === "cliente") {
+        key = it.cliente || it.clienteId || null;
+      } else {
+        const bid = it._row?.brand_id;
+        key = bid ? (brandNameOf?.(bid) || bid) : null;
+      }
+      if (!key) return;
+      acc.set(key, (acc.get(key) || 0) + itemValue(it));
+    });
+    const top = Array.from(acc.entries())
+      .filter(([, v]) => v > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit);
+    return {
+      labels: top.map(([k]) => String(k)),
+      values: top.map(([, v]) => Math.round(v * 100) / 100),
+    };
+  }
+
   list.forEach((e) => {
     (e?.it?.lineas || []).forEach((l) => {
       const key = dim === "talla"

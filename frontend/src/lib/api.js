@@ -1217,22 +1217,38 @@ export const storageApi = {
 //   GET /api/analytics/expediente_margin_scatter/
 // ---------------------------------------------------------------------
 const analyticsBase = "/analytics";
+// Sprint 2026-08-02 · scope por widget (dashboard ADMIN/CEO): cada método
+// acepta opts.params ({ client_id, brand_id, market }) → querystring.
+// Sin params la URL queda idéntica a antes (compat con el patrón viejo).
+const _analyticsQs = (params) => {
+  if (!params) return "";
+  const usp = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v != null && v !== "") usp.set(k, String(v));
+  });
+  const s = usp.toString();
+  return s ? `?${s}` : "";
+};
+const _analyticsGet = (path, opts = {}) => {
+  const { params, ...rest } = opts;
+  return apiFetch(`${analyticsBase}/${path}/${_analyticsQs(params)}`, { token: getToken(), ...rest });
+};
 export const analyticsApi = {
-  dashboardKpis:            (opts = {}) => apiFetch(`${analyticsBase}/dashboard_kpis/`,             { token: getToken(), ...opts }),
-  cashflow:                 (opts = {}) => apiFetch(`${analyticsBase}/cashflow/`,                   { token: getToken(), ...opts }),
-  aging:                    (opts = {}) => apiFetch(`${analyticsBase}/aging/`,                      { token: getToken(), ...opts }),
-  exposicionClientes:       (opts = {}) => apiFetch(`${analyticsBase}/exposicion_clientes/`,        { token: getToken(), ...opts }),
-  margenMarcas:             (opts = {}) => apiFetch(`${analyticsBase}/margen_marcas/`,              { token: getToken(), ...opts }),
-  byStatus:                 (opts = {}) => apiFetch(`${analyticsBase}/by_status/`,                  { token: getToken(), ...opts }),
-  urgent:                   (opts = {}) => apiFetch(`${analyticsBase}/urgent/`,                     { token: getToken(), ...opts }),
-  creditClockAvg:           (opts = {}) => apiFetch(`${analyticsBase}/credit_clock_avg/`,           { token: getToken(), ...opts }),
-  r1CorrectionRatio:        (opts = {}) => apiFetch(`${analyticsBase}/r1_correction_ratio/`,        { token: getToken(), ...opts }),
-  byStatusByBrand:          (opts = {}) => apiFetch(`${analyticsBase}/by_status_by_brand/`,         { token: getToken(), ...opts }),
-  inventoryCoverageByNode:  (opts = {}) => apiFetch(`${analyticsBase}/inventory_coverage_by_node/`, { token: getToken(), ...opts }),
-  topSkusMargen:            (opts = {}) => apiFetch(`${analyticsBase}/top_skus_margen/`,            { token: getToken(), ...opts }),
-  expedienteMarginScatter:  (opts = {}) => apiFetch(`${analyticsBase}/expediente_margin_scatter/`,  { token: getToken(), ...opts }),
-  sizeMarketDistribution:   (opts = {}) => apiFetch(`${analyticsBase}/size_market_distribution/`,   { token: getToken(), ...opts }),
-  tacosFbaUs:               (opts = {}) => apiFetch(`${analyticsBase}/tacos_fba_us/`,               { token: getToken(), ...opts }),
+  dashboardKpis:            (opts = {}) => _analyticsGet("dashboard_kpis", opts),
+  cashflow:                 (opts = {}) => _analyticsGet("cashflow", opts),
+  aging:                    (opts = {}) => _analyticsGet("aging", opts),
+  exposicionClientes:       (opts = {}) => _analyticsGet("exposicion_clientes", opts),
+  margenMarcas:             (opts = {}) => _analyticsGet("margen_marcas", opts),
+  byStatus:                 (opts = {}) => _analyticsGet("by_status", opts),
+  urgent:                   (opts = {}) => _analyticsGet("urgent", opts),
+  creditClockAvg:           (opts = {}) => _analyticsGet("credit_clock_avg", opts),
+  r1CorrectionRatio:        (opts = {}) => _analyticsGet("r1_correction_ratio", opts),
+  byStatusByBrand:          (opts = {}) => _analyticsGet("by_status_by_brand", opts),
+  inventoryCoverageByNode:  (opts = {}) => _analyticsGet("inventory_coverage_by_node", opts),
+  topSkusMargen:            (opts = {}) => _analyticsGet("top_skus_margen", opts),
+  expedienteMarginScatter:  (opts = {}) => _analyticsGet("expediente_margin_scatter", opts),
+  sizeMarketDistribution:   (opts = {}) => _analyticsGet("size_market_distribution", opts),
+  tacosFbaUs:               (opts = {}) => _analyticsGet("tacos_fba_us", opts),
 };
 // ---------------------------------------------------------------------
 // FX (USD ↔ BRL) — endpoint compartido con BrandClientPricingForm.

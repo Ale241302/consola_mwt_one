@@ -433,22 +433,26 @@ class PortalViewSet(viewsets.ViewSet):
         # preferences (JSONB de portal.mwt_user — la misma tabla que
         # escribe update_preferences) para que el FE cargue el layout
         # guardado del dashboard. Best-effort: si falla, {}.
+        # rev2 · fallback a users.mwtuser (staff/admin/CEO no tienen fila
+        # en portal.mwt_user — sin esto su update_preferences daba 404).
         prefs = {}
         uid = getattr(getattr(request, "user", None), "id", None)
         if uid:
             try:
                 with connection.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT COALESCE(preferences, '{}'::jsonb)
-                          FROM portal.mwt_user
-                         WHERE id = %s AND is_active = TRUE
-                        """,
-                        [str(uid)],
-                    )
-                    row = cur.fetchone()
-                    if row and isinstance(row[0], dict):
-                        prefs = row[0]
+                    for tabla in ("portal.mwt_user", "users.mwtuser"):
+                        cur.execute(
+                            f"""
+                            SELECT COALESCE(preferences, '{{}}'::jsonb)
+                              FROM {tabla}
+                             WHERE id = %s AND is_active = TRUE
+                            """,
+                            [str(uid)],
+                        )
+                        row = cur.fetchone()
+                        if row and isinstance(row[0], dict):
+                            prefs = row[0]
+                            break
             except Exception:  # noqa: BLE001
                 log.warning("portal/me: no se pudieron leer preferences",
                             exc_info=True)
@@ -870,17 +874,25 @@ class PortalViewSet(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST)
         try:
             with connection.cursor() as c:
-                c.execute("""
-                    UPDATE portal.mwt_user
-                    SET preferences = COALESCE(preferences,'{}'::jsonb) || %s::jsonb,
-                        updated_at = NOW()
-                    WHERE id = %s AND is_active = TRUE
-                    RETURNING preferences
-                """, [
-                    __import__("json").dumps(prefs),
-                    str(user_id),
-                ])
-                row = c.fetchone()
+                # Sprint 2026-08-02 rev2 · fallback a users.mwtuser: los
+                # usuarios staff/admin/CEO no tienen fila en
+                # portal.mwt_user y su UPDATE tocaba 0 filas → 404
+                # "Usuario no encontrado" al personalizar el dashboard.
+                row = None
+                for tabla in ("portal.mwt_user", "users.mwtuser"):
+                    c.execute(f"""
+                        UPDATE {tabla}
+                        SET preferences = COALESCE(preferences,'{{}}'::jsonb) || %s::jsonb,
+                            updated_at = NOW()
+                        WHERE id = %s AND is_active = TRUE
+                        RETURNING preferences
+                    """, [
+                        __import__("json").dumps(prefs),
+                        str(user_id),
+                    ])
+                    row = c.fetchone()
+                    if row:
+                        break
         except Exception as e:
             log.warning("update_preferences falló: %s", e)
             return Response({"detail": str(e)},
