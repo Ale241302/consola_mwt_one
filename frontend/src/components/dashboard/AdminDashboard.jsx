@@ -205,7 +205,10 @@ export default function AdminDashboard({
             ? <CustomChart config={{ ...entry.config, brandNameOf }} enriched={enriched} lang={lang}/>
             : def.render({ ...ctx, scope });
           // El chip cede la esquina al chrome de edición en modo Personalizar.
-          const chip = (!isCustom && !customizing) ? (
+          // Sprint 2026-08-02 rev3 · las 6 KPI cards (bare) NO llevan
+          // selector de scope: se veía feo en cards chicas; siempre
+          // muestran el scope guardado (por defecto General).
+          const chip = (!isCustom && !customizing && !def.bare) ? (
             <ScopeChip
               scope={scope}
               scopeable={def.scopeable}
