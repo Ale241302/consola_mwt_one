@@ -1955,15 +1955,15 @@ function EditNodeDrawer({ raw, lang, onClose, onSaved, onDelete }) {
       />
       {/* Drawer */}
       <motion.aside
-        initial={{ x: 480, opacity: 0 }}
+        initial={{ x: 680, opacity: 0 }}
         animate={{ x: 0, opacity: 1, transition: { duration: 0.25, ease: 'easeOut' }}}
-        exit={{ x: 480, opacity: 0, transition: { duration: 0.18 }}}
+        exit={{ x: 680, opacity: 0, transition: { duration: 0.18 }}}
         style={{
           position: 'fixed', top: 0, right: 0, bottom: 0,
-          width: 'min(480px, 96vw)', background: '#FFFFFF',
+          width: 'min(680px, 94vw)', background: '#FFFFFF',
           boxShadow: '-12px 0 40px -10px rgba(15,27,61,0.25)',
           zIndex: 91, display: 'flex', flexDirection: 'column',
-          fontFamily: 'inherit',
+          fontFamily: 'inherit', overflowX: 'hidden',
         }}
       >
         <div style={{
@@ -1981,7 +1981,7 @@ function EditNodeDrawer({ raw, lang, onClose, onSaved, onDelete }) {
           <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Cerrar">✕</button>
         </div>
 
-        <form onSubmit={submit} className="drawer-body" style={{ padding: '18px 22px', overflowY:'auto', flex:1 }}>
+        <form onSubmit={submit} className="drawer-body" style={{ padding: '18px 22px', overflowY:'auto', overflowX:'hidden', flex:1 }}>
           {/* ── Identificación ── */}
           <section className="drawer-section">
             <div className="drawer-section-title">{lang==='es'?'Identificación':'Identification'}</div>

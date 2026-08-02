@@ -73,9 +73,10 @@ export default function CreateNodeModal({ lang='es', onClose, onCreated }) {
       <motion.aside
         className="drawer-panel"
         role="dialog" aria-modal="true"
-        initial={{ x: 520, opacity: 0.6 }}
+        initial={{ x: 680, opacity: 0.6 }}
         animate={{ x: 0,   opacity: 1, transition: { type: 'spring', stiffness: 260, damping: 30 } }}
-        exit   ={{ x: 520, opacity: 0, transition: { duration: 0.18 } }}
+        exit   ={{ x: 680, opacity: 0, transition: { duration: 0.18 } }}
+        style={{ width: 'min(680px, 94vw)', overflowX: 'hidden' }}
       >
         <div className="drawer-head">
           <div>
