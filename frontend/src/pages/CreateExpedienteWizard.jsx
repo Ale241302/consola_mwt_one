@@ -190,6 +190,13 @@ export default function CreateExpedienteWizard() {
     submitError:       null,
     createdExpediente: null,
 
+    // Sprint 2026-08-02 · modal de PO opcional (CLIENT). Antes de enviar,
+    // preguntamos si quiere registrar SU número de orden de compra. Si lo
+    // deja vacío, el backend auto-numera con el correlativo del cliente
+    // (_next_oc_correlativo: salta los números ya usados en sus OCs).
+    poModalOpen:       false,
+    poNumberInput:     "",
+
     // Metadatos de origen (audit)
     entrySource:       location.state?.entrySource || "wizard_upload",
   }));
@@ -212,8 +219,14 @@ export default function CreateExpedienteWizard() {
   // -------------------------------------------------------------------
   // Submit final — POST /api/expedientes/create-from-oc/
   // -------------------------------------------------------------------
-  const handleSubmit = useCallback(async () => {
-    patch({ submitting: true, submitError: null });
+  const handleSubmit = useCallback(async (poNumberOverride) => {
+    // Sprint 2026-08-02 · po_number opcional del modal (CLIENT). Puede
+    // llegar como override directo o leerse del estado; vacío = auto.
+    const poNum = (typeof poNumberOverride === "string"
+      ? poNumberOverride
+      : state.poNumberInput
+    ).trim();
+    patch({ submitting: true, submitError: null, poModalOpen: false });
     try {
       const token = getToken();
       // Sprint 2026-07-15 · payload efectivo: SIEMPRE las líneas del estado
@@ -244,6 +257,11 @@ export default function CreateExpedienteWizard() {
         ocr_payload:       ocrPayloadOut,
         idempotence_token: idempotenceToken,
       };
+      // Sprint 2026-08-02 · PO manual del cliente (opcional). El backend
+      // lo toma tal cual; si no viene, auto-numera por correlativo.
+      if (isClient && poNum) {
+        body.po_number = poNum;
+      }
       if (isAdmin) {
         // El CEO puede corregir cliente/marca si el OCR los matcheó mal.
         Object.assign(body, {
@@ -264,6 +282,9 @@ export default function CreateExpedienteWizard() {
         fd.append("file", state.file);
         fd.append("ocr_payload",       JSON.stringify(ocrPayloadOut));
         fd.append("idempotence_token", idempotenceToken);
+        if (isClient && poNum) {
+          fd.append("po_number", poNum);
+        }
         if (isAdmin) {
           Object.entries(body).forEach(([k, v]) => {
             if (v !== null && v !== undefined && k !== "ocr_payload"
@@ -303,6 +324,7 @@ export default function CreateExpedienteWizard() {
             brandId:  null, brandName:  "",
             lines: [], mode: null,
             createdExpediente: null, submitError: null,
+            poModalOpen: false, poNumberInput: "",
           });
           window.location.reload(); // regenera idempotence_token
         }}
@@ -400,7 +422,11 @@ export default function CreateExpedienteWizard() {
           {idx === steps.length - 1 && (
             <button
               type="button"
-              onClick={handleSubmit}
+              onClick={isClient
+                // Sprint 2026-08-02 · CLIENT: antes de enviar, modal de PO
+                // opcional. ADMIN sigue creando directo (sin modal).
+                ? () => patch({ poModalOpen: true, submitError: null })
+                : () => handleSubmit()}
               disabled={state.submitting || !canNext}
               style={{
                 ...styles.btnPrimary,
@@ -415,6 +441,17 @@ export default function CreateExpedienteWizard() {
           )}
         </div>
       </footer>
+
+      {/* Sprint 2026-08-02 · Modal PO opcional (CLIENT). Vacío = el backend
+          auto-numera con el correlativo del cliente saltando OCs usadas. */}
+      {isClient && state.poModalOpen && (
+        <PoNumberModal
+          value={state.poNumberInput}
+          onChange={(v) => patch({ poNumberInput: v })}
+          onCancel={() => patch({ poModalOpen: false, poNumberInput: "" })}
+          onConfirm={() => handleSubmit(state.poNumberInput)}
+        />
+      )}
     </div>
   );
 }
@@ -1632,6 +1669,77 @@ function fmtMoney(n, currency = "USD") {
 // =====================================================================
 // Estilos inline (para no depender de app.css en este componente nuevo)
 // =====================================================================
+// =====================================================================
+// Modal · Número de OC opcional (CLIENT · Sprint 2026-08-02)
+// Se abre al pulsar "Enviar Orden de Compra". Si el cliente deja el
+// campo vacío y confirma, el backend auto-asigna el siguiente número de
+// su serie (clientes.cliente.oc_correlativo, saltando las OCs ya
+// registradas). Si escribe uno, se usa tal cual.
+// =====================================================================
+function PoNumberModal({ value, onChange, onCancel, onConfirm }) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(10, 20, 32, 0.45)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24,
+      }}
+      onClick={onCancel}
+    >
+      <div
+        style={{
+          background: "var(--surface)", borderRadius: 14,
+          border: `1px solid ${COLORS.border}`,
+          boxShadow: "0 18px 48px rgba(8,16,24,.22)",
+          maxWidth: 440, width: "100%", padding: "24px 26px",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{
+          fontSize: 11, fontWeight: 700, letterSpacing: 1.1,
+          textTransform: "uppercase", color: COLORS.mint, marginBottom: 8,
+        }}>
+          Número de orden de compra
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: COLORS.ink, marginBottom: 6 }}>
+          ¿Querés agregar tu número de OC?
+        </div>
+        <p style={{ fontSize: 13, color: COLORS.inkSoft, lineHeight: 1.5, margin: "0 0 16px" }}>
+          Es opcional. Si lo dejás vacío, te asignamos automáticamente el
+          siguiente número disponible de tu serie.
+        </p>
+        <input
+          autoFocus
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") onConfirm(); if (e.key === "Escape") onCancel(); }}
+          placeholder="Ej. 505288"
+          style={{
+            width: "100%", boxSizing: "border-box",
+            padding: "10px 12px", fontSize: 14,
+            fontFamily: "JetBrains Mono, monospace",
+            border: `1px solid ${COLORS.border}`, borderRadius: 8,
+            background: "var(--surface)", color: COLORS.ink,
+            outline: "none", marginBottom: 18,
+          }}
+        />
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button type="button" onClick={onCancel} style={styles.btnSecondary}>
+            Cancelar
+          </button>
+          <button type="button" onClick={onConfirm} style={styles.btnPrimary}>
+            {value.trim() ? "Enviar con este número" : "Continuar sin número"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const styles = {
   page: {
     minHeight: "100%",
