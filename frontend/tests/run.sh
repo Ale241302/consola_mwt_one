@@ -22,5 +22,7 @@ $ESBUILD src/lib/errorReporter.js --bundle --format=esm --log-level=error \
   $DEFINES_BASE --define:import.meta.env.VITE_USE_MOCKS='"0"' --outfile="$OUT/errorReporter.mjs"
 $ESBUILD src/lib/cronogramaData.js --bundle --format=esm --log-level=error \
   $DEFINES_BASE --define:import.meta.env.VITE_USE_MOCKS='"0"' --outfile="$OUT/cronogramaData.mjs"
+$ESBUILD src/lib/clientDashMetrics.js --bundle --format=esm --log-level=error \
+  $DEFINES_BASE --define:import.meta.env.VITE_USE_MOCKS='"0"' --outfile="$OUT/clientDashMetrics.mjs"
 
 exec node --test "tests/*.test.mjs"

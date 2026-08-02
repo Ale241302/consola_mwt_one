@@ -229,7 +229,9 @@ function SizeGauss({ dist, lang, title }) {
 // ═══════════════════════════════════════════════════════════════
 // 1 · TALLAS
 // ═══════════════════════════════════════════════════════════════
-function SizesChart({ items, lang, isClient = false }) {
+// Sprint 2026-08-02 · export nombrado: el dashboard personalizable del
+// cliente reutiliza este chart como widget (AnalisisCharts sigue igual).
+export function SizesChart({ items, lang, isClient = false }) {
   const es = lang === "es";
   const [orient, setOrient] = useState("SIZE");
   const [selSkus, setSelSkus] = useState(() => new Set());
@@ -433,7 +435,8 @@ const MODES = [
   { key: "Maritimo", es: "Marítimo", en: "Sea", color: "#0FA3A0" },
 ];
 
-function SkuMethodChart({ items, lang }) {
+// Sprint 2026-08-02 · export nombrado (mismo motivo que SizesChart).
+export function SkuMethodChart({ items, lang }) {
   const es = lang === "es";
   const { skuList, nameBySku } = useSkuMeta(items);
   const nameOf = (k) => nameBySku.get(k) || "";

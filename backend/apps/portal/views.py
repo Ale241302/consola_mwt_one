@@ -428,8 +428,34 @@ class PortalViewSet(viewsets.ViewSet):
         """
         user = _user_identity(request)
         cids = _all_user_client_ids(request)
+
+        # Sprint 2026-08-02 · Dashboard personalizable CLIENT: exponer
+        # preferences (JSONB de portal.mwt_user — la misma tabla que
+        # escribe update_preferences) para que el FE cargue el layout
+        # guardado del dashboard. Best-effort: si falla, {}.
+        prefs = {}
+        uid = getattr(getattr(request, "user", None), "id", None)
+        if uid:
+            try:
+                with connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COALESCE(preferences, '{}'::jsonb)
+                          FROM portal.mwt_user
+                         WHERE id = %s AND is_active = TRUE
+                        """,
+                        [str(uid)],
+                    )
+                    row = cur.fetchone()
+                    if row and isinstance(row[0], dict):
+                        prefs = row[0]
+            except Exception:  # noqa: BLE001
+                log.warning("portal/me: no se pudieron leer preferences",
+                            exc_info=True)
+
         if not cids:
-            return Response({"user": user, "empresas": [], "primary": None})
+            return Response({"user": user, "empresas": [], "primary": None,
+                             "preferences": prefs})
 
         # Sprint 2026-06-13 · Enriquecemos cada empresa con su ficha
         # completa + KPIs de crédito reales (límite / usado / disponible /
@@ -469,9 +495,10 @@ class PortalViewSet(viewsets.ViewSet):
                 "credito_porcentaje": k.get("credito_porcentaje", 0),
             })
         return Response({
-            "user":     user,
-            "empresas": empresas,
-            "primary":  empresas[0] if empresas else None,
+            "user":        user,
+            "empresas":    empresas,
+            "primary":     empresas[0] if empresas else None,
+            "preferences": prefs,
         })
 
     # ── /api/portal/mis_ocs/ ──────────────────────────────────
