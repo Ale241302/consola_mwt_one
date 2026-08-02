@@ -25,7 +25,7 @@ export const STRINGS = {
     all_brands: 'Todas las marcas', blocked: 'Bloqueado', risk: 'Riesgo', on_time: 'Al día',
     critical: 'Crítico', warning: 'Advertencia',
     // States
-    REGISTRO: 'Registro', PRODUCCION: 'Producción', PREPARACION: 'Preparación',
+    REGISTRO: 'Registro', PRODUCCION: 'Producción', PREPARACION: 'Preparación de despacho',
     DESPACHO: 'Despacho', PREPARACION_DESPACHO: 'Preparación de despacho',
     TRANSITO: 'Tránsito', EN_DESTINO: 'En destino',
     CERRADO: 'Cerrado', CANCELADO: 'Cancelado',

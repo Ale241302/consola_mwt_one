@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { tr, fmtMoney, fmtMoneyDetail, fmtDate, relativeTime } from "../lib/i18n.js";
-import { displayStage, nextTechAndVisual } from "../lib/phaseDisplay.js";
+import { displayStage, nextTechAndVisual, getNextStageForTransition } from "../lib/phaseDisplay.js";
 import {
   expedientesApi, clientesApi, marcasApi, lineasApi, productosApi,
   financePaymentsApi, storageApi, apiFetch, getToken,
@@ -2236,11 +2236,8 @@ function NextActionCard({ exp, lang, onAdvance }) {
 // está oculto para CLIENT_* (R3). Aun así, el backend deniega vía
 // _deny_client_mutation; un click directo no rompería invariantes.
 function AdvanceStateModal({ exp, lang, onClose, onTransitioned }) {
-  const techOrder = ['REGISTRO','PRODUCCION','PREPARACION','DESPACHO','TRANSITO','EN_DESTINO','CERRADO'];
-  const idx   = techOrder.indexOf(exp.status);
-  const next  = techOrder[idx+1];
-  const currentDisplay = displayStage(exp.status);
-  const nextDisplay    = next ? displayStage(next) : null;
+  const { nextTech, currentDisplay, nextDisplay } = getNextStageForTransition(exp.status);
+  const next = nextTech;
 
   const [note,    setNote]    = useState("");
   const [loading, setLoading] = useState(false);
@@ -2304,10 +2301,10 @@ function AdvanceStateModal({ exp, lang, onClose, onTransitioned }) {
         </div>
         <div style={{ padding: 22 }}>
           <div className="flex ai-center gap-3 mb-4">
-            <StatusBadge status={exp.status} lang={lang}/>
+            <StatusBadge status={currentDisplay} lang={lang}/>
             <IconArrow size={16} style={{color:'var(--text-tertiary)'}}/>
-            {next
-              ? <StatusBadge status={next} lang={lang}/>
+            {nextDisplay
+              ? <StatusBadge status={nextDisplay} lang={lang}/>
               : <span className="caption">{lang==='es'?'Estado final':'Final state'}</span>}
           </div>
           <div className="body-md text-sec mb-4">
@@ -2315,14 +2312,14 @@ function AdvanceStateModal({ exp, lang, onClose, onTransitioned }) {
               ? 'El avance de estado es flexible: ningún documento es obligatorio. Si las notificaciones están activas, el cliente será informado del cambio.'
               : 'State advancement is flexible: no document is mandatory. If notifications are active, the client will be notified of the change.'}
           </div>
-          {next && (
+          {nextDisplay && (
             <div className="card card-pad" style={{background: 'var(--bg-alt)'}}>
               <div className="micro mb-2">{lang==='es' ? 'TRANSICIÓN' : 'TRANSITION'}</div>
               <div className="flex ai-center gap-2" style={{fontSize:13, color:'var(--text-secondary)'}}>
                 <IconArrow size={14} style={{color:'var(--text-tertiary)'}}/>
                 {lang==='es'
-                  ? <>El expediente pasará de <strong style={{color:'var(--text-primary)'}}>{tr(lang,exp.status)}</strong> a <strong style={{color:'var(--text-primary)'}}>{tr(lang,next)}</strong>.</>
-                  : <>The file will move from <strong style={{color:'var(--text-primary)'}}>{tr(lang,exp.status)}</strong> to <strong style={{color:'var(--text-primary)'}}>{tr(lang,next)}</strong>.</>}
+                  ? <>El expediente pasará de <strong style={{color:'var(--text-primary)'}}>{tr(lang,currentDisplay)}</strong> a <strong style={{color:'var(--text-primary)'}}>{tr(lang,nextDisplay)}</strong>.</>
+                  : <>The file will move from <strong style={{color:'var(--text-primary)'}}>{tr(lang,currentDisplay)}</strong> to <strong style={{color:'var(--text-primary)'}}>{tr(lang,nextDisplay)}</strong>.</>}
               </div>
             </div>
           )}
@@ -2363,7 +2360,7 @@ function AdvanceStateModal({ exp, lang, onClose, onTransitioned }) {
           >
             {loading
               ? (lang==='es'?'Avanzando…':'Advancing…')
-              : <><IconCheck size={14}/>{lang==='es' ? `Avanzar a ${tr(lang,next)}` : `Advance to ${tr(lang,next)}`}</>}
+              : <><IconCheck size={14}/>{lang==='es' ? `Avanzar a ${tr(lang,nextDisplay)}` : `Advance to ${tr(lang,nextDisplay)}`}</>}
           </button>
         </div>
       </div>

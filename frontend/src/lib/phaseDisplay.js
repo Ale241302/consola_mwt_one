@@ -110,18 +110,29 @@ export function expandPhaseDuration(displayKey, value) {
 }
 
 /**
- * Dado un estado técnico actual, devuelve la siguiente fase técnica en la
- * máquina de estados y su etiqueta visual para mostrar al usuario.
+ * Dado el estado técnico actual, determina la siguiente fase a transicionar:
+ * - Si es REGISTRO -> PRODUCCION
+ * - Si es PRODUCCION -> PREPARACION (visual: PREPARACION_DESPACHO "Preparación de despacho")
+ * - Si es PREPARACION o DESPACHO (fases fusionadas) -> TRANSITO
+ * - Si es TRANSITO -> EN_DESTINO
+ * - Si es EN_DESTINO -> CERRADO
+ *
+ * Retorna { nextTech, currentDisplay, nextDisplay }
  */
-const TECH_ORDER = [
-  "REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO",
-  "TRANSITO", "EN_DESTINO", "CERRADO",
-];
+export function getNextStageForTransition(currentTech) {
+  const currentDisplay = displayStage(currentTech);
+  const visualIdx = DISPLAY_STAGES.indexOf(currentDisplay);
+  if (visualIdx < 0 || visualIdx >= DISPLAY_STAGES.length - 1) {
+    return { nextTech: null, currentDisplay, nextDisplay: null };
+  }
+  const nextDisplay = DISPLAY_STAGES[visualIdx + 1];
+  const nextTech = nextDisplay === MERGED_VISUAL_STAGE ? "PREPARACION" : nextDisplay;
+  return { nextTech, currentDisplay, nextDisplay };
+}
 
 export function nextTechAndVisual(currentTech) {
-  const idx = TECH_ORDER.indexOf(currentTech);
-  const nextTech = idx >= 0 && idx < TECH_ORDER.length - 1 ? TECH_ORDER[idx + 1] : null;
-  return { nextTech, visualNext: nextTech ? displayStage(nextTech) : null };
+  const { nextTech, nextDisplay } = getNextStageForTransition(currentTech);
+  return { nextTech, visualNext: nextDisplay };
 }
 
 /**

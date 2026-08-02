@@ -23,8 +23,8 @@ const STRINGS = {
     all_brands: 'Todas las marcas', blocked: 'Bloqueado', risk: 'Riesgo', on_time: 'Al día',
     critical: 'Crítico', warning: 'Advertencia',
     // States
-    REGISTRO: 'Registro', PRODUCCION: 'Producción', PREPARACION: 'Preparación',
-    DESPACHO: 'Despacho', TRANSITO: 'Tránsito', EN_DESTINO: 'En destino',
+    REGISTRO: 'Registro', PRODUCCION: 'Producción', PREPARACION: 'Preparación de despacho',
+    DESPACHO: 'Despacho', PREPARACION_DESPACHO: 'Preparación de despacho', TRANSITO: 'Tránsito', EN_DESTINO: 'En destino',
     CERRADO: 'Cerrado', CANCELADO: 'Cancelado',
     advance_state: 'Avanzar estado', advance_to: 'Avanzar a', state: 'Estado',
     // Tabs
@@ -174,8 +174,8 @@ const STRINGS = {
     amount: 'Amount', activity: 'Activity', blocked_only: 'Blocked only',
     all_brands: 'All brands', blocked: 'Blocked', risk: 'Risk', on_time: 'On time',
     critical: 'Critical', warning: 'Warning',
-    REGISTRO: 'Record', PRODUCCION: 'Production', PREPARACION: 'Preparation',
-    DESPACHO: 'Dispatch', TRANSITO: 'Transit', EN_DESTINO: 'At destination',
+    REGISTRO: 'Record', PRODUCCION: 'Production', PREPARACION: 'Dispatch preparation',
+    DESPACHO: 'Dispatch', PREPARACION_DESPACHO: 'Dispatch preparation', TRANSITO: 'Transit', EN_DESTINO: 'At destination',
     CERRADO: 'Closed', CANCELADO: 'Canceled',
     advance_state: 'Advance state', advance_to: 'Advance to', state: 'State',
     tab_overview: 'Overview', tab_artifacts: 'Documents', tab_costs: 'Costs',
