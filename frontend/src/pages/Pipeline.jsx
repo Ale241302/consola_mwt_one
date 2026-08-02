@@ -205,6 +205,11 @@ export default function ScreenPipeline() {
           ),
           // Operador (Sprint 2026-05-17)
           operator: operatorName,
+          // Logos (Sprint 2026-08-02) · la card muestra el logo del
+          // OPERADOR; si no tiene, cae al del cliente final. Son keys
+          // de MinIO servidas vía /api/storage/download/?key=…
+          operator_logo: op?.logo_url  || '',
+          client_logo:   cli?.logo_url || '',
           // Marca
           brand: br ? (br.nombre || br.brand_code || br.slug || '') : e.brand,
           // Monto
@@ -435,6 +440,16 @@ export default function ScreenPipeline() {
 }
 
 // ─── Rich pipeline card (Sprint 2026-05-17 · CEO refactor) ─────────
+// Convierte una logo_url (key de MinIO o URL absoluta) en URL servible.
+// Mismo patrón que ClienteFormView/Portal: /api/storage/download/ es
+// AllowAny — la key UUID actúa como capability token.
+function logoSrc(keyOrUrl) {
+  if (!keyOrUrl) return null;
+  return /^https?:\/\//i.test(keyOrUrl)
+    ? keyOrUrl
+    : `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(keyOrUrl)}`;
+}
+
 function PipelineCard({ exp, currentState, lang, dragging, onOpen, onOpenOC, onDragStart, onDragEnd, isClient, canDrag, showMoney }) {
   // Monto efectivo: prefiere total_invoiced; cae a order_value cuando
   // todavía no hay facturación (mismo criterio que Expedientes.jsx).
@@ -479,6 +494,11 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onOpenOC, onD
   const pfChips = headKind === "pf" ? proformas.slice(1) : proformas;
   const ocChips = headKind === "oc" ? ocs.slice(1) : ocs;
 
+  // Sprint 2026-08-02 (CEO) · logo en la esquina superior derecha:
+  // prioriza el logo del OPERADOR del pedido; si no tiene, cae al del
+  // cliente final. Ambos se hidratan en load() desde /api/clientes/<id>.
+  const cardLogo = logoSrc(exp.operator_logo) || logoSrc(exp.client_logo);
+
   return (
     <div
       className="k-card-pro k-card-pipeline-v2"
@@ -493,8 +513,20 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onOpenOC, onD
         <div className="k-card-dragbar" title={lang==='es'?'Arrastra para mover':'Drag to move'}>⋮⋮</div>
       )}
 
+      {/* Logo operador (fallback: cliente) — esquina superior derecha */}
+      {cardLogo && (
+        <img
+          src={cardLogo}
+          alt={exp.operator || exp.client || ''}
+          title={exp.operator || exp.client || ''}
+          className="k-card-logo"
+          loading="lazy"
+          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+        />
+      )}
+
       {/* Header: REF + lock (si bloqueado). Sin badge "C" ni "90d". */}
-      <div className="k-card-row1">
+      <div className="k-card-row1" style={cardLogo ? { paddingRight: 40 } : undefined}>
         <span
           className="k-card-ref-mono"
           style={{ cursor: 'pointer' }}
