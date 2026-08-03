@@ -463,7 +463,9 @@ export function resource(name) {
 
       const actionPath = actionId ? `${base}${actionId}/${name}/` : `${base}${name}/`;
       if (body !== undefined) {
-        return apiFetch(actionPath, { method: "POST", body, ...tokenOpt(), ...fetchOpts });
+        const method = fetchOpts.method || "POST";
+        delete fetchOpts.method;
+        return apiFetch(actionPath, { method, body, ...tokenOpt(), ...fetchOpts });
       }
       return apiFetch(withQs(actionPath, params), { ...tokenOpt(), ...fetchOpts });
     },

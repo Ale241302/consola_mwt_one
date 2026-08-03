@@ -52,7 +52,7 @@ const STATUS_OPTIONS = [
 ];
 import { tr, fmtMoney } from "../lib/i18n.js";
 import {
-  nodosApi, stockApi, transferenciasApi, nodoAssignmentsApi,
+  nodosApi, stockApi, transferenciasApi, nodoAssignmentsApi, transferDetailApi,
   financePaymentsApi, nodoBuilderArtifactsApi,
   // Sprint 2026-05-11 fase 4 · nodoArtefactosApi (legacy de fase 2)
   // ya no se usa en esta page — el nuevo NodoArtifactsTab consume
@@ -1781,10 +1781,9 @@ function NodoCostosTab({ nodeId, lang, navigate, isClient = false, onPayCost }) 
     if (!deleteCostTarget) return;
     setDeleting(true);
     try {
-      await transferenciasApi.action(
-        `cost-lines/${deleteCostTarget.cost_line_id}`,
+      await transferDetailApi.removeCost(
         deleteCostTarget.transferencia_id,
-        { method: "DELETE" }
+        deleteCostTarget.cost_line_id
       );
       setDeleteCostTarget(null);
       fetchCosts();
