@@ -195,7 +195,15 @@ def check_en_destino_eta_task(self):
     qs = Expediente.objects.filter(estado="EN_DESTINO", is_active=True)
     alertas = 0
 
-    for exp in qs:
+    for exp in list(qs):
+        try:
+            from apps.expedientes.views import check_auto_close_en_destino
+            if check_auto_close_en_destino(exp):
+                log.info("Expediente auto-cerrado tras 120d · exp=%s", exp.codigo)
+                continue
+        except Exception as exc:
+            log.warning("check_auto_close_en_destino failed for exp %s: %s", exp.codigo, exc)
+
         end_date = _resolve_end_date(exp)
         if end_date != today:
             continue

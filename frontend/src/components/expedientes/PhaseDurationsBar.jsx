@@ -158,20 +158,36 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
   const openModal = useCallback((s) => {
     const info = phaseInfo[s] || {};
     const ov = info.override;
-    const todayIso = new Date().toISOString().slice(0, 10);
     setMStart((ov && ov.start) || info.entry || "");
-    setMEnd((ov && ov.end) || info.exit || (info.entry ? todayIso : ""));
+    setMEnd((ov && ov.end) || info.exit || "");
     setError("");
     setModal(s);
   }, [phaseInfo]);
 
   // Días equivalentes del rango del modal (en vivo).
   const modalDays = useMemo(() => {
-    if (!mStart || !mEnd) return null;
-    const a = new Date(mStart + "T12:00:00");
-    const b = new Date(mEnd + "T12:00:00");
-    if (isNaN(a.getTime()) || isNaN(b.getTime()) || b < a) return null;
-    return Math.round((b - a) / DAY_MS);
+    if (!mStart && !mEnd) return null;
+    const a = mStart ? new Date(mStart + "T12:00:00") : null;
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const b = mEnd ? new Date(mEnd + "T12:00:00") : new Date(todayStr + "T12:00:00");
+
+    if (a && isNaN(a.getTime())) return null;
+    if (b && isNaN(b.getTime())) return null;
+    if (a && b && b < a) return null;
+
+    if (a) {
+      return Math.max(0, Math.round((b - a) / DAY_MS));
+    }
+    return null;
+  }, [mStart, mEnd]);
+
+  const isRangeInvalid = useMemo(() => {
+    if (mStart && mEnd) {
+      const a = new Date(mStart + "T12:00:00");
+      const b = new Date(mEnd + "T12:00:00");
+      return !isNaN(a.getTime()) && !isNaN(b.getTime()) && b < a;
+    }
+    return false;
   }, [mStart, mEnd]);
 
   // Sprint 2026-07-30 · progreso de la fase Tránsito.
@@ -261,7 +277,7 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
                 <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary, #475569)", marginLeft: 6 }}>
                   {lang === "es" ? "días en esta fase" : "days in this phase"}
                 </span>
-                {modalDays == null && (mStart || mEnd) && (
+                {isRangeInvalid && (
                   <div className="caption" style={{ color: "#D64545", marginTop: 2 }}>
                     {lang === "es" ? "Rango inválido — fin debe ser ≥ inicio" : "Invalid range — end must be ≥ start"}
                   </div>
@@ -291,13 +307,13 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
                       {lang === "es" ? "Cancelar" : "Cancel"}
                     </button>
                     <button className="btn"
-                            disabled={saving || modalDays == null}
-                            onClick={() => save(modal, { start: mStart, end: mEnd })}
+                            disabled={saving || (!mStart && !mEnd) || isRangeInvalid}
+                            onClick={() => save(modal, { start: mStart || null, end: mEnd || null })}
                             style={{
                               fontSize: 13, fontWeight: 700, padding: "6px 16px", borderRadius: 8,
                               background: "#0B1E3A", color: "#fff", border: "1.5px solid #0B1E3A",
-                              opacity: saving || modalDays == null ? 0.6 : 1,
-                              cursor: saving || modalDays == null ? "not-allowed" : "pointer",
+                              opacity: saving || (!mStart && !mEnd) || isRangeInvalid ? 0.6 : 1,
+                              cursor: saving || (!mStart && !mEnd) || isRangeInvalid ? "not-allowed" : "pointer",
                             }}>
                       {saving ? (lang === "es" ? "Guardando…" : "Saving…") : (lang === "es" ? "Guardar" : "Save")}
                     </button>

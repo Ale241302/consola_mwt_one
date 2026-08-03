@@ -1087,6 +1087,98 @@ class ExpedienteViewSet(viewsets.ViewSet):
     #   · La duración real sigue derivándose del EventLog; esto sólo
     #     prioriza el valor manual en el detalle y en el Cronograma del
     #     Resumen de Exportación.
+def check_auto_close_en_destino(exp: Expediente) -> bool:
+    """
+    Si exp.estado == 'EN_DESTINO' y han transcurrido 120 días desde la fecha fin
+    de PREPARACION_DESPACHO (o la entrada a EN_DESTINO), transiciona automáticamente
+    el expediente a 'CERRADO', asignando la fecha fin a EN_DESTINO y las fechas a CERRADO.
+    """
+    if not exp or exp.estado != "EN_DESTINO":
+        return False
+
+    import datetime as _dt
+    today = _dt.date.today()
+
+    pd = dict(exp.phase_durations_json or {})
+    prep_info = pd.get("PREPARACION_DESPACHO") or pd.get("DESPACHO") or pd.get("PREPARACION") or {}
+    prep_end_str = prep_info.get("end") if isinstance(prep_info, dict) else None
+
+    en_destino_info = pd.get("EN_DESTINO") or {}
+    en_destino_start_str = en_destino_info.get("start") if isinstance(en_destino_info, dict) else None
+
+    base_date = None
+    if prep_end_str:
+        try:
+            base_date = _dt.date.fromisoformat(str(prep_end_str).strip())
+        except (TypeError, ValueError):
+            pass
+    if not base_date and en_destino_start_str:
+        try:
+            base_date = _dt.date.fromisoformat(str(en_destino_start_str).strip())
+        except (TypeError, ValueError):
+            pass
+
+    if not base_date:
+        base_date = exp.created_at.date() if exp.created_at else today
+
+    target_close_date = base_date + _dt.timedelta(days=120)
+
+    if today >= target_close_date:
+        en_destino_start = en_destino_start_str or base_date.isoformat()
+        try:
+            d_start = _dt.date.fromisoformat(en_destino_start)
+            en_destino_days = max(0, (target_close_date - d_start).days)
+        except Exception:
+            en_destino_days = 120
+
+        pd["EN_DESTINO"] = {
+            "start": en_destino_start,
+            "end": target_close_date.isoformat(),
+            "days": en_destino_days,
+        }
+        pd["CERRADO"] = {
+            "start": target_close_date.isoformat(),
+            "end": target_close_date.isoformat(),
+            "days": 0,
+        }
+
+        previous_state = exp.estado
+        exp.estado = "CERRADO"
+        exp.phase_durations_json = pd
+        exp.last_event_at = timezone.now()
+        exp.phase_signal = "ON_TRACK"
+        exp.save(update_fields=["estado", "phase_durations_json", "last_event_at", "phase_signal", "updated_at"])
+
+        try:
+            EventLog.objects.create(
+                id=uuid.uuid4(),
+                correlation_id=uuid.uuid4(),
+                event_type="expediente.phase_transition",
+                aggregate_type="expediente",
+                aggregate_id=exp.id,
+                action_source="SYSTEM_AUTO_CLOSE",
+                previous_status=previous_state,
+                new_status="CERRADO",
+                phase_from=previous_state,
+                phase_to="CERRADO",
+                payload={
+                    "from": previous_state,
+                    "to": "CERRADO",
+                    "label": "Auto-cierre 120d tras preparación de despacho",
+                    "note": "Cierre automático a los 120 días desde fin de preparación de despacho / entrada a destino",
+                    "auto_closed": True,
+                },
+                emitted_by_role="system",
+                is_active=True,
+            )
+        except Exception as e:
+            logging.getLogger(__name__).warning("EventLog auto_close falló para exp %s: %s", exp.id, e)
+
+        return True
+
+    return False
+
+
     _PHASE_KEYS = {
         "REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO",
         "PREPARACION_DESPACHO",
@@ -1105,6 +1197,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
             return Response({"detail": "expediente_id inválido"}, status=400)
 
         if request.method.upper() == "GET":
+            check_auto_close_en_destino(exp)
             return Response({"phase_durations": exp.phase_durations_json or {}})
 
         denied = _deny_client_mutation(request, action_label="expediente.phase_durations")
@@ -1130,19 +1223,40 @@ class ExpedienteViewSet(viewsets.ViewSet):
             # el modal del frontend manda fechas ISO; los días se calculan
             # aquí (end - start) y se persisten junto con el rango.
             if isinstance(v, dict):
-                try:
-                    d0 = _dt.date.fromisoformat(str(v.get("start") or "").strip())
-                    d1 = _dt.date.fromisoformat(str(v.get("end") or "").strip())
-                except (TypeError, ValueError):
-                    return Response({"detail": f"fechas inválidas para {key} (YYYY-MM-DD)"}, status=400)
-                days = (d1 - d0).days
-                if days < 0:
-                    return Response({"detail": f"fecha fin anterior al inicio en {key}"}, status=400)
-                if days > 365:
-                    return Response({"detail": f"rango fuera de límite (365d) en {key}"}, status=400)
-                current[key] = {"start": d0.isoformat(), "end": d1.isoformat(), "days": days}
+                start_str = str(v.get("start") or "").strip()
+                end_str = str(v.get("end") or "").strip()
+                d0 = None
+                d1 = None
+                if start_str:
+                    try:
+                        d0 = _dt.date.fromisoformat(start_str)
+                    except (TypeError, ValueError):
+                        return Response({"detail": f"fecha inicio inválida para {key} (YYYY-MM-DD)"}, status=400)
+                if end_str:
+                    try:
+                        d1 = _dt.date.fromisoformat(end_str)
+                    except (TypeError, ValueError):
+                        return Response({"detail": f"fecha fin inválida para {key} (YYYY-MM-DD)"}, status=400)
+
+                if d0 and d1:
+                    days = (d1 - d0).days
+                    if days < 0:
+                        return Response({"detail": f"fecha fin anterior al inicio en {key}"}, status=400)
+                elif d0:
+                    days = max(0, (_dt.date.today() - d0).days)
+                elif d1:
+                    days = 0
+                else:
+                    current.pop(key, None)
+                    continue
+
+                current[key] = {
+                    "start": d0.isoformat() if d0 else None,
+                    "end": d1.isoformat() if d1 else None,
+                    "days": days,
+                }
                 # Sprint 2026-07-30 · la fecha fin de Tránsito se usa como ETA.
-                if key == "TRANSITO":
+                if key == "TRANSITO" and d1:
                     new_transito_end = d1
                 continue
             # Legacy: número de días directo.
@@ -1150,15 +1264,18 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 days = float(v)
             except (TypeError, ValueError):
                 return Response({"detail": f"días inválidos para {key}"}, status=400)
-            if days < 0 or days > 365:
-                return Response({"detail": f"días fuera de rango (0-365) para {key}"}, status=400)
+            if days < 0 or days > 3650:
+                return Response({"detail": f"días fuera de rango (0-3650) para {key}"}, status=400)
             current[key] = round(days, 1)
 
         exp.phase_durations_json = current
         if new_transito_end is not None:
             exp.eta = new_transito_end
         exp.save(update_fields=["phase_durations_json", "eta", "updated_at"])
-        return Response({"phase_durations": current})
+
+        check_auto_close_en_destino(exp)
+
+        return Response({"phase_durations": exp.phase_durations_json or {}})
 
     # ── Fusión visual de expedientes (Sprint 2026-06-11 · E3) ────────
     # Una PO del cliente dividida en N partes (operadores/SAP/proforma
