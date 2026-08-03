@@ -653,9 +653,11 @@ export default function ScreenExpedienteDetail() {
         {!isClient && (
           <div className="flex ai-center jc-between" style={{ padding: '12px 24px', background: 'var(--bg-alt)' }}>
             <div className="flex gap-2">
-              <button className="btn btn-accent" onClick={() => setShowAdvance(true)}>
-                <IconArrow size={14}/> {tr(lang,'advance_state')}
-              </button>
+              {exp?.status !== 'CERRADO' && exp?.estado !== 'CERRADO' && (
+                <button className="btn btn-accent" onClick={() => setShowAdvance(true)}>
+                  <IconArrow size={14}/> {tr(lang,'advance_state')}
+                </button>
+              )}
               <button className="btn btn-secondary" onClick={() => setShowPaymentDrawer(true)}>
                 <IconDollar size={14}/> {tr(lang,'register_payment')}
               </button>
@@ -2213,6 +2215,28 @@ function MiniMetric({ label, value, sub }) {
 }
 
 function NextActionCard({ exp, lang, onAdvance }) {
+  const isCerrado = exp?.status === 'CERRADO' || exp?.estado === 'CERRADO';
+  if (isCerrado) {
+    return (
+      <div className="card card-pad-lg" style={{ background: 'linear-gradient(135deg, rgba(0,178,134,0.08), rgba(0,178,134,0.02))', border: '1px solid rgba(0,178,134,0.25)' }}>
+        <div className="flex ai-center gap-2 mb-3">
+          <IconCheck size={16} style={{ color: 'var(--success, #00B286)' }} />
+          <span className="micro" style={{ color: 'var(--success, #00B286)' }}>
+            {lang === 'es' ? 'EXPEDIENTE CERRADO' : 'FILE CLOSED'}
+          </span>
+        </div>
+        <div className="heading-md mb-2" style={{ color: '#0B1E3A' }}>
+          {lang === 'es' ? 'Proceso completado' : 'Process completed'}
+        </div>
+        <div className="body-sm text-sec">
+          {lang === 'es'
+            ? 'Este expediente ha completado todo su ciclo de vida y se encuentra cerrado.'
+            : 'This file has completed its full lifecycle and is closed.'}
+        </div>
+      </div>
+    );
+  }
+
   const nextTech = {
     REGISTRO: 'PRODUCCION', PRODUCCION: 'PREPARACION', PREPARACION: 'DESPACHO',
     DESPACHO: 'TRANSITO', TRANSITO: 'EN_DESTINO', EN_DESTINO: 'CERRADO',
@@ -2229,8 +2253,8 @@ function NextActionCard({ exp, lang, onAdvance }) {
       </div>
       <div className="body-sm text-sec mb-4">
         {lang==='es'
-          ? `Cuando la nave arribe a ${exp.destination}, actualiza el expediente a "${nextLabel}" para iniciar la secuencia de facturación final.`
-          : `When the vessel arrives at ${exp.destination}, advance to "${nextLabel}" to trigger final invoicing.`}
+          ? `Cuando la nave arribe a ${exp.destination || 'destino'}, actualiza el expediente a "${nextLabel}" para iniciar la secuencia de facturación final.`
+          : `When the vessel arrives at ${exp.destination || 'destination'}, advance to "${nextLabel}" to trigger final invoicing.`}
       </div>
       {nextTech && (
         <button className="btn btn-accent w-full" onClick={onAdvance}>

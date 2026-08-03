@@ -108,7 +108,21 @@ export function StateTimeline({ currentStatus, lang='es', dates={},
   const order = DISPLAY_STAGES;
   const currentDisplay = displayStage(currentStatus);
   const currentIdx = order.indexOf(currentDisplay);
-  const progressPct = currentIdx >= 0 ? (currentIdx / (order.length - 1)) * 100 : 0;
+
+  const cerradoInfo = phaseInfo ? (phaseInfo['CERRADO'] || {}) : {};
+  const cerradoOv = cerradoInfo.override;
+  const cerradoHasEnd = !!(
+    cerradoOv?.end ||
+    cerradoInfo.exit ||
+    dates?.CERRADO_END ||
+    dates?.CERRADO_end ||
+    dates?.CERRADO
+  );
+  const isCerradoCompleted = (currentDisplay === 'CERRADO' || currentStatus === 'CERRADO') && cerradoHasEnd;
+
+  const progressPct = isCerradoCompleted
+    ? 100
+    : currentIdx >= 0 ? (currentIdx / (order.length - 1)) * 100 : 0;
   // Fechas de fases técnicas fusionadas: mostrar la entrada a la primera
   // fase técnica del grupo (PREPARACION) como fecha de la fase visual.
   const displayDates = {};
@@ -185,7 +199,10 @@ export function StateTimeline({ currentStatus, lang='es', dates={},
       )}
 
       {order.map((s, i) => {
-        const status = i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'future';
+        let status = i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'future';
+        if (s === 'CERRADO' && isCerradoCompleted) {
+          status = 'done';
+        }
         const info = phaseInfo ? (phaseInfo[s] || {}) : {};
         const ov = info.override;
         const has = info.real != null || (ov && ov.days != null);
