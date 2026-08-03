@@ -215,7 +215,7 @@ def _fetch_expedientes() -> list[dict]:
             WHERE e.is_active = TRUE
             GROUP BY e.id, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct,
                      a05.shipment_date_artifact, a05.eta_artifact
-            ORDER BY e.created_at DESC
+            ORDER BY proforma_codigo ASC NULLS LAST, e.codigo ASC
             """
         )
         cols = [c0[0] for c0 in c.description]
@@ -225,14 +225,23 @@ def _fetch_expedientes() -> list[dict]:
 def _build_item(row: dict, today: date) -> dict:
     """Transforma una fila del cursor en el item de la API."""
     commission_rate = row["commission_rate"]
-    delta_total = _dec(row["delta_total"])
     total_client = _dec(row["total_client"])
-    total_mwt = _dec(row["total_mwt"])
+
+    # Regla de Operador (Sprint 2026-08-03 CEO Directive):
+    # Si operating_company_id == client_id (expediente directo del cliente),
+    # NO es operado por Muito Work Limitada.
+    # Por lo tanto, total_mwt debe ser 0.00 y la base de comision es total_client.
+    is_mwt_operated = (row["operating_company_id"] != row["client_id"])
+
+    if is_mwt_operated:
+        total_mwt = _dec(row["total_mwt"])
+        delta_total = _dec(row["delta_total"])
+    else:
+        total_mwt = Decimal("0.00")
+        delta_total = total_client
 
     if commission_rate is not None:
-        base = (delta_total
-                if row["operating_company_id"] == MWT_OPERATING_CLIENT_ID
-                else total_client)
+        base = delta_total if is_mwt_operated else total_client
         commission_amount = (base * _dec(commission_rate)).quantize(Decimal("0.01"))
     else:
         commission_amount = None
