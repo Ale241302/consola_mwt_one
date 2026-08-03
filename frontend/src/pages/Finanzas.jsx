@@ -45,7 +45,12 @@ function formatMoney(v, currency = "USD") {
 }
 
 function formatExpedienteId(item) {
-  return item?.display_id || item?.proforma_codigo || item?.codigo || "—";
+  const raw = (item?.display_id || item?.proforma_codigo || item?.codigo || "—").trim();
+  if (!raw || raw === "—") return "—";
+  if (!raw.toUpperCase().startsWith("PF")) {
+    return `PF ${raw}`;
+  }
+  return raw;
 }
 
 function formatDate(iso) {

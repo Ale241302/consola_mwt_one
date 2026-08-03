@@ -56,10 +56,13 @@ def _dec(v) -> Decimal:
 
 
 def _resolve_display_id(codigo: str | None, proforma_codigo: str | None) -> str:
-    """number_proforma > codigo. Nunca exponer UUID."""
-    if proforma_codigo and str(proforma_codigo).strip():
-        return str(proforma_codigo).strip()
-    return str(codigo or "—")
+    """number_proforma > codigo. Estandariza prefijo PF en todos los identificadores."""
+    raw = (proforma_codigo or codigo or "").strip()
+    if not raw or raw == "—":
+        return "—"
+    if not raw.upper().startswith("PF"):
+        return f"PF {raw}"
+    return raw
 
 
 def _resolve_devengo_estado(
@@ -67,6 +70,8 @@ def _resolve_devengo_estado(
     commission_rate: Decimal | None,
     shipment_date,
     eta,
+    oc_delivery_date=None,
+    created_at_date=None,
     credit_days_cliente: int | None,
     credit_days_mwt: int | None,
     balance: Decimal,
@@ -82,17 +87,19 @@ def _resolve_devengo_estado(
         return ("SIN_TASA", None)
 
     # Si el expediente ya esta pagado completamente, asumimos DEVENGADA.
-    # (Cuando exista PaymentLine.commission_settled_at, refinar.)
     if total_paid > 0 and balance == 0:
         return ("DEVENGADA", None)
 
-    base = shipment_date or eta
+    # Jerarquía de fecha base (real > eta > prometida OC > estimada 60d)
+    base = shipment_date or eta or oc_delivery_date
+    if base is None and created_at_date is not None:
+        base = created_at_date + timedelta(days=60)
     if base is None:
         return ("PROYECTADA", None)
 
-    cd_cli = int(credit_days_cliente or 0)
-    cd_mwt = int(credit_days_mwt or 0)
-    BUFFER_RECONCILIACION = 10  # dias, constante (deuda diferida: hacer setting)
+    cd_cli = int(credit_days_cliente or 90)
+    cd_mwt = int(credit_days_mwt or 90)
+    BUFFER_RECONCILIACION = 10  # dias
 
     fecha_pago_cliente_a_marluvas = base + timedelta(days=cd_cli)
     fecha_pago_marluvas_a_mwt = fecha_pago_cliente_a_marluvas + timedelta(days=cd_mwt)
@@ -131,8 +138,6 @@ def _next_month_business_window(d: date | None, n_days: int = 10) -> tuple[date 
     # Avanzar n dias habiles (lun=0..vie=4)
     cur = inicio
     habiles = 0
-    # Si inicio cae en fin de semana, lo contamos como 0 habiles.
-    # Avanzamos hasta acumular n_days habiles.
     while habiles < n_days:
         if cur.weekday() < 5:  # lun-vie
             habiles += 1
@@ -153,10 +158,6 @@ def _fetch_expedientes() -> list[dict]:
             SELECT
                 e.id::text                                        AS expediente_id,
                 e.codigo                                          AS codigo,
-                -- Sprint 2026-05-24 fix · proforma_codigo NO es columna SQL,
-                -- es un SerializerMethodField (computed en Python). Lo derivamos
-                -- aqui leyendo el codigo del documento PROFORMA mas reciente
-                -- via subquery LATERAL (devuelve NULL si no hay proforma).
                 (
                     SELECT d.codigo
                       FROM expedientes.documento d
@@ -172,15 +173,12 @@ def _fetch_expedientes() -> list[dict]:
                 e.operating_company_id::text                      AS operating_company_id,
                 e.shipment_date                                   AS shipment_date,
                 e.eta                                             AS eta,
-                -- Sprint 2026-05-30 (CEO) - fechas reales del ART-05
-                -- (template_id=9 AWB/BL) mas reciente del expediente.
-                -- field-1780150662711 = Fecha de Despacho.
-                -- field-1780150673285 = Fecha de Arrivo (ETA).
+                e.created_at::date                                AS created_at_date,
+                oc.delivery_date                                  AS oc_delivery_date,
                 a05.shipment_date_artifact                        AS shipment_date_artifact,
                 a05.eta_artifact                                  AS eta_artifact,
-                e.credit_days                                     AS credit_days,
-                e.credit_days_mwt                                 AS credit_days_mwt,
-                e.credit_days_cliente                             AS credit_days_cliente,
+                COALESCE(e.credit_days_mwt, e.credit_days, 90)   AS credit_days_mwt,
+                COALESCE(e.credit_days_cliente, e.credit_days, cl.dias_credito, 90) AS credit_days_cliente,
                 e.forma_pago                                      AS forma_pago,
                 COALESCE(e.balance, 0)                            AS balance,
                 COALESCE(e.total_paid, 0)                         AS total_paid,
@@ -192,7 +190,7 @@ def _fetch_expedientes() -> list[dict]:
                 END                                               AS commission_rate_source,
                 cl.razon_social                                   AS cliente_razon_social,
                 cl.segmento                                       AS cliente_segmento,
-                cl.dias_credito                                   AS cliente_dias_credito,
+                COALESCE(cl.dias_credito, 90)                     AS cliente_dias_credito,
                 COALESCE(SUM(l.qty * l.unit_price_client), 0)     AS total_client,
                 COALESCE(SUM(l.qty * l.unit_price_mwt), 0)        AS total_mwt,
                 COALESCE(SUM(l.qty * (l.unit_price_client - l.unit_price_mwt)), 0) AS delta_total,
@@ -200,9 +198,8 @@ def _fetch_expedientes() -> list[dict]:
                 COUNT(l.id)                                       AS lines_count
             FROM expedientes.expediente e
             LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
+            LEFT JOIN expedientes.oc oc ON oc.id = e.oc_id
             LEFT JOIN expedientes.linea l ON l.expediente_id = e.id AND l.is_active = TRUE
-            -- Sprint 2026-05-30 (CEO) - LATERAL join para extraer fecha
-            -- de despacho del ART-05 mas reciente vinculado al expediente.
             LEFT JOIN LATERAL (
                 SELECT
                     NULLIF(bai.data->>'field-1780150662711', '')::date AS shipment_date_artifact,
@@ -218,7 +215,7 @@ def _fetch_expedientes() -> list[dict]:
                 LIMIT 1
             ) a05 ON TRUE
             WHERE e.is_active = TRUE
-            GROUP BY e.id, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct,
+            GROUP BY e.id, oc.id, oc.delivery_date, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct,
                      a05.shipment_date_artifact, a05.eta_artifact
             ORDER BY e.created_at DESC
             """
@@ -235,10 +232,6 @@ def _build_item(row: dict, today: date) -> dict:
     total_mwt = _dec(row["total_mwt"])
 
     if commission_rate is not None:
-        # Decision CEO 2026-07-29: regla DUAL de comision segun operador.
-        #   - Operado por MWT:     tasa x delta_total (margen de reventa).
-        #   - Operado por cliente: tasa x total_client (comision por operacion;
-        #     ahi unit_price_client == unit_price_mwt y el delta es 0).
         base = (delta_total
                 if row["operating_company_id"] == MWT_OPERATING_CLIENT_ID
                 else total_client)
@@ -248,40 +241,34 @@ def _build_item(row: dict, today: date) -> dict:
 
     margen_pct = None
     if total_client > 0:
-        # Margen ponderado del expediente (delta / total_client).
         margen_pct = (delta_total / total_client).quantize(Decimal("0.0001"))
+
+    cd_cli = int(row["credit_days_cliente"] or row.get("cliente_dias_credito") or 90)
+    cd_mwt = int(row["credit_days_mwt"] or 90)
 
     estado, fecha_devengo = _resolve_devengo_estado(
         commission_rate=_dec(commission_rate) if commission_rate is not None else None,
-        # Sprint 2026-05-30 (CEO) - prioridad ART-05 > legacy.
         shipment_date=(row.get("shipment_date_artifact") or row["shipment_date"]),
         eta=(row.get("eta_artifact") or row["eta"]),
-        credit_days_cliente=(row["credit_days_cliente"]
-                             if row["credit_days_cliente"]
-                             else row.get("cliente_dias_credito")),
-        credit_days_mwt=row["credit_days_mwt"],
+        oc_delivery_date=row.get("oc_delivery_date"),
+        created_at_date=row.get("created_at_date"),
+        credit_days_cliente=cd_cli,
+        credit_days_mwt=cd_mwt,
         balance=_dec(row["balance"]),
         total_paid=_dec(row["total_paid"]),
         today=today,
     )
 
-    # Sprint 2026-05-30 (CEO) - fecha_facturada = base + credit_days_cliente.
-    # Luego mes_pago_aprox = primer dia del mes siguiente + rango primeros
-    # 10 dias habiles. Permite agrupar comision en /finanzas/commission-by-month/
-    # para grafica BarChart, y mostrar columna "Fecha pago aprox" en la tabla.
-    # Sprint 2026-05-30 (CEO) - prioridad de fuente para 'base' (fecha
-    # despacho): artefacto ART-05 > campo legacy del expediente.
-    fecha_facturada = None
     base = (row.get("shipment_date_artifact")
             or row["shipment_date"]
             or row.get("eta_artifact")
-            or row["eta"])
+            or row["eta"]
+            or row.get("oc_delivery_date"))
+    if base is None and row.get("created_at_date"):
+        base = row["created_at_date"] + timedelta(days=60)
+
+    fecha_facturada = None
     if base is not None:
-        # credit_days_cliente del expediente, con fallback al
-        # cliente.dias_credito cuando el expediente lo tiene NULL/0.
-        cd_cli = int(row["credit_days_cliente"] or 0)
-        if cd_cli <= 0:
-            cd_cli = int(row.get("cliente_dias_credito") or 0)
         fecha_facturada = base + timedelta(days=cd_cli)
     fpa_inicio, fpa_fin, mes_pago_label = _next_month_business_window(
         fecha_facturada, n_days=10
@@ -295,7 +282,7 @@ def _build_item(row: dict, today: date) -> dict:
         "client_id":             row["client_id"],
         "cliente_razon_social":  row["cliente_razon_social"] or "—",
         "cliente_segmento":      row["cliente_segmento"] or None,
-        "dias_credito_cliente":  row["cliente_dias_credito"],
+        "dias_credito_cliente":  cd_cli,
         "commission_rate":       (str(commission_rate) if commission_rate is not None else None),
         "commission_rate_source": row["commission_rate_source"],
         "total_client":          str(total_client.quantize(Decimal("0.01"))),
@@ -304,8 +291,8 @@ def _build_item(row: dict, today: date) -> dict:
         "commission_amount":     (str(commission_amount) if commission_amount is not None else None),
         "margen_pct":            (str(margen_pct) if margen_pct is not None else None),
         "forma_pago":            row["forma_pago"],
-        "credit_days_mwt":       row["credit_days_mwt"],
-        "credit_days_cliente":   row["credit_days_cliente"],
+        "credit_days_mwt":       cd_mwt,
+        "credit_days_cliente":   cd_cli,
         "shipment_date":         (row.get("shipment_date_artifact") or row["shipment_date"]).isoformat()
                                   if (row.get("shipment_date_artifact") or row["shipment_date"]) else None,
         "eta":                   (row.get("eta_artifact") or row["eta"]).isoformat()
@@ -316,7 +303,6 @@ def _build_item(row: dict, today: date) -> dict:
         "devengo_estado":        estado,
         "lines_count":           row["lines_count"],
         "total_qty":             str(_dec(row["total_qty"])),
-        # Sprint 2026-05-30 (CEO) - fecha facturada y ventana de pago.
         "fecha_facturada":           fecha_facturada.isoformat() if fecha_facturada else None,
         "mes_pago_aproximado":       mes_pago_label,
         "fecha_pago_aprox_inicio":   fpa_inicio.isoformat() if fpa_inicio else None,
