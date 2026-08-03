@@ -70,7 +70,6 @@ def _resolve_devengo_estado(
     commission_rate: Decimal | None,
     shipment_date,
     eta,
-    oc_delivery_date=None,
     created_at_date=None,
     credit_days_cliente: int | None,
     credit_days_mwt: int | None,
@@ -93,8 +92,8 @@ def _resolve_devengo_estado(
     cd_cli = int(credit_days_cliente or 90)
     cd_mwt = int(credit_days_mwt or 90)
 
-    # Jerarquía de fecha base (real > eta > prometida OC > estimada con días crédito cliente)
-    base = shipment_date or eta or oc_delivery_date
+    # Jerarquía de fecha base (real > eta > estimada con días crédito cliente)
+    base = shipment_date or eta
     if base is None and created_at_date is not None:
         base = created_at_date + timedelta(days=cd_cli)
     if base is None:
@@ -175,7 +174,6 @@ def _fetch_expedientes() -> list[dict]:
                 e.shipment_date                                   AS shipment_date,
                 e.eta                                             AS eta,
                 MAX(e.created_at)::date                           AS created_at_date,
-                MAX(oc.delivery_date)                             AS oc_delivery_date,
                 a05.shipment_date_artifact                        AS shipment_date_artifact,
                 a05.eta_artifact                                  AS eta_artifact,
                 COALESCE(e.credit_days_mwt, e.credit_days, 90)   AS credit_days_mwt,
@@ -199,7 +197,6 @@ def _fetch_expedientes() -> list[dict]:
                 COUNT(l.id)                                       AS lines_count
             FROM expedientes.expediente e
             LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
-            LEFT JOIN expedientes.oc oc ON oc.id = e.oc_id
             LEFT JOIN expedientes.linea l ON l.expediente_id = e.id AND l.is_active = TRUE
             LEFT JOIN LATERAL (
                 SELECT
@@ -251,7 +248,6 @@ def _build_item(row: dict, today: date) -> dict:
         commission_rate=_dec(commission_rate) if commission_rate is not None else None,
         shipment_date=(row.get("shipment_date_artifact") or row["shipment_date"]),
         eta=(row.get("eta_artifact") or row["eta"]),
-        oc_delivery_date=row.get("oc_delivery_date"),
         created_at_date=row.get("created_at_date"),
         credit_days_cliente=cd_cli,
         credit_days_mwt=cd_mwt,
@@ -263,8 +259,7 @@ def _build_item(row: dict, today: date) -> dict:
     base = (row.get("shipment_date_artifact")
             or row["shipment_date"]
             or row.get("eta_artifact")
-            or row["eta"]
-            or row.get("oc_delivery_date"))
+            or row["eta"])
     if base is None and row.get("created_at_date"):
         base = row["created_at_date"] + timedelta(days=cd_cli)
 
