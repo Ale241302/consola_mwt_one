@@ -90,15 +90,16 @@ def _resolve_devengo_estado(
     if total_paid > 0 and balance == 0:
         return ("DEVENGADA", None)
 
-    # Jerarquía de fecha base (real > eta > prometida OC > estimada 60d)
+    cd_cli = int(credit_days_cliente or 90)
+    cd_mwt = int(credit_days_mwt or 90)
+
+    # Jerarquía de fecha base (real > eta > prometida OC > estimada con días crédito cliente)
     base = shipment_date or eta or oc_delivery_date
     if base is None and created_at_date is not None:
-        base = created_at_date + timedelta(days=60)
+        base = created_at_date + timedelta(days=cd_cli)
     if base is None:
         return ("PROYECTADA", None)
 
-    cd_cli = int(credit_days_cliente or 90)
-    cd_mwt = int(credit_days_mwt or 90)
     BUFFER_RECONCILIACION = 10  # dias
 
     fecha_pago_cliente_a_marluvas = base + timedelta(days=cd_cli)
@@ -265,7 +266,7 @@ def _build_item(row: dict, today: date) -> dict:
             or row["eta"]
             or row.get("oc_delivery_date"))
     if base is None and row.get("created_at_date"):
-        base = row["created_at_date"] + timedelta(days=60)
+        base = row["created_at_date"] + timedelta(days=cd_cli)
 
     fecha_facturada = None
     if base is not None:
