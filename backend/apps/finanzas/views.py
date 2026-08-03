@@ -173,8 +173,8 @@ def _fetch_expedientes() -> list[dict]:
                 e.operating_company_id::text                      AS operating_company_id,
                 e.shipment_date                                   AS shipment_date,
                 e.eta                                             AS eta,
-                e.created_at::date                                AS created_at_date,
-                oc.delivery_date                                  AS oc_delivery_date,
+                MAX(e.created_at)::date                           AS created_at_date,
+                MAX(oc.delivery_date)                             AS oc_delivery_date,
                 a05.shipment_date_artifact                        AS shipment_date_artifact,
                 a05.eta_artifact                                  AS eta_artifact,
                 COALESCE(e.credit_days_mwt, e.credit_days, 90)   AS credit_days_mwt,
@@ -215,7 +215,7 @@ def _fetch_expedientes() -> list[dict]:
                 LIMIT 1
             ) a05 ON TRUE
             WHERE e.is_active = TRUE
-            GROUP BY e.id, oc.id, oc.delivery_date, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct,
+            GROUP BY e.id, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct,
                      a05.shipment_date_artifact, a05.eta_artifact
             ORDER BY e.created_at DESC
             """
