@@ -636,14 +636,14 @@ export default function AddOCProductModal({
                         : `Available sizes (${picked.tallas.length})`}
                     </div>
                     {(() => {
-                      const allSystems = ["BASE","EU","US_M","US_W","UK_M","BR","CM","ALFA"];
+                      const allSystems = ["BASE","EU","US_M","US_W","UK_M","CM","ALFA"];
                       const systemsWithData = allSystems.filter((s) =>
                         s === "BASE" || picked.tallas.some((t) => !!(t.equiv && t.equiv[s]))
                       );
                       const labels = {
-                        BASE: lang === "es" ? "Base" : "Base",
+                        BASE: "BRA",
                         EU: "EU", US_M: "US M", US_W: "US W",
-                        UK_M: "UK", BR: "BR", CM: "CM",
+                        UK_M: "UK", CM: "CM",
                         ALFA: lang === "es" ? "Letras" : "Letter",
                       };
                       if (systemsWithData.length <= 1) return null;

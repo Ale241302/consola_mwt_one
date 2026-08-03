@@ -357,10 +357,16 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
         .map((s) => ({ id: s, label: labels[s] || s }));
     }
 
-    // Sprint 2026-07-25 · BASE (talla base BRA) siempre primera opción
-    // del toggle y seleccionada por defecto.
+    // Sprint 2026-08-03 · deduplicar BR / BASE (ambos son BRA).
+    // Filtrar cualquier 'br', 'BR' o 'BASE' previo de sysList para evitar que "BRA" aparezca repetido.
+    sysList = sysList.filter(s => {
+      const idUpper = String(s.id).toUpperCase();
+      return idUpper !== "BR" && idUpper !== "BASE" && s.label !== "BRA";
+    });
+
+    // Sprint 2026-07-25 · BASE (talla base BRA) siempre primera opción del toggle.
     const hasBase = tallas.some(t => t.base && t.base !== "ÚNICA");
-    if (hasBase && !sysList.some(s => String(s.id).toUpperCase() === "BASE")) {
+    if (hasBase) {
       sysList.unshift({ id: "BASE", label: "BRA" });
     }
 
@@ -373,7 +379,8 @@ export function ManualLinePanel({ lang, clientId, clientLabel, onClose, onAdd })
         : sysList[0]?.id);
 
     const valueOf = (t, sys = activeSystem) => {
-      if (String(sys).toUpperCase() === "BASE") return t?.base ?? null;
+      const sysUpper = String(sys).toUpperCase();
+      if (sysUpper === "BASE" || sysUpper === "BR") return t?.base ?? null;
       return useDyn ? dynValOf(t, sys) : (t?.equiv?.[sys] ?? null);
     };
 
