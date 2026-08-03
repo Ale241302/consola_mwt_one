@@ -1527,9 +1527,8 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
         #       con costo_batch_id. El costo de recepción viaja con la asignación,
         #       así que aparece en el nodo donde esté actualmente.
         sql = """
-            WITH asignaciones_del_nodo AS (
+            WITH items_en_nodo AS (
                 SELECT
-                    a.transferencia_id,
                     a.expediente_id,
                     a.producto_id,
                     COALESCE(a.talla, '')         AS talla_norm,
@@ -1537,10 +1536,41 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                     SUM(a.qty_asignada)::int      AS qty_asignada
                 FROM inventario.expediente_nodo_assignment a
                 WHERE a.nodo_id = %(nodo_id)s::uuid
-                  AND a.transferencia_id IS NOT NULL
                   AND a.is_active = TRUE
-                GROUP BY a.transferencia_id, a.expediente_id, a.producto_id, a.talla
+                GROUP BY a.expediente_id, a.producto_id, a.talla
                 HAVING SUM(a.qty_asignada) > 0
+            ),
+            costos_transfers_nodo AS (
+                SELECT
+                    cl.id                                          AS cost_line_id,
+                    cl.transferencia_id,
+                    t.codigo                                       AS transferencia_codigo,
+                    t.legal_context,
+                    t.created_at                                   AS transferencia_fecha,
+                    cl.kind,
+                    ck.label                                       AS kind_label,
+                    cl.label,
+                    cl.amount,
+                    cl.currency,
+                    cl.fx_to_usd,
+                    cl.amount_usd,
+                    cl.source,
+                    cl.scope_json,
+                    cl.created_at                                  AS cost_created_at
+                FROM transfers.cost_line cl
+                JOIN transfers.transferencia t ON t.id = cl.transferencia_id
+                LEFT JOIN transfers.cost_kind_cat ck ON ck.codigo = cl.kind
+                WHERE t.is_active = TRUE
+                  AND cl.is_active = TRUE
+                  AND (
+                      t.destino_id = %(nodo_id)s::uuid
+                      OR EXISTS (
+                          SELECT 1 FROM inventario.expediente_nodo_assignment a
+                          WHERE a.transferencia_id = t.id
+                            AND a.nodo_id = %(nodo_id)s::uuid
+                            AND a.is_active = TRUE
+                      )
+                  )
             ),
             recepcion_asignaciones_del_nodo AS (
                 SELECT
@@ -1558,11 +1588,11 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                 HAVING SUM(a.qty_asignada) > 0
             )
             SELECT
-                cl.id                                              AS cost_line_id,
-                cl.transferencia_id,
-                t.codigo                                           AS transferencia_codigo,
-                t.legal_context,
-                t.created_at                                       AS transferencia_fecha,
+                ct.cost_line_id,
+                ct.transferencia_id,
+                ct.transferencia_codigo,
+                ct.legal_context,
+                ct.transferencia_fecha,
                 a.expediente_id,
                 e.codigo                                           AS expediente_codigo,
                 pf.codigo                                          AS proforma_codigo,
@@ -1570,30 +1600,43 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                 l.sku,
                 COALESCE(p.nombre, p.descripcion, l.sku, '—')      AS nombre,
                 a.talla,
-                a.qty_asignada                                     AS qty,
-                cl.kind,
-                ck.label                                           AS kind_label,
-                cl.label,
-                cl.amount,
-                cl.currency,
-                cl.fx_to_usd,
-                cl.amount_usd,
-                cl.source,
-                cl.scope_json,
-                cl.created_at                                      AS cost_created_at,
+                COALESCE(a.qty_asignada, 0)                        AS qty,
+                ct.kind,
+                COALESCE(ct.kind_label, ct.kind)                   AS kind_label,
+                ct.label,
+                ct.amount,
+                ct.currency,
+                ct.fx_to_usd,
+                ct.amount_usd,
+                ct.source,
+                ct.scope_json,
+                ct.cost_created_at,
                 FALSE                                              AS is_reception
-            FROM asignaciones_del_nodo a
-            JOIN transfers.cost_line cl
-              ON cl.transferencia_id = a.transferencia_id
-             AND cl.is_active = TRUE
-            JOIN transfers.transferencia t        ON t.id = cl.transferencia_id
+            FROM costos_transfers_nodo ct
+            LEFT JOIN items_en_nodo a ON (
+                ct.scope_json IS NULL
+                OR (ct.scope_json->>'applies_to_all')::bool = TRUE
+                OR (
+                    ct.scope_json->'expediente_ids' ? a.expediente_id::text
+                    AND (
+                        ct.scope_json->'lines' IS NULL
+                        OR jsonb_typeof(ct.scope_json->'lines') <> 'array'
+                        OR jsonb_array_length(ct.scope_json->'lines') = 0
+                        OR EXISTS (
+                            SELECT 1 FROM jsonb_array_elements(ct.scope_json->'lines') AS ln
+                            WHERE ln->>'expediente_id' = a.expediente_id::text
+                              AND ln->>'producto_id'   = a.producto_id::text
+                              AND COALESCE(ln->>'talla','') = a.talla_norm
+                        )
+                    )
+                )
+            )
             LEFT JOIN expedientes.linea l
               ON l.expediente_id = a.expediente_id
              AND l.producto_id   = a.producto_id
              AND COALESCE(l.size,'') = a.talla_norm
             LEFT JOIN expedientes.expediente e    ON e.id = a.expediente_id
             LEFT JOIN productos.producto p        ON p.id = a.producto_id
-            LEFT JOIN transfers.cost_kind_cat ck  ON ck.codigo = cl.kind
             LEFT JOIN LATERAL (
                 SELECT d.codigo
                 FROM expedientes.documento d
@@ -1605,24 +1648,6 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                 ORDER BY d.created_at DESC
                 LIMIT 1
             ) pf ON TRUE
-            WHERE (
-                cl.scope_json IS NULL
-                OR (cl.scope_json->>'applies_to_all')::bool = TRUE
-                OR (
-                    cl.scope_json->'expediente_ids' ? a.expediente_id::text
-                    AND (
-                        cl.scope_json->'lines' IS NULL
-                        OR jsonb_typeof(cl.scope_json->'lines') <> 'array'
-                        OR jsonb_array_length(cl.scope_json->'lines') = 0
-                        OR EXISTS (
-                            SELECT 1 FROM jsonb_array_elements(cl.scope_json->'lines') AS ln
-                            WHERE ln->>'expediente_id' = a.expediente_id::text
-                              AND ln->>'producto_id'   = a.producto_id::text
-                              AND COALESCE(ln->>'talla','') = a.talla_norm
-                        )
-                    )
-                )
-            )
 
             UNION ALL
 
