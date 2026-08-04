@@ -237,8 +237,17 @@ export default function ScreenExpedientes() {
           l => l.expediente_id === e._raw.id
         );
         let orderValue = 0;
+        let totalClientVal = Number(e._raw?.balance || e._raw?.total_invoiced || 0);
+        let totalMwtVal = Number(e._raw?.total_cost || 0);
+        let sumClient = 0;
+        let sumMwt = 0;
+
         for (const ln of expLines) {
           const qty = Number(ln.qty || 0);
+          const priceClient = Number(ln.unit_price_client || ln.unit_price || 0);
+          const priceMwt = Number(ln.unit_price_mwt || ln.unit_price || 0);
+          sumClient += qty * priceClient;
+          sumMwt += qty * priceMwt;
           let unit  = Number(ln.unit_price || 0);
           if (unit === 0 && ln.producto_id) {
             const p = productMap[ln.producto_id];
@@ -251,9 +260,15 @@ export default function ScreenExpedientes() {
           }
           orderValue += qty * unit;
         }
+
+        if (sumClient > 0) totalClientVal = sumClient;
+        if (sumMwt > 0) totalMwtVal = sumMwt;
+
         const enrichedExp = {
           ...e,
           order_value: orderValue,
+          total_client: totalClientVal,
+          total_mwt: totalMwtVal,
           // Sprint 2026-08-02 · nombre del operador (operating_company_id
           // es un cliente; se hidrata con el mismo clientMap). Se resuelve
           // ANTES del early-return de `cli` para no depender del cliente.
@@ -1034,7 +1049,12 @@ export default function ScreenExpedientes() {
           UX). 'table' → render tradicional de la master table. */}
       {viewMode === 'kanban' ? (
         <div style={{ marginTop: 4 }}>
-          <ScreenPipeline />
+          <ScreenPipeline
+            searchQuery={q}
+            brandFilter={brandFilter}
+            clientFilter={clientFilter}
+            statusFilter={statusFilter}
+          />
         </div>
       ) : (<>
       {/* ── Master table ───── */}
@@ -1090,8 +1110,8 @@ export default function ScreenExpedientes() {
                 <th style={{width:90, textAlign:'right'}}>{tr(lang,'time_signal')}</th>
               </>}
               {effectiveView === 'financial' && <>
-                <th style={{textAlign:'right'}}>{tr(lang,'invoiced')}</th>
-                <th style={{textAlign:'right'}}>{tr(lang,'real_margin')}</th>
+                <th style={{textAlign:'right'}}>{lang==='es'?'Facturado Cliente':'Client Invoiced'}</th>
+                {!isClient && <th style={{textAlign:'right'}}>{lang==='es'?'Facturado MWT':'MWT Invoiced'}</th>}
                 <th style={{textAlign:'right'}}>{tr(lang,'credit_days')}</th>
                 <th style={{width: 140}}>{tr(lang,'payments_breakdown')}</th>
               </>}
@@ -1230,7 +1250,11 @@ export default function ScreenExpedientes() {
                     </>}
                     {effectiveView === 'financial' && <>
                       <td className="td-money">{fmtMoney(totalInv)}</td>
-                      <td style={{ textAlign: 'right' }}><span className="caption">—</span></td>
+                      {!isClient && (
+                        <td className="td-money" style={{ textAlign: 'right' }}>
+                          {fmtMoney(members.reduce((a, m) => a + (Boolean(m.operating_company_id && m.operating_company_id !== m.client_id) ? (m.total_mwt || m.total_cost || 0) : 0), 0))}
+                        </td>
+                      )}
                       <td className="td-num">
                         <div className="flex ai-center gap-2" style={{ justifyContent: 'flex-end' }}>
                           <CreditDot band={maxCredit > 75 ? 'RED' : maxCredit > 60 ? 'AMBER' : 'GREEN'}/>
@@ -1389,15 +1413,16 @@ export default function ScreenExpedientes() {
                     </>}
 
                     {effectiveView === 'financial' && <>
-                      <td className="td-money">{fmtMoney(e.total_invoiced)}</td>
-                      <td style={{textAlign:'right'}}>
-                        <span className={`margin-pill ${driftE > 0.005 ? 'up' : driftE < -0.005 ? 'down' : 'flat'}`}>
-                          {(e.real_margin*100).toFixed(1)}%
-                          <span style={{fontSize:10, marginLeft:2, opacity:0.8}}>
-                            {driftE >= 0 ? '+' : ''}{(driftE*100).toFixed(1)}
-                          </span>
-                        </span>
+                      <td className="td-money">
+                        {fmtMoney(e.total_invoiced > 0 ? e.total_invoiced : (e.total_client || e.order_value || 0))}
                       </td>
+                      {!isClient && (
+                        <td className="td-money" style={{ textAlign: 'right' }}>
+                          {Boolean(e.operating_company_id && e.operating_company_id !== e.client_id)
+                            ? fmtMoney(e.total_mwt || e.total_cost || 0)
+                            : '$0'}
+                        </td>
+                      )}
                       <td className="td-num">
                         <div className="flex ai-center gap-2" style={{justifyContent:'flex-end'}}>
                           <CreditDot band={e.credit_days>75?'RED':e.credit_days>60?'AMBER':'GREEN'}/>

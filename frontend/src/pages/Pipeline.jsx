@@ -88,7 +88,12 @@ function mapExpedienteForPipeline(r) {
   };
 }
 
-export default function ScreenPipeline() {
+export default function ScreenPipeline({
+  searchQuery = "",
+  brandFilter: propBrandFilter = "ALL",
+  clientFilter: propClientFilter = "ALL",
+  statusFilter: propStatusFilter = "ALL",
+}) {
   const navigate = useNavigate();
   const { lang } = useOutletContext();
   const { isClient, isAdmin, can } = useRole();
@@ -113,11 +118,6 @@ export default function ScreenPipeline() {
       const mapped   = expItems.map(mapExpedienteForPipeline);
 
       // ── Enrichment (mismo patrón que Expedientes.jsx) ──────────────
-      // 1) Líneas activas + catálogo productos → order_value como
-      //    fallback de total_invoiced cuando todavía no hay factura.
-      // 2) Clientes → razón social, país y días de crédito.
-      // 3) Marcas → nombre legible (BRANDS mock no siempre matchea
-      //    el UUID real del backend).
       let lineasArr = [];
       try {
         const lnRaw = await lineasApi.list({ is_active: true });
@@ -131,10 +131,6 @@ export default function ScreenPipeline() {
         for (const p of arr) { if (p?.id) productMap[p.id] = p; }
       } catch { /* fallthrough — order_value queda en 0 */ }
 
-      // Clientes + operadores: fetch único por cada UUID (cliente final
-      // u operating company). Reusamos el mismo endpoint /api/clientes/
-      // — operating_company_id apunta a un cliente (puede ser MWT o el
-      // cliente directo).
       const uniqueClientIds = Array.from(new Set([
         ...mapped.map(e => e.client_id).filter(Boolean),
         ...mapped.map(e => e.operating_company_id).filter(Boolean),
@@ -152,7 +148,6 @@ export default function ScreenPipeline() {
         } catch { clientMap = {}; }
       }
 
-      // Marcas: lookup por brand_id real (no solo el mock BRANDS).
       const brandMap = {};
       try {
         const brList = await marcasApi.list();
@@ -164,14 +159,21 @@ export default function ScreenPipeline() {
         const cli = clientMap[e.client_id];
         const br  = brandMap[e.brand_id];
 
-        // order_value = Σ qty × unit (con fallback a precio_lista /
-        // override por cliente cuando la línea no trae unit_price).
         const expLines = lineasArr.filter(
           l => l.expediente_id === e._raw.id
         );
         let orderValue = 0;
+        let totalClientVal = Number(e._raw?.balance || e._raw?.total_invoiced || 0);
+        let totalMwtVal = Number(e._raw?.total_cost || 0);
+        let sumClient = 0;
+        let sumMwt = 0;
+
         for (const ln of expLines) {
           const qty = Number(ln.qty || 0);
+          const priceClient = Number(ln.unit_price_client || ln.unit_price || 0);
+          const priceMwt = Number(ln.unit_price_mwt || ln.unit_price || 0);
+          sumClient += qty * priceClient;
+          sumMwt += qty * priceMwt;
           let unit  = Number(ln.unit_price || 0);
           if (unit === 0 && ln.producto_id) {
             const p = productMap[ln.producto_id];
@@ -185,9 +187,9 @@ export default function ScreenPipeline() {
           orderValue += qty * unit;
         }
 
-        // Operador: lookup en el mismo clientMap (operating_company_id
-        // es un cliente). Si coincide con client_id → expediente directo
-        // del cliente; si es distinto (MWT) → MWT lo opera.
+        if (sumClient > 0) totalClientVal = sumClient;
+        if (sumMwt > 0) totalMwtVal = sumMwt;
+
         const op = e.operating_company_id ? clientMap[e.operating_company_id] : null;
         const operatorName = op
           ? (op.razon_social || op.nombre_comercial || op.codigo || '')
@@ -195,7 +197,6 @@ export default function ScreenPipeline() {
 
         return {
           ...e,
-          // Cliente
           client: cli
             ? (cli.razon_social || cli.nombre_comercial || cli.codigo || '')
             : e.client,
@@ -203,41 +204,34 @@ export default function ScreenPipeline() {
           credit_days:    Number(
             cli?.dias_credito ?? cli?.credit_days ?? cli?.credito_dias ?? e.credit_days ?? 0
           ),
-          // Operador (Sprint 2026-05-17)
           operator: operatorName,
-          // Logos (Sprint 2026-08-02) · la card muestra el logo del
-          // OPERADOR; si no tiene, cae al del cliente final. Son keys
-          // de MinIO servidas vía /api/storage/download/?key=…
           operator_logo: op?.logo_url  || '',
           client_logo:   cli?.logo_url || '',
-          // Marca
           brand: br ? (br.nombre || br.brand_code || br.slug || '') : e.brand,
-          // Monto
           order_value: orderValue,
+          total_client: totalClientVal,
+          total_mwt: totalMwtVal,
         };
       });
 
-      if (!isAlive()) return;   // Fable5 · desmontado durante el enrichment
+      if (!isAlive()) return;
       setApiExpedientes(enriched);
       setApiOcs(ocItems);
     } catch {
-      if (!isAlive()) return;   // Fable5
+      if (!isAlive()) return;
       setApiExpedientes([]);
       setApiOcs([]);
     } finally {
-      if (isAlive()) setLoading(false);   // Fable5
+      if (isAlive()) setLoading(false);
     }
   }, []);
 
-  // Fable5 · cleanup: marca alive=false al desmontar para que load() no
-  // toque el estado de un componente muerto.
   useEffect(() => {
     let alive = true;
     load(() => alive);
     return () => { alive = false; };
   }, [load]);
 
-  // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
   const EXPEDIENTES = apiExpedientes;
   const OCS         = apiOcs;
 
@@ -260,19 +254,34 @@ export default function ScreenPipeline() {
   const [brandFilter, setBrandFilter] = useState('ALL');
   const [urgentOnly, setUrgentOnly] = useState(false);
   const [blockedOnly, setBlockedOnly] = useState(false);
-  // Local overrides on state so drag-drop feels real
   const [stateOverrides, setStateOverrides] = useState({});
   const [draggingId, setDraggingId] = useState(null);
   const [dropTargetCol, setDropTargetCol] = useState(null);
 
-  const cols = DISPLAY_STAGES; // 6 fases visuales
+  const cols = DISPLAY_STAGES;
 
   const effectiveStatus = (e) => displayStage(stateOverrides[e.id] || e.status);
 
   const baseCards = EXPEDIENTES.filter(e => {
     if (brandFilter !== 'ALL' && e.brand_id !== brandFilter) return false;
+    if (propBrandFilter !== 'ALL' && e.brand_id !== propBrandFilter) return false;
+    if (propClientFilter !== 'ALL' && e.client_id !== propClientFilter) return false;
+    if (propStatusFilter !== 'ALL' && effectiveStatus(e) !== propStatusFilter) return false;
     if (urgentOnly && e.phase_signal !== 'red') return false;
     if (blockedOnly && !e.is_blocked) return false;
+
+    if (searchQuery && searchQuery.trim()) {
+      const qStr = searchQuery.trim().toLowerCase();
+      const matchRef = (e.ref || '').toLowerCase().includes(qStr);
+      const matchClient = (e.client || '').toLowerCase().includes(qStr);
+      const matchOperator = (e.operator || '').toLowerCase().includes(qStr);
+      const matchPfs = (e.proforma_codigos || []).some(c => String(c).toLowerCase().includes(qStr));
+      const matchOcs = (e.oc_codigos || []).some(c => String(c).toLowerCase().includes(qStr));
+      const matchSaps = (e.sap_codigos || []).some(c => String(c).toLowerCase().includes(qStr));
+      if (!matchRef && !matchClient && !matchOperator && !matchPfs && !matchOcs && !matchSaps) {
+        return false;
+      }
+    }
     return true;
   });
 
@@ -637,17 +646,25 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onOpenOC, onD
         )
       )}
 
-      {/* Footer: monto efectivo (sólo si showMoney — ADMIN). */}
-      {showMoney && effectiveAmount > 0 && (
-        <div className="k-card-foot">
-          <span className="k-card-money-pro tabular-nums"
-                title={exp.total_invoiced > 0
-                  ? (lang==='es'?'Facturado':'Invoiced')
-                  : (lang==='es'?'Valor de la orden (sin facturar aún)':'Order value (not yet invoiced)')}>
-            {fmtMoney(effectiveAmount)}
+      {/* Footer: monto cliente / monto MWT (Admin/CEO) vs solo cliente (Client/Normal) */}
+      <div className="k-card-foot" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'baseline' }}>
+        {!isClient ? (
+          <div style={{ textAlign: 'right' }}>
+            <span className="k-card-money-pro tabular-nums" title={lang==='es' ? 'Total Cliente' : 'Client Total'}>
+              {fmtMoney(effectiveAmount || exp.total_client || 0)}
+            </span>
+            {Boolean(exp.operating_company_id && exp.operating_company_id !== exp.client_id) && (
+              <span className="tabular-nums" style={{ fontSize: 11, color: 'var(--text-tertiary)', marginLeft: 6 }} title={lang==='es' ? 'Total MWT' : 'MWT Total'}>
+                / {fmtMoney(exp.total_mwt || 0)}
+              </span>
+            )}
+          </div>
+        ) : (
+          <span className="k-card-money-pro tabular-nums" title={lang==='es' ? 'Total Cliente' : 'Client Total'}>
+            {fmtMoney(effectiveAmount || exp.total_client || 0)}
           </span>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
