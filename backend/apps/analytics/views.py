@@ -618,11 +618,17 @@ class AnalyticsViewSet(viewsets.ViewSet):
               COALESCE(ocdoc.codigo, o.codigo)               AS oc_codigo,
               o.proforma                                     AS proforma,
               e.client_id,
+              e.operating_company_id,
               COALESCE(cli.nombre_comercial, cli.razon_social) AS client_name,
               e.brand_id,
               m.nombre                                       AS brand_name,
               e.credit_days,
               e.is_blocked,
+              COALESCE(lines_tot.total_client, o.total_value, e.total_invoiced, 0) AS total_client,
+              CASE WHEN e.operating_company_id IS NOT NULL AND e.operating_company_id <> e.client_id
+                   THEN COALESCE(lines_tot.total_mwt, e.total_cost, 0)
+                   ELSE 0
+              END                                            AS total_mwt,
               CASE WHEN e.is_blocked THEN 'high' ELSE 'medium' END AS urgency,
               CASE WHEN e.is_blocked
                    THEN 'Resolver bloqueo de crédito'
@@ -632,6 +638,13 @@ class AnalyticsViewSet(viewsets.ViewSet):
             LEFT JOIN expedientes.oc       o   ON o.id = e.oc_id
             LEFT JOIN clientes.cliente     cli ON cli.id = e.client_id
             LEFT JOIN brands.marca         m   ON m.id   = e.brand_id
+            LEFT JOIN LATERAL (
+              SELECT
+                SUM(l.qty * COALESCE(l.unit_price_client, l.unit_price, 0)) AS total_client,
+                SUM(l.qty * COALESCE(l.unit_price_mwt, l.unit_price, 0))    AS total_mwt
+              FROM expedientes.linea l
+              WHERE l.expediente_id = e.id AND l.is_active = TRUE
+            ) lines_tot ON TRUE
             LEFT JOIN LATERAL (
               SELECT d.codigo
                 FROM expedientes.documento d

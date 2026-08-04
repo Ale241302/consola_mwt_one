@@ -689,11 +689,15 @@ export function UrgentExpedientesTable({
           ("Resolver bloqueo de crédito" / "Confirmar arribo...") y el
           icono de urgencia al inicio de cada fila ya lo transmite.
           Cada fila lleva un badge PF/OC/EXP que indica el tipo de ref. */}
+      {/* Header — layout compacto.
+          Reemplaza Marca por dos columnas: Total Cliente y Total MWT (solo admin/ceo). */}
       <div
         role="row"
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 0.9fr) 56px 18px",
+          gridTemplateColumns: isAdmin
+            ? "minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 0.9fr) 48px 18px"
+            : "minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 1fr) 48px 18px",
           gap: 8,
           padding: "8px 12px",
           font: "var(--micro)",
@@ -704,28 +708,19 @@ export function UrgentExpedientesTable({
       >
         <span>{lang === "en" ? "Reference" : "Referencia"}</span>
         <span>{tr(lang, "client")}</span>
-        <span>{tr(lang, "brand")}</span>
+        <span style={{ textAlign: "right" }}>{lang === "en" ? "Client Total" : "Total Cliente"}</span>
+        {isAdmin && <span style={{ textAlign: "right" }}>{lang === "en" ? "MWT Total" : "Total MWT"}</span>}
         <span style={{ textAlign: "right" }}>{lang === "en" ? "Days" : "Días"}</span>
         <span />
       </div>
 
       {sorted.map((u) => {
-        // Brand: usar primero brand_name del payload, fallback al resolver.
-        const brandFromPayload = u.brand_name
-          ? { name: u.brand_name, color: resolveBrand(u.brand_id)?.color || "var(--brand-primary)" }
-          : null;
-        const brand = brandFromPayload || resolveBrand(u.brand_id);
-
         // Cliente: razón_social del backend, fallback al resolver o UUID.
         const clientName = u.client_name
           || resolveClient(u.client_id)?.name
           || (u.client_id ? `${String(u.client_id).slice(0, 8)}…` : "—");
 
-        // Número visible según rol (mandato CEO).
-        //   admin → proforma (número MWT) → fallback oc_codigo → fallback ref
-        //   client → oc_codigo (número de OC del cliente) → fallback ref
-        // El cliente JAMÁS ve la proforma. El admin prefiere proforma, pero si
-        // no está poblada en BD usa oc_codigo (más útil que EXP-XXXX).
+        // Número visible según rol.
         const primaryRef = isAdmin
           ? (u.proforma || u.oc_codigo || u.ref || u.id || "")
           : (u.oc_codigo || u.ref || u.id || "");
@@ -733,11 +728,12 @@ export function UrgentExpedientesTable({
           ? primaryRef
           : String(primaryRef).slice(0, 18) + "…";
 
-        // Pequeña etiqueta que indica qué tipo de número se está mostrando
-        // (útil cuando admin cae al fallback de OC porque proforma falta).
         const refKind = isAdmin
           ? (u.proforma ? "PF" : (u.oc_codigo ? "OC" : "EXP"))
           : (u.oc_codigo ? "OC" : "EXP");
+
+        const totalClientVal = Number(u.total_client || u.order_value || u.total_invoiced || u.value || 0);
+        const totalMwtVal = Number(u.total_mwt || u.total_cost || 0);
 
         const isHigh = u.urgency === "high";
         return (
@@ -750,7 +746,9 @@ export function UrgentExpedientesTable({
             style={{
               width: "100%",
               display: "grid",
-              gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 0.9fr) 56px 18px",
+              gridTemplateColumns: isAdmin
+                ? "minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 0.9fr) 48px 18px"
+                : "minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 1fr) 48px 18px",
               gap: 8,
               padding: "10px 12px",
               alignItems: "center",
@@ -804,18 +802,35 @@ export function UrgentExpedientesTable({
             >
               {clientName}
             </span>
-            <span className="flex ai-center gap-2" style={{ minWidth: 0, overflow: "hidden" }}>
-              <span style={{ width: 8, height: 8, background: brand?.color || "var(--border-strong)", borderRadius: 2, flexShrink: 0 }} />
+
+            {/* Total Cliente */}
+            <span
+              className="tabular-nums"
+              style={{
+                font: "600 12px/1 var(--font-mono)",
+                color: "var(--text-primary)",
+                textAlign: "right",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {fmtMoney(totalClientVal)}
+            </span>
+
+            {/* Total MWT (solo admin) */}
+            {isAdmin && (
               <span
-                title={brand?.name || ""}
+                className="tabular-nums"
                 style={{
-                  font: "var(--caption)", color: "var(--text-secondary)",
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  font: "600 12px/1 var(--font-mono)",
+                  color: totalMwtVal > 0 ? "var(--text-secondary)" : "var(--text-tertiary)",
+                  textAlign: "right",
+                  whiteSpace: "nowrap",
                 }}
               >
-                {brand?.name || "—"}
+                {totalMwtVal > 0 ? fmtMoney(totalMwtVal) : "$0"}
               </span>
-            </span>
+            )}
+
             <span className="tabular" style={{
               font: "600 12.5px/1 var(--font-mono)",
               color: (u.credit_days || 0) > 75 ? "var(--critical)"
