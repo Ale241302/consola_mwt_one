@@ -460,11 +460,14 @@ function logoSrc(keyOrUrl) {
 }
 
 function PipelineCard({ exp, currentState, lang, dragging, onOpen, onOpenOC, onDragStart, onDragEnd, isClient, canDrag, showMoney }) {
-  // Monto efectivo: prefiere total_invoiced; cae a order_value cuando
-  // todavía no hay facturación (mismo criterio que Expedientes.jsx).
-  const effectiveAmount = exp.total_invoiced > 0
-    ? exp.total_invoiced
-    : (exp.order_value || 0);
+  // Monto cliente y monto MWT (mismo criterio que la tabla master de Expedientes.jsx)
+  const clientAmount = exp.total_client > 0
+    ? exp.total_client
+    : (exp.total_invoiced > 0 ? exp.total_invoiced : (exp.order_value || 0));
+  const mwtAmount = exp.total_mwt > 0
+    ? exp.total_mwt
+    : (exp._raw?.total_cost || 0);
+
   // Track whether a real drag started, so mouseup-on-same-card still opens detail
   const dragStartedRef = useRef(false);
 
@@ -651,17 +654,17 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onOpenOC, onD
         {!isClient ? (
           <div style={{ textAlign: 'right' }}>
             <span className="k-card-money-pro tabular-nums" title={lang==='es' ? 'Total Cliente' : 'Client Total'}>
-              {fmtMoney(effectiveAmount || exp.total_client || 0)}
+              {fmtMoney(clientAmount)}
             </span>
             {Boolean(exp.operating_company_id && exp.operating_company_id !== exp.client_id) && (
               <span className="tabular-nums" style={{ fontSize: 11, color: 'var(--text-tertiary)', marginLeft: 6 }} title={lang==='es' ? 'Total MWT' : 'MWT Total'}>
-                / {fmtMoney(exp.total_mwt || 0)}
+                / {fmtMoney(mwtAmount)}
               </span>
             )}
           </div>
         ) : (
           <span className="k-card-money-pro tabular-nums" title={lang==='es' ? 'Total Cliente' : 'Client Total'}>
-            {fmtMoney(effectiveAmount || exp.total_client || 0)}
+            {fmtMoney(clientAmount)}
           </span>
         )}
       </div>
