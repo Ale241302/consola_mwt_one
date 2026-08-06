@@ -60,7 +60,7 @@ connect_network() {
 connect_network "$CONSOLA_NET"
 connect_network "$MCP_GATEWAY_NET"
 
-# ── Copiar consola.conf al contenedor ─────────────────────────────
+# ── Copiar consola.conf al contenedor (compatible con bind-mounts) ───
 needs_reload=0
 
 current_md5="$(docker exec "$NGINX_CTR" sh -c "md5sum $DST_PATH 2>/dev/null | awk '{print \$1}'" || true)"
@@ -68,7 +68,8 @@ new_md5="$(md5sum "$SRC_CONF" | awk '{print $1}')"
 
 if [[ "$current_md5" != "$new_md5" ]]; then
     echo "==> copiando consola.conf → $NGINX_CTR:$DST_PATH"
-    docker cp "$SRC_CONF" "$NGINX_CTR:$DST_PATH"
+    # Usamos cat en lugar de docker cp para no romper bind mounts.
+    docker exec "$NGINX_CTR" sh -c "cat > $DST_PATH" < "$SRC_CONF"
     needs_reload=1
 else
     echo "==> consola.conf ya está sincronizado (md5 $new_md5) — skip"
