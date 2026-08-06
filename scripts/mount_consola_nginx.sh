@@ -69,7 +69,14 @@ new_md5="$(md5sum "$SRC_CONF" | awk '{print $1}')"
 if [[ "$current_md5" != "$new_md5" ]]; then
     echo "==> copiando consola.conf → $NGINX_CTR:$DST_PATH"
     # Usamos cat en lugar de docker cp para no romper bind mounts.
-    docker exec "$NGINX_CTR" sh -c "cat > $DST_PATH" < "$SRC_CONF"
+    # -i es obligatorio para que stdin llegue al contenedor en scripts no-interactivos.
+    docker exec -i "$NGINX_CTR" sh -c "cat > $DST_PATH" < "$SRC_CONF"
+    # Sanity check: nunca dejar el archivo vacío.
+    size_after="$(docker exec "$NGINX_CTR" sh -c "stat -c %s $DST_PATH 2>/dev/null || echo 0")"
+    if [[ "${size_after:-0}" -lt 100 ]]; then
+        echo "[ERR] $DST_PATH quedó vacío o casi vacío después de copiar — abortando" >&2
+        exit 1
+    fi
     needs_reload=1
 else
     echo "==> consola.conf ya está sincronizado (md5 $new_md5) — skip"
