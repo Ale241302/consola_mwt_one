@@ -47,7 +47,7 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: "4444"
-      APP_DOMAIN: https://mcp.consola.mwt.one
+      APP_DOMAIN: https://mcp.mwt.one
       DATABASE_URL: sqlite:////data/mcp.db
       MCPGATEWAY_UI_ENABLED: "true"
       MCPGATEWAY_ADMIN_API_ENABLED: "true"
