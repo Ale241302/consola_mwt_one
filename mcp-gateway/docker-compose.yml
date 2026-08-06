@@ -37,7 +37,7 @@ services:
   # ContextForge — MCP gateway, registry and proxy
   # -----------------------------------------------------------------
   contextforge:
-    image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+    image: ghcr.io/ibm/mcp-context-forge:latest
     container_name: mcp-gateway-contextforge
     restart: unless-stopped
     depends_on:
