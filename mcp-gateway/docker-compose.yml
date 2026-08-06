@@ -1,0 +1,88 @@
+# =====================================================================
+# MWT.ONE · MCP Gateway Stack
+# Expone el mcp_server de MWT como Remote MCP para Claude.ai/Cowork/Desktop.
+# Componentes:
+#   - pocket-id: proveedor OIDC/OAuth 2.1 (idp.mwt.one)
+#   - contextforge: gateway MCP con OAuth resource server (mcp.consola.mwt.one)
+# =====================================================================
+
+name: mcp-gateway
+
+services:
+  # -----------------------------------------------------------------
+  # Pocket-ID — OIDC/OAuth 2.1 provider (passkeys + password fallback)
+  # -----------------------------------------------------------------
+  pocket-id:
+    image: ghcr.io/pocket-id/pocket-id:latest
+    container_name: mcp-gateway-pocket-id
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_URL: https://idp.mwt.one
+      TRUST_PROXY: "true"
+    volumes:
+      - ./data/pocket-id:/app/data
+    networks:
+      - mcp-gateway-net
+      - consola-mwt-one-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:1411/healthz"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # -----------------------------------------------------------------
+  # ContextForge — MCP gateway, registry and proxy
+  # -----------------------------------------------------------------
+  contextforge:
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+    container_name: mcp-gateway-contextforge
+    restart: unless-stopped
+    depends_on:
+      pocket-id: { condition: service_healthy }
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4444"
+      APP_DOMAIN: https://mcp.consola.mwt.one
+      DATABASE_URL: sqlite:////data/mcp.db
+      MCPGATEWAY_UI_ENABLED: "true"
+      MCPGATEWAY_ADMIN_API_ENABLED: "true"
+      SSO_ENABLED: "true"
+      AUTH_REQUIRED: "true"
+      SECURE_COOKIES: "false"
+      LOG_LEVEL: DEBUG
+      # ContextForge no permite por defecto llamar a backends en IPs privadas.
+      # Ajustar a la CIDR real de consola-mwt-one-net (ver docker network inspect).
+      SSRF_ALLOWED_NETWORKS: '["172.21.0.0/16"]'  # actualizar si cambia
+    volumes:
+      - ./data/contextforge:/data
+    networks:
+      - mcp-gateway-net
+      - consola-mwt-one-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4444/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+# ---------------------------------------------------------------------
+# Volúmenes / datos persistentes
+# ---------------------------------------------------------------------
+# ./data/pocket-id     -> usuarios, clients OIDC, config
+# ./data/contextforge  -> SQLite mcp.db
+
+# ---------------------------------------------------------------------
+# Redes
+# ---------------------------------------------------------------------
+networks:
+  mcp-gateway-net:
+    name: mcp-gateway-net
+    driver: bridge
+  consola-mwt-one-net:
+    name: consola-mwt-one-net
+    external: true

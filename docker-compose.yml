@@ -229,6 +229,32 @@ services:
       - consola-net
 
   # -----------------------------------------------------------------
+  # MCP Server (para agentes externos: ContextForge, Claude, etc.)
+  # -----------------------------------------------------------------
+  mcp-server:
+    build:
+      context: ./mcp_server
+      dockerfile: Dockerfile
+    image: consola-mwt-one/mcp-server:latest
+    container_name: consola-mwt-one-mcp
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MWT_MCP_TRANSPORT: http
+      MWT_MCP_HOST: 0.0.0.0
+      MWT_MCP_PORT: "8765"
+      MWT_API_BASE: https://consola.mwt.one/api
+    networks:
+      - consola-net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(3); s.connect(('127.0.0.1', 8765)); s.close()\""]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # -----------------------------------------------------------------
   # Frontend (Vite build + nginx)
   # -----------------------------------------------------------------
   frontend:

@@ -21,6 +21,7 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/opt/consola-mwt-one}"
 NGINX_CTR="${NGINX_CTR:-mwt-nginx}"
 CONSOLA_NET="${CONSOLA_NET:-consola-mwt-one-net}"
+MCP_GATEWAY_NET="${MCP_GATEWAY_NET:-mcp-gateway-net}"
 SRC_CONF="$APP_DIR/infra/nginx/consola.conf"
 DST_PATH="/etc/nginx/conf.d/consola.conf"
 
@@ -38,21 +39,26 @@ if [[ ! -f "$SRC_CONF" ]]; then
     exit 1
 fi
 
-# ── Conectar a la red de consola-mwt-one (si no lo estaba ya) ─────
-if docker network inspect "$CONSOLA_NET" >/dev/null 2>&1; then
-    connected="$(docker network inspect "$CONSOLA_NET" \
-                 --format '{{range $_, $c := .Containers}}{{$c.Name}} {{end}}' \
-                 | tr ' ' '\n' | grep -x "$NGINX_CTR" || true)"
-    if [[ -z "$connected" ]]; then
-        echo "==> conectando $NGINX_CTR a $CONSOLA_NET"
-        docker network connect "$CONSOLA_NET" "$NGINX_CTR"
+# ── Conectar a redes Docker necesarias ──────────────────────────────
+connect_network() {
+    local net="$1"
+    if docker network inspect "$net" >/dev/null 2>&1; then
+        connected="$(docker network inspect "$net" \
+                     --format '{{range $_, $c := .Containers}}{{$c.Name}} {{end}}' \
+                     | tr ' ' '\n' | grep -x "$NGINX_CTR" || true)"
+        if [[ -z "$connected" ]]; then
+            echo "==> conectando $NGINX_CTR a $net"
+            docker network connect "$net" "$NGINX_CTR" || true
+        else
+            echo "==> $NGINX_CTR ya está en $net (skip)"
+        fi
     else
-        echo "==> $NGINX_CTR ya está en $CONSOLA_NET (skip)"
+        echo "[WARN] red '$net' no existe — omitiendo (puede ser el stack mcp-gateway aún no levantado)" >&2
     fi
-else
-    echo "[ERR] red '$CONSOLA_NET' no existe. Ejecuta 'docker compose up -d' en $APP_DIR primero." >&2
-    exit 1
-fi
+}
+
+connect_network "$CONSOLA_NET"
+connect_network "$MCP_GATEWAY_NET"
 
 # ── Copiar consola.conf al contenedor ─────────────────────────────
 needs_reload=0
