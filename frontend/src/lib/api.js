@@ -1285,8 +1285,8 @@ export const storageApi = {
     return body;
   },
   // URL HTTPS para abrir/embed un archivo dado su key (server-side stream).
-  downloadUrl: (key) =>
-    `${API_BASE}/storage/download/?key=${encodeURIComponent(key)}`,
+  // Añade ?token= para activos privados porque <img>/<a> no envían header.
+  downloadUrl: (key) => storageUrl(key, { forceToken: true }),
 };
 
 // ---------------------------------------------------------------------
