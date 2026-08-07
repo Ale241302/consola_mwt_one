@@ -184,7 +184,7 @@ class StorageViewSet(viewsets.ViewSet):
     #    fichas, logos de clientes). Documentos y otros activos privados
     #    requieren autenticación + scoping. El bucket nunca viene del cliente.
     @action(detail=False, methods=["get"], url_path="download",
-            permission_classes=[AllowAny])
+            permission_classes=[AllowAny], throttle_classes=[])
     def download(self, request):
         """
         GET /api/storage/download/?key=<key>
