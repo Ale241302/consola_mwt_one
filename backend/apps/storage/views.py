@@ -94,9 +94,9 @@ def _authenticate_token_from_query(request):
 
     Necesario para que <img>, <iframe> y <a href> puedan descargar activos
     privados (documentos, expedientes, artefactos) sin mandar header
-    Authorization. El token sigue siendo un access JWT normal de DRF.
+    Authorization. El token es el access JWT normal de MWT (claim user_uuid).
     """
-    from rest_framework_simplejwt.authentication import JWTAuthentication
+    from apps.core.jwt_auth import MwtJWTAuthentication
     from rest_framework_simplejwt.exceptions import InvalidToken, AuthenticationFailed, TokenError
 
     if getattr(request.user, "is_authenticated", False):
@@ -105,7 +105,7 @@ def _authenticate_token_from_query(request):
     if not token:
         return
     try:
-        auth = JWTAuthentication()
+        auth = MwtJWTAuthentication()
         validated_token = auth.get_validated_token(token)
         user = auth.get_user(validated_token)
         request.user = user
